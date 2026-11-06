@@ -17,7 +17,7 @@ the group-level ``transfer_method`` mechanism that DC PF activates).
 
 This module replaces the on-disk emission and the
 ``input_writer._write_dc_power_flow_data`` call site.  No CSV touches
-disk here; the cascade consumer (:mod:`flextool.engine_polars._dc_power_flow`)
+disk here; the cascade consumer (:mod:`flextool.engine.model._dc_power_flow`)
 reads the four frames from the Provider.
 
 See ``specs/step_2_5_audit.md`` Section 7 item 9 for the migration
@@ -28,6 +28,22 @@ from __future__ import annotations
 import logging
 
 import polars as pl
+
+from flextool.engine.input._solve_state import FlexToolConfigError
+
+
+def group_override_conflicts(override_sources: "dict[str, dict[str, str]]") -> "dict[str, dict[str, str]]":
+    """The connections whose matching groups set different ``transfer_method`` overrides
+    (``{connection: {group: method}}`` of the input, restricted to the conflicting connections)."""
+    return {c: g for c, g in sorted(override_sources.items()) if len(set(g.values())) > 1}
+
+
+def conflicting_overrides_message(conflicts: "dict[str, dict[str, str]]") -> str:
+    """The error for connections with conflicting group ``transfer_method`` overrides."""
+    parts = [f"{c} ({', '.join(f'{g}: {m}' for g, m in sorted(gm.items()))})" for c, gm in conflicts.items()]
+    return ("Connection(s) with both endpoints in several groups that set different transfer_method overrides: "
+            + "; ".join(parts) + ".  A connection can take its transfer_method from one group only: set the same "
+            "transfer_method on these groups, or use_connection_transfer_methods on all but one of them.")
 
 
 def derive_dc_power_flow(
@@ -108,6 +124,7 @@ def derive_dc_power_flow(
 
     # --- Apply group transfer_method overrides for ALL groups ---
     dc_pf_groups: list[str] = []
+    override_sources: dict[str, dict[str, str]] = {}  # connection -> {group: method}
     for group_name, method in group_transfer_methods.items():
         if method == "use_connection_transfer_methods":
             continue
@@ -125,11 +142,16 @@ def derive_dc_power_flow(
                 # For dc_power_flow_with_angles: exclude is_DC=yes connections
                 if is_dc_pf and conn_name in is_dc_connections:
                     continue
+                override_sources.setdefault(conn_name, {})[group_name] = method
                 if is_dc_pf:
                     # DC PF connections use no_losses_no_variable_cost internally
                     ct_method_overrides[conn_name] = "no_losses_no_variable_cost"
                 else:
                     ct_method_overrides[conn_name] = method
+
+    conflicts = group_override_conflicts(override_sources)
+    if conflicts:
+        raise FlexToolConfigError(conflicting_overrides_message(conflicts))
 
     # --- DC power flow specific processing ---
     dc_pf_nodes: set[str] = set()
@@ -186,7 +208,18 @@ def derive_dc_power_flow(
             for node in nodes_in_group:
                 adjacency.setdefault(node, set())
 
-            # Read existing capacity for nodes
+            # Existing capacity of the nodes: existing × virtual_unitsize when that is set (existing is then the
+            # number of units), else existing.
+            node_vu: dict[str, float] = {}
+            for pv in backend.find_parameter_values(
+                entity_class_name="node",
+                parameter_definition_name="virtual_unitsize",
+            ):
+                if pv["type"] is None:
+                    continue
+                val = pv["parsed_value"]
+                if isinstance(val, (int, float)) and float(val) != 0.0:
+                    node_vu[pv["entity_byname"][0]] = float(val)
             node_existing: dict[str, float] = {}
             for pv in backend.find_parameter_values(
                 entity_class_name="node",
@@ -198,7 +231,7 @@ def derive_dc_power_flow(
                 if node_name in nodes_in_group:
                     val = pv["parsed_value"]
                     if isinstance(val, (int, float)):
-                        node_existing[node_name] = float(val)
+                        node_existing[node_name] = float(val) * node_vu.get(node_name, 1.0)
 
             # BFS to find connected components
             visited: set[str] = set()
@@ -227,7 +260,7 @@ def derive_dc_power_flow(
                         best_node = node
                 reference_nodes.append(best_node)
                 logger.info(
-                    "DC power flow: auto-selected reference node '%s' (existing=%.1f) "
+                    "DC power flow: auto-selected reference node '%s' (existing capacity=%.1f) "
                     "for connected component in group '%s'.",
                     best_node, best_cap, group_name,
                 )
@@ -285,7 +318,8 @@ def derive_dc_power_flow(
                 precapacity = float(pv["parsed_value"])
                 break
 
-        # Read existing capacity for connections
+        # Existing of the connections, for the zero check only: the capacity (existing × virtual_unitsize when
+        # that is set) is zero exactly when existing is.
         conn_existing: dict[str, float] = {}
         for pv in backend.find_parameter_values(
             entity_class_name="connection",
@@ -336,6 +370,11 @@ def derive_dc_power_flow(
         schema={"node": pl.Utf8},
     )
     provider.put("input/node_reference_angle", ref_angle_frame)
+
+    # Before, any is_DC connection replaced these lines and the reference node of a DC power-flow model.
+    if dc_pf_nodes and is_dc_connections:
+        from flextool.engine import _behaviour_changes
+        _behaviour_changes.notice("dc_power_flow_lines_beside_dc_links", "groups", sorted(dc_pf_groups))
 
     # p_connection_susceptance — two columns ``process,
     # p_connection_susceptance``, sorted by process.  The legacy

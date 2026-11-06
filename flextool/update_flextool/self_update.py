@@ -4,7 +4,8 @@ import os
 import subprocess
 import shutil
 try: 
-    from spinedb_api import import_data, DatabaseMapping
+    from spinedb_api import import_data
+    from flextool.update_flextool.db_handle import open_database_mapping
 except ModuleNotFoundError:
     exit("Cannot find the required Spine-Toolbox module. Check that the environment is activated and the toolbox is installed")
 from spinedb_api.exception import NothingToCommit
@@ -71,6 +72,39 @@ def _reinstall_if_needed():
             f"Warning: pip install failed.  Run "
             f"'pip install --upgrade {flag}{repo_root}' manually."
         )
+    if is_editable:
+        _keep_bundle_relocatable()
+
+
+def _keep_bundle_relocatable():
+    """In the Windows Toolbox bundle, point the editable install to the clone by a relative path again.
+
+    ``pip install -e`` writes the clone's absolute path; the bundle must keep
+    working after it is moved.  Does nothing outside the bundle.
+    """
+    from flextool.update_flextool.bundle_install import relativise_bundle_install
+
+    try:
+        relative = relativise_bundle_install()
+    except (OSError, RuntimeError) as exc:
+        print(f"Warning: could not make the FlexTool editable install relative: {exc}")
+        return
+    if relative is not None:
+        print(f"FlexTool editable install made relative: {relative}")
+
+
+def _run_fix_steps(steps) -> bool:
+    """Run pip *steps* in order, echoing each; stop at the first failure."""
+    for step in steps:
+        print("\n$ " + " ".join(step))
+        completed = subprocess.run(step)
+        if completed.returncode != 0:
+            print(
+                f"Warning: '{' '.join(step)}' exited {completed.returncode}. "
+                f"Run it manually to finish the fix."
+            )
+            return False
+    return True
 
 
 def _ensure_compatible_solver_stack():
@@ -79,12 +113,15 @@ def _ensure_compatible_solver_stack():
     build automatically.
 
     Two known cases (see ``flextool.env_check``): the default ``polars``
-    wheel on a CPU lacking the SIMD baseline it was built for (cure:
-    ``polars-lts-cpu``), and ``highspy==1.14.0`` import-crashing on older
-    Windows (cure: ``highspy==1.13.1``).  Both surface as a native crash —
-    a Windows access violation (exit ``3221225477``) or a POSIX
-    ``SIGILL``/``SIGSEGV``.  We probe in a child process so the crash is
-    observable and pinpoint which component died, then apply its remedy.
+    runtime on a CPU without AVX2/FMA/BMI2/MOVBE (cure: add the compatible
+    runtime, ``polars[rtcompat]``), and an old ``highspy`` (1.14.0)
+    import-crashing on older Windows (cure: highspy 1.15 or later, which
+    ships its own C++ runtime).  Both surface as a native
+    crash — a Windows access violation (exit ``3221225477``) or a POSIX
+    ``SIGILL``/``SIGSEGV``.  The CPU flags are read first, so the compatible
+    polars runtime goes in before polars ever crashes; then the imports are
+    probed in a child process so a crash is observable and the component
+    that died is pinpointed and its remedy applied.
 
     Run unattended here (the user already opted into installs by choosing
     "Update FlexTool"), but loudly: the banner names what is happening and
@@ -95,6 +132,15 @@ def _ensure_compatible_solver_stack():
     from flextool import env_check
 
     print("\nChecking that the solver libraries run on this computer...")
+    verdict = env_check.cpu_verdict()
+    if verdict.status == env_check.CPU_UNSUPPORTED:
+        print("\n" + env_check.unsupported_cpu_help(verdict))
+        return
+    if env_check.proactive_polars_fix_needed():
+        print("\n" + env_check.proactive_banner(verdict))
+        if not _run_fix_steps(env_check.polars_compat_steps(sys.executable)):
+            return
+
     probe = env_check.probe_solver_stack()
     print(env_check.diagnostics_report(probe))
     if not probe.is_native_fault:
@@ -104,25 +150,19 @@ def _ensure_compatible_solver_stack():
 
     steps = env_check.remediation_steps(probe.failed_component, sys.executable)
     if steps is None:
-        # A native crash with no package-level remedy (e.g. polar_high).
-        print("\n" + env_check.UNFIXABLE_HELP)
+        # A native crash with no package-level remedy (e.g. polar_high, or a
+        # compatible polars runtime that is already in place).
+        print("\n" + env_check.unfixable_help())
         return
 
     print("\n" + env_check.remediation_banner(probe.failed_component))
-    for step in steps:
-        print("\n$ " + " ".join(step))
-        completed = subprocess.run(step)
-        if completed.returncode != 0:
-            print(
-                f"Warning: '{' '.join(step)}' exited {completed.returncode}. "
-                f"Run it manually to finish the fix."
-            )
-            return
+    if not _run_fix_steps(steps):
+        return
 
     reprobe = env_check.probe_solver_stack()
     print("\n" + reprobe.summary())
     if not reprobe.ok:
-        print("\n" + env_check.UNFIXABLE_HELP)
+        print("\n" + env_check.unfixable_help())
 
 
 def _sync_settings_param_defs(json_template, sqlite_path):
@@ -138,7 +178,7 @@ def _sync_settings_param_defs(json_template, sqlite_path):
     """
     from flextool.update_flextool.export_database import keep_serialized_unparse
     try:
-        with open(json_template) as json_file:
+        with open(json_template, encoding="utf-8") as json_file:
             template = json.load(json_file)
         payload = {
             key: template[key]
@@ -147,7 +187,7 @@ def _sync_settings_param_defs(json_template, sqlite_path):
         }
         if not payload:
             return
-        with DatabaseMapping('sqlite:///' + sqlite_path, create=False) as db:
+        with open_database_mapping('sqlite:///' + sqlite_path, create=False) as db:
             (num, _log) = import_data(db, unparse_value=keep_serialized_unparse, **payload)
             if num:
                 db.commit_session(
@@ -298,7 +338,7 @@ def update_flextool(skip_git):
 
     # After (re)install, make sure the native solver stack actually runs on
     # this machine; auto-fix the known incompatible-build cases (polars CPU
-    # baseline, highspy 1.14.0 on older Windows) if a component crashes.
+    # baseline, a highspy older than 1.15 on older Windows) if a component crashes.
     _ensure_compatible_solver_stack()
 
     migrate_project("./.spinetoolbox/project_temp.json","./.spinetoolbox/project.json")
@@ -390,7 +430,7 @@ def update_flextool(skip_git):
     #get template JSON. This can be the master or old template if conflicting migrations in between
     with open (result_template_path) as json_file:
         template = json.load(json_file)
-    with DatabaseMapping('sqlite:///' + 'results.sqlite', create = False, upgrade = True) as db:
+    with open_database_mapping('sqlite:///' + 'results.sqlite', create = False, upgrade = True) as db:
         #these update the old descriptions, but wont remove them or change names (the new name is created, but old stays)
         (num,log) = import_data(db, parameter_definitions = template["parameter_definitions"])
         try:
@@ -403,7 +443,7 @@ def initialize_result_database(filename,json_path):
 
     with open (json_path) as json_file:
         template = json.load(json_file)
-    with DatabaseMapping('sqlite:///' + filename, create = True) as db:
+    with open_database_mapping('sqlite:///' + filename, create = True) as db:
         (num,log) = import_data(db,**template)
         print("Result database initialized")
         db.commit_session("Result database initialized")
@@ -422,9 +462,9 @@ def migrate_project(old_path, new_path):
         "Plot_settings",
     ]
 
-    with open(old_path) as old_json:
+    with open(old_path, encoding="utf-8") as old_json:
         old_dict = json.load(old_json)
-    with open(new_path) as new_json:
+    with open(new_path, encoding="utf-8") as new_json:
         new_dict = json.load(new_json)
     
     for item in items:

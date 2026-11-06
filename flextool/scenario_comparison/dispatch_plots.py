@@ -111,13 +111,13 @@ def _build_dispatch_figure(
     colors: dict | None = None,
     timeline: tuple[int, int] = (0, 168),
     ylim: tuple[float, float] | None = None,
-    break_times: set[str] | None = None,
+    break_times: pd.MultiIndex | None = None,
 ) -> plt.Figure | None:
     """Build a dispatch stacked-area Figure and return it (without saving or closing).
 
     Returns None if there's nothing to plot.
     """
-    from flextool.plot_outputs.format_helpers import insert_timeline_breaks
+    from flextool.plot_outputs.format_helpers import has_timeline_breaks, insert_timeline_breaks
 
     if colors is None:
         colors = {}
@@ -133,7 +133,7 @@ def _build_dispatch_figure(
     df_plot = df_dispatch.iloc[timeline[0]:timeline[1]]
 
     # Insert NaN rows at timeline breaks for visual gaps
-    if break_times:
+    if has_timeline_breaks(break_times):
         df_plot = insert_timeline_breaks(df_plot, break_times)
         if inflow_series is not None:
             inflow_series = insert_timeline_breaks(
@@ -186,7 +186,7 @@ def _build_dispatch_figure(
 
     # Plot demand line
     if has_demand:
-        if break_times:
+        if has_timeline_breaks(break_times):
             inflow_plot = inflow_series
         else:
             inflow_plot = inflow_series.iloc[timeline[0]:timeline[1]]
@@ -237,7 +237,7 @@ def plot_dispatch_area(
     timeline: tuple[int, int] = (0, 168),
     show_plot: bool = False,
     ylim: tuple[float, float] | None = None,
-    break_times: set[str] | None = None,
+    break_times: pd.MultiIndex | None = None,
 ) -> None:
     """Create a stacked area dispatch plot with demand line."""
     fig = _build_dispatch_figure(
@@ -432,7 +432,7 @@ def create_dispatch_plots(
     show_plot: bool = False,
     write_xlsx: bool = False,
     plot_rows: list[int] | tuple[int, int] | None = None,
-    break_times: set[str] | None = None,
+    break_times: pd.MultiIndex | None = None,
     debug: bool = False,
     settings_path: str | Path | None = None,
 ) -> None:

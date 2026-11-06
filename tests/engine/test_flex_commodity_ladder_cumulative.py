@@ -1,0 +1,93 @@
+"""Parity test for the commodity price-ladder cumulative variant.
+
+Fixture: ``tests/data/work_commodity_ladder_cumulative`` — coal scenario
+with ``price_method = price_ladder_cumulative`` and a 3-tier ladder
+(tier 1: 20 €/MWh, tier 2: 25 €/MWh, both capped at 1,000,000 MWh
+cumulative; tier 3: 30 €/MWh, +∞).
+
+Hand-derivation of the binding cap (``_eq_tier_cap_cumulative``,
+``flextool/engine/model/_commodity_ladder.py``): on this single-period,
+non-rolling solve (``y2020_2day_dispatch``, 48 realized hours of
+``p2020``) the cap is each tier's cumulative quantity times
+``years_represented[p2020] (= 1.0, no multi-year chain here) ×
+realized_hours[p2020] (= 48) / 8760``:
+
+    cap[tier] = 1,000,000 × 1.0 × 48 / 8760 = 5479.452054794521
+
+Both finite tiers share that cap (same 1,000,000 quantity), so tier 1
+and tier 2 both saturate at ~5479.45 MWh and the +∞ tier 3 absorbs the
+rest of the coal demand.
+"""
+import polars as pl
+
+from polar_high import Problem
+from flextool.engine import build_flextool
+from tests._support.load import load_scenario
+import pytest
+
+pytestmark = pytest.mark.solver
+
+
+# Phase 3d: scenario ``coal_ladder_cumulative`` added to ``tests.json``.
+SCENARIO = "coal_ladder_cumulative"
+
+
+def test_commodity_ladder_cumulative_parity(scenario_run):
+    """polar_high obj == flextool's HiGHS objective for the cumulative ladder.
+
+    Also confirms the per-tier v_trade decomposition: tiers 1 and 2
+    both bind at their ~5479.45 MWh cumulative cap (hand-derived in the
+    module docstring) and tier 3 (+∞) absorbs the rest.
+    """
+    run = scenario_run(SCENARIO)
+    work = run.work_folder
+    data = load_scenario(run)
+    pb = Problem()
+    build_flextool(pb, data)
+    sol = pb.solve()
+    flextool_obj = pl.read_parquet(
+        work / "output_raw" / "v_obj__y2020_2day_dispatch.parquet"
+    )["objective"][0]
+    assert sol.optimal
+    rel = abs(sol.obj - flextool_obj) / max(1.0, flextool_obj)
+    assert rel < 1e-6, (
+        f"cumulative ladder parity failed: polar_high={sol.obj}, "
+        f"flextool={flextool_obj}, rel={rel:.3e}"
+    )
+
+    v_trade = sol.value("v_trade").sort("c", "n", "d", "i")
+    # Pre-Tier-4 backfill: nail down v_trade column structure so the smoke
+    # test's parquet column assertion (commodity, node, tier) can retire.
+    assert {"c", "n", "i"}.issubset(set(v_trade.columns)), (
+        f"v_trade missing expected (commodity=c, node=n, tier=i) columns: "
+        f"got {v_trade.columns}"
+    )
+    tier1_total = v_trade.filter(pl.col("i") == "1")["value"].sum()
+    tier2_total = v_trade.filter(pl.col("i") == "2")["value"].sum()
+    tier3_total = v_trade.filter(pl.col("i") == "3")["value"].sum()
+    # Hand-derived cap (module docstring): 1,000,000 × 1.0 × 48 / 8760 ≈ 5479.452.
+    expected_cap = 1_000_000.0 * 1.0 * 48.0 / 8760.0
+    assert abs(tier1_total - expected_cap) < 1e-6, (
+        f"tier 1 should bind at the hand-derived cap {expected_cap}; got {tier1_total}")
+    assert abs(tier2_total - expected_cap) < 1e-6, (
+        f"tier 2 should also bind at the hand-derived cap {expected_cap}; got {tier2_total}")
+    assert tier3_total > 100.0, (
+        f"tier 3 (+∞) should absorb the overflow past tiers 1 and 2, got {tier3_total}")
+
+    # r_cost_ladder proxy: Σ price[c,i] × v_trade[c,n,d,i] must be > 0.
+    # Cumulative ladder has no period dimension — the same per-tier price
+    # applies across all periods. Catches regressions where v_trade routes
+    # correctly but prices fail to flow into the objective.
+    from flextool.engine.input._axis_enums import cast_dim
+    prices = pl.read_csv(work / "input" / "commodity_ladder_cumulative.csv").select(
+        cast_dim(pl.col("commodity"), None, "c").alias("c"),
+        cast_dim(pl.col("tier").cast(pl.Utf8), None, "i").alias("i"),
+        pl.col("price"),
+    )
+    ladder_cost = (
+        v_trade.join(prices, on=["c", "i"], how="inner")
+        .select((pl.col("price") * pl.col("value")).sum())
+        .item()
+    )
+    assert ladder_cost > 0, (
+        f"expected positive ladder cost (Σ price × v_trade), got {ladder_cost}")

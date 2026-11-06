@@ -12,7 +12,7 @@ Related modules:
 * :mod:`flextool.spinedb_backend` — the EAV → polars materialisers
   (``SpineDBBackend.entities`` / ``parameter_values`` /
   ``parameter_defaults``);
-* :mod:`flextool.engine_polars._emit_*` — the native polars writers
+* :mod:`flextool.engine._emit_*` — the native polars writers
   that consume the materialised frames and emit derived ``solve_data/``
   frames.
 """
@@ -55,6 +55,15 @@ _ENTITY_SPECS: list[EntitySpec] = [
     EntitySpec(["unit__outputNode", "connection__node__node"], "process,sink",
                "input/process__sink.csv", entity_dimens=[[0, 1], [0, 2]]),
 ]
+
+
+# ``processParam`` values whose timestep-keyed ``pd_process`` rows ``input_derivation.run`` drops (a timestep is
+# never a period): the period twins of the ``pt_process`` parameters ``efficiency``, ``efficiency_at_min_load``,
+# ``min_load`` and ``availability`` (a silent-``x`` time map of one passes both the ``pt`` and the ``pd`` filter)
+# and ``startup_cost``, which has no ``pt_process`` twin but entered ``pd_process`` with them, so an off-schema
+# silent-``x`` time map of it cannot add timestep names to the period universe either.
+PD_PROCESS_DROP_TIMESTEP_KEYS: frozenset[str] = frozenset(
+    {"efficiency", "efficiency_at_min_load", "min_load", "availability", "startup_cost"})
 
 
 _PARAMETER_SPECS: list[dict] = [
@@ -180,6 +189,21 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/p_node_constraint_cumulative_pre_built_capacity_coeff.csv",
     },
     {
+        "cl_pars": [("node", "constraint_capacity_coeff")],
+        "header": "node,constraint,p_node_constraint_capacity_coeff",
+        "filename": "input/p_node_constraint_capacity_coeff.csv",
+    },
+    {
+        "cl_pars": [("node", "constraint_retired_capacity_coeff")],
+        "header": "node,constraint,p_node_constraint_retired_capacity_coeff",
+        "filename": "input/p_node_constraint_retired_capacity_coeff.csv",
+    },
+    {
+        "cl_pars": [("node", "constraint_in_construction_capacity_coeff")],
+        "header": "node,constraint,p_node_constraint_in_construction_capacity_coeff",
+        "filename": "input/p_node_constraint_in_construction_capacity_coeff.csv",
+    },
+    {
         "cl_pars": [("node", "constraint_state_coeff")],
         "header": "node,constraint,p_node_constraint_state_coeff",
         "filename": "input/p_node_constraint_state_coeff.csv",
@@ -215,7 +239,7 @@ _PARAMETER_SPECS: list[dict] = [
         # here (``_rows_to_frame`` truncates the flattened map row to this
         # 2-col header, dropping the time axis and value).  Map-shaped
         # adders ingest through the ``pd_``/``pdt_`` specs below; the
-        # emitter (_emit_energy_margin_adder) reads all three files and
+        # emitter (_energy_margin_adder) reads all three files and
         # broadcasts each authored shape over the invest (d, t) grid via
         # _param_shapes' promote_param_to_dt.  A node has a scalar OR a
         # map adder, never both.
@@ -276,8 +300,8 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/node__penalty_method.csv",
     },
     {
-        "cl_pars": [("node", "penalty_down"), ("node", "self_discharge_loss"), ("node", "availability"),
-                    ("node", "storage_state_reference_value")],
+        "cl_pars": [("node", "penalty_down"), ("node", "penalty_up"), ("node", "self_discharge_loss"),
+                    ("node", "availability"), ("node", "storage_state_reference_value")],
         "header": "node,nodeParam,time,pt_node",
         "filename": "input/pt_node.csv",
         "filter_in_type": ["1d_map", "array", "time_series"],
@@ -285,11 +309,25 @@ _PARAMETER_SPECS: list[dict] = [
         "param_print": True,
     },
     {
-        "cl_pars": [("node", "penalty_down"), ("node", "self_discharge_loss"), ("node", "availability"),
-                    ("node", "storage_state_reference_value")],
+        "cl_pars": [("node", "penalty_down"), ("node", "penalty_up"), ("node", "self_discharge_loss"),
+                    ("node", "availability"), ("node", "storage_state_reference_value")],
         "header": "node,nodeParam,branch,time_start,time,pt_node",
         "filename": "input/pbt_node.csv",
         "filter_in_type": ["3d_map"],
+        "param_print": True,
+    },
+    {
+        # Genuine 2-D maps of the same parameters: outer index "period", inner index "time". Neither ``pt_node``
+        # (``filter_out_index: "period"`` drops a period-outer map) nor ``pd_node`` (``filter_in_type: ["1d_map"]``
+        # rejects a 2-D map's dimension count) carries one, so without this spec the emit ``pdtNode`` frame (the
+        # penalty seed and the ``--csv-dump`` ``solve_data/pdtNode.csv``) showed the class default for a period x
+        # time map. ``filter_out_index: "time"`` rejects the (disallowed) time-outer shape.
+        "cl_pars": [("node", "penalty_down"), ("node", "penalty_up"), ("node", "self_discharge_loss"),
+                    ("node", "availability"), ("node", "storage_state_reference_value")],
+        "header": "node,nodeParam,period,time,pdt_node",
+        "filename": "input/pdt_node.csv",
+        "filter_in_type": ["2d_map"],
+        "filter_out_index": "time",
         "param_print": True,
     },
     {
@@ -610,6 +648,28 @@ _PARAMETER_SPECS: list[dict] = [
         "param_print": True,
     },
     {
+        # Genuine 2-D maps of the same parameters: outer index "period", inner index "time". Neither
+        # ``pt_process`` (``filter_out_index: "period"`` drops a period-outer map) nor ``pd_process``
+        # (``filter_in_type: ["1d_map"]`` rejects a 2-D map's dimension count) carries one, so without this
+        # spec a period × time map of the efficiency family reached no tier of the emit ``pdtProcess``
+        # cascade on rolling / nested / stochastic-rolling sub-solves (Q13). ``filter_out_index: "time"``
+        # rejects the (disallowed) time-outer shape.
+        "cl_pars": [("unit", "efficiency"),
+                    ("unit", "efficiency_at_min_load"),
+                    ("unit", "min_load"),
+                    ("unit", "availability"),
+                    ("connection", "efficiency"),
+                    ("connection", "efficiency_at_min_load"),
+                    ("connection", "min_load"),
+                    ("connection", "other_operational_cost"),
+                    ("connection", "availability")],
+        "header": "process,processParam,period,time,pdt_process",
+        "filename": "input/pdt_process.csv",
+        "filter_in_type": ["2d_map"],
+        "filter_out_index": "time",
+        "param_print": True,
+    },
+    {
         "cl_pars": [("unit__outputNode", "is_non_synchronous")],
         "header": "process,sink",
         "filename": "input/process__sink_nonSync_unit.csv",
@@ -680,6 +740,27 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/p_process_constraint_cumulative_pre_built_capacity_coeff.csv",
         "filter_in_type": ["1d_map"],
     },
+    {
+        "cl_pars": [("unit", "constraint_capacity_coeff"),
+                    ("connection", "constraint_capacity_coeff")],
+        "header": "process,constraint,p_process_constraint_capacity_coeff",
+        "filename": "input/p_process_constraint_capacity_coeff.csv",
+        "filter_in_type": ["1d_map"],
+    },
+    {
+        "cl_pars": [("unit", "constraint_retired_capacity_coeff"),
+                    ("connection", "constraint_retired_capacity_coeff")],
+        "header": "process,constraint,p_process_constraint_retired_capacity_coeff",
+        "filename": "input/p_process_constraint_retired_capacity_coeff.csv",
+        "filter_in_type": ["1d_map"],
+    },
+    {
+        "cl_pars": [("unit", "constraint_in_construction_capacity_coeff"),
+                    ("connection", "constraint_in_construction_capacity_coeff")],
+        "header": "process,constraint,p_process_constraint_in_construction_capacity_coeff",
+        "filename": "input/p_process_constraint_in_construction_capacity_coeff.csv",
+        "filter_in_type": ["1d_map"],
+    },
     # Units only: a connection ``delay`` is not implemented and is ignored
     # (``_validators.validate_connection_delay`` warns about it).
     {
@@ -707,12 +788,16 @@ _PARAMETER_SPECS: list[dict] = [
                     ("unit", "invest_cost"),
                     ("unit", "invest_max_total"),
                     ("unit", "invest_min_total"),
+                    ("unit", "invest_max_period"),
+                    ("unit", "invest_min_period"),
                     ("unit", "lifetime"),
                     ("unit", "min_downtime"),
                     ("unit", "min_load"),
                     ("unit", "min_uptime"),
                     ("unit", "retire_max_total"),
                     ("unit", "retire_min_total"),
+                    ("unit", "retire_max_period"),
+                    ("unit", "retire_min_period"),
                     ("unit", "salvage_value"),
                     ("unit", "startup_cost"),
                     ("unit", "virtual_unitsize"),
@@ -726,10 +811,14 @@ _PARAMETER_SPECS: list[dict] = [
                     ("connection", "invest_cost"),
                     ("connection", "invest_max_total"),
                     ("connection", "invest_min_total"),
+                    ("connection", "invest_max_period"),
+                    ("connection", "invest_min_period"),
                     ("connection", "lifetime"),
                     ("connection", "other_operational_cost"),
                     ("connection", "retire_max_total"),
                     ("connection", "retire_min_total"),
+                    ("connection", "retire_max_period"),
+                    ("connection", "retire_min_period"),
                     ("connection", "salvage_value"),
                     ("connection", "startup_cost"),
                     ("connection", "virtual_unitsize")],
@@ -752,12 +841,16 @@ _PARAMETER_SPECS: list[dict] = [
                     ("node", "invest_forced"),
                     ("node", "invest_max_total"),
                     ("node", "invest_min_total"),
+                    ("node", "invest_max_period"),
+                    ("node", "invest_min_period"),
                     ("node", "lifetime"),
                     ("node", "peak_inflow"),
                     ("node", "penalty_down"),
                     ("node", "penalty_up"),
                     ("node", "retire_max_total"),
                     ("node", "retire_min_total"),
+                    ("node", "retire_max_period"),
+                    ("node", "retire_min_period"),
                     ("node", "salvage_value"),
                     ("node", "self_discharge_loss"),
                     ("node", "storage_state_end"),
@@ -786,8 +879,6 @@ _PARAMETER_SPECS: list[dict] = [
                     ("group", "inertia_limit"),
                     ("group", "invest_max_total"),
                     ("group", "invest_min_total"),
-                    ("group", "invest_max_cumulative"),
-                    ("group", "invest_min_cumulative"),
                     ("group", "non_synchronous_limit"),
                     ("group", "penalty_capacity_margin"),
                     ("group", "penalty_inertia"),
@@ -831,6 +922,11 @@ _PARAMETER_SPECS: list[dict] = [
         "param_print": True,
     },
     # --- pd_process (period maps) ---
+    # Also carries the period twin of every ``pt_process`` parameter (and ``startup_cost``): ``pt_process`` drops
+    # period-labelled maps (``filter_out_index: "period"``), so without the twin a 1-D period map of efficiency /
+    # min_load / availability never reached the emit ``pdtProcess`` cascade that rolling and nested sub-solves read
+    # (same pairing as ``pd_node`` / ``pt_node``).  Timestep-keyed rows of the twins (silent-``x`` time maps) are
+    # dropped in ``input_derivation.run`` (``PD_PROCESS_DROP_TIMESTEP_KEYS``).
     {
         "cl_pars": [("unit", "invest_forced"),
                     ("unit", "invest_max_period"),
@@ -860,7 +956,17 @@ _PARAMETER_SPECS: list[dict] = [
                     ("connection", "other_operational_cost"),
                     ("connection", "existing"),
                     ("connection", "cumulative_max_capacity"),
-                    ("connection", "cumulative_min_capacity")],
+                    ("connection", "cumulative_min_capacity"),
+                    ("unit", "efficiency"),
+                    ("unit", "efficiency_at_min_load"),
+                    ("unit", "min_load"),
+                    ("unit", "availability"),
+                    ("unit", "startup_cost"),
+                    ("connection", "efficiency"),
+                    ("connection", "efficiency_at_min_load"),
+                    ("connection", "min_load"),
+                    ("connection", "availability"),
+                    ("connection", "startup_cost")],
         "header": "process,processParam,period,pd_process",
         "filename": "input/pd_process.csv",
         "filter_in_type": ["1d_map"],
@@ -1007,6 +1113,24 @@ METHODS_MAPPING: dict[tuple[str, str, str], str] = {
     ("regular", "no_startup", "fork_yes"): "not_applicable",
     ("exact", "no_startup", "fork_no"): "method_2way_2var_MIP_exclude",
     ("exact", "no_startup", "fork_yes"): "not_applicable",
+    # Two-way connections with a startup method: the flow shape of the no-startup entry (the online
+    # variables come from the startup method, not from the internal method).
+    ("no_losses_no_variable_cost", "linear", "fork_no"): "method_2way_1var_off",
+    ("no_losses_no_variable_cost", "linear", "fork_yes"): "method_2way_nvar_off",
+    ("no_losses_no_variable_cost", "binary", "fork_no"): "method_2way_1var_off",
+    ("no_losses_no_variable_cost", "binary", "fork_yes"): "method_2way_nvar_off",
+    ("variable_cost_only", "linear", "fork_no"): "method_2way_2var_off",
+    ("variable_cost_only", "linear", "fork_yes"): "method_2way_nvar_off",
+    ("variable_cost_only", "binary", "fork_no"): "method_2way_2var_off",
+    ("variable_cost_only", "binary", "fork_yes"): "method_2way_nvar_off",
+    ("regular", "linear", "fork_no"): "method_2way_2var_exclude",
+    ("regular", "linear", "fork_yes"): "not_applicable",
+    ("regular", "binary", "fork_no"): "method_2way_2var_exclude",
+    ("regular", "binary", "fork_yes"): "not_applicable",
+    ("exact", "linear", "fork_no"): "method_2way_2var_MIP_exclude",
+    ("exact", "linear", "fork_yes"): "not_applicable",
+    ("exact", "binary", "fork_no"): "method_2way_2var_MIP_exclude",
+    ("exact", "binary", "fork_yes"): "not_applicable",
     ("min_load_efficiency", "no_startup", "fork_no"): "not_applicable",
     ("min_load_efficiency", "no_startup", "fork_yes"): "not_applicable",
     ("min_load_efficiency", "linear", "fork_no"): "method_1way_1var_LP",

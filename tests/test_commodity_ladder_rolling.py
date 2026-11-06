@@ -56,7 +56,7 @@ if str(TEST_DIR) not in sys.path:
 
 from db_utils import json_to_db  # noqa: E402
 
-from flextool.engine_polars import run_chain_from_db  # noqa: E402
+from flextool.engine import run_chain_from_db  # noqa: E402
 from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
 
 
@@ -300,7 +300,9 @@ def annual_within_period_db_url(
         tier1_quantity_mwh=1e9,
         tier2_price=1000.0,
         scenario_name="coal_ann_within_period",
-        alternative_name="ladder_ann_on",
+        # Its own alternative: written into ladder_ann_on, the ladder would be merged into that
+        # alternative's period -> tier ladder (a value with keys at two depths, which is an error).
+        alternative_name="ladder_ann_within",
     )
     return url
 
@@ -356,12 +358,12 @@ def _run(
 def _ladder_csv_path(workdir: Path, filename: str) -> Path:
     """Locate a ladder-accumulator CSV after a native-cascade run.
 
-    Phase 4.1a of ``specs/provider_consolidation.md`` moved the cross-
-    sub-solve accumulator carriers to the handoff translator's
-    ``handoff/cumulative_commodity`` and ``handoff/cum_sim_hours``
-    Provider keys (no ``solve_data/`` indirection).
-    ``snapshot_processed_inputs`` materialises those at
-    ``workdir/handoff/<basename>.csv``.  The legacy bare /
+    The final accumulators (after the last roll) are the last solve's
+    produced handoff: ``produced_handoff/cumulative_commodity`` and
+    ``produced_handoff/cum_sim_hours`` Provider keys, which
+    ``snapshot_processed_inputs`` materialises at
+    ``workdir/produced_handoff/<basename>.csv``.  (``handoff/*`` holds
+    what the last roll consumed: the totals before it.)  The legacy bare /
     ``solve_data/`` locations are retained as fallbacks for fixtures
     that pre-seed the old keys directly.
     """
@@ -370,7 +372,7 @@ def _ladder_csv_path(workdir: Path, filename: str) -> Path:
         "ladder_cum_sim_hours.csv": "cum_sim_hours.csv",
     }.get(filename)
     if handoff_basename is not None:
-        handoff_path = workdir / "handoff" / handoff_basename
+        handoff_path = workdir / "produced_handoff" / handoff_basename
         if handoff_path.exists():
             return handoff_path
     bare = workdir / filename
@@ -667,21 +669,25 @@ class TestWithinPeriodAnnualRolling:
 
 
 class TestCumulativeLadderBindingCap:
-    """Tiny tier-1 cap (1 MWh) across both single solve and two-roll
-    rolling.  Under the new rolling-aware formulation the cap binds
+    """Tiny tier-1 cap (1 MWh/year) across both single solve and two-roll
+    rolling.  Under the rolling-aware formulation the cap binds
     actively (not inactive on first-solve as it was under the old
     sentinel-1e30 convention), so:
 
     - Single solve: LP routes most dispatch through tier 2; tier-1
       v_trade sums to roughly the cap (1 MWh).
-    - Two-roll: roll 1 consumes the entire cap in p2020, roll 2 sees
-      ``sum_periodAll cum_realized_mwh >= cap × sum_f_d_k`` and locks
-      tier 1 out via ladder_tier_cap_cumulative_overspent → tier 2
-      absorbs all roll-2 dispatch.
+    - Two-roll: roll 1 consumes its own allocation (p2020's share of the
+      per-year cap) in full; roll 2's budget is the allocation through
+      the END of roll 2's horizon minus what roll 1 already realized
+      (``_eq_tier_cap_cumulative``) — a roll's budget is monotone
+      non-decreasing, never a one-shot total that locks later rolls
+      out once an earlier roll saturates it.  Bringing p2025 into the
+      realized set in roll 2 adds p2025's own share to the allocation,
+      so roll 2 gets that new share, not zero.
 
     The accumulator's role here is structural: the writer correctly
-    records per-period realized MWh summing (nearly) to the cap after
-    all rolls, and the override fires on roll 2 to respect the total.
+    records per-period realized MWh, and ``_eq_tier_cap_cumulative``
+    reads it back to compute each roll's own remaining budget.
     """
 
     def test_single_solve_cumulative_binds_at_cap(
@@ -714,17 +720,41 @@ class TestCumulativeLadderBindingCap:
             f"{total_tier1} (keys {tier1_keys})"
         )
 
-    def test_roll2_uses_tier2_only_after_roll1_saturates_cap(
+    def test_roll2_gets_the_new_periods_own_allocation_after_roll1_saturates_cap(
         self,
         cumulative_db_url_overspend: str,
         test_solver_config_dir: Path,
         tmp_path_factory: pytest.TempPathFactory,
     ) -> None:
-        """Full two-roll: roll 1 saturates the 1 MWh cap in p2020, the
-        writer records cum_realized_mwh[coal, 1, p2020] = 1.0, roll 2
-        sees (sum_periodAll cum) >= cap × f_d_k[p2025] (1 >= 1) so the
-        cumulative_overspent override fires and locks v_trade[tier=1]
-        to zero in p2025.  Tier 2 absorbs the remaining dispatch."""
+        """Full two-roll: a roll's cumulative budget is the tier's allocation through the END of
+        THIS roll's horizon minus what earlier rolls already realized (``_eq_tier_cap_cumulative``) —
+        monotone non-decreasing across rolls, never a one-shot cap that locks later rolls out once an
+        earlier roll saturates it.
+
+        Roll 1 (p2020 only in the realized set): allocation = quantity_cum[coal,1] (1.0 MWh/year) ×
+        years_represented[p2020] (1.0) × realized_hours[p2020]/8760 (48/8760 = 2/365) = 2/365 =
+        0.0054794520... MWh; roll 1's demand exceeds that, so tier 1 saturates there (confirmed by the
+        accumulator: ``ladder_cum_realized_mwh[coal, 1, p2020] == 2/365``, read via
+        ``_read_accumulator`` in the sibling single-solve test above).
+
+        Roll 2 brings p2025 into the realized set too, so the allocation through roll 2's horizon end
+        is 2/365 (p2020, unchanged — already fully realized) + 2/365 (p2025, newly realized this
+        roll) = 4/365.  Budget for roll 2 = 4/365 − 2/365 (already realized by roll 1) = 2/365 — p2025's
+        own allocation, not zero.  Tier 1 in roll 2 therefore sums to 2/365 MWh (the new period's share,
+        every bit as binding as roll 1's), and the rest of roll 2's larger demand spills into whichever
+        other tier is cheapest.
+
+        ``cumulative_db_url_overspend``'s ``price_ladder_cumulative`` ends up with 3 tiers, not the 2
+        ``_add_cumulative_ladder_scenarios`` authors directly: tiers are a Map keyed by tier index, and
+        importing it under the same (commodity, alternative) as ``tests.json``'s pre-existing
+        ``_augment_phase3d`` ladder (price=30, quantity=inf at tier "3") merges per-key instead of
+        replacing, so tier "3" survives alongside the test's own tiers "1" (price 20, quantity-capped)
+        and "2" (price 50, quantity=inf).  Tier "2" is unconstrained but strictly costlier than tier
+        "3" (also unconstrained), so the LP never touches it — the overflow lands entirely in tier 3.
+        Which tier number absorbs the overflow is this fixture's incidental layering, not what this
+        test is about; only that tier 1 itself gets the new period's allocation and something beyond
+        tier 1 absorbs the rest.
+        """
         workdir = tmp_path_factory.mktemp("cum_over_roll")
         os.chdir(workdir)
         _run("coal_cum_rolling", cumulative_db_url_overspend,
@@ -735,15 +765,16 @@ class TestCumulativeLadderBindingCap:
 
         final_roll = parquets[-1]
         per_tier = _sum_v_trade_per_tier(final_roll)
-        assert per_tier.get(1, 0.0) <= 1e-6, (
-            f"Tier 1 must be locked out in roll 2 after the cap was "
-            f"saturated in roll 1. Got tier-1 sum="
+        new_period_allocation = 2.0 / 365.0  # see docstring: years_represented x realized_hours/8760
+        assert per_tier.get(1, 0.0) == pytest.approx(new_period_allocation, rel=1e-9), (
+            f"Tier 1 in roll 2 must bind at the new period's own allocation "
+            f"({new_period_allocation}), not be locked out at 0 or left unbounded. Got tier-1 sum="
             f"{per_tier.get(1, 0.0)} in {final_roll.name}."
         )
-        assert per_tier.get(2, 0.0) > 0, (
-            f"Tier 2 (tail) must absorb roll-2 dispatch when tier 1 "
-            f"is locked out. Got tier-2 sum={per_tier.get(2, 0.0)} "
-            f"in {final_roll.name}."
+        overflow = sum(v for tier, v in per_tier.items() if tier != 1)
+        assert overflow > 0, (
+            f"Some other tier must absorb roll-2 dispatch beyond the new period's tier-1 allocation. "
+            f"Got per_tier={per_tier} in {final_roll.name}."
         )
 
 
@@ -790,7 +821,7 @@ def test_same_level_cold_rebuild_releases_prior_highs(
     dispatch-on-dispatch stack).  Structural assertion via the env-gated
     cross-level audit; LP is trivial so no GB needed.
     """
-    from flextool.engine_polars import _orchestration
+    from flextool.engine.solve import _orchestration
 
     monkeypatch.setenv("FLEXTOOL_LEVEL_RELEASE_AUDIT", "1")
     _orchestration._LEVEL_RELEASE_AUDIT.clear()

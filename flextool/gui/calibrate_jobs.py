@@ -412,6 +412,7 @@ def launch_calibration_jobs(
             output_location=spec.output_location or output_location,
             debug=spec.debug,
             final_write_methods=spec.final_write_methods,
+            threads=mgr.execution_limits.max_cores_per_job,
         )
         display_name = f"Calibrate: {spec.scenario}"
         action_key = f"calibrate:{spec.scenario}"

@@ -11,10 +11,15 @@ Workflow
 2. Materialize it as a temporary SQLite via ``tests/db_utils.json_to_db``.
 3. Migrate the temp SQLite to the current flextool schema so the legacy
    migration is not a downstream surprise.
-4. Open the migrated DB with ``spinedb_api``, swap the scalar
+4. Drop the ``stochastics.json`` content added after this fixture was
+   built and designate branch ``realized`` of ``2day_dispatch`` as realized
+   (``_match_committed_baseline``), so a rebuild reproduces the committed
+   fixture.
+5. Open the migrated DB with ``spinedb_api``, swap the scalar
    ``hydro_reservoir.inflow`` under alternative ``system`` for a 3-level
    ``Map`` (branch -> time_start -> time -> float).
-5. Export back to JSON via ``tests/db_utils.db_to_json``.
+6. Export back to JSON via ``tests/db_utils.db_to_json``, then migrate it and
+   replace its schema sections with the schema's (``migrate_fixture``).
 
 The result is ``tests/fixtures/stochastics_pbt_inflow.json``, ready for
 the legacy parity-oracle run.
@@ -50,23 +55,27 @@ with ``branch_idx`` in {0, 1, 2, 3} ordered as
 """
 from __future__ import annotations
 
+import json
 import math
-import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "tests"))
+sys.path.insert(0, str(REPO_ROOT))
 
 from db_utils import db_to_json, json_to_db  # noqa: E402
 
-from spinedb_api import DatabaseMapping, Map, to_database  # noqa: E402
+from flextool.update_flextool.db_handle import open_database_mapping  # noqa: E402
+from spinedb_api import Map, to_database  # noqa: E402
+
+from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
+from flextool.update_flextool.test_fixtures import migrate_fixture  # noqa: E402
 
 
 SRC_JSON = REPO_ROOT / "tests/fixtures/stochastics.json"
 DST_JSON = REPO_ROOT / "tests/fixtures/stochastics_pbt_inflow.json"
-WORK_DIR = Path("/tmp/pbt_fixture_build")
-MIGRATE_SCRIPT = Path("/home/jkiviluo/sources/flextool/migrate_database.py")
 
 BRANCHES = ("realized", "upper", "lower", "mid")
 TIME_START = "t0001"
@@ -91,7 +100,7 @@ def _build_3d_map() -> Map:
 
 def _augment_inflow(db_path: Path) -> None:
     url = f"sqlite:///{db_path.resolve()}"
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         pvs = db.find_parameter_values(
             entity_class_name="node", parameter_definition_name="inflow"
         )
@@ -116,28 +125,58 @@ def _augment_inflow(db_path: Path) -> None:
     print(f"augmented inflow on hydro_reservoir in {db_path}")
 
 
+# ``stochastics.json`` content added after this fixture was built: the
+# storage-drain alternative and its scenario.  Removed so a rebuild
+# reproduces the committed fixture.
+NOT_CARRIED_ALTERNATIVES = ("no_storage_override",)
+NOT_CARRIED_SCENARIOS = ("2_day_stochastic_dispatch_no_storage",)
+
+
+def _realized_2day_branches() -> dict:
+    """The ``2day_dispatch`` fan of this fixture: branch ``realized`` is the
+    realized member (``stochastics.json`` authors it as a forecast)."""
+    def nested(data: list) -> dict:
+        return {"type": "map", "index_type": "str", "data": data}
+    return {"index_type": "str", "data": [["period1", nested([
+        [branch, nested([["t0001", nested([[realized, 1.0]])]])]
+        for branch, realized in (("realized", "yes"), ("upper", "no"), ("lower", "no"), ("mid", "no"))
+    ])]]}
+
+
+def _match_committed_baseline(db_path: Path) -> None:
+    url = f"sqlite:///{db_path.resolve()}"
+    with open_database_mapping(url) as db:
+        for name in NOT_CARRIED_SCENARIOS:
+            item = db.get_item("scenario", name=name)
+            if item:
+                db.remove_item("scenario", item["id"])
+        for name in NOT_CARRIED_ALTERNATIVES:
+            item = db.get_item("alternative", name=name)
+            if item:
+                db.remove_item("alternative", item["id"])
+        branches = db.get_item("parameter_value", entity_class_name="solve", entity_byname=("2day_dispatch",),
+                               parameter_definition_name="stochastic_branches", alternative_name="2day")
+        if not branches:
+            raise RuntimeError("solve 2day_dispatch stochastic_branches under alternative '2day' not found")
+        branches.update(value=json.dumps(_realized_2day_branches()).encode(), type="map")
+        db.commit_session("match the committed baseline")
+
+
+def build(src_json: Path = SRC_JSON, dst_json: Path = DST_JSON) -> None:
+    """Augment ``src_json`` into ``dst_json`` (migrated and synced with the schema)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_db = Path(tmp) / "augment_round_trip.sqlite"
+        url = json_to_db(src_json, tmp_db)
+        migrate_database(url)
+        _match_committed_baseline(tmp_db)
+        _augment_inflow(tmp_db)
+        db_to_json(tmp_db, dst_json)
+    migrate_fixture(dst_json)
+    print(f"wrote augmented JSON -> {dst_json}")
+
+
 def main() -> None:
-    WORK_DIR.mkdir(parents=True, exist_ok=True)
-    tmp_db = WORK_DIR / "augment_round_trip.sqlite"
-    if tmp_db.exists():
-        tmp_db.unlink()
-
-    # 1. JSON -> sqlite
-    json_to_db(SRC_JSON, tmp_db)
-
-    # 2. Migrate to current schema (so spinedb_api can operate on it,
-    # and so the JSON we export back is current-schema as well).
-    subprocess.run(
-        [sys.executable, str(MIGRATE_SCRIPT), str(tmp_db)],
-        check=True,
-    )
-
-    # 3. Swap scalar -> 3d_map
-    _augment_inflow(tmp_db)
-
-    # 4. Export back to JSON
-    db_to_json(tmp_db, DST_JSON)
-    print(f"wrote augmented JSON -> {DST_JSON}")
+    build()
 
 
 if __name__ == "__main__":

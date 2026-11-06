@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Iterable
 import polars as pl
 
 if TYPE_CHECKING:  # pragma: no cover
-    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
 
 # ---------------------------------------------------------------------------
@@ -238,9 +238,9 @@ def discover_decomposition_regions_from_db(input_db_url: str) -> list[str]:
     Used by the CLI to present the list of available regions and by
     ``build_region_directory`` to know other regions' membership.
     """
-    from spinedb_api import DatabaseMapping  # lazy import
+    from flextool.update_flextool.db_handle import open_database_mapping
 
-    with DatabaseMapping(input_db_url) as db:
+    with open_database_mapping(input_db_url) as db:
         names: list[str] = []
         for pv in db.find_parameter_values(
             entity_class_name="group",
@@ -641,13 +641,10 @@ def _virtual_rows(
         # efficiency stays embedded in the importing region's import
         # half-flow.
         #
-        # Capacity: we source the original pipe's ``existing`` from
-        # :func:`_original_connection_existing` (reads
-        # input/p_process.csv one directory up from the filtered copy
-        # before the rename swap, or defaults to a conservative
-        # ``1e3`` when that information is no longer available).  The
-        # caller (input_writer) sets the value via a module-level
-        # context dict — see
+        # Capacity: the original pipe's capacity (:func:`_pipe_capacities`:
+        # existing × virtual_unitsize when that is set, else existing), or a
+        # conservative ``1e3`` when that information is not available.  The
+        # caller sets the value via a module-level context dict — see
         # :data:`_virtual_capacity_override`.
         for hf in half_flows:
             cap = _virtual_capacity_override.get(hf.original_connection, 1e3)
@@ -656,6 +653,26 @@ def _virtual_rows(
             rows.append([hf.virtual_connection, "availability", "1.0"])
             rows.append([hf.virtual_connection, "virtual_unitsize", "1.0"])
     return rows
+
+
+def _pipe_capacities(p_process_rows: list[list[str]], pipes: set[str]) -> dict[str, float]:
+    """``{pipe: capacity}`` from ``p_process`` rows ``[process, parameter, value]`` for the connections in ``pipes``
+    with an ``existing`` row.
+
+    capacity = existing × virtual_unitsize when the pipe's virtual_unitsize is set and > 0 (``existing`` is then the
+    number of units), else existing.  The virtual half-flow connection carries it with virtual_unitsize 1.
+    """
+    existing: dict[str, float] = {}
+    unitsize: dict[str, float] = {}
+    for row in p_process_rows:
+        if len(row) < 3 or row[0] not in pipes or row[1] not in ("existing", "virtual_unitsize"):
+            continue
+        try:
+            value = float(row[2])
+        except ValueError:
+            continue
+        (existing if row[1] == "existing" else unitsize)[row[0]] = value
+    return {pipe: ex * unitsize[pipe] if unitsize.get(pipe, 0.0) > 0.0 else ex for pipe, ex in existing.items()}
 
 
 # Module-level override for original-connection capacities injected
@@ -737,12 +754,7 @@ def build_region_directory(
     _virtual_capacity_override.clear()
     try:
         _, p_process_rows = _read_csv_rows(input_dir / "p_process.csv")
-        for row in p_process_rows:
-            if len(row) >= 3 and row[0] in cross_region_conns and row[1] == "existing":
-                try:
-                    _virtual_capacity_override[row[0]] = float(row[2])
-                except ValueError:
-                    continue
+        _virtual_capacity_override.update(_pipe_capacities(p_process_rows, cross_region_conns))
     except Exception:  # noqa: BLE001 — defensive; fall back to defaults.
         pass
 
@@ -1111,7 +1123,7 @@ def build_region_provider(
     (``_EXPLICIT_SPECS`` / ``_infer_column_spec_from_header`` /
     ``_virtual_rows``); only the data carrier changes.
     """
-    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
     mem = discover_region_membership_from_provider(provider, region)
     if all_regions is not None:
@@ -1142,12 +1154,7 @@ def build_region_provider(
     _virtual_capacity_override.clear()
     try:
         _, p_process_rows = _provider_csv_rows(provider, "p_process.csv")
-        for row in p_process_rows:
-            if len(row) >= 3 and row[0] in cross_region_conns and row[1] == "existing":
-                try:
-                    _virtual_capacity_override[row[0]] = float(row[2])
-                except ValueError:
-                    continue
+        _virtual_capacity_override.update(_pipe_capacities(p_process_rows, cross_region_conns))
     except Exception:  # noqa: BLE001 — defensive; fall back to defaults.
         pass
 

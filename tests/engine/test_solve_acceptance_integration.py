@@ -1,0 +1,169 @@
+"""Integration: the accept/reject gate wired into the cascade.
+
+Unit coverage of the policy lives in ``test_solve_acceptance.py``.  Here we
+drive the full ``run_chain_from_db`` cascade on the smallest fixture and
+patch the gate's ``classify_acceptance`` to force each branch, proving the
+control-flow contract:
+
+* an ACCEPTED near-optimal solve does NOT abort — the cascade runs to
+  completion and writes its solution (the behaviour the crossover-off case
+  depends on); and
+* a REJECTED solve still aborts cleanly with ``FlexToolSolveError``.
+"""
+
+from __future__ import annotations
+
+import pytest
+import spinedb_api as api
+
+from flextool.engine import run_chain_from_db
+from flextool.engine.solve._acceptance import (
+    Acceptance,
+    classify_acceptance as _real_classify,
+)
+from flextool.engine.input._solve_state import FlexToolSolveError
+
+pytestmark = pytest.mark.solver
+
+
+def _first_scenario(sqlite) -> str:
+    with api.DatabaseMapping("sqlite:///" + str(sqlite)) as db:
+        return sorted(s.name for s in db.query(db.scenario_sq).all())[0]
+
+
+def test_near_optimal_accept_does_not_abort_cascade(
+    scenario_workdir, monkeypatch
+) -> None:
+    """Forcing the near-optimal accept branch must let the cascade complete
+    and keep the solution — it must not raise or discard outputs (the
+    behaviour the crossover-off case depends on)."""
+    sqlite = scenario_workdir("base") / "tests.sqlite"
+    scenario = _first_scenario(sqlite)
+
+    seen: list[bool] = []
+
+    def _fake(sol, *, ranges_post, solve_name):
+        # Run the real classifier for side-effect-free validation, then
+        # override to the NEAR-optimal accept branch so the fall-through is
+        # exercised even though the genuine solve certifies kOptimal.
+        _real_classify(sol, ranges_post=ranges_post, solve_name=solve_name)
+        seen.append(True)
+        return Acceptance(
+            accepted=True,
+            near_optimal=True,
+            message=f"Accepted near-optimal solve for {solve_name}: forced",
+            scaling_hint=None,
+        )
+
+    monkeypatch.setattr(
+        "flextool.engine.solve._orchestration.classify_acceptance", _fake
+    )
+
+    steps = run_chain_from_db(sqlite, scenario, keep_solutions=True)
+
+    # Gate reached, and the near-optimal accept did NOT abort: every solve
+    # ran to completion with its solution retained.
+    assert seen, "acceptance gate was never reached"
+    assert len(steps) >= 1
+    for name, step in steps.items():
+        assert step.solution is not None, f"{name}: solution discarded"
+        assert step.obj is not None, f"{name}: obj is None"
+        # The near-optimal verdict propagated onto the deposited step so the
+        # CLI exit-code scan can recognise the accepted solve (regression for
+        # the 18-region roll_5 false failure: strict ``optimal`` is False for
+        # a crossover-off Unknown solve, but ``near_optimal`` records the
+        # accept).
+        assert step.near_optimal is True, f"{name}: near_optimal not recorded"
+
+    # End-to-end: the CLI scan over these accepted-near-optimal steps must
+    # SUCCEED (exit 0), not re-reject them off the strict ``optimal`` flag.
+    from flextool.cli.cmd_run_flextool import _scan_cascade_optimality
+
+    code, _ = _scan_cascade_optimality(steps)
+    assert code == 0
+
+
+def test_reject_still_raises(scenario_workdir, monkeypatch) -> None:
+    """Forcing a reject must abort the cascade with FlexToolSolveError and
+    an honest message — no silent success."""
+    sqlite = scenario_workdir("base") / "tests.sqlite"
+    scenario = _first_scenario(sqlite)
+
+    def _fake(sol, *, ranges_post, solve_name):
+        return Acceptance(
+            accepted=False,
+            near_optimal=False,
+            message=f"forced reject for {solve_name}",
+            scaling_hint=None,
+        )
+
+    monkeypatch.setattr(
+        "flextool.engine.solve._orchestration.classify_acceptance", _fake
+    )
+
+    with pytest.raises(FlexToolSolveError):
+        run_chain_from_db(sqlite, scenario, keep_solutions=True)
+
+
+def test_layer2_unscale_keeps_the_solve_status_for_the_gate() -> None:
+    """The Layer-2 unscale pushes the unscaled solution into HiGHS with
+    ``setSolution``, which resets the live model status to ``kNotset``.  The
+    gate must still judge the solve that ran: classifying after the unscale
+    gives the same verdict as classifying before it (an infeasible LP stays
+    "is infeasible", not "returned no model status")."""
+    import numpy as np
+    import polars as pl
+    from polar_high.engine import Problem, Sum
+
+    from flextool.engine.autoscale import unscale_solution
+    from flextool.engine.autoscale._layer2 import Layer2Plan
+
+    def _infeasible_solve():
+        pb = Problem()
+        x = pb.add_var("v_x", "i", pl.DataFrame({"i": [0]}), lower=0.0, upper=1.0)
+        pb.add_cstr("x_floor", sense=">=", lhs_terms={"x": Sum(x, over=("i",))}, rhs_terms={"floor": 2.0})
+        pb.set_objective(Sum(x), sense="min")
+        return pb.solve(keep_solver=True)
+
+    before = _infeasible_solve()
+    acc_before = _real_classify(before, ranges_post=None, solve_name="s")
+
+    after = _infeasible_solve()
+    plan = Layer2Plan(
+        col_factors=np.ones(len(after.col_value)),
+        row_factors=np.ones(len(after.row_dual)),
+        type_exponents={},
+        type_buckets_before={},
+    )
+    unscale_solution(after, plan)
+    assert after.highs.getModelStatus().name == "kNotset"  # the reset the gate must see past
+    acc_after = _real_classify(after, ranges_post=None, solve_name="s")
+
+    assert "is infeasible" in acc_before.message
+    assert (acc_after.accepted, acc_after.message) == (acc_before.accepted, acc_before.message)
+
+
+def test_gate_reads_the_tolerance_highs_ran_with_after_the_unscale() -> None:
+    """The ceiling uses the solve's primal_feasibility_tolerance.  The Layer-2
+    unscale's ``setSolution`` resets status and info, not the options: after
+    it, the Solution still reports the tolerance the solve was run with."""
+    import numpy as np
+    import polars as pl
+    from polar_high.engine import Problem, Sum
+
+    from flextool.engine.autoscale import unscale_solution
+    from flextool.engine.autoscale._layer2 import Layer2Plan
+
+    pb = Problem()
+    x = pb.add_var("v_x", "i", pl.DataFrame({"i": [0]}), lower=0.0, upper=1.0)
+    pb.add_cstr("x_floor", sense=">=", lhs_terms={"x": Sum(x, over=("i",))}, rhs_terms={"floor": 0.5})
+    pb.set_objective(Sum(x), sense="min")
+    sol = pb.solve(keep_solver=True, options={"primal_feasibility_tolerance": 1e-3})
+    plan = Layer2Plan(
+        col_factors=np.ones(len(sol.col_value)),
+        row_factors=np.ones(len(sol.row_dual)),
+        type_exponents={},
+        type_buckets_before={},
+    )
+    unscale_solution(sol, plan)
+    assert sol.primal_feasibility_tolerance == 1e-3

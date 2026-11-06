@@ -21,7 +21,7 @@ flowchart LR
   spdb --> backend["SpineDBBackend<br/>(EAV → polars frames)"]
   backend --> derive["input_derivation<br/>(per-solve preprocessing)"]
   derive --> provider["FlexDataProvider<br/>(in-memory transport)"]
-  provider --> build["engine_polars.build_flextool<br/>(polar_high.Problem)"]
+  provider --> build["engine.build_flextool<br/>(polar_high.Problem)"]
   build --> solve["HiGHS via highspy<br/>(Problem / WarmProblem)"]
   solve --> handoff["SolveHandoff<br/>(Provider keys)"]
   handoff -->|next roll / sub-solve| derive
@@ -48,7 +48,7 @@ Key invariants:
 ```mermaid
 flowchart LR
   root["Root wrapper scripts<br/>run_flextool.py, write_outputs.py,<br/>scenario_results.py, ..."] --> cli["flextool/cli/cmd_*"]
-  cli --> engine["flextool/engine_polars<br/>cascade + LP build + HiGHS solve"]
+  cli --> engine["flextool/engine<br/>cascade + LP build + HiGHS solve"]
   cli --> backend["flextool/spinedb_backend"]
   cli --> derive["flextool/input_derivation"]
   cli --> decomp["flextool/decomposition"]
@@ -81,6 +81,44 @@ packages. Every CLI command also has an installed entry point in
 | `cmd_update_flextool` | `flextool-update` | `git pull` + project-side migration in one step. |
 | `cmd_gui` (via `flextool.gui.__main__`) | `flextool-gui` | Launch the Tkinter desktop application. |
 
+### Runtime options
+
+`flextool/run_options.py` holds the one resolver for every operator option that has more than one form, and
+the registry of every environment variable FlexTool reads. Where a setting belongs:
+
+- **database** — what changes the model or its answer (a solve's `scaling`, `solver_mip_gap`,
+  `benders_in_out_weight`, ...);
+- **CLI flag** — a choice for one run (threads, time limit, log level, `--save-memory`, `--benders-workers`);
+- **environment variable** — process-level settings that must exist before import (allocator, polars build),
+  developer / CI switches, and the twin of a flag for callers without a command line (Spine Toolbox, a Python
+  console, tests).
+
+The contract:
+
+1. Several forms of one option resolve in the order **flag > environment variable > database > default**,
+   through `resolve()` / `RunOptions`, one `OptionSpec` per option in `OPTIONS`.
+2. Flags of registry options default to `None` (a `store_true` flag gives `True` or `None`), so an unset flag
+   lets the environment variable through.
+3. Nothing writes `os.environ` to carry an option. `cmd_run_flextool` builds `RunOptions.from_cli(args)` and
+   passes it to `run_chain_from_db(..., run_options=)`, which stores it on `RunnerState.run_options`; a library
+   caller that passes none gets `RunOptions.from_env()`, resolved once per run. The database tier is added per
+   solve with `RunOptions.with_db` (e.g. `scaling`).
+4. A child FlexTool process (GUI job, calibration iteration, workflow run) gets the parent's flag-given choices
+   as flags (`RunOptions.to_argv()`) and inherits the parent's environment untouched. Benders region workers are
+   threads and read the same `RunOptions`.
+5. Process-level variables (`MALLOC_ARENA_MAX`, `_RJEM_MALLOC_CONF`, `POLARS_*`) keep `setdefault` semantics: a
+   value already in the environment wins.  The exception is `POLARS_MAX_THREADS` while `flextool/__init__.py`
+   imports polars: see "Thread budget" below.
+6. HiGHS keys keep their own stack (baseline < `highs.opt` < `solve.solver_mip_gap` < `solve.solver_arguments` <
+   operator layer); the registry supplies only the operator layer.
+7. The run header prints `RunOptions.summary_lines()` — each option set by a flag or an environment variable,
+   with its source — and the thread budget (`Threads:`), with polars' and HiGHS' thread counts.
+
+Every other variable is an `EnvKnob` in `ENV_KNOBS` with its audience (`user`, `dev`, `test`) and page:
+[user page](../env_vars.md), [developer page](env_vars.md), [testing](testing.md#test-suite-environment-variables).
+`tests/test_env_knob_registry.py` fails on an unregistered read, an undocumented registered variable, or a
+documented variable that is no longer read.
+
 ## Repository layout
 
 ```
@@ -96,9 +134,9 @@ flextool/                          The installed Python package
 ├── input_derivation/              Per-solve preprocessing computations
 │                                    (the live successor to the retired
 │                                    flextoolrunner/preprocessing).
-├── engine_polars/                 Optimization engine + cascade coordinator:
-│                                    FlexData, FlexDataProvider, derived
-│                                    parameter / set emitters (_emit_*.py),
+├── engine/                        Optimization engine + cascade coordinator:
+│                                    FlexData, FlexDataProvider, parameter
+│                                    cascade + per-solve emitters,
 │                                    build_flextool, run_orchestration /
 │                                    run_chain_from_db, SolveHandoff,
 │                                    auto-scaling.
@@ -156,18 +194,17 @@ migration_artifacts/               (none — the migration scratchpad was
 
 tests/                             Test suite (single root):
   tests/                             — top-level unit & integration tests
-  tests/engine_polars/               — engine-internal unit tests (cluster,
+  tests/engine/               — engine-internal unit tests (cluster,
                                        constraints, scaling, perturbation, ...)
   tests/spinedb_backend/             — backend unit tests
   tests/model/                       — model-level end-to-end suites
   tests/gui/                         — GUI startup tests
-  tests/decomposition/               — Benders / region-filter tests
   tests/fixtures/*.json              — single authoritative source for all
                                        test data; sqlite DBs are built on
                                        demand
   tests/scenarios.yaml + tests/expected/  — the scenario integration suite
   tests/conftest.py                  — shared top-level fixtures
-  tests/engine_polars/conftest.py    — engine-internal fixtures
+  tests/engine/conftest.py    — engine-internal fixtures
                                        (scenario_workdir, ...)
 
 execution_tests/                   Spine Toolbox subprocess execution tests.
@@ -223,7 +260,7 @@ three-step pattern:
 Output is an in-memory `FlexData` augmented with derived fields, exposed to
 the engine through `FlexDataProvider`.
 
-### `flextool/engine_polars/` — the optimization engine
+### `flextool/engine/` — the optimization engine
 
 The dominant package. Builds a `polar_high.Problem` from `FlexData`, solves
 it with HiGHS, and threads cross-solve state through `SolveHandoff` (in
@@ -231,29 +268,32 @@ memory; CSVs only emitted under `csv_dump=True` for debugging).
 
 #### Public surface
 
-Exported from `flextool.engine_polars` (`__init__.py`):
+Exported from `flextool.engine` (`__init__.py`):
 
 | Symbol | Purpose |
 |---|---|
 | `FlexData` | Input dataclass — polars frames + `polar_high.Param`s. Sets unprefixed, parameters `p_*`. Full inventory in `_param_shapes.py`. |
-| `FlexDataProvider` | In-memory transport surface. Keys are declared in `_provider_keys.py` (no `.csv` suffix). All cross-phase data moves through it. |
-| `load_flextool(source)` | Build `FlexData` from a workdir (CSV layout) or from a Provider-backed source. |
+| `FlexDataProvider` | In-memory transport surface (`preprocess/_flex_data_provider.py`; not re-exported). Keys are declared in `_provider_keys.py` (no `.csv` suffix). All cross-phase data moves through it. |
+| `load_flextool(source, *, provider, db_reader)` | Build `FlexData` for one sub-solve from its `FlexDataProvider` + `SpineDbReader`; `source` (the work folder) only forms the provider keys. Never reads the work folder. |
 | `build_flextool(m, d, ...)` | Feature-conditional LP/MIP construction on a `Problem` / `WarmProblem`. |
-| `run_chain(...)` / `run_chain_from_db(...)` | Run a sequence of `ChainStep`s, threading `SolveHandoff` between them. |
+| `run_chain_from_db(...)` / `run_chain(...)` | Run a DB scenario end to end, threading `SolveHandoff` between sub-solves (`run_chain` is an older wrapper returning `ChainStep`s). |
 | `run_orchestration(state, work_folder, ...)` | Native cascade coordinator: reads `RunnerState`, drives the rolling / nested / stochastic cascade, returns one `OrchestrationStep` per solve. |
 | `SolveHandoff` | Cross-solve carrier (invest / divest / storage / roll-state / CO2 ladder / commodity ladder / cumulative sim-hours / history sets). |
-| `SpineDbReader` / `InMemoryReader` / `CsvSource` / `FlexInputSource` | Input adapters — production Spine DB, in-memory test fixture, or workdir CSVs. |
+| `SpineDbReader` / `InMemoryReader` / `CsvSource` / `FlexInputSource` / `InputSource` | Input adapters — production Spine DB, in-memory test fixture, or the work-folder path wrapper (`CsvSource`: the loader takes its directories as key paths and reads the provider). |
 
 #### Solve modes
 
 Same `build_flextool` body, three wrappers from `polar_high`:
 
 - **Monolithic** — `polar_high.Problem`. One LP per call.
-- **Warm-start cascade** — `polar_high.WarmProblem`. Rebuilds the LP shell
-  once, then mutates marked Params (`_apply_warm_updates` in
-  `_solve_handoff.py`) between rolls. The optimisation room for the future
-  rolling-overlap work (only update changing coefficients) lives here.
-- **Benders (regional)** — `engine_polars._benders.solve_benders` driven by
+- **Warm-start cascade** — `polar_high.WarmProblem`. Reuses the built LP
+  when the next sub-solve is identical (every `FlexData` field, labels
+  included, and the solver configuration; `_reuse_blocker` in
+  `solve/_warm.py`); rolls are rebuilt, because the output writer and the
+  handoff read the LP by its labels. The future rolling-overlap work (adopt
+  the new labels on the live LP and update only changing coefficients, the
+  "rebind" feature item) would live here.
+- **Benders (regional)** — `engine.solve._benders.solve_benders` driven by
   the orchestrator. Slices `FlexData` by region via `_region_filter`, then
   runs a **Benders decomposition**: a coordinating *master* (a persistent
   `polar_high.WarmProblem`) holds the inter-regional trade flows and the
@@ -266,35 +306,58 @@ Same `build_flextool` body, three wrappers from `polar_high`:
   collapsed greenfield cross-region trade to autarky with an *invalid*
   bound. See [decomposition.md](decomposition.md).
 
-#### Feature blocks in `build_flextool`
+#### Feature flags in `build_flextool`
 
-LP construction is feature-by-feature; each block runs only when its switch
-field on `FlexData` is populated. Required-field lists are module-level
-tuples in `model.py`:
+`build_flextool` is a table of contents: `_prepare` → `_declare_variables`
+→ `_shared_expressions` → one `_eq_<family>(b)` per core equation family
+(plus the feature modules' `add_constraints(b)`) → `_obj_<family>(b)` /
+`objective_terms(b)` summed into the objective. Optional features with
+their own variables live in their own modules (`_online`, `_unit_floors`,
+`_reserve`, `_group_slack`, `_cumulative_invest`, `_commodity_ladder`,
+`_dc_power_flow`, `_delay`, `_non_anticipativity`). The `model/core.py` module
+docstring maps every variable and equation family; details in
+[engine.md](engine.md#lp-build-modelpy-and-the-feature-modules).
 
-| Constant | Switch field | Adds |
-|---|---|---|
-| `ALWAYS` | (floor) | `vq_state_up/down`, `nodeBalance_eq`, slack-only objective. |
-| `PROCESSES` | `process_source_sink` | `v_flow`, source/sink contributions to `nodeBalance_eq`, commodity buy. |
-| `INDIRECT` | `process_indirect` | `conversion_indirect_eq` for multi-flow processes. |
-| `CO2_PRICE` | `flow_from_co2_priced` | CO2 emission term in the objective. |
-| `CO2_CAP` | `flow_from_co2_capped` / `group_d_co2_capped` | Per-period CO2 cap constraint. |
-| `USER_CSTR` | `flow_constraint_idx` | User-defined `process_constraint_{eq,le,ge}` rows. |
-| `PROFILES` | `process_profile_{upper,lower,fixed}` | Profile bounds on `v_flow`. |
-| `STORAGE` | `nodeState` | `v_state`, storage transition, fix-start / fix-storage, end-state binding. |
-| `ONLINE` | `process_online` | `v_online`, min-load, uptime / downtime windows. |
-| `RAMP` | any `process_source_sink_ramp_limit_*` | Ramp-up / ramp-down constraints. |
-| `INVEST` / `DIVEST` | `pd_invest_set` / `pd_divest_set` (or `nd_*`) | `v_invest` / `v_divest`, cumulative caps, lifetime cost. |
-| `STARTUP_COST_*` | `pdt_online_{linear,integer}` | Startup-cost objective term. |
-| `MINLOAD_EFF` | `process_min_load_eff` | min_load_efficiency reformulation. |
-| `RP_BLENDED_WEIGHTS` | `nodeState_rp` family | Representative-period inter-period state coupling. |
+`_prepare` sets one `has_*` flag per feature on the `_Build` context from
+its switch field on `FlexData`; each family function returns early when
+its flag is off. Required-field lists are module-level tuples in
+`model/core.py`:
+
+| Flag | Switch field | Required tuple | Adds |
+|---|---|---|---|
+| (always) | — | `ALWAYS` | `vq_state_up/down`, `nodeBalance_eq`, balance slack penalty. |
+| `has_proc` | `process_source_sink` | `PROCESSES` | `v_flow`, flow terms of `nodeBalance_eq`, `maxFlow`, `maxOutputSum` (indirect units), commodity cost. |
+| `has_indirect` | `process_indirect` | `INDIRECT` | `conversion_indirect`, `minInputShare`. |
+| `has_co2_price` | `flow_from_co2_priced` | — (warns and skips without price / content) | CO2 price term in the objective. |
+| `has_co2_cap` / `has_co2_cap_total` | `flow_from_co2_capped[_noEff]` / `flow_from_co2_capped_total[_noEff]` | `CO2_CAP` / `CO2_CAP_TOTAL` | `co2_max_period` / `co2_max_total`. |
+| `has_user_cstr` | `cdt_eq` / `cdt_le` / `cdt_ge` | `USER_CSTR` | `process_constraint_{equal,less_than,greater_than}[_period]` (`_period`: one row per period for constraints without flow or state terms). |
+| `has_profile` | `process_profile_{upper,lower,fixed}` | `PROFILES` | `profile_flow_*` bounds on `v_flow`. |
+| `has_storage` | `nodeState` | `STORAGE` | `v_state`, state change in `nodeBalance_eq`, `maxState`, start binding, state profiles, reference value. |
+| `has_rp` | `nodeState_rp` | — | Representative-period inter-period state coupling (`_eq_rp_storage_chain`). |
+| `has_nsb` | `nodeStateBlock` | — | `bind_intraperiod_blocks` nodes: `stateConstantWithinBlock_eq`, `nodeBalanceBlock_eq`. |
+| `has_coarse` | `nodeCoarse` + `node_coarse_step` | — | Nodes of coarse `new_stepduration` groups: `nodeBalanceCoarse_eq` (the summed `nodeBalance_eq` terms per coarse step), `stateConstantCoarse_eq`. |
+| `has_online_{lin,int}` | `process_online_{linear,integer}` | `ONLINE` | `_online`: `v_online`, startup / shutdown, uptime / downtime; `_unit_floors`: min-load floors. |
+| `has_minload_eff` | `process_min_load_eff` | `MINLOAD_EFF` | min_load_efficiency section terms. |
+| `has_startup_cost_{lin,int}` | `pdt_online_{linear,integer}` | `STARTUP_COST_*` | Startup-cost objective term. |
+| `has_ramp` | any `process_source_sink_ramp_limit_*` | `RAMP` | Ramp-up / ramp-down constraints. |
+| `has_{invest,divest}_{p,n}` | `pd_{invest,divest}_set` / `nd_{invest,divest}_set` | `INVEST` / `DIVEST` | `v_invest` / `v_divest`, investment maxima, annuities. |
+| `has_reserve` | `reserve_upDown_group` | checked in `_reserve` | `_reserve`. |
+| `has_capacity_margin` / `has_inertia` / `has_non_sync` | `_group_slack.has_*` | — | `_group_slack`. |
+| `has_cumulative_invest` | `_cumulative_invest.has_feature` | — | `_cumulative_invest`. |
+| `has_ladder` | `_commodity_ladder.has_feature` | — | `_commodity_ladder`. |
+
+The DC power-flow, exact-connection, delay and non-anticipativity modules
+gate on their own data (`_dc_power_flow.has_feature`, `_exact.has_feature`
+(`process_exact`), `_delay.has_feature`, `period_branch_full` /
+`pd_non_anticipativity`).
 
 If a switch is set but a required field is missing, `build_flextool` raises
 `ValueError` rather than silently degrading.
 
 #### Block-COO dense-axis contract
 
-`build_flextool` declares FlexTool's dense trailing axes once, up front, via
+`_prepare` (the first step of `build_flextool`) declares FlexTool's dense
+trailing axes once, via
 `m.declare_dense_axes(("d", "t"))` — `(period, timestep)`. This is an
 unconditional call requiring **polar-high>=2.4.0** (the interim `hasattr`
 capability guard has been dropped; the pin lives in `pyproject.toml`). With the
@@ -309,7 +372,7 @@ the peak-memory and wall-time of the build.
 #### Cross-solve state (Provider keys + `SolveHandoff`)
 
 Inside the cascade everything moves through `FlexDataProvider`. The
-relevant key families are declared in `engine_polars/_provider_keys.py`:
+relevant key families are declared in `engine/preprocess/_provider_keys.py`:
 
 - `HANDOFF_*` — quantities the just-solved problem produces for the next
   iteration (`fix_storage_quantity/price/usage`, `roll_end_state`,
@@ -320,49 +383,84 @@ relevant key families are declared in `engine_polars/_provider_keys.py`:
 - `SOLVE_DATA_*` — per-solve sets and parameters that the derivation
   layer produces.
 
-The Provider is the contract. Disk-side CSV mirrors in `solve_data/<solve>/`
-exist only when `csv_dump=True` (a debug toggle) and are not load-bearing
-for any downstream phase.
+The Provider is the contract. Disk-side CSV mirrors in `input/` + `solve_data/`
+exist only when `csv_dump=True` (a debug toggle; one folder, shared by every
+sub-solve; a Benders solve dumps its undecomposed FlexData) and are not load-bearing for any downstream phase.
 
-#### File map (most important)
+#### Output writers read only memory; one run per work folder
+
+The output cascade (`flextool/process_outputs/`) has the same contract as the loader: every writer sources its
+values from the sub-solve's `FlexData`, `FlexDataProvider` or `OutputWriterState`, never from `input/` or
+`solve_data/` on the work folder (item 163, `specs/bugfix/c24/design_163.md`;
+`test_output_writers_read_no_work_folder_inputs` in `tests/engine/test_meta_provider_invariants.py`, Rule 5). The
+five handoff-mirror CSVs under `solve_data/` (`p_entity_divested`, `fix_storage_quantity`, `fix_storage_usage`,
+`p_roll_continue_state`, `p_entity_period_existing_capacity`) are write-only `--csv-dump` debug output with no
+reader anywhere in the engine; `period_capacity.csv` is the one mirror still written on every run (vestigial,
+always header-only).
+
+Because nothing reads the work folder back, **FlexTool supports exactly one run per work folder at a time**: a
+second concurrent cascade into the same folder is not supported (its parquets would interleave with the first's,
+and whichever run finishes first deletes the other's stash). `run_orchestration`'s `_bootstrap_dirs` clears the
+*previous* run's own leftovers at the start of every cascade — `output_raw/` (`rmtree` + recreate: the per-roll
+parquet stash, `_solve_order.txt`, `manifest.json`) and the `solve_data/` handoff-mirror basenames
+(`handoff_writers.MIRROR_FILES`) — so a reused folder (the CLI-in-cwd rerun case, e.g. after a failed run or a
+`--csv-dump` run) cannot leak a prior run's output into this one
+(`union_realized_slice.has_persisted_slices` would otherwise union stale per-roll parquets into the fresh run).
+`input/` and every other `solve_data/*` file (dump / debug output) are left alone. A symlinked `output_raw/` is
+refused rather than followed. The GUI and Spine Toolbox already give each job / execution a fresh work folder, so
+this clearing is a no-op there; it is the fix for the CLI case.
+
+#### CSV dump (supported) and CSV reload (unsupported)
+
+`--csv-dump` / the GUI "Full" debug level, `FlexData.dump_csvs` and
+`FlexDataProvider.snapshot_processed_inputs` write a CSV dump for inspection. Both writers stamp the folder with
+`_dump_meta.json` (`dump_format`, FlexTool version, schema version, git hash; `preprocess/_dump_stamp.py`). The
+writers are supported; nothing in a run reads a dump back. The main loader is provider-only: it never reads `input/` or
+`solve_data/` on disk, so a dump or stale CSVs in a reused work folder cannot change a run
+(`test_loader_and_model_have_no_disk_arms` in `tests/engine/test_meta_provider_invariants.py`).
+
+Reloading a model from a dump lives only in `flextool/engine/_csv_reload/`: `load_from_dump(dump_dir, *, db_url=None,
+scenario=None, force=False)`, `copy_runner_meta`, and the offline output writer (`python -m
+flextool.engine._csv_reload.offline_outputs`, outputs from an MPS + solution file). It is **unsupported**: it is not
+kept in sync with the engine, it warns on every call, and it refuses a dump without a stamp or with another dump
+format or schema version unless `force=True`. A reloaded model has no solve-to-solve carry and can differ from the
+solved model. The stamp does not detect leftover CSVs from earlier runs in a reused folder (the CLI work folder
+defaults to the current directory and is never cleaned), so reload only from a folder that holds a single dump. Nothing outside the package imports it (`test_csv_reload_is_a_leaf`), and its tests in
+`tests/csv_reload/` run only with `pytest -m csv_reload`. Do not update the package when you change the engine;
+whoever needs the reload brings it up to date first (and then updates `VERIFIED_FLEXTOOL` / `VERIFIED_SCHEMA` in
+`_csv_reload/_stamp.py`).
+
+The offline output writer replaces the removed `python -m flextool.process_outputs.read_highs_solution` and needs
+`--dump`. It reads the solve's `scale_the_objective` from the dump's `solve_data/scale_the_objective.csv`: the
+sub-solve provider holds the scale its LP was built with, so a provider snapshot (`--csv-dump`, a run's work folder)
+carries it. `--scale` is an optional override (an MPS built at another scale); a missing or header-only file is an
+error, never a silent default.
+
+#### Package map
+
+`flextool/engine/README.md` is the entry point: public API, the pipeline
+step by step, and one line per folder. In short:
 
 ```
-__init__.py                       Public re-exports (table above)
-model.py                          build_flextool — LP build, feature blocks
-input.py                          FlexData dataclass + loader entry point
-chain.py                          run_chain + ChainStep dataclass
-_orchestration.py                 run_orchestration / run_chain_from_db,
-                                  native cascade
-_solve_state.py                   RunnerState, PathConfig, SolveConfig,
-                                  TimelineConfig dataclasses
-_solve_handoff.py                 SolveHandoff carrier + capture wiring
-_benders.py                       solve_benders + Coupling / BendersResult
-                                  (master + multi-cut loop)
-_region_filter.py                 region slicing + half-flow injection
-_warm.py                          WarmProblem update routine
-_provider_keys.py                 Canonical key names for FlexDataProvider
-_flex_data_provider.py            In-memory transport surface
-_param_shapes.py                  Canonical shape per FlexData field
-_spinedb_reader.py                Spine DB → FlexData
-_inmemory_reader.py               In-memory test-fixture loader
-_input_source.py                  FlexInputSource / CsvSource / InputSource
-_db_loader.py                     FlexToolRunner: DB-side state loader
-_db_reader.py                     Spine DB read helpers
-_recursive_solve.py               Rolling / nested solve tree builder
-_stochastic.py                    Stochastic branch handler
-_timeline.py                      Timeline / timeset construction
-_block_layout.py / _blocks.py     Multi-resolution period-block layout
-_solver_base.py                   Solver invocation surface
-autoscale/                        Auto-scaling pipeline + YAML audit report
-_derived_*.py                     Calculated-parameter helpers (NPV, branch,
-                                  walks, profile, block, ...)
-_emit_*.py                        Set/parameter emitters (period_params,
-                                  arc_unions, calc_params, co2_accumulators,
-                                  pdt_params, reserve, leaf_sets, mid_sets,
-                                  inflow_scaling, lp_scaling, ...)
-_native_run_model.py              Per-solve run helper (cascade-internal)
-_output_writer.py                 Solution → output_parquet bridge
+__init__.py           Public API (table above)
+input/                Database and in-memory readers, SolveConfig, timeline,
+                      RunnerState, parameter shapes (_param_shapes.py), constants
+preprocess/           FlexData + load_flextool (flex_data.py), FlexDataProvider
+                      and its keys, input writer, per-solve context
+preprocess/params/    Parameter cascade: direct, projected, derived (NPV,
+                      walks, profiles, blocks, branches, existing capacity)
+preprocess/emit/      Per-solve sets and parameters written into the Provider
+model/                The LP: core.py (build_flextool, table of contents +
+                      core equations) and one module per optional feature
+solve/                Orchestration (_orchestration.py), sub-solve expansion,
+                      solver dispatch, warm start, Benders, SolveHandoff
+output/               Solution → output parquet bundle; CSV dumps
+_csv_reload/           Unsupported, opt-in CSV-dump reload + offline outputs (see "CSV dump … reload")
+autoscale/            Auto-scaling pipeline + YAML audit report
 ```
+
+Imports point down the pipeline (solve → model → preprocess → input); the
+README lists the known exceptions.
 
 #### Parameter shapes & `(d,t)` broadcasting
 
@@ -382,6 +480,46 @@ cross-product) → `promote_param_to_dt` (narrowing inner-join on the
 carried axis). A new parameter that needs this must be added to
 `PARAM_ALLOWED_SHAPES`.
 
+##### Silent-label Maps are resolved per entity, not per parameter
+
+When the DB carries no explicit `index_name` on a Map (`"x"` or empty) and the registry admits both a
+period and a time shape at that depth, `resolve_param_shape` first tries to disambiguate the *whole*
+parameter at once, by value-domain probing the union of every entity's keys against the solve's
+`(d, t)`. When that union probe stays ambiguous — no entity's keys overlap the solve's periods or
+timesteps at all, or different entities' keys overlap different axes — the resolver does **not** fall
+back to dropping the whole parameter. Instead each silent entity is classified on its own
+(`_silent_entity_axes`): an entity never decides another entity's shape. An entity with no key in the
+active solve has no value in that solve — it is removed from the frame the same way an entity that
+authored nothing at all would be (so the parameter's own default applies, whatever that is for the
+consuming producer); when *every* entity is removed this way, the frame falls through to the source's
+own default-broadcast path (a scalar default spread over every entity, or nothing when there is none).
+An entity whose keys match both axes raises, naming it — the same rule a single ambiguous row inside
+one entity's own Map already raises on. See `tests/engine/test_param_shapes_silent_per_entity.py` and
+`tests/engine/test_silent_label_params.py` (items #167 / #168 of `specs/github_issues.md`).
+
+##### Every entity's index path is checked; unnamed maps of different depths are read per depth
+
+Before any shape is resolved, `_check_entity_label_paths` checks each entity's own raw label path
+(`parameter_entity_label_paths`), not only the parameter's combined one: a depth that is not the
+`shape_rank` of an allowed shape, or an explicit name that no allowed shape of that depth has on that level
+(`period` / `time`; for the price ladders, level 1 of a 3-level ladder is the period and the tier and
+price / quantity levels may not be named `period` / `time`), raises `FlexToolConfigError` in plain words
+(`allowed_shapes_in_words`): *"commodity 'coal', parameter 'price': the value has 2 index levels; this
+parameter takes a constant, or a map over periods or over time (1 level)"*. A depth that stays ambiguous
+between allowed shapes is accepted; value-domain probing decides it. `shape_rank(shape)` =
+`len(_SHAPE_LABELS[shape])` is the one source of a shape's depth (also the schema's map rank,
+`tests/engine/test_schema_shape_consistency.py`).
+
+When a non-ladder parameter's entities have maps of more than one depth and some level is unnamed, the
+reader's single positional unroll cannot place them (it puts every row into the deepest map's columns), so
+`_resolve_by_depth` resolves each depth group on a `_view_without` the others (as `resolve_facet_groups`
+does for ladders) with the usual rules, and unions the groups into one `[entities, period, t, value]` frame
+(`_axis_frame_resolved`). It raises only where those rules cannot place a group: keys on both axes, or an
+ambiguous group without a `period_filter`. With every level named, the reader places rows by label and no
+split happens. When an unnamed map's shape was read from its depth or keys, `resolve_param_shape` prints one
+note per (class, parameter) and run (`_behaviour_changes.warn_once`, `print(flush=True)`); ladders are left
+out (their levels are placed by depth by definition).
+
 `_param_shapes` is the **I/O contract only** — it validates user-authored
 DB shapes and errors to the user on mismatch. Model-internal axes (e.g.
 the rolling-solve `roll` axis) are deliberately excluded; they are never
@@ -392,8 +530,8 @@ loudly via `_UnrecognisedIndex`. Document such internal axes in
 ##### Silent-default `"x"` index — readers outside the resolver
 
 Not every DB read goes through `resolve_param_shape`. The **per-entity
-cascades** in `_derived_params.py` / `_derived_existing.py` /
-`_derived_npv.py` read raw entity params (`source.parameter(...)`) and
+cascades** in `_derived.py` / `_existing.py` /
+`_npv.py` read raw entity params (`source.parameter(...)`) and
 must detect the period axis themselves. The failure mode is identical to
 the resolver's: Spine names a Map's index column with the author's
 `index_name`, whose spinedb_api *default is the literal string `"x"`*
@@ -403,7 +541,7 @@ gate misfires on the common `"x"`-indexed map and the code either drops
 the row or collapses it via a downstream `.unique(subset=["e"],
 keep="last")` — for a *retiring* `existing` map (nameplate → 0 at expiry)
 that keeps the last period's `0`, defaulting `unitsize` to `1000` and
-turning `existing_count = existing/unitsize` into a spurious fraction
+turning `existing_count = capacity / unitsize` into a spurious fraction
 (caps continuous online below 1; forbids integer online entirely).
 
 **Safe idioms** (use one of these for any raw per-entity map read):
@@ -421,7 +559,7 @@ turning `existing_count = existing/unitsize` into a spurious fraction
   `_per_entity_param_lf` in both the `existing` and `npv` mirrors).
 
 **Audited state** (see the coverage test
-`tests/engine_polars/test_silent_default_index_pdt.py`):
+`tests/engine/test_silent_default_index_pdt.py`):
 
 - *Safe* — `availability`, `inflow`, `other_operational_cost`,
   `reservation` (resolver-routed); the `existing`/`lifetime`/
@@ -429,7 +567,7 @@ turning `existing_count = existing/unitsize` into a spurious fraction
   hardened); `_ed_explicit_period_param`, `_per_solve_sets`; `profile`
   in real solves (reads the engine-written canonical `pt_profile.csv` /
   `pbt_profile`, not the raw Map).
-- *Residual, latent* — the `_derived_profile.py` **raw-Spine fallback**
+- *Residual, latent* — the `_profiles.py` **raw-Spine fallback**
   readers (`_profile_time_lf` matches only `t`/`i`/`time`;
   `_profile_period_time_lf` / `_profile_period_only_lf` gate on literal
   `"period"`). An `"x"`-indexed profile Map read via these returns empty
@@ -587,7 +725,8 @@ dialogs/                         Add / project / plot / file-picker dialogs.
 | `db_migration.py` (`migrate_database`) | Walk the version chain to the current `FLEXTOOL_DB_VERSION`. |
 | `initialize_database.py` (`initialize_database`) | Create new DB from JSON template. |
 | `ensure_settings_db.py` | Idempotent settings-DB creation. |
-| `test_fixtures.py` | Migrate `tests/fixtures/*.json` to current schema. |
+| `test_fixtures.py` | Migrate `tests/fixtures/*.json` to current schema and sync their schema sections. |
+| `fixture_schema.py` | Schema sections of fixture / canonical JSONs generated from `spinedb_schema.json`; sync rules and drift listing. |
 | `canonical_databases.py` | Materialise / migrate canonical example DBs from JSON. |
 | `generate_canonical.py` | Project authoritative fixtures into derived canonical DBs. |
 | `extend_tests_fixture.py` | Agent-friendly YAML-delta workflow for append-only fixture additions. |
@@ -605,8 +744,8 @@ CI-enforced verify chain (`tests.yml::template-check`):
 group and prepare sub-problems for the Benders solve mode (the filter-only
 `--region` CLI entry point that materialises one region's standalone input
 directory). The in-engine slicer used by the live Benders driver lives at
-`engine_polars/_region_filter.py`; the master + cut loop is in
-`engine_polars/_benders.py`.
+`engine/solve/_region_filter.py`; the master + cut loop is in
+`engine/solve/_benders.py`.
 
 ### `flextool/model_builder/` and `flextool/representative_periods/`
 
@@ -708,7 +847,7 @@ from flextool import (
     initialize_database,
     update_flextool,
 )
-from flextool.engine_polars import (
+from flextool.engine import (
     FlexData,
     FlexDataProvider,
     SolveHandoff,
@@ -717,7 +856,7 @@ from flextool.engine_polars import (
     run_chain_from_db,
     run_orchestration,
 )
-from flextool.engine_polars._db_loader import FlexToolRunner
+from flextool.engine.input._db_loader import FlexToolRunner
 from flextool.spinedb_backend import SpineDBBackend
 from flextool.process_inputs import TabularReader, write_to_flextool_input_db
 from flextool.process_outputs import write_outputs, post_process_results
@@ -760,11 +899,51 @@ an on-disk MPS file, trading ~5-10 GB peak RSS for slower per-solve
 build time. The orchestrator emits a one-time warning when it disables
 warm-start because of this flag.
 
+**Memory: polars allocator.** polars links jemalloc statically, and its
+own decay settings in 1.x (`dirty_decay_ms:500,muzzy_decay_ms:-1`) leave
+freed pages resident for good, which roughly doubles peak RSS on large
+models (2.x writes `muzzy_decay_ms:1000`, which returns them after ~2 s).
+FlexTool wants `dirty_decay_ms:1000,muzzy_decay_ms:0`
+(`flextool/_allocator.py`, called first thing in `flextool/__init__.py`).
+jemalloc reads `_RJEM_MALLOC_CONF` once, when `import polars` loads the
+runtime library, so there are two paths:
+- polars not loaded yet (CLI, GUI, a fresh Toolbox run): `setdefault` the
+  variable; a value from the shell wins as a whole.
+- polars loaded first (a Toolbox console, a notebook, a script): append
+  FlexTool's values to the variable for child processes and write the two
+  decay values at runtime with jemalloc's `mallctl` (`arenas.*` and every
+  initialised `arena.<i>.*`), which also returns pages freed before
+  flextool was imported. `_rjem_mallctl` is a local symbol, so its address
+  comes from the library's ELF `.symtab` and the load base of its exported
+  `PyInit_*`; the function's first bytes in memory must equal those in the
+  file before it is called. A value set before polars was imported was
+  already read by jemalloc and is left alone. Any failure (macOS Mach-O,
+  stripped symbol table, a mismatch, a failing call) prints one warning
+  on stderr with the remedy: import flextool before polars, or start
+  Python with `_RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0`.
+  Windows (mimalloc) and builds without jemalloc are a silent no-op.
+
+**Thread budget.** One number B per run (`--threads` > `FLEXTOOL_THREADS` > the available cores, by CPU
+affinity) limits FlexTool's processing and the solver (`flextool/_thread_budget.py`). polars reads
+`POLARS_MAX_THREADS` only at import, and `import flextool` imports it, so `flextool/__init__.py` runs, in this
+order: the thread budget (`apply_before_polars`: when the process is a FlexTool command that accepts
+`--threads` — `sys.orig_argv` holds `-m flextool.cli.cmd_run_flextool` / `cmd_solve_mps` /
+`cmd_execute_flextool_workflow` / `flextool.calibrate`, or `sys.argv[0]` is `flextool-run[.exe]` or the
+`cmd_run_flextool.py` file Spine Toolbox runs — the flag is read from the command line, full name only; then
+`POLARS_MAX_THREADS = min(B, the user's POLARS_MAX_THREADS, else 8)`), the allocator config, `import polars`,
+the rest of the package, and finally `restore_env`, which puts `POLARS_MAX_THREADS` back exactly as it was.
+The environment therefore never carries B: a child gets `--threads` on its command line (workflow, calibrator,
+GUI jobs, the `--save-memory` solve child). With a polar-high older than 3.12.2, whose import sets
+`POLARS_MAX_THREADS=1` even with polars loaded, it is imported before the restore so that value is removed too.
+When polars was imported before flextool, its pool cannot change; the header says so. HiGHS: a caller-set B
+gives `threads=B` with the `parallel=off` pin kept (`highs_thread_options`); `--highs-threads N>1` keeps its
+parallel-simplex opt-in, at most B. Benders: without `--benders-workers`, at most B region solves at once.
+
 ## Solver outputs: folder layout
 
 ```
 work_folder/
-├── solve_data/<solve>/        Debug-only mirrors of cascade state
+├── input/, solve_data/        Debug-only mirrors of cascade state
 │                                (csv_dump=True path). Not load-bearing.
 ├── output_parquet/<scenario>/ Canonical results — one parquet per output.
 ├── output_csv/<scenario>/     Optional CSV mirror of the parquets.
@@ -788,23 +967,35 @@ names as before for debug inspection:
 | `realized_invest` | `p_entity_period_existing_capacity.csv` (period column) | New capacity built this solve, in absolute units. |
 | `realized_existing` | `p_entity_period_existing_capacity.csv` (existing column) | Cumulative existing capacity history per `(entity, period)`. |
 | `divest_cumulative` | `p_entity_divested.csv` | Cumulative divest per entity carried forward. |
-| `roll_end_state` / `upward_roll_end_state` | `p_roll_continue_state.csv` | `v_state` at the end of the realized window; pins the next roll's first timestep. |
-| `roll_end_online` | *(in-memory only)* | Committed jump-end `v_online` per online process (OC1 Carrier 1); the next roll's `online__startup`/`online__shutdown` first step sees the prior commitment instead of the within-roll cyclic wrap, so a unit that stays committed is not re-charged a startup across the boundary. |
-| `online_history` | *(in-memory only)* | Trailing realized committed `v_startup`/`v_shutdown` window (OC1 Carrier 2); rebuilt into `uptime_carry`/`downtime_carry` at the next roll and injected on the `minimum_uptime` RHS / `minimum_downtime` LHS so an obligation opened in roll N constrains roll N+1's early steps. |
+| `roll_end_state` / `upward_roll_end_state` | `p_roll_continue_state.csv` | `v_state` at the end of the realized window; the start state of the sub-solves that continue from it, routed by `solve/_carry_routing.py` (the latest realised state at the sub-solve's nesting level or deeper; engine.md "Storage carry routing"). |
+| `roll_end_online` | *(in-memory only)* | Committed jump-end `v_online` per online process (OC1 Carrier 1); the next roll's `online_change` first step (`dt_online_carry`) sees the prior commitment instead of the within-roll cyclic wrap, so a unit that stays committed is not re-charged a startup across the boundary. |
+| `online_history` | *(in-memory only)* | The realized `v_startup`/`v_shutdown` that a minimum up / down time still covers after the solve: the last realized step and its predecessors along `dt_ramp_link`, each with `hours_to_end` (hours from its start to the end of the last realized step); inside a forecasts-only fan under the tied forecast's steps. Rebuilt into `uptime_carry`/`downtime_carry` at the next solve's steps that follow its `dt_ramp_carry` and injected on the `minimum_uptime` RHS / `minimum_downtime` LHS. |
 | `fix_storage_quantity / price / usage` | `fix_storage_*.csv` | Parent-imposed storage quota at the boundary (any subset of the three metrics — each carries its own `(node, period, step)` index, so a separate timesteps carrier is not needed). |
 | `cumulative_co2` | `co2_cum_realized_tonnes.csv` | Running CO2 totals across rolls. |
 | `cumulative_commodity` | `commodity_ladder_cumulative.csv` | Per-tier commodity consumption (ladder pricing). |
 | `cum_sim_hours` | `ladder_cum_sim_hours.csv` | Running simulated-hour total per period. |
 
 Cross-boundary unit-commitment continuity (OC1 Carriers 1 & 2) is
-**hard-enforced** and **period-aware**: a `min_uptime` / `min_downtime`
-obligation opened near a roll's jump-end carries into the next roll's early
-steps *only within the same period*. FlexTool's online dynamics are
-period-cyclic (a period's first step wraps within that period, never to the
-prior period), so a commitment obligation must not propagate across a period
-boundary — the non-contiguous investment years (e.g. 2020 → 2025) do not
-connect, and forcing one across would be a unit-commitment infeasibility no
-node penalty slack can absorb. A node with the default `penalty_method`
+**hard-enforced** and **timeline-aware**: a `min_uptime` / `min_downtime`
+obligation opened near a solve's last realized step carries exactly where
+`dt_ramp_carry` does — into the first steps of the next solve that continue
+that step on the timeline (`jump == 1`): the same period, a period that
+continues the previous one, and the forecast branches that start with such a
+step. It does not carry into a period that does not continue the previous one
+(investment years that reuse one timeset, e.g. 2020 → 2025), across a gap or
+into a representative-block start. The consumer counts elapsed time from the
+`dt_ramp_carry` roots along `dt_ramp_link` and adds each history step's
+`hours_to_end` (`params/_mintime.py`); it raises when the history does not end
+at the carried step (history and step handed over from different solves).
+Time-keyed carries (ramp, online, min up / down) reach forecast branches
+through the `dt_*_carry` roots (`_ramp_links._with_fan_members`); the
+period-keyed `branch_periods_inherit_carry` (`params/_branch.py`) is
+deliberately not applied to them — `hours_to_end` plus the roots is its
+timeline counterpart, and a copy per branch would count twice. A solve whose
+first step continues a step of another time resolution (a 6 h storage roll
+after an hourly dispatch) has no `dt_ramp_carry` there: it takes neither the
+ramp nor the min up / down carry, and the cut-short look-back warning names
+the step. A node with the default `penalty_method`
 (`regular`) absorbs any forced-on generation through its downward penalty
 (`vq_state_down`, a feasible spill); a hard-balance node (`penalty_method =
 off`) can instead become infeasible when a myopically-committed unit's
@@ -815,7 +1006,7 @@ an un-absorbable commitment, resolved by allowing slack.
 used to be `SolveHandoff` fields too, populated only by the now-removed
 `capture_post_solve()` disk-read constructor. They were retired when the
 cascade fell through to Provider/CSV reads in all production paths; see
-the docstring of `_solve_handoff.py` for the history.
+the docstring of `solve/_handoff.py` for the history.
 
 ## Solution extraction
 
@@ -852,10 +1043,7 @@ slack semantics.
    `node_capacity_for_scaling` / `group_capacity_for_scaling` derived
    from connected-entity unitsizes; rounded to powers of 10 to preserve
    HiGHS symmetry detection.
-4. **Precision cleanup (`--precision-digits`).** Every numeric value is
-   rounded to 10 significant figures so benign precision artifacts don't
-   trip near-duplicate detection.
-5. **Autoscale package** (`engine_polars/autoscale/`). Three layers,
+4. **Autoscale package** (`engine/autoscale/`). Three layers,
    on by default (gate via `--scaling=off` / `FLEXTOOL_SCALING=off`;
    intermediate modes are `solver_only`, `basic`, `full`):
    - **Layer 1 — detect** (`_ranges.py`). Walks the assembled LP and
@@ -909,7 +1097,7 @@ slack semantics.
      range) and folds D's escape-tier valve into the same pass, so the
      LP arriving at HiGHS is comfortably within the solver's
      conditioning sweet spot.
-6. **YAML audit** (`engine_polars/autoscale/_report.py`). After every
+5. **YAML audit** (`engine/autoscale/_report.py`). After every
    solve, writes `solve_data/autoscale_<solve>.yaml` covering Layer 1
    ranges, the Layer 2 plan (per-type exponents + post-L2 ranges),
    and the Layer 3 plan (`user_bound_scale`, escape-tier).
@@ -918,13 +1106,13 @@ slack semantics.
    solve's **post-autoscale** LP is still wide-ranged (i.e. the autoscaler
    could not tame the spread), and even then it is framed as a possibility
    — never as the certified cause. Accept/reject itself is decided by
-   `engine_polars/_solve_acceptance.py` from the solver's own diagnostics
+   `engine/solve/_acceptance.py` from the solver's own diagnostics
    (see "Solve acceptance" below), not by the range report.
-7. **Manual override.** `--user-bound-scale N` (or DB
-   `solve.user_bound_scale`) pins Layer 3's bound-scale exponent and
+6. **Manual override.** `--user-bound-scale N` (or
+   `FLEXTOOL_USER_BOUND_SCALE`) pins Layer 3's bound-scale exponent and
    disables the auto-pick. Useful when the audit hints at a value the
    recommender did not lock in.
-8. **Output un-scaling** (`process_outputs/read_highs_solution.py`).
+7. **Output un-scaling** (`process_outputs/read_highs_solution.py`).
    Every `VariableSpec` carries an `unscale_by` field; the Layer 2 +
    Layer 3 reverse maps are applied in the writer so downstream
    consumers see absolute units regardless of which layers fired.
@@ -938,7 +1126,7 @@ HiGHS refuses to *certify* — post-solve leaves the dual objective slightly
 inconsistent, so HiGHS reports `kUnknown` rather than a failure. FlexTool
 consumes the primal for every output, so such a solve is usable.
 
-`engine_polars/_solve_acceptance.py::classify_acceptance` decides from the
+`engine/solve/_acceptance.py::classify_acceptance` decides from the
 solver's own diagnostics (`polar_high.Solution.solve_diagnostics()`, a
 snapshot of `getModelStatus()` + `getInfo()`):
 
@@ -950,11 +1138,17 @@ snapshot of `getModelStatus()` + `getInfo()`):
   tolerance-derived absolute backstop) *and* `primal_dual_objective_error`
   is within the accepted optimality gap; otherwise reject.
 
-Thresholds default to primal-relative `1e-6`, absolute margin `10×` the
-solver's `primal_feasibility_tolerance`, and P-D gap `1e-2` (the same
-order as the `mip_rel_gap` models routinely accept); each has a
-`FLEXTOOL_ACCEPT_*` env override, and `FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0`
-restores the legacy hard-fail. The subprocess/commercial path exposes no
+Thresholds follow the solve's own `primal_feasibility_tolerance` (the
+option value HiGHS ran with, read from the live handle; the Layer-2
+unscale resets status and info, not options): primal-relative ceiling
+`max(1e-6, 10 × tolerance)`, absolute margin `10×` the tolerance, and P-D
+gap `1e-2` (the same order as the `mip_rel_gap` models routinely accept).
+The dual side is judged by the P-D gap only, so there is no dual ceiling.
+Each has a `FLEXTOOL_ACCEPT_*` env override; a set (positive)
+`FLEXTOOL_ACCEPT_PRIMAL_REL` replaces the derived relative ceiling outright.
+`FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0` restores the legacy hard-fail. A solve
+accepted above the former fixed `1e-6` prints the
+`acceptance_ceiling_follows_tolerance` behaviour-change notice. The subprocess/commercial path exposes no
 queryable handle, so `solve_diagnostics()` returns `None` and the solve is
 never near-optimal-accepted — it falls back to the strict `kOptimal` gate.
 
@@ -997,19 +1191,20 @@ tests/
 ├── scenarios.yaml               Integration-suite scenario definitions.
 ├── expected/                    Golden CSVs (per-scenario, regenerated
 │                                  when the suite genuinely changes).
-├── engine_polars/               Engine-internal unit tests.
+├── engine/               Engine-internal unit tests.
 ├── spinedb_backend/             Backend unit tests.
 ├── model/                       Model-level end-to-end suites.
+├── csv_reload/                  Unsupported CSV reload; run only with -m csv_reload.
 ├── gui/                         GUI startup tests.
 ├── decomposition/               Benders / region-filter tests.
 └── test_*.py                    Top-level unit & integration tests.
 ```
 
 `scenario_workdir(scenario_name, db_fixture="main")` (defined in
-`tests/engine_polars/conftest.py`) is a session-scoped fixture that
+`tests/engine/conftest.py`) is a session-scoped fixture that
 builds a per-scenario workdir on demand by running the full cascade with
 `csv_dump=True`. It replaced the historical bulky CSV snapshot pattern
-that previously sat under `tests/engine_polars/data/work_*/` (~521 MB
+that previously sat under `tests/engine/data/work_*/` (~521 MB
 gitignored); the directories that remain contain only a single
 `golden_obj.json` golden file each. Tests do not depend on pre-built
 fixture directories.
@@ -1017,8 +1212,8 @@ fixture directories.
 ### Three-tier gate
 
 - **Inner loop** — module-specific tests, run after every edit
-  (typically `tests/engine_polars/<area>/`).
-- **Broader gate** — `tests/engine_polars/` full sweep, once per commit
+  (typically `tests/engine/<area>/`).
+- **Broader gate** — `tests/engine/` full sweep, once per commit
   batch.
 - **Activation truth** — full `tests/` including the integration scenario
   suite, run rarely (overnight / release).

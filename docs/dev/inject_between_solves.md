@@ -6,7 +6,7 @@ data from an external tool — another optimisation model, a market
 simulator, a Python data step — into a FlexTool cascade *between*
 sub-solves of the same run.
 
-[rc]: ../../flextool/engine_polars/_orchestration.py
+[rc]: https://github.com/irena-flextool/flextool/blob/main/flextool/engine/solve/_orchestration.py
 
 ## Purpose
 
@@ -33,11 +33,11 @@ script imports `run_chain_from_db` and passes a callable.
 ## API
 
 ```python
-from flextool.engine_polars import run_chain_from_db
+from flextool.engine import run_chain_from_db
 
 run_chain_from_db(
     input_db_url,
-    scenario_name=None,
+    scenario_name,  # required: None or "" raises FlexToolConfigError
     work_folder=None,
     *,
     override_provider=None,  # Callable[[], dict[str, pl.DataFrame]] | None
@@ -51,9 +51,9 @@ It is invoked **once per sub-solve iteration**, after the natural
 handoff translators and before preprocessing. Returning `{}` (or
 `None`) means "no override this iteration".
 
-Full source: `flextool/engine_polars/_orchestration.py` (entry point),
-`flextool/engine_polars/_native_run_model.py` (invocation site),
-`flextool/engine_polars/_provider_translators.py`
+Full source: `flextool/engine/solve/_orchestration.py` (entry point),
+`flextool/engine/solve/_run_model.py` (invocation site),
+`flextool/engine/preprocess/_provider_translators.py`
 (`translate_overrides_to_provider`, `read_handoff_frame`,
 `dump_provider_sources`).
 
@@ -61,8 +61,8 @@ Full source: `flextool/engine_polars/_orchestration.py` (entry point),
 
 Only the 11 keys below are overridable. Supplying any other key raises
 `ValueError` in `translate_overrides_to_provider`. The constants live
-in `flextool.engine_polars._provider_keys`; import as
-`from flextool.engine_polars import _provider_keys as K`.
+in `flextool.engine.preprocess._provider_keys`; import as
+`from flextool.engine.preprocess import _provider_keys as K`.
 
 | Key constant | What it overrides | Required columns |
 |---|---|---|
@@ -93,18 +93,35 @@ following steps in order:
 
 1. **Sequential handoff translation.** The previous sub-solve's
    `SolveHandoff` is fanned into `handoff/*` Provider keys
-   (`translate_handoff_to_provider`).
+   (`translate_handoff_to_provider`). A realised-dispatch roll takes
+   only `PIN_FIELDS` from its UC roll and `ROLL_FORWARD_FIELDS` from the
+   previous dispatch roll.
 2. **Parent handoff translation.** In nested cascades, the parent's
-   handoff is translated next.
-3. **Override callable.** If `state.override_provider` is non-`None`,
+   handoff is translated next, `PIN_FIELDS` only (realised investment /
+   existing / divest, fixed online, the nested storage fixes).
+3. **Routed carriers.** The carriers tied to the realised end — the
+   storage state (`handoff/roll_end_state`, `handoff/upward_roll_end_state`)
+   and the step carriers (online state, last flow, last step, online
+   history) — are written by the carry router (`solve/_carry_routing.py`):
+   the latest state realised before this sub-solve at its nesting level or
+   deeper, or empty when the sub-solve is the first of its level. The
+   running totals (`cumulative_*`, `cum_sim_hours`) are not routed: every
+   sub-solve passes them on, so they come from the sequential predecessor.
+4. **Override callable.** If `state.override_provider` is non-`None`,
    it is invoked. The returned dict is fanned into the parallel
    `override/*` Provider keys
    (`translate_overrides_to_provider`).
-4. **Preprocessing.** Per-solve preprocessing reads handoff values via
+5. **Preprocessing.** Per-solve preprocessing reads handoff values via
    `read_handoff_frame`, which checks the `override/*` slot first and
    falls back to `handoff/*`. Consumers stay key-stable.
-5. **Solve.** The LP is built (cold) or updated (warm) and dispatched
+6. **Solve.** The LP is built (cold) or updated (warm) and dispatched
    to the solver.
+7. **Produced handoff.** After the solve, the sub-solve's own
+   `SolveHandoff` is written under `produced_handoff/*`
+   (`translate_produced_handoff_to_provider`). The `handoff/*` keys keep
+   the values the solve consumed, so a LP rebuilt from the post-solve
+   provider is the LP that was solved; read `produced_handoff/*` for what
+   the solve passes on (e.g. a roll's final running totals).
 
 The callable is invoked **on every iteration** including the first.
 Return `{}` whenever no override applies — that iteration falls through
@@ -120,21 +137,22 @@ with the sorted key list at DEBUG.
 
 ## Warm-path interaction
 
-Under `--warm`, the warm `Problem` for iteration N is built from the
-previous iteration's LP coefficients and is reused *before* the
-override callable fires for iteration N. Concretely:
+Under `warm=True` (the default) an LP is reused for iteration N only when
+iteration N's `FlexData` — computed after the override callable has fired
+and preprocessing has read the overridden handoff — is identical to
+iteration N-1's in every field, labels included, and the solver
+configuration is the same (`_reuse_blocker` in `solve/_warm.py`).
+Concretely:
 
-- Overrides at iteration N **do not** retroactively mutate the warm LP
-  matrix entering iteration N. They affect only what preprocessing
-  computes downstream of `read_handoff_frame`.
-- For example, overriding `K.HANDOFF_REALIZED_INVEST` at iteration N
-  changes `p_entity_previously_invested_capacity` (and anything
-  computed from it) for iteration N's preprocessing, but the warm LP
-  coefficients still reflect iteration N-1's value of
-  `realized_invest`.
+- An override that changes anything preprocessing computes (for example
+  `K.HANDOFF_REALIZED_INVEST` at iteration N changes
+  `p_entity_previously_invested_capacity`) makes iteration N's `FlexData`
+  differ, so iteration N builds its own LP: the override always reaches
+  the LP matrix, the objective and the right-hand sides.
+- An override that changes nothing in `FlexData` leaves the LP identical,
+  and reusing it is equivalent to rebuilding it.
 
-If the wrapper needs the override to influence the LP matrix itself,
-run the cascade cold (omit `warm=True`).
+No `warm=False` run is needed for overrides to take effect.
 
 ## Audit
 
@@ -170,8 +188,8 @@ from pathlib import Path
 
 import polars as pl
 
-from flextool.engine_polars import run_chain_from_db
-from flextool.engine_polars import _provider_keys as K
+from flextool.engine import run_chain_from_db
+from flextool.engine.preprocess import _provider_keys as K
 
 
 WATCH_DIR = Path("overrides_in")
@@ -271,11 +289,12 @@ itself, not this hook.
 
 ## See also
 
-- [`tests/engine_polars/test_override_provider.py`](../../tests/engine_polars/test_override_provider.py) —
+- [`tests/engine/test_override_provider.py`](https://github.com/irena-flextool/flextool/blob/main/tests/engine/test_override_provider.py) —
   end-to-end test of the override path plus the audit-dump variant.
   Useful as a reference for additional patterns (capturing a real
   handoff frame, scaling it, asserting the propagated effect).
-- [`specs/architecture_provider_and_future_duckdb.md`](../../specs/architecture_provider_and_future_duckdb.md)
+- `specs/architecture_provider_and_future_duckdb.md` (internal design notes,
+  not in the public repository)
   (sections on Phases 5 and 6) — design rationale for the
   `override/*` namespace, the override-aware `read_handoff_frame`
   lookup, and the audit-dump format.

@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 # Entity classes, in the order they should appear as tabs.
 _ENTITY_CLASSES = ("nodeGroup", "flowGroup", "unit", "connection", "node")
 # Category subsections, in tab order.
-_CATEGORY_SECTIONS = ("costs", "node_flows", "nodegroup_flows", "dispatch")
+_CATEGORY_SECTIONS = ("costs", "capacity", "node_flows", "nodegroup_flows", "dispatch")
 
 # The ``("categories", "dispatch")`` category is ENGINE-FIXED order (see the
 # module docstring for the stack): its special columns are pinned by the

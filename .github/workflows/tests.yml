@@ -10,7 +10,16 @@ on:
   pull_request:
     branches: [main, master]
     paths-ignore: ['**.md']
+  schedule:
+    # 02:00 UTC nightly: only the `nightly-heavy` job runs on this trigger.
+    - cron: "0 2 * * *"
   workflow_dispatch:
+
+# The tests and every FlexTool run they start are single-threaded (polars and HiGHS): the xdist
+# workers already use every vCPU, so more threads per worker only oversubscribe the runner.
+env:
+  FLEXTOOL_THREADS: "1"
+  POLARS_MAX_THREADS: "1"
 
 jobs:
   template-check:
@@ -21,7 +30,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Install dependencies
         run: pip install -e .
@@ -39,39 +48,45 @@ jobs:
         run: python -m flextool.update_flextool.canonical_databases verify
 
   test:
-    # Full suite on all platforms — all blocking. Genuinely platform-specific
+    # Full suite minus the `nightly_heavy` tests, on 4 OS/Python cells (Linux
+    # 3.13 + 3.14, Windows 3.14, macOS 3.14; 3.11 / 3.12 run in
+    # tests-old-python.yml), each cell split into 4 module-atomic, time-balanced
+    # shards (`--shard K/N`, tests/_ci_shard.py; weights in
+    # tests/ci_durations.json). One xdist worker per LOGICAL core (`-n logical`):
+    # the public runners have 4 vCPUs = 2 SMT cores on Linux / Windows (16 GB)
+    # and 3 cores on macOS-15 arm64 (7 GB), and the addopts `-n auto` counts
+    # physical cores only (2 workers). 4 shards x 4 cells = 16 jobs stay within
+    # the free plan's 20 concurrent jobs and 5 concurrent macOS jobs (5 shards
+    # would queue); predicted Linux shard ~27 min. `peak_mem.py` prints the
+    # runner's cores and the run's peak memory. Genuinely platform-specific
     # tests are skipped in place (POSIX-only path/shebang forms, Windows file
     # locks), and the one non-unique-optimum scenario (network_all_tech) is
-    # skipped pending reformulation for a unique optimum (see its skip_reason in
-    # tests/scenarios.yaml).
+    # skipped pending reformulation (see its skip_reason in
+    # tests/scenarios.yaml). No `-x`: a failing shard still reports every
+    # failure and full timings. Not run on the nightly schedule.
+    if: github.event_name != 'schedule'
+    name: test (${{ matrix.cell.os }}, ${{ matrix.cell.python }}, shard ${{ matrix.shard }}/4)
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: ubuntu-latest
-            python: "3.12"
-          - os: ubuntu-latest
-            python: "3.13"
-          - os: windows-latest
-            python: "3.12"
-          - os: windows-latest
-            python: "3.13"
-          - os: macos-15
-            python: "3.12"
-          - os: macos-15
-            python: "3.13"
-    runs-on: ${{ matrix.os }}
+        cell:
+          - {os: ubuntu-latest, python: "3.13"}
+          - {os: ubuntu-latest, python: "3.14"}
+          - {os: windows-latest, python: "3.14"}
+          - {os: macos-15, python: "3.14"}
+        shard: [1, 2, 3, 4]
+    runs-on: ${{ matrix.cell.os }}
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python }}
+          python-version: ${{ matrix.cell.python }}
 
       - name: Install dependencies
         run: |
           pip install -e .
-          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib
+          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib setuptools
 
       - name: Set glpsol executable permission
         if: runner.os != 'Windows'
@@ -86,4 +101,47 @@ jobs:
           # gap-free (see docs/dev/architecture.md "Numerical scaling →
           # Layer 2").
           FLEXTOOL_AUTOSCALE_STRICT: "1"
-        run: pytest tests/ -v --tb=short -x
+        # A command-line -m replaces the addopts one, so repeat its opt-outs;
+        # the command-line -n overrides the addopts `-n auto`.
+        run: >-
+          python .github/scripts/peak_mem.py
+          pytest tests/ -v --tb=short -n logical --shard ${{ matrix.shard }}/4
+          -m "not csv_reload and not axis_enums and not nightly_heavy"
+
+  nightly-heavy:
+    # The `nightly_heavy` tests (~1 h of worker time: rolling twin-LP builds,
+    # nested-cascade determinism, calibration loop, energy-margin adder
+    # cascades, ...) that the PR `test` job deselects. A fast representative of
+    # each area stays in the PR run. Linux only: Linux is the authoritative
+    # platform (Windows / macOS are non-blocking).
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    name: nightly-heavy (ubuntu-latest, ${{ matrix.python }})
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.13", "3.14"]
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib setuptools
+
+      - name: Set glpsol executable permission
+        run: |
+          if [ -f bin/glpsol ]; then chmod +x bin/glpsol; fi
+
+      - name: Run nightly-heavy tests
+        env:
+          FLEXTOOL_AUTOSCALE_STRICT: "1"
+        run: >-
+          python .github/scripts/peak_mem.py
+          pytest tests/ -v --tb=short -n logical
+          -m "nightly_heavy and not csv_reload and not axis_enums"

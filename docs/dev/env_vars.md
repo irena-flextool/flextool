@@ -1,103 +1,102 @@
-# Environment variables
+# Environment variables (developer)
 
-Reference for every environment variable FlexTool reads at runtime,
-grouped by what they do. All variables are optional — defaults
-preserve the user-facing behaviour and add zero overhead.
+Developer-only switches: diagnostics, profiling, experiments and checks. They are not part of the user
+interface, their names and meaning can change between releases, and user pages do not link here. The variables
+users set — the twins of `run_flextool` flags and the process / GUI settings — are on the user page
+[Environment variables](../env_vars.md). Test-suite switches are in [Testing](testing.md).
 
-Two reasons to set any of them:
+Every variable FlexTool reads is registered in `flextool/run_options.py`: the twin of a flag in `OPTIONS`, every
+other one in `ENV_KNOBS` with its audience (`user`, `dev`, `test`) and its page. Developer variables keep their
+names (no `FLEXTOOL_DEV_*` prefix); the registry and this page mark them developer-only.
+`tests/test_env_knob_registry.py` fails when FlexTool reads a variable that is not registered, when a registered
+variable is missing from its page, or when a page lists one that is no longer read. A new variable therefore
+needs an `ENV_KNOBS` entry and a row on its page.
 
-- **Functional toggles** — change what FlexTool does (autoscale mode,
-  save-memory subprocess solver, HiGHS options).
-- **Diagnostics** — record memory or timing for post-hoc analysis.
+How options are resolved (one resolver, flag > environment variable > database > default, nothing writes the
+environment) is in [architecture.md, "Runtime options"](architecture.md#runtime-options).
 
-CLI flags on `run_flextool.py` take precedence and, where they map to
-an env var, set it for the rest of the process. Direct env-var use is
-the right path when you cannot pass a flag (Spine Toolbox execution,
-GUI subprocess, CI matrix).
-
-For the `polar_high` solver kernel's own env vars (profiling MPS
-writes, autoscale range readout cap), see the
+For polar-high's own variables (`POLAR_HIGH_WRITE_MPS_PROFILE`, ...), see the
 [polar-high environment-variables page](https://nodal-tools.github.io/polar-high/guide/env-vars/).
 
-## Functional toggles
+## Solve acceptance
+
+`engine/solve/_acceptance.py` decides whether a solve that HiGHS did not certify optimal is accepted.
 
 | Variable | Default | Set to | What it does |
 |---|---|---|---|
-| `FLEXTOOL_SCALING` | `full` | `off` / `solver_only` / `basic` / `full` | Autoscale mode. Equivalent to `--scaling <mode>`. `off` skips Layers 2/3 (Layer 1 always runs for the YAML audit). See [LP scaling pipeline](scaling.md). |
-| `FLEXTOOL_USER_BOUND_SCALE` | unset | integer (e.g. `6`) | Pin the HiGHS Layer-3 `user_bound_scale` exponent instead of auto-picking. Equivalent to `--user-bound-scale N`. |
-| `FLEXTOOL_SAVE_MEMORY` | unset (off) | `1` | Enable the polar-high subprocess-solver path (writes MPS, shells out, frees parent-process LP buffers before the solve). Equivalent to `--save-memory`. Trades wall time for peak RSS. |
+| `FLEXTOOL_ACCEPT_NEAR_OPTIMAL` | on | `0` | `0` rejects every HiGHS status other than optimal (the old hard failure), e.g. for strict test runs. On by default: an interior-point solve stopped without crossover (status Unknown) is accepted when the checks below pass. |
+| `FLEXTOOL_ACCEPT_PD_GAP` | `1e-2` | positive float | Largest relative primal-dual gap of an accepted near-optimal solve. |
+| `FLEXTOOL_ACCEPT_PRIMAL_REL` | `max(1e-6, 10 × primal_feasibility_tolerance)` | positive float | Largest relative primal infeasibility of an accepted near-optimal solve. Unset, it follows the tolerance the solve ran with; a set value replaces that derived ceiling (tighter or looser). |
+| `FLEXTOOL_ACCEPT_PRIMAL_ABS_MARGIN` | `10` | positive float | Absolute primal infeasibility allowed, as a multiple of HiGHS' primal feasibility tolerance (HiGHS checks feasibility on the scaled LP, so the unscaled slack can exceed it). |
 
-## HiGHS tuning
+## Benders
 
-Each maps to a HiGHS option threaded through
-`_orchestration._finalise_highs_options`. Setting the env var is
-equivalent to passing the matching CLI flag on `run_flextool.py`.
-
-| Variable | Default | Set to | What it does |
-|---|---|---|---|
-| `FLEXTOOL_HIGHS_TIME_LIMIT` | HiGHS default | seconds (float) | HiGHS `time_limit` option. Hard wall-clock cap per solve. |
-| `FLEXTOOL_HIGHS_PRESOLVE` | HiGHS default (`on`) | `on` / `off` / `choose` | HiGHS `presolve` option. Equivalent to `--presolve`. Useful when comparing warm-vs-cold solves. |
-| `FLEXTOOL_HIGHS_THREADS` | HiGHS default | positive integer | HiGHS `threads` option. Equivalent to `--highs-threads`. |
-
-## Memory diagnostics
-
-All diagnostics are off by default and impose zero overhead when
-unset.
+Read by `engine/solve/_benders.py`. A malformed value is ignored with a warning.
 
 | Variable | Default | Set to | What it does |
 |---|---|---|---|
-| `FLEXTOOL_MEMORY_DIAGNOSTICS` | unset (off) | `1` | Enable the per-checkpoint memory recorder. Activates `tracemalloc` (so `traced_peak` is meaningful) and writes `solve_data/memory_diagnostics.csv` for post-hoc analysis. `--debug` sets this. |
-| `FLEXTOOL_MEMORY_VERBOSE` | unset (off) | `1` | Drop the whitelist filter on the standard `[mem]` log table so every phase checkpoint is printed. `--debug` sets this. |
-| `FLEXTOOL_AUTOSCALE_PROFILE` | unset (off) | `1` | Per-substep RSS markers around the autoscale orchestration. Complements `POLAR_HIGH_RANGES_PROFILE` from polar-high — set both when range detection itself is suspect. |
-| `FLEXTOOL_PYRAMID_PROFILE` | unset (off) | `1` | Wired through `_MemoryRecorder.checkpoint()`: after every `emit_*` call in `_emit_solve_time.run` (the per-solve preprocessing pyramid), emit a tab-separated stderr line in the polar-high `[pyramid profile] phase=… rss_gb=… delta_gb=… t_s=…` format (precedent: `POLAR_HIGH_WRITE_MPS_PROFILE`). Zero overhead when unset; combine with `FLEXTOOL_MEMORY_DIAGNOSTICS=1` to also persist a CSV trace. |
-| `FLEXTOOL_PHASE_TIMING` | unset (off) | `1` | Per-iter `per_iter` rows added to the workdir's `timings.csv` covering `lp_build` / `solve` / `handoff` plus a `warm_used` marker. Use for rolling / warm-chain wall-time breakdowns. |
-| `FLEXTOOL_MEM_SAMPLER` | unset (off) | `1` (or any truthy: `true`, `yes`) | Start an in-process daemon-thread RSS sampler at startup. Writes one row per sample to the log path below. Independent of the phase recorder — useful when the recorder's coarse checkpoints miss a transient peak. |
-| `FLEXTOOL_MEM_SAMPLER_LOG` | `/tmp/flextool_mem_sampler_<pid>.log` | filesystem path | Sampler output path. Only consulted when the sampler is on. |
-| `FLEXTOOL_MEM_SAMPLER_INTERVAL_MS` | `100` (clamped 20–10000) | integer milliseconds | Sampler cadence. Tighter intervals catch shorter peaks at the cost of more log volume. |
+| `FLEXTOOL_BENDERS_IN_OUT_WEIGHT` | the solve's `benders_in_out_weight` (`0`) | float in `[0, 1)` | Developer override of the in-out stabilization weight λ (weight of the interior centre in the separation point). `0` is off. No flag: it changes convergence, so production runs set it in the database. |
+| `FLEXTOOL_BENDERS_TRUST_REGION_RADIUS` | unset (off) | positive float | Trust-region stabilizer: absolute box half-width on the coupling flows (normalised units). Not combined with in-out. |
+| `FLEXTOOL_BENDERS_MAX_STALL` | `8` | positive integer | Iterations without progress before the stall guard stops the loop. The guard cannot be turned off. |
+| `FLEXTOOL_BENDERS_CUT_COMPACT_AT` | unset / `0` (off) | positive integer | Master cut count at which the master is compacted to its binding cuts. |
+| `FLEXTOOL_BENDERS_CUT_POLICY` | `slack` | `slack` / `dominance` | Compaction policy: drop cuts slack at the current optimum, or keep per recourse column the oldest maximum over the last trial points. |
+| `FLEXTOOL_BENDERS_CUT_WINDOW` | `10` | positive integer | Trial-point window of the `dominance` policy. |
+| `FLEXTOOL_BENDERS_REGION_DUALS` | `basic` | `basic` / `interior` | Duals for the cut slopes: vertex duals with crossover, or barrier duals without crossover (a central point of a degenerate dual face; no warm start). |
+| `FLEXTOOL_BENDERS_VERBOSE` | unset | any value | Show the HiGHS log of every master and region solve (by default they are silent and the per-iteration bound log shows progress). |
+| `FLEXTOOL_BENDERS_PIN_DIAGNOSTIC` | unset | parquet path | Pin diagnostic: instead of iterating, evaluate the decomposition once at the monolith's coupling flows (columns `p, source, sink, d, t, value`) and report whether a region's recourse blows up. |
+| `FLEXTOOL_BENDERS_PIN_MONOLITH_OBJ` | unset | float (real units) | Monolith objective for the pin diagnostic's exactness check (Σ region cost + master ≈ monolith). |
+| `FLEXTOOL_BENDERS_PIN_BLOWUP_MULT` | `100` | float | Pin diagnostic: a region whose cost exceeds this multiple of its stand-alone cost counts as blown up. |
 
-Example — find a transient RSS peak the per-phase recorder is missing:
+## Checks and modes
+
+| Variable | Default | Set to | What it does |
+|---|---|---|---|
+| `FLEXTOOL_AUTOSCALE_STRICT` | unset (off) | `1` | A variable, constraint or parameter missing from the autoscale registries raises instead of the solve silently falling back to an unscaled LP. Set it in tests that exercise autoscale (CLAUDE.md invariant 1). |
+| `FLEXTOOL_AXIS_ENUMS` | unset (off) | `1` | Experimental axis-Enum mode for the whole run (axes typed as polars Enums instead of Utf8). Development and tests only. |
+| `FLEXTOOL_FORCE_ROW_SCALING` | unset | `1` / `true` / `yes` / `on` | Turn on the legacy node / group balance row scaling (`p_use_row_scaling=1`); every solve has it off otherwise. Used by the un-scaling benchmark. |
+| `FLEXTOOL_SKIP_SOLVER_PROBE` | unset | `1` | Skip the start-up probe of commercial solver licences (avoids the FICO Xpress Community licence warning). The test conftest sets it. |
+| `FLEXTOOL_NATIVE_SCENARIO` | unset | scenario name | Scenario of `run_chain` when neither the work folder name (`work_<scenario>`) nor an argument gives it. |
+| `FLEXTOOL_AUDIT_SOURCES` | unset (off) | `1` | Append every Provider entry with a `source` tag (entries injected between solves) to `<work_folder>/audit_sources.log`, per sub-solve. |
+| `FLEXTOOL_LEVEL_RELEASE_AUDIT` | unset (off) | `1` | Record solves whose HiGHS instance is still alive after its level is finished (memory-release audit). |
+| `FLEXTOOL_DUMP_CSVS` | unset (off) | `1` | With `--csv-dump`, also write the eight largest debug CSVs (`p_flow_max`, `pdtProcess*`, `pdtNode*`, `ptNode_inflow`), which are not read by any output step. |
+| `FLEXTOOL_COLD_KEEP_PROVIDER` | unset (off) | `1` | Under `--save-memory`, keep the data provider between cold solves instead of rebuilding it (less database reading, higher steady memory). |
+| `FLEXTOOL_RSS_BUDGET_MB` | unset (no eviction) | MB | RSS above which the data provider evicts cached frames (subject to their lifetime). |
+| `FLEXTOOL_WARM_AB_MARGIN` | `0.10` | float | Warm-start first-transfer test: the basis is kept when the warm solve takes at most `1 + margin` times the cold solve; a negative value forces the "slower" verdict (tests). |
+| `FLEXTOOL_DISABLE_AUTOSCALE_CACHE` | unset | `1` | Recompute the autoscale plan in every roll instead of reusing it (A/B check). |
+| `FLEXTOOL_DISABLE_OUTPUT_HOIST` | unset | `1` | Fetch the solution arrays once per output instead of once per solve (A/B check). |
+
+## Memory and timing diagnostics
+
+All off by default, with no overhead when unset.
+
+| Variable | Default | Set to | What it does |
+|---|---|---|---|
+| `FLEXTOOL_MEMORY_DIAGNOSTICS` | unset (off) | `1` | Per-checkpoint memory recorder with `tracemalloc`; writes `solve_data/memory_diagnostics.csv`. `--debug` sets it. |
+| `FLEXTOOL_MEMORY_VERBOSE` | unset (off) | `1` | Print every phase in the `[mem]` table, not only the main ones. `--debug` sets it. |
+| `FLEXTOOL_MEM_SAMPLER` | unset (off) | `1` / `true` / `yes` | Background thread that samples RSS at a fixed interval; catches peaks between checkpoints. |
+| `FLEXTOOL_MEM_SAMPLER_LOG` | `/tmp/flextool_mem_sampler_<pid>.log` | path | Sampler output. |
+| `FLEXTOOL_MEM_SAMPLER_INTERVAL_MS` | `100` (20–10000) | milliseconds | Sampler interval. |
+| `FLEXTOOL_PHASE_TIMING` | unset (off) | `1` | Per-iteration rows (`lp_build` / `solve` / `handoff`, `warm_used`) in `timings.csv`. |
+| `FLEXTOOL_PHASE_PROFILE` | unset (off) | `1` | One epoch-stamped RSS line per orchestration phase on stderr (aligns with the sampler log). |
+| `FLEXTOOL_PYRAMID_PROFILE` | unset (off) | `1` | One `[pyramid profile]` RSS line per preprocessing emit on stderr. |
+| `FLEXTOOL_AUTOSCALE_PROFILE` | unset (off) | `1` | RSS markers around the autoscale steps. |
+| `FLEXTOOL_BUILD_PROFILE` | unset (off) | `1` | One RSS line per model-build step on stderr. |
+| `FLEXTOOL_LOADFLEX_PROFILE` | unset (off) | `1` | One RSS line per data-load step on stderr. |
+| `POLAR_HIGH_LAYER2_PROFILE` | unset (off) | `1` | One `[layer2-bucket profile]` line per term of the autoscale Layer 2 coefficient walk. Read by FlexTool's `engine/autoscale/_layer2.py`, not by polar-high. |
+| `POLAR_HIGH_RANGES_MAX_FAMILY_ROWS` | `1000000` | integer | Only with a polar-high that has no bounded coefficient walk: constraint families with more rows are skipped in Layer 2 bucketing. Read by FlexTool's `_layer2.py`. |
+
+Example — find a transient RSS peak the per-phase recorder misses:
 
 ```bash
 FLEXTOOL_MEM_SAMPLER=1 FLEXTOOL_MEM_SAMPLER_INTERVAL_MS=50 \
     python run_flextool.py input.sqlite output_info.sqlite --scenario-name base
 ```
 
-## Memory tuning
+## Process level
 
-| Variable | Default | Set to | What it does |
-|---|---|---|---|
-| `MALLOC_ARENA_MAX` | `4` (set by `flextool/cli/cmd_run_flextool.py` at startup) | integer (e.g. `1`, `2`, `8`) | Cap on per-thread glibc malloc arenas. Linux-only. Defaults to `4` because polars / Arrow allocate-and-free in patterns that otherwise fragment per-thread arenas into a large RSS footprint that is not reclaimed between solves. Lower (`1` or `2`) further trims long-running rolling-horizon RSS at a small allocator-contention cost; higher relaxes the cap if you suspect arena contention is dominating. Not a FlexTool-defined variable — the entry point sets a default via `os.environ.setdefault`, so any value already in the environment wins. |
-| `FLEXTOOL_COLD_KEEP_PROVIDER` | unset (off) | `1` | Under `--save-memory`, keep the `flex_data_provider` alive across cold iterations instead of rebuilding from the Spine DB each time. Trades steady-state RSS for skipping a per-iter DB re-read. Off by default because peak RSS is the typical save-memory bottleneck. |
-| `FLEXTOOL_RSS_BUDGET_MB` | unset (no eviction) | MB (float) | Soft RSS budget for the `flex_data_provider`'s lazy-frame eviction. When set, the provider drops cached frames once RSS crosses the threshold (subject to lifetime info). Useful on long-running workflows where intermediate frames accumulate; unset gives unbounded retention. |
+Set when `flextool` is imported, with `setdefault` semantics: a value already in the environment wins.
 
-## Precision cleanup
-
-| Variable | Default | Set to | What it does |
-|---|---|---|---|
-| `FLEXTOOL_PRECISION_DIGITS` | unset (passthrough) | integer 1–15 | Round every numeric CSV cell written to `input/` / `solve_data/` to N significant figures. Env-var fallback for `--precision-digits N`. `0` or unset disables. CLI takes precedence. See [LP scaling pipeline § Precision rounding](scaling.md#precision-rounding). |
-| `FLEXTOOL_REPORT_NEAR_DUPS` | unset (off) | `1` / `true` / `yes` / `on` | Run the near-duplicate parameter-value diagnostic. Off by default; equivalent to `--report-near-duplicates`. Surfaces clusters of values that are nearly-but-not-exactly equal — useful before tightening `FLEXTOOL_PRECISION_DIGITS`. |
-
-## Niche / test hooks
-
-These are documented for completeness. Most users will never set
-them.
-
-| Variable | Default | Set to | What it does |
-|---|---|---|---|
-| `FLEXTOOL_NATIVE_SCENARIO` | unset | scenario name | Override for `run_chain`'s scenario-name resolution when neither the dir-name convention (`work_<scenario>`) nor an explicit kwarg applies. |
-| `FLEXTOOL_SOLVER_CONFIG_DIR` | `<cwd>/solver_config` | directory path | Override the lookup directory for `highs.opt` and friends used by the subprocess-solve path. Matches the existing hook honoured by CI / tests. |
-| `FLEXTOOL_DUMP_CSVS` | unset (off) | `1` | Restore the legacy debug-oracle CSV writes — emits the seven gigabyte-scale CSVs that `dump_csvs` skips by default. Used by the round-trip regression test; for normal runs the default (skip) saves significant disk I/O. |
-| `FLEXTOOL_AUDIT_SOURCES` | unset (off) | `1` | Append every Provider key carrying a non-None `source` tag to `<work_folder>/audit_sources.log` per sub-solve. Captures externally-injected entries from the override translator. |
-| `FLEXTOOL_FORCE_ROW_SCALING` | unset | `1` / `true` / `yes` / `on` | Test hook that forces `p_use_row_scaling=1`. Since the `solve.use_row_scaling` DB parameter was removed, every solve emits `p_use_row_scaling=0` by default and this hook is the only way to enable the legacy row-scaling family. Used by the Mode B un-scaling benchmark harness. |
-| `FLEXTOOL_SKIP_SOLVER_PROBE` | unset | `1` | Skip the startup solver-license probe (avoids the FICO Xpress Community LicenseWarning). Set in the test conftest. |
-| `FLEXTOOL_SLICE` | unset | systemd slice name | When set and `systemd-run` is available, place the worker process in the named cgroup slice for scheduling isolation. GUI-launched runs only. |
-| `FLEXTOOL_DPI` | unset (auto-detect) | DPI value (e.g. `144`) | GUI-only. Explicit DPI override when desktop-environment auto-detection (`Xft.dpi`, `GDK_SCALE`, Windows ctypes query) gives the wrong value. |
-
-## See also
-
-- [LP scaling pipeline](scaling.md) — the full autoscale story for
-  `FLEXTOOL_SCALING` and `FLEXTOOL_USER_BOUND_SCALE`.
-- [polar-high — Environment variables](https://nodal-tools.github.io/polar-high/guide/env-vars/) —
-  the kernel-side `POLAR_HIGH_*` profiling and tuning variables.
-  `FLEXTOOL_SAVE_MEMORY=1` enables the path where
-  `POLAR_HIGH_WRITE_MPS_PROFILE=1` is most informative.
+| Variable | FlexTool sets | What it does |
+|---|---|---|
+| `POLARS_ENGINE_AFFINITY` | `in-memory` | polars' engine choice. FlexTool's results are verified only on the in-memory engine; the streaming engine changes row order and summation order. |
+| `_RJEM_MALLOC_CONF` | `dirty_decay_ms:1000,muzzy_decay_ms:0` | Settings of polars' jemalloc allocator: return freed pages to the system, which roughly halves peak memory on long runs. When polars was imported before flextool, FlexTool sets the decay at run time instead. |

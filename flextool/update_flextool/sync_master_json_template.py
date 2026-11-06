@@ -22,9 +22,10 @@ import sys
 import tempfile
 from pathlib import Path
 
-from spinedb_api import DatabaseMapping, export_data, import_data
+from spinedb_api import export_data, import_data
 
-from flextool.update_flextool.db_migration import migrate_database
+from flextool.update_flextool.db_handle import open_database_mapping
+from flextool.update_flextool.db_migration import migrate_repository_database
 
 from flextool._resources import package_data_path
 
@@ -34,11 +35,11 @@ SPINEDB_SCHEMA = SCHEMAS_DIR / "spinedb_schema.json"
 
 def _create_db_from_template(template_path: Path, db_path: Path) -> None:
     """Create a fresh SQLite DB from a JSON template."""
-    with open(template_path) as f:
+    with open(template_path, encoding="utf-8") as f:
         template = json.load(f)
 
     url = f"sqlite:///{db_path}"
-    with DatabaseMapping(url, create=True) as db:
+    with open_database_mapping(url, create=True) as db:
         for alt in db.find_alternatives():
             try:
                 db.remove_alternative(name=alt["name"])
@@ -51,7 +52,7 @@ def _create_db_from_template(template_path: Path, db_path: Path) -> None:
 def _export_db_to_json(db_path: Path) -> dict:
     """Export a Spine DB to a JSON-serializable dict."""
     url = f"sqlite:///{db_path}"
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         data = export_data(db)
     # export_data returns tuples; convert to lists for JSON
     return {k: [list(item) for item in v] for k, v in data.items()}
@@ -73,7 +74,7 @@ def sync_master_template(*, verify_only: bool = False) -> bool:
         _create_db_from_template(SPINEDB_SCHEMA, db_path)
 
         # Step 2: Run all migrations
-        migrate_database(str(db_path))
+        migrate_repository_database(str(db_path))
 
         # Step 3: Export migrated DB
         new_data = _export_db_to_json(db_path)
@@ -81,7 +82,7 @@ def sync_master_template(*, verify_only: bool = False) -> bool:
     # Step 4: Compare or overwrite
     new_json = json.dumps(new_data, indent=2, ensure_ascii=False) + "\n"
 
-    with open(SPINEDB_SCHEMA) as f:
+    with open(SPINEDB_SCHEMA, encoding="utf-8") as f:
         old_json = f.read()
 
     if new_json == old_json:
@@ -99,7 +100,7 @@ def sync_master_template(*, verify_only: bool = False) -> bool:
         print("Master template is OUT OF DATE. Run without --verify to regenerate.")
         return False
 
-    with open(SPINEDB_SCHEMA, "w") as f:
+    with open(SPINEDB_SCHEMA, "w", encoding="utf-8") as f:
         f.write(new_json)
     print(f"Regenerated {SPINEDB_SCHEMA}")
     return True

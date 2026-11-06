@@ -28,7 +28,7 @@ from pathlib import Path
 import pytest
 from spinedb_api import DatabaseMapping, import_data
 
-from flextool.engine_polars._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.input_derivation._specs import METHODS_MAPPING
 from flextool.input_derivation._dc_power_flow import derive_dc_power_flow
 from flextool.input_derivation._process_method import derive_process_method
@@ -54,7 +54,6 @@ def _run_dc_pf(db) -> tuple[FlexDataProvider, dict[str, str]]:
     backend._db = db  # type: ignore[attr-defined]
     import spinedb_api as _api
     backend._api = _api  # type: ignore[attr-defined]
-    backend._precision_digits = 0  # type: ignore[attr-defined]
     provider = FlexDataProvider()
     overrides = derive_dc_power_flow(backend, provider, logger)
     return provider, overrides
@@ -113,6 +112,7 @@ def _create_test_db(db_path: str) -> str:
             ("group", "reference_node"),
             ("group", "candidate_precapacity_to_avoid_big_m"),
             ("node", "existing"),
+            ("node", "virtual_unitsize"),
         ]
         count, errors = import_data(
             db,
@@ -147,7 +147,6 @@ def _run_process_method(
     backend._db = db  # type: ignore[attr-defined]
     import spinedb_api as _api
     backend._api = _api  # type: ignore[attr-defined]
-    backend._precision_digits = 0  # type: ignore[attr-defined]
     provider = FlexDataProvider()
     derive_process_method(
         backend, provider, logger,
@@ -272,6 +271,17 @@ class TestDCPowerFlowDataPipeline:
 
         ref_nodes = _column(provider, "input/node_reference_angle", "node")
         assert ref_nodes == ["bus_A"]
+
+    def test_reference_node_reads_existing_capacity(self, triangle_db: str) -> None:
+        """With virtual_unitsize, existing is the number of units: bus_C's 50 × 10 = 500 is larger than bus_A's 200,
+        so bus_C is the reference node."""
+        _add_data(triangle_db, parameter_values=[("node", "bus_C", "virtual_unitsize", 10.0)])
+        with DatabaseMapping(triangle_db) as db:
+            db.fetch_all("entity")
+            db.fetch_all("parameter_value")
+            provider, _ = _run_dc_pf(db)
+
+        assert _column(provider, "input/node_reference_angle", "node") == ["bus_C"]
 
     def test_ct_method_overrides_returned(self, triangle_db: str) -> None:
         """DC PF connections get ct_method override to no_losses_no_variable_cost."""

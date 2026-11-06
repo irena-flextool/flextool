@@ -57,15 +57,21 @@ unpack_map_params:
     index_column: "constraint"
   node_constraint:
     source_classes: ["node"]
-    params: ["constraint_invested_capacity_coeff", "constraint_cumulative_pre_built_capacity_coeff", "constraint_state_coeff"]
+    params: ["constraint_invested_capacity_coeff", "constraint_cumulative_pre_built_capacity_coeff",
+             "constraint_capacity_coeff", "constraint_retired_capacity_coeff",
+             "constraint_in_construction_capacity_coeff", "constraint_state_coeff"]
     index_column: "constraint"
   unit_constraint:
     source_classes: ["unit"]
-    params: ["constraint_invested_capacity_coeff", "constraint_cumulative_pre_built_capacity_coeff"]
+    params: ["constraint_invested_capacity_coeff", "constraint_cumulative_pre_built_capacity_coeff",
+             "constraint_capacity_coeff", "constraint_retired_capacity_coeff",
+             "constraint_in_construction_capacity_coeff"]
     index_column: "constraint"
   connection_constraint:
     source_classes: ["connection"]
-    params: ["constraint_invested_capacity_coeff", "constraint_cumulative_pre_built_capacity_coeff"]
+    params: ["constraint_invested_capacity_coeff", "constraint_cumulative_pre_built_capacity_coeff",
+             "constraint_capacity_coeff", "constraint_retired_capacity_coeff",
+             "constraint_in_construction_capacity_coeff"]
     index_column: "constraint"
 
 # Add columns from a related multi-dim entity class to a sheet.
@@ -163,6 +169,8 @@ sheet_order:
   - unit_node_p
   - unit_node_t
   - unit_node_s
+  - profile_c
+  - profile_p
   - profile_t
   - profile_s
   - node_profile_c
@@ -183,6 +191,7 @@ sheet_order:
   - reserve_unit_node_c
   - solve_s_stochastic_branches
   - constraint_sense_c
+  - constraint_sense_p
   - unit_node_constraint_c
   - connection_node_constraint_c
   - node_constraint_c
@@ -223,7 +232,7 @@ navigate_groups:
   - name: "Profiles"
     color: "C5E0B4"
     rows:
-      - [profile_t, "", "", profile_s]
+      - [profile_c, profile_p, profile_t, profile_s]
       - [node_profile_c]
       - [connection_profile_c]
       - [unit_node_profile_c]
@@ -245,7 +254,7 @@ navigate_groups:
   - name: "Constraints"
     color: "FFE699"
     rows:
-      - [constraint_sense_c]
+      - [constraint_sense_c, constraint_sense_p]
       - [unit_node_constraint_c]
       - [connection_node_constraint_c]
       - [node_constraint_c]
@@ -307,6 +316,9 @@ period_only_params:
   node:
     - constraint_invested_capacity_coeff
     - constraint_cumulative_pre_built_capacity_coeff
+    - constraint_capacity_coeff
+    - constraint_retired_capacity_coeff
+    - constraint_in_construction_capacity_coeff
     - constraint_state_coeff
     - annual_flow
     - cumulative_max_capacity
@@ -323,15 +335,15 @@ period_only_params:
     - peak_inflow
     - retire_max_period
     - retire_min_period
-    - penalty_down
-    - penalty_up
     - salvage_value
-    - self_discharge_loss
     - storage_state_reference_price
     - storage_state_reference_value
   unit:
     - constraint_invested_capacity_coeff
     - constraint_cumulative_pre_built_capacity_coeff
+    - constraint_capacity_coeff
+    - constraint_retired_capacity_coeff
+    - constraint_in_construction_capacity_coeff
     - cumulative_max_capacity
     - cumulative_min_capacity
     - existing
@@ -345,9 +357,13 @@ period_only_params:
     - retire_max_period
     - retire_min_period
     - salvage_value
+    - startup_cost
   connection:
     - constraint_invested_capacity_coeff
     - constraint_cumulative_pre_built_capacity_coeff
+    - constraint_capacity_coeff
+    - constraint_retired_capacity_coeff
+    - constraint_in_construction_capacity_coeff
     - cumulative_max_capacity
     - cumulative_min_capacity
     - existing
@@ -361,6 +377,7 @@ period_only_params:
     - retire_max_period
     - retire_min_period
     - salvage_value
+    - startup_cost
   group:
     - co2_max_period
     - inertia_limit
@@ -374,6 +391,10 @@ period_only_params:
     - penalty_capacity_margin
     - penalty_inertia
     - penalty_non_synchronous
+    - retire_max_period
+    - retire_min_period
+  constraint:
+    - constant
   solve:
     - years_represented
   unit__inputNode:

@@ -83,22 +83,25 @@ These hand-derived sums are the parity oracle for
 """
 from __future__ import annotations
 
-import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "tests"))
+sys.path.insert(0, str(REPO_ROOT))
 
 from db_utils import db_to_json, json_to_db  # noqa: E402
 
-from spinedb_api import DatabaseMapping, Map, to_database  # noqa: E402
+from flextool.update_flextool.db_handle import open_database_mapping  # noqa: E402
+from spinedb_api import Map, to_database  # noqa: E402
+
+from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
+from flextool.update_flextool.test_fixtures import migrate_fixture  # noqa: E402
 
 
 SRC_JSON = REPO_ROOT / "tests/fixtures/stochastics_pbt_inflow.json"
 DST_JSON = REPO_ROOT / "tests/fixtures/branch2_parent_period.json"
-WORK_DIR = Path("/tmp/branch2_parent_period_build")
-MIGRATE_SCRIPT = Path("/home/jkiviluo/sources/flextool/migrate_database.py")
 
 BRANCHES = ("realized",)
 TIME_STARTS = ("t0001", "t0025")
@@ -130,7 +133,7 @@ def _build_3d_map() -> Map:
 
 def _augment_db(db_path: Path) -> None:
     url = f"sqlite:///{db_path.resolve()}"
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         pvs = db.find_parameter_values(
             entity_class_name="node", parameter_definition_name="inflow"
         )
@@ -157,20 +160,20 @@ def _augment_db(db_path: Path) -> None:
     print(f"replaced downriver.inflow with 3d_map (realized-only) in {db_path}")
 
 
-def main() -> None:
-    WORK_DIR.mkdir(parents=True, exist_ok=True)
-    tmp_db = WORK_DIR / "augment_round_trip.sqlite"
-    if tmp_db.exists():
-        tmp_db.unlink()
+def build(src_json: Path = SRC_JSON, dst_json: Path = DST_JSON) -> None:
+    """Augment ``src_json`` into ``dst_json`` (migrated and synced with the schema)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_db = Path(tmp) / "augment_round_trip.sqlite"
+        url = json_to_db(src_json, tmp_db)
+        migrate_database(url)
+        _augment_db(tmp_db)
+        db_to_json(tmp_db, dst_json)
+    migrate_fixture(dst_json)
+    print(f"wrote augmented JSON -> {dst_json}")
 
-    json_to_db(SRC_JSON, tmp_db)
-    subprocess.run(
-        [sys.executable, str(MIGRATE_SCRIPT), str(tmp_db)],
-        check=True,
-    )
-    _augment_db(tmp_db)
-    db_to_json(tmp_db, DST_JSON)
-    print(f"wrote augmented JSON -> {DST_JSON}")
+
+def main() -> None:
+    build()
 
 
 if __name__ == "__main__":

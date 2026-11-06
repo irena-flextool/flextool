@@ -1,0 +1,804 @@
+"""Per-solve in-memory state — the typed replacement for ``solve_data/``.
+
+Δ.12a — port per-solve preprocessing metadata into engine.
+
+This module hosts :class:`SolveContext`, the typed dataclass the
+:doc:`audit/native_data_path_design_solve_context` schematic specifies.
+It wraps the per-solve preprocessing artefacts (the ``solve_data/*``
+frames the per-solve emitters put into the sub-solve's
+:class:`~flextool.engine.preprocess._flex_data_provider.FlexDataProvider`)
+and exposes them as typed fields so the override helpers
+(``apply_derived_a..g``) and the ``_load_*`` family in
+:mod:`flextool.engine.preprocess.flex_data` read each one once per solve.
+
+:class:`SolveContext` reads only the provider; it never reads the work
+folder on disk (a ``provider=None`` raises ``ValueError``).  The point
+of going through this object is:
+
+1. **Single funnel** — every per-solve frame is fetched from the
+   provider in one place and cached on the context.
+2. **Typed entry points** — the most-consumed metadata
+   (``solveFirst``, ``realized_periods``, ``period_in_use``,
+   ``period_branch``, ``edd_history``, etc.) is parsed once into typed
+   Python state and exposed as named attributes.  Helpers that today
+   re-derive these from raw CSVs each call (e.g.
+   ``_read_active_solve``, ``_read_realize_invest_periods``) consume the
+   typed fields.
+3. **Future cutover seam** — when Δ.12c lands, the typed-fields
+   constructor swaps to populate from
+   :class:`~flextool.engine.input._solve_state.RunnerState` directly
+   (``state.solve.realized_periods[solve_name]``,
+   ``state.timeline.dt_for_solve(solve_name)``).  Helpers don't change.
+
+See :doc:`audit/native_data_path_design_solve_context` for the design
+rationale and :doc:`audit/handoff_csv_retirement.md` for the broader
+CSV-retirement plan.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import polars as pl
+
+from flextool.engine.input._axis_enums import schema_dtype
+
+
+# ---------------------------------------------------------------------------
+# SolveContext
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class SolveContext:
+    """Typed in-memory carrier of per-solve preprocessing state.
+
+    Construct via :meth:`from_workdir` to populate the typed fields from
+    the sub-solve's provider, or via the plain constructor to hand-build
+    for tests.  Every loader needs the provider (``provider=None`` raises
+    ``ValueError``); nothing is read from the work folder on disk.
+
+    All ``DataFrame`` fields are eager (``pl.DataFrame``) — helpers can
+    convert via ``df.lazy()`` at the call site to keep the rest of the
+    pipeline lazy per the project invariant.
+
+    Attributes
+    ----------
+    workdir : Path
+        The flextool workdir.  Used only to form the provider keys
+        (``solve_data/<stem>`` / ``input/<stem>``); never read.
+    solve_name : str | None
+        Active solve as written to ``solve_data/solve_current.csv``.
+        ``None`` for fixtures without per-solve preprocessing.
+    solveFirst : bool
+        ``True`` iff this is the first sub-solve in a multi-solve cascade
+        (per ``solve_data/p_model.csv:solveFirst``).  Default ``True``
+        (single-solve fixtures behave as first-of-chain).
+    realized_periods : set[str]
+        Periods realized this solve (``realized_dispatch.csv`` distinct
+        ``period`` column).  Empty when the file is missing.
+    realized_invest_periods : set[str]
+        Periods where invest was realized this solve
+        (``realized_invest_periods_of_current_solve.csv``).
+    period_in_use : pl.DataFrame
+        ``[d]`` distinct frame from ``period_in_use_set.csv``.  This is
+        the authoritative active-period set INCLUDING any stochastic-
+        branch periods (per ``per_solve_sets.py:95-101``).  Empty frame
+        when the file is missing.
+    period_branch : pl.DataFrame
+        ``[d_anchor, b]`` from ``period__branch.csv`` — full unfiltered
+        anchor → sibling map.  Empty frame when the file is missing.
+    edd_history : pl.DataFrame
+        ``[entity, d_decided, d_apply]`` from ``edd_history.csv`` — the
+        invest-decision-date → apply-date map used by handoff-derived
+        ``p_entity_previously_invested_capacity``.  Empty frame when the
+        file is missing.
+    p_entity_pre_existing : pl.DataFrame
+        ``[entity, period, value]`` from ``p_entity_pre_existing.csv``.
+        Empty when missing.
+
+    The remaining per-solve frames (block-layout, dtttdt, etc.) are read
+    from the provider by their own helpers (:class:`BlockLayout`,
+    ``_derived._ctx_read``).
+    """
+
+    workdir: Path
+    solve_name: str | None = None
+    solveFirst: bool = True
+    realized_periods: set[str] = field(default_factory=set)
+    realized_invest_periods: set[str] = field(default_factory=set)
+    # Provider stashed at construction so the lazy DataFrame property
+    # loaders can consult it without re-plumbing the kwarg through every
+    # caller.  Required: a lazy loader raises ``ValueError`` on None.
+    provider: "object | None" = field(default=None, repr=False)
+    # ``period_in_use`` / ``period_branch`` / ``edd_history`` /
+    # ``p_entity_pre_existing`` are populated on first access via the
+    # descriptor machinery below — they're DataFrame-shaped fields and
+    # each needs a provider fetch + rename.  Most consumers use only one
+    # or two of them, so the work is deferred until an attribute access
+    # asks for it.
+    _period_in_use_loaded: bool = field(default=False, repr=False)
+    _period_in_use: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(
+            schema={"d": schema_dtype(None, "d")}
+        ),
+        repr=False,
+    )
+    _period_branch_loaded: bool = field(default=False, repr=False)
+    _period_branch: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(
+            schema={
+                "d_anchor": schema_dtype(None, "d_anchor"),
+                "b": schema_dtype(None, "b"),
+            }
+        ),
+        repr=False,
+    )
+    _edd_history_loaded: bool = field(default=False, repr=False)
+    _edd_history: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(schema={}), repr=False,
+    )
+    _ppe_loaded: bool = field(default=False, repr=False)
+    _ppe: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(schema={}), repr=False,
+    )
+
+    # ── Path B Cat B (WriterSnapshot top-7) extensions ──────────────────
+    # Per-solve preprocessing artefacts written by ``_solve_writers``
+    # / ``_period_calc`` and consumed by the cascade (audit
+    # `specs/in_cascade_csv_audit.md` §Category B).  Lazy-loaded on first
+    # attribute access — same pattern as ``period_in_use`` /
+    # ``period_branch`` above.  Schemas mirror the renamed canonical form
+    # the cascade helpers themselves construct, so callers can swap a
+    # ``_read_csv_file + rename + select + unique`` chain for a single
+    # attribute access.
+    _steps_in_use_loaded: bool = field(default=False, repr=False)
+    _steps_in_use: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(
+            schema={
+                "d": schema_dtype(None, "d"),
+                "t": schema_dtype(None, "t"),
+                "step_duration": pl.Float64,
+            }
+        ),
+        repr=False,
+    )
+    _period_share_loaded: bool = field(default=False, repr=False)
+    _period_share: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(
+            schema={"d": schema_dtype(None, "d"), "value": pl.Float64}
+        ),
+        repr=False,
+    )
+    _p_entity_all_existing_loaded: bool = field(default=False, repr=False)
+    _p_entity_all_existing: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(schema={}), repr=False,
+    )
+    _solve_branch_weight_loaded: bool = field(default=False, repr=False)
+    _solve_branch_weight: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(
+            schema={
+                "b": schema_dtype(None, "b"),
+                "p_branch_weight_input": pl.Float64,
+            }
+        ),
+        repr=False,
+    )
+    _solve_branch_time_branch_loaded: bool = field(default=False, repr=False)
+    _solve_branch_time_branch: pl.DataFrame = field(
+        default_factory=lambda: pl.DataFrame(
+            schema={"d": pl.Utf8, "time_branch": pl.Utf8}
+        ),
+        repr=False,
+    )
+
+    # ------------------------------------------------------------------
+    # Factories
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_workdir(cls, workdir: Path | str,
+                      *, provider: "object | None" = None) -> "SolveContext":
+        """Construct a SolveContext for *workdir* from *provider*.
+
+        Eagerly reads only the cheap typed scalars
+        (``solve_name``, ``solveFirst``, ``realized_periods``,
+        ``realized_invest_periods``) — small single-column frames
+        consumed by the apply_derived_* boundary checks that gate the
+        rest of the cascade.
+
+        The DataFrame-shaped fields (``period_in_use``, ``period_branch``,
+        ``edd_history``, ``p_entity_pre_existing``) are loaded **lazily**
+        on first attribute access.
+
+        *provider* (the sub-solve's :class:`FlexDataProvider`) is
+        required: ``None`` raises ``ValueError``.  *workdir* only forms
+        the provider keys; nothing is read from disk.
+        """
+        _require_provider(provider, "SolveContext.from_workdir")
+        wd = Path(workdir)
+        sd = wd / "solve_data"
+        ctx = cls(workdir=wd, provider=provider)
+        ctx.solve_name = _read_active_solve(wd, provider=provider)
+        ctx.solveFirst = _read_solve_first(wd, provider=provider)
+        ctx.realized_periods = _read_realized_dispatch_periods(
+            sd / "realized_dispatch.csv", provider=provider,
+        )
+        ctx.realized_invest_periods = _read_period_set(
+            sd / "realized_invest_periods_of_current_solve.csv",
+            provider=provider,
+        )
+        return ctx
+
+    # ------------------------------------------------------------------
+    # Lazy DataFrame fields
+    # ------------------------------------------------------------------
+
+    @property
+    def period_in_use(self) -> pl.DataFrame:
+        if not self._period_in_use_loaded:
+            self._period_in_use = _load_period_in_use(
+                self.solve_data_dir / "period_in_use_set.csv",
+                provider=self.provider,
+            )
+            self._period_in_use_loaded = True
+        return self._period_in_use
+
+    @property
+    def period_branch(self) -> pl.DataFrame:
+        if not self._period_branch_loaded:
+            self._period_branch = _load_period_branch(
+                self.solve_data_dir / "period__branch.csv",
+                provider=self.provider,
+            )
+            self._period_branch_loaded = True
+        return self._period_branch
+
+    @property
+    def edd_history(self) -> pl.DataFrame:
+        if not self._edd_history_loaded:
+            self._edd_history = _load_edd_history(
+                self.solve_data_dir / "edd_history.csv",
+                provider=self.provider,
+            )
+            self._edd_history_loaded = True
+        return self._edd_history
+
+    @property
+    def p_entity_pre_existing(self) -> pl.DataFrame:
+        if not self._ppe_loaded:
+            self._ppe = _maybe_read(
+                self.solve_data_dir / "p_entity_pre_existing.csv",
+                provider=self.provider,
+            )
+            self._ppe_loaded = True
+        return self._ppe
+
+    # ── Path B Cat B (WriterSnapshot top-7) accessors ─────────────────
+    @property
+    def steps_in_use(self) -> pl.DataFrame:
+        """``[d, t, step_duration]`` from ``steps_in_use.csv`` —
+        canonical column names.  Empty when the file is missing.
+
+        Path B / audit §Category B: cascade helpers that previously
+        re-read the CSV (``_derived.py:5421, 7974``;
+        ``_branch.py:285``) should prefer this typed accessor.
+        """
+        if not self._steps_in_use_loaded:
+            self._steps_in_use = _load_steps_in_use(
+                self.solve_data_dir / "steps_in_use.csv",
+                provider=self.provider,
+            )
+            self._steps_in_use_loaded = True
+        return self._steps_in_use
+
+    @property
+    def period_share_of_year(self) -> pl.DataFrame:
+        """``[d, value]`` from ``complete_period_share_of_year_calc.csv``
+        (canonical form: ``period`` → ``d``).  Falls back to the non-
+        ``_calc`` variant when only that file exists.  Empty when neither
+        is present.
+
+        Path B / audit §Category B: cascade helpers that previously
+        re-read the CSV (``_derived.py:7990``) should prefer this
+        typed accessor.
+        """
+        if not self._period_share_loaded:
+            self._period_share = _load_period_share(
+                self.solve_data_dir, provider=self.provider,
+            )
+            self._period_share_loaded = True
+        return self._period_share
+
+    @property
+    def p_entity_all_existing(self) -> pl.DataFrame:
+        """``p_entity_all_existing.csv`` — preserved schema (canonical
+        column names already present at writer side).  Empty when the
+        file is missing.
+
+        Path B / audit §Category B: cascade helpers that previously
+        re-read the CSV (``_derived.py:4940``) should prefer this
+        typed accessor.
+        """
+        if not self._p_entity_all_existing_loaded:
+            self._p_entity_all_existing = _maybe_read(
+                self.solve_data_dir / "p_entity_all_existing.csv",
+                provider=self.provider,
+            )
+            self._p_entity_all_existing_loaded = True
+        return self._p_entity_all_existing
+
+    @property
+    def solve_branch_weight(self) -> pl.DataFrame:
+        """``[b, p_branch_weight_input]`` from
+        ``solve_branch_weight.csv`` (rename ``branch`` → ``b``).  Empty
+        when the file is missing.
+
+        Path B / audit §Category B: cascade helpers that previously
+        re-read the CSV (``_derived.py:7623``) should prefer
+        this typed accessor.
+        """
+        if not self._solve_branch_weight_loaded:
+            self._solve_branch_weight = _load_solve_branch_weight(
+                self.solve_data_dir / "solve_branch_weight.csv",
+                provider=self.provider,
+            )
+            self._solve_branch_weight_loaded = True
+        return self._solve_branch_weight
+
+    @property
+    def solve_branch_time_branch(self) -> pl.DataFrame:
+        """``[d, time_branch]`` from ``solve_branch__time_branch.csv``
+        (rename ``period`` → ``d``, ``branch`` → ``time_branch``).
+        Empty when the file is missing.
+
+        Continuation fan-out: ``dtttdt_from_source`` walks this map so
+        a continuation branch period wraps to the nearest earlier
+        period sharing the same time-branch instead of self-wrapping.
+        Columns stay ``Utf8`` — the ``time_branch`` vocabulary (DB
+        branch names like ``rlz`` / ``low``) is not a canonical axis
+        enum, and consumers use the frame as a plain dict.
+        """
+        if not self._solve_branch_time_branch_loaded:
+            self._solve_branch_time_branch = _load_solve_branch_time_branch(
+                self.solve_data_dir / "solve_branch__time_branch.csv",
+                provider=self.provider,
+            )
+            self._solve_branch_time_branch_loaded = True
+        return self._solve_branch_time_branch
+
+    # ------------------------------------------------------------------
+    # Typed-field convenience accessors
+    # ------------------------------------------------------------------
+
+    @property
+    def solve_data_dir(self) -> Path:
+        return self.workdir / "solve_data"
+
+    @property
+    def input_dir(self) -> Path:
+        return self.workdir / "input"
+
+
+# ---------------------------------------------------------------------------
+# Loaders for the typed fields
+# ---------------------------------------------------------------------------
+
+
+def _require_provider(provider: "object | None", consumer: str) -> None:
+    """Raise ``ValueError`` when *provider* is None.
+
+    SolveContext reads only the sub-solve's provider; there is no disk
+    fallback.
+    """
+    if provider is None:
+        raise ValueError(
+            f"{consumer} requires a FlexDataProvider; SolveContext never reads "
+            "the work folder on disk."
+        )
+
+
+def _carrier_miss(path: Path, consumer: str) -> "FlexDataError":
+    """Build the strict-Provider miss error for a SolveContext loader.
+
+    The producer-side writer should have populated the carrier before
+    the loader runs.  A miss here is a cascade bug — likely the writer
+    didn't run, or its frame was emitted under a non-canonical key.
+    """
+    return FlexDataError(
+        f"FlexDataProvider has no carrier for '{path.name}' "
+        f"(consumer: {consumer}).  This per-solve frame must be "
+        f"populated by its emitter before SolveContext consumes it.  "
+        f"Check that the producer ran and registered under the canonical "
+        f"key '{_provider_key_for(path)}'."
+    )
+
+
+def _provider_key_for(path: Path) -> str:
+    """Return the canonical Provider key for *path* (parent/stem)."""
+    parent = path.parent.name
+    stem = path.stem
+    if parent:
+        return f"{parent}/{stem}"
+    return stem
+
+
+class FlexDataError(RuntimeError):
+    """Raised when the Provider lacks a carrier the cascade requires.
+
+    This is a programming/wiring error — surfaced rather than worked
+    around so the broken edge is visible.  See ``specs/enum_dtype_refactor_plan.md``
+    §Phase 3 for the rationale (no silent disk-fallback arms).
+    """
+
+
+def _provider_fetch_or_raise(
+    provider: "object", path: Path, consumer: str,
+) -> pl.DataFrame:
+    """Fetch *path*'s carrier from *provider* strictly; raise on miss."""
+    from flextool.engine.preprocess._provider_io import _provider_key
+    key = _provider_key(path)
+    if provider.has(key):
+        df = provider.get(key)
+        if df is not None:
+            return df
+    raise _carrier_miss(path, consumer)
+
+
+def _maybe_read(path: Path,
+                 *, provider: "object | None" = None) -> pl.DataFrame:
+    """Strict provider fetch of *path*'s carrier.
+
+    A missing key raises :class:`FlexDataError`; ``provider=None`` raises
+    ``ValueError``.  Empty frames (height 0) are returned as
+    ``pl.DataFrame()`` so callers that ``if df.height == 0`` continue to
+    short-circuit cleanly.
+    """
+    _require_provider(provider, "SolveContext._maybe_read")
+    df = _provider_fetch_or_raise(provider, path, "SolveContext._maybe_read")
+    if df.height == 0:
+        return pl.DataFrame()
+    return df
+
+
+def _read_active_solve(workdir: Path,
+                        *, provider: "object | None" = None) -> str | None:
+    """Mirror of ``_derived._read_active_solve``.
+
+    Reads ``solve_data/solve_current`` from *provider* (required:
+    ``None`` raises ``ValueError``).  Key absent or empty → ``None``.
+    """
+    from flextool.engine.preprocess._provider_io import _provider_key
+    _require_provider(provider, "SolveContext._read_active_solve")
+    p = workdir / "solve_data" / "solve_current.csv"
+    if not provider.has(_provider_key(p)):
+        return None
+    df = provider.get(_provider_key(p))
+    if df is None or df.height == 0:
+        return None
+    col = df.columns[0]
+    return df[col][0]
+
+
+def _read_solve_first(work_folder: Path,
+                       *, provider: "object | None" = None) -> bool:
+    """Mirror of ``flex_data._read_solve_first``.
+
+    Reads ``modelParam == 'solveFirst'`` from ``p_model.csv``.  Resolves
+    in order: ``solve_data/p_model.csv`` → ``input/p_model.csv`` → True.
+    """
+    from flextool.engine.preprocess._provider_io import _provider_key
+    _require_provider(provider, "SolveContext._read_solve_first")
+
+    def _cell_str(value: "object | None") -> str:
+        return "" if value is None else str(value)
+
+    for cand in ("solve_data/p_model.csv", "input/p_model.csv"):
+        path = work_folder / cand
+        key = _provider_key(path)
+        if not provider.has(key):
+            continue
+        df = provider.get(key)
+        if "modelParam" not in df.columns or "p_model" not in df.columns:
+            return True
+        for r in df.iter_rows(named=True):
+            if _cell_str(r["modelParam"]) == "solveFirst":
+                try:
+                    return bool(int(_cell_str(r["p_model"])))
+                except (ValueError, TypeError):
+                    return True
+        # Frame existed but didn't contain the flag — treat as default.
+        return True
+    return True
+
+
+def _read_period_set(path: Path,
+                      *, provider: "object | None" = None) -> set[str]:
+    """Read a single-column period frame (one period per row) from *provider*."""
+    from flextool.engine.preprocess._provider_io import _provider_key
+    _require_provider(provider, "SolveContext._read_period_set")
+
+    def _cell_str(value: "object | None") -> str:
+        return "" if value is None else str(value)
+
+    key = _provider_key(path)
+    if not provider.has(key):
+        return set()
+    df = provider.get(key)
+    out: set[str] = set()
+    if df.width == 0:
+        return out
+    col0 = df.columns[0]
+    for value in df.get_column(col0):
+        c0 = _cell_str(value)
+        if c0:
+            out.add(c0)
+    return out
+
+
+def _read_realized_dispatch_periods(path: Path,
+                                     *, provider: "object | None" = None) -> set[str]:
+    """Read distinct periods from ``solve_data/realized_dispatch`` in *provider*."""
+    from flextool.engine.preprocess._provider_io import _provider_key
+    _require_provider(provider, "SolveContext._read_realized_dispatch_periods")
+
+    def _cell_str(value: "object | None") -> str:
+        return "" if value is None else str(value)
+
+    key = _provider_key(path)
+    if not provider.has(key):
+        return set()
+    df = provider.get(key)
+    if "period" not in df.columns:
+        return set()
+    out: set[str] = set()
+    for value in df.get_column("period"):
+        c = _cell_str(value)
+        if c:
+            out.add(c)
+    return out
+
+
+def _read_frame(path: Path,
+                 *, provider: "object | None" = None,
+                 consumer: str = "SolveContext") -> pl.DataFrame | None:
+    """Strict provider frame fetch.
+
+    Returns the frame when present, ``None`` when it is empty (height 0).
+    Raises :class:`FlexDataError` when the provider lacks the carrier and
+    ``ValueError`` when *provider* is None (no disk read).
+    """
+    _require_provider(provider, consumer)
+    df = _provider_fetch_or_raise(provider, path, consumer)
+    if df.height == 0:
+        return None
+    return df
+
+
+def _load_period_in_use(path: Path,
+                         *, provider: "object | None" = None) -> pl.DataFrame:
+    """Load ``period_in_use_set.csv`` and rename to canonical ``[d]``.
+
+    Preserves CSV row order (``unique(maintain_order=True)``) so callers
+    that consume the frame as an ordered list of periods (e.g. the
+    canonical-order reorder in ``_dt_period_active_steps``) get the
+    same active_time_list ordering the workdir CSV exposes.
+
+    Phase 4.6 — cast the renamed ``d`` column to the canonical axis
+    Enum when activation is on so downstream joins against cascade
+    frames (which are Enum-typed) match dtypes.
+    """
+    from flextool.engine.input._axis_enums import (
+        get_global_axis_enums,
+        cast_frame_axes,
+    )
+    _live = get_global_axis_enums()
+    _empty_d_dtype = (
+        _live.get("d", pl.Utf8) if _live is not None else pl.Utf8
+    )
+    empty = pl.DataFrame(schema={"d": _empty_d_dtype})
+    df = _read_frame(path, provider=provider,
+                      consumer="SolveContext.period_in_use")
+    if df is None:
+        return empty
+    df = df.rename({df.columns[0]: "d"})
+    df = df.select("d").unique(maintain_order=True)
+    if _live is not None:
+        df = cast_frame_axes(df, _live)
+    return df
+
+
+def _load_period_branch(path: Path,
+                         *, provider: "object | None" = None) -> pl.DataFrame:
+    """Load ``period__branch.csv`` as ``[d_anchor, b]``.
+
+    Phase 4.6 — under activation cast the dim columns to the canonical
+    axis enums so downstream joins see Enum dtypes consistently.
+    """
+    from flextool.engine.input._axis_enums import (
+        get_global_axis_enums,
+        cast_frame_axes,
+    )
+    _live = get_global_axis_enums()
+    _d_anchor = _live.get("d_anchor", pl.Utf8) if _live is not None else pl.Utf8
+    _b = _live.get("branch", pl.Utf8) if _live is not None else pl.Utf8
+    empty = pl.DataFrame(schema={"d_anchor": _d_anchor, "b": _b})
+    df = _read_frame(path, provider=provider,
+                      consumer="SolveContext.period_branch")
+    if df is None:
+        return empty
+    rename = {}
+    if "period" in df.columns:
+        rename["period"] = "d_anchor"
+    if "branch" in df.columns:
+        rename["branch"] = "b"
+    df = df.rename(rename)
+    cols = [c for c in ("d_anchor", "b") if c in df.columns]
+    df = df.select(cols).unique(maintain_order=True) if cols else empty
+    if _live is not None:
+        cast = cast_frame_axes(df, _live)
+        for col in cols:
+            lost = cast[col].is_null() & df[col].is_not_null()
+            if lost.any():
+                from flextool.spinedb_backend._axis_enums import FlexDataIntegrityError
+                bad = sorted({str(v) for v in df.filter(lost)[col].to_list()})
+                raise FlexDataIntegrityError(
+                    f"period__branch column {col!r} holds labels outside the {col!r} axis vocabulary: {bad}. "
+                    "Axis-Enum mode builds 'd_anchor' from the period ('d') vocabulary and 'b' (branch) to cover "
+                    "every period, so every label here should be a period of the scenario."
+                )
+        df = cast
+    return df
+
+
+def _load_edd_history(path: Path,
+                       *, provider: "object | None" = None) -> pl.DataFrame:
+    """Load ``edd_history.csv`` — schema preserved as-is."""
+    df = _read_frame(path, provider=provider,
+                      consumer="SolveContext.edd_history")
+    if df is None:
+        return pl.DataFrame()
+    return df
+
+
+def _load_steps_in_use(path: Path,
+                        *, provider: "object | None" = None) -> pl.DataFrame:
+    """Load ``steps_in_use.csv`` and rename to canonical ``[d, t,
+    step_duration]``.  Empty frame when missing.
+
+    Audit §Category B (WriterSnapshot top-7): the cascade helpers
+    consume this frame after renaming ``period`` → ``d`` and
+    ``step`` / ``time`` → ``t``; this helper centralises that rename
+    so the cascade sees the canonical form directly.
+
+    Phase 4.6 — cast ``d``/``t`` to canonical axis enums when
+    activation is on so downstream joins (against cascade frames that
+    are Enum-typed) match dtypes.
+    """
+    from flextool.engine.input._axis_enums import (
+        get_global_axis_enums,
+        cast_frame_axes,
+    )
+    _live = get_global_axis_enums()
+    _d_dt = _live.get("d", pl.Utf8) if _live is not None else pl.Utf8
+    _t_dt = _live.get("t", pl.Utf8) if _live is not None else pl.Utf8
+    empty = pl.DataFrame(
+        schema={"d": _d_dt, "t": _t_dt, "step_duration": pl.Float64}
+    )
+    df = _read_frame(path, provider=provider,
+                      consumer="SolveContext.steps_in_use")
+    if df is None:
+        return empty
+    period_col = next((c for c in ("period", "d") if c in df.columns), None)
+    step_col = next(
+        (c for c in ("step", "t", "time") if c in df.columns), None
+    )
+    if period_col is None or step_col is None:
+        return empty
+    out = df.rename({period_col: "d", step_col: "t"})
+    if "step_duration" in out.columns:
+        out = out.with_columns(
+            pl.col("step_duration").cast(pl.Float64, strict=False)
+        )
+    cols = [c for c in ("d", "t", "step_duration") if c in out.columns]
+    out = out.select(cols)
+    if _live is not None:
+        out = cast_frame_axes(out, _live)
+    return out
+
+
+def _load_period_share(solve_data_dir: Path,
+                        *, provider: "object | None" = None) -> pl.DataFrame:
+    """Load ``complete_period_share_of_year_calc.csv`` (preferred) or
+    its non-``_calc`` variant — rename ``period`` → ``d``.
+
+    Audit §Category B (WriterSnapshot top-7): the cascade currently
+    falls through both names at its read sites (e.g.
+    ``_derived.py:7984-7988``).  Centralising the fallback here
+    gives every consumer the same semantics.  *provider* is required
+    (``None`` raises ``ValueError``); no disk read.
+    """
+    from flextool.engine.preprocess._provider_io import _provider_key
+    _require_provider(provider, "SolveContext._load_period_share")
+    empty = pl.DataFrame(schema={"d": pl.Utf8, "value": pl.Float64})
+    cand_paths = (
+        solve_data_dir / "complete_period_share_of_year_calc.csv",
+        solve_data_dir / "complete_period_share_of_year.csv",
+    )
+    # Probe ``_calc`` first (the producer's default), then the
+    # non-``_calc`` name.
+    for path in cand_paths:
+        key = _provider_key(path)
+        if provider.has(key):
+            df = provider.get(key)
+            if df is None or df.height == 0:
+                continue
+            out = df
+            if "period" in out.columns:
+                out = out.rename({"period": "d"})
+            if "value" in out.columns:
+                out = out.with_columns(
+                    pl.col("value").cast(pl.Float64, strict=False)
+                )
+            cols = [c for c in ("d", "value") if c in out.columns]
+            if cols:
+                return out.select(cols)
+    # Neither variant carried a usable frame — treat as empty.
+    # ``period_share_of_year`` is genuinely optional (some fixtures
+    # skip the inflation-factor pipeline entirely).
+    return empty
+
+
+def _load_solve_branch_time_branch(path: Path,
+                                     *, provider: "object | None" = None,
+                                     ) -> pl.DataFrame:
+    """Load ``solve_branch__time_branch.csv`` as ``[d, time_branch]``.
+
+    Plain ``Utf8`` columns — the time-branch vocabulary is not a
+    canonical axis enum (see :pyattr:`SolveContext.solve_branch_time_branch`).
+    """
+    empty = pl.DataFrame(schema={"d": pl.Utf8, "time_branch": pl.Utf8})
+    df = _read_frame(path, provider=provider,
+                      consumer="SolveContext.solve_branch_time_branch")
+    if df is None:
+        return empty
+    rename = {}
+    if "period" in df.columns:
+        rename["period"] = "d"
+    if "branch" in df.columns:
+        rename["branch"] = "time_branch"
+    df = df.rename(rename)
+    cols = [c for c in ("d", "time_branch") if c in df.columns]
+    if len(cols) < 2:
+        return empty
+    return (df.select(pl.col(c).cast(pl.Utf8) for c in cols)
+              .unique(maintain_order=True))
+
+
+def _load_solve_branch_weight(path: Path,
+                                *, provider: "object | None" = None) -> pl.DataFrame:
+    """Load ``solve_branch_weight.csv`` and rename to canonical
+    ``[b, p_branch_weight_input]``.
+
+    Audit §Category B (WriterSnapshot top-7).
+    """
+    empty = pl.DataFrame(
+        schema={"b": pl.Utf8, "p_branch_weight_input": pl.Float64}
+    )
+    df = _read_frame(path, provider=provider,
+                      consumer="SolveContext.solve_branch_weight")
+    if df is None:
+        return empty
+    ren = {}
+    if "branch" in df.columns:
+        ren["branch"] = "b"
+    out = df.rename(ren)
+    if "p_branch_weight_input" in out.columns:
+        out = out.with_columns(
+            pl.col("p_branch_weight_input").cast(pl.Float64, strict=False)
+        )
+    cols = [c for c in ("b", "p_branch_weight_input") if c in out.columns]
+    return out.select(cols) if cols else empty
+
+
+__all__ = ["SolveContext", "FlexDataError"]

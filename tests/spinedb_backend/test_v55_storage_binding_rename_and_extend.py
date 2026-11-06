@@ -302,7 +302,8 @@ def test_v55_post_migration_description_matches_canonical(tmp_path: Path) -> Non
             name="storage_binding_method",
         )
         description = item["description"]
-    assert description == _STORAGE_BINDING_METHOD_DESCRIPTION_V55, (
+    # Database version 77 appends one sentence to the v55 text.
+    assert description.startswith(_STORAGE_BINDING_METHOD_DESCRIPTION_V55), (
         "node.storage_binding_method description does not match the "
         "canonical v55 text.\n"
         f"  expected (first 80 chars): {_STORAGE_BINDING_METHOD_DESCRIPTION_V55[:80]!r}\n"

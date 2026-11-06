@@ -8,7 +8,7 @@ turned into double-counted state-change residuals.
 The single-valued contract is enforced at ingestion in
 :func:`flextool.spinedb_backend._backend.SpineDBBackend.parameter_values`
 — the ``elif ptype in ("array", "time_series"):`` branch raises a
-:class:`flextool.engine_polars._solve_state.FlexToolConfigError` with
+:class:`flextool.engine.input._solve_state.FlexToolConfigError` with
 an actionable message naming the offending entity, the array contents,
 the six allowed single-string values, and pointing at the v52->v53
 migration.  This test pins that behaviour.
@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 from spinedb_api import Array, DatabaseMapping, import_data
 
-from flextool.engine_polars._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.spinedb_backend import SpineDBBackend
 
 

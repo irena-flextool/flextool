@@ -8,7 +8,8 @@ import sys
 from pathlib import Path
 
 import matplotlib
-from spinedb_api import DatabaseMapping, from_database, Array
+from spinedb_api import from_database, Array
+from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.filters.alternative_filter import alternative_filter_config
 from spinedb_api.filters.tools import append_filter_config
 
@@ -137,7 +138,7 @@ def main() -> None:
 
     settings_db_url = args.settings_db_url
     if settings_db_url and os.path.exists(settings_db_url.replace('sqlite:///', '')):
-        with DatabaseMapping(settings_db_url) as settings_db:
+        with open_database_mapping(settings_db_url) as settings_db:
             settings_entities = settings_db.get_entity_items(entity_class_name="settings")
             if len(settings_entities) == 1:
                 settings_name = settings_entities[0]["name"]

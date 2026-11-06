@@ -1,0 +1,355 @@
+"""Registry coverage: every parameter / variable / constraint named in
+FlexTool must have a Layer-2 quantity-type / family registration.
+
+This test is the future-proofing layer for the autoscaler.  Phase 0c
+populated :data:`flextool.engine.autoscale._quantity_types.
+PARAMETER_TYPES` from the parameter_definition descriptions in
+``templates/input_data_template.sqlite``; phase 1c populated
+:data:`VARIABLE_FAMILIES` and :data:`CONSTRAINT_FAMILIES` from every
+``add_var`` / ``add_cstr`` call site in ``flextool/engine/``.
+
+What this test pins:
+
+* **Parameter coverage** — for every ``(parameter_name, entity_class)``
+  pair the template DB declares, ``PARAMETER_TYPES`` must have an
+  entry.  A new parameter added by a model author MUST also be
+  registered here, otherwise Layer 2 would silently skip its scaling
+  contribution.  Phase 0c was exhaustive; this test guards against
+  drift.
+* **Variable coverage** — every string literal passed to ``add_var``
+  in non-test, non-autoscale engine sources must appear in
+  ``VARIABLE_FAMILIES``.  A new variable that the autoscaler does not
+  know about would raise :class:`KeyError` in Layer 2 at solve time;
+  surfacing it here gives a clear failure message instead.
+* **Constraint coverage** — every string literal passed to
+  ``add_cstr`` must resolve via :func:`lookup_cstr` (which knows the
+  ``_p`` / ``_n`` / ``_linear`` / ``_integer`` suffix-strip rules).
+  Dynamic constraint names (``f"maxOnline_{suffix}"``) are out of
+  scope for the static grep — the prefix entry in
+  ``CONSTRAINT_FAMILIES`` covers them transparently.
+
+We deliberately use a regex scan rather than AST parsing: the
+``add_var`` / ``add_cstr`` call shape is unambiguous (the name is
+always a leading string literal), the regex catches multi-line calls,
+and we avoid the overhead of building a CPython AST for every engine
+module.  The cost is that genuinely dynamic names ("f-strings") are
+silently skipped — which is the correct behaviour here (no static
+name to register).
+
+The template DB lives at the absolute path below; it is read-only
+(opened via ``mode=ro`` in the sqlite URI) so this test cannot
+mutate it.  We do NOT copy to /tmp because we only read parameter
+metadata, never solve.
+"""
+from __future__ import annotations
+
+import re
+import sqlite3
+from pathlib import Path
+
+import pytest
+
+
+# add_var("name", ...)  /  add_cstr("name", ...).  Both names are
+# always the first positional argument as a string literal.  The
+# pattern is permissive about whitespace + newlines so the multi-line
+# calls in ``_dc_power_flow.py`` (``m.add_var(\n    "v_angle", ...)``)
+# are matched too.
+_ADD_VAR_PATT = re.compile(r"add_var\(\s*[\"']([a-zA-Z_][a-zA-Z0-9_]*)[\"']")
+_ADD_CSTR_PATT = re.compile(r"add_cstr\(\s*[\"']([a-zA-Z_][a-zA-Z0-9_]*)[\"']")
+
+
+# The solver-license probe in ``_solver_dispatch.py`` builds a
+# throwaway Problem with a one-var LP called ``"x"`` purely to check
+# whether the solver is licensed.  That variable never appears in a
+# FlexTool LP — it lives entirely inside the probe — so excluding it
+# from the registry is correct.
+_PROBE_ONLY_VARS = {"x"}
+
+
+def _engine_sources() -> list[Path]:
+    """Engine_polars source files, excluding tests and the autoscale
+    package (which has no ``add_var`` calls of its own)."""
+    engine_dir = Path(__file__).resolve().parents[3] / "flextool" / "engine"
+    assert engine_dir.is_dir(), f"engine not found at {engine_dir}"
+    return [
+        f for f in engine_dir.rglob("*.py")
+        if "test" not in f.parts and "autoscale" not in f.parts
+    ]
+
+
+def test_parameter_registry_covers_schema(schema_db_url: str) -> None:
+    """Every (parameter, entity_class) pair the schema declares has a
+    :class:`QuantityType` registration.
+
+    Reads from a DB built off ``schemas/spinedb_schema.json`` at session
+    start (the ``schema_db_url`` fixture) rather than a checked-in
+    template SQLite.  The template lags the schema between regenerations
+    and silently under-covers — the v56 ``is_enabled`` add was present in
+    the schema but missing from ``templates/input_data_template.sqlite``,
+    so the old template-DB form of this test stayed green while
+    ``PARAMETER_TYPES`` was incomplete.  Building from the schema also
+    exercises the real ``import_data`` path.
+
+    If this fails the diagnostic lists the missing pairs — add each to
+    ``flextool/engine/autoscale/_quantity_types.py`` with the
+    quantity tag from the parameter's description (flags / yes_no gates →
+    DIMENSIONLESS).
+    """
+    from flextool.engine.autoscale._quantity_types import PARAMETER_TYPES
+
+    db_path = schema_db_url.replace("sqlite:///", "")
+    # Read-only URI so a buggy test cannot mutate the built DB by accident.
+    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    try:
+        rows = conn.execute(
+            "SELECT pd.name, ec.name "
+            "FROM parameter_definition pd "
+            "JOIN entity_class ec ON pd.entity_class_id = ec.id"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    pairs = [(p, ec) for p, ec in rows]
+    missing = [p for p in pairs if p not in PARAMETER_TYPES]
+    assert not missing, (
+        f"{len(missing)} (parameter, entity_class) pairs declared in "
+        f"spinedb_schema.json are missing from PARAMETER_TYPES (out of "
+        f"{len(pairs)} total):\n"
+        + "\n".join(f"  {p!r}" for p in missing[:50])
+        + ("\n  ..." if len(missing) > 50 else "")
+        + "\n\nAdd each pair to "
+        "flextool/engine/autoscale/_quantity_types.py with the "
+        "QuantityType matching the parameter's description unit."
+    )
+
+
+def test_variable_registry_covers_engine_sources() -> None:
+    """Every static ``add_var("name", ...)`` literal has a
+    :class:`VarFamily` registration in :data:`VARIABLE_FAMILIES`.
+
+    A missing entry would cause Layer 2 to raise :class:`KeyError` at
+    solve time.  Surfacing it here gives the developer a clean failure
+    list instead of an opaque solve-time crash.
+    """
+    from flextool.engine.autoscale._layer2_types import VARIABLE_FAMILIES
+
+    found: dict[str, list[Path]] = {}
+    for src_path in _engine_sources():
+        text = src_path.read_text(encoding="utf-8")
+        for m in _ADD_VAR_PATT.finditer(text):
+            found.setdefault(m.group(1), []).append(src_path)
+
+    # Exclude the solver-probe variable (see _PROBE_ONLY_VARS).
+    for name in _PROBE_ONLY_VARS:
+        found.pop(name, None)
+
+    missing = sorted(n for n in found if n not in VARIABLE_FAMILIES)
+    assert not missing, (
+        "add_var names without a VARIABLE_FAMILIES entry:\n"
+        + "\n".join(
+            f"  {n!r} (in {', '.join(sorted(set(str(p) for p in found[n])))})"
+            for n in missing
+        )
+        + "\n\nAdd each to flextool/engine/autoscale/_layer2_types.py "
+        "with the QuantityType matching its column meaning."
+    )
+
+
+def test_constraint_registry_covers_engine_sources() -> None:
+    """Every static ``add_cstr("name", ...)`` literal resolves via
+    :func:`lookup_cstr` (exact match or known suffix strip).
+
+    Dynamic constraint names (``f"maxOnline_{sfx}"``) are matched via
+    prefix entries in the registry — those don't appear as literals in
+    the grep, and the registry covers them transparently via the
+    prefix dispatch in :func:`lookup_cstr`.
+    """
+    from flextool.engine.autoscale._layer2_types import lookup_cstr
+
+    found: dict[str, list[Path]] = {}
+    for src_path in _engine_sources():
+        text = src_path.read_text(encoding="utf-8")
+        for m in _ADD_CSTR_PATT.finditer(text):
+            found.setdefault(m.group(1), []).append(src_path)
+
+    missing: list[str] = []
+    for name in sorted(found):
+        try:
+            lookup_cstr(name)
+        except KeyError:
+            missing.append(name)
+
+    assert not missing, (
+        "add_cstr names without a CONSTRAINT_FAMILIES entry "
+        "(neither exact match nor known suffix strip resolves them):\n"
+        + "\n".join(
+            f"  {n!r} (in {', '.join(sorted(set(str(p) for p in found[n])))})"
+            for n in missing
+        )
+        + "\n\nAdd each to flextool/engine/autoscale/_layer2_types.py "
+        "with the QuantityType matching its row-bound (RHS) meaning, or "
+        "``CstrFamily(None)`` if the row carries no per-row scaling."
+    )
+
+
+# Dynamic (f-string) constraint names that the literal grep above CANNOT
+# see — ``add_cstr(f"...")`` calls.  These resolve only through
+# ``lookup_cstr``'s prefix / suffix dispatch, so the grep test's claim
+# that "the registry covers them transparently" is unverified by it.
+# The ramp family proved that gap can bite: the ``"ramp"`` prefix entry
+# existed but prefix dispatch was unimplemented, so
+# ``ramp_sink_up_constraint`` raised KeyError and silently degraded the
+# whole solve to an un-scaled LP.  Pin every dynamic family behaviorally
+# here.  When a new ``add_cstr(f"...")`` family is added in the engine,
+# add a representative instantiation to this list.
+_DYNAMIC_CONSTRAINT_SAMPLES = [
+    # ramp — model._eq_ramp  f"ramp_{side}_{dir_}_constraint"
+    "ramp_sink_up_constraint", "ramp_sink_down_constraint",
+    "ramp_source_up_constraint", "ramp_source_down_constraint",
+    # unit commitment — _online.py / _unit_floors.py  f"...{sfx}", sfx ∈ {_linear,_integer}
+    "maxOnline_linear", "maxOnline_integer",
+    "maxStartup_linear", "maxStartup_integer",
+    "maxShutdown_linear", "maxShutdown_integer",
+    "online_change_linear", "online_change_integer",
+    "maxFlow_online_linear", "maxFlow_online_integer",
+    "maxOutputSum_online_linear", "maxOutputSum_online_integer",
+    "maxInputFlow_online_linear", "maxInputFlow_online_integer",
+    "maxFlow_online_shutdown_linear", "maxFlow_online_shutdown_integer",
+    "maxInputFlow_online_shutdown_linear", "maxInputFlow_online_shutdown_integer",
+    # c14c critique item 1 — the pre-shutdown twin's per-successor rows at a branch point.
+    "maxFlow_online_shutdown_branch_linear", "maxFlow_online_shutdown_branch_integer",
+    "maxInputFlow_online_shutdown_branch_linear", "maxInputFlow_online_shutdown_branch_integer",
+    "maxFlow_back_online_linear", "maxFlow_back_online_integer",
+    # connection reserve — _reserve.py f"connection_reserve_{ud}[_online_{kind}|_exact]"
+    "connection_reserve_up", "connection_reserve_down",
+    "connection_reserve_up_online_linear", "connection_reserve_up_online_integer",
+    "connection_reserve_down_online_linear", "connection_reserve_down_online_integer",
+    "connection_reserve_up_exact", "connection_reserve_down_exact",
+    "minFlow_minload_linear", "minFlow_minload_integer",
+    "minFlow_output_floor_linear", "minFlow_output_floor_integer",
+    "minimum_uptime_linear", "minimum_uptime_integer",
+    "minimum_downtime_linear", "minimum_downtime_integer",
+    # OC1 #1 sub-slice (b) separate_dispatch sibling v_online pin — _online.py
+    # ``online_fix_eq_{linear,integer}`` (resolver strips the UC suffix to
+    # the registered ``online_fix_eq`` base).
+    "online_fix_eq_linear", "online_fix_eq_integer",
+    # Slice D per-path total caps — model/core.py ``_eq_invest_total_caps``
+    # and _cumulative_invest.py ``_eq_group_divest_total`` pass the
+    # constraint name as a variable (legacy vs ``…_path``), so the
+    # literal-grep test above cannot see them.  Pin both the legacy and
+    # the ``_path`` shapes behaviorally (design §7.3/§14).
+    "maxInvest_entity_total", "maxInvest_entity_total_n",
+    "maxDivest_entity_total", "maxDivest_entity_total_n",
+    "maxInvest_entity_total_path", "maxInvest_entity_total_path_n",
+    "maxDivest_entity_total_path", "maxDivest_entity_total_path_n",
+    "maxDivestGroup_entity_total_path_p",
+    "maxDivestGroup_entity_total_path_n",
+    # The group max-invest total gains the same legacy-vs-_path split
+    # (_cumulative_invest.py ``_eq_group_invest_total``).
+    "maxInvestGroup_entity_total_path_p",
+    "maxInvestGroup_entity_total_path_n",
+    # Per-period invest/divest caps — model/core.py ``_eq_invest_period_caps``
+    # passes the constraint name from a loop table.
+    "maxInvest_entity_period_p", "maxInvest_entity_period_n",
+    "maxDivest_entity_period_p", "maxDivest_entity_period_n",
+    # Retired capacity within the pre-existing capacity — model/core.py ``_eq_retired_existing`` builds the name
+    # as f"maxRetired_existing_{axis}".
+    "maxRetired_existing_p", "maxRetired_existing_n",
+    # Non-anticipativity — _non_anticipativity.py passes the online family
+    # as f"non_anticipativity_online_{kind}" and the invest/divest families
+    # as a variable from a loop table, so the literal grep above cannot see
+    # them.  All resolve via an exact CONSTRAINT_FAMILIES entry (RHS = 0,
+    # CstrFamily(None)).
+    "non_anticipativity_online_integer", "non_anticipativity_online_linear",
+    "non_anticipativity_invest_p", "non_anticipativity_invest_n",
+    "non_anticipativity_divest_p", "non_anticipativity_divest_n",
+    # _reserve.py passes the n-1 row names from the _N_1_DIRECTIONS table.
+    "reserveBalance_up_n_1_eq", "reserveBalance_down_n_1_eq",
+    # _cumulative_invest.py — every family passes its names from a loop table.
+    # {max,min}InvestGroup_entity_cumulative now has a registry entry (CstrFamily(None)).
+    "maxInvestGroup_entity_cumulative", "minInvestGroup_entity_cumulative",
+    "minInvest_entity_period_p", "minInvest_entity_period_n",
+    "minDivest_entity_period_p", "minDivest_entity_period_n",
+    # MinInvest/minDivest entity totals are always named _path now
+    # (one row per (entity, leaf), required even with a single scenario
+    # leaf — see _eq_min_invest_total's EQ. header); the bare names are
+    # no longer emitted.
+    "minInvest_entity_total_path_p", "minInvest_entity_total_path_n",
+    "minDivest_entity_total_path_p", "minDivest_entity_total_path_n",
+    "maxCumulative_capacity_p", "maxCumulative_capacity_n",
+    "minCumulative_capacity_p", "minCumulative_capacity_n",
+    "maxInvestGroup_entity_period_p", "maxInvestGroup_entity_period_n",
+    "minInvestGroup_entity_period_p", "minInvestGroup_entity_period_n",
+    "maxDivestGroup_entity_period_p", "maxDivestGroup_entity_period_n",
+    "minDivestGroup_entity_period_p", "minDivestGroup_entity_period_n",
+    "maxInvestGroup_entity_total_p", "maxInvestGroup_entity_total_n",
+    "maxDivestGroup_entity_total_p", "maxDivestGroup_entity_total_n",
+    # MinInvestGroup/minDivestGroup entity totals are always named
+    # _path now (one row per (group, leaf), required even with a single
+    # scenario leaf); the bare names are no longer emitted.
+    "minInvestGroup_entity_total_path_p", "minInvestGroup_entity_total_path_n",
+    "minDivestGroup_entity_total_path_p", "minDivestGroup_entity_total_path_n",
+    "maxCumulative_flow_solve", "minCumulative_flow_solve",
+    # {max,min}Cumulative_flow_solve gains a per-leaf _path row under recourse
+    # (_cumulative_invest.py ``_eq_cumulative_flow_solve``, ``leaf_rows``), same shape as the
+    # entity/group total families above.
+    "maxCumulative_flow_solve_path", "minCumulative_flow_solve_path",
+    "maxCumulative_flow_period", "minCumulative_flow_period",
+    "maxInstant_flow", "minInstant_flow",
+    "fix_v_invest_no_investment_eq_p", "fix_v_invest_no_investment_eq_n",
+    # Q16 (#52, #58) per-path stochastic caps — model/core.py ``_eq_co2_max_total`` and
+    # _commodity_ladder.py ``_eq_tier_cap_cumulative`` pass the constraint name as a variable
+    # (legacy vs "_path"), so the literal grep above cannot see the "_path" shape.
+    "co2_max_total", "co2_max_total_path",
+    "ladder_tier_cap_cumulative_roll", "ladder_tier_cap_cumulative_roll_path",
+    # Coarse processes — model/_coarse_flows.py add_cstr writes f"{name}_coarse" (and passes the fine family's
+    # name as an argument, which the literal grep above cannot see either).
+    "maxFlow", "maxFlow_negCap", "maxFlow_back", "maxOutputSum", "maxOutputSum_negCap", "conversion_indirect",
+    "minInputShare", "profile_flow_upper_limit", "profile_flow_lower_limit", "profile_flow_fixed",
+    "maxFlow_coarse", "maxFlow_negCap_coarse", "maxFlow_back_coarse", "maxOutputSum_coarse",
+    "maxOutputSum_negCap_coarse", "conversion_indirect_coarse", "minInputShare_coarse",
+    "profile_flow_upper_limit_coarse", "profile_flow_lower_limit_coarse", "profile_flow_fixed_coarse",
+    # Coarse online processes — the same add_cstr with the UC class suffix before "_coarse".
+    *(f"{fam}_{kind}_coarse" for fam in ("maxFlow_online", "maxFlow_back_online", "maxOutputSum_online",
+                                         "minFlow_minload", "minFlow_output_floor", "maxFlow_online_shutdown",
+                                         "maxFlow_online_shutdown_branch", "maxInputFlow_online",
+                                         "maxInputFlow_online_shutdown", "maxInputFlow_online_shutdown_branch")
+      for kind in ("linear", "integer")),
+    # Coarse reserve providers — the same add_cstr (and the storage rows by the row rule), the reserve ramp room.
+    "minFlow_reserve", "minFlow_reserve_arc", "minFlow_reserve_coarse", "minFlow_reserve_arc_coarse",
+    "reserve_process_upward", "reserve_process_downward",
+    "reserve_process_upward_coarse", "reserve_process_downward_coarse",
+    *(f"connection_reserve_{ud}{sfx}{c}" for ud in ("up", "down")
+      for sfx in ("", "_online_linear", "_online_integer", "_exact") for c in ("", "_coarse")),
+    "reserve_storage_up_floor", "reserve_storage_down_headroom",
+    "reserve_storage_up_floor_coarse", "reserve_storage_down_headroom_coarse",
+    *(f"ramp_{side}_{dir_}_reserve_coarse" for side in ("sink", "source") for dir_ in ("up", "down")),
+    # Coarse exact connections (add_cstr) and the row rule (add_row_rule_cstr writes f"{name}_coarse").
+    "maxFlow_exact_forward_coarse", "maxFlow_exact_reverse_coarse", "dc_flow_eq", "dc_flow_eq_coarse",
+    "capacityMargin", "capacityMargin_coarse", "inertia_constraint", "inertia_constraint_coarse",
+    "non_sync_constraint", "non_sync_constraint_coarse", "maxInstant_flow_coarse", "minInstant_flow_coarse",
+    *(f"process_constraint_{s}{c}" for s in ("equal", "less_than", "greater_than") for c in ("", "_coarse")),
+    "non_anticipativity_storage_use", "non_anticipativity_storage_use_coarse",
+]
+
+
+@pytest.mark.parametrize("name", _DYNAMIC_CONSTRAINT_SAMPLES)
+def test_dynamic_constraint_names_resolve(name: str) -> None:
+    """Every dynamic (f-string) constraint family resolves via
+    :func:`lookup_cstr` and :func:`resolve_cstr_rhs_type`.
+
+    Behavioral complement to the literal-grep test above: actually
+    instantiating and resolving the dynamic names is the only thing that
+    catches a registry entry whose dispatch is broken (the ramp bug) or a
+    new dynamic family with no entry at all.
+    """
+    from flextool.engine.autoscale._layer2_types import (
+        lookup_cstr,
+        resolve_cstr_rhs_type,
+    )
+
+    assert lookup_cstr(name) is not None  # raises KeyError if unresolved
+    # The path Layer 2 actually calls; must not raise for these samples
+    # (none carry the _p/_n suffix the group_capacity resolver requires).
+    resolve_cstr_rhs_type(name)

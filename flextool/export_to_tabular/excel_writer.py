@@ -1207,13 +1207,18 @@ def write_scenario_sheet(
 def write_version_sheet(
     ws: Worksheet,
     version: float | None,
+    behaviour_markers: list[tuple[str, str]] | None = None,
 ) -> None:
-    """Write the version sheet."""
+    """Write the version sheet: the version in A1, then one row per
+    behaviour-change marker (name in column A, value in column B)."""
     if version is not None:
         version_int = int(version) if version == int(version) else version
         ws.cell(row=1, column=1, value=f"Generated from FlexTool sqlite version: {version_int}")
     else:
         ws.cell(row=1, column=1, value="Generated from FlexTool sqlite")
+    for i, (name, value) in enumerate(behaviour_markers or ()):
+        ws.cell(row=2 + i, column=1, value=name)
+        ws.cell(row=2 + i, column=2, value=value)
 
 
 # ---------------------------------------------------------------------------
@@ -1688,7 +1693,7 @@ def write_ladder_sheet_v2(
     rows simply leave the period cell empty.
     """
     # Lazy registry import — kept off the hot path.
-    from flextool.engine_polars._param_shapes import (
+    from flextool.engine.input._param_shapes import (
         LeafKind,
         PARAM_ALLOWED_SHAPES,
         facet_keys,
@@ -1888,6 +1893,7 @@ def write_navigate_sheet(
     all_specs: list[SheetSpec],
     navigate_groups: list[dict[str, Any]] | None = None,
     version: float | None = None,
+    behaviour_markers: list[tuple[str, str]] | None = None,
 ) -> None:
     """Write the navigate sheet with grouped, colour-coded hyperlinks.
 
@@ -1896,6 +1902,8 @@ def write_navigate_sheet(
         all_specs: All sheet specifications (used for fallback if no groups).
         navigate_groups: Navigate group configuration from export_settings.yaml.
         version: FlexTool DB version to display.
+        behaviour_markers: Behaviour-change markers of the database, written
+            below the version (name in column F, value in column G).
     """
     # Build set of sheet names that actually exist in the workbook specs
     existing_sheets: set[str] = {spec.sheet_name for spec in all_specs if spec.layout != "navigate"}
@@ -1932,6 +1940,9 @@ def write_navigate_sheet(
         version_int = int(version) if version == int(version) else version
         ws.cell(row=15, column=6, value="FlexTool DB version:")
         ws.cell(row=15, column=7, value=version_int)
+    for i, (name, value) in enumerate(behaviour_markers or ()):
+        ws.cell(row=16 + i, column=6, value=name)
+        ws.cell(row=16 + i, column=7, value=value)
 
     # --- Write grouped rows ---
     current_row = 2  # start after header row

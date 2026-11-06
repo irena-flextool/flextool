@@ -51,8 +51,8 @@ sys.path.insert(0, str(REPO_ROOT / "tests"))
 
 from db_utils import db_to_json, json_to_db  # noqa: E402
 
+from flextool.update_flextool.db_handle import open_database_mapping  # noqa: E402
 from spinedb_api import (  # noqa: E402
-    DatabaseMapping,
     Map,
     to_database,
 )
@@ -66,32 +66,44 @@ WORK_DIR = Path("/tmp/phase3d_build")
 # ---------------------------------------------------------------------------
 
 
+def _ladder_tiers() -> tuple[Map, Map, Map]:
+    """The three price/quantity tiers shared by both ladder shapes.
+
+    tier 1: price=20, quantity=100 000; tier 2: price=25,
+    quantity=100 000; tier 3: price=30, quantity=Infinity.
+    """
+    t1 = Map(["price", "quantity"], [20.0, 100000.0])
+    t2 = Map(["price", "quantity"], [25.0, 100000.0])
+    t3 = Map(["price", "quantity"], [30.0, float("inf")])
+    return t1, t2, t3
+
+
 def _ladder_annual_map_3d() -> Map:
     """``period -> tier -> {price, quantity}`` 3d map.
 
-    Reproduces ``work_commodity_ladder_annual``'s ``coal`` value::
-
-        p2020:
-          tier 1: price=20, quantity=1
-          tier 2: price=30, quantity=Infinity
+    Reproduces ``work_commodity_ladder_annual``'s ``coal`` value: the same
+    three tiers (see ``_ladder_tiers``) repeated for every period of the
+    rolling chain (``p2020``, ``p2025``, ``p2030``, ``p2035``).
     """
-    inner_t1 = Map(["price", "quantity"], [20.0, 1.0])
-    inner_t2 = Map(["price", "quantity"], [30.0, float("inf")])
-    tiers = Map(["1", "2"], [inner_t1, inner_t2], index_name="tier")
-    return Map(["p2020"], [tiers], index_name="period")
+    t1, t2, t3 = _ladder_tiers()
+    tiers = Map(["1", "2", "3"], [t1, t2, t3], index_name="tier")
+    periods = ["p2020", "p2025", "p2030", "p2035"]
+    return Map(periods, [tiers for _ in periods], index_name="period")
 
 
 def _ladder_cumulative_map_2d() -> Map:
     """``tier -> {price, quantity}`` 2d map.
 
-    Reproduces ``work_commodity_ladder_cumulative``'s ``coal`` value::
-
-        tier 1: price=20, quantity=1
-        tier 2: price=30, quantity=Infinity
+    Reproduces ``work_commodity_ladder_cumulative``'s ``coal`` value: the
+    same tier prices as the annual ladder, with quantities scaled ×10
+    (100 000 / 100 000 / Infinity -> 1 000 000 / 1 000 000 / Infinity) so
+    the cumulative cap over the ~20-year rolling chain is comparable to
+    the per-period annual caps.
     """
-    inner_t1 = Map(["price", "quantity"], [20.0, 1.0])
-    inner_t2 = Map(["price", "quantity"], [30.0, float("inf")])
-    return Map(["1", "2"], [inner_t1, inner_t2], index_name="tier")
+    t1, t2, t3 = _ladder_tiers()
+    t1 = Map(["price", "quantity"], [20.0, 1000000.0])
+    t2 = Map(["price", "quantity"], [25.0, 1000000.0])
+    return Map(["1", "2", "3"], [t1, t2, t3], index_name="tier")
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +113,7 @@ def _ladder_cumulative_map_2d() -> Map:
 
 def _augment_tests_db(db_path: Path) -> None:
     url = f"sqlite:///{db_path.resolve()}"
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         # Alternatives
         for alt_name, desc in (
             ("ladder_ann_on", "Phase 3d: enable coal annual price ladder."),
@@ -243,7 +255,7 @@ def _augment_tests_db(db_path: Path) -> None:
 
 def _augment_stochastics_db(db_path: Path) -> None:
     url = f"sqlite:///{db_path.resolve()}"
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         db.add_alternative_item(
             name="no_storage_override",
             description=(

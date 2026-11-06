@@ -52,7 +52,6 @@ solve):
 
 | CLI flag               | Replaces former DB param | Values / notes                                  |
 |------------------------|--------------------------|-------------------------------------------------|
-| `--matrix-file-format` | `solver_io_api`          | `mps` (default) / `lp`; on-disk format used when the solver is dispatched via a matrix file |
 | `--solver-time-limit`  | `solver_time_limit`      | Wall-clock seconds (HiGHS `time_limit`); unset means no limit |
 | `--highs-threads`      | `solver_threads`         | Integer thread count (default 1); `>1` enables HiGHS parallel mode |
 | `--solver-log-level`   | `solver_log_level`       | `silent` / `normal` / `verbose`                 |
@@ -81,8 +80,8 @@ entering the values above. Unspecified parameters take their defaults.
 | `solver_mip_gap`     | float  | unset       | Relative MIP optimality gap (e.g. `0.01` for 1 %). Translated to each solver's native parameter (`MIPGap` / `mip.tolerances.mipgap` / `miprelstop` / `RelGap` / `mip_rel_gap`). |
 | `solver_precommand`  | str    | unset       | Shell command run before the solver subprocess (advanced; e.g. to source a licence environment). |
 
-The corresponding CLI flags (`--matrix-file-format`, `--solver-time-limit`,
-`--highs-threads`, `--solver-log-level`) are documented in the table above.
+The corresponding CLI flags (`--solver-time-limit`, `--highs-threads`,
+`--solver-log-level`) are documented in the table above.
 
 ### Authoring `solver_arguments` in Spine
 
@@ -148,6 +147,10 @@ via the per-solver mechanism:
 3. Translated convenience knobs (`solver_mip_gap`).
 4. The baseline file under `solver_config/<solver>.opt`.
 
+For HiGHS every solve receives this one layered set: warm and cold solves,
+`--save-memory` and the subprocess solve of `warm=False` alike. FlexTool's own
+determinism defaults sit below the baseline file.
+
 Override `solver_config/` location with the `FLEXTOOL_SOLVER_CONFIG_DIR`
 environment variable when running outside the standard project layout
 (for example in CI).
@@ -157,9 +160,11 @@ environment variable when running outside the standard project layout
 The cross-solver dispatch always builds a fresh solver instance per call.
 HiGHS retains its existing warm-start fast path because FlexTool uses HiGHS
 directly (not via the cross-solver `solve()` entry point) when no `solver`
-parameter is set. **Picking any non-HiGHS solver disables warm-start for that
-solve.** In a rolling-horizon scenario this means each sub-solve is built
-cold; expect a slower per-iteration build, but the result is fully correct.
+parameter is set. **Picking any non-HiGHS solver disables the in-process
+warm path for that solve**: each sub-solve is built and solved through the
+cross-solver dispatch. Rolls of a rolling-horizon scenario are built anew on
+every solver (HiGHS reuses a built model only for an identical sub-solve), so
+the solver choice itself does not change how often the LP is built.
 
 ## Benders-decomposition caveat
 
@@ -173,6 +178,20 @@ This is an upstream constraint in polar-high: the Benders master is a
 persistent `WarmProblem`, and warm-LP machinery is HiGHS-only by design.
 Lifting the restriction is tracked separately; in the meantime FlexTool
 fails loudly rather than silently running on HiGHS.
+
+The layered options above also reach the Benders master and every region
+subproblem. Benders' own settings stay on top of them: the region
+subproblems always run crossover (or the interior-point settings of the
+experimental interior-dual mode), and the per-solve HiGHS log is silenced.
+While the regions are solved in parallel (more than one worker), `threads`
+and `parallel` (`--highs-threads`) apply to the master only; the regions stay
+single-threaded so that the result does not depend on the worker count. HiGHS
+has one thread scheduler per process, so the master re-initialises it before
+each of its solves (polar-high 3.10.0 or later; with an older polar-high the
+thread count is not used while the regions run in parallel). A
+time limit (`--solver-time-limit`, or `time_limit` in `solver_arguments`)
+applies to each master and region solve separately, not to the whole
+decomposition.
 
 ## Verifying which solvers are installed
 
@@ -208,10 +227,8 @@ per-solver page for the licence setup.
 - **Mixing solvers without checking.** A scenario tree can route each solve
   to a different solver, but every solve needs its own `solver` parameter
   if you want anything other than HiGHS. Unset solves stay on HiGHS.
-- **Using `--matrix-file-format mps` for very large models.** The MPS
-  fallback writes the full model to disk and shells out to the solver's CLI.
-  After the in-process cold-solve retirement this is the only path for
-  non-HiGHS solvers. The trade-off is bounded peak RSS (the
+- **Commercial solvers on very large models.** A non-HiGHS solver is always
+  given the model as an MPS file and run in its own process. The trade-off is bounded peak RSS (the
   `Problem.write_mps` writer caps ~2-3 GB on the largest LPs) at the cost
   of file I/O plus a fresh solver process per sub-solve.
 - **Hand-writing `solver_arguments` and the convenience knobs together.** Raw

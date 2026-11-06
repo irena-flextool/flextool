@@ -17,8 +17,11 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pandas as pd
+import polars as pl
 import pytest
+from polar_high import Param
 
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 from flextool.lean_parquet import read_lean_parquet
 from flextool.process_outputs.read_highs_solution import (
     VARIABLE_SPECS,
@@ -31,6 +34,13 @@ from flextool.process_outputs.read_highs_solution import (
     write_v_obj,
     write_variable_parquet,
 )
+from tests._support.provider import provider_from_csv_dirs
+
+
+def _param(*dims: str, **cols) -> Param:
+    """A real :class:`Param` built from column lists, e.g.
+    ``_param("d", "t", d=["p2020"], t=["t0001"], value=[2.0])``."""
+    return Param(dims, pl.DataFrame(cols))
 
 
 # ---------------------------------------------------------------------------
@@ -285,16 +295,22 @@ def test_extract_skips_wrong_arity(caplog: pytest.LogCaptureFixture) -> None:
 
 
 def test_realized_dispatch_filter(tmp_path: Path) -> None:
-    realized_csv = tmp_path / "realized.csv"
+    """Item 163: no disk fallback — the (period, step) filter frame comes from the provider,
+    keyed ``solve_data/realized_dispatch`` (the key ``_provider_lookup`` derives from the
+    ``realized_dispatch_csv`` path's parent/stem)."""
+    sd = tmp_path / "solve_data"
+    sd.mkdir()
     # Only t1 is realized; t2 must be dropped.
-    realized_csv.write_text("period,step\nd1,t1\n")
+    (sd / "realized_dispatch.csv").write_text("period,step\nd1,t1\n")
+    provider = provider_from_csv_dirs(solve_data_dir=sd)
     h = _fake_highs(
         variable_names=["v_state[nA,d1,t1]", "v_state[nA,d1,t2]"],
         col_values=[10.0, 20.0],
     )
     df = extract_variable(
         h, "v_state", ("node",), solve_name="s1",
-        realized_dispatch_csv=realized_csv,
+        realized_dispatch_csv=sd / "realized_dispatch.csv",
+        provider=provider,
     )
     assert df.shape == (1, 1)
     assert ("s1", "d1", "t1") in df.index
@@ -302,18 +318,33 @@ def test_realized_dispatch_filter(tmp_path: Path) -> None:
 
 
 def test_realized_periods_filter(tmp_path: Path) -> None:
-    realized_csv = tmp_path / "realized_periods.csv"
-    realized_csv.write_text("period\nd1\n")  # d2 must be dropped
+    """Item 163: a dispatch-only roll — an EMPTY realized-INVEST period list — makes a
+    ``period_source="invest"`` variable (``v_invest`` / ``v_divest``) emit NO rows for the roll, even
+    though its dispatch axis (``flex_data.realized_dispatch``) has periods.  This is the still-
+    provider-driven mechanism in :func:`_load_realized_invest_periods_list` (no disk fallback), keyed
+    ``solve_data/realized_invest_periods_of_current_solve`` — see the ``period_source="invest"``
+    VariableSpec comment for why a dispatch-only roll must contribute no rows.
+    """
+    sd = tmp_path / "solve_data"
+    sd.mkdir()
+    (sd / "realized_invest_periods_of_current_solve.csv").write_text("period\n")  # empty: no investment this roll
+    provider = provider_from_csv_dirs(solve_data_dir=sd)
+    fd = SimpleNamespace(
+        realized_dispatch=pl.DataFrame({"period": ["d1", "d2"], "step": ["t1", "t1"]}),
+        recourse_invest=False,
+    )
     h = _fake_highs(
         variable_names=["v_invest[e1,d1]", "v_invest[e1,d2]"],
         col_values=[42.0, 99.0],
     )
     df = extract_variable(
         h, "v_invest", ("entity",), solve_name="s1",
-        has_time=False, realized_periods_csv=realized_csv,
+        has_time=False, period_source="invest",
+        realized_periods_csv=sd / "realized_invest_periods_of_current_solve.csv",
+        provider=provider, flex_data=fd,
     )
-    assert df.shape == (1, 1)
-    assert ("s1", "d1") in df.index
+    assert df.shape == (0, 1)
+    assert ("s1", "d1") not in df.index
     assert ("s1", "d2") not in df.index
 
 
@@ -360,17 +391,21 @@ def test_write_v_obj_scalar(tmp_path: Path) -> None:
 def test_write_v_dual_invest_by_class_splits_entities(tmp_path: Path) -> None:
     """Produces 3 parquets; each keeps only entities matching its class.
 
+    Item 163: the entity-class membership comes from the sub-solve's
+    FlexDataProvider (``input/process_unit`` / ``input/process_connection`` /
+    ``input/node``), never from a work-folder CSV — a normal run never
+    writes those CSVs.
+
     Also pins the col-dual scaling: HiGHS returns the reduced cost in
     scaled-objective units, so the writer multiplies by
     ``1 / scale_the_objective``.  With ``scale_the_objective=1e-6`` the
     written values equal the raw col duals × 1e6.
     """
-    # input/ layout that the loader reads
-    (tmp_path / "input").mkdir()
     (tmp_path / "output_raw").mkdir()
-    (tmp_path / "input" / "process_unit.csv").write_text("process_unit\nu1\nu2\n")
-    (tmp_path / "input" / "process_connection.csv").write_text("process_connection\nc1\n")
-    (tmp_path / "input" / "node.csv").write_text("node\nn1\n")
+    provider = FlexDataProvider()
+    provider.put("input/process_unit", pl.DataFrame({"process_unit": ["u1", "u2"]}))
+    provider.put("input/process_connection", pl.DataFrame({"process_connection": ["c1"]}))
+    provider.put("input/node", pl.DataFrame({"node": ["n1"]}))
 
     h = _fake_highs(
         variable_names=[
@@ -387,7 +422,7 @@ def test_write_v_dual_invest_by_class_splits_entities(tmp_path: Path) -> None:
     paths = write_v_dual_invest_by_class(
         h, solve_name="s1",
         output_dir=tmp_path / "output_raw",
-        work_folder=tmp_path,
+        provider=provider,
         scale_the_objective=scale,
     )
     assert len(paths) == 3
@@ -407,11 +442,14 @@ def test_write_v_dual_invest_by_class_splits_entities(tmp_path: Path) -> None:
 
 def test_write_v_dual_invest_by_class_honours_custom_scale(tmp_path: Path) -> None:
     """A non-default scale_the_objective scales the reduced cost by 1/scale."""
-    (tmp_path / "input").mkdir()
     (tmp_path / "output_raw").mkdir()
-    (tmp_path / "input" / "process_unit.csv").write_text("process_unit\nu1\n")
-    (tmp_path / "input" / "process_connection.csv").write_text("process_connection\n")
-    (tmp_path / "input" / "node.csv").write_text("node\n")
+    provider = FlexDataProvider()
+    provider.put("input/process_unit", pl.DataFrame({"process_unit": ["u1"]}))
+    provider.put(
+        "input/process_connection",
+        pl.DataFrame({"process_connection": []}, schema={"process_connection": pl.Utf8}),
+    )
+    provider.put("input/node", pl.DataFrame({"node": []}, schema={"node": pl.Utf8}))
 
     h = _fake_highs(
         variable_names=["v_invest[u1,p2020]"],
@@ -422,25 +460,74 @@ def test_write_v_dual_invest_by_class_honours_custom_scale(tmp_path: Path) -> No
     write_v_dual_invest_by_class(
         h, solve_name="s1",
         output_dir=tmp_path / "output_raw",
-        work_folder=tmp_path,
+        provider=provider,
         scale_the_objective=scale,
     )
     unit_df = read_lean_parquet(tmp_path / "output_raw" / "v_dual_invest_unit__s1.parquet")
     assert unit_df.loc[("s1", "p2020"), "u1"] == pytest.approx(5.0 / scale)
 
 
-def test_write_v_dual_node_balance_applies_per_period_inflation(tmp_path: Path) -> None:
-    """Value = −raw_dual × 1e6 / inflation[period]; arity-3 polars row names.
-
-    Δ.30 — the polars LP emits ``nodeBalance_eq[node, period, time]`` (3
-    subscripts); the legacy GMPL ``c, bn, tp, tpwt, dp, tpws`` wrappers
-    were retired in Δ.21/Δ.22 and the parser no longer accepts them.
-    """
+def test_v_dual_invest_classes_ignore_input_csvs(tmp_path: Path) -> None:
+    """A stale ``input/process_connection.csv`` (left by an earlier run / dump) must not override
+    the provider's entity-class membership — item 163 T8: the writer never reads the work folder."""
     (tmp_path / "output_raw").mkdir()
     (tmp_path / "input").mkdir()
-    (tmp_path / "solve_data").mkdir()
-    (tmp_path / "solve_data" / "solve__p_inflation_factor_operations_yearly.csv").write_text(
-        "solve,period,value\ns1,p2020,1.0\ns1,p2025,2.0\n"
+    # Stale disk file: claims u1 is a connection. The writer must ignore it.
+    (tmp_path / "input" / "process_connection.csv").write_text("process_connection\nu1\n")
+
+    provider = FlexDataProvider()
+    provider.put("input/process_unit", pl.DataFrame({"process_unit": ["u1"]}))
+    provider.put(
+        "input/process_connection",
+        pl.DataFrame({"process_connection": []}, schema={"process_connection": pl.Utf8}),
+    )
+    provider.put("input/node", pl.DataFrame({"node": []}, schema={"node": pl.Utf8}))
+
+    h = _fake_highs(
+        variable_names=["v_invest[u1,p2020]"],
+        col_values=[0.0],
+        col_duals=[1.0],
+    )
+    write_v_dual_invest_by_class(
+        h, solve_name="s1",
+        output_dir=tmp_path / "output_raw",
+        provider=provider,
+        scale_the_objective=1e-6,
+    )
+    unit_df = read_lean_parquet(tmp_path / "output_raw" / "v_dual_invest_unit__s1.parquet")
+    conn_df = read_lean_parquet(tmp_path / "output_raw" / "v_dual_invest_connection__s1.parquet")
+    assert list(unit_df.columns) == ["u1"]
+    assert list(conn_df.columns) == []
+
+
+def test_write_v_dual_invest_by_class_requires_provider(tmp_path: Path) -> None:
+    """Item 163: a None provider is a wiring bug, not a tolerated absence — raise, don't silently
+    revert to an empty entity-class split."""
+    (tmp_path / "output_raw").mkdir()
+    h = _fake_highs(variable_names=["v_invest[u1,p2020]"], col_values=[0.0], col_duals=[1.0])
+    with pytest.raises(ValueError, match="FlexDataProvider"):
+        write_v_dual_invest_by_class(
+            h, solve_name="s1", output_dir=tmp_path / "output_raw", provider=None,
+        )
+
+
+def test_write_v_dual_node_balance_applies_per_period_inflation(tmp_path: Path) -> None:
+    """price = +raw_dual × 1e6 / (timestep_weight · inflation / period_share); arity-3 polars row names.
+
+    Item 163: the weights come from ``flex_data`` only (no ``solve_data`` CSV fallback) — a stub carrying
+    the values the CSVs used to.  The default scale 1e-6 applies without ``scale_the_objective`` given.
+    """
+    (tmp_path / "output_raw").mkdir()
+    fd = SimpleNamespace(
+        p_timestep_weight=_param("d", "t", d=["p2020"], t=["t0001"], value=[2.0]),
+        p_inflation_op=_param("d", d=["p2020", "p2025"], value=[1.0, 2.0]),
+        p_period_share=_param("d", d=["p2020", "p2025"], value=[0.5, 0.25]),
+        pdt_branch_weight=None,
+        p_step_duration=None,
+        # ``dt`` is the (d, t) domain :func:`price_weight_from_components` unions in: without it, a period
+        # with no ``p_timestep_weight`` row (p2025 here) would be absent from the weight frame entirely and
+        # fall back to weight 1 (null -> fill_null(1.0)) instead of the period-only components' 2.0/0.25=8.
+        dt=pl.DataFrame({"d": ["p2020", "p2025"], "t": ["t0001", "t0001"]}),
     )
     h = _fake_highs(
         variable_names=[], col_values=[],
@@ -453,14 +540,76 @@ def test_write_v_dual_node_balance_applies_per_period_inflation(tmp_path: Path) 
     write_v_dual_node_balance(
         h, solve_name="s1",
         output_dir=tmp_path / "output_raw",
-        work_folder=tmp_path,
+        flex_data=fd,
     )
     df = read_lean_parquet(tmp_path / "output_raw" / "v_dual_node_balance__s1.parquet")
-    # raw × −1e6 / inflation
-    # (s1, p2020, t0001): -(3e-6) × 1e6 / 1.0 = -3.0
-    # (s1, p2025, t0001): -(-4e-6) × 1e6 / 2.0 = +2.0
-    assert df.loc[("s1", "p2020", "t0001"), "nA"] == pytest.approx(-3.0)
-    assert df.loc[("s1", "p2025", "t0001"), "nA"] == pytest.approx(2.0)
+    # (s1, p2020, t0001): 3e-6 × 1e6 / (2.0 · 1.0 / 0.5) = 0.75
+    # (s1, p2025, t0001): -4e-6 × 1e6 / (1.0 · 2.0 / 0.25) = -0.5   (no timestep weight row → 1)
+    assert df.loc[("s1", "p2020", "t0001"), "nA"] == pytest.approx(0.75)
+    assert df.loc[("s1", "p2025", "t0001"), "nA"] == pytest.approx(-0.5)
+
+
+def test_write_v_dual_reserve_balance_sums_requirement_rows(tmp_path: Path) -> None:
+    """reserve_price_t = the sum of the duals of the group's requirement rows (timeseries, dynamic, and the
+    large-failure rows of every failing process), whatever the group's reserve_method; no method CSV needed.
+    Price = Σ dual × 1e6 (default scale, no weight components → weight 1).
+
+    Item 163: no FlexData weight components at all, but ``dt`` still supplies the (period, time) domain so
+    the weight frame covers the dual's cell (an empty domain would give a null price, not weight 1).
+    """
+    from flextool.process_outputs.read_highs_solution import write_v_dual_reserve_balance
+
+    (tmp_path / "output_raw").mkdir()
+    fd = SimpleNamespace(
+        p_timestep_weight=None, p_inflation_op=None, p_period_share=None,
+        pdt_branch_weight=None, p_step_duration=None,
+        dt=pl.DataFrame({"d": ["p2020"], "t": ["t0001"]}),
+    )
+    h = _fake_highs(
+        variable_names=[], col_values=[],
+        row_names=[
+            "reserveBalance_timeseries_eq[both,up,g1,p2020,t0001]",
+            "reserveBalance_dynamic_eq[both,up,g1,p2020,t0001]",
+            "reserveBalance_dynamic_eq[dz,up,g2,p2020,t0001]",
+            "reserveBalance_dynamic_eq[mix,up,g3,p2020,t0001]",
+            "reserveBalance_up_n_1_eq[mix,up,g3,f1,p2020,t0001]",
+            "reserveBalance_up_n_1_eq[mix,up,g3,f2,p2020,t0001]",
+            "reserveBalance_up_n_1_eq[n1,up,g4,f1,p2020,t0001]",
+            "reserveBalance_up_n_1_eq[n1,up,g4,f2,p2020,t0001]",
+            "reserveBalance_down_n_1_eq[nd,down,g5,f1,p2020,t0001]",
+        ],
+        row_duals=[1.5e-6, 7.0e-6, 2.5e-6, 3.5e-6, 0.5e-6, 1.0e-6, 2.0e-6, 0.25e-6, 0.75e-6],
+    )
+    write_v_dual_reserve_balance(h, solve_name="s1", output_dir=tmp_path / "output_raw", flex_data=fd)
+    df = read_lean_parquet(tmp_path / "output_raw" / "v_dual_reserve__upDown__group__period__t__s1.parquet")
+    cols = {tuple(str(x) for x in c): c for c in df.columns}
+    expected = {("both", "up", "g1"): 8.5, ("dz", "up", "g2"): 2.5, ("mix", "up", "g3"): 5.0,
+                ("n1", "up", "g4"): 2.25, ("nd", "down", "g5"): 0.75}
+    assert set(cols) == set(expected)
+    for key, price in expected.items():
+        assert df.loc[("s1", "p2020", "t0001"), cols[key]] == pytest.approx(price)
+
+
+def test_write_v_dual_reserve_balance_divides_by_step_and_weights(tmp_path: Path) -> None:
+    """reserve_price = dual / s / (Δt · tw · inflation / period_share): 6e-6 × 1e6 / (2 · 0.5 · 3 / 0.25) = 0.5.
+
+    Item 163: every weight component is a FlexData stub (no ``solve_data`` CSVs)."""
+    from flextool.process_outputs.read_highs_solution import write_v_dual_reserve_balance
+
+    (tmp_path / "output_raw").mkdir()
+    fd = SimpleNamespace(
+        p_timestep_weight=_param("d", "t", d=["p2020"], t=["t0001"], value=[0.5]),
+        p_inflation_op=_param("d", d=["p2020"], value=[3.0]),
+        p_period_share=_param("d", d=["p2020"], value=[0.25]),
+        pdt_branch_weight=None,
+        p_step_duration=_param("d", "t", d=["p2020"], t=["t0001"], value=[2.0]),
+        dt=pl.DataFrame({"d": ["p2020"], "t": ["t0001"]}),
+    )
+    h = _fake_highs(variable_names=[], col_values=[],
+                    row_names=["reserveBalance_timeseries_eq[r,up,g,p2020,t0001]"], row_duals=[6e-6])
+    write_v_dual_reserve_balance(h, solve_name="s1", output_dir=tmp_path / "output_raw", flex_data=fd)
+    df = read_lean_parquet(tmp_path / "output_raw" / "v_dual_reserve__upDown__group__period__t__s1.parquet")
+    assert df.iloc[0, 0] == pytest.approx(0.5)
 
 
 def test_write_all_variables_isolates_failures(

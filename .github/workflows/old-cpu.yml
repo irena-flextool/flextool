@@ -1,0 +1,49 @@
+name: Old-CPU emulation
+
+# FlexTool on processors without AVX2, emulated with qemu user mode
+# (`qemu-x86_64 -cpu <model>`): Nehalem (no AVX) and SandyBridge (AVX, no
+# AVX2/FMA/BMI2/MOVBE). polars' default runtime needs x86-64-v3 + MOVBE and
+# crashes there; polars-runtime-compat needs x86-64-v2. The script
+# .github/scripts/old_cpu_emulation.sh proves the default runtime crashes,
+# that FlexTool refuses it with the fix (env_check, import), that
+# `update_flextool.py` installs the compatible runtime, that the `base`
+# example then solves, and that an AVX2 host still selects the default
+# runtime. Not gating while it settles (continue-on-error).
+
+on:
+  schedule:
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  emulated:
+    name: qemu -cpu ${{ matrix.cpu }}
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        cpu: [Nehalem, SandyBridge]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install qemu user-mode emulation
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user-static
+          qemu-x86_64-static --version
+      - name: Install FlexTool (default polars runtime only)
+        run: |
+          python -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/venv/bin/python" -m pip install .
+          "$RUNNER_TEMP/venv/bin/python" -m pip list
+          rm -rf build ./*.egg-info
+      - name: Run FlexTool on the emulated ${{ matrix.cpu }}
+        run: bash .github/scripts/old_cpu_emulation.sh "${{ matrix.cpu }}" "$RUNNER_TEMP/venv" . "$RUNNER_TEMP/work"

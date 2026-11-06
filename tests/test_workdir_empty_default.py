@@ -17,7 +17,7 @@ What this test asserts
 2. The preprocessing **writer-port cascade** does not leak any of its
    canonical ``solve_data/*.csv`` outputs to disk.  We assert this via
    a whitelist intersection: any basename present in
-   :attr:`flextool.engine_polars._flex_data_accumulator._THIN_WRAPPER_BASENAMES`
+   :attr:`tests.engine._flex_data_accumulator._THIN_WRAPPER_BASENAMES`
    that ends up on disk indicates a bug in the ``capture_frames``
    plumbing.
 
@@ -45,8 +45,8 @@ if str(TEST_DIR) not in sys.path:
 
 from db_utils import json_to_db  # noqa: E402
 
-from flextool.engine_polars import run_chain_from_db  # noqa: E402
-from flextool.engine_polars._flex_data_accumulator import (  # noqa: E402
+from flextool.engine import run_chain_from_db  # noqa: E402
+from tests.engine._flex_data_accumulator import (  # noqa: E402
     _THIN_WRAPPER_BASENAMES,
 )
 from flextool.update_flextool.db_migration import migrate_database  # noqa: E402

@@ -125,6 +125,7 @@ def build_calibrate_command(
     output_location: str | None,
     debug: bool,
     final_write_methods: list[str] | None = None,
+    threads: int | None = None,
 ) -> list[str]:
     """Build the argv for the calibrate CLI.
 
@@ -141,6 +142,9 @@ def build_calibrate_command(
     * ``[]`` — emit ``--skip-final-outputs`` (the operator unchecked every File
       output, so leave the results parquet-only).
     * non-empty — emit ``--final-write-methods <methods…>``.
+
+    ``threads`` (the Execution jobs window's "Threads per run") is emitted as
+    ``--threads N`` when given; the calibrator passes it to each solve.
     """
     argv: list[str] = [
         python_exe,
@@ -171,6 +175,8 @@ def build_calibrate_command(
             argv.append("--skip-final-outputs")
     if debug:
         argv.append("--debug")
+    if threads is not None:
+        argv += ["--threads", str(max(1, int(threads)))]
     return argv
 
 

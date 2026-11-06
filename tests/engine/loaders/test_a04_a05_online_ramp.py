@@ -1,0 +1,225 @@
+"""Surface A.4 (Online / Unit-Commitment / Startup Constraints) and A.5
+(Ramp-Rate Constraints) loader tests.
+
+Entry point: ``flextool.engine.load_flextool`` (through ``load_scenario``).  These sections are
+gated by ``pss`` (process_source_sink) presence, so each test starts from
+a real scenario that wires up online / ramp data (``coal_min_load``,
+``coal_ramp_limit``) or from ``base`` (no process, pss absent).
+
+Production-path tests (provider clone + DB reader, ``load_scenario``):
+
+* A5-empty_when_pss_none on ``base`` (``tiny_run``).
+* A5-all_four_directions_independent: the ramp direction sets are
+  ``SIMPLE_PROJECTIONS`` of the DB (``params/_projection.py``) that keep
+  the provider seed when the DB has no member, so an overlay on a
+  direction the DB leaves empty is what the model sees.
+* ``pdt_online_zero_startup_cost_excluded`` calls ``_load_online``
+  directly with a stub source returning ``startup_cost=0`` and the
+  ``coal_min_load`` provider (the ``filter(value != 0)`` branch is
+  reachable only with a source).
+
+The reload-only online tests and the all-empty / ramp-speed parts of the
+ramp blank-path test (the DB re-derives those sets on every load) are in
+``tests/csv_reload/test_a04_a05_online_ramp.py`` (c24 S1-8).
+"""
+from __future__ import annotations
+
+import polars as pl
+import pytest
+
+from tests._support.fields import field_diff
+from tests._support.load import ScenarioRun, clone_provider, load_scenario
+
+from .conftest import drop_frame, put_frame
+
+
+@pytest.fixture(scope="function")
+def online_run(scenario_run) -> tuple[ScenarioRun, object]:
+    """The ``coal_min_load`` run (1 online process with min_load_eff) and a fresh clone of its provider."""
+    run = scenario_run("coal_min_load")
+    return run, clone_provider(run.last.provider)
+
+
+@pytest.fixture(scope="function")
+def ramp_run(scenario_run) -> tuple[ScenarioRun, object]:
+    """The ``coal_ramp_limit`` run (one ``sink_up`` ramp arc) and a fresh clone of its provider."""
+    run = scenario_run("coal_ramp_limit")
+    return run, clone_provider(run.last.provider)
+
+
+# --- A.4 ------------------------------------------------------------
+
+
+def test_pdt_online_zero_startup_cost_excluded(online_run):
+    """Covers A4-pdt_online_zero_startup_cost_excluded (direct).
+
+    Stub ``InputSource`` returns ``startup_cost = 0`` for the lone
+    process; ``_load_online`` must filter that row before constructing
+    the ``pdt_online_*`` join sets, leaving them and ``p_startup_cost``
+    as ``None``.  Called directly because the CSV path skips the
+    source helper entirely (``source=None``).  The online sets come from
+    the ``coal_min_load`` provider; ``inp`` / ``sd`` point into the empty
+    load folder, so no file is read.
+    """
+    from flextool.engine.preprocess.flex_data import _load_online
+
+    run, P = online_run
+    inp = run.load_folder / "input"
+    sd = run.load_folder / "solve_data"
+    pss = pl.DataFrame({"p": ["coal_plant"],
+                        "source": ["coal_market"], "sink": ["west"]})
+    dt = pl.DataFrame({"d": ["p2020"], "t": ["t0001"]})
+
+    class _ZeroStartupSource:
+        # ``parameter`` is the core InputSource read; ``parameter_explicit``
+        # the optional refinement.  Both expose only the lone zero-startup
+        # row — every other ``(ec, name)`` raises ``KeyError`` so callers
+        # (e.g. Carrier 2's ``_process_min_time`` probe for min_uptime /
+        # min_downtime) see "no such parameter" and contribute nothing.
+        def parameter(self, ec: str, name: str) -> pl.DataFrame:
+            if (ec, name) == ("unit", "startup_cost"):
+                # Hand-calc: explicit zero row triggers filter(value != 0).
+                return pl.DataFrame({"name": ["coal_plant"],
+                                     "period": ["p2020"],
+                                     "value": [0.0]})
+            raise KeyError((ec, name))
+
+        def parameter_explicit(self, ec: str, name: str) -> pl.DataFrame:
+            return self.parameter(ec, name)
+
+    out = _load_online(inp, sd, dt, pss, source=_ZeroStartupSource(), provider=P)
+    # The provider's online set is read (not the blank early return), so the Nones below come from
+    # the zero-startup filter.
+    assert out["process_online"]["p"].to_list() == ["coal_plant"]
+    assert out["process_online_linear"]["p"].to_list() == ["coal_plant"]
+    # Hand-calc: filter removes the only sc row -> sc_frame.height == 0
+    # -> pdt_online_lin / p_startup_cost left at their initial None.
+    assert out["pdt_online_linear"] is None
+    assert out["pdt_online_integer"] is None
+    assert out["p_startup_cost"] is None
+
+
+# --- A.5 ------------------------------------------------------------
+
+
+def test_ramp_blank_when_pss_none(tiny_run):
+    """Covers A5-empty_when_pss_none (direct) on the production path.
+
+    ``base`` has no process, so pss is None and ``_load_ramp`` returns the
+    blank dict: every ramp set and every ``p_ramp_speed_*`` Param is None.
+    No overlay; the ``coal_ramp_limit`` load below shows the same fields
+    are populated when a ramp arc exists.
+    """
+    run, P = tiny_run
+    data = load_scenario(run, provider=P)
+    assert data.process_source_sink is None
+    for key in ("process_source_sink_ramp_limit_sink_up",
+                "process_source_sink_ramp_limit_sink_down",
+                "process_source_sink_ramp_limit_source_up",
+                "process_source_sink_ramp_limit_source_down",
+                "p_ramp_speed_up_sink", "p_ramp_speed_down_sink",
+                "p_ramp_speed_up_source", "p_ramp_speed_down_source"):
+        assert getattr(data, key) is None, f"{key} not None on the base seed"
+
+
+def test_ramp_directions_independent(ramp_run):
+    """Covers A5-all_four_directions_independent (direct).
+
+    The ``coal_ramp_limit`` provider holds the four direction sets
+    (``sink_up`` = the one ramp arc, the other three empty).  The overlay
+    removes all four keys and puts back *only* ``source_down`` populated.
+    Per ``_read_set``, a missing key -> None; this asserts no cross-fill
+    between directions.
+
+    Production path: the direction sets are DB projections that keep the
+    provider seed when the DB has no member.  The DB has no ``source_down``
+    arc, so the overlay is what the model sees; ``sink_up`` is re-derived
+    from the DB (the scenario's ramp arc) although its key was removed.
+    """
+    run, P = ramp_run
+    for dirn in ("sink_up", "sink_down", "source_up", "source_down"):
+        drop_frame(P, f"process_source_sink_ramp_limit_{dirn}.csv")
+    put_frame(P, "process_source_sink_ramp_limit_source_down.csv",
+              "process,source,sink\ncoal_plant,coal_market,west\n")
+    data = load_scenario(run, provider=P)
+    # Hand-calc: only source_down populated by the overlay; sink_down and
+    # source_up stay None — no accidental fill from a populated direction.
+    assert data.process_source_sink_ramp_limit_source_down.height == 1
+    assert data.process_source_sink_ramp_limit_source_down["p"].to_list() == [
+        "coal_plant"]
+    assert data.process_source_sink_ramp_limit_sink_down is None
+    assert data.process_source_sink_ramp_limit_source_up is None
+    # The three directions the overlay did not populate equal the un-overlaid
+    # load whole (every column, every row): sink_up is the DB's own ramp arc,
+    # so a cross-fill of the source_down row into sink_up (same p, other
+    # source/sink) fails here.
+    for dirn in ("sink_up", "sink_down", "source_up"):
+        field = f"process_source_sink_ramp_limit_{dirn}"
+        assert field_diff(getattr(data, field), getattr(run.last_flex_data, field)) is None, field
+    assert data.process_source_sink_ramp_limit_sink_up.height == 1
+    # The overlay is consumed: the un-overlaid load has no source_down set.
+    assert run.last_flex_data.process_source_sink_ramp_limit_source_down is None
+
+
+# --- the online roll carry lands on the ramp's seam roots ------------------------------------------------------
+#
+# A continuation solve receives the previous solve's realized commitment (``handoff/roll_end_online``) and the step
+# it was realized at (``handoff/roll_end_step``).  The commitment is the online predecessor (``dt_online_carry``) of
+# exactly the first steps that the ramp carry continues (``dt_ramp_carry``): where the complete solve's predecessor
+# of a period's first step is adjacent (``jump == 1``) and is the carried step.  A seam at a gap, a new year or a
+# representative-period start (``jump != 1``, or an ``rp_block_first`` step) gives no carry: the step is a stretch
+# start and its commitment cycles within its stretch (``dt_online_wrap``).
+
+
+def _seam(P, *, jump: int, rp_first: bool = False) -> None:
+    """The coal_min_load solve made a continuation of a solve that realized (p2015, t0048): the coal plant was
+    online with 1 unit there; the complete solve's predecessor of p2020's first step t0001 is that step, with the
+    given ``jump``."""
+    put_frame(P, "handoff/roll_end_online", pl.DataFrame({"process": ["coal_plant"], "value": ["1.0"]}))
+    put_frame(P, "handoff/roll_end_step", pl.DataFrame({"period": ["p2015"], "step": ["t0048"],
+                                                         "duration": ["1.0"]}))
+    put_frame(P, "solve_data/roll_first_step_link",
+              pl.DataFrame({"period": ["p2020"], "time": ["t0001"], "previous_period": ["p2015"],
+                            "previous_within_solve": ["t0048"], "jump": [str(jump)]}))
+    if rp_first:
+        put_frame(P, "solve_data/rp_block_first", pl.DataFrame({"period": ["p2020"], "step": ["t0001"]}))
+
+
+def _first_step(data) -> tuple[str, str]:
+    dt = data.dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+    return dt.row(0)
+
+
+def test_online_carry_continues_an_adjacent_seam(online_run):
+    """jump 1, not an rp start: the first step continues the carried step, so it takes the commitment, and the
+    online carry steps are the ramp carry steps."""
+    run, P = online_run
+    _seam(P, jump=1)
+    data = load_scenario(run, provider=P)
+    assert _first_step(data) == ("p2020", "t0001")
+    assert data.p_roll_continue_online is not None
+    assert data.dt_online_carry.rows() == [("p2020", "t0001")]
+    assert data.dt_online_carry.equals(data.dt_ramp_carry.select("d", "t"))
+
+
+@pytest.mark.parametrize("jump, rp_first", [(2, False), (25, False), (1, True)],
+                         ids=["gap", "new_year", "rp_start"])
+def test_online_carry_stops_at_a_seam_that_is_not_adjacent(online_run, jump, rp_first):
+    """A seam after a gap (jump 2), at a new year that reuses the timeline (jump 25) or at a representative-period
+    start: no step takes the commitment (before, it was carried whatever the jump), so the first step keeps its
+    stretch wrap."""
+    run, P = online_run
+    _seam(P, jump=jump, rp_first=rp_first)
+    data = load_scenario(run, provider=P)
+    assert data.dt_ramp_carry is None
+    assert data.dt_online_carry is None
+    assert ("p2020", "t0001") in [(d, t) for d, t, _, _ in data.dt_online_wrap.rows()]
+
+
+def test_online_carry_without_its_step_raises(online_run):
+    """A carried commitment without the step it was realized at cannot be placed: the load raises instead of
+    putting it on the solve's first step (before, it silently fell back to that step)."""
+    run, P = online_run
+    put_frame(P, "handoff/roll_end_online", pl.DataFrame({"process": ["coal_plant"], "value": ["1.0"]}))
+    with pytest.raises(ValueError, match="roll_end_step"):
+        load_scenario(run, provider=P)

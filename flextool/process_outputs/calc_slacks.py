@@ -1,7 +1,6 @@
 import pandas as pd
 
 from flextool.process_outputs._annualize import annualize_dt_to_d
-from flextool.process_outputs._branch_weight import weight_dt_by_branch
 
 
 def compute_slacks(par, s, v, r) -> None:
@@ -13,7 +12,9 @@ def compute_slacks(par, s, v, r) -> None:
       are cost amounts held across each step.  The mod multiplies them by
       ``step_duration[d, t] * p_rp_cost_weight[d, t] *
       p_inflation_factor_operations_yearly[d] /
-      complete_period_share_of_year[d] * pdt_branch_weight[d, t]``.  Here
+      complete_period_share_of_year[d] * pdt_branch_weight[d, t]``.  The
+      branch weight is not applied here: normal outputs hold realized rows
+      only, and a realized ``(d, t)`` has branch weight 1.  Here
       we store the *per-(d, t)* contribution with ``step_duration`` and
       ``timestep_weight`` already baked in (so it can still be totalled
       per-step by ``costs__dt.csv``).  The remaining period-level factors
@@ -29,21 +30,16 @@ def compute_slacks(par, s, v, r) -> None:
     """
     # Per-step scaling factor for all per-(d, t) cost terms:
     # step_duration × timestep_weight.  Combined once for readability.
-    # Option (A): fold in pdt_branch_weight[d, t] so the inertia /
-    # non-synchronous penalty costs built from step_x_rp carry the LP's
-    # per-(d, t) probability weight.  step_x_rp feeds ONLY penalty-cost
-    # terms here (the physical slack / reserve diagnostics use step_duration
-    # directly), so folding the weight in is safe; deterministic → ×1.0.
-    _pdt_bw = getattr(par, "pdt_branch_weight", None)
     step_x_rp = par.step_duration.mul(par.timestep_weight, axis=0)
-    step_x_rp = weight_dt_by_branch(step_x_rp, _pdt_bw)
 
-    r.reserves_dt = v.reserve.mul(par.step_duration, axis=0)
+    # Reserve held at each step, MW: v_reserve counts in units of the process's unit size, like v_flow
+    # (model/_reserve.py: MW = v_reserve · unitsize[p]).  A capacity held, not an energy: no step_duration.
+    r.reserves_dt = v.reserve.mul(par.entity_unitsize, axis=1, level='process')
     # Average MW held over the period: Σ(MW × step_duration) / total period hours.
     # Reserves are MW capacity held per hour (not consumed energy), so the
     # meaningful per-period figure is the average MW held across the period.
     period_hours = par.complete_period_share_of_year * 8760
-    r.reserves_d = r.reserves_dt.groupby('period').sum().div(period_hours, axis=0)
+    r.reserves_d = r.reserves_dt.mul(par.step_duration, axis=0).groupby('period').sum().div(period_hours, axis=0)
 
     # upward_node_slack_dt is already MWh per step (q_state_up × capacity × step_duration),
     # so the period aggregate is a plain groupby-sum; no extra step_duration.
@@ -69,10 +65,6 @@ def compute_slacks(par, s, v, r) -> None:
                                                    .mul(par.timestep_weight, axis=0)
     r.costPenalty_node_state_upDown_dt = pd.concat([upward_node_penalty, downward_node_penalty], axis=1, keys=['up', 'down'], names=['upDown'])
     r.costPenalty_node_state_upDown_dt = r.costPenalty_node_state_upDown_dt.reorder_levels([1, 0], axis=1)
-    # Option (A): weight the node-state slack *penalty* by pdt_branch_weight
-    # (the LP's vq_up/down term carries op_factor — model.py §obj).  The raw
-    # physical slack (upward/downward_node_slack_dt above) stays UNWEIGHTED.
-    r.costPenalty_node_state_upDown_dt = weight_dt_by_branch(r.costPenalty_node_state_upDown_dt, _pdt_bw)
     r.costPenalty_node_state_upDown_d = r.costPenalty_node_state_upDown_dt.groupby(level='period').sum()
 
     # Inertia penalty: mod uses × step_duration × timestep_weight (objective line ~2380).
@@ -112,16 +104,10 @@ def compute_slacks(par, s, v, r) -> None:
     r.q_reserves_d_not_annualized = r.q_reserves_dt.mul(par.step_duration, axis=0).groupby(level='period').sum()
     r.q_reserves_d = annualize_dt_to_d(r.q_reserves_dt, par.timestep_weight, par.complete_period_share_of_year, par.step_duration)
     # Reserve slack penalty: step_duration is already here (line below);
-    # add timestep_weight to match mod line ~2388.
+    # add timestep_weight to match mod line ~2388.  ``shortfall_scale`` is the same multiplier the LP uses (it
+    # equals the reservation for timeseries-only groups), so it is applied once here — not alongside
+    # ``reservation``.
     r.costPenalty_reserve_upDown_dt = v.q_reserve.mul(par.step_duration, axis=0) \
         .mul(par.timestep_weight, axis=0) \
         .mul(par.reserve_upDown_group_penalty.reindex(v.q_reserve.columns), axis=1) \
         .mul(par.reserve_upDown_group_shortfall_scale, axis=1)
-    # Option (A): weight the reserve slack *penalty* by pdt_branch_weight
-    # (the LP's q_reserve penalty carries op_factor — _reserve.py §obj,
-    # ``vq_reserve · scale · penalty · op_factor``).  ``shortfall_scale`` is
-    # the same multiplier the LP uses (it equals the reservation for
-    # timeseries-only groups), so it is applied once here — not alongside
-    # ``reservation``.  The physical reserve held (r.q_reserves_dt above)
-    # stays UNWEIGHTED.
-    r.costPenalty_reserve_upDown_dt = weight_dt_by_branch(r.costPenalty_reserve_upDown_dt, _pdt_bw)

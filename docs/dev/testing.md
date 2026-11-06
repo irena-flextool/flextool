@@ -1,7 +1,7 @@
 # Testing
 
 FlexTool has a multi-layer test pyramid: fast unit/integration tests on
-the `engine_polars` building blocks, scenario goldens built on demand
+the `engine` building blocks, scenario goldens built on demand
 from JSON fixtures, and end-to-end scenario runs that compare output
 CSVs against committed reference files. This page is a developer
 pointer — where the tests live, how the JSON-fixture architecture
@@ -11,12 +11,12 @@ markers gate CI.
 For the high-level test-layout inventory see
 [`architecture.md`](architecture.md) ("Test layout and fixture
 architecture"). For the engine internals being tested see
-[`engine_polars.md`](engine_polars.md). For the JSON-fixture rollout
+[`engine.md`](engine.md). For the JSON-fixture rollout
 narrative see the `CHANGELOG.md` entry for v3.47.0.
 
-## Layer 1 — engine_polars unit & integration
+## Layer 1 — engine unit & integration
 
-Lives under `tests/engine_polars/`. Covers the LP build path, derived
+Lives under `tests/engine/`. Covers the LP build path, derived
 parameter expansion, writer port, scaling pipeline (see
 [`scaling.md`](scaling.md)), decomposition (see
 [`decomposition.md`](decomposition.md)), warm-start handoff, fast load,
@@ -39,12 +39,12 @@ fixtures.
 
 Tests range from millisecond-class unit tests (block layout, derived
 params) to solver-touching parity tests. Synthetic flextool-flavoured
-fixtures live in `tests/engine_polars/fixtures/` and are auto-added to
-`sys.path` by `tests/engine_polars/conftest.py` so test modules can
+fixtures live in `tests/engine/fixtures/` and are auto-added to
+`sys.path` by `tests/engine/conftest.py` so test modules can
 `from flex_toy_<feature> import …` directly.
 
 **Meta-provider invariants.**
-`tests/engine_polars/test_meta_provider_invariants.py` enforces the
+`tests/engine/test_meta_provider_invariants.py` enforces the
 Provider-only cascade contract as executable tests, not convention:
 
 - `test_no_disk_csv_reads_in_cascade` — fails if a cascade module
@@ -79,7 +79,7 @@ Canonical fixtures currently in `tests/fixtures/`:
 
 | Fixture | Role |
 |---|---|
-| `tests.json` | Main fixture; `tests/scenarios.yaml` and most engine_polars tests build their work-folders from here. Also the source for the generated `templates_examples.json` canonical DB. |
+| `tests.json` | Main fixture; `tests/scenarios.yaml` and most engine tests build their work-folders from here. Also the source for the generated `templates_examples.json` canonical DB. |
 | `stochastics.json` | Stochastic / forecast-branch scenarios. Source for the generated `howto_stochastics.json` canonical DB. |
 | `stochastics_pbt_inflow.json` | PBT inflow scenarios (period-block-time stochastic inflow). |
 | `lh2_three_region.json` | LH2 three-region monolithic + Benders parity fixture (see [`decomposition.md`](decomposition.md)). |
@@ -88,24 +88,34 @@ Canonical fixtures currently in `tests/fixtures/`:
 | `branch2_parent_period.json` | Branch-2 / parent-period stochastic fixture. |
 | `case14_dc_power_flow.json` | PGLib IEEE case14 MATPOWER export (~8200 lines), used by `test_flex_dc_power_flow.py`. |
 
-The `_augment_*.py` and `build_*.py` scripts alongside these JSONs are
-one-shot builders / overlays kept for provenance, not runtime
-dependencies.
+The `_augment_*.py`, `build_*.py` and `regen_lh2_three_region.py` scripts
+alongside these JSONs are builders / overlays kept for provenance, not
+runtime dependencies.  They take the schema sections from
+`spinedb_schema.json` (`fixture_schema.schema_sections`), and
+`tests/update_flextool/test_fixture_builders.py` checks that each still
+reproduces the data of its committed fixture.  Every fixture carries
+exactly the schema's sections (`test_fixture_schema_drift.py`).
 
 ### `scenario_workdir` — on-demand cascade fixture
 
 `scenario_workdir(scenario_name, db_fixture="main")`, defined in
-`tests/engine_polars/conftest.py`, is the session-scoped fixture that
-replaced the historical `tests/engine_polars/data/work_*/` snapshot
-pattern. For a requested `(scenario, db_fixture)` pair it:
+`tests/conftest.py`, is the session-scoped fixture that
+replaced the historical `tests/engine/data/work_*/` snapshot
+pattern. It shares one cached run with `scenario_run` (which returns the
+`tests._support.load.ScenarioRun` instead of the folder). For a requested
+`(scenario, db_fixture)` pair it:
 
 1. Resolves `db_fixture` against the per-fixture session-scoped DB
    (built once per session from the matching JSON).
-2. Runs the full cascade with `csv_dump=True` + `keep_solutions=True`
-   in a `tmp_path_factory` workdir.
-3. Snapshots the last orchestration step's `flex_data_provider` so the
-   on-disk CSV layout matches what the legacy disk fixtures shipped.
-4. Caches the resulting work-folder per `(scenario, db_fixture)` —
+2. Runs the full cascade (`tests._support.load.run_scenario`:
+   `csv_dump=False`, `keep_solutions=True`) in a `tmp_path_factory`
+   work folder.
+3. Copies the DB to `tests.sqlite` and snapshots the last step's
+   provider into `input/` + `solve_data/`, for tests that read those
+   files. Nothing in a run reads them back: to get a sub-solve's
+   `FlexData`, use `scenario_run` + `load_scenario` (the production
+   loader call: the step's provider + a DB reader).
+4. Caches the result per `(scenario, db_fixture)` —
    each scenario pays its ~2 s cascade cost once per test session
    regardless of how many tests consume it.
 
@@ -119,7 +129,7 @@ def test_foo(scenario_workdir):
     # work is a Path to a populated workdir with input/output CSVs.
 ```
 
-The two `tests/engine_polars/data/work_<scenario>/` directories that
+The two `tests/engine/data/work_<scenario>/` directories that
 survive after Stage 4 (`work_lh2_three_region`, `work_test_a_lot`)
 hold only a single `golden_obj.json` golden objective each. No
 migrated test depends on the gitignored bulk CSV snapshot pattern;
@@ -196,13 +206,13 @@ through the Toolbox DAG rather than the Python runner directly.
 on the same loop):
 
 - **Inner loop** — module-specific tests after every edit, typically
-  `pytest tests/engine_polars/<area>/`. Run continuously while
+  `pytest tests/engine/<area>/`. Run continuously while
   iterating.
-- **Broader gate** — `pytest tests/engine_polars/` full sweep, once
+- **Broader gate** — `pytest tests/engine/` full sweep, once
   per commit batch (~27 minutes on a recent reference run).
 - **Activation truth** — `pytest tests/` (Layer 1 + scenario
   integration suite + `tests/model/` + `tests/gui/` +
-  `tests/decomposition/` + `tests/spinedb_backend/`), run rarely
+  `tests/spinedb_backend/`), run rarely
   (overnight / pre-release).
 
 Inner loop ≠ confidence to merge; activation truth is the only gate
@@ -236,12 +246,23 @@ Defined in `pyproject.toml` and re-asserted in `tests/conftest.py`:
 | `smoke`         | Layer-1 + scenarios on the per-commit CI gate (<1 min)        |
 | `solver`        | Touches a real solver (HiGHS), 5–60 s each                    |
 | `slow`          | >~30 s — nightly only                                         |
-| `decomposition` | Tier 8 objective-decomposition parity tests                   |
+| `decomposition` | Tier 8 objective-decomposition parity (`tests/test_scenarios.py`) |
 | `perturbation`  | Tier 6 single-multiplier perturbation tests                   |
 | `emission`      | Tier 7 MPS row-count emission tests                           |
+| `csv_reload`    | CSV reload contract tests in `tests/csv_reload/` — opt-in     |
 
 The `smoke` marker is attached automatically to scenarios in
 `scenarios.yaml` that set `smoke: true`.
+
+`csv_reload` is attached by `tests/csv_reload/conftest.py` to every test
+in that folder: tests that load a CSV work folder (a provider snapshot, a
+`dump_csvs` tree, hand-written CSVs) with the unsupported
+`flextool.engine._csv_reload.load_from_dump` (a provider seeded from the
+folder's CSVs), which production never does: `load_flextool` needs the
+sub-solve's provider and a DB reader, and never reads the work folder. The default `addopts` (`-m 'not csv_reload'`)
+deselects them, and because a command-line `-m` replaces that one, the
+conftest also skips them unless the `-m` expression names `csv_reload`.
+Run them with `pytest -m csv_reload tests/csv_reload/`.
 
 `.github/workflows/ci.yml` defines the three-tier CI gate:
 
@@ -252,12 +273,24 @@ The `smoke` marker is attached automatically to scenarios in
   Layer-2 MPS parity (30-minute timeout).
 - **slow** — nightly only; `-m slow`.
 
+### Test-suite environment variables
+
+Opt-in switches read by the test suite only (registered with audience `test` in `ENV_KNOBS`,
+`flextool/run_options.py`). The runtime developer switches the suite also uses, such as
+`FLEXTOOL_AUTOSCALE_STRICT` and `FLEXTOOL_SKIP_SOLVER_PROBE`, are in
+[Environment variables (developer)](env_vars.md).
+
+| Variable | Default | Set to | What it does |
+|---|---|---|---|
+| `FLEXTOOL_NATIVE_PARITY_SWEEP` | unset (skipped) | `1` | Run the slow parity sweep of `tests/engine/test_orchestration.py` over every fixture (about 5 min per fixture). |
+| `FLEXTOOL_TEST_RSS_BUDGET_MB` | `1500` | MB | RSS budget of the input-derivation memory test `tests/spinedb_backend/test_memory_budget.py`, for machines with unrelated memory pressure. |
+
 ## Running the tests
 
 ```bash
 pytest -m smoke              # the CI smoke gate, fast
 pytest -m "not solver"       # everything that doesn't touch a solver
-pytest tests/engine_polars/  # broader gate — engine layer
+pytest tests/engine/  # broader gate — engine layer
 pytest tests/                # activation truth (slow)
 ```
 
@@ -272,7 +305,7 @@ CSVs into `tests/expected/coal/`, and lets you commit the diff.
 
 ## Determinism guards
 
-`engine_polars` emitters keep cross-solve determinism through explicit
+`engine` emitters keep cross-solve determinism through explicit
 polars sort keys on every set / parameter frame before it enters the
 `polar_high.Problem`. The downstream LP row / column IDs are then
 assigned in canonical order regardless of Python hash randomisation.
@@ -284,7 +317,7 @@ test so scenarios that share solve names cannot cross-contaminate.
 ## Adding a new test
 
 - **Engine unit test.** Drop a `test_*.py` file into
-  `tests/engine_polars/` (or the matching `loaders/` / `constraints/`
+  `tests/engine/` (or the matching `loaders/` / `constraints/`
   / `objective/` subdirectory) — pytest auto-discovers.
 - **New scenario golden.** Append a scenario entry to
   `tests/scenarios.yaml`, then
@@ -301,7 +334,7 @@ test so scenarios that share solve names cannot cross-contaminate.
 
 - [`architecture.md`](architecture.md) — pipeline end-to-end,
   Repository layout, verify-hook inventory
-- [`engine_polars.md`](engine_polars.md) — the core under Layer 1
+- [`engine.md`](engine.md) — the core under Layer 1
 - [`db_schema.md`](db_schema.md) — schema migration chain that
   `sync_master_json_template --verify` enforces
 - [`decomposition.md`](decomposition.md) — Benders parity context

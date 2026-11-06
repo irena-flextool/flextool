@@ -1,6 +1,11 @@
+import logging
+
+import numpy as np
 import pandas as pd
 
 from flextool.process_outputs._annualize import annualize_dt_to_d
+
+_logger = logging.getLogger(__name__)
 
 
 def compute_storage_and_vre(par, s, v, r) -> None:
@@ -10,11 +15,26 @@ def compute_storage_and_vre(par, s, v, r) -> None:
 
     # node_state_change_dt (four storage binding methods)
     current_idx = s.dtt.droplevel('t_previous')
-    prev_period_idx = (
-        s.dtttdt
-        .droplevel(['time', 't_previous_within_timeset', 'd_previous', 't_previous_within_solve'])
-        .set_names(['period', 'time'])
-    )
+    # bind_within_period: the previous step in the same period, the first step wrapping to the period's own
+    # last step (the model's lag; dtttdt's t_previous of a period's first step may point into another period).
+    # Built only when a node uses the method; later sub-solves win on a shared step, as in drop_levels.
+    prev_period_idx = current_idx
+    methods = s.node__storage_binding_method
+    wp_lag = getattr(s, "dtt_within_period", None)
+    if (len(current_idx) and wp_lag is not None and len(wp_lag)
+            and (methods.get_level_values('method') == 'bind_within_period').any()):
+        lag = pd.Series(
+            wp_lag.get_level_values('t_previous_within_period'),
+            index=pd.MultiIndex.from_arrays(
+                [wp_lag.get_level_values('period'), wp_lag.get_level_values('time')], names=['period', 'time']),
+        )
+        lag = lag[~lag.index.duplicated(keep='last')]
+        prev_time = lag.reindex(current_idx).to_numpy(dtype=object)
+        times = current_idx.get_level_values('time').to_numpy(dtype=object)
+        prev_period_idx = pd.MultiIndex.from_arrays(
+            [current_idx.get_level_values('period'), np.where(pd.isna(prev_time), times, prev_time)],
+            names=['period', 'time'],
+        )
     prev_timeset_idx = (
         s.dtttdt
         .droplevel(['time', 't_previous', 'd_previous', 't_previous_within_solve'])
@@ -73,42 +93,24 @@ def compute_storage_and_vre(par, s, v, r) -> None:
     r.node_state_change_dt = r_state_change
     r.node_state_change_d = r.node_state_change_dt.groupby(level='period').sum()
 
-    # self_discharge_loss
-    # par.node_self_discharge_loss broadcasts the authored
-    # ``state_self_discharge`` param across every node that carries it,
-    # including supply-curve / commodity nodes that have no ``v_state``
-    # LP variable.  Self-discharge is only meaningful on storage nodes,
-    # so restrict to the intersection with ``v.state.columns`` before
-    # multiplying — otherwise pandas raises ``KeyError: None of [...] are
-    # in the [columns]`` on real scenarios with non-storage authored
-    # values.
-    #
-    # In rolling / multi-solve scenarios ``par.node_self_discharge_loss``
-    # is built from the last sub-solve's ``flex_data.dt`` only, whereas
-    # ``v.state`` is concatenated across every sub-solve's parquet.
-    # Their (period, time) row indices then differ, and pandas raises
-    # ``TypeError: Join on level between two MultiIndex objects is
-    # ambiguous`` on the broadcast-multiply.  The underlying
-    # ``p_state_self_discharge`` is dimensioned ``(n,)`` (one constant
-    # value per node — see ``read_parameters.py``), so collapse the
-    # per-(d, t) repeats to a per-node Series before broadcasting; the
-    # mul then aligns the Series's ``node`` axis against
-    # ``v.state.columns`` regardless of row index.
-    loss_cols = par.node_self_discharge_loss.columns.intersection(
-        v.state.columns
-    )
-    if len(loss_cols) > 0:
-        per_node_loss = par.node_self_discharge_loss[loss_cols].iloc[0]
-        r.self_discharge_loss_dt = (
-            v.state[loss_cols]
-            .mul(per_node_loss, axis='columns')
-            .mul(unitsize[loss_cols], axis='columns', level=0)
-        )
+    # self_discharge_loss — the loss the balance rows used, per step in MWh (v.self_discharge, written by the
+    # engine writer write_v_self_discharge from each solve's own solution).  The dt column is MW (÷ step
+    # duration; a coarse step's / block's loss is spread evenly over its steps); the period value is the plain
+    # sum over the period's steps (MWh, not annualised).
+    sd = getattr(v, "self_discharge", None)
+    sd_cols = sd.columns.intersection(v.state.columns) if sd is not None else pd.Index([])
+    if len(sd_cols) > 0:
+        energy = sd[sd_cols].reindex(v.state.index).fillna(0.0)
+        r.self_discharge_loss_dt = energy.div(step_duration, axis=0)
+        r.self_discharge_loss_d = energy.groupby('period').sum()
     else:
-        r.self_discharge_loss_dt = pd.DataFrame(
-            0.0, index=v.state.index, columns=[],
-        )
-    r.self_discharge_loss_d = r.self_discharge_loss_dt.mul(step_duration, axis=0).groupby('period').sum()
+        lossy = par.node_self_discharge_loss.columns.intersection(v.state.columns)
+        if len(lossy) > 0 and (par.node_self_discharge_loss[lossy] != 0).any().any():
+            _logger.warning(
+                "self-discharge outputs are empty: no v_self_discharge output was written for nodes %s",
+                ", ".join(str(c) for c in lossy))
+        r.self_discharge_loss_dt = pd.DataFrame(0.0, index=v.state.index, columns=[])
+        r.self_discharge_loss_d = r.self_discharge_loss_dt.groupby('period').sum()
 
     # node_inflow_d — weight each (d, t) by par.timestep_weight (=1.0 with
     # no/uniform timeset_weights → byte-identical) before the period sum,
@@ -132,7 +134,7 @@ def compute_storage_and_vre(par, s, v, r) -> None:
     # absent from the frame.  A plain ``.mul`` aligns on the shared 'process'
     # level and drops those columns to NaN, silently zeroing VRE potential /
     # curtailment.  The engine applies availability=1.0 to every unauthored
-    # process (model.py: left-join + fill_null(1.0)); reproduce that here by
+    # process (model/core.py: left-join + fill_null(1.0)); reproduce that here by
     # densifying availability to 1.0 over the VRE process set before the mul.
     vre_procs = vre_processes_in_use.columns.get_level_values('process').unique()
     availability_dt = par.process_availability.reindex(columns=vre_procs).fillna(1.0)

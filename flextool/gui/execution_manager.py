@@ -342,7 +342,7 @@ class JobType(Enum):
     MIGRATION = auto()      # database schema / data version migration
     UPDATE = auto()         # FlexTool self-update (git pull / pip upgrade)
     DB_EDITOR = auto()      # Spine DB Editor launch (recorded only on failure)
-    ENV_REPAIR = auto()     # native-library compatibility fix (polars-lts-cpu swap)
+    ENV_REPAIR = auto()     # native-library compatibility fix (polars compat runtime, highspy pin)
 
 
 @dataclass
@@ -1241,7 +1241,9 @@ class ExecutionManager:
         if single.only_first_file:
             cmd.append("--only-first-file-per-plot")
 
-        cmd.extend(["--highs-threads", str(self.execution_limits.max_cores_per_job)])
+        # "Threads per run" (Execution jobs window): FlexTool's data processing and the solver of this run.
+        # ``--threads`` gives HiGHS ``threads=N`` with its parallel simplex left off.
+        cmd.extend(["--threads", str(max(1, int(self.execution_limits.max_cores_per_job)))])
 
         # "Debug" radio group in the main window: Off / Basic / Full.
         # Basic → --debug=basic only (verbose checkpoints, no tracemalloc).
@@ -1260,38 +1262,26 @@ class ExecutionManager:
             cmd.append("--save-memory")
 
         # ── Solver options (Solver options dialog in the side menu) ──
-        # Append each flag only when the user has changed it from the
-        # GUI-side default, keeping the engine command line clean on
-        # the common path.  HiGHS thread count is sourced solely from
-        # the execution_limits.max_cores_per_job append above (the
-        # Execution jobs window owns that knob); ``user_bound_scale``
-        # is advanced-user territory routed through ``solver_arguments``.
+        # A flag is appended only for a setting the user changed, so a GUI
+        # run and a terminal run of the same database solve alike.  The
+        # thread count is sourced solely from the
+        # execution_limits.max_cores_per_job append above (the Execution
+        # jobs window owns that knob).  The MIP gap is not a GUI setting:
+        # each solve's ``solver_mip_gap`` (else highs.opt) governs.
         _sll = getattr(settings, "solver_log_level", "normal")
         if _sll != "normal":
             cmd.append(f"--solver-log-level={_sll}")
         _stl = getattr(settings, "solver_time_limit", 0)
         if isinstance(_stl, int) and _stl > 0:
             cmd.extend(["--solver-time-limit", str(_stl)])
-        # MIP gap is forwarded only when explicitly enabled (the dialog's
-        # "Set relative MIP gap here" checkbox).  When enabled, 0 is a
-        # valid value and IS sent; when disabled, no flag is emitted and
-        # the solver_config/<solver>.opt baseline governs.
-        if getattr(settings, "solver_mip_gap_set", False):
-            _smg = getattr(settings, "solver_mip_gap", 0.0)
-            if isinstance(_smg, (int, float)) and not isinstance(_smg, bool) and _smg >= 0:
-                cmd.extend(["--solver-mip-gap", repr(float(_smg))])
-        _mff = getattr(settings, "matrix_file_format", "mps")
-        if _mff != "mps":
-            cmd.append(f"--matrix-file-format={_mff}")
-        _scl = getattr(settings, "scaling", "full")
-        if _scl != "full":
+        # Scaling / presolve: ``None`` is the dialog's "Default" entry and
+        # sends nothing (the solve's scaling, else full; presolve on).  Any
+        # other value was picked by the user and is sent, including "full".
+        _scl = getattr(settings, "scaling", None)
+        if _scl is not None:
             cmd.append(f"--scaling={_scl}")
-        # Presolve is always forwarded (incl. the "choose" default): the
-        # engine's determinism pin lives on the in-process baseline used
-        # by the test gate, not this CLI path, so passing "choose" here
-        # genuinely lets HiGHS decide per-problem.
-        _ps = getattr(settings, "presolve", "choose")
-        if _ps in ("on", "off", "choose"):
+        _ps = getattr(settings, "presolve", None)
+        if _ps is not None:
             cmd.append(f"--presolve={_ps}")
 
         return cmd

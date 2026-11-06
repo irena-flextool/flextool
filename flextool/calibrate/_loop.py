@@ -103,6 +103,8 @@ class CalibConfig:
                               parquet is always already present).  Empty ⇒ leave
                               the parquet-only outputs as-is.  Consumed by the
                               CLI, not the loop itself.
+    ``threads``             — thread budget of each solve (``--threads``);
+                              ``None`` sends no flag.
     """
 
     iterations: int
@@ -118,6 +120,7 @@ class CalibConfig:
     overshoot: float = 1.0
     stall_fraction: float = 0.05
     final_write_methods: tuple[str, ...] = ("csv",)
+    threads: int | None = None
 
 
 @dataclass
@@ -431,6 +434,7 @@ def run_calibration(
             work_dir=config.work_dir,
             out_root=config.out_root,
             cache_dir=config.warm_start_cache_dir,
+            threads=config.threads,
         )
         solve_seconds = time.time() - run.started_at
         iterations_run = k + 1

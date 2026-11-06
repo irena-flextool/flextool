@@ -1,19 +1,19 @@
-"""Integration tests for the three-region LH2 fixture (Agent 1.9).
+"""Integration tests for the three-region LH2 fixture.
 
-This is the first non-degenerate exercise of the flex-temporal stack:
+The fixture exercises a coarse ``new_stepduration`` group: the h2_* and
+lh2_* nodes are in the 24-h ``daily_group``, the electricity nodes are
+hourly.  A daily node is balanced once per day by summing its hourly
+flows (``nodeBalanceCoarse_eq``) and a daily storage node keeps one state
+per day.  The liquefiers and pipes (between daily nodes only) have one
+flow per day, written at every hour; the electrolysers (hourly ->
+daily) have hourly flows.
 
-* hourly + daily blocks coexist within one solve
-* indirect-method (regular) connection straddles blocks (hourly elec
-  source → daily H2 sink — the electrolyser)
-* coarse-block flows (liquefier h2→lh2, pipelines) live entirely on
-  the daily grid
-* coarse-block storage state (LH2) is daily
-
-The fixture is built fresh per pytest session by
-``tests/fixtures/build_lh2_three_region.py`` (no .sqlite is checked
-into the repo).  The integration tests are intentionally lightweight —
-they assert solve success, lock the objective against a golden, and
-spot-check the block-aware broadcast in the output writers (Agent 1.8).
+The fixture is built fresh per pytest session from
+``tests/fixtures/lh2_three_region.json`` (no .sqlite is checked into the
+repo).  The integration tests are intentionally lightweight — they assert
+solve success, lock the objective against a golden and spot-check the
+written outputs.  The coarse-group rows themselves are tested in
+``tests/engine/test_coarse_groups.py``.
 """
 from __future__ import annotations
 
@@ -43,11 +43,18 @@ from build_lh2_three_region import (  # noqa: E402
 )
 from db_utils import json_to_db  # noqa: E402
 
-from flextool.engine_polars import run_chain_from_db  # noqa: E402
+from flextool.engine import run_chain_from_db  # noqa: E402
 
 
 # Tolerance lifted from the existing scenario-test convention.
 OBJECTIVE_TOLERANCE = 1e-4
+
+# Objective of the hourly twin of this fixture (``daily_group.new_stepduration`` 24 → 1, or the daily group
+# removed: both give 5 855 731 058.77; oracle batch F, specs/bugfix/oracle_batch_F.md §2).  The daily model is a
+# relaxation of it: summing an hourly-feasible point's balances over each day gives a daily-feasible point, and
+# the daily state at the end of each day is the hourly state at that time.  So the daily objective can never
+# exceed it.
+HOURLY_TWIN_OBJECTIVE = 5_855_731_058.77
 
 
 # ---------------------------------------------------------------------------
@@ -129,7 +136,9 @@ class TestLh2ThreeRegion:
         and is regenerated on demand via ``--regenerate lh2_three_region``
         on a separate parametrized test (see ``test_scenarios.py`` for
         the existing pattern).  Here we use a static JSON so the
-        threshold logic is explicit.
+        threshold logic is explicit.  Independently of the golden, the
+        daily objective is bounded above by the hourly twin's
+        (``HOURLY_TWIN_OBJECTIVE``).
         """
         v_obj_path = lh2_solve / "output_raw" / "v_obj__lh2_week.parquet"
         assert v_obj_path.exists(), f"v_obj parquet not produced at {v_obj_path}"
@@ -148,6 +157,10 @@ class TestLh2ThreeRegion:
                 f"{golden_path.relative_to(REPO_ROOT)}; commit it and "
                 f"re-run the test to validate."
             )
+        assert actual <= HOURLY_TWIN_OBJECTIVE, (
+            f"daily objective {actual!r} exceeds the hourly twin's "
+            f"{HOURLY_TWIN_OBJECTIVE!r}; the daily model is its relaxation"
+        )
         golden = json.loads(golden_path.read_text())
         expected = float(golden["objective"])
         rel_diff = abs(actual - expected) / max(abs(expected), 1.0)
@@ -161,11 +174,10 @@ class TestLh2ThreeRegion:
     ) -> None:
         """Electrolyser elec source-side flow is at hourly resolution.
 
-        The connection's source side lives at the elec node's block
-        (hourly).  Even though the LP may legitimately bunch all
-        consumption into a single hour per day, the fact that *any*
-        hour-to-hour variation is permitted (i.e. flows are NOT pinned
-        constant within a day) is what we want to exercise here.
+        The electrolyser connects an hourly node, so its flows are hourly.  Even though the LP may
+        legitimately bunch all consumption into a single hour per day, the
+        fact that *any* hour-to-hour variation is permitted (i.e. flows are
+        NOT pinned constant within a day) is what we want to exercise here.
 
         Concretely: we check that for *some* day, two distinct hourly
         timesteps in that day have different electrolyser elec-input
@@ -192,54 +204,6 @@ class TestLh2ThreeRegion:
             "elec_A hourly block."
         )
 
-    def test_liquefier_h2_to_lh2_is_daily_constant(
-        self, lh2_solve: Path
-    ) -> None:
-        """Daily-block process flow is constant within each day.
-
-        The liquefier is in ``daily_group`` and its source/sink both
-        live at the daily block.  Agent 1.8's broadcast must populate
-        every hour within a day with the same value.
-        """
-        df = self._read_v_flow(lh2_solve)
-        col = ("liquefier_A", "h2_A", "lh2_A")
-        col_str = str(col)
-        assert col_str in df.columns, f"missing liquefier flow column {col_str!r}"
-        flows = df[col_str].astype(float).to_numpy()
-        for d in range(N_DAYS):
-            day_slice = flows[d * 24 : (d + 1) * 24]
-            spread = day_slice.max() - day_slice.min()
-            assert spread < 1e-9, (
-                f"day {d + 1}: liquefier flow varies within the day "
-                f"(spread={spread:.3e}); daily-block broadcast should "
-                f"emit the same value for all 24 hours."
-            )
-
-    def test_pipe_flows_are_daily(self, lh2_solve: Path) -> None:
-        """LH2 pipeline flows (daily block) are constant within each day.
-
-        Validates that connection-level coarse-block broadcast works
-        for the pipeline topology too.
-        """
-        df = self._read_v_flow(lh2_solve)
-        for col in (
-            ("pipe_AB", "lh2_A", "lh2_B"),
-            ("pipe_AB", "lh2_B", "lh2_A"),
-            ("pipe_BC", "lh2_B", "lh2_C"),
-            ("pipe_BC", "lh2_C", "lh2_B"),
-        ):
-            col_str = str(col)
-            if col_str not in df.columns:
-                continue  # one direction may be all-zero / pruned
-            flows = df[col_str].astype(float).to_numpy()
-            for d in range(N_DAYS):
-                day_slice = flows[d * 24 : (d + 1) * 24]
-                spread = day_slice.max() - day_slice.min()
-                assert spread < 1e-9, (
-                    f"{col_str} day {d + 1}: pipe flow varies within "
-                    f"the day (spread={spread:.3e})."
-                )
-
     def test_lh2_storage_state_is_daily(self, lh2_solve: Path) -> None:
         """LH2 storage state (daily block) is constant within each day."""
         v_state_path = lh2_solve / "output_raw" / "v_state__lh2_week.parquet"
@@ -250,7 +214,7 @@ class TestLh2ThreeRegion:
             assert col in df.columns, f"missing v_state column for {col}"
             states = df[col].astype(float).to_numpy()
             assert len(states) == N_HOURS, (
-                f"{col}: expected {N_HOURS} rows after broadcast, got {len(states)}"
+                f"{col}: expected {N_HOURS} rows, got {len(states)}"
             )
             for d in range(N_DAYS):
                 day_slice = states[d * 24 : (d + 1) * 24]
@@ -264,8 +228,8 @@ class TestLh2ThreeRegion:
     def test_battery_state_is_hourly(self, lh2_solve: Path) -> None:
         """Battery storage state (hourly block) varies hour-to-hour.
 
-        Sanity check that the broadcast doesn't accidentally collapse
-        hourly nodes to daily-broadcast.  At least one day should show
+        Sanity check that the daily group does not collapse hourly nodes
+        to daily states.  At least one day should show
         nontrivial hour-to-hour variation in battery state.
         """
         v_state_path = lh2_solve / "output_raw" / "v_state__lh2_week.parquet"
@@ -294,10 +258,9 @@ class TestLh2ThreeRegion:
     def test_output_row_counts_match_fine_timeline(
         self, lh2_solve: Path
     ) -> None:
-        """Every time-indexed output has 168 rows (the fine timeline).
-
-        Agent 1.8's broadcast widens coarse-block variables to the fine
-        timeline so downstream readers don't see ragged DataFrames.
+        """Every time-indexed output has 168 rows (the fine timeline): the
+        flows of processes between daily nodes (one per day in the LP) are
+        written at every hour, like every other variable.
         """
         for fname in ("v_flow", "v_state", "vq_state_up", "vq_state_down"):
             path = lh2_solve / "output_raw" / f"{fname}__lh2_week.parquet"
@@ -306,67 +269,8 @@ class TestLh2ThreeRegion:
             df = pd.read_parquet(path)
             assert len(df) == N_HOURS, (
                 f"{fname}: expected {N_HOURS} rows (one per fine-timeline "
-                f"step), got {len(df)}.  Coarse-block variables must be "
-                f"broadcast to every covered fine timestep."
+                f"step), got {len(df)}."
             )
-
-    def test_daily_block_broadcast_invariant_every_arc(
-        self, lh2_solve: Path
-    ) -> None:
-        """Bug A1 regression — every daily-block arc has 24 identical
-        v_flow rows per day after the writer broadcast.
-
-        The cascade path keeps the block CSVs (entity_block.csv,
-        process_block.csv, overlap_set.csv) in the Provider rather than
-        flushing them to disk.  Before the A1 fix, the output writer's
-        ``_load_entity_block_map`` / ``_load_overlap_fine_to_coarse``
-        only consulted disk and silently returned empty dicts — leaving
-        every coarse-block flow value unbroadcast.  This test pins the
-        invariant: ALL daily-block arcs (not just the canonical
-        liquefier + pipe spot checks above) must show zero intra-day
-        spread.
-        """
-        df = self._read_v_flow(lh2_solve)
-        # Every column in v_flow is a ``(process, source, sink)`` tuple.
-        # The daily-group processes are the liquefiers and the pipes —
-        # both sides live on the daily block, so the writer must
-        # broadcast across all 24 hours of each day.
-        daily_processes = {
-            "liquefier_A", "liquefier_B", "liquefier_C",
-            "pipe_AB", "pipe_BC",
-        }
-        checked = 0
-        for col_str in df.columns:
-            # Column labels are stringified Python tuples produced by
-            # _output_writer; parse the process name out of the string.
-            # Lightweight inline parse — Python's ast.literal_eval works
-            # but ast import overhead vs the tuple-shape check is moot.
-            import ast
-            try:
-                col = ast.literal_eval(col_str)
-            except (ValueError, SyntaxError):
-                continue
-            if not (isinstance(col, tuple) and len(col) == 3):
-                continue
-            process = col[0]
-            if process not in daily_processes:
-                continue
-            flows = df[col_str].astype(float).to_numpy()
-            for d in range(N_DAYS):
-                day_slice = flows[d * 24 : (d + 1) * 24]
-                spread = day_slice.max() - day_slice.min()
-                assert spread < 1e-9, (
-                    f"{col_str} day {d + 1}: daily-block v_flow varies "
-                    f"intra-day (spread={spread:.3e}); the writer's "
-                    f"block-aware broadcast (Agent 1.8) must replicate "
-                    f"the coarse-step value to every fine hour."
-                )
-            checked += 1
-        assert checked > 0, (
-            "no daily-block arcs found in v_flow output — the fixture "
-            "should always carry at least the three liquefier arcs.  "
-            f"Have columns: {df.columns.tolist()[:6]}"
-        )
 
     # ------------------------------------------------------------------
     # Helpers

@@ -22,7 +22,6 @@ def cost_summaries(par, s, v, r, debug):
 
     # Common calculations
     discount_ops = par.inflation_factor_operations_yearly
-    discount_invs = par.inflation_factor_investment_yearly
     period_share = par.complete_period_share_of_year
     to_millions = 1000000
 
@@ -93,8 +92,11 @@ def cost_summaries(par, s, v, r, debug):
     # ``d_realize_invest ∪ d_realized_period`` discarded p2025's row on
     # assignment to ``investment_costs``, leaving the per-category sum 1000
     # M-CUR below summary's full-horizon total).
+    # The fixed cost of existing capacity is reported in every period of the run (also one no solve realizes,
+    # the last solve's look-ahead, which the fixed-cost lumps of new capacity cover too).
     period_in_use = par.complete_period_share_of_year.index
-    investment_index = s.d_realize_invest.union(s.d_realized_period).union(period_in_use)
+    investment_index = (s.d_realize_invest.union(s.d_realized_period).union(period_in_use)
+                        .union(r.costFixedPreExisting_d.index))
     investment_costs = pd.DataFrame(index=investment_index, dtype=float)
     investment_costs.columns.name = 'category'
     # Invest + divest are independent per-period series: a scenario may
@@ -118,12 +120,27 @@ def cost_summaries(par, s, v, r, debug):
     investment_costs['capacity margin penalty'] = r.costPenalty_capacity_margin_d / to_millions
     investment_costs = investment_costs.fillna(0.0)
 
-    # Annualize back: Remove inflation adjustment and years represented
-    annual_invest_costs = investment_costs.div(discount_invs, axis=0)
+    # Annualized: the fixed cost of existing capacity and the capacity margin penalty are the discounted costs
+    # without the discount factor; investment, retirement and the fixed costs of new and retired capacity are
+    # the yearly amounts of every vintage and retirement in effect in the period (calc_costs ANN.), in every
+    # period the capacity operates or the retirement applies.
+    yearly = {
+        'unit investment & retirement': r.costInvestUnit_yearly.add(r.costDivestUnit_yearly, fill_value=0),
+        'connection investment & retirement': r.costInvestConnection_yearly.add(r.costDivestConnection_yearly,
+                                                                                fill_value=0),
+        'storage investment & retirement': r.costInvestState_yearly.add(r.costDivestState_yearly, fill_value=0),
+        'fixed cost invested': r.costFixedInvested_yearly,
+        'fixed cost reduction of divestments': r.costFixedDivested_yearly,
+    }
+    extra = [d for frame in yearly.values() for d in frame.index[frame.fillna(0.0).ne(0.0)]]
+    annual_index = investment_index.union(pd.Index(list(dict.fromkeys(extra)), name=investment_index.name))
+    annual_invest_costs = pd.DataFrame(index=annual_index, columns=investment_costs.columns, dtype=float)
+    annual_invest_costs.columns.name = 'category'
+    for col, series in yearly.items():
+        annual_invest_costs[col] = series.reindex(annual_index) / to_millions
     annual_invest_costs['fixed cost pre-existing'] = investment_costs['fixed cost pre-existing'].div(discount_ops, axis=0)
-    annual_invest_costs['fixed cost invested'] = investment_costs['fixed cost invested'].div(discount_ops, axis=0)
-    annual_invest_costs['fixed cost reduction of divestments'] = investment_costs['fixed cost reduction of divestments'].div(discount_ops, axis=0)
     annual_invest_costs['capacity margin penalty'] = investment_costs['capacity margin penalty'].div(discount_ops, axis=0)
+    annual_invest_costs = annual_invest_costs.fillna(0.0)
 
     # 4. Combined summary (investment + dispatch aggregated to period)
     all_periods = s.d_realized_period.union(s.d_realize_invest)
@@ -183,7 +200,6 @@ def cost_breakdown_by_entity(par, s, v, r, debug):
     results = []
 
     discount_ops = par.inflation_factor_operations_yearly
-    discount_invs = par.inflation_factor_investment_yearly
     period_share = par.complete_period_share_of_year
     to_millions = 1000000
 
@@ -293,16 +309,25 @@ def cost_breakdown_by_entity(par, s, v, r, debug):
         # have empty v.invest / v.divest).
         invest_label = 'storage investment' if kind == 'node' else 'investment'
         divest_label = 'storage retirement' if kind == 'node' else 'retirement'
+        # Annualized: the fixed cost of existing capacity without its discount factor; the others are the
+        # yearly amounts in every period the capacity operates or the retirement applies (calc_costs ANN.).
         inv_specs = [
-            (invest_label, r.cost_entity_invest_d, discount_invs),
-            (divest_label, r.cost_entity_divest_d, discount_invs),
-            ('fixed cost pre-existing', r.cost_entity_fixed_pre_existing, discount_ops),
-            ('fixed cost invested', r.cost_entity_fixed_invested, discount_ops),
-            ('fixed cost reduction of divestments', r.cost_entity_fixed_divested, discount_ops),
+            (invest_label, r.cost_entity_invest_d, r.cost_entity_invest_yearly),
+            (divest_label, r.cost_entity_divest_d, r.cost_entity_divest_yearly),
+            ('fixed cost pre-existing', r.cost_entity_fixed_pre_existing, None),
+            ('fixed cost invested', r.cost_entity_fixed_invested, r.cost_entity_fixed_invested_yearly),
+            ('fixed cost reduction of divestments', r.cost_entity_fixed_divested,
+             r.cost_entity_fixed_divested_yearly),
         ]
-        for cat, frame, discount in inv_specs:
+        for cat, frame, yearly in inv_specs:
             d = _inv_discounted(frame, entities)
-            a = _inv_annualized(frame, entities, discount=discount)
+            if yearly is None:
+                a = _inv_annualized(frame, entities, discount=discount_ops)
+            else:
+                # Already per year (/1e6 only); the rows of the discounted lumps stay (as zeros where no
+                # capacity of the entity operates), so a category keeps its column without investments.
+                index = yearly.index.union(frame.index) if len(yearly.index) else frame.index
+                a = _inv_discounted(yearly.reindex(index=index, columns=frame.columns).fillna(0.0), entities)
             if a is not None:
                 ann_pieces[cat] = a
             if d is not None:
@@ -324,15 +349,54 @@ def cost_breakdown_by_entity(par, s, v, r, debug):
     return results
 
 
+def realized_leaf_periods(s) -> dict[str, pd.Index]:
+    """``{leaf: realized periods on that scenario path}`` for the per-path CO2 reports.
+
+    ``s.d_leaf`` maps each period of a stochastic solve to the scenario
+    path(s) holding it (a pre-reveal trunk period is on every path).  Only
+    realized periods reach the outputs, so the map is cut to
+    ``s.d_realized_period`` first: forecast-branch periods never count.
+    Paths left with the same realized periods are one timeline and collapse
+    into one entry; the result has more than one entry only when realized
+    periods genuinely differ between paths.  Empty when there is no tree.
+    """
+    if s.d_leaf.empty:
+        return {}
+    realized = s.d_realized_period
+    if isinstance(realized, pd.MultiIndex):
+        realized = realized.get_level_values('period')
+    realized = set(realized)
+    d_leaf = s.d_leaf[s.d_leaf.get_level_values('period').isin(realized)]
+    out: dict[str, pd.Index] = {}
+    seen: set[tuple] = set()
+    for leaf in d_leaf.get_level_values('leaf').unique():
+        periods = d_leaf[d_leaf.get_level_values('leaf') == leaf].get_level_values('period').unique()
+        key = tuple(sorted(periods))
+        if key not in seen:
+            seen.add(key)
+            out[leaf] = periods
+    return out
+
+
 def CO2(par, s, v, r, debug):
     """Annualized CO2 Mt for groups by period"""
     results = []
 
-    # Calculate CO2 emissions in Mt
-    total_co2 = ((r.emissions_co2_d * par.years_represented_d) / 1000000).sum(axis=0)
-    co2_summary = pd.DataFrame(index=["CO2 [Mt]"], columns=["model_wide"], data=total_co2)
-    co2_summary.index.name = 'param_CO2'
-    co2_summary.columns.name = 'scope'
+    # Calculate CO2 emissions in Mt, reported per scenario path when the
+    # realized periods belong to more than one (see
+    # :func:`realized_leaf_periods`); otherwise one "model_wide" column.
+    co2_mt = (r.emissions_co2_d * par.years_represented_d) / 1000000
+    leaf_periods = realized_leaf_periods(s)
+    if len(leaf_periods) > 1:
+        totals = {leaf: co2_mt.reindex(periods).sum() for leaf, periods in leaf_periods.items()}
+        co2_summary = pd.DataFrame(totals, index=["CO2 [Mt]"])
+        co2_summary.index.name = 'param_CO2'
+        co2_summary.columns.name = 'path'
+    else:
+        total_co2 = co2_mt.sum(axis=0)
+        co2_summary = pd.DataFrame(index=["CO2 [Mt]"], columns=["model_wide"], data=total_co2)
+        co2_summary.index.name = 'param_CO2'
+        co2_summary.columns.name = 'scope'
     results.append((co2_summary, 'CO2__'))
 
     # Process co2 emissions (annualized — plot rule 'y' weights by years_represented for horizon totals)

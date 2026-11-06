@@ -21,8 +21,8 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from flextool.engine_polars._flex_data_provider import FlexDataProvider
-from flextool.engine_polars._solve_state import FlexToolConfigError
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 
 def write_input_for_region(
@@ -32,7 +32,6 @@ def write_input_for_region(
     region_group: str,
     output_dir: Path,
     work_folder: Path | None = None,
-    precision_digits: int = 0,
 ) -> dict:
     """Write a self-contained ``input_region_<region>/`` directory for one
     decomposition region's standalone solve.
@@ -54,7 +53,7 @@ def write_input_for_region(
 
     Parameters
     ----------
-    input_db_url, scenario_name, logger, work_folder, precision_digits
+    input_db_url, scenario_name, logger, work_folder
         Standard cascade entry-point inputs.
     region_group
         The group name whose ``decomposition_method`` is
@@ -79,7 +78,6 @@ def write_input_for_region(
         logger,
         scenario_name=scenario_name,
         work_folder=work_folder,
-        precision_digits=precision_digits,
     )
 
     # 2. Validate region membership BEFORE filtering — surface a clear
@@ -114,7 +112,8 @@ def write_input_for_region(
         else:
             # Non-input frames stay under their qualified parent.
             flat_provider.put(key, frame)
-    flat_provider.snapshot_processed_inputs(output_dir)
+    # ``stamp=False``: the region directory is a CLI export, not a CSV dump.
+    flat_provider.snapshot_processed_inputs(output_dir, stamp=False)
 
     # 5. Write the coupling manifest.  Routes through the Provider for
     # symmetry with the rest of the pipeline; the snapshot lands at
@@ -124,5 +123,6 @@ def write_input_for_region(
         manifest_provider,
         results=[result],
     )
-    manifest_provider.snapshot_processed_inputs(wf)
+    # ``stamp=False``: one manifest file into the run's work folder root, not a CSV dump.
+    manifest_provider.snapshot_processed_inputs(wf, stamp=False)
     return result

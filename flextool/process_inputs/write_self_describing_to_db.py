@@ -13,11 +13,13 @@ adds entities, alternatives, entity_alternatives, and parameter_values.
 
 from __future__ import annotations
 
+import json
 import logging
 from collections import defaultdict
 from typing import Any
 
 from spinedb_api import Array, Asterisk, DatabaseMapping, Map, SpineDBAPIError, to_database
+from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.exception import NothingToCommit
 
 from flextool.process_inputs.read_self_describing_excel import SheetData
@@ -73,7 +75,7 @@ def _registry_facet_targets() -> "dict[tuple[str, str], list[tuple[str, tuple[st
     ``("period", "tier")``).
     """
     try:
-        from flextool.engine_polars._param_shapes import (
+        from flextool.engine.input._param_shapes import (
             LeafKind,
             PARAM_ALLOWED_SHAPES,
             facet_keys,
@@ -502,7 +504,7 @@ def _group_map_records(
         # array slot number OR the period token.  Reconstruct an Array
         # so the round-trip preserves the SpineDB ``"array"`` type — a
         # hard requirement for ``model.solves``, ``solve.realized_periods``
-        # and friends, which downstream code (engine_polars._solve_config
+        # and friends, which downstream code (engine.input._solve_config
         # ``params_to_dict``) only treats as ordered sequences when the
         # parsed value is an ``Array`` instance.  Index_name is preserved
         # from the source so the engine's axis labels stay intact.
@@ -890,6 +892,59 @@ def _purge_database(db: DatabaseMapping, keep_entities: bool = False) -> None:
 # ---------------------------------------------------------------------------
 
 
+def merge_behaviour_marker_values(stored: str, restored: str) -> str:
+    """The value of a marker that is both in the database (*stored*) and in the workbook (*restored*).
+
+    Two JSON objects are merged: list fields are unioned (stored items first, then the workbook's new ones),
+    other fields take the workbook's value.  Otherwise the workbook's value wins.
+    """
+    try:
+        old, new = json.loads(stored), json.loads(restored)
+    except (TypeError, ValueError):
+        return restored
+    if not (isinstance(old, dict) and isinstance(new, dict)):
+        return restored
+    merged = dict(old)
+    for key, value in new.items():
+        if isinstance(value, list) and isinstance(old.get(key), list):
+            merged[key] = list(old[key]) + [item for item in value if item not in old[key]]
+        else:
+            merged[key] = value
+    return json.dumps(merged)
+
+
+def restore_behaviour_markers(db_url: str, markers: list[tuple[str, str]]) -> None:
+    """Write behaviour-change markers read from a workbook back into the
+    database metadata (see :func:`read_behaviour_markers`).
+
+    Markers are matched by name, so a name stays unique: a marker the
+    database already has (e.g. written by the import's own upgrade) is
+    updated with :func:`merge_behaviour_marker_values`, and any duplicates
+    of that name are removed."""
+    if not markers:
+        return
+    with open_database_mapping(db_url, create=False) as db:
+        changed = False
+        for name, value in markers:
+            same = [md for md in db.get_items("metadata") if md["name"] == name]
+            if not same:
+                db.add_item("metadata", name=name, value=value)
+                changed = True
+                continue
+            merged = same[0]["value"]
+            for md in same[1:]:
+                merged = merge_behaviour_marker_values(merged, md["value"])
+            merged = merge_behaviour_marker_values(merged, value)
+            if merged != same[0]["value"]:
+                db.update_item("metadata", id=same[0]["id"], value=merged)
+                changed = True
+            if len(same) > 1:
+                db.remove_items("metadata", *[md["id"] for md in same[1:]])
+                changed = True
+        if changed:
+            db.commit_session("Restored behaviour-change markers from the workbook")
+
+
 def write_sheet_data_to_db(
     sheet_data_list: list[SheetData],
     db_url: str,
@@ -911,7 +966,7 @@ def write_sheet_data_to_db(
             entities during purge.  Useful when importing into a fresh
             template DB that has structural entities (like upDown).
     """
-    with DatabaseMapping(db_url, create=False, upgrade=True) as db:
+    with open_database_mapping(db_url, create=False, upgrade=True) as db:
         if purge_first:
             _purge_database(db, keep_entities=keep_entities)
 

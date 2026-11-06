@@ -1212,7 +1212,9 @@ plots:
     node_capacity_ed_p:
       default:
         variant: p
-        map_dimensions_for_plots: [ed_p, bg_u]
+        # Bars per entity, a panel per period, the capacity components (existing, invested,
+        # in_construction, divested, total) side by side, coloured by categories.capacity.
+        map_dimensions_for_plots: [ed_p, bu_g]
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
@@ -1220,6 +1222,7 @@ plots:
         skip_data_with_only_zeroes: true
         axis_bounds: shared
         value_label: dynamic
+        color_category: capacity
         comparison_overrides:
           map_dimensions_for_plots: [ed_sp, eb_gu]
           max_subplots_per_file: 2
@@ -1231,7 +1234,9 @@ plots:
     unit_capacity_ed_p:
       default:
         variant: p
-        map_dimensions_for_plots: [ed_p, bg_u]
+        # Bars per entity, a panel per period, the capacity components (existing, invested,
+        # in_construction, divested, total) side by side, coloured by categories.capacity.
+        map_dimensions_for_plots: [ed_p, bu_g]
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
@@ -1239,11 +1244,13 @@ plots:
         skip_data_with_only_zeroes: true
         axis_bounds: shared
         value_label: dynamic
+        color_category: capacity
         # In the comparison view, the unioned plan parquet has 'scenario'
         # prepended as the outermost column level. 'g' renders each scenario
         # as a separate colour group on the bars (side-by-side per unit).
         scenario_rule: g
         comparison_overrides:
+          map_dimensions_for_plots: [ed_sp, bg_gu]
           max_subplots_per_file: 2
           base_length: 4
           legend: shared
@@ -1253,7 +1260,9 @@ plots:
     connection_capacity_ed_p:
       default:
         variant: p
-        map_dimensions_for_plots: [ed_p, bg_u]
+        # Bars per entity, a panel per period, the capacity components (existing, invested,
+        # in_construction, divested, total) side by side, coloured by categories.capacity.
+        map_dimensions_for_plots: [ed_p, bu_g]
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
@@ -1261,6 +1270,7 @@ plots:
         skip_data_with_only_zeroes: true
         axis_bounds: shared
         value_label: dynamic
+        color_category: capacity
         comparison_overrides:
           map_dimensions_for_plots: [ed_sp, eb_gu]
           legend: shared
@@ -2068,6 +2078,67 @@ plots:
         comparison_overrides:
           max_subplots_per_file: 4
           legend: shared
+  'Connection online':
+    group: 8
+    order: 8
+    connection_online_dt_e:
+      default:
+        variant: h
+        map_dimensions_for_plots: [dt_e, tt_l]
+        color_entity_class: connection
+        max_items_per_plot: 10
+        max_subplots_per_file: 6
+        ylabel: units online
+        scenario_rule: l
+      chunks:
+        plot_name: 'Connection online weekly avg'
+        variant: w
+        map_dimensions_for_plots: [dt_e, ti_l]
+        color_entity_class: connection
+        time_average_duration: 168
+        max_items_per_plot: 10
+        max_subplots_per_file: 6
+        ylabel: units online
+        comparison_overrides:
+          map_dimensions_for_plots: [dt_se, ti_lu]
+          legend: shared
+          ylabel: number of units online
+    connection_online_average_d_e:
+      default:
+        variant: p
+        map_dimensions_for_plots: [d_e, g_b]
+        max_items_per_plot: 40
+        xlabel: units online (period average)
+        scenario_rule: g
+      sum_periods:
+        plot_name: 'Connection online average'
+        variant: a
+        map_dimensions_for_plots: [d_e, z_b]
+        color_entity_class: connection
+        max_items_per_plot: 40
+        xlabel: units online (weighted average)
+        scenario_rule: g
+        comparison_overrides:
+          max_subplots_per_file: 8
+          xlabel: connection online (weighted average)
+          subplots_per_row: 2
+          legend: shared
+  'Connection startup':
+    group: 8
+    order: 9
+    connection_startup_d_e:
+      default:
+        variant: p
+        map_dimensions_for_plots: [d_e, g_b]
+        max_items_per_plot: 40
+        xlabel: number of starts (annualized)
+      sum_periods:
+        plot_name: 'Connection startup total'
+        variant: a
+        map_dimensions_for_plots: [d_e, y_b]
+        color_entity_class: connection
+        max_items_per_plot: 40
+        xlabel: starts (horizon total)
   'Reserve from process to node':
     group: 9
     order: 0
@@ -2220,8 +2291,11 @@ rename:
   connection_rightward_d_eee: [connection_rightward__d, true]
   connection_capacity_ed_p: [connection_capacity__d, true]
   connection_cf_d_e: [connection_cf__d, true]
+  connection_online_dt_e: [connection_online__dt, true]
+  connection_online_average_d_e: [connection_online__d_average, true]
+  connection_startup_d_e: [connection_startup__d, true]
   costs_dt_p: [costs__dt, true]
-  costs_discounted_d_p: [costs_discounted, true]
+  costs_discounted_d_p: [costs_discounted__d, true]
   costs_discounted_p_: [costs_discounted, true]
   cost_unit_annualized_d_ec: [cost_unit_annualized__d, true]
   cost_connection_annualized_d_ec: [cost_connection_annualized__d, true]
@@ -2245,8 +2319,8 @@ rename:
   nodeGroup_gd_p: [group_node__d, true]
   flowGroup_gd_p: [group_flow__d, true]
   flowGroup_gd_t: [group_flow__dt, true]
-  nodeGroup_VRE_share_d_g: [group_node_VRE_share__dt, true]
-  nodeGroup_VRE_share_dt_g: [group_node_VRE_share, true]
+  nodeGroup_VRE_share_d_g: [group_node_VRE_share__d, true]
+  nodeGroup_VRE_share_dt_g: [group_node_VRE_share__dt, true]
   CO2_d_g: [group_CO2__d, true]
   co2_price_period_d_g: [group_CO2_price_period__d, true]
   co2_price_total_d_g: [group_CO2_price_total__d, true]

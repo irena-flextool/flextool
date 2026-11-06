@@ -15,7 +15,7 @@ builder EXTENDS the proven ``stochastics.json`` shape (the
 ``2_day_stochastic_dispatch`` scenario, which already fires
 ``non_anticipativity_storage_use`` with a populated
 ``dt_non_anticipativity`` — see
-``tests/engine_polars/emission/test_non_anticipativity_storage_use_emits.py``)
+``tests/engine/emission/test_non_anticipativity_storage_use_emits.py``)
 with a new ``recourse_na`` scenario that:
 
   * turns on ``solve.stochastic_invest_method = recourse`` for
@@ -29,7 +29,7 @@ with a new ``recourse_na`` scenario that:
     ``pd_branch_weight[d]``.
 
 Assertions (structural + directional, no second hand-calc) live in
-``tests/engine_polars/test_recourse_invest_na.py``:
+``tests/engine/test_recourse_invest_na.py``:
   * ``dt_non_anticipativity`` non-empty; ``non_anticipativity_storage_use``
     row count > 0 — the coupling is live.
   * branch-leaf ``v_state`` at the NA-tied timesteps equals the realized
@@ -47,6 +47,9 @@ import base64
 import json
 from pathlib import Path
 
+from flextool.update_flextool.fixture_schema import schema_sections
+from flextool.update_flextool.test_fixtures import write_built_fixture
+
 FIXTURES = Path(__file__).resolve().parent
 
 
@@ -59,25 +62,21 @@ def _pack(value: object, value_type: str) -> list:
 
 def build() -> dict:
     spec = json.loads((FIXTURES / "stochastics.json").read_text())
+    spec.update(schema_sections("packed"))
 
-    # ``stochastics.json`` predates v70, so inject the
-    # ``solve.stochastic_invest_method`` opt-in (value list + definition)
-    # before import — ``json_to_db`` validates authored values against the
-    # embedded schema BEFORE the idempotent v70 migration reconciles it.
-    if not any(vl[0] == "stochastic_invest_methods"
-               for vl in spec["parameter_value_lists"]):
-        spec["parameter_value_lists"] += [
-            ["stochastic_invest_methods", _pack("none", "str")],
-            ["stochastic_invest_methods", _pack("recourse", "str")],
-        ]
-    if not any(pd[0] == "solve" and pd[1] == "stochastic_invest_method"
-               for pd in spec["parameter_definitions"]):
-        spec["parameter_definitions"].append([
-            "solve", "stochastic_invest_method",
-            _pack("none", "str"), "stochastic_invest_methods",
-            "How stochastic branches participate in investment "
-            "(none/recourse).", "solve_advanced",
-        ])
+    # The fixture's ``2day_dispatch`` fan designates the ``realized``
+    # branch as realized (``stochastics.json`` itself authors it as a
+    # forecast), so the realized-value assertions have a realized member.
+    branches = {"index_type": "str", "data": [["period1", {
+        "type": "map", "index_type": "str", "data": [
+            [branch, {"type": "map", "index_type": "str", "data": [
+                ["t0001", {"type": "map", "index_type": "str",
+                           "data": [[realized, 1.0]]}]]}]
+            for branch, realized in (("realized", "yes"), ("upper", "no"),
+                                     ("lower", "no"), ("mid", "no"))]}]]}
+    for row in spec["parameter_values"]:
+        if row[:3] == ["solve", "2day_dispatch", "stochastic_branches"]:
+            row[3] = _pack(branches, "map")
 
     # New alternative + scenario layered on the 2_day_stochastic_dispatch
     # chain (base → init → system → 2day → recourse_na).
@@ -128,7 +127,7 @@ def build() -> dict:
 def main() -> None:
     spec = build()
     out = FIXTURES / "stoch_two_period_invest_na.json"
-    out.write_text(json.dumps(spec, indent=2) + "\n")
+    write_built_fixture(spec, out)
     print(f"Wrote {out} "
           f"({len(spec['parameter_values'])} parameter values)")
 

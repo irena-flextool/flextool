@@ -69,8 +69,8 @@ OUTPUT_CONFIG = str(REPO_ROOT / "templates" / "default_plots.yaml")
 if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
-from flextool.engine_polars import run_chain_from_db  # noqa: E402  # imports after sys.path manipulation above
-from flextool.engine_polars._flex_data_provider import FlexDataProvider  # noqa: E402
+from flextool.engine import run_chain_from_db  # noqa: E402  # imports after sys.path manipulation above
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider  # noqa: E402
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402  # imports after sys.path manipulation above
 
 
@@ -90,7 +90,7 @@ def _run_scenario(
     Δ.22 migration: ``SolverRunner.run`` was deleted, so the legacy
     ``runner.run_model()`` path raises :class:`NotImplementedError`.
     The native cascade replacement is
-    :func:`flextool.engine_polars.run_chain_from_db`.  ``csv_dump=True``
+    :func:`flextool.engine.run_chain_from_db`.  ``csv_dump=True``
     triggers the per-solve snapshot to ``solve_data/`` so the
     cost-aggregation hand-derivations below can read
     ``p_step_duration.csv`` / ``p_rp_cost_weight.csv`` /
@@ -120,6 +120,12 @@ def _run_scenario(
     provider = getattr(last_step, "flex_data_provider", None)
     if provider is not None:
         provider.snapshot_processed_inputs(workdir)
+    # A stochastic solve followed by its realization solve: the solve_data of
+    # the stochastic solve (its own Provider) under solve_data_<solve>/.
+    for step in steps.values():
+        if step is not last_step and step.flex_data_provider is not None \
+                and step.flex_data_provider is not provider:
+            step.flex_data_provider.snapshot_processed_inputs(workdir / f"provider_{step.solve_name}", stamp=False)
 
     write_outputs(
         scenario_name=scenario,
@@ -279,6 +285,22 @@ def _read_pdt_timestep_weight(
     )
 
 
+def _solve_objectives(csv_dir: Path) -> dict[str, float]:
+    """``{solve: LP objective}`` from the ``Solve,Objective`` block of ``summary_solve.csv``."""
+    out: dict[str, float] = {}
+    in_block = False
+    with open(csv_dir / "summary_solve.csv") as f:
+        for row in csv.reader(f):
+            if row and row[0] == "Solve":
+                in_block = True
+                continue
+            if in_block:
+                if len(row) < 2 or row[0].startswith("Total cost"):
+                    break
+                out[row[0]] = float(row[1])
+    return out
+
+
 def _read_summary_solve(csv_dir: Path) -> dict:
     """Parse ``summary_solve.csv`` into a flat dict of the top-level totals.
 
@@ -349,6 +371,23 @@ def _read_slack_up_dt(csv_dir: Path) -> pd.DataFrame:
 
 def _read_slack_capacity_margin_d(csv_dir: Path) -> pd.DataFrame:
     return pd.read_csv(csv_dir / "slack__capacity_margin__d.csv", index_col=[0, 1])
+
+
+def _read_co2_model_total(csv_dir: Path) -> float:
+    """Read the ``model`` entity ``CO2`` total [Mt] from ``co2.csv``."""
+    with open(csv_dir / "co2.csv") as f:
+        reader = csv.reader(f)
+        next(reader)  # header: param_CO2,model_wide
+        row = next(reader)
+    return float(row[1])
+
+
+def _read_unit_input_node_dt(csv_dir: Path, *, unit: str) -> pd.Series:
+    """Read ``unit__inputNode__dt.csv`` flow (MW, negative = into the unit)
+    for a single ``unit`` column. Index: (solve, period, time)."""
+    df = pd.read_csv(csv_dir / "unit__inputNode__dt.csv", header=[0, 1], index_col=[0, 1, 2])
+    col = [c for c in df.columns if c[0] == unit][0]
+    return df[col].astype(float)
 
 
 # ---------------------------------------------------------------------------
@@ -565,6 +604,42 @@ class TestCoalWindInertiaControl:
             f"Objective {s['objective']} != Python total {s['total_calc']}"
         )
 
+    def test_physical_co2_reported_without_priced_or_capped_group(
+        self, csv_dir: Path,
+    ) -> None:
+        """``coal`` has a ``co2_content`` row (0.34 t/MWh), but
+        ``coal_wind_inertia``'s alternative chain
+        (init < west < coal < wind < inertia) never pulls in the
+        ``co2_price`` / ``co2_limit`` alternatives that hold
+        ``group.co2_price`` / ``group.co2_max_period`` — so no group
+        prices or caps CO2 in this scenario.  Physical CO2 is still being
+        emitted (``coal_plant`` is dispatched, drawing fuel from
+        ``coal_market``), and the ``model`` ``CO2`` total must report it;
+        it is not conditioned on a priced/capped group existing.
+
+        Regression for ``read_sets._CO2_EMISSION_FLOW_ATTRS`` being the
+        only source of ``process__commodity__node_co2`` — those frames
+        are empty whenever no group prices/caps CO2, which silently
+        zeroed the model-wide and per-process CO2 outputs even though
+        the commodity's ``co2_content`` was set and fuel was consumed.
+        """
+        # Positive control: coal_plant must actually draw coal fuel,
+        # otherwise a 0 CO2 total would be correct and the assertion below
+        # would be vacuous.
+        coal_flow = _read_unit_input_node_dt(csv_dir, unit="coal_plant")
+        assert (coal_flow != 0).any(), (
+            "coal_plant has zero coal_market flow in every timestep — "
+            "fixture no longer exercises coal dispatch, test is vacuous"
+        )
+
+        total_co2 = _read_co2_model_total(csv_dir)
+        assert total_co2 > 0, (
+            f"model CO2 total = {total_co2} Mt, expected > 0: coal has "
+            "co2_content and coal_plant is dispatched, so physical "
+            "emissions exist even though no group prices or caps CO2 "
+            "in this scenario"
+        )
+
 
 # ===========================================================================
 # TODO items documented as xfail markers (user-decisions).
@@ -631,10 +706,11 @@ class TestDivestSalvageIncludedInObjective:
 # Target: ``coal_min_load_wind`` with a varCost added on the source
 # (coal_plant, coal_market).  The mod objective for pssdt_varCost_eff_unit_source
 # adds both a flow-slope term AND a section term when the process uses
-# ``min_load_efficiency`` (flextool.mod ~line 2352-2367):
+# ``min_load_efficiency`` (flextool.mod ~line 2352-2367; GMPL subtracted the
+# term, the engine adds it like the other O&M terms):
 #
 #     + sum {(p,source,sink,d,t) in pssdt_varCost_eff_unit_source}
-#         ( - pdtProcess_source[p, source, 'other_operational_cost', d, t]
+#         ( + pdtProcess_source[p, source, 'other_operational_cost', d, t]
 #             * ( v_flow * unitsize * slope * (sink_coef / source_coef)
 #                 + online * section * unitsize   (if min_load_efficiency)
 #               )
@@ -834,6 +910,13 @@ class TestMinLoadEfficiencySectionTerm:
             atol=1e-6,
         )
 
+    def test_solver_matches_python(self, csv_dir: Path) -> None:
+        """The LP objective counts the input-side O&M as a cost, like the outputs do."""
+        s = _read_summary_solve(csv_dir)
+        assert s["objective"] == pytest.approx(s["total_calc"], rel=1e-4), (
+            f"Objective {s['objective']} != Python total {s['total_calc']}"
+        )
+
     def test_section_term_actually_contributes(self, csv_dir: Path) -> None:
         """Positive control: without the section term, the hand-derived
         bucket would be ``slope*v_flow * varCost * step * rpw`` only.
@@ -913,43 +996,30 @@ class TestMinLoadEfficiencySectionTerm:
         )
 
 
-def test_pre_existing_fixed_uses_all_existing() -> None:
-    """Regression guard for the commit that switched
-    ``calc_costs.cost_entity_fixed_pre_existing`` from
-    ``par.entity_pre_existing`` to ``par.entity_all_existing``.
+def test_pre_existing_fixed_uses_user_existing() -> None:
+    """``calc_costs.cost_entity_fixed_pre_existing`` charges the fixed cost of existing capacity on the user's
+    existing capacity aged over its lifetime (``par.entity_user_existing``), not on ``entity_all_existing``.
 
-    The mod objective at flextool.mod:2395-2398 uses
-    ``p_entity_all_existing × ed_fixed_cost × inflation ×
-    pd_branch_weight``.  For single-solve runs
-    ``p_entity_all_existing == p_entity_pre_existing`` (mod:1933), so
-    the behavior is numerically identical on existing fixtures.  For
-    rolling / nested solves with ``solveFirst == 0``,
-    ``p_entity_all_existing`` additionally includes capacity invested in
-    earlier solve rolls — without this fix, Python would under-count
-    the fixed cost on those carried-forward assets.
-
-    The existing golden tests (``base``, ``base_weighted``, etc.)
-    implicitly verify the single-solve equivalence.  A numeric test of
-    the multi-solve divergence would require a fixture that rolls
-    through multiple solves with realized investment between rolls; no
-    such fixture exists in the suite today.
+    For a single solve the two are equal (``p_entity_all_existing == p_entity_pre_existing``, mod:1933), so the
+    reported cost matches the objective term at flextool.mod:2395-2398.  Over several solves
+    ``p_entity_all_existing`` also holds the capacity invested in earlier solves (and subtracts their
+    retirements), whose fixed cost is already in the fixed-cost lump of the investment (the retirement's saving
+    in its own lump), so charging it again double counts (owner decision "Chained costs", 2026-11-04).  The
+    numeric guards are ``tests/engine/test_chain_costs.py`` (chain, nested and retirement runs equal to the
+    single solve).
     """
     import inspect
     import flextool.process_outputs.calc_costs as cc
     src = inspect.getsource(cc.compute_costs)
-    assert "entity_all_existing * par.entity_fixed_cost" in src or \
-           "entity_all_existing*par.entity_fixed_cost" in src, (
-        "calc_costs.cost_entity_fixed_pre_existing must use "
-        "par.entity_all_existing — mod objective line 2396 uses "
-        "p_entity_all_existing, not p_entity_pre_existing."
-    )
+    assert "par.entity_user_existing * par.entity_fixed_cost" in src
+    assert "entity_all_existing * par.entity_fixed_cost" not in src
 
 
 def test_storage_state_reference_price_credit() -> None:
     """Sentinel: the reference-price credit IS now implemented in Python
-    at ``flextool/engine_polars/model.py:3406-3428`` (storage-state
+    in ``model._obj_storage_reference_price`` (storage-state
     reference-price objective term).  The wiring is exercised by
-    ``tests/engine_polars/constraints/test_storage_handoff_wiring.py``
+    ``tests/engine/constraints/test_storage_handoff_wiring.py``
     (Sc B: ``test_storage_handoff_wiring_sc_b_fix_price``) which proves
     the term fires with the correct sign and unitsize scaling.
 
@@ -964,38 +1034,22 @@ def test_stochastic_branch_weight(
     test_solver_config_dir: Path,
     workdir: Path,
 ) -> None:
-    """Both the LP objective AND the Python ``Total cost (calculated)``
-    apply ``pdt_branch_weight`` to every per-(d, t) operational + slack cost
-    term, so the two MUST agree.
-
-    The LP objective folds ``pdt_branch_weight[d, t]`` into ``op_factor`` /
-    ``startup_factor`` (``flextool/engine_polars/model.py``).  Option (A)
-    makes the post-process do the same: ``calc_slacks`` / ``calc_costs``
-    weight each per-(d, t) cost term by ``pdt_branch_weight`` (via
-    ``flextool/process_outputs/_branch_weight.py``), so
-    ``Total cost (calculated) full horizon`` IS the probability-weighted
-    expectation == the LP objective.
+    """The LP objective applies ``pdt_branch_weight`` to every per-(d, t)
+    operational + slack cost term; the Python ``Total cost (calculated)``
+    adds up realized rows only.
 
     For ``2_day_stochastic_dispatch`` (a genuine 4-forecast fan at
     ``period1``, each forecast ``pd_branch_weight = 0.25``, plus the
-    weight-0 phantom self-row) the identity is exact:
+    weight-0 period label) the LP objective is the probability-weighted
+    expectation 67.3517305373 (grounded below).  The fan is forecasts-only
+    (no ``realized: yes`` branch, so no realization solve): it realizes no
+    step, so the calculated total is 0 — the forecast-branch costs are not
+    results (normal outputs hold realized rows only; with ``output_horizon``
+    they are in the raw dump).  Before, the forecast-branch rows were summed
+    with their weights and the total equalled the LP objective.
 
-        python_total_calc ≈ LP_obj
-
-    This is the re-grounding the previous ``× avg_weight = 4`` identity
-    anticipated in its own docstring ("someone fixes the calc_costs TODO
-    and multiplies cost terms by pdt_branch_weight: python_total_calc drops
-    to ≈ LP_obj, ratio falls to 1.0 … deserves an update of this test").
-
-    Still a genuine tripwire — it fails if EITHER side stops applying the
-    weight:
-
-    * LP-side regression (mod/model stops applying ``pdt_branch_weight``):
-      LP_obj jumps up (phantom slack re-enters the objective), diverging
-      from the weighted ``total_calc``.
-    * Python-side regression (option A reverts — the post-process stops
-      weighting): ``total_calc`` jumps up (phantom's free slack summed
-      unweighted ≈ 183 000 M), diverging from the weighted LP_obj.
+    Tripwire on the LP side: if the LP stops applying the weight, the
+    objective jumps up (the label's free slack re-enters it).
     """
     csv_dir = _run_scenario(
         "2_day_stochastic_dispatch",
@@ -1008,7 +1062,7 @@ def test_stochastic_branch_weight(
     # Pull pd_branch_weight from solve_data — the writer's own output, so the
     # file is guaranteed to exist for any solve.  Assert the fixture is
     # genuinely stochastic (a real multi-forecast fan with a weight-0
-    # phantom), otherwise the identity below is vacuous (deterministic runs
+    # period label), otherwise the identity below is vacuous (deterministic runs
     # weight by 1.0 and trivially reconcile).
     weights: dict[str, float] = {}
     with open(workdir / "solve_data" / "pd_branch_weight.csv") as f:
@@ -1032,18 +1086,14 @@ def test_stochastic_branch_weight(
         f"{forecast_weights}"
     )
 
-    # Core invariant: both sides apply pdt_branch_weight, so the Python
-    # calculated total equals the LP objective (the phantom's free slack
-    # × weight 0 = 0; the forecasts × their weights sum to the expectation).
-    rel_err = abs(summary["total_calc"] - summary["objective"]) / max(
-        abs(summary["objective"]), 1e-9
-    )
-    assert rel_err <= 1e-4, (
-        f"branch-weight reconciliation broken: "
-        f"LP_obj={summary['objective']:.6f}, "
-        f"python_total_calc={summary['total_calc']:.6f}, "
-        f"rel_err={rel_err:.3e}.  Either the LP stopped applying "
-        f"pdt_branch_weight (LP_obj jumps up) or the post-process option-A "
-        f"weighting reverted (total_calc jumps up with unweighted phantom "
-        f"slack) — see the docstring above for which side moved."
-    )
+    # The fan is forecasts-only (no realized: yes branch), so the run is the
+    # stochastic solve alone.
+    objectives = _solve_objectives(csv_dir)
+    assert set(objectives) == {"2day_dispatch"}, objectives
+    # The stochastic solve's objective, the forecast expectation: the parent LP (before the period label lost its
+    # dispatch, objective 66.9291187913) with the label's rows and columns removed and each forecast's first-step
+    # storage balance in the label's solve-start form (a forecast of a fan in the solve's first period starts the
+    # solve), solved on its own from the edited MPS: 67.3517305373.  Dropping the fixture's former weight-0
+    # realized: yes branch leaves this LP byte-identical (lp_snapshot), so the value stands.
+    assert objectives["2day_dispatch"] == pytest.approx(67.3517305373, rel=1e-6)
+    assert summary["total_calc"] == 0.0, summary

@@ -126,12 +126,15 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
       the reduced cost is ≥0, so negate → NEGATIVE (unprofitable to build).
     - (d) interior, binds nothing → 0.
 
-    ASYMMETRY (read off ``drop_levels.py``): ``dual_maxInvest_total`` is in
-    ``_V_SOLVE_ONLY`` — it is collapsed to a single-row ``RangeIndex(1)``
-    (period-less) and so must be broadcast across the period axis of its
-    siblings before combining.  ``dual_minInvest_total`` is in ``_V_DROP`` —
-    after dropping the solve level it retains a ``period`` index and is
-    ALREADY per-(entity, period), so it is added directly without broadcast.
+    SOLVE-ONLY BROADCAST (read off ``drop_levels.py``): ``dual_maxInvest_total``,
+    ``dual_minInvest_total``, and their group counterparts
+    ``dual_maxInvestGroup_total`` / ``dual_minInvestGroup_total`` — the rows
+    they mirror are each now one row per entity/group over the whole chain
+    horizon, period summed out — are all collapsed to a single-row
+    ``RangeIndex(1)`` (period-less) and so must be broadcast across the
+    period axis of a sibling before combining.  The group pair is expanded
+    to member entities FIRST (still period-less), then broadcast the same
+    way as the entity-level pair.
 
     The broadcast period axis is taken from a per-period sibling dual when
     one is non-empty; otherwise (a binding total cap is the SOLE family, so
@@ -170,7 +173,6 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
                 v.dual_minInvest_period,
                 v.dual_maxCumulative,
                 v.dual_minCumulative,
-                v.dual_minInvest_total,
                 v.dual_invest_unit,
                 v.dual_invest_connection,
                 v.dual_invest_node,
@@ -195,55 +197,69 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
                 and 'period' in ei.names:
             ed_invest_idx = ei
 
+    def _broadcast(df: "pd.DataFrame") -> "pd.DataFrame | None":
+        """Broadcast a period-less (single-row ``RangeIndex``) dual frame
+        across periods: ``period_ref`` when available, else each column's
+        own realized invest periods from ``ed_invest_idx`` (shared by
+        ``dual_maxInvest_total``, ``dual_minInvest_total`` and, after their
+        member expansion, ``dual_{max,min}InvestGroup_total``).  ``None``
+        when neither fallback is available (drop it, don't fabricate 0)."""
+        if period_ref is not None:
+            out = pd.DataFrame(
+                {c: df.iloc[0][c] for c in df.columns},
+                index=period_ref.index,
+            )
+            out.columns.name = df.columns.name
+            return out
+        if ed_invest_idx is not None:
+            row = df.iloc[0]
+            cols = {}
+            for c in df.columns:
+                periods = ed_invest_idx[
+                    ed_invest_idx.get_level_values('entity') == c
+                ].get_level_values('period').unique()
+                if len(periods) == 0:
+                    continue
+                cols[c] = pd.Series(row[c], index=periods)
+            if not cols:
+                return None
+            out = pd.DataFrame(cols)
+            out.index.name = 'period'
+            out.columns.name = df.columns.name
+            return out
+        return None
+
     # (b) Max-side ``<=`` duals: raw < 0 → negate → POSITIVE.
     #     ``dual_maxInvest_total`` is solve-only → broadcast over periods.
     for df in (v.dual_maxInvest_period, v.dual_maxInvest_total, v.dual_maxCumulative):
         if df.empty:
             continue
         if df is v.dual_maxInvest_total:
-            if period_ref is not None:
-                df = pd.DataFrame(
-                    {c: df.iloc[0][c] for c in df.columns},
-                    index=period_ref.index,
-                )
-                df.columns.name = 'entity'
-            elif ed_invest_idx is not None:
-                # Build per-(entity, period) from the invest set: each capped
-                # entity's value goes only on its own realized invest periods.
-                cols = {}
-                row = df.iloc[0]
-                for c in df.columns:
-                    periods = ed_invest_idx[
-                        ed_invest_idx.get_level_values('entity') == c
-                    ].get_level_values('period').unique()
-                    if len(periods) == 0:
-                        continue
-                    cols[c] = pd.Series(row[c], index=periods)
-                if not cols:
-                    continue
-                df = pd.DataFrame(cols)
-                df.index.name = 'period'
-                df.columns.name = 'entity'
-            else:
+            df = _broadcast(df)
+            if df is None:
                 continue
         entity_duals.append(df.mul(-1.0))
 
     # (c) Min-side ``>=`` duals: raw > 0 → negate → NEGATIVE.
-    #     ``dual_minInvest_total`` is ALREADY per-(entity, period) — add it
-    #     directly, NO broadcast (the max-total asymmetry above).
-    for df in (v.dual_minInvest_period, v.dual_minInvest_total, v.dual_minCumulative):
+    for df in (v.dual_minInvest_period, v.dual_minCumulative):
         if df.empty:
             continue
         entity_duals.append(df.mul(-1.0))
+
+    # ``dual_minInvest_total`` is now solve-only (one row per entity
+    # over the chain horizon) — broadcast it over periods the same way as
+    # ``dual_maxInvest_total`` above, instead of adding it directly.
+    if not v.dual_minInvest_total.empty:
+        df = _broadcast(v.dual_minInvest_total)
+        if df is not None:
+            entity_duals.append(df.mul(-1.0))
 
     # (b)/(c) group caps/floors: expand group → member entities, then negate.
     if not v.group_entity_invest.empty:
         group_map = v.group_entity_invest  # columns: group, entity
         for group_df in (
-            v.dual_maxInvestGroup_period, v.dual_maxInvestGroup_total,
-            v.dual_maxInvestGroup_cumulative,
-            v.dual_minInvestGroup_period, v.dual_minInvestGroup_total,
-            v.dual_minInvestGroup_cumulative,
+            v.dual_maxInvestGroup_period, v.dual_maxInvestGroup_cumulative,
+            v.dual_minInvestGroup_period, v.dual_minInvestGroup_cumulative,
         ):
             if group_df.empty:
                 continue
@@ -251,13 +267,37 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
                 members = group_map.loc[group_map['group'] == group_name, 'entity'].tolist()
                 if not members:
                     continue
-                # Create per-entity columns with the group's dual value.
                 group_series = group_df[group_name]
                 expanded = pd.DataFrame(
                     {entity: group_series for entity in members},
                     index=group_series.index,
                 )
                 expanded.columns.name = 'entity'
+                entity_duals.append(expanded.mul(-1.0))
+
+        # dual_{max,min}InvestGroup_total are now solve-only (one row
+        # per group over the chain horizon, like the entity-level totals).
+        # Expand to member entities FIRST (still period-less), then
+        # broadcast the expanded per-entity frame over periods the same way
+        # dual_maxInvest_total is broadcast above.
+        for group_df in (v.dual_maxInvestGroup_total, v.dual_minInvestGroup_total):
+            if group_df.empty:
+                continue
+            for group_name in group_df.columns:
+                members = group_map.loc[group_map['group'] == group_name, 'entity'].tolist()
+                if not members:
+                    continue
+                # Create per-entity columns with the group's (still
+                # period-less) dual value, then broadcast over periods.
+                group_series = group_df[group_name]
+                expanded = pd.DataFrame(
+                    {entity: group_series for entity in members},
+                    index=group_series.index,
+                )
+                expanded.columns.name = 'entity'
+                expanded = _broadcast(expanded)
+                if expanded is None:
+                    continue
                 entity_duals.append(expanded.mul(-1.0))
 
     # (a) Not-built regime — v_invest COLUMN reduced cost.  Divide by
@@ -283,7 +323,7 @@ def _synthesize_invest_dual(v, par, s=None) -> "pd.DataFrame":
     # The synthesized dual is naturally in CUR/MW (units & connections) and
     # CUR/MWh (storage nodes): the LP capacity is in MW(h) and the objective
     # coefficient was lifted ×1000 from the per-kW input invest_cost
-    # (_derived_npv.py annuity).  Divide by 1000 so the REPORTED marginal
+    # (_npv.py annuity).  Divide by 1000 so the REPORTED marginal
     # matches the input convention the user types — CUR/kW (units &
     # connections) and CUR/kWh (storage nodes).  Single choke point: every
     # regime flows through `combined`, and the node-vs-process split happens
@@ -295,7 +335,7 @@ def co2_duals(par, s, v, r, debug):
     """CO2 emission-cap shadow prices in Currency / tCO2 (positive = cost).
 
     Units: the polars ``co2_max_period`` / ``co2_max_total`` constraints
-    (``model.py``) carry the cap RHS in **raw tonnes** (input
+    (``model/core.py``) carry the cap RHS in **raw tonnes** (input
     ``co2_max_period`` is ``[tCO2]``) against a tonnes LHS
     (``v_flow·unitsize·p_co2_content``), so the raw dual is already
     **Δobj / Δ(tonnes) = Currency/tCO2** — there is NO ÷1000.  (The legacy
@@ -303,22 +343,18 @@ def co2_duals(par, s, v, r, debug):
     it; the polars port does not, so applying ÷1000 here would under-report
     the price 1000× — see the CO2-units investigation.)  The dual is in NPV
     currency because the objective discounts operational costs; for the
-    per-period cap we divide by inflation_factor_operations_yearly[d] to
-    recover nominal Currency/tCO2 at period d (mirroring
+    per-period cap we divide by inflation_factor_operations_solve[d] (the
+    factor of the solve that realizes d, which its objective and duals carry;
+    not the run-level factor of the reported costs) to recover nominal
+    Currency/tCO2 at period d (mirroring
     v_dual_node_balance).  Sign is always flipped so binding caps show as
     positive costs — negatives should ring alarm bells.
 
     The cumulative (total) cap has no single period to un-discount against
-    (it spans all periods in the sum), so it is reported in NPV currency
-    (same convention as investment duals).  Its scalar per group is
-    broadcast across periods for uniform (period × group) shape.
-
-    Caveat: the constraint LHS does not include p_timestep_weight whereas
-    the objective does.  In rp (representative-period) scenarios the raw
-    dual therefore picks up an extra timestep_weight factor, inflating
-    shadow prices relative to chrono runs.  Fixing that requires either
-    adding the weight to the constraint LHS in the mod, or post-dividing
-    by a representative value of timestep_weight per period.
+    (it spans all periods in the sum, each weighted by the years it
+    represents), so it is reported in NPV currency per horizon tonne (same
+    convention as investment duals).  Its scalar per group is broadcast
+    across periods for uniform (period × group) shape.
     """
     import pandas as pd
 
@@ -329,8 +365,10 @@ def co2_duals(par, s, v, r, debug):
     if not v.dual_co2_max_period.empty:
         co2_period_price = (-v.dual_co2_max_period).astype(float)
         co2_period_price = co2_period_price.div(
-            par.inflation_factor_operations_yearly, axis=0
+            par.inflation_factor_operations_solve.reindex(co2_period_price.index), axis=0
         )
+        # The raw dual of a forecast-branch period carries that branch's probability; normal outputs hold
+        # realized periods only, whose branch weight is 1, so the dual needs no un-weighting.
         co2_period_price.columns.name = 'group'
         co2_period_price.index.name = 'period'
         results.append((co2_period_price, 'co2_price_period_d_g'))

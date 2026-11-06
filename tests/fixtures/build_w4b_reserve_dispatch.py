@@ -33,6 +33,8 @@ import base64
 import json
 from pathlib import Path
 
+from flextool.update_flextool.test_fixtures import write_built_fixture
+
 FIXTURES = Path(__file__).resolve().parent
 
 STEPS = [f"t{i:04d}" for i in range(1, 4)]
@@ -87,7 +89,7 @@ def build() -> dict:
 def main() -> None:
     spec = build()
     out = FIXTURES / "w4b_reserve_dispatch.json"
-    out.write_text(json.dumps(spec, indent=2) + "\n")
+    write_built_fixture(spec, out)
     print(f"Wrote {out} "
           f"({len(spec['parameter_values'])} parameter values)")
 

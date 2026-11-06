@@ -1,0 +1,91 @@
+name: Tests (Python 3.11 / 3.12)
+
+# The oldest supported Pythons (requires-python >= 3.11) are not in the PR /
+# nightly CI (that runs 3.13 + 3.14). This workflow runs the full suite
+# (nightly_heavy included) on Linux for 3.11 and 3.12, sharded like the PR
+# Tests workflow, twice a month and on workflow_dispatch. A scheduled run is
+# skipped when the default branch has no new commits since this workflow's last
+# successful run; a manual run always tests. Not a required check; a failed
+# run does not count as "last successful", so the next one re-tests.
+
+on:
+  schedule:
+    # 05:00 UTC on the 1st and 15th (GitHub cron has no "every other week").
+    - cron: "0 5 1,15 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: tests-old-python
+  cancel-in-progress: false
+
+# The tests and every FlexTool run they start are single-threaded (polars and HiGHS): the xdist
+# workers already use every vCPU, so more threads per worker only oversubscribe the runner.
+env:
+  FLEXTOOL_THREADS: "1"
+  POLARS_MAX_THREADS: "1"
+
+jobs:
+  gate:
+    name: New commits since the last successful run?
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          last="$(gh run list --workflow tests-old-python.yml --branch "$BRANCH" \
+            --status success --limit 1 --json headSha --jq '.[0].headSha // ""')"
+          echo "this commit: $SHA; last successful run: ${last:-none}"
+          if [ "$EVENT" = "schedule" ] && [ "$last" = "$SHA" ]; then
+            echo "No new commits since the last successful run: skipping."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  test:
+    needs: gate
+    if: needs.gate.outputs.run == 'true'
+    name: test (ubuntu-latest, ${{ matrix.python }}, shard ${{ matrix.shard }}/4)
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+        shard: [1, 2, 3, 4]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib setuptools
+
+      - name: Set glpsol executable permission
+        run: |
+          if [ -f bin/glpsol ]; then chmod +x bin/glpsol; fi
+
+      - name: Run tests
+        env:
+          FLEXTOOL_AUTOSCALE_STRICT: "1"
+        # The nightly_heavy tests are not in tests/ci_durations.json, so they
+        # weigh the 3.5 s/test default and their shards run a little longer.
+        run: >-
+          python .github/scripts/peak_mem.py
+          pytest tests/ -v --tb=short -n logical --shard ${{ matrix.shard }}/4
+          -m "not csv_reload and not axis_enums"

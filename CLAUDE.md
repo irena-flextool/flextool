@@ -5,6 +5,7 @@ the authoritative sources before non-trivial work:
 
 - **`docs/dev/architecture.md`** — system structure, every subsystem, and
   the invariants below (in full, with the *why*).
+- **`flextool/engine/README.md`** — engine structure: pipeline, folders.
 - **`CONTRIBUTING.md`** — dev setup, running tests, changing the data
   structure / schema, migrations, and the PR checklist.
 
@@ -18,13 +19,13 @@ the authoritative sources before non-trivial work:
 
 1. **Autoscale registries must stay complete.** Every new
    `add_var(...)` / `add_cstr(...)` and every new schema parameter MUST be
-   registered in `flextool/engine_polars/autoscale/_layer2_types.py`
+   registered in `flextool/engine/autoscale/_layer2_types.py`
    (`VARIABLE_FAMILIES` / `CONSTRAINT_FAMILIES`) and `_quantity_types.py`
    (`PARAMETER_TYPES`). A missing entry does **not** crash — it's caught
    and the solve silently reverts to an un-scaled LP. Run autoscale-
    exercising tests with `FLEXTOOL_AUTOSCALE_STRICT=1` to make gaps loud.
    Dynamic f-string constraint names are pinned in
-   `tests/engine_polars/autoscale/test_registry_coverage.py`.
+   `tests/engine/autoscale/test_registry_coverage.py`.
    → architecture.md "Numerical scaling → Layer 2".
 
 2. **Never broadcast a parameter over `(d,t)` by column name.** Route
@@ -53,12 +54,25 @@ the authoritative sources before non-trivial work:
    `NaN`. Lift cascade lookups from the de-duplicated dict
    (`lift_dict_to_lookup`), never raw CSV — duplicate keys explode the
    join. Preserve domain/period order (don't `.unique()` the source
-   lists) and the `__eo` / `__to` sort keys. Every heavy `_emit_*`
-   derive is gated by a `test_vectorize_<family>_parity.py` (Tier A
+   lists) and the `__eo` / `__to` sort keys. Every heavy
+   `preprocess/emit/` derive is gated by a `test_vectorize_<family>_parity.py` (Tier A
    `.equals` / Tier B `rtol≈1e-12`).
-   → docs/dev/engine_polars.md "Vectorized per-roll emit".
+   → docs/dev/engine.md "Vectorized per-roll emit".
+
+## Working on the model (`flextool/engine/model/`)
+- Every new equation / objective term / variable gets the `EQ.` / `OBJ.` /
+  `VAR.` header (formula, what it does, notes) — format in
+  `docs/dev/engine.md`. Writing the formula is a review: if it doesn't match
+  the code or the docs, stop.
+- Prove what a change does to the LP with `tools/lp_snapshot.py` (byte-
+  identical for refactors; every diff explained for fixes).
+- Parity with the old GMPL model is not correctness — several GMPL bugs were
+  ported faithfully. Check copied logic against the user docs.
+- A parameter that accepts several shapes (constant / period / time / maps)
+  needs a constant-vs-equivalent-map test: same LP in single, rolling and
+  stochastic solves.
 
 ## Running / testing
 See `CONTRIBUTING.md` "Running Tests". Inner loop is the area-specific
-suite (`tests/engine_polars/<area>/`); the full `tests/` integration
+suite (`tests/engine/<area>/`); the full `tests/` integration
 sweep runs rarely.

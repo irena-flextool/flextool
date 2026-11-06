@@ -51,7 +51,7 @@ from typing import Any
 
 import yaml
 
-from flextool.update_flextool.db_migration import migrate_database
+from flextool.update_flextool.db_migration import migrate_repository_database
 from flextool.update_flextool.export_database import export_database
 
 
@@ -100,14 +100,14 @@ def _filter_db(
     # spinedb_api is the canonical handle for filtering Spine DBs — it
     # owns the cascade semantics so we don't have to track FK ordering
     # by hand.
-    from spinedb_api import DatabaseMapping
+    from flextool.update_flextool.db_handle import open_database_mapping
 
     if not (exclude_scenarios or exclude_alternatives or exclude_entities):
         # Recipe wants the source verbatim — skip the DatabaseMapping
         # open/commit cycle entirely (spinedb_api raises NothingToCommit
         # if commit_session is called with no pending changes).
         return
-    with DatabaseMapping(sqlite_url, create=False, upgrade=False) as db:
+    with open_database_mapping(sqlite_url, create=False, upgrade=False) as db:
         for name in exclude_scenarios:
             db.remove_scenario(name=name)
         for name in exclude_alternatives:
@@ -158,7 +158,7 @@ def generate_one(recipe_name: str, output_path: Path | None = None) -> Path:
     with tempfile.TemporaryDirectory() as tmp:
         staging_sqlite = Path(tmp) / f"{recipe_name}.sqlite"
         url = json_to_db(source_abs, staging_sqlite)
-        migrate_database(url)
+        migrate_repository_database(url)
         _filter_db(url, exclude_scenarios, exclude_alternatives, exclude_entities)
         export_database(str(staging_sqlite), str(dest))
 

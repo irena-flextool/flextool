@@ -98,7 +98,7 @@ def test_input_derivation_peak_rss_under_budget(tmp_path, examples_db_url) -> No
     """
     # Late imports so the test's import phase doesn't dominate the
     # baseline reading.
-    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     from flextool.input_derivation import run as input_derivation_run
 
     budget_mb = float(os.environ.get("FLEXTOOL_TEST_RSS_BUDGET_MB", "1500"))
@@ -115,7 +115,6 @@ def test_input_derivation_peak_rss_under_budget(tmp_path, examples_db_url) -> No
             provider,
             scenario_name="test_a_lot",
             work_folder=tmp_path,
-            precision_digits=0,
         )
         wall_s = time.perf_counter() - t0
 

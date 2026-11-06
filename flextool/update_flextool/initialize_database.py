@@ -11,10 +11,20 @@ def initialize_database(json_template, database_name="new_database.sqlite"):
         print("Give a name with .sqlite file extension")
         exit(-1)
 
-    with open(json_template) as json_file:
+    with open(json_template, encoding="utf-8") as json_file:
         template = json.load(json_file)
 
-    with DatabaseMapping('sqlite:///' + database_name, create=True) as new_db:
+    # ``with`` closes only the session; ``close()`` (below) also disposes the engine, whose pooled connection
+    # otherwise keeps the file open (Windows then cannot delete or replace it).
+    new_db = DatabaseMapping('sqlite:///' + database_name, create=True)
+    try:
+        _initialize(new_db, template, database_name)
+    finally:
+        new_db.close()
+
+
+def _initialize(new_db, template, database_name):
+    with new_db:
         # Remove any default alternatives created by spinedb_api (e.g. 'Base')
         # so they don't conflict with the template's own alternatives.
         for alt in new_db.find_alternatives():

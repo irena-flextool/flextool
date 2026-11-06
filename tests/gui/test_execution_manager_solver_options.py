@@ -1,130 +1,209 @@
-"""Tests for the Solver-options flag emission in ``_build_run_command``.
+"""The GUI → ``cmd_run_flextool`` solver flags, and the one-time update of older solver settings.
 
-Covers the GUI → ``cmd_run_flextool`` command-line translation of the
-five Solver-options-dialog knobs (log level, time limit, MIP relative
-gap, matrix file format, scaling) plus presolve.  Two behaviours are
-pinned here:
+A GUI run sends a solver flag only for a setting the user changed, so it solves like a terminal run of the same
+database: the default settings send no solver flag apart from ``--threads`` (the Execution jobs window's
+"Threads per run").  The GUI has no MIP-gap setting.  A settings.yaml of an earlier GUI held the old defaults
+(presolve ``choose``, MIP gap 0.001 sent with every run); loading it updates them once.
 
-* ``--solver-mip-gap`` is appended only when ``solver_mip_gap > 0`` and
-  carries a lossless ``repr(float)`` value, mirroring the sibling
-  ``--solver-time-limit`` knob.
-* ``--presolve`` is *always* forwarded, including the ``"choose"``
-  default — the engine's determinism pin lives on the in-process
-  baseline (used by the golden test gate), not this CLI path, so
-  ``choose`` here genuinely lets HiGHS decide per-problem.
-
-The manager constructor only stores ``project_path`` / ``settings`` and
-reads package-bundled plot configs, so these tests are hermetic: no real
-subprocess, DB, or network access.
+No Tk: the manager constructor only stores ``project_path`` / ``settings`` and reads package-bundled plot
+configs, and the settings tests only read and write YAML.
 """
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
+import yaml
 
-from flextool.gui.data_models import ProjectSettings
+from flextool.cli.cmd_run_flextool import build_parser
+from flextool.gui.data_models import SOLVER_SETTINGS_REVISION, ProjectSettings
 from flextool.gui.execution_manager import ExecutionJob, ExecutionManager
 from flextool.gui.settings_io import (
+    SETTINGS_FILENAME,
     load_project_settings,
     save_project_settings,
+    solver_defaults_notice,
 )
+from flextool.run_options import OPTIONS, RunOptions
+
+_REGISTRY_FLAGS = {spec.flag for spec in OPTIONS.values() if spec.flag}
 
 
-def _cmd_for(tmp_path: Path, **setting_overrides) -> list[str]:
-    """Build the engine command line for a SCENARIO job under *settings*."""
-    settings = ProjectSettings(**setting_overrides)
-    mgr = ExecutionManager(project_path=tmp_path, settings=settings)
-    job = ExecutionJob(
-        job_id=0,
-        scenario_name="scen",
-        output_subdir="scen",
-        input_db_url="sqlite:///input.sqlite",
-    )
+def _cmd_for(tmp_path: Path, settings: ProjectSettings | None = None) -> list[str]:
+    """The engine command line of a scenario job under *settings*."""
+    mgr = ExecutionManager(project_path=tmp_path, settings=settings or ProjectSettings())
+    job = ExecutionJob(job_id=0, scenario_name="scen", output_subdir="scen", input_db_url="sqlite:///input.sqlite")
     return mgr._build_run_command(job, tmp_path / "work")
 
 
-def test_defaults_forward_presolve_choose_only(tmp_path: Path):
-    """At GUI defaults, presolve=choose and the 0.001 MIP gap are
-    forwarded; the other non-default-gated knobs are absent."""
+def _registry_flags_in(cmd: list[str]) -> set[str]:
+    return {tok.split("=", 1)[0] for tok in cmd if tok.split("=", 1)[0] in _REGISTRY_FLAGS}
+
+
+def _run_options(cmd: list[str]) -> RunOptions:
+    assert cmd[1:3] == ["-m", "flextool.cli.cmd_run_flextool"]
+    return RunOptions.from_cli(build_parser().parse_args(cmd[3:]), environ={})
+
+
+def test_default_settings_send_only_the_thread_count(tmp_path: Path):
     cmd = _cmd_for(tmp_path)
-    assert "--presolve=choose" in cmd
-    # MIP gap defaults to 0.001, so it is emitted at defaults.
-    i = cmd.index("--solver-mip-gap")
-    assert cmd[i + 1] == repr(0.001)
-    # The other default-gated knobs emit nothing at their defaults.
-    assert "--solver-time-limit" not in cmd
-    assert not any(a.startswith("--scaling") for a in cmd)
-    assert not any(a.startswith("--matrix-file-format") for a in cmd)
-    assert not any(a.startswith("--solver-log-level") for a in cmd)
+    assert _registry_flags_in(cmd) == {"--threads"}
+    options = _run_options(cmd)
+    assert {k for k, r in options.resolved.items() if r.source == "cli"} == {"threads"}
 
 
-@pytest.mark.parametrize("ps", ["on", "off", "choose"])
-def test_presolve_always_forwarded(tmp_path: Path, ps: str):
-    cmd = _cmd_for(tmp_path, presolve=ps)
-    assert f"--presolve={ps}" in cmd
-
-
-def test_mip_gap_emitted_with_lossless_value(tmp_path: Path):
-    cmd = _cmd_for(tmp_path, solver_mip_gap=0.01)
-    i = cmd.index("--solver-mip-gap")
-    assert cmd[i + 1] == repr(0.01)
-
-
-def test_mip_gap_omitted_when_disabled(tmp_path: Path):
-    # Checkbox off → no override emitted, regardless of the stored value.
-    cmd = _cmd_for(tmp_path, solver_mip_gap_set=False, solver_mip_gap=0.01)
-    assert "--solver-mip-gap" not in cmd
-
-
-def test_mip_gap_zero_is_emitted_when_enabled(tmp_path: Path):
-    # 0 is a valid gap (proven exact optimum) and must be sent when the
-    # checkbox is on — it is no longer a "defer to .opt" sentinel.
-    cmd = _cmd_for(tmp_path, solver_mip_gap_set=True, solver_mip_gap=0.0)
-    i = cmd.index("--solver-mip-gap")
-    assert cmd[i + 1] == repr(0.0)
-
-
-# --- settings_io round-trip -------------------------------------------
-
-
-def test_settings_io_roundtrips_mip_gap(tmp_path: Path):
-    settings = ProjectSettings(solver_mip_gap=0.005)
-    save_project_settings(tmp_path, settings)
-    loaded = load_project_settings(tmp_path)
-    assert loaded.solver_mip_gap == pytest.approx(0.005)
-
-
-def test_settings_io_rejects_negative_mip_gap(tmp_path: Path):
-    # A hand-edited / corrupt settings.yaml must not poison the GUI: a
-    # negative gap falls back to the dataclass default rather than load.
-    default_gap = ProjectSettings().solver_mip_gap
-    settings = ProjectSettings(solver_mip_gap=0.5)
-    save_project_settings(tmp_path, settings)
-    yaml_path = tmp_path / next(
-        p.name for p in tmp_path.iterdir() if p.suffix in (".yaml", ".yml")
+@pytest.mark.parametrize(
+    ("field", "value", "key", "expected"),
+    [
+        ("presolve", "on", "presolve", "on"),
+        ("presolve", "off", "presolve", "off"),
+        ("presolve", "choose", "presolve", "choose"),
+        ("scaling", "full", "scaling", "full"),
+        ("scaling", "basic", "scaling", "basic"),
+        ("scaling", "off", "scaling", "off"),
+        ("solver_log_level", "verbose", "solver_log_level", "verbose"),
+        ("solver_time_limit", 600, "solver_time_limit", 600.0),
+    ],
+)
+def test_a_changed_setting_sends_exactly_its_flag(tmp_path: Path, field, value, key, expected):
+    """Each changed setting reaches the run as the same option a terminal user would set by hand."""
+    cmd = _cmd_for(tmp_path, ProjectSettings(**{field: value}))
+    gui = _run_options(cmd)
+    assert {k for k, r in gui.resolved.items() if r.source == "cli"} == {"threads", key}
+    by_hand = RunOptions.from_cli(
+        build_parser().parse_args(["in.sqlite", OPTIONS[key].flag, str(value), "--threads", "1"]), environ={},
     )
-    text = yaml_path.read_text(encoding="utf-8")
-    yaml_path.write_text(
-        text.replace("solver_mip_gap: 0.5", "solver_mip_gap: -3.0"),
-        encoding="utf-8",
+    assert gui.get(key) == by_hand.get(key)
+    assert gui.value(key) == expected
+
+
+@pytest.mark.parametrize("per_run", [1, 6])
+def test_threads_per_run_is_sent_as_the_thread_budget(tmp_path: Path, per_run: int):
+    """The Execution jobs window's "Threads per run" (stored as ``max_cores_per_job``) reaches the run as
+    ``--threads``, which gives HiGHS ``threads`` without its parallel simplex; ``--highs-threads`` is not sent."""
+    from flextool.engine.solve._orchestration import _operator_highs_overrides
+    from flextool.gui.data_models import ExecutionLimits
+
+    settings = ProjectSettings()
+    settings.execution_limits = ExecutionLimits(max_cores_per_job=per_run)
+    cmd = _cmd_for(tmp_path, settings)
+    assert "--highs-threads" not in cmd
+    options = _run_options(cmd)
+    assert (options.value("threads"), options.source("threads")) == (per_run, "cli")
+    assert _operator_highs_overrides(options) == {"threads": per_run}
+
+
+def test_calibration_sends_threads_per_run(tmp_path: Path):
+    from flextool.calibrate._cli import build_parser as calibrate_parser
+    from flextool.gui.calibrate_commands import build_calibrate_command
+
+    argv = build_calibrate_command(
+        "python", "sqlite:///in.sqlite", "scen", iterations=2, sizing="uniform", overshoot=1.0,
+        damping_first=1.0, damping_remaining=0.5, stall_fraction=0.05, warm_start_cache_dir=None, work_dir=None,
+        output_location=None, debug=False, threads=3,
     )
-    loaded = load_project_settings(tmp_path)
-    assert loaded.solver_mip_gap == default_gap
+    assert argv[1:3] == ["-m", "flextool.calibrate"]
+    assert calibrate_parser().parse_args(argv[3:]).threads == 3
+
+
+def test_the_gui_never_sends_a_mip_gap(tmp_path: Path):
+    assert not hasattr(ProjectSettings(), "solver_mip_gap")
+    assert not hasattr(ProjectSettings(), "solver_mip_gap_set")
+    cmd = _cmd_for(tmp_path, ProjectSettings(presolve="off", scaling="basic", solver_time_limit=5))
+    assert "--solver-mip-gap" not in _registry_flags_in(cmd)
+
+
+# --- settings.yaml --------------------------------------------------------
+
+
+def _write_settings(project: Path, data: dict) -> None:
+    project.mkdir(parents=True, exist_ok=True)
+    (project / SETTINGS_FILENAME).write_text(yaml.safe_dump(data), encoding="utf-8")
+
+
+def _read_settings(project: Path) -> dict:
+    return yaml.safe_load((project / SETTINGS_FILENAME).read_text(encoding="utf-8"))
+
+
+def _load_counting(project: Path) -> tuple[ProjectSettings, int]:
+    calls = []
+    settings = load_project_settings(project, on_solver_defaults_reset=lambda: calls.append(1))
+    return settings, len(calls)
+
+
+def test_old_default_settings_are_updated_once(tmp_path: Path):
+    """An earlier GUI's defaults become "Default" once; after the save, a reload neither resets nor notifies."""
+    project = tmp_path / "proj"
+    _write_settings(project, {"presolve": "choose", "scaling": "full",
+                              "solver_mip_gap_set": True, "solver_mip_gap": 0.001})
+
+    settings, notices = _load_counting(project)
+    assert (settings.presolve, settings.scaling) == (None, None)
+    assert notices == 1
+    assert _registry_flags_in(_cmd_for(tmp_path, settings)) == {"--threads"}
+
+    save_project_settings(project, settings)
+    stored = _read_settings(project)
+    assert stored["solver_settings_revision"] == SOLVER_SETTINGS_REVISION
+    assert "solver_mip_gap" not in stored and "solver_mip_gap_set" not in stored
+
+    # The user now picks presolve "choose" on purpose: it is kept and no notice repeats.
+    settings.presolve = "choose"
+    save_project_settings(project, settings)
+    again, notices = _load_counting(project)
+    assert again.presolve == "choose" and notices == 0
+
+
+@pytest.mark.parametrize("presolve", ["on", "off"])
+def test_a_deliberate_old_presolve_is_kept(tmp_path: Path, presolve: str):
+    project = tmp_path / "proj"
+    _write_settings(project, {"presolve": presolve, "scaling": "basic", "solver_mip_gap_set": False})
+    settings, notices = _load_counting(project)
+    assert (settings.presolve, settings.scaling) == (presolve, "basic")
+    # Nothing the old file sent changes: no notice.
+    assert notices == 0
+
+
+def test_an_old_ticked_mip_gap_alone_gives_the_notice(tmp_path: Path):
+    project = tmp_path / "proj"
+    _write_settings(project, {"presolve": "on", "solver_mip_gap_set": True, "solver_mip_gap": 0.01})
+    settings, notices = _load_counting(project)
+    assert settings.presolve == "on" and notices == 1
+
+
+def test_a_new_project_has_no_notice_and_records_the_revision(tmp_path: Path):
+    project = tmp_path / "proj"
+    settings, notices = _load_counting(project)
+    assert notices == 0 and (settings.presolve, settings.scaling) == (None, None)
+    save_project_settings(project, settings)
+    assert _load_counting(project)[1] == 0
+
+
+def test_the_notice_names_both_changes():
+    text = solver_defaults_notice("my_project")
+    assert "presolve is on" in text
+    assert "solver_mip_gap" in text and "highs.opt" in text
+    assert "my_project" in text
 
 
 def test_settings_io_tolerates_stale_lagrangian_workers_key(tmp_path: Path):
-    # The retired subgradient-workers knob may still linger in old
-    # settings.yaml files. The load path must ignore the unknown key
-    # rather than error, and round-trip cleanly otherwise.
-    settings = ProjectSettings(solver_mip_gap=0.005)
-    save_project_settings(tmp_path, settings)
-    yaml_path = tmp_path / next(
-        p.name for p in tmp_path.iterdir() if p.suffix in (".yaml", ".yml")
-    )
-    text = yaml_path.read_text(encoding="utf-8")
-    # Inject a stale key as an older file would have carried it.
-    yaml_path.write_text(text + "lagrangian_workers: 4\n", encoding="utf-8")
-    loaded = load_project_settings(tmp_path)
-    assert loaded.solver_mip_gap == pytest.approx(0.005)
+    # The retired subgradient-workers knob may still linger in old settings.yaml files: ignored on load.
+    project = tmp_path / "proj"
+    save_project_settings(project, ProjectSettings(solver_time_limit=7))
+    data = _read_settings(project)
+    data["lagrangian_workers"] = 4
+    _write_settings(project, data)
+    loaded = load_project_settings(project)
+    assert loaded.solver_time_limit == 7
     assert not hasattr(loaded, "lagrangian_workers")
+
+
+def test_a_stored_matrix_file_format_is_ignored(tmp_path: Path):
+    """The removed matrix-file-format option of older files loads without error, is not sent and is not saved."""
+    project = tmp_path / "proj"
+    _write_settings(project, {"matrix_file_format": "lp", "solver_settings_revision": SOLVER_SETTINGS_REVISION})
+    settings = load_project_settings(project)
+    assert not hasattr(settings, "matrix_file_format")
+    assert not any(tok.startswith("--matrix-file-format") for tok in _cmd_for(tmp_path, settings))
+    save_project_settings(project, settings)
+    assert "matrix_file_format" not in _read_settings(project)

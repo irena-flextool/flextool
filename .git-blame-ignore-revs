@@ -1,0 +1,21 @@
+# Purely mechanical commits that `git blame` should skip.
+# Use: git config blame.ignoreRevsFile .git-blame-ignore-revs
+
+# refactor(engine): rename flextool.engine_polars → flextool.engine
+c8451bd21eec57bd6c12e490753dc284dbd2366f
+# refactor(engine): absolute imports inside flextool.engine
+b015d8444c6c3b59459ab989b598f81e02e9791c
+# refactor(engine): move output modules into engine/output/
+c1633309d582d296489da1955fb0d45c671be360
+# refactor(engine): move solve-layer modules into engine/solve/
+1bf831f54e410dea88609f00439d629026b01dcc
+# refactor(engine): move FlexData + provider modules into engine/preprocess/
+d44fb70c0452e43d38062cfa75c122f0d180d6bf
+# refactor(engine): move parameter cascade into engine/preprocess/params/
+8064db510cce07cef074160ebb09c98ff681a6eb
+# refactor(engine): move per-solve emitters into engine/preprocess/emit/
+62b87ec00c1ff690bb96a40b49afbdd8a8dd1ed7
+# refactor(engine): move readers and settings into engine/input/
+44dd7d991cb657e5695a059bd7ee2bc4fa00be5b
+# refactor(engine): move LP model and feature modules into engine/model/
+de8fbcd4b2afc8ec5d4f1b4bdb9a19a0ef5dff60

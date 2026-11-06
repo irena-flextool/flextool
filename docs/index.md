@@ -24,12 +24,12 @@ The **Spine Toolbox workflow** is the alternative for advanced users who combine
 
 # Pure-Python optimisation core
 
-FlexTool's optimisation core is **pure Python**: it builds the LP/MIP matrix in [polars](https://pola.rs/) DataFrames with [polar-high](https://github.com/nodal-tools/polar-high) and solves it directly with [HiGHS](https://highs.dev/). This `engine_polars` backend has replaced the older GLPSOL-based pre-processing and is a lot (~3-10x) faster on the model-build side (the solver itself is unchanged).
+FlexTool's optimisation core is **pure Python**: it builds the LP/MIP matrix in [polars](https://pola.rs/) DataFrames with [polar-high](https://github.com/nodal-tools/polar-high) and solves it directly with [HiGHS](https://highs.dev/). This `engine` backend has replaced the older GLPSOL-based pre-processing and is a lot (~3-10x) faster on the model-build side (the solver itself is unchanged).
 
 # Video tutorials
 
 !!! warning "Video tutorials may be out of date"
-    Some of the video tutorials linked from this site predate the FlexTool GUI and the `engine_polars` solver backend. The core modelling concepts still apply, but the screens and CLI flags shown may differ from the current release. Treat them as supplementary; the written tutorial and how-to pages are authoritative.
+    Some of the video tutorials linked from this site predate the FlexTool GUI and the `engine` solver backend. The core modelling concepts still apply, but the screens and CLI flags shown may differ from the current release. Treat them as supplementary; the written tutorial and how-to pages are authoritative.
 
 # Monthly user support telcos
 

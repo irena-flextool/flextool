@@ -15,6 +15,9 @@ maps across the model period list (sourced from the Provider's
 ``input/periods_available`` key — populated by the
 ``_PARAMETER_SPECS`` loop — with DB fallbacks for setups that supply
 periods only through ``solve.period_timeset``).
+
+Tier labels are kept as written (text: ``01``, ``1`` and ``a`` are three tiers).  A tier without a price gets a
+null price here; the engine's ladder reader (``_direct._ladder_split``) reports it.
 """
 from __future__ import annotations
 
@@ -34,6 +37,21 @@ def _tier_sort_key(t: str) -> tuple[int, str]:
         return (0, f"{int(t):020d}")
     except ValueError:
         return (1, t)
+
+
+def tier_label_read_differently_before(label: str) -> bool:
+    """Whether a tier label was read as another tier before labels were kept as written: earlier releases
+    read a label as a whole number (``01`` became ``1``) and dropped labels that were not whole numbers."""
+    try:
+        return str(int(label)) != label
+    except ValueError:
+        return True
+
+
+def _notice_relabelled_tiers(commodity: str, labels) -> None:
+    if any(tier_label_read_differently_before(str(t)) for t in labels):
+        from flextool.engine import _behaviour_changes
+        _behaviour_changes.notice("ladder_tier_labels_as_written", "commodities", [commodity])
 
 
 def _quantity_sentinel(quantity: str) -> str:
@@ -65,9 +83,10 @@ def _iter_flat_ladder_rows(api, value, commodity: str,
         return []
 
 
-def _collect_periods(backend, provider, api) -> list[str]:
+def _collect_periods(backend, provider, api) -> tuple[list[str], bool]:
     """Return the model's period list (for 1d-map → per-period expansion
-    of ``price_ladder_annual``).
+    of ``price_ladder_annual``), and whether it came only from the solve
+    periods of the Rule 1 / 5b default (fallback 3).
 
     Step 2.5-F Phase E
     ------------------
@@ -77,7 +96,8 @@ def _collect_periods(backend, provider, api) -> list[str]:
     ``_PARAMETER_SPECS`` pass for ``model.periods_available``.  DB
     fallbacks (in order) cover the case where the parameter is set as a
     raw map or where periods come exclusively from
-    ``solve.period_timeset``.
+    ``solve.period_timeset`` -- or, for a solve without one, from its
+    invest / realized periods (the Rule 1 / 5b default).
     """
     periods: list[str] = []
     seen: set[str] = set()
@@ -94,7 +114,7 @@ def _collect_periods(backend, provider, api) -> list[str]:
                     periods.append(v)
                     seen.add(v)
     if periods:
-        return periods
+        return periods, False
 
     # Fallback 1: raw map on model.periods_available.
     for pv in backend.find_parameter_values(
@@ -114,7 +134,7 @@ def _collect_periods(backend, provider, api) -> list[str]:
                     periods.append(c)
                     seen.add(c)
     if periods:
-        return periods
+        return periods, False
 
     # Fallback 2: scan solve.period_timeset map indexes.
     for pv in backend.find_parameter_values(
@@ -134,7 +154,23 @@ def _collect_periods(backend, provider, api) -> list[str]:
                 if p and p not in seen:
                     periods.append(p)
                     seen.add(p)
-    return periods
+
+    # Fallback 3: the periods of the solves without ``period_timeset`` that
+    # the Rule 1 / 5b default of ``create_assumptive_parts`` maps to a
+    # timeset (item #175).  Imported here so that importing this module does
+    # not initialise the ``flextool.engine`` package.
+    from flextool.engine.input._timeline_rules import solve_period_timesets, time_structure_from_backend
+
+    authored_only = len(periods)
+    time_structure = time_structure_from_backend(backend)
+    for solve in time_structure.solves:
+        if solve in time_structure.period_timeset:
+            continue
+        for p, _ts in solve_period_timesets(solve, time_structure) or []:
+            if p not in seen:
+                periods.append(p)
+                seen.add(p)
+    return periods, authored_only == 0 and len(periods) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -158,7 +194,7 @@ def derive_commodity_ladder_cumulative(
     the ``commodity_with_ladder_cumulative`` set.
     """
     api = backend.api
-    rows: list[tuple[str, int, str, str]] = []
+    rows: list[tuple[str, str, str | None, str]] = []
 
     for pv in backend.find_parameter_values(
         entity_class_name="commodity",
@@ -185,20 +221,11 @@ def derive_commodity_ladder_cumulative(
             val = entry[-1]
             per_tier.setdefault(tier_str, {})[facet] = str(val)
 
+        _notice_relabelled_tiers(commodity, per_tier)
         for tier_str in sorted(per_tier.keys(), key=_tier_sort_key):
             facets = per_tier[tier_str]
-            price = facets.get("price", "0")
             quantity = _quantity_sentinel(facets.get("quantity", "inf"))
-            try:
-                tier_int = int(tier_str)
-            except ValueError:
-                logger.warning(
-                    "commodity.price_ladder_cumulative tier on '%s' is not "
-                    "an integer ('%s'); skipping tier.",
-                    commodity, tier_str,
-                )
-                continue
-            rows.append((commodity, tier_int, price, quantity))
+            rows.append((commodity, tier_str, facets.get("price"), quantity))
 
     # All-Utf8 frame to match the legacy CSV's textual schema (consumers
     # read these through the writer-port ``_read_csv`` helper which
@@ -206,7 +233,7 @@ def derive_commodity_ladder_cumulative(
     frame = pl.DataFrame(
         {
             "commodity": [r[0] for r in rows],
-            "tier": [str(r[1]) for r in rows],
+            "tier": [r[1] for r in rows],
             "price": [r[2] for r in rows],
             "quantity": [r[3] for r in rows],
         },
@@ -242,8 +269,9 @@ def derive_commodity_ladder_annual(
       quantity}))`` — per-period rows are kept as-is.
     """
     api = backend.api
-    rows: list[tuple[str, str, int, str, str]] = []
+    rows: list[tuple[str, str, str, str | None, str]] = []
     periods_cache: list[str] | None = None
+    periods_from_solves = False
 
     for pv in backend.find_parameter_values(
         entity_class_name="commodity",
@@ -279,8 +307,13 @@ def derive_commodity_ladder_annual(
                 facet = str(entry[1])
                 val = entry[-1]
                 per_tier.setdefault(tier_str, {})[facet] = str(val)
+            _notice_relabelled_tiers(commodity, per_tier)
             if periods_cache is None:
-                periods_cache = _collect_periods(backend, provider, api)
+                periods_cache, periods_from_solves = _collect_periods(backend, provider, api)
+            if periods_from_solves:
+                # Before, these periods were not found and the ladder was skipped.
+                from flextool.engine import _behaviour_changes
+                _behaviour_changes.notice("price_ladder_periods_from_solve_periods", "commodities", [commodity])
             if not periods_cache:
                 logger.warning(
                     "commodity.price_ladder_annual on '%s' is 2d_map but "
@@ -291,20 +324,8 @@ def derive_commodity_ladder_annual(
             for period in periods_cache:
                 for tier_str in sorted(per_tier.keys(), key=_tier_sort_key):
                     facets = per_tier[tier_str]
-                    price = facets.get("price", "0")
                     quantity = _quantity_sentinel(facets.get("quantity", "inf"))
-                    try:
-                        tier_int = int(tier_str)
-                    except ValueError:
-                        logger.warning(
-                            "commodity.price_ladder_annual tier on '%s' is "
-                            "not an integer ('%s'); skipping tier.",
-                            commodity, tier_str,
-                        )
-                        continue
-                    rows.append(
-                        (commodity, period, tier_int, price, quantity)
-                    )
+                    rows.append((commodity, period, tier_str, facets.get("price"), quantity))
         elif max_len >= 4:
             # 3d_map → per-period.  Flat row layout [period, tier,
             # facet, value] — Spine nests Map(period -> Map(tier ->
@@ -321,6 +342,8 @@ def derive_commodity_ladder_annual(
                     (period, tier_str), {}
                 )[facet] = str(val)
 
+            _notice_relabelled_tiers(commodity, {t for _p, t in per_period_tier})
+
             def _sort_key(k: tuple[str, str]) -> tuple:
                 return (k[0], _tier_sort_key(k[1]))
 
@@ -328,20 +351,8 @@ def derive_commodity_ladder_annual(
                 per_period_tier.keys(), key=_sort_key,
             ):
                 facets = per_period_tier[(period, tier_str)]
-                price = facets.get("price", "0")
                 quantity = _quantity_sentinel(facets.get("quantity", "inf"))
-                try:
-                    tier_int = int(tier_str)
-                except ValueError:
-                    logger.warning(
-                        "commodity.price_ladder_annual tier on '%s' is not "
-                        "an integer ('%s'); skipping tier.",
-                        commodity, tier_str,
-                    )
-                    continue
-                rows.append(
-                    (commodity, period, tier_int, price, quantity)
-                )
+                rows.append((commodity, period, tier_str, facets.get("price"), quantity))
         else:
             logger.warning(
                 "commodity.price_ladder_annual on '%s' has unexpected "
@@ -354,7 +365,7 @@ def derive_commodity_ladder_annual(
         {
             "commodity": [r[0] for r in rows],
             "period": [r[1] for r in rows],
-            "tier": [str(r[2]) for r in rows],
+            "tier": [r[2] for r in rows],
             "price": [r[3] for r in rows],
             "quantity": [r[4] for r in rows],
         },

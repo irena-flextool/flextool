@@ -25,19 +25,27 @@ monolith; Step 2.5 item 6 extracted them here.
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 
-from flextool.engine_polars._solve_state import FlexToolConfigError
+import spinedb_api as api
+
+from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.input_derivation._method_constants import METHOD_2WAY_1VAR
 
 
 __all__ = [
     "validate_timeline_timestep_duration",
     "validate_capacity_margin_groups",
+    "validate_group_limit_flags",
+    "validate_non_sync_one_variable_connections",
+    "validate_min_load_efficiency_inputs",
     "validate_ladder_methods",
     "validate_group_output_memberships",
     "validate_connection_node_memberships",
     "validate_connection_delay",
     "validate_unit_input_shares",
     "validate_output_min_coeff",
+    "validate_node_inflow_not_period",
 ]
 
 
@@ -86,6 +94,120 @@ def validate_timeline_timestep_duration(db) -> None:
         )
 
 
+def _pv_rows(src, entity_class: str, parameter: str) -> Iterable:
+    """Parameter-value items of ``(entity_class, parameter)``.  ``src`` is a ``SpineDBBackend`` (its bulk
+    ``(class, param)`` index, built once per backend, through ``parameter_value_items``) or a ``DatabaseMapping``."""
+    if hasattr(src, "parameter_value_items"):
+        return src.parameter_value_items(entity_class, parameter)
+    return src.find_parameter_values(entity_class_name=entity_class, parameter_definition_name=parameter)
+
+
+def _parsed_then_evict(pv):
+    """Parse ``pv``'s value and drop spinedb-api's cached parse right away (Track A eviction contract, see
+    ``SpineDBBackend.parameter_values``), so a validator never keeps every series of a class parsed at once."""
+    value = pv["parsed_value"]
+    item = getattr(pv, "mapped_item", None)
+    if item is not None:
+        item._parsed_value = None
+    return value
+
+
+def _map_keys_all_levels(value, out: set[str]) -> None:
+    """Add every index key of a (nested) Map to ``out``; Map values that are not Maps are not collected."""
+    if not isinstance(value, api.Map):
+        return
+    for key, sub in zip(value.indexes, value.values):
+        out.add(str(key))
+        _map_keys_all_levels(sub, out)
+
+
+_SOLVE_PERIOD_PARAMS = ("realized_periods", "invest_periods", "realized_invest_periods", "fix_storage_periods")
+
+
+def _period_and_timestep_names(src) -> tuple[set[str], set[str]]:
+    """``(periods, timesteps)`` of the scenario: see ``validate_node_inflow_not_period``."""
+    periods: set[str] = set()
+    for pv in _pv_rows(src, "solve", "period_timeset"):
+        if pv["type"] == "map":
+            _map_keys_all_levels(_parsed_then_evict(pv), periods)
+    for par in _SOLVE_PERIOD_PARAMS:
+        for pv in _pv_rows(src, "solve", par):
+            if pv["type"] == "array":
+                periods.update(str(v) for v in _parsed_then_evict(pv).values)
+            elif pv["type"] == "map":
+                _map_keys_all_levels(_parsed_then_evict(pv), periods)
+    timesteps: set[str] = set()
+    for pv in _pv_rows(src, "timeline", "timestep_duration"):
+        if pv["type"] in ("map", "time_series"):
+            timesteps.update(str(k) for k in _parsed_then_evict(pv).indexes)
+    return periods, timesteps
+
+
+def _keys_all_periods(indexes, periods: set[str], timesteps: set[str]) -> bool:
+    """True when ``indexes`` is non-empty, every key is a period name and none is a timestep name.  Stops at the
+    first key that is not a period or is a timestep, so a time series exits at its first key."""
+    if len(indexes) == 0:
+        return False
+    for key in indexes:
+        name = str(key)
+        if name not in periods or name in timesteps:
+            return False
+    return True
+
+
+def validate_node_inflow_not_period(src) -> None:
+    """Raise FlexToolConfigError when a node's ``inflow`` is keyed by period.
+
+    ``inflow`` is a constant, a time series (1-D map over time) or a stochastic 3-D map (branch, analysis time,
+    time); it cannot be period-based (docs/reference.md, 'Timesteps and periods').  A period-keyed value is not
+    read by any path: before this check it silently became inflow 0.  Flagged:
+      * a 1-D map with index_name 'period';
+      * any 2-D map (the schema has no rank-2 inflow; a period x time map is the usual intent);
+      * a 1-D map with another index_name whose keys are all period names and none a timestep name.
+
+    Period names: the keys of every ``solve.period_timeset``, the entries of the 1-D period arrays of a solve
+    (``realized_periods``, ``invest_periods``, ``realized_invest_periods``, ``fix_storage_periods``) and the index
+    keys at every level of their Map variants (never Map values: nested-investment variants map period to a Map).
+    Timestep names: the keys of every ``timeline.timestep_duration``.  Both sets are built first (only when some
+    inflow is a map), then each map is classified right after its parse, which is evicted at once: the rank is
+    read without parsing, rank-1 and rank-2 maps are parsed (rank 2 for its first-level keys only), and only the
+    first 3 keys of an offending map are kept.
+
+    ``src`` is the ``SpineDBBackend`` of ``input_derivation.run`` (or a scenario-filtered ``DatabaseMapping``).
+    """
+    to_rank = api.parameter_value.from_database_to_dimension_count
+    inflow_maps = [pv for pv in _pv_rows(src, "node", "inflow") if pv["type"] == "map"]
+    if not inflow_maps:
+        return
+    periods, timesteps = _period_and_timestep_names(src)
+
+    problems: list[str] = []
+    for pv in inflow_maps:
+        rank = to_rank(pv["value"], pv["type"])
+        if rank not in (1, 2):
+            continue
+        value = _parsed_then_evict(pv)
+        indexes = value.indexes
+        if rank == 2:
+            reason = "a 2-D map"
+        elif value.index_name == "period":
+            reason = "index_name 'period'"
+        elif _keys_all_periods(indexes, periods, timesteps):
+            reason = "all map keys are period names"
+        else:
+            continue
+        shown = ", ".join(str(k) for k in indexes[:3]) + (", ..." if len(indexes) > 3 else "")
+        problems.append(
+            f"node '{pv['entity_byname'][0]}' inflow (alternative '{pv['alternative_name']}') is keyed by period "
+            f"({reason}" + (f"; first-level keys: {shown}" if len(indexes) else "") + ")")
+    if problems:
+        raise FlexToolConfigError(
+            "\n".join(problems)
+            + "\ninflow is a constant or a time series and cannot be period-based; to vary demand by period use "
+              "annual_flow (constant or period) with an inflow_method that scales to it (scale_to_annual_flow, "
+              "scale_in_proportion, scale_to_annual_and_peak_flow).")
+
+
 def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
     """Storage nodes are excluded from the capacity-margin constraint.
     Raise if any capacity_margin_method='manual' group contains *only*
@@ -124,6 +246,148 @@ def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
                 "be excluded from the capacity margin constraint.",
                 g, ', '.join(storage_in_group),
             )
+
+
+def _explicit_values(db, entity_class: str, parameter: str) -> dict[str, list[float]]:
+    """``{entity: [numeric elements]}`` of the scenario's explicit values of a one-dimensional class's
+    ``parameter`` (scalars and every value of a period / time / stochastic-time map)."""
+    out: dict[str, list[float]] = {}
+    for pv in db.find_parameter_values(entity_class_name=entity_class, parameter_definition_name=parameter):
+        if pv["type"] is None:
+            continue
+        out[pv["entity_byname"][0]] = _numeric_values(pv["parsed_value"])
+    return out
+
+
+def _entities_with_value(db, entity_class: str, parameter: str, value: str) -> set[str]:
+    """Entities of ``entity_class`` whose explicit ``parameter`` value is ``value``."""
+    return {pv["entity_byname"][0]
+            for pv in db.find_parameter_values(entity_class_name=entity_class, parameter_definition_name=parameter)
+            if pv["type"] is not None and pv["parsed_value"] == value}
+
+
+# (limit parameter, method/flag parameter, value that switches the limit on)
+_GROUP_LIMIT_FLAGS: tuple[tuple[str, str, str], ...] = (
+    ("capacity_margin", "capacity_margin_method", "manual"),
+    ("inertia_limit", "has_inertia", "yes"),
+    ("non_synchronous_limit", "has_non_synchronous", "yes"),
+)
+
+# What a flagged group without the limit gets (the model reads the limit as 0).
+_GROUP_LIMIT_ABSENT: dict[str, str] = {
+    "capacity_margin": "its capacity must cover the peak net load (margin 0)",
+    "inertia_limit": "it has no inertia requirement",
+    "non_synchronous_limit": "it reads as 0, so no non-synchronous infeed is allowed (violations are penalised)",
+}
+
+
+def validate_group_limit_flags(db, logger: logging.Logger) -> None:
+    """Warn about group limits and their method / flag that do not go together.
+
+    The capacity margin, inertia and non-synchronous constraints are built for the groups whose
+    ``capacity_margin_method`` is ``manual`` / ``has_inertia`` is ``yes`` / ``has_non_synchronous``
+    is ``yes``, and nowhere else.  Warnings (``db`` is scenario-filtered):
+
+    * a non-zero limit on a group without its method / flag: the limit is ignored;
+    * the method / flag on a group with no limit value at all: the model reads the limit as 0.  An
+      explicit 0 is a deliberate input and is not reported.
+    """
+    for limit, flag, on in _GROUP_LIMIT_FLAGS:
+        flagged = _entities_with_value(db, "group", flag, on)
+        values = _explicit_values(db, "group", limit)
+        for g in sorted(values):
+            if g not in flagged and any(v != 0.0 for v in values[g]):
+                logger.warning(
+                    "Group '%s' has %s but %s is not %s: the limit is ignored.", g, limit, flag, on)
+        for g in sorted(flagged - set(values)):
+            logger.warning(
+                "Group '%s' has %s = %s but no %s: %s.", g, flag, on, limit, _GROUP_LIMIT_ABSENT[limit])
+
+
+def validate_non_sync_one_variable_connections(db, provider, logger: logging.Logger) -> None:
+    """Warn about one-variable connections across the boundary of a group with a non-synchronous limit.
+
+    The non-synchronous limit counts the flows of a connection with one node in the group both ways: the
+    flow into the group as infeed, the flow out of it as supply.  A one-variable connection
+    (``no_losses_no_variable_cost``, and the lines of a ``dc_power_flow_with_angles`` group, which use it
+    internally) can flow both ways at once at no cost, so the optimiser can raise the group's supply side by
+    up to the line capacity and loosen the limit.  Warnings (``db`` is scenario-filtered), one per connection
+    and group, for groups with ``has_non_synchronous = yes``: the connection is classified ``2way_1var`` and
+    exactly one of its nodes is in the group.  ``is_DC`` connections are left out: their infeed into the
+    group counts as non-synchronous, so flowing both ways tightens the limit instead.  The same loophole
+    exists for a ``regular`` connection (documented); ``exact`` closes it.
+    """
+    groups = _entities_with_value(db, "group", "has_non_synchronous", "yes")
+    if not groups:
+        return
+    methods = _process_methods(provider)
+    one_var = {c for c, m in methods.items() if m in METHOD_2WAY_1VAR}
+    if not one_var:
+        return
+    is_dc = _entities_with_value(db, "connection", "is_DC", "yes")
+    dc_pf: set[str] = set()
+    if provider is not None and provider.has("input/connection_dc_power_flow"):
+        frame = provider.get("input/connection_dc_power_flow")
+        if frame is not None and frame.height > 0:
+            dc_pf = set(frame.get_column(frame.columns[0]).cast(str).to_list())
+    group_nodes: dict[str, set[str]] = {}
+    for ent in db.find_entities(entity_class_name="group__node"):
+        group_nodes.setdefault(ent["entity_byname"][0], set()).add(ent["entity_byname"][1])
+    for ent in sorted(db.find_entities(entity_class_name="connection__node__node"),
+                      key=lambda e: tuple(e["entity_byname"])):
+        conn, n1, n2 = ent["entity_byname"][:3]
+        if conn not in one_var or conn in is_dc:
+            continue
+        for g in sorted(groups):
+            nodes = group_nodes.get(g, set())
+            if (n1 in nodes) == (n2 in nodes):
+                continue
+            if conn in dc_pf:
+                logger.warning(
+                    "DC power-flow line '%s' crosses the boundary of group '%s' with a non-synchronous limit: its "
+                    "flows both ways count, and simultaneous flow both ways can loosen the limit at no cost.",
+                    conn, g)
+            else:
+                logger.warning(
+                    "Connection '%s' crosses the boundary of group '%s' with a non-synchronous limit: its flows "
+                    "both ways count, and simultaneous flow both ways can loosen the limit at no cost: use "
+                    "transfer_method exact.", conn, g)
+
+
+def validate_min_load_efficiency_inputs(db, logger: logging.Logger) -> None:
+    """Check the conversion curve inputs of ``min_load_efficiency`` units.
+
+    Errors (:class:`FlexToolConfigError`), for units with ``conversion_method = min_load_efficiency``, over every
+    value of a scalar or a period / time / stochastic-time map:
+
+    * ``efficiency_at_min_load`` not above 0 (the fuel use at minimum load would be infinite);
+    * ``min_load`` not below 1 (the curve between minimum and full load would have no length).
+
+    Warning: a unit with a ``min_load`` value above 0 in any value (over the whole database, not one solve) and no
+    ``efficiency_at_min_load``.  Such a unit uses its ``efficiency`` at minimum load too (a flat curve: the fuel
+    use is output / efficiency, as with constant_efficiency, while the minimum load still applies).  Cells that an
+    ``efficiency_at_min_load`` map leaves out get the efficiency in the same way, without a warning.  ``db`` is
+    scenario-filtered.
+    """
+    mle = _entities_with_value(db, "unit", "conversion_method", "min_load_efficiency")
+    if not mle:
+        return
+    min_load = _explicit_values(db, "unit", "min_load")
+    eta_min = _explicit_values(db, "unit", "efficiency_at_min_load")
+    errors: list[str] = []
+    for unit in sorted(mle):
+        if any(v <= 0.0 for v in eta_min.get(unit, [])):
+            errors.append(f"unit '{unit}': efficiency_at_min_load {_fmt(eta_min[unit])} must be above 0")
+        if any(v >= 1.0 for v in min_load.get(unit, [])):
+            errors.append(f"unit '{unit}': min_load {_fmt(min_load[unit])} must be below 1 for a "
+                          "min_load_efficiency unit (use constant_efficiency for a unit that only runs at full load)")
+    if errors:
+        raise FlexToolConfigError("min_load_efficiency inputs: " + "; ".join(errors) + ".")
+    with_min_load = {u for u, vals in min_load.items() if any(v > 0.0 for v in vals)}
+    for unit in sorted((mle & with_min_load) - set(eta_min)):
+        logger.warning(
+            "Unit '%s' uses min_load_efficiency with min_load > 0 but has no efficiency_at_min_load: its "
+            "efficiency is used at minimum load too (a flat curve; the minimum load still applies).", unit)
 
 
 def validate_ladder_methods(db, logger: logging.Logger) -> None:
@@ -349,6 +613,100 @@ def validate_connection_delay(db, logger: logging.Logger) -> None:
             "implemented yet and is ignored (the connection is modelled "
             "without a delay). Use a unit with a delay for a delayed flow.",
             pv["entity_byname"][0],
+        )
+
+
+def validate_connection_startup(db, provider) -> None:
+    """Raise when a connection in a ``dc_power_flow_with_angles`` group has a ``startup_method``.
+
+    A DC power-flow line's flow is set by the voltage angles (``dc_flow_eq``); an offline line would still tie
+    the angles, and switching it needs line-switching constraints FlexTool does not have.  Reads the DC line
+    set from the Provider (``input/connection_dc_power_flow``, after :func:`derive_dc_power_flow`).  The model
+    builder raises the same error for data built without the input derivation
+    (``model.core._validate_no_online_dc_lines``).
+    """
+    from flextool.engine.model.core import DC_ONLINE_MESSAGE
+
+    if not provider.has("input/connection_dc_power_flow"):
+        return
+    dc_frame = provider.get("input/connection_dc_power_flow")
+    if dc_frame is None or dc_frame.height == 0:
+        return
+    dc = {str(x) for x in dc_frame.get_column(dc_frame.columns[0]).to_list()}
+    hit = sorted(
+        pv["entity_byname"][0]
+        for pv in db.find_parameter_values(entity_class_name="connection",
+                                           parameter_definition_name="startup_method")
+        if pv["type"] is not None and str(pv["parsed_value"]) != "no_startup" and pv["entity_byname"][0] in dc)
+    if hit:
+        raise FlexToolConfigError(DC_ONLINE_MESSAGE.format(names=", ".join(hit)))
+
+
+def warn_existing_not_whole_units(db, provider) -> None:
+    """Print a warning for each unit / connection with integer online variables whose ``existing`` is not a whole
+    number of units.
+
+    With ``virtual_unitsize`` set, ``existing`` is the number of units (capacity = existing × virtual_unitsize; the
+    ``params._existing`` capacity cascade), so the unit count is ``existing`` itself.  An integer online variable
+    (``process_online_integer``: ``startup_method = binary``) counts whole units up to that count, so a count such
+    as 2.5 cannot all be online.  Without ``virtual_unitsize`` the entity is one unit of its existing capacity, a
+    whole number by construction, so it is not checked.  Nodes and investments have no integer variables, so they
+    are not checked either.  Reads the integer set from the Provider (after ``emit_process_method_projections``).
+    ``db`` is scenario-filtered, and the input derivation runs once per scenario, so each entity is reported once
+    per run.  Results are unchanged.
+    """
+    key = "solve_data/process_online_integer"
+    if not provider.has(key):
+        return
+    frame = provider.get(key)
+    if frame is None or frame.height == 0:
+        return
+    integer = {str(x) for x in frame.get_column(frame.columns[0]).to_list()}
+    for cls in ("unit", "connection"):
+        unitsize = {name: vals[0] for name, vals in _explicit_values(db, cls, "virtual_unitsize").items()
+                    if name in integer and vals and vals[0] > 0.0}
+        for name, existing in sorted(_explicit_values(db, cls, "existing").items()):
+            size = unitsize.get(name)
+            if size is None:
+                continue
+            fractional = [e for e in dict.fromkeys(existing) if abs(e - round(e)) > 1e-6 * max(1.0, abs(e))]
+            if not fractional:
+                continue
+            counts = ", ".join(f"{e:g}" for e in fractional)
+            print(f"Warning: {cls} '{name}' has integer online variables (whole units), but existing gives "
+                  f"{counts} units, not a whole number. With virtual_unitsize, existing is the number of units of "
+                  f"virtual_unitsize ({size:g} MW each).", flush=True)
+
+
+def validate_group_increase_reserve_ratio(db, logger: logging.Logger) -> None:
+    """Warn once per reserve group with an ``increase_reserve_ratio`` but no dynamic ``reserve_method``.
+
+    The group ratio adds the demand of the group's nodes to the dynamic requirement only
+    (``model._reserve.group_demand_requirement``); with any other method (or none) it is ignored.
+    ``db`` is scenario-filtered; a ratio of 0 changes nothing and is not reported.
+    """
+    from flextool.engine.preprocess._reserve_methods import RESERVE_DYNAMIC_METHODS
+
+    methods = {
+        tuple(pv["entity_byname"]): pv["parsed_value"]
+        for pv in db.find_parameter_values(
+            entity_class_name="reserve__upDown__group", parameter_definition_name="reserve_method",
+        )
+    }
+    for pv in db.find_parameter_values(
+        entity_class_name="reserve__upDown__group", parameter_definition_name="increase_reserve_ratio",
+    ):
+        if pv["type"] is None:
+            continue
+        if not any(v != 0.0 for v in _numeric_values(pv["parsed_value"])):
+            continue
+        key = tuple(pv["entity_byname"])
+        if methods.get(key) in RESERVE_DYNAMIC_METHODS:
+            continue
+        logger.warning(
+            "increase_reserve_ratio of reserve group '%s' is used only with a dynamic reserve_method "
+            "(dynamic_only, timeseries_and_dynamic, dynamic_and_large_failure, all); it is ignored.",
+            "__".join(key),
         )
 
 

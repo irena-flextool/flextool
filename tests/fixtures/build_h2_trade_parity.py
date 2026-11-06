@@ -31,8 +31,10 @@ definitions, value lists, parameter types, parameter groups, entities,
 entity_alternatives, parameter_values, alternatives, scenarios and
 scenario_alternatives.  We export everything (Asterisk) for the schema-
 shaped tables and only filter the alternative-keyed and scenario-keyed
-tables — that way the rebuilt SQLite has exactly the same schema as the
-source DB but only the data needed for the parity scenario.
+tables — that way the rebuilt SQLite has the source DB's data needed for
+the parity scenario.  The written fixture is then migrated and its schema
+sections replaced by ``spinedb_schema.json``'s, like every committed
+fixture (``test_fixtures.migrate_fixture``).
 
 Usage
 -----
@@ -60,7 +62,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api import DatabaseMapping, Map, export_data, from_database, to_database
+
+from flextool.update_flextool.test_fixtures import migrate_fixture
 
 
 HERE = Path(__file__).parent
@@ -164,7 +169,7 @@ def build_payload(source_url: str) -> dict[str, list]:
     EXCEPT the alternative-keyed / scenario-keyed ones, which we pin to
     just the data needed for ``scenario_test_6h_no_carrier_storage``.
     """
-    with DatabaseMapping(source_url) as db:
+    with open_database_mapping(source_url) as db:
         kept_ts = _resolve_kept_timestamps(db)
 
         keep_alt_ids = [
@@ -236,6 +241,8 @@ def write_json_fixture(source_url: str, out_path: Path) -> int:
         # entities and pvs ordering matches export_data's insertion
         # order; the resulting JSON is still byte-stable across runs).
         json.dump(data, fh, indent=2)
+    # Migrated and synced with the schema like every committed fixture.
+    migrate_fixture(out_path)
     return out_path.stat().st_size
 
 

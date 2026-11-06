@@ -1,0 +1,234 @@
+"""Slice D — variant B (cross-scenario coupling) structural tests.
+
+Design: ``specs/sliceD_recourse_invest_design.md`` §15.6.
+
+Fixture ``stoch_two_period_invest_na.json`` (built via
+``build_stoch_two_period_invest_na.py``): the proven ``stochastics.json``
+storage shape (``2_day_stochastic_dispatch``) extended with a
+``recourse_na`` scenario that makes the stochastic-group storage node
+``hydro_reservoir`` investable under ``recourse``.  Unlike variant A the
+LP is NOT separable: a stochastic-group NODE fires the dispatch
+non-anticipativity net-charge pinning (``non_anticipativity_storage_use``).
+"""
+from __future__ import annotations
+
+import os
+
+import pytest
+
+from tests._support.load import load_scenario
+
+SOLVE = "2day_dispatch"
+
+
+@pytest.fixture(scope="module")
+def na_run(scenario_run):
+    prev = os.environ.get("FLEXTOOL_AUTOSCALE_STRICT")
+    os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = "1"
+    try:
+        return scenario_run("recourse_na",
+                            db_fixture="stoch_two_period_invest_na")
+    finally:
+        if prev is None:
+            os.environ.pop("FLEXTOOL_AUTOSCALE_STRICT", None)
+        else:
+            os.environ["FLEXTOOL_AUTOSCALE_STRICT"] = prev
+
+
+@pytest.fixture(scope="module")
+def _built(na_run):
+    from polar_high import Problem
+    from flextool.engine import build_flextool
+
+    data = load_scenario(na_run)
+    pb = Problem()
+    build_flextool(pb, data)
+    sol = pb.solve()
+    assert sol.optimal
+    return data, pb, sol
+
+
+@pytest.mark.solver
+def test_na_coupling_active(_built):
+    """§15.6 witness 1: the storage non-anticipativity family fires (the
+    flag-on LP is NOT separable per leaf)."""
+    data, pb, _sol = _built
+    assert data.dt_non_anticipativity is not None
+    assert data.dt_non_anticipativity.height > 0
+    recs = pb.cstrs_named("non_anticipativity_storage_use")
+    n_rows = sum(r.over.height for r in recs)
+    assert n_rows > 0
+
+
+@pytest.mark.solver
+def test_na_recourse_active(_built):
+    data, _pb, _sol = _built
+    assert data.recourse_invest is True
+
+
+@pytest.mark.solver
+def test_na_node_invest_coefficient_branch_weighted(_built):
+    """§15.6 witness 3 (the F3 node-side regression hook): the objective
+    coefficient of ``v_invest_n[hydro_reservoir, d]`` equals
+    ``unitsize × annu_n[d] × pd_branch_weight[d]`` — i.e. the node-side
+    annuity carries the per-period branch weight."""
+    data, pb, _sol = _built
+    m = pb.canonicalise()
+
+    # annu_n[d] and pd_branch_weight[d] for hydro_reservoir.
+    annu = {str(r["d"]): float(r["value"])
+            for r in data.ed_entity_annual_discounted.frame.iter_rows(named=True)
+            if str(r["e"]) == "hydro_reservoir"}
+    wts = {str(r["d"]): float(r["value"])
+           for r in data.pd_branch_weight.frame.iter_rows(named=True)}
+    us_frame = data.p_state_unitsize.frame
+    us = {str(r[us_frame.columns[0]]): float(r["value"])
+          for r in us_frame.iter_rows(named=True)}
+    unit = us.get("hydro_reservoir", 1.0)
+
+    # Objective coefficients keyed by v_invest_n column name.
+    obj = {name: float(c)
+           for name, c in zip(m.col_names, m.col_obj)
+           if name.startswith("v_invest_n[")}
+    assert obj, "no v_invest_n columns in the LP"
+
+    # Parse the period token out of each column name and check the
+    # coefficient against unitsize × annu_n × weight.
+    checked = 0
+    for name, coeff in obj.items():
+        inner = name[len("v_invest_n["):-1]
+        parts = [p.strip() for p in inner.split(",")]
+        if parts[0] != "hydro_reservoir":
+            continue
+        period = parts[-1]
+        if period not in annu or period not in wts:
+            continue
+        expected = unit * annu[period] * wts[period]
+        assert coeff == pytest.approx(expected, rel=1e-6), (
+            f"{name}: coeff {coeff} != unitsize({unit}) × "
+            f"annu_n({annu[period]}) × weight({wts[period]}) = {expected}"
+        )
+        checked += 1
+    assert checked >= 2, (
+        f"expected ≥2 weighted v_invest_n[hydro_reservoir, ·] coefficients, "
+        f"checked {checked}")
+
+    # At least one weighted period carries a genuine (non-unit) factor —
+    # guards against an unweighted regression that would leave every
+    # coefficient == unitsize × annu_n (pd_branch_weight normalises the
+    # equal-weight branch cohort to < 1 per leaf).
+    weight_vals = {wts[p] for p in annu if p in wts}
+    assert any(abs(w - 1.0) > 1e-9 for w in weight_vals), (
+        f"branch weights all 1.0 ({weight_vals}) — the coefficient check "
+        "would not discriminate an unweighted regression")
+
+
+@pytest.mark.solver
+def test_na_forecasts_v_state_equal(_built):
+    """§15.6 witness 2 (re-grounded, forecast-to-forecast): at the NA-tied
+    timesteps the FORECAST-leaf ``v_state`` values are equal to EACH OTHER.
+
+    Corrected model: non-anticipativity ties the forecasts together via a
+    deterministic reference forecast (``period1_lower`` here), NEVER to the
+    realized trunk ``period1``.  So the coupling asserted is across the
+    forecast copies only; the untied trunk is excluded (it floats).  The
+    tied forecast set is read off the emitted ``non_anticipativity_storage_use``
+    cohort, so the assertion is pinned to exactly what fired.
+    """
+    import polars as pl
+
+    data, pb, sol = _built
+    if "v_state" not in sol._vars:
+        pytest.skip("fixture has no v_state variable")
+
+    recs = pb.cstrs_named("non_anticipativity_storage_use")
+    assert recs, "non_anticipativity_storage_use did not fire"
+    over = pl.concat([r.over for r in recs]).with_columns(
+        pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8))
+    d_ref = set(over["d"].unique().to_list())
+    b_vals = set(over["b"].unique().to_list())
+    # Forecast-to-forecast: the reference forecast is the lexicographically
+    # smallest; the trunk ``period1`` is tied to nothing.
+    assert d_ref == {"period1_lower"}, d_ref
+    assert b_vals and "period1" not in b_vals, b_vals
+    assert "period1" not in d_ref
+    tied_periods = d_ref | b_vals
+    assert all(p.startswith("period1_") for p in tied_periods), tied_periods
+
+    # Group v_state by (node, time) RESTRICTED to the tied forecast periods;
+    # every forecast sharing a (node, time) tie must carry the same value.
+    from collections import defaultdict
+
+    tol = 1e-6
+    vs = sol.value("v_state")
+    cols = vs.columns
+    ncol = "n" if "n" in cols else ("node" if "node" in cols else cols[0])
+    tcol = "t" if "t" in cols else ("time" if "time" in cols else None)
+    dcol = "d" if "d" in cols else ("period" if "period" in cols else None)
+    if tcol is None or dcol is None:
+        pytest.skip("v_state frame has no time/period column")
+    by_nt: dict[tuple[str, str], list[float]] = defaultdict(list)
+    for r in vs.iter_rows(named=True):
+        if str(r[dcol]) not in tied_periods:
+            continue
+        by_nt[(str(r[ncol]), str(r[tcol]))].append(float(r["value"]))
+    coupled = 0
+    for (_n, _t), vals in by_nt.items():
+        if len(vals) > 1:
+            assert max(vals) - min(vals) <= tol + 1e-6 * max(1.0, max(abs(v) for v in vals))
+            coupled += 1
+    assert coupled > 0, (
+        "no shared (node, time) v_state rows across forecasts to witness "
+        "coupling")
+
+
+@pytest.mark.solver
+def test_na_preconditions_clean(_built):
+    """§15.6 witness 4: recourse NPV preconditions hold on this fixture.
+
+    ``load_flextool`` invokes ``assert_recourse_npv_preconditions`` at the
+    lineage-activation boundaries (D4); a violation would have raised
+    during the cascade.  The ``_built`` fixture reaching an optimal solve
+    is therefore the end-to-end precondition witness."""
+    data, _pb, sol = _built
+    assert sol.optimal
+    assert data.recourse_invest is True
+
+
+@pytest.mark.solver
+def test_nested_recourse_sub_solve_is_refused(tmp_path_factory):
+    """A recourse fan nested in another solve that shares exactly its one period runs as the sub-solve
+    ``2day_dispatch_period1``, which never gets the recourse wiring (no invest non-anticipativity ties),
+    so the run stops with a configuration error naming the sub-solve instead of solving it without them."""
+    from flextool.engine import run_chain_from_db
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    from tests.engine._unit_db import FLEXTOOL_ROOT, b64, make_db
+
+    import json
+
+    fixture = FLEXTOOL_ROOT / "tests" / "fixtures" / "stoch_two_period_invest_na.json"
+    # the outer solve is deterministic, so wind keeps its plain time series (the system alternative's)
+    (plain_wind,) = [r[3] for r in json.loads(fixture.read_text())["parameter_values"]
+                     if r[:3] == ["profile", "wind", "profile"] and r[4] == "system"]
+    outer = "outer_invest"
+    one = {"value_type": "str", "index_name": "period", "data": ["period1"]}
+    values = [
+        ["profile", "wind", "profile", plain_wind],
+        ["model", "flextool", "solves", b64({"value_type": "str", "data": [outer]}, "array")],
+        ["solve", outer, "solve_mode", b64("single_solve", "str")],
+        ["solve", outer, "period_timeset",
+         b64({"index_type": "str", "index_name": "period", "data": [["period1", "2day"]]}, "map")],
+        ["solve", outer, "invest_periods", b64(one, "array")],
+        ["solve", outer, "realized_invest_periods", b64(one, "array")],
+        ["solve", outer, "years_represented",
+         b64({"index_type": "str", "index_name": "period", "data": [["period1", 1.0]]}, "map")],
+        ["solve", outer, "contains_solves", b64({"value_type": "str", "data": [SOLVE]}, "array")],
+    ]
+    url, scen = make_db(tmp_path_factory, alt="nested_recourse", values=values,
+                        base_chain=["base", "init", "system", "2day", "recourse_na"],
+                        entities=[["solve", outer, None]],
+                        fixture_json=fixture)
+    with pytest.raises(FlexToolConfigError, match=(
+            r"recourse in nested sub-solve '2day_dispatch_period1'.*nested solves cannot hold recourse "
+            r"investments")):
+        run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("nested_recourse_w"))

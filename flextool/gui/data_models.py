@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+# Revision of the GUI solver settings in settings.yaml.  1 (no key): presolve "choose" and a 0.001 MIP gap were
+# sent with every run.  2: presolve and scaling are sent only when the user picks them; the GUI sends no MIP gap.
+SOLVER_SETTINGS_REVISION = 2
+
 
 @dataclass
 class PlotSettings:
@@ -93,9 +97,9 @@ class ProjectSettings:
     # common path.
     #
     # The previous ``highs_threads`` and ``user_bound_scale`` fields
-    # were dropped: HiGHS thread count is the canonical responsibility
+    # were dropped: the thread count (FlexTool's processing and HiGHS) is the canonical responsibility
     # of ``execution_limits.max_cores_per_job`` (Execution jobs
-    # window), and ``user_bound_scale`` overlaps with ``scaling`` for
+    # window, "Threads per run"), and ``user_bound_scale`` overlaps with ``scaling`` for
     # the rare advanced-user case where the autoscaler is bypassed in
     # favour of a hand-set bound scale via ``solver_arguments``.
 
@@ -109,37 +113,19 @@ class ProjectSettings:
     # default).  Only appended when > 0.
     solver_time_limit: int = 0
 
-    # HiGHS MIP relative optimality gap (``--solver-mip-gap``), routed to
-    # HiGHS' ``mip_rel_gap`` option.  ``solver_mip_gap_set`` gates whether
-    # the value is sent at all: when True the gap is appended (and 0 is a
-    # valid value — solve to a proven exact optimum); when False no
-    # override is emitted and the solver_config/<solver>.opt baseline (or
-    # the solver's built-in default) governs.  Only affects MIP solves
-    # (integer investments, unit-commitment / online variables); pure-LP
-    # solves ignore it.
-    solver_mip_gap_set: bool = True
-    solver_mip_gap: float = 0.001
+    # FlexTool autoscaler strategy (``--scaling``): ``None`` (the dialog's "Default") sends nothing, so each
+    # solve's ``scaling`` in the database governs (else full); ``"off"`` | ``"solver_only"`` | ``"basic"`` |
+    # ``"full"`` is sent and wins over the database.
+    scaling: str | None = None
 
-    # On-disk format used when the solver is dispatched via a matrix
-    # file (``--matrix-file-format``).  One of ``"mps"`` | ``"lp"``.
-    # Default "mps"; only appended when non-default.  The in-process
-    # vs. file decision itself is implicit (HiGHS + no --save-memory
-    # = direct binding; commercial solvers + HiGHS --save-memory =
-    # file write using the chosen format).
-    matrix_file_format: str = "mps"
+    # HiGHS ``presolve`` (``--presolve``): ``None`` (the dialog's "Default (on)") sends nothing, so the GUI
+    # solves like a terminal run (presolve on); ``"on"`` | ``"off"`` | ``"choose"`` is sent.
+    presolve: str | None = None
 
-    # FlexTool autoscaler strategy (``--scaling``).  One of
-    # ``"off"`` | ``"solver_only"`` | ``"basic"`` | ``"full"``.
-    # Default "full"; only appended when non-default.
-    scaling: str = "full"
-
-    # HiGHS ``presolve`` override (``--presolve``).  One of
-    # ``"on"`` | ``"off"`` | ``"choose"``.  All three are appended to
-    # the engine command line: "choose" is HiGHS' native default and
-    # lets the solver decide per-problem, overriding the engine's
-    # determinism-pinned "on" baseline (that pin only governs the test
-    # gate, which does not go through this CLI path).  Default "choose".
-    presolve: str = "choose"
+    # Revision of the solver settings above.  A settings.yaml without it (or with an older one) holds the
+    # earlier GUI defaults, which ``settings_io.load_project_settings`` updates once
+    # (see ``SOLVER_SETTINGS_REVISION``).
+    solver_settings_revision: int = SOLVER_SETTINGS_REVISION
 
     # ── Calibrate-investments dialog settings (surfaced via the
     # "Calibrate investments…" dialog).  Representative-period build knobs
@@ -251,7 +237,7 @@ class ExecutionLimits:
     per-project field.  A value of 0 / 0.0 means "auto" (compute at
     dispatch time from system info).
     """
-    max_cores_per_job: int = 1            # passed as --highs-threads to each subprocess
+    max_cores_per_job: int = 1            # "Threads per run": passed as --threads to each subprocess
     memory_cap_per_job_gb: float = 0.0    # 0 = auto: (system_total - system_reserve_gb) / max_workers
     system_reserve_gb: float = 0.5        # tier 4: leave at least this much free system RAM
     swap_allowance_gb: float = 0.0        # tier 4: 0 = no swap; >0 allowed but warns user

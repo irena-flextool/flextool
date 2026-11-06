@@ -59,7 +59,11 @@ against linopy and Pyomo on the same HiGHS solver.
 
 ### Check your Python (and possibly install it)
 
-FlexTool requires **Python 3.11+**.
+FlexTool requires **Python 3.11+**, 64-bit Windows 10 or 11, Linux or macOS, and on
+Intel/AMD computers a processor with SSE4.2 and POPCNT (x86-64-v2: Intel Core
+i3/i5/i7 from 2009 on, AMD FX or Ryzen; not Core 2 or Phenom II). A processor with
+AVX2 (most from 2013 on) runs the fastest build. Windows 7 and 8.1 cannot run FlexTool 4.
+If a library reports "DLL load failed" on Windows, install the Microsoft Visual C++ Redistributable (x64, https://aka.ms/vs/17/release/vc_redist.x64.exe).
 
 Open a terminal (Windows: Command Prompt or PowerShell; macOS: Terminal; Linux: your shell)
 and check which Python you have:
@@ -104,6 +108,16 @@ The `[toolbox,viewer]` extras add the Spine Toolbox database editor (for editing
 and viewing input and result databases) and the network-graph result view. To
 install without Spine Toolbox (edit/view data in a spreadsheet only), you can
 use plain `pip install flextool`.
+
+On a processor without AVX2 (for example a Celeron/Pentium laptop up to about 2021, an
+Intel Core from before 2013 or an AMD FX), add the `compat` extra:
+`pip install "flextool[toolbox,viewer,compat]"`. It installs the compatible build of the
+`polars` data library, which is about 10-30% slower but runs on any x86-64-v2 processor.
+When FlexTool finds such a processor without the compatible build, it says why and gives
+the pip command: in a terminal it asks "Run it now? [y/N]" and installs only on yes;
+without a terminal (a Spine Toolbox tool, CI) it stops with that message; the GUI asks at
+startup, before it loads polars (in its terminal, or in a yes/no dialog from a shortcut), and `flextool-update` installs it. `python -m flextool.env_check`
+reports what it found.
 
 Your prompt should now show `(.venv)`. Verify with `python --version` — it
 should report 3.11 or newer.

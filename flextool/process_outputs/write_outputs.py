@@ -10,8 +10,10 @@ from pathlib import Path
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend; must precede any pyplot import
 import pandas as pd
+import polars as pl
 import yaml
-from spinedb_api import DatabaseMapping, from_database, Array
+from spinedb_api import from_database, Array
+from flextool.update_flextool.db_handle import open_database_mapping
 
 from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
 from flextool.process_outputs._output_meta import (
@@ -29,14 +31,14 @@ from flextool.process_outputs.out_ancillary import (
 )
 from flextool.process_outputs.out_capacity import unit_capacity, connection_capacity, node_capacity
 from flextool.process_outputs.out_costs import (
-    generic, cost_summaries, cost_breakdown_by_entity, CO2,
+    generic, cost_summaries, cost_breakdown_by_entity, CO2, realized_leaf_periods,
 )
 from flextool.process_outputs.out_flowgroup import flowGroup_indicators
 from flextool.process_outputs.out_flows import (
     unit_outputNode, unit_inputNode,
     unit_cf_outputNode, unit_cf_inputNode,
     unit_VRE_curtailment_and_potential, unit_ramps,
-    unit_online_and_startup,
+    unit_online_and_startup, connection_online_and_startup,
 )
 from flextool.process_outputs.out_group import (
     nodeGroup_indicators, nodeGroup_VRE_share,
@@ -47,6 +49,7 @@ from flextool.process_outputs.process_results import post_process_results
 from flextool.process_outputs.read_parameters import (
     read_parameters,
     read_parameters_multi,
+    warn_if_run_fields_missing,
 )
 from flextool.process_outputs.read_sets import (
     read_sets,
@@ -70,6 +73,30 @@ def _parse_rename_entry(entry) -> tuple[str, bool]:
         return str(entry[0]), bool(entry[1])
     # Bare string (legacy) — treat as name with export=True
     return str(entry), True
+
+
+def _csv_filename(table_name: str, rename_raw: dict, used: dict[str, str]) -> str:
+    """Return the CSV file name of *table_name* and record it in *used*.
+
+    ``used`` maps each lower-cased file name already taken in this CSV
+    folder to the output that took it.  Two outputs that resolve to the
+    same file name (also when they differ only by case, which collides
+    on case-insensitive file systems) would silently overwrite each
+    other, so a repeat raises ``ValueError`` naming both outputs and the
+    ``rename`` entry to change.
+    """
+    display_name, _ = _parse_rename_entry(rename_raw.get(table_name, table_name))
+    csv_filename = display_name + '.csv'
+    key = csv_filename.lower()
+    if key in used:
+        raise ValueError(
+            f"Outputs '{used[key]}' and '{table_name}' are both written to "
+            f"'{csv_filename}'; one would overwrite the other.  Give them "
+            f"distinct display names in the 'rename' section of the output "
+            f"settings."
+        )
+    used[key] = table_name
+    return csv_filename
 
 
 def _frame_axes(df) -> tuple[list, list]:
@@ -142,7 +169,7 @@ def _provider_lookup_df(provider, parent: str, stem: str):
 
     Provider key convention matches the emit_* writers' ``_emit(...)``
     callsites — ``"<parent>/<basename-without-csv>"`` (see
-    :mod:`flextool.engine_polars._emit_provider_io`).  The cascade keeps
+    :mod:`flextool.engine.preprocess._provider_io`).  The cascade keeps
     these frames in memory only (no on-disk fallback), so a ``None``
     *provider* yields ``None`` for every key.
     """
@@ -172,7 +199,7 @@ def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
     flowGroup indicators sum nothing and emit all-zero rows in production.
 
     Also backfills the 12 ``nodeGroupDispatch__*`` arc-union MultiIndex
-    sets emitted by ``flextool/engine_polars/_emit_arc_unions.py``.
+    sets emitted by ``flextool/engine/preprocess/emit/_arc_unions.py``.
     Without these, ``calc_group_flows`` finds zero rows for the unit /
     connection aggregator joins, and ``out_group.nodeGroup_flows`` emits
     only the slack/inflow/loss column families — group_flows__dt loses
@@ -183,7 +210,7 @@ def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
     ``FlexDataProvider`` keyed under ``"input/<basename>"`` /
     ``"solve_data/<basename>"`` — the writer→emitter refactor no longer
     flushes these to disk on the default cascade path, so there is no
-    on-disk fallback (matching the B6 ``_emit_arc_unions`` precedent).
+    on-disk fallback (matching the B6 ``_arc_unions`` precedent).
 
     ``provider`` contract (STRICT): on an in-memory output path a
     Provider MUST exist.  This function is only reached on the in-memory
@@ -322,6 +349,44 @@ def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
         setattr(s, attr, mi)
 
 
+def _group_entity_invest(provider) -> pd.DataFrame:
+    """``{(g, e) in group_entity : g in group_invest}`` — the GMPL definition (``flextool.mod``
+    l.5194-5198), read from the sub-solve's :class:`FlexDataProvider` snapshot.
+
+    Item 163 addendum: nothing in the polars cascade writes ``input/group_entity_invest.csv`` (only
+    the retired GMPL model did, on the first solve), so a fresh run's copy of that file was always
+    absent and the group invest cap/floor duals were never spread to their member entities. The
+    Provider keys ``solve_data/group_entity`` (``group, entity``) and ``solve_data/group_invest``
+    (``group``) are the in-memory equivalents the cascade already builds every run. An absent key on
+    either side gives an empty ``(group, entity)`` frame.
+    """
+    empty = pd.DataFrame(columns=["group", "entity"])
+    ge = _provider_lookup_df(provider, "solve_data", "group_entity")
+    if ge is None or ge.is_empty() or ge.width < 2:
+        return empty
+    gi = _provider_lookup_df(provider, "solve_data", "group_invest")
+    if gi is None or gi.is_empty() or gi.width < 1:
+        return empty
+    ge = ge.rename({ge.columns[0]: "group", ge.columns[1]: "entity"}).with_columns(
+        pl.col("group").cast(pl.Utf8), pl.col("entity").cast(pl.Utf8),
+    )
+    gi = gi.rename({gi.columns[0]: "group"}).with_columns(pl.col("group").cast(pl.Utf8))
+    joined = ge.join(gi.select("group"), on="group", how="semi")
+    if joined.is_empty():
+        return empty
+    return joined.select(["group", "entity"]).to_pandas()
+
+
+def _rp_block_first(flex_data, solve_steps) -> "pd.MultiIndex | None":
+    """``(period, time)`` of the representative-block starts of the solves at hand (``None`` when unknown)."""
+    frames = [fd.rp_block_first for fd in ([st[1] for st in solve_steps] if solve_steps else [flex_data])
+              if fd is not None and getattr(fd, "rp_block_first", None) is not None]
+    if not frames:
+        return None
+    rows = pl.concat([f.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)) for f in frames]).unique()
+    return pd.MultiIndex.from_arrays([rows["d"].to_list(), rows["t"].to_list()], names=["period", "time"])
+
+
 def _read_outputs(
     output_dir,
     *,
@@ -357,6 +422,8 @@ def _read_outputs(
     # it replaces the broken single-flex_data last-roll fallback.  The
     # last step's ``flex_data`` / ``solution`` supply the static
     # (solve-invariant) attrs + the per-attr shape template.
+    # A CSV-dump reload carries no run-level fields of the reported costs: say so (once per output write).
+    warn_if_run_fields_missing([st[1] for st in solve_steps] if solve_steps is not None else [flex_data])
     if (
         solve_steps is None
         and flex_data is not None
@@ -372,7 +439,7 @@ def _read_outputs(
         p = union_params(last_par, output_dir)
         s = union_sets(last_s, output_dir)
         _backfill_group_indicator_sets(s, output_dir, provider=flex_data_provider)
-        v = read_variables(output_dir)
+        v = read_variables(output_dir, group_entity_invest=_group_entity_invest(flex_data_provider))
         return p, s, v
     if solve_steps is not None:
         if solution is None:
@@ -382,7 +449,7 @@ def _read_outputs(
         p = read_parameters_multi(solve_steps, solution)
         s = read_sets_multi(solve_steps, solution)
         _backfill_group_indicator_sets(s, output_dir, provider=flex_data_provider)
-        v = read_variables(output_dir)
+        v = read_variables(output_dir, group_entity_invest=_group_entity_invest(flex_data_provider))
         return p, s, v
     if flex_data is None or solution is None:
         raise ValueError(
@@ -392,7 +459,7 @@ def _read_outputs(
     p = read_parameters(flex_data, solution, solve_name=solve_name or "solve")
     s = read_sets(flex_data, solution, solve_name=solve_name or "solve")
     _backfill_group_indicator_sets(s, output_dir, provider=flex_data_provider)
-    v = read_variables(output_dir)
+    v = read_variables(output_dir, group_entity_invest=_group_entity_invest(flex_data_provider))
     return p, s, v
 
 
@@ -505,17 +572,23 @@ def write_summary_csv(par, s, v, r, csv_dir):
         # flextool.mod:2107-2126; omitting them here would under-report
         # the objective for any scenario with non-zero existing capacity
         # or a non-zero lifetime_fixed_cost on invest/divest entities.
-        total_cost_full = (
+        total_cost_d = (
             r.costOper_and_penalty_d
                 .add(r.costInvest_d, fill_value=0.0)
                 .add(r.costDivest_d, fill_value=0.0)
                 .add(r.costFixedPreExisting_d, fill_value=0.0)
                 .add(r.costFixedInvested_d, fill_value=0.0)
                 .add(r.costFixedDivested_d, fill_value=0.0)
-        ).sum(axis=0) / 1000000
+        )
+        total_cost_full = total_cost_d.sum(axis=0) / 1000000
+        # Realized periods: the rows of the periods some solve realizes (dispatch or investment), each once and
+        # from the start of the run (union_realized_slice / drop_levels).  The full horizon adds the rows no solve
+        # realizes: the fixed cost of existing capacity in the last solve's look-ahead periods.
+        realized_periods = s.d_realized_period.union(s.d_realize_invest)
+        total_cost_realized = total_cost_d[total_cost_d.index.isin(realized_periods)].sum(axis=0) / 1000000
 
         f.write(f'"Total cost (calculated) full horizon (M CUR)",{total_cost_full:.12g},"Annualized operational, penalty and investment costs"\n')
-        f.write(f'"Total cost (calculated) realized periods (M CUR)",{total_cost_full:.12g}\n')
+        f.write(f'"Total cost (calculated) realized periods (M CUR)",{total_cost_realized:.12g}\n')
 
         # Operational costs for realized periods (M CUR)
         operational_costs = r.costOper_d.sum(axis=0) / 1000000
@@ -581,8 +654,17 @@ def write_summary_csv(par, s, v, r, csv_dir):
 
         # Emissions section
         f.write('Emissions\n')
-        co2_total = r.emissions_co2_d.sum(axis=0) / 1000000
-        f.write(f'"CO2 [Mt]",{co2_total:.6g},"System-wide annualized CO2 emissions for realized periods"\n')
+        # Per scenario path only when the realized periods differ between
+        # paths (out_costs.realized_leaf_periods); otherwise one line.
+        leaf_periods = realized_leaf_periods(s)
+        if len(leaf_periods) > 1:
+            for leaf, periods in leaf_periods.items():
+                leaf_total = r.emissions_co2_d.reindex(periods).sum() / 1000000
+                f.write(f'"CO2 [Mt] ({leaf})",{leaf_total:.6g},'
+                        f'"System-wide annualized CO2 emissions for realized periods, scenario path {leaf}"\n')
+        else:
+            co2_total = r.emissions_co2_d.sum(axis=0) / 1000000
+            f.write(f'"CO2 [Mt]",{co2_total:.6g},"System-wide annualized CO2 emissions for realized periods"\n')
 
         # Slack variables section
         f.write('\n"Slack variables multiplied by timestep duration (creating or removing energy/matter, ')
@@ -638,6 +720,7 @@ ALL_OUTPUTS = [
     cost_breakdown_by_entity,
     reserves,
     unit_online_and_startup,
+    connection_online_and_startup,
     node_summary,
     node_additional_results,
     investment_duals,
@@ -683,7 +766,7 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
         else:
             db_reachable = True  # HTTP or other remote URLs — let DatabaseMapping handle errors
     if db_reachable:
-        with DatabaseMapping(settings_db_url) as settings_db:
+        with open_database_mapping(settings_db_url) as settings_db:
             settings_entities = settings_db.get_entity_items(entity_class_name="settings")
             if len(settings_entities) == 1:
                 settings_name = settings_entities[0]["name"]
@@ -808,7 +891,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             solve parquet aggregation, and pandas joins/muls would
             mismatch.  Single-solve scenarios can ignore.
         flex_data_provider: optional per-sub-solve
-            :class:`flextool.engine_polars._flex_data_provider.FlexDataProvider`
+            :class:`flextool.engine.preprocess._flex_data_provider.FlexDataProvider`
             from the orchestration step (typically ``last_step.flex_data_provider``).
             Used by :func:`_backfill_group_indicator_sets` to read the
             ``input/nodeGroup*`` + ``solve_data/nodeGroupDispatch__*``
@@ -891,9 +974,11 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
     # If results already exist as parquet files, read them
     if read_parquet_dir:
+        from flextool.plot_outputs.format_helpers import TIMELINE_BREAKS_FILE, load_timeline_breaks
+        break_index = load_timeline_breaks(parquet_dir)
         results = {}
         for filename in os.listdir(parquet_dir):
-            if filename.endswith('.parquet') and filename != 'timeline_breaks.parquet':
+            if filename.endswith('.parquet') and filename != TIMELINE_BREAKS_FILE:
                 key = filename[:-8]  # Remove '.parquet' extension
                 filepath = os.path.join(parquet_dir, filename)
                 results[key] = read_lean_parquet(filepath)
@@ -918,6 +1003,13 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         # Pre-process results to be closer to what needed for output writing
         r = post_process_results(par, s, v)
         start = log_time("Post-processed outputs", start, timing_recorder)
+
+        # The realized steps at which a time-series plot starts a new line (gaps in the timeline,
+        # representative-block starts, periods that do not continue the previous one).
+        from flextool.process_outputs._timeline_breaks import timeline_breaks
+        break_index = timeline_breaks(
+            s.dt_realize_dispatch, s.ramp_link,
+            block_first=_rp_block_first(flex_data, solve_steps), scenario=scenario_name)
 
         # Call the final processing functions for each category of outputs
         # and make a dict of dataframes to hold final results
@@ -990,28 +1082,35 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             write_lean_parquet(df, f'{parquet_dir}/{name}.parquet',
                                column_metadata=col_meta)
 
-        # Copy timeline_breaks from solve_data to parquet dir.
-        raw_dir = raw_output_dir or 'output_raw'
-        work_dir = os.path.dirname(raw_dir) or '.'
-        breaks_csv = os.path.join(work_dir, 'solve_data', 'timeline_breaks.csv')
-        if os.path.exists(breaks_csv):
-            breaks_df = pd.read_csv(breaks_csv)
-            write_lean_parquet(breaks_df, f'{parquet_dir}/timeline_breaks.parquet', index=False)
+        # The plot break steps, written also when empty so a parquet replay knows there are none.
+        from flextool.plot_outputs.format_helpers import write_timeline_breaks
+        write_timeline_breaks(parquet_dir, break_index)
 
         start = log_time("Wrote to parquet", start, timing_recorder)
+
+    # Raw horizon dump (``model.output_horizon``): stream the per-roll parts
+    # from ``output_raw/horizon/`` into ``<parquet_dir>/horizon/``.  An
+    # earlier run's ``horizon/`` is removed first whatever the flag (the
+    # top-level cleanup above removes files only), under the same
+    # single-result guard.  Not on the parquet-replay path (no raw parts).
+    if not read_parquet_dir:
+        try:
+            from flextool.engine.output._horizon_dump import assemble_horizon_dump
+            assemble_horizon_dump(raw_output_dir or 'output_raw', parquet_dir,
+                                  clear_stale=not single_result)
+        except Exception as exc:  # noqa: BLE001
+            logging.error("Raw horizon dump assembly failed: %s", exc)
 
     # Compute plot plans for the viewer (always, when parquets exist)
     if 'parquet' in write_methods or read_parquet_dir:
         try:
             from flextool.plot_outputs.orchestrator import compute_all_plot_plans
-            from flextool.plot_outputs.format_helpers import load_timeline_breaks
-            plan_break_times = load_timeline_breaks(parquet_dir)
             plan_results = {k: v.to_frame() if isinstance(v, pd.Series) else v for k, v in results.items()}
             single_plot_settings = settings.get('plots', {})
             compute_all_plot_plans(
                 plan_results, single_plot_settings, parquet_dir,
                 active_settings=active_configs, plot_rows=plot_rows,
-                break_times=plan_break_times,
+                break_times=break_index,
                 color_path=resolve_plot_settings_path(Path(output_location)),
             )
             start = log_time("Computed plot plans", start, timing_recorder)
@@ -1090,9 +1189,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         delete_plots = not bool(single_result)
         results = {k: v.to_frame() if isinstance(v, pd.Series) else v for k, v in results.items()}
         # Load timeline breaks for visual gaps in time-series plots
-        from flextool.plot_outputs.format_helpers import load_timeline_breaks
-        break_times = load_timeline_breaks(parquet_dir)
-        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file, break_times=break_times, color_path=resolve_plot_settings_path(Path(output_location)))
+        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file, break_times=break_index, color_path=resolve_plot_settings_path(Path(output_location)))
 
         start = log_time('Plotted figures', start, timing_recorder)
 
@@ -1117,9 +1214,9 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         if read_parquet_dir:
             # Simplified CSV writing from parquet (no par,s,v,r available)
             rename_raw = settings.get('rename', {})
+            used_csv_names: dict[str, str] = {}
             for table_name, df in results.items():
-                display_name, _ = _parse_rename_entry(rename_raw.get(table_name, table_name))
-                csv_filename = display_name + '.csv'
+                csv_filename = _csv_filename(table_name, rename_raw, used_csv_names)
                 csv_path = os.path.join(csv_dir, csv_filename)
                 dp_resources.append(datapackage_resource(
                     table_name, csv_filename, *_frame_axes(df)))
@@ -1131,6 +1228,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             write_summary_csv(par, s, v, r, csv_dir)
 
             rename_raw = settings.get('rename', {})
+            used_csv_names = {'summary_solve.csv': 'summary_solve'}
             for table_name, df in results.items():
                 if isinstance(df, (pd.MultiIndex, pd.Index)):
                     df = df.to_frame(index=False)
@@ -1179,8 +1277,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                     names.insert(period_pos, 'solve')
                     df.index = df.index.reorder_levels(order=names)
 
-                display_name, _ = _parse_rename_entry(rename_raw.get(table_name, table_name))
-                csv_filename = display_name + '.csv'
+                csv_filename = _csv_filename(table_name, rename_raw, used_csv_names)
                 csv_path = os.path.join(csv_dir, csv_filename)
                 dp_resources.append(datapackage_resource(
                     table_name, csv_filename, *_frame_axes(df)))
@@ -1277,7 +1374,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
     # (legitimately absent) raw shard.
     if not read_parquet_dir:
         try:
-            from flextool.engine_polars._parquet_bundle import write_manifest
+            from flextool.engine.output._parquet_bundle import write_manifest
             raw_dir = raw_output_dir or 'output_raw'
             bundle_root = os.path.dirname(raw_dir) or '.'
             write_manifest(bundle_root)

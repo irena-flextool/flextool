@@ -21,7 +21,7 @@ scenario emits, and the unscoped EAV view is the union.
 
 Fixture work folders are built dynamically per session via the
 ``scenario_workdir`` factory (``tests/conftest.py``).  The pre-v4.0.0
-committed ``tests/engine_polars/data/work_*`` snapshots that this
+committed ``tests/engine/data/work_*`` snapshots that this
 module used to read from disk are gone; the backend now opens the
 ``tests.sqlite`` materialised on demand from the JSON-backed SpineDB
 fixtures.
@@ -200,16 +200,16 @@ def test_build_axis_enums_parameter_keys_i_runtime_depth(
     """``i`` enum cardinality matches the runtime-discovered tier count
     of the ``commodity.price_ladder_*`` maps.  Uses the ``coal_ladder_annual``
     scenario (formerly ``work_commodity_ladder_annual``) which has a
-    known 2-tier ladder so this gates the discovery logic instead of
+    known 3-tier ladder so this gates the discovery logic instead of
     measuring "≥1"."""
     fixture = scenario_workdir("coal_ladder_annual")
     backend_ladder = SpineDBBackend(str(fixture / "tests.sqlite"))
     try:
         enums = build_axis_enums(backend_ladder, contract)
         i_vocab = enums["i"].categories.to_list()
-        # coal_ladder_annual has a 2-tier ladder (keys "1", "2").
-        assert i_vocab == ["1", "2"], (
-            f"i axis vocab should be ['1','2']; got {i_vocab}"
+        # coal_ladder_annual has a 3-tier ladder (keys "1", "2", "3").
+        assert i_vocab == ["1", "2", "3"], (
+            f"i axis vocab should be ['1','2','3']; got {i_vocab}"
         )
     finally:
         backend_ladder.close()
@@ -217,9 +217,47 @@ def test_build_axis_enums_parameter_keys_i_runtime_depth(
 
 def test_build_axis_enums_synthetic(axis_enums: dict[str, pl.Enum]) -> None:
     """Synthetic axes use the contract's ``tokens`` field verbatim."""
-    assert axis_enums["side"].categories.to_list() == ["source", "sink"]
-    assert axis_enums["ud"].categories.to_list() == ["up", "down"]
-    assert axis_enums["klass"].categories.to_list() == ["unit", "connection"]
+    assert axis_enums["side"].categories.to_list() == ["sink", "source"]
+    assert axis_enums["ud"].categories.to_list() == ["down", "up"]
+    assert axis_enums["klass"].categories.to_list() == ["connection", "unit"]
+
+
+def test_every_vocabulary_is_lexically_sorted(axis_enums: dict[str, pl.Enum]) -> None:
+    """Category order = the polars Utf8 sort order, so an Enum run sorts axis labels as the Utf8 run does."""
+    for name, enum in axis_enums.items():
+        cats = enum.categories.to_list()
+        assert cats == sorted(cats), name
+        assert cats == pl.Series(cats, dtype=pl.Utf8).sort().to_list(), name
+
+
+@pytest.fixture(scope="module")
+def base_scenario_enums(test_db_url: str) -> dict[str, pl.Enum]:
+    """The scenario-filtered vocabulary of the deterministic ``base`` scenario (what a run builds)."""
+    from flextool.spinedb_backend._axis_enums import build_scenario_axis_enums
+
+    return build_scenario_axis_enums(test_db_url, "base")[0]
+
+
+def test_group_axis_covers_flowgroup(test_db_url: str, base_scenario_enums: dict[str, pl.Enum]) -> None:
+    """``g`` keys the flow-group families too, so it holds the flowGroup class names (v58 carve-out)."""
+    from spinedb_api import DatabaseMapping
+
+    with DatabaseMapping(test_db_url) as db:
+        flow_groups = {e["name"] for e in db.find_entities(entity_class_name="flowGroup")}
+        groups = {e["name"] for e in db.find_entities(entity_class_name="group")}
+    assert flow_groups
+    g = set(base_scenario_enums["g"].categories.to_list())
+    assert flow_groups <= g
+    assert groups <= g
+
+
+def test_anchor_and_branch_axes_cover_periods(base_scenario_enums: dict[str, pl.Enum]) -> None:
+    """``d_anchor`` (anchor periods) is the ``d`` vocabulary; ``branch`` covers every period, since the
+    ``period__branch`` trunk self-rows put period labels in ``b`` also in a deterministic run."""
+    d = base_scenario_enums["d"].categories.to_list()
+    assert d
+    assert base_scenario_enums["d_anchor"].categories.to_list() == d
+    assert set(d) <= set(base_scenario_enums["branch"].categories.to_list())
 
 
 def test_synthetic_allowlist_merged_into_branch(
@@ -227,7 +265,7 @@ def test_synthetic_allowlist_merged_into_branch(
 ) -> None:
     """The ``branch`` enum carries the schema-derived branch labels
     PLUS the ``eff`` / ``noEff`` synthetic allowlist tokens introduced
-    by ``_emit_co2_accumulators``.
+    by ``_co2_accumulators``.
 
     test_a_lot has no ``solve.stochastic_branches`` rows, so the only
     tokens in the branch enum are the allowlist entries.  The pin

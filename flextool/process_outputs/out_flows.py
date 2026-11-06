@@ -254,21 +254,21 @@ def unit_VRE_curtailment_and_potential(par, s, v, r, debug):
 def unit_ramps(par, s, v, r, debug):
     """Unit ramps by input and output nodes for timesteps"""
     results = []
-    if r.ramp_dtt.empty:
+    if r.ramp_dt.empty:
         return results
 
     # Output node ramps
     process_sink_ramp_output = s.process_sink[s.process_sink.get_level_values(0).isin(s.process_unit)]
-    pss_ramp_output = r.ramp_dtt.columns[r.ramp_dtt.columns.droplevel(1).isin(process_sink_ramp_output)]
-    ramp_output = r.ramp_dtt[pss_ramp_output].droplevel('t_previous')
+    pss_ramp_output = r.ramp_dt.columns[r.ramp_dt.columns.droplevel(1).isin(process_sink_ramp_output)]
+    ramp_output = r.ramp_dt[pss_ramp_output]
     ramp_output.columns = ramp_output.columns.droplevel(1)  # Remove 'source' from (process, source, sink) to get (unit, source)
     ramp_output.columns.names = ['unit', 'sink']
     results.append((ramp_output, 'unit_ramp_outputs_dt_ee'))
 
     # Input node ramps
     process_source_ramp_input = s.process_source[s.process_source.get_level_values(0).isin(s.process_unit)]
-    pss_ramp_input = r.ramp_dtt.columns[r.ramp_dtt.columns.droplevel(2).isin(process_source_ramp_input)]
-    ramp_input = r.ramp_dtt[pss_ramp_input].droplevel('t_previous')
+    pss_ramp_input = r.ramp_dt.columns[r.ramp_dt.columns.droplevel(2).isin(process_source_ramp_input)]
+    ramp_input = r.ramp_dt[pss_ramp_input]
     ramp_input.columns = ramp_input.columns.droplevel(2)  # Remove 'sink' from (process, source, sink) to get (unit, source)
     ramp_input.columns.names = ['unit', 'source']
     results.append((ramp_input, 'unit_ramp_inputs_dt_ee'))
@@ -299,3 +299,27 @@ def unit_online_and_startup(par, s, v, r, debug):
     results.append((startup_units_d, 'unit_startup_d_e'))
 
     return results
+
+
+def connection_online_and_startup(par, s, v, r, debug):
+    """Connection online status and startups for timesteps and periods (connections with a startup_method)"""
+    results = []
+    connections_online = s.process_connection.intersection(s.process_online)
+
+    # 1. Online connections dt (count of unitsize)
+    online_dt = r.process_online_dt[connections_online]
+    results.append((online_dt, 'connection_online_dt_e'))
+
+    # 2. Average online status at period level (weighted by step_duration)
+    complete_hours = par.complete_period_share_of_year * 8760
+    online_d = online_dt.mul(par.step_duration, axis=0).groupby('period').sum().div(complete_hours, axis=0)
+    results.append((online_d, 'connection_online_average_d_e'))
+
+    # 3. Startups annualized to period level (as for units)
+    startup_d = annualize_dt_to_d(
+        r.process_startup_dt[connections_online], par.timestep_weight,
+        par.complete_period_share_of_year)
+    results.append((startup_d, 'connection_startup_d_e'))
+
+    return results
+

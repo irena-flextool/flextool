@@ -28,8 +28,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from flextool.engine_polars import run_chain_from_db
-from flextool.lean_parquet import read_lean_parquet
+from flextool.engine import run_chain_from_db
+import polars as pl
 
 
 def _read_csv_pairs(path: Path) -> list[tuple[str, str]]:
@@ -68,7 +68,11 @@ def stochastic_run_workdir(
     assert last_step.solution is not None and last_step.solution.optimal, (
         "Stochastic dispatch model failed to solve"
     )
-    provider = getattr(last_step, "flex_data_provider", None)
+    # The checks read the STOCHASTIC solve's inputs; the deterministic
+    # realization solve that follows it (the fan has a realized: yes
+    # designation) has its own Provider and wrote the last solve_data/ dump.
+    stochastic_step = steps["2day_dispatch"]
+    provider = getattr(stochastic_step, "flex_data_provider", None)
     if provider is not None:
         provider.snapshot_processed_inputs(workdir)
     return workdir
@@ -129,15 +133,14 @@ def test_storage_state_equal_across_branches(
     pulled from the wrong CSV) would let the forecasts' storage states drift.
     """
     workdir = stochastic_run_workdir
-    matches = list(
-        (workdir / "output_raw").glob("v_state__*.parquet")
-    )
-    assert matches, "No v_state parquet emitted by stochastic run"
-    df = read_lean_parquet(matches[0])
-
-    # Rows: (solve, period, time).  Columns: (node,).
-    assert df.index.names == ["solve", "period", "time"], df.index.names
-    assert df.columns.names == ["node"], df.columns.names
+    # The forecasts' v_state is not realized, so it is not in the normal
+    # outputs; the fixture sets ``output_horizon``, whose raw dump holds every
+    # row of the solve (per unitsize, which leaves the equality unchanged).
+    parts = sorted((workdir / "output_raw" / "horizon" / "v_state").glob("*__2day_dispatch.parquet"))
+    assert parts, "No raw v_state dump written by the stochastic run"
+    raw = pl.read_parquet(parts[0])
+    df = (raw.select(pl.col("d").alias("period"), pl.col("t").alias("time"), pl.col("n").alias("node"), "value")
+          .to_pandas().pivot_table(index=["period", "time"], columns="node", values="value", aggfunc="first"))
 
     pb = _read_csv_pairs(workdir / "solve_data" / "period__branch.csv")
     dtna = _read_csv_pairs(
@@ -151,9 +154,9 @@ def test_storage_state_equal_across_branches(
     periods_with_rows = set(df.index.get_level_values("period"))
 
     # Forecast periods = the branch (b) side of the off-diagonal
-    # period__branch pairs; the anchor (d) side is the realised trunk and is
-    # EXCLUDED (it is no longer tied under the forecast-to-forecast ground).
-    trunks = {d for (d, b) in pb if d != b}
+    # period__branch pairs; the anchor (d) side is the period label, which has
+    # no dispatch.
+    labels = {d for (d, b) in pb if d != b}
     forecast_periods = sorted(
         {b for (d, b) in pb if d != b and b in periods_with_rows}
     )
@@ -167,10 +170,9 @@ def test_storage_state_equal_across_branches(
             vals = []
             for f in forecast_periods:
                 try:
-                    row_f = df.xs((f, t), level=("period", "time"))
+                    vals.append(float(df.loc[(f, t), node]))
                 except KeyError:
                     continue
-                vals.append(float(row_f.iloc[0][node]))
             if len(vals) > 1:
                 assert max(vals) - min(vals) == pytest.approx(0.0, abs=1e-6), (
                     f"forecast-to-forecast non-anticipativity violated for "
@@ -183,9 +185,9 @@ def test_storage_state_equal_across_branches(
         "No (forecast, t) cohorts with >1 forecast were checked — fixture "
         "failed to produce multiple forecast branches in period_in_use."
     )
-    # Sanity: the trunk really is present but excluded (a forecast-to-forecast
-    # ground, not a trunk-anchored one).
-    assert trunks and trunks <= periods_with_rows, trunks
+    # The anchor is a period label: it has no dispatch, so no v_state rows (the
+    # ties are forecast-to-forecast, never to the label).
+    assert labels and not (labels & periods_with_rows), labels
 
 
 # ---------------------------------------------------------------------------

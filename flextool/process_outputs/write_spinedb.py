@@ -23,8 +23,9 @@ Key correctness facts (verified against the engine code, 2026-06-03):
   ``node``, ``connection``, ``group``, ``reserve``, ``upDown``, plus the
   literal ``model``-class entities ``"cost"`` and ``"model"``) in addition
   to the relationship entities.
-* Capacity Map keys stay ``existing``/``invested``/``divested``/``total``
-  (no ``retired`` rename).
+* Capacity Map keys stay ``existing``/``invested``/``in_construction``/
+  ``divested``/``total`` (no ``retired`` rename); ``in_construction`` is
+  empty without a construction lead time, so it emits nothing then.
 * Discount-factor params (#33/#34) derive from
   ``par.inflation_factor_investment_yearly`` /
   ``par.inflation_factor_operations_yearly``.  ``par`` is threaded in as an
@@ -43,6 +44,7 @@ from typing import Any
 
 import pandas as pd
 from spinedb_api import DatabaseMapping, import_data
+from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.parameter_value import Map
 
 from flextool.process_outputs._output_meta import FACTOR, result_key_summary
@@ -105,6 +107,14 @@ SPINEDB_OUTPUT_SPEC: dict[str, dict[str, Any]] = {
     "unit_startup_d_e": dict(ec="unit", param="startup_cumulative",
                              entity_dims=1, has_time=False, category=None,
                              entity_filter="unit"),
+    "connection_online_dt_e": dict(ec="connection", param="online_t", entity_dims=1,
+                                   has_time=True, category=None, entity_filter="connection"),
+    "connection_online_average_d_e": dict(ec="connection", param="online_average",
+                                          entity_dims=1, has_time=False,
+                                          category=None, entity_filter="connection"),
+    "connection_startup_d_e": dict(ec="connection", param="startup_cumulative",
+                                   entity_dims=1, has_time=False, category=None,
+                                   entity_filter="connection"),
     "unit_capacity_ed_p": dict(ec="unit", param="capacity", entity_dims=1,
                                has_time=False, category="header",
                                entity_index="unit"),
@@ -370,7 +380,7 @@ def _top_up_schema_if_stale(db_url: str) -> None:
     # never take the lock and never write.  The gate mapping MUST be closed
     # before we take the lock: its item cache would otherwise go stale under
     # another process's concurrent commit (critique BLOCKER #1).
-    with DatabaseMapping(db_url) as db:
+    with open_database_mapping(db_url) as db:
         have_classes = {c["name"] for c in db.get_entity_class_items()}
         have_params = {(p["entity_class_name"], p["name"])
                        for p in db.get_parameter_definition_items()}
@@ -687,7 +697,7 @@ def write_spinedb(results, s, db_url, scenario_name, solve_name,
         results, s, alternative_name, solve_name, par=par,
     )
 
-    with DatabaseMapping(db_url) as db:
+    with open_database_mapping(db_url) as db:
         count, errors = import_data(
             db,
             alternatives=[(alternative_name, f"FlexTool results: {alternative_name}")],
@@ -1258,7 +1268,7 @@ def _purge_alternative(db_url, alternative_name):
     """Delete existing ``parameter_value`` items in ``alternative_name`` so a
     re-run replaces rather than duplicates.  Entities are shared across
     alternatives and are not purged."""
-    with DatabaseMapping(db_url) as db:
+    with open_database_mapping(db_url) as db:
         items = db.get_parameter_value_items(alternative_name=alternative_name)
         if not items:
             return

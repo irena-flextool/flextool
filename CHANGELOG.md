@@ -1,3 +1,1806 @@
+## Unreleased
+
+- **New: `--threads N` (`FLEXTOOL_THREADS`), one thread count per FlexTool run, for FlexTool's data processing and
+  the solver.** FlexTool's own processing (polars) uses at most N threads and at most 8 (`POLARS_MAX_THREADS` can
+  set a lower limit), HiGHS gets `threads=N` (its parallel simplex stays off) and a Benders solve runs at most N
+  region solves at once. Default: the available cores, with HiGHS and Benders as before. Give each run about
+  cores / runs when several run at once (a script or an AI agent driving the terminal, Spine Toolbox running
+  scenarios in parallel: add `--threads N` to the FlexTool Tool's arguments). The run header prints the threads
+  in use. The workflow runner and the calibrator take `--threads` too and pass it on. Requires polar-high 3.12.2.
+- **Changed: the GUI's "Cores per job" is now "Threads per run" and also sets FlexTool's own data processing.**
+  GUI runs used one thread for FlexTool's processing by accident, about 30-45 % slower before the solver; a GUI
+  run now sends its "Threads per run" as `--threads` (default 1, as before). It no longer turns on HiGHS' parallel
+  simplex when set above 1.
+- **Changed: terminal and Spine Toolbox runs use at most 8 threads for FlexTool's data processing** (before: every
+  core). No measured slowdown, and less contention when several runs execute at once.
+
+- **Changed: a solve HiGHS could not certify as optimal (status "Unknown") is judged against its own feasibility
+  tolerance.** It is accepted as near-optimal when its largest relative primal infeasibility is within
+  max(1e-6, 10 × `primal_feasibility_tolerance`) (before: 1e-6 whatever the tolerance) and its primal-dual
+  objective error is within the accepted gap. A solve run with a looser tolerance (e.g. 1e-3) that stopped the run
+  before now writes results; with the HiGHS default 1e-7 nothing changes. A set `FLEXTOOL_ACCEPT_PRIMAL_REL` still
+  replaces the limit. Upgraded databases print a behaviour-change notice for each solve accepted this way.
+- **Fixed: a solve that HiGHS could not certify (status "Unknown") failed with "returned no model status"** when
+  autoscale rescaled the LP. Writing the unscaled solution back into HiGHS cleared its status and counters before
+  the accept/reject check read them, so the near-optimal check never ran and the real status was not reported. The
+  check now uses the status and counters of the solve itself.
+- **Changed: polars is held below 2.** polars 2.x roughly triples FlexTool's peak memory on large models
+  (the same LP); installs keep polars 1.x until that is resolved.
+- **Fixed: after "Update FlexTool" in the Windows Toolbox bundle, moving the bundle folder broke FlexTool** in
+  processes started outside its `flextool` folder (`python -m ...`, a Jupyter console): the reinstall wrote the
+  folder's absolute path into the bundled Python. "Update FlexTool" now points the install to the clone by a path
+  relative to the bundled Python again, so the bundle can be moved or unzipped anywhere.
+- **Fixed: on Windows, a database could not be deleted or replaced after a run in the same Python session**
+  (Spine Toolbox console, a script calling FlexTool): the run kept the input database, the output-info database
+  and `results.sqlite` open after it finished. Every database FlexTool opens is now closed when it is done.
+- **Fixed: on Windows, creating or migrating a database wrote garbled parameter descriptions** (`â†’` for `→`,
+  `â€”` for `—`). The schema and template JSON files were read with the Windows code page instead of UTF-8;
+  they are now always read as UTF-8.
+- **Fixed: `FLEXTOOL_HIGHS_THREADS` was ignored by `run_flextool`.** The `--highs-threads` flag always sent 1, which
+  replaced the environment variable, so HiGHS ran on one thread. An unset flag now lets the environment variable
+  through; a given flag still wins. The flags of the other options with an environment variable twin work the same
+  way (flag > environment variable > database > default).
+- **Fixed: a solve with Benders decomposition ignored its `scaling` setting.** Its region subproblems were scaled
+  with `full`, or with the `scaling` of the solve that ran before it in the chain. Each solve now uses its own
+  `scaling`; `--scaling` / `FLEXTOOL_SCALING` still override it.
+- **Fixed: a second run in the same Python session (Spine Toolbox console, a script) took its solver option files
+  (`highs.opt`, `gurobi.opt`, ...) from the previous run's work folder** instead of from `solver_config/` or
+  `FLEXTOOL_SOLVER_CONFIG_DIR`. A run no longer sets `FLEXTOOL_SOLVER_CONFIG_DIR`, and `run_flextool` no longer
+  writes its flags into environment variables.
+- **Changed: an out-of-range numeric flag is ignored with a warning, like its environment variable.**
+  `--solver-time-limit 0` (or a negative value) used to reach HiGHS as a zero time limit, which stops the solve at
+  once, while `FLEXTOOL_HIGHS_TIME_LIMIT=0` was ignored. Both forms now warn and fall through to the next setting
+  (no limit by default). The same holds for a negative `--solver-mip-gap` and for `--highs-threads 0`.
+- **Docs: `--warm-start` also works without `--save-memory`.** It reuses the HiGHS basis in-process too; the help
+  and the documentation said it worked only with `--save-memory`.
+- **New flags `--benders-workers N` and `--basis-cache-dir PATH`** for `run_flextool`, the command-line twins of
+  `FLEXTOOL_BENDERS_WORKERS` and `FLEXTOOL_BASIS_CACHE_DIR`.
+- **GUI runs now use the same solver settings as terminal and Spine Toolbox runs** (behaviour change, notice). The
+  GUI sends presolve and scaling only when you pick them in the Solver options dialog, whose new "Default" entries
+  send nothing: presolve is then on (before: the GUI always sent `choose`), and scaling is each solve's `scaling`
+  (choosing "Full" now forces `full` over the solve's setting). The GUI no longer has a MIP-gap setting: each solve
+  uses its `solver_mip_gap`, else `mip_rel_gap` in `solver_config/highs.opt` (before: 0.001 for every solve). Results
+  of MIP solves can change within the gap. A project saved by an earlier GUI is updated once when opened: a stored
+  presolve `choose` and scaling `full` become "Default" (a stored presolve `on` / `off` is kept), and the GUI shows
+  the change once. `--solver-mip-gap` and `FLEXTOOL_HIGHS_MIP_GAP` remain for terminal and Toolbox runs.
+- **Removed `--matrix-file-format` and `FLEXTOOL_MATRIX_FILE_FORMAT`** (and the GUI's "Matrix file format"
+  setting). They had no effect: HiGHS is called in-process, or with an MPS file under `--save-memory`, and
+  commercial solvers are always given an MPS file. A GUI project that stored the setting opens as before.
+- **Removed `--precision-digits`, `FLEXTOOL_PRECISION_DIGITS` and `FLEXTOOL_REPORT_NEAR_DUPS`.** They never affected
+  a normal run (only `--region` passed the rounding on), so results do not change. FlexTool does not round input
+  values; the developer documentation said it rounded them to 10 significant figures by default, which was wrong.
+- The run header lists the options set by a flag or an environment variable, with where each came from, and the
+  number of polars threads.
+- **New page "Environment variables"** in the user guide: every variable users set, with its `run_flextool` flag
+  twin and the order flag > environment variable > database > default. The developer guide keeps the diagnostic,
+  profiling and experimental variables, now marked developer-only, and the help of every `run_flextool` flag names
+  its environment variable.
+- **Processors with AVX2 keep polars' fast build when the compatible build is installed too.** polars loads its
+  compatible build (`polars[rtcompat]`) first whenever it is installed, so a `flextool[compat]` install ran about
+  10-30% slower on every processor. `import flextool` now selects polars' default build on a processor that has
+  its features (`POLARS_PREFER_PKG`; a value you set is kept). On Linux a processor feature now counts only when both
+  `/proc/cpuinfo` and the processor itself (cpuid) report it, so emulators are read correctly.
+- **Fixed: `python -m flextool.env_check` crashed on a processor without AVX2** when the compatible polars build was
+  missing, before printing anything. It now prints the diagnostics and the pip command.
+- **Windows Toolbox bundle: runs on processors without AVX2 and on Windows without the Visual C++ runtime.** The
+  bundle's Python now has both polars builds (FlexTool picks the right one at start). The libraries it loads carry
+  their own C++ runtime, so no Visual C++ Redistributable is needed.
+- **Windows Toolbox bundle is smaller**: no debugger (debugpy), no test suites of FlexTool or of the bundled
+  packages, no C headers or import libraries, and no unused pyarrow, pywin32 and Qt parts. The Jupyter Console still
+  works, without debugging.
+- **highspy 1.15.1 or newer is required** (was `>=1.14.0,<1.15`; now `>=1.15.1,<1.16`). From 1.15 the Windows
+  highspy carries its own C++ runtime; highspy 1.14.0 crashed on import on Windows 10 1809 / Server 2019. The
+  automatic fix for a crashing highspy now installs this requirement instead of downgrading to 1.13.1. Two test
+  scenarios with several equally cheap solutions now report another one of them (same total cost). If a library
+  reports "DLL load failed" on Windows, `python -m flextool.env_check` points to the Visual C++ Redistributable.
+
+- **Fixed: FlexTool on processors without AVX2** (for example Celeron/Pentium laptops up to about 2021, Intel Core
+  from before 2013, AMD FX). polars' default build crashes on these. The automatic fix installed `polars-lts-cpu`,
+  whose last release (1.33.1) is older than the polars FlexTool needs, so the fixed install was still broken. FlexTool
+  now installs the compatible build of the same polars version (`polars[rtcompat]`, about 10-30% slower), which polars
+  loads in preference to the default build. It reads the processor's features when FlexTool is imported, before
+  polars can crash. On such a processor without the compatible build, it prints why (the missing CPU features) and the
+  exact pip command; in a terminal it asks "Run it now? [y/N]" and installs only on yes, and without a terminal (a
+  Spine Toolbox tool, a GUI-started run, CI) it stops with that message instead of installing anything. The GUI
+  (`flextool`, `flextool-gui`) asks the same before it loads polars, so the default build cannot crash first: in
+  its terminal, or, started from a shortcut, in a small yes/no dialog with the reason and the command and a progress
+  window while it installs; on no it closes with the message. "Update FlexTool" (`flextool-update`) installs it; an install that has `polars-lts-cpu` is moved to `polars[rtcompat]`. A processor without
+  even SSE4.2/POPCNT (x86-64-v2, for example Core 2 or Phenom II), which no current build of FlexTool's libraries
+  supports, now gets a message that says so. New install option `pip install "flextool[compat]"`;
+  `python -m flextool.env_check` reports the processor's features and the installed polars builds; set
+  `FLEXTOOL_NO_ENV_CHECK=1` to skip the checks. The install pages now list the system requirements (64-bit Windows 10
+  or 11, Linux or macOS; an x86-64-v2 processor, AVX2 recommended).
+- **Windows Toolbox bundle: Python 3.14, with FlexTool installed in the bundled Python.** Before, the bundle's
+  Python (3.12) had only pandas and spinedb-api, so FlexTool 4 tools could not run in it (polars, highspy and
+  polar-high were installed into the build machine's Python instead). The bundle build now also runs an import
+  check, a solve of the `base` example and a headless start of Spine Toolbox.
+- **Python 3.14 is supported and tested** (CI matrix now 3.13 and 3.14 on Linux, Windows and macOS; 3.11 is still
+  checked by the nightly CI as the minimum version).
+- **Fixed: results changed slightly from run to run with polars 2.x** (row order of output files, last digits of
+  discount factors, costs and duals). polars 2.x runs some queries on its streaming engine, which does not keep
+  row order and adds partial sums in a varying order. FlexTool now selects polars' in-memory engine (the default
+  of polars 1.x) when it is imported; a `POLARS_ENGINE_AFFINITY` set in the environment is respected.
+- **Fixed: inflow scaling silently dropped demand or turned it into supply** (models that now stop with an error
+  ran with a wrong demand before). `inflow_method` `scale_to_annual_flow`, `scale_in_proportion` and
+  `scale_to_annual_and_peak_flow` now stop with an error naming the node, method and period when the period has no
+  `annual_flow` (or a negative one), when `scale_to_annual_and_peak_flow` has no (or a zero) `peak_inflow`, when
+  the node has no `inflow` profile (or one that sums to 0) to scale, and when `peak_inflow` has the opposite sign of
+  the inflow. Before, the node's inflow silently became 0 in such a period, and `scale_to_annual_and_peak_flow`
+  without an `inflow` profile gave a constant supply of `annual_flow / 8760` (for example +1027 MW for 9 TWh of
+  demand). An explicit `annual_flow` of 0 still gives no inflow in that period. A warning (once per node) says
+  when `annual_flow` is above `|peak_inflow| x 8760`, or when the peak scaling makes the inflow change direction
+  at some time steps (`annual_flow` too small for the peak and the profile). The example database's `ev` and
+  `scale_to_peak_flow` alternatives and the demand how-to's `scale_to_proportion` scenario lacked `annual_flow`:
+  the EV battery now uses its inflow as given (`use_original`; before, its demand was 0), `scale_to_peak_flow` gets
+  `annual_flow` 9 TWh (before, the demand of `west` was 0) and `scale_to_proportion` includes the `scale_to_annual`
+  alternative.
+- **Fixed: reserve provision results in MW** (`process__reserve__upDown__node__dt`, `..._d_average`, SpineDB
+  `reservation_t` / `reservation_average`). The reserve a unit or connection holds is now reported in MW in each
+  time step. Before, it was in units of the process's unit size (for example 0.02 instead of 20 MW for a 1000 MW
+  unit) and, per time step, also multiplied by the step duration, so it was wrong for any unit size other than
+  1 MW and for steps other than one hour.
+- **Fixed: the summary's total cost for realized periods** (`summary_solve.csv`). The line "Total cost
+  (calculated) realized periods" now sums only the periods a solve realizes (each once, discounted from the start
+  of the run); before, it repeated the full-horizon total, which also holds the fixed cost of existing capacity in
+  the look-ahead periods of the last solve.
+- **Fixed: the per-period discounted costs were not written to CSV** (output file names change). The per-period
+  table of discounted costs is now `costs_discounted__d.csv` (Excel sheet `costs_discounted__d`); before, it and the
+  horizon total shared the name `costs_discounted`, so the CSV writer kept only the horizon total and the Excel
+  sheets were `costs_discounted` (per period) and `costs_discounted_1` (total). `costs_discounted.csv` / the sheet
+  `costs_discounted` is the horizon total by cost category, as before in CSV. The VRE share of a node group is
+  `group_node_VRE_share__d` per period and `group_node_VRE_share__dt` per time step (before, the per-period table
+  carried the `__dt` name and the per-step table none). The CSV writer now stops with an error naming both outputs
+  when two outputs would be written to the same file (also when the names differ only by case).
+- **Fixed: investment costs inside a stochastic fan** (results change for stochastic solves that invest with a
+  `construction_lead_time` or with `stochastic_invest_method = recourse`). The investment cost and the fixed cost of
+  the new capacity that operates in a fan's branch periods are reported, weighted by each branch's probability
+  weight, in the fan's period where the capacity starts to operate, also without a realization solve. A shared
+  investment is reported at its full amount (its branch weights sum to 1); under `recourse` each forecast's own
+  investment is reported times its branch weight, so the reported investment costs equal the investment part of the
+  objective. Before, an investment whose capacity starts to operate in a later period of a fan without a
+  realization solve (a construction lead time) was reported nowhere, and under `recourse` no investment cost was
+  reported at all.
+- **A warning when reported costs are rebuilt without the run-level cost data** (a CSV-dump reload): such costs
+  are discounted from the start of each solve, not from the start of the run, and the annualized investment,
+  retirement and fixed costs of new and retired capacity are 0. The documentation now also says that the
+  investment duals (`invest_marginal`) stay discounted from the start of each solve, like the objective.
+- **Fixed: retiring existing capacity before its end of life** (results change for models that retire
+  capacity). Only capacity that existed before the model run (`existing`) can be retired, and a retirement now counts
+  until that capacity's end of life: for `reinvest_choice` / `no_investment` the first year of the run plus
+  `lifetime`, for `reinvest_automatic` the end of the model horizon. Before, a retirement counted in every later
+  period, so past the end of life the retired capacity was subtracted a second time: the capacity went negative and
+  a required retirement made the model infeasible (an optional one never happened); later solves of a chain
+  subtracted earlier retirements from every period, and could be infeasible too. The capacity retired cannot exceed
+  the existing capacity of any period it counts in. The retirement saves exactly the fixed cost the retired
+  capacity would have paid in those periods (each period's fixed cost, discounted as the fixed cost of existing
+  capacity; before, the retirement period's fixed cost with the investment discount, and over the lifetime from the
+  retirement). Its salvage value is unchanged: an annuity over `lifetime` from the retirement period, counted inside
+  the horizon as an investment's annuity. An entity with a retire option but no existing capacity has no retirement
+  variable (a warning names it, once per run); a required retirement (`retire_min_period`, `retire_min_total`) that
+  the existing capacity cannot supply is an error naming the entity and the period. An upgraded database prints a
+  notice naming the affected entities.
+- **Fixed: the end of life of existing capacity in a chain of solves and with stochastic branches in the first
+  period** (results change for `reinvest_choice` / `no_investment` existing capacity). It is the first year of the
+  model run plus `lifetime` in every solve. Before, a later solve of a chain counted the lifetime from its own first
+  period, so the existing capacity lived longer there and its reported fixed cost continued, and stochastic branches
+  in the first period multiplied the lifetime by the number of branches (covered by the same notice).
+- **Fixed: in a stochastic solve without recourse, capacity invested in a later period reaches the stochastic
+  branches of that period** (results change for stochastic solves whose `stochastic_invest_method` is not
+  `recourse` and that invest or have a `reinvest_choice` / `no_investment` lifetime). The branch periods of the
+  stochastic branches now count from the year of their period. Before, every branch period counted as the first
+  year of the solve, so an investment decided in a later period, or one that starts to operate in a later period
+  after a `construction_lead_time`, was not available in that period's branches (the model ran on penalties
+  instead), and lifetimes ended late in the branches. An upgraded database prints a notice naming the entities.
+- **Fixed: the annualized investment, retirement and fixed costs of new and retired capacity are yearly amounts in
+  every period the capacity operates** (`cost_annualized` of the model, units, connections and nodes; results
+  change for models that invest or retire). The annualized *investment & retirement*, *fixed cost invested* and
+  *fixed cost reduction of divestments* of a period are now the yearly annuity and fixed cost of every vintage
+  operating in the period (and of every retirement that applies in it). Before, they were the discounted cost of
+  the whole lifetime divided by the discount factor of the period where it was reported, so they appeared in that
+  one period only and were many times too large there.
+- **A run of several solves reports its costs from the start of the run, each once** (results change for models
+  with several solves in `model.solves`: chains of investment solves, investment and dispatch solves, stochastic
+  and realization solves). The discounted costs of every solve now count their years from the first period of the
+  run (before: from the first period of the solve, so a later solve's costs were too large by the inflation of
+  the years before it). The investment and fixed cost of new capacity cover the years it operates in the whole
+  run (before: only the deciding solve's periods) and are reported once, in the period the capacity starts to
+  operate, by the solve that realizes that period; capacity carried from an earlier solve and retired capacity are
+  no longer charged again as existing capacity. The fixed cost of existing capacity is also reported in the last
+  solve's look-ahead periods, which the fixed cost of new capacity covers. A single solve reports as before, except
+  that a lump of new capacity with a `construction_lead_time` is now in the period it starts operating and the
+  "Investment discount factor" of the solve summary is now the investment factor (before: the operations
+  factor). The printed objectives and the CO2 prices stay those of each solve. An upgraded database prints a
+  notice listing the solves of such a run.
+- **Fixed: the ramp of a unit with online variables at a stochastic branch point** (results change for
+  stochastic solves with mid-horizon branches and units with online variables and a downward ramp limit). Each
+  branch's first step now reads the shut-down share of the trunk's last step once; before, it was multiplied by
+  the number of branches squared (1.04 instead of 0.26 with two branches), which let units shut down at the branch
+  point drop their flow faster than the ramp limit allows. An upgraded database prints a notice naming the units.
+- **Units and connections between coarse nodes use the coarse step** (results can change for models with a
+  `group` `new_stepduration`; before, every flow, unit commitment and reserve stayed at the solve's step). A unit
+  or connection whose balance nodes are all in coarse groups now decides once per coarse step, so the model gets
+  smaller (the three-region hydrogen test model: 7 instead of 168 flow variables per liquefier and pipe arc in a
+  week). Requires polar-high 3.12.1.
+  - *Flows*: one flow per coarse step, a rate that stays the same over the step. Its capacity, availability,
+    profile, efficiency and input-share limits apply to their average over the coarse step, and ramp limits apply
+    between coarse steps. The result is the same as with flows at the solve's step when each flow has at most one
+    limit that varies within the step and its cost, efficiency and prices do not vary within the step; otherwise
+    the result can differ (hourly flows could use the cheapest or most efficient hours, and several varying limits
+    are looser when averaged).
+  - *Units with online variables* (`startup_method` linear or integer): units online, start-ups and shut-downs are
+    decided once per coarse step (a unit starts or stops at the start of the step); minimum load and online
+    capacity apply to the average over the step; a minimum up or down time counts whole coarse steps (a start-up
+    counts while the steps since its start last less than `min_uptime`, so a 30-h minimum on daily steps holds the
+    unit for two days, and one of at most a day adds nothing). With ramp limits, the start-up and shut-down
+    capacity reduction uses the coarse step: a unit started at the start of a step is limited to its mean output
+    over the whole step while ramping up from minimum load (at full load for the rest of the step once the ramp
+    reaches it), likewise before a shut-down, and its units online ramp between coarse steps.
+  - *Reserves*: nodes of a coarse group may now be in reserve groups (before, such a model stopped with
+    "participates in reserves but is a member of resolution-group"). A provider holds one reserve per coarse step;
+    the reserve requirement is still checked at every time step of the solve. Its reserve limits (the share of its
+    capacity, a connection's net position, the floor of its flow, the storage energy for `reserve_duration` when
+    the storage node and every provider are coarse) apply to the average over the step, with the average
+    availability or profile (a wind unit offers reserve against its mean capacity factor over the step), and the
+    room its ramp limit leaves for reserve is the smallest of the step's time steps (each with its own capacity
+    factor).
+  - *Exact connections and DC power flow*: an `exact` connection chooses its direction once per coarse step, its
+    direction limits applying to the average over the step. A DC line has one flow per coarse step; the nodes of a DC
+    network whose every line uses the coarse step (and whose nodes all have the same coarse step) have one voltage
+    angle per coarse step. In a DC network with a line at the solve's step every angle stays at the solve's step,
+    so that line keeps its per-step physics.
+  - *Rows that combine several units and connections*: a capacity-margin, inertia or non-synchronous row of a
+    group, a flow group's instant-flow limit, a user constraint with flow or storage terms, the DC power-flow row
+    of a line and the stochastic storage-use tie of a node are one row per coarse step, the average of the row
+    over the step, when every unit and connection in the row uses the coarse step; the inertia and
+    non-synchronous shortfalls are then one value per coarse step. Such a row uses the step mean of the demand,
+    inflow, profile, limit or constant in it: an averaged capacity margin covers the mean net demand of the step,
+    not its peak hour. A row whose limit is given on only part of a coarse step stays at the time steps it covers.
+    A row that mixes units or connections on the coarse step with others on the solve's step stays at every time
+    step and sees the coarse flows constant through their step (a coarse DC line in a network
+    with a line at the solve's step holds the angle difference across it constant through the step; the angles
+    themselves stay per time step).
+  - *What keeps the solve's step*: units and connections with a node outside the coarse groups, and those with a
+    delay; flows that cross Benders regions or live in the Benders master; in a stochastic solve, a unit or
+    connection at a stochastic node, with online variables or providing reserves, whose coarse step is tied
+    between the forecasts over only part of it; in a realization solve, one whose committed units online or
+    reserve change within a coarse step or are pinned on only part of it. An info line lists the units and
+    connections that use a coarse step and those kept at the solve's step with the reason.
+  - *Outputs*: flows, units online, reserves, voltage angles and the shortfalls of averaged rows are written at
+    every time step of the solve, the same value through each coarse step; each start-up and shut-down is written
+    whole at the first time step of its coarse step (0 at the others), so start-up totals and costs are the
+    model's.
+  - An upgraded database prints a notice naming each coarse unit or connection whose results can differ from
+    flows at the solve's step, and why (a cost, price, efficiency or minimum load varying within the step, two or
+    more varying limits, ramp limits, online variables, minimum times, the coarse start-up reduction, reserves and
+    their step-mean headroom, a mixed row, or an averaged row whose demand, inflow, profile or limit varies within
+    the step).
+- **A Benders master that HiGHS left with an undetermined status after its cold retry is solved once more from
+  its reloaded LP** (polar-high 3.12.1), instead of stopping with "Benders master problem did not solve to
+  optimality". This happened on badly scaled masters (an unscaled objective with cut slopes near 1e9).
+- **The shipped how-to and example databases now carry the documented parameter defaults and value lists** (for
+  example `lifetime_method`, `startup_method` and `storage_binding_method` defaults, and the `none` members of the
+  profile and ramp method lists), the same as a new database. Their data and results are unchanged.
+- **Construction lead time: "invested" is the capacity that comes online** (results change for models with a
+  `construction_lead_time`). The capacity results (`unit_capacity__d`, `connection_capacity__d`,
+  `node_capacity__d`) report as `invested` the capacity that comes online in the period, and a new column
+  `in_construction` the capacity decided but not yet operating; the column is always written and is empty without a
+  lead time, and capacity plots give it its own bar colour. Over combined solves each realized investment is
+  counted once, in the period it comes online. The per-period investment limits (`invest_max_period` /
+  `invest_min_period`, also of groups) and `constraint_invested_capacity_coeff` count capacity
+  coming online in the period; the new `constraint_in_construction_capacity_coeff` puts the capacity in
+  construction in a user constraint, and capacity in service = pre-built + invested − retired now holds with a lead
+  time too. The annuity and fixed cost of new capacity are paid only while it operates, at the `invest_cost` (an
+  overnight cost), lifetime and interest rate of the period it comes online; the lifetime starts then. The start of
+  operation is rounded on the periods of the whole model, so a chain of solves and a single solve agree.
+  Investments that would start to operate after the end of the solve or of the model horizon are not offered, with
+  a warning naming the entity, the lead time and the solve; a chain whose solves are not longer than the lead time
+  therefore does not invest in that technology (use a longer solve horizon or `construction_lead_time_method`
+  `immediate`). A minimum per-period limit that nothing can meet (nothing can come online in the period) is an
+  error naming the entity, the period and the lead time. An upgraded database with a lead time prints a notice
+  naming the entities. Without a lead time, results are unchanged apart from the new empty column.
+  A lead time in a solve whose `invest_periods` is a map (one investment sub-solve per period) stops with an
+  error that explains why (capacity with a lead time could never come online inside a one-period sub-solve) and
+  names the solve, the entities and their lead times; use one investment solve over several periods instead.
+- **Dispatch and other time-series plots again leave a gap at timeline breaks**: after a gap in the timeline, at
+  the start of every representative period (also between two adjacent representative periods) and at the first
+  step of a period that does not continue the previous one (also a later year that reuses the same timeset).
+  Since version 4 no breaks were found, so every plot drew a straight line across them. Rolling windows that
+  follow each other on the timeline stay one line. A break now applies to its own period only (before, a break
+  time cut every period with a step of that name). The breaks are written to
+  `output_parquet/<scenario>/timeline_breaks.parquet` (columns `period`, `time`); results saved with an earlier
+  form of this file are drawn without gaps until the scenario is run again.
+- **Output files come out in the same row and column order on every run.** The rows of some set outputs (for
+  example `edd_invest`, `period_in_use` and `d_realize_invest`) and the entity columns of some per-entity
+  outputs could change order from one run to the next; a rerun of the same model now writes identical files.
+  The values are unchanged, apart from the last digit of some sums whose terms were added in a varying order.
+- **A map whose index depth or level names do not fit its parameter is now an error** naming the entity, the
+  parameter and what the parameter takes (for example a 2-level `commodity.price`, or a ladder tier level named
+  `period`); before, such values were dropped without a message. **Maps without index names at different
+  depths within one parameter are read per depth:** a one-level map keyed by time steps next to a period x time
+  map is now read over time (before, its values were lost; results change, and an upgraded database prints a
+  notice naming the entities). A one-line note says when a map's shape was read from its depth or keys; name the
+  index levels to make it explicit.
+- **Price-ladder tier labels are kept as written.** Tiers such as `01` or `a` are now their own tiers. Before, a
+  label was read as a whole number: tiers `01`, `02`, ... were bought at no cost, `1` and `01` were merged, and
+  tiers like `a` were dropped (results change; an upgraded database whose ladder has such labels prints a notice
+  naming the commodities). A tier with a `quantity` but no `price` is now an error naming the commodity, period
+  and tier (before: price 0). A tier without a `quantity` stays unlimited.
+- **A unit whose `min_load` map has no value above 0 in a solve's periods no longer stops the solve** ("feature
+  'min_load' is active but ... `p_min_load`"), and it gets no minimum-load constraint rows in that solve. A
+  reserve whose `reservation` adds up to 0 over a solve's time steps (for example a period map with values only
+  for other periods) gets no reserve variables in that solve, as on the CSV path. Results of solves that ran
+  before are unchanged.
+- **A solve without `period_timeset` that uses the model's only timeset now gets the same periods everywhere.**
+  A `price_ladder_annual` given without periods now applies in every period of such a solve when the model has no
+  `periods_available` either; before, it was skipped with a warning (results change; an upgraded database prints a
+  notice naming the commodities). A multi-period stochastic solve without `period_timeset` now has the
+  forecast-branch period names of its later periods too.
+- **A model with no timeset now runs on the whole timeline** instead of stopping with "More than one timeset
+  available". With one timeline, FlexTool creates the timeset `full_timeline` covering it and uses it for every
+  period of the solve, as documented. With several timelines and no timeset the error now says that no timeset is
+  available.
+- **`--csv-dump` shows period + time maps of node `availability`, `penalty_up` / `penalty_down` and
+  `self_discharge_loss`.** The dumped `solve_data/pdtNode.csv` listed the default
+  value for such a map instead of the authored one. Only the debug dump was wrong: the model already used the
+  authored values, so results are unchanged.
+- **Lower peak memory in large in-process HiGHS solves.** The LP's column and row names are no longer copied into
+  HiGHS (a few GB on large models); they are passed only when a HiGHS option writes a file that carries them
+  (`write_solution_to_file`, `write_model_to_file`, `write_basis_file`, …), so such files keep the real names.
+  Autoscale's coefficient bucketing keeps its per-column tables as arrays. Results and outputs are unchanged.
+  Requires polar-high 3.12.0.
+- **The default `storage_start_end_method` is now `fix_nothing`.** Storage nodes without their own method start
+  free. Before, where some node had a `storage_state_start`, the old default `fix_start` fixed them at the start: at
+  their own `storage_state_start`, or at 0 when only other nodes had one. The database upgrade writes `fix_start` on
+  the nodes that have their own `storage_state_start`, so their results are unchanged (a notice names them). The
+  other nodes now start free (results change; a notice names them). Where no node had a `storage_state_start`, the
+  old default fixed nothing and results are unchanged.
+- **`fix_start` / `fix_end` / `fix_start_end` without `storage_state_start` / `storage_state_end` is now an error
+  naming the nodes** (before: the start or end was silently not fixed, or fixed at 0). The database upgrade rewrites
+  such nodes where it can tell what they did (`fix_nothing`, or a start / end value of 0) without changing results,
+  and lists them; the error remains only where scenarios used the node differently.
+- **Behaviour-change notices.** When a release changes what an existing model does, the database upgrade marks the
+  database (metadata `flextool_behaviour_change:<change>`, in the database editor's Metadata tab) and runs print a
+  notice naming the version, its publication date, what changed and the affected entities, once per run. Deleting
+  the marker stops the notice; new databases have none.
+- **`dispatch_realization_method = separate_dispatch` without a `realized: yes` branch is now an error naming the
+  solve** (before: it was accepted although there was no branch to realize).
+
+- **Database version 77: the value types of the database match what FlexTool reads.** The investment and
+  retirement limits per period of units, nodes, connections and groups, `co2_max_period`, `startup_cost` and the
+  user-constraint `constant` can now be a constant or a period map; `efficiency`, `min_load` and
+  `efficiency_at_min_load` of a unit, `efficiency` of a connection, `profile`, `self_discharge_loss` and
+  `energy_margin_adder` also take period + time maps. Ten parameters that had no allowed value type (for example
+  `penalty_method`, `scaling`, `shared_operation_periods`) now have one, so the database editor offers them. The
+  upgrade only adds types; stored values are unchanged. Parameter descriptions were rewritten as short statements
+  of what each parameter does.
+- **A user-constraint `constant` can vary by period.** A period map gives each period its own right-hand side; it
+  must cover every period of the solve (a missing period is an error naming the constraint). Constraints with a
+  constant value are unchanged.
+- **Groups have their own `invest_method` values: `not_allowed` is now `not_active`** (the default: the group sets
+  no investment or retirement limits). The upgrade renames stored group values; a group value `not_allowed` in a
+  database that was not upgraded stops the run with an error. Unit, node and connection values are unchanged.
+  Results unchanged.
+- **Group retirement limits in the database.** `retire_max_period`, `retire_min_period`, `retire_max_total` and
+  `retire_min_total` of a group (with a *retire* option in its `invest_method`) were read by FlexTool but missing
+  from the database; they are now there.
+- **New user-constraint parameters `constraint_capacity_coeff` and `constraint_retired_capacity_coeff`** on units,
+  nodes and connections. `constraint_capacity_coeff` puts the capacity in service in each period (existing plus
+  investments still in service minus retirements, the capacity that limits the flows) on the left side of a user
+  constraint; `constraint_retired_capacity_coeff` puts the capacity retired in each period there. Shares of the
+  fleet, ratios between technologies and replacement rules can now account for retirements.
+- **The pre-built capacity term of user constraints subtracts earlier retirements** (results change).
+  `constraint_cumulative_pre_built_capacity_coeff` is now the capacity in service at the start of each period:
+  existing capacity plus earlier investments still in service minus the retirements of earlier periods. Before,
+  retirements decided earlier in the same solve were ignored while those of earlier solves of a chain were
+  subtracted, so one solve and a chain of solves of the same problem gave different results. Results change only
+  for models that retire capacity of an entity with this coefficient; upgraded databases print a notice naming the
+  constraints. Capacity in service = pre-built + invested − retired, also with a construction lead time (see the
+  construction lead time entry above).
+- **User constraints with only capacity terms are written once per period** instead of once per time step (the
+  rows were identical). In the `output_horizon` raw dump these rows are
+  `process_constraint_{equal,less_than,greater_than}_period` with dimensions (constraint, period).
+- **A user constraint with no term left in a solve gets no row.** This happens when its coefficients only refer
+  to flows, storage states, investments or retirements that the solve does not have. When the remaining row cannot
+  hold (for example 0 >= 5, or one period of a period-map `constant`), the run stops with an error naming the
+  constraint, the solve and the period. Before, the solve was infeasible without naming the constraint. When the
+  row always holds (for example 0 >= 0), a warning names the constraint once per run.
+- **Fix: a user-constraint pre-built coefficient now gives a zero-cost entity its investment variable** (results
+  change only for such entities). An entity without investment cost that a user constraint linked only through
+  `constraint_cumulative_pre_built_capacity_coeff` got no investment variable, because the link was looked up under
+  a wrong parameter name. The new capacity and retired-capacity coefficients link the investment and retirement
+  variables the same way.
+- **The upgrade drops parameters FlexTool no longer has** (`discount_years`, `max_relative_capacity`,
+  `storage_include_solve_fix_method`, unit input `capacity_max_coeff` / `capacity_min_coeff`) and lists any values
+  they held; an input `capacity_max_coeff` value moves to `input_share_max` (its name since database version 70)
+  where that input has none of its own. `solve_mode` `single_shot` becomes `single_solve`. Results unchanged.
+- **Fix: DC power-flow lines are always the connections inside `dc_power_flow_with_angles` groups** (results
+  change for DC power-flow models that also have an `is_DC` connection; a notice names the groups). Such a model
+  used its `is_DC` connections as the DC power-flow lines: the group's lines got no angle constraints and the
+  reference node could change. An `is_DC` connection inside such a group is not a line; it keeps its own
+  `transfer_method`. A `startup_method` on an `is_DC` connection no longer raises the DC power-flow error, and the
+  "DC power flow per connection" output of a model without DC power flow is now empty (it listed the `is_DC`
+  connections; solved values unchanged).
+- **Fix: a node retirement or an investment without its period map stops with an error** naming the missing data
+  (before: the retirement or investment was left out of the capacity without a word). Results unchanged.
+- **Warning when `existing` is not a whole number of units for a unit or connection with integer online
+  variables** (`startup_method = binary`) and `virtual_unitsize`. With `virtual_unitsize`, `existing` is the number
+  of units; integer online variables commit whole units, so a count such as 2.5 cannot all be online. The warning
+  names the entity, the count and the unit size. Results unchanged.
+- **Docs: with `virtual_unitsize`, `existing` is the number of units** (as in FlexTool 3 and every 4.x release);
+  the 4.x reference example said MW. Results unchanged.
+- **Fixed: net-load representative-period clustering reads `existing` as the number of units with
+  `virtual_unitsize`** (results change: the selected representative periods can differ for a VRE unit with
+  `virtual_unitsize` other than 1 and a non-zero `existing`, when the representative periods are selected again).
+  The existing VRE capacity is now `existing` × `virtual_unitsize`, as in the model; before, the clustering used
+  `existing` as MW. The tool prints a note naming such units. Stored selections are not changed.
+- **Fixed: the `--region` export gave a cross-region connection with `virtual_unitsize` only `existing` MW.** The
+  virtual half-flow connection of the region's input now carries `existing` × `virtual_unitsize`. Solve results
+  (including the Benders decomposition) are unchanged.
+- **Fixed: the automatic DC power-flow reference node reads a node's `existing` as the number of units with
+  `virtual_unitsize`.** The reference is the node with the largest existing capacity (`existing` × `virtual_unitsize`);
+  before, `existing` was compared as is, so a node with `virtual_unitsize` could lose to a smaller one. Results
+  change only where that picks another reference node.
+- **Docs: a lossy connection's capacity limits the flow it delivers.** The how-to example on the *regular*
+  transfer method said both nodes can send 500 but receive 400 (capacity 500, efficiency 0.8); as the model has
+  always done, they receive 500 and send 625. Results unchanged.
+- **Docs: `constraint_invested_capacity_coeff` is a coefficient per MW (MWh for storage).** Its description said
+  "Not multiplied by unitsize"; FlexTool has always applied it to the invested capacity in MW (MWh).
+- **Docs: `increase_reserve_ratio` applies to upward and downward reserve alike.** The ratio stands for the
+  variability of a flow, which can go either way, so each participating flow raises both requirements (unlike
+  `large_failure_ratio`, which is directional). The reference and the parameter descriptions now say so; the model
+  is unchanged. The reference also lists the database version 77 parameter shapes, the group retirement limits and
+  the group `invest_method` value `not_active`.
+- **Fix: Excel export keeps period + time maps of parameters without stochastic values.** Such a value (for
+  example a period + time `energy_margin_adder`) was dropped when a model was exported to xlsx; it is now written on
+  its own multi-index sheet and read back on import. Behaviour-change markers of a database (its metadata) are now
+  also written to the workbook and restored on import.
+
+- **Fix: memory is returned to the system when polars was imported before flextool.** FlexTool sets the memory
+  allocator of polars to give freed memory back to the operating system about a second after it goes idle, but the
+  setting only took effect when flextool was imported first. In a Spine Toolbox console where an earlier tool had
+  imported polars, in a notebook or in a script that imported polars first, freed memory stayed with the process
+  and peak memory on a large model could be about twice as high. The setting is now also applied when polars is
+  already loaded, and memory freed before flextool was imported is returned as well. Where it cannot be applied
+  (for example on macOS), one warning names the remedy: import flextool before polars, or start Python with
+  `_RJEM_MALLOC_CONF=dirty_decay_ms:1000,muzzy_decay_ms:0`.
+- **Lower peak memory when building the non-synchronous limit of a group.** The constraint no longer combines the
+  unit size of every process with every time step before picking the processes that feed the group; on a large
+  model this removes several GB from the peak of the scaling step. The model is unchanged.
+
+- **Fix: the online commitment no longer links across a gap in the timeline.** The units online at the first step
+  after a gap were compared with the units online at the step before the gap, so a start-up (or a free shut-down)
+  was counted across the gap. The first step of a solve or of a period that does not continue the previous one
+  wrapped to the period's last step when that step name existed in the solve, and otherwise started from zero units
+  online (a start-up charged at the first step of later periods). Now every step without an adjacent predecessor —
+  the first step of a solve or such a period, the step after a gap, the start of a representative period — takes
+  the units online at the last step of its own stretch of the period (the steps that follow each other up to the
+  next gap), as a solve with one block always did. The commitment thus cycles within each block and never reaches
+  across a gap, a representative-period start or into another period, the same as ramp limits and the minimum
+  up / down time look-back. In a stochastic solve that branches mid-horizon, the steps before the reveal cycle among
+  themselves.
+- **Fix: the units online carried into the next roll stop at a gap, a new year and a representative-period
+  start.** A rolling or nested solve took over the units online realized at the end of the previous roll at its
+  first step whatever came between them: across a gap in the timeline, into a new year that reuses the same
+  timeset, at a representative-period start, and, when no step matched, on the first step of the solve anyway.
+  The commitment is now carried only to the steps from which ramp limits and the minimum up / down time continue
+  (the steps that continue the previous roll's last realized step on the timeline, including a continuing period,
+  every forecast branch starting there and a solve with longer time steps). Elsewhere the first step cycles within
+  its own stretch of the period, as within a solve. A carried commitment without the step it was realized at now
+  stops with an error instead of being placed on the first step.
+- **Fix: a solve with longer time steps continues the finer dispatch realized before it.** In nested and rolling
+  solves, the ramp limit and the minimum up / down time carry of a solve's first step were taken over from the
+  previous solve only when the step before it on its own timeline was the very step realized last. A solve with
+  longer steps than the dispatch realized before it (for example a 6-hour storage roll after an hourly dispatch)
+  never matched, so its first step had no ramp limit from the realized flow, the start-ups realized just before
+  it did not count towards `min_uptime` / `min_downtime`, and a warning said the look-back was cut short. The two
+  steps are now matched by where they end in time on the underlying timeline: when the step before the first step
+  ends exactly where the realized step ends, the solve continues it (the ramp uses the realized step's own
+  duration). A hole or an overlap between the two still gives no carry and the warning.
+- **Fix: the minimum up / down time obligation carried into the next roll follows the timeline.** The start-ups
+  and shut-downs realized near the end of a roll were carried into the next roll only within a period of the same
+  name, matched by sorting step names. The forecast branches of a stochastic roll therefore never took the
+  obligation (the history had the period's name, not the branch's), and neither did a period that continues the
+  previous one on the same timeline. The carry now starts at the first steps that continue the previous roll's last
+  realized step on the timeline — the same steps from which ramp limits continue — and counts the hours from each
+  realized start-up or shut-down to them, so every forecast branch and a continuing period take it; a period that
+  does not continue the previous one, a step after a gap and a representative-period start still take none.
+- **Fix: minimum up and down times only look back along the timeline.** The look-back of `min_uptime` /
+  `min_downtime` walked the time steps in the order of their names, so it reached from a forecast branch into
+  the last hours of a sibling branch, from the first hours of an investment year into the end of an earlier
+  year that reuses the same timeset, and across gaps in the timeline and the starts of representative
+  periods. It now follows the same adjacent-time links as ramp limits: it continues into a period whose time
+  steps continue the previous period's on the same timeline and into the steps of a forecast branch before the
+  reveal, and stops at a gap, at the start of a representative period, at a period that does not continue the
+  previous one and at the first step of a solve (no cyclic wrap). A rolling or nested solve whose first step
+  continues the timeline of an earlier solve, but not the last step realized before it (so no realized on-line
+  history reaches it), now prints a warning naming the process.
+
+- **Fix: `co2_max_total` in rolling solves and chains of solves no longer allows more than the limit.**
+  Each roll or solve subtracted the emissions earlier rolls and solves had already realized as plain
+  tonnes, while the limit counts emissions annualized and times `years_represented`. The history was
+  therefore under-counted by `years_represented` / period share (52 times for a one-week period that
+  represents a year), and a rolling or chained run could emit several times its limit. The realized
+  emissions are now counted the same way as in the limit, so the realized emissions of the whole run stay
+  within it. The per-forecast-path `co2_max_total` constraints of rolling stochastic solves (below) use the
+  same corrected budget.
+
+- **A recourse stochastic fan nested inside another solve now stops with an error.** A solve with
+  `stochastic_invest_method = recourse` that is nested (`contains_solves`) in a solve sharing exactly one of
+  its periods ran without the ties that keep its forecast investments non-anticipative. It now stops with a
+  configuration error naming the sub-solve; make it a top-level solve.
+
+- **A committed window in a forecasts-only fan no longer stops a run over a cap on another period.** The
+  check that stops a solve committing steps inside a fan nobody realizes named the annual commodity-ladder
+  tiers and `co2_max_period` caps of every period; it now only counts caps on the fan's own period.
+
+- **Fix: in a rolling stochastic solve each forecast keeps its own cumulative limits.** The rolls of a
+  rolling solve were built without their scenario paths, so the CO2 total cap (`co2_max_total`), the
+  cumulative commodity-ladder tier cap and the flow-group cumulative flow limits (`max_cumulative_flow` /
+  `min_cumulative_flow`) pooled all forecasts of a roll into one constraint: the forecasts shared one
+  budget (the ladder tier allowed the forecasts' hours added together, the CO2 cap counted every
+  forecast's emissions against one budget). Each forecast now gets its own constraint, as in a single
+  stochastic solve. The cumulative tier cap of a scenario path also counts the periods that earlier solves
+  or rolls already finished, so a fan in a later period no longer gets a too-tight (or negative) budget.
+  Deterministic rolls and realization rolls are unchanged.
+
+- **Fix: in a stochastic fan the capacity-margin penalty is weighted by the forecast's probability.**
+  Each forecast branch period of an investment period keeps its own capacity-margin shortfall, but its
+  penalty was counted in full, so a fan of forecasts paid the shortfall as many times as it had branches
+  regardless of their weights. Each forecast's penalty is now multiplied by its branch weight, as the
+  operational costs already were. Deterministic solves are unchanged.
+
+- **Fix: in a rolling stochastic solve, a forecast's period budgets count the hours already realized.**
+  The annual commodity-ladder tiers and `co2_max_period` allot each roll the share of the period reached
+  by the end of its horizon. A forecast branch counted only its own window, not the hours the earlier
+  realization rolls had already realized, so its tier budget shrank as the week advanced. After the
+  realized purchases were subtracted it could turn negative and make the roll infeasible. Each forecast
+  now counts its period's realized hours plus its own window. The `co2_max_total` share of a fan
+  counts those hours once, and so does the fallback weight of the cumulative ladder. A forecast's
+  `co2_max_period` cap also subtracts the emissions already realized in its period; before, every
+  forecast could emit them again.
+
+- **Normal outputs hold realized results only, with or without `output_horizon`.** `output_horizon = yes`
+  no longer changes the parquet / CSV / plot / summary outputs: forecast-branch rows, rolling look-ahead
+  rows and per-forecast (recourse) investment rows are gone from them, and the "realized periods" /
+  "full horizon" totals no longer include forecast-branch costs. Those rows are only in the raw dump
+  under `horizon/`. A stochastic fan with no realization solve (forecasts only) reports its investment
+  decisions only: without the option it also used to report the forecast branches' costs, prices and
+  capacities. CO2 in the summary is one total for the realized periods.
+
+- **Fix: node and reserve prices of a solve that realizes no time step are no longer reported.** In a
+  nested run, the investment and storage solves above the dispatch solve (and a forecasts-only stochastic
+  fan) realize no dispatch step, yet their node prices reached `node_prices_dt_e` next to the dispatch
+  prices, and the per-step price plots could show the parent's price for a step. Prices now come only
+  from the solves that realize the step.
+
+- **Fix: `output_horizon = yes` no longer changes the next solve.** In a solve followed by another solve
+  (rolling, realization dispatch, multi-solve), the CO2 emitted in unrealized steps, and the unrealized
+  hours and commodity use, were carried into the next solve's CO2 limits (`co2_max_period`,
+  `co2_max_total`), cumulative-hour totals and commodity ladders. Only realized steps are carried now,
+  as without the option.
+
+- **New: raw LP dump with `output_horizon = yes`.** The debug option now also writes
+  `output_parquet/<scenario>/horizon/`: one raw parquet per LP variable and constraint holding all rows
+  of every solve (forecast branches and rolling look-ahead steps included), appended over the solves and
+  rolls, with `solve`, `roll` and `realized` columns, raw primal values, reduced costs and duals. Not
+  available for solves decomposed with Benders.
+
+- **`timeset_weights` now reach the forecast branches of a stochastic solve, and a map indexed by
+  `time` is no longer ignored.** The forecast branch copies of a period (single, recourse and rolling
+  stochastic solves) used weight 1 on every time step instead of the weights of their period's
+  timeset; they now take that timeset's weights, so the objective, the energy and cost outputs and the
+  prices weigh the branch steps like the deterministic period. A `timeset_weights` map whose
+  `index_name` is `time` (or `t`) was read as no weights at all in a single solve; it now gives the
+  same weights as a map without an index name. A `timeset_weights` value that is not a timestep map
+  (a scalar, or a map indexed by `period`) is now a configuration error instead of being ignored.
+  Objectives of affected solves change.
+
+- **Units online are no longer tied across the forecast branches when no step is committed.** With
+  `shared_operation_periods = []`, or in a rolling solve whose fan lies only in the look-ahead, the
+  units online were still held equal in every forecast over every time step of the fan, although the
+  other operations were free. They are now tied only over the committed (tied) steps, like storage use
+  and reserves, so each forecast can commit units on its own there. Objectives of such solves can be lower.
+
+- **Under `stochastic_invest_method = none`, investment cost in a stochastic fan is no longer counted
+  several times.** The investment annuity, the salvage value of retirements and the lifetime fixed cost
+  of capacity built before or at the reveal were summed over the period's original name and again over
+  each forecast branch copy of the same calendar years, so with two forecasts the fan periods were
+  charged three times. Each calendar period the capacity serves is now counted once, as under
+  `recourse`. Objectives and reported investment costs of such solves are lower; the chosen
+  investment can change (it was biased low).
+
+- **A `realized: yes` branch in a stochastic solve's `stochastic_branches` now makes FlexTool run a
+  realization dispatch right after the stochastic solve, without setting
+  `dispatch_realization_method = separate_dispatch`.** It applies when the designated branch opens a
+  fan that reaches the periods the solve realizes (a single or rolling solve with
+  `stochastic_invest_method = none`). The realization dispatch is deterministic, fixes the stochastic
+  solve's investments, reads the designated branch's data, and inherits the units online and the
+  reserves the stochastic solve committed before the forecast is known (the value of the first
+  forecast branch in sorted order over the tied steps; reserves were not inherited before). The
+  stochastic solve keeps those ties over the window it hands to the realization dispatch. A deterministic
+  solve placed right after the stochastic solve in `model.solves`, with the same solve mode and
+  rolling settings and realizing the same fan periods, is used as the realization dispatch instead.
+  A designated solve that contains other solves or is nested in another solve is a configuration
+  error; under `stochastic_invest_method = recourse` a warning says that no realization dispatch is
+  added. When the inherited units online cannot cover the realized net load of a node with
+  `penalty_method = off`, the run stops before that solve with an error naming the node and the time
+  step.
+
+- **Under `stochastic_invest_method = recourse`, `cumulative_max_capacity` / `cumulative_min_capacity` now
+  apply to every forecast branch.** The cumulative-capacity limit of a `cumulative_limits` entity sat on the
+  period's original name, which has no investment under recourse: a `cumulative_min_capacity` made the solve
+  infeasible, and neither limit constrained the forecast branches' investment.
+
+- **A stochastic fan now has no dispatch of its own under the period's original name.** The period that
+  opens a fan (and every later period of it) keeps its name only for period-level bookkeeping: its
+  investment (under `stochastic_invest_method = none`, seen by every forecast), years and discounting.
+  Its operational results (flows, storage, units online, reserves, prices, costs per time step) are
+  empty, not 0: those decisions exist only per forecast branch, and the realized operation comes from a
+  realization dispatch (see the `realized: yes` entry above). Before, the original period name carried a
+  weight-0 copy of the dispatch: an arbitrary feasible point that was reported, carried to the next roll
+  and, without a designated branch, filled with a guessed scenario. Forecast branches stay visible
+  through `model.output_horizon`. Under `stochastic_invest_method = recourse` the original period name
+  has no investment either: every forecast branch invests on its own, and the shared-investment ties
+  (`shared_invest_periods`) now join the forecasts to each other. A forecast branch's retirement now
+  reduces that branch's capacity (before, a branch retirement was paid but changed no capacity), and
+  every forecast of a fan in a solve's first period starts from the solve's start state (or the
+  previous roll's carry), not from its own last step. Per-path caps and outputs (investment and
+  cumulative-flow totals, `co2_max_total`, the cumulative price ladder) have no `__anchor` path any
+  more: each forecast path holds the shared periods before the reveal and the fan's here-and-now
+  investment.
+- **A committed window that reaches into a forecasts-only fan now stops the run before the LP when a
+  later solve continues from it and no solve realizes it**: the error names the solve and the
+  families decided per forecast there (storage state, ramp-limited flows, the cumulative commodity
+  ladder, the CO2 total cap, finite annual commodity-ladder tiers, the CO2 period cap, recourse
+  investment, or units online / reserves outside the tied steps)
+  and suggests designating a `realized: yes` branch, configuring a realization solve, or ending the
+  committed window before the reveal. Units online and reserves on the tied steps are the same in
+  every forecast and need no realization: the next solve (e.g. the next roll) continues the units
+  online, and the start-up / shut-down history of minimum up and down times, from them (before, it
+  continued from nothing at all, as if no unit had been online).
+- **A forecasts-only fan (no `realized: yes` branch) that authors a stochastic-time value
+  (availability, efficiency, min_load, operational cost, reservation, penalty, profile) is valid
+  again:** every forecast branch period takes its own branch's value. A designated `realized: yes`
+  branch's value feeds the realization dispatch. An entity in no `include_stochastics` group reads the
+  realized branch's value on every branch period, so in a forecasts-only fan such a value is a
+  configuration error naming the entity and the parameter (it would otherwise silently become the class
+  default); add the entity to the group, designate a realized branch, or give a non-stochastic value.
+  The same holds for the `reservation` of a reserve group without `include_stochastics` (before, it
+  silently became 0). A stochastic-time profile is read per profile: when any of its users is in an
+  `include_stochastics` group, all its users read the forecast branches' own series.
+  The how-to stochastics example `2_day_stochastic_dispatch` is a forecasts-only fan of four forecasts
+  again, so it reports no realized dispatch (the forecast branches are visible through
+  `model.output_horizon`); `1_week_rolling_wind` keeps its realized branch.
+- **A stochastic-time value that gives only some of its forecast branches a number, leaving others
+  out, is now a configuration error naming the entity, the parameter and the missing branches**,
+  instead of silently treating the branches left out as the class default. **A deterministic solve
+  that authors a stochastic-time value takes the `realized: yes` branch's value and raises a
+  configuration error when no branch is designated**, instead of silently using the class default (a
+  realized branch projected from elsewhere — e.g. for a rolling solve's realization dispatch — is
+  used, not an error).
+
+- **A rolling stochastic solve's commodity price-ladder tier cap now gives a forecast branch period
+  the same already-bought carry-over as its anchor, instead of re-opening the tier's budget in
+  full for every branch.** The running "already bought this tier" total carried from roll to roll
+  is only ever recorded under the anchor's real period name; a branch period of the same calendar
+  year had no row of its own there, so its remaining budget silently fell back to the un-reduced
+  full-tier amount — too loose — while the anchor's own row correctly subtracted what earlier
+  rolls had bought. Branch periods now read their anchor's carried-over amount the same way they
+  already read its tier price and quantity. A deterministic solve, a single (non-rolling)
+  stochastic solve, or a rolling solve without a price ladder is unaffected.
+
+- **A rolling solve that auto-spawns a separate realized-dispatch solve now carries the commodity
+  price-ladder's rolling "already bought" total forward from that dispatch solve alone, instead of
+  also adding the same hours' purchases from the solve that spawned it.** The spawning solve's own
+  dispatch for those hours is a placeholder with no weight in its objective (the dispatch solve
+  re-solves the same hours for real right afterwards), so its own purchase split across tiers was
+  arbitrary; folding it into the running total on top of the dispatch solve's own, correct
+  contribution double-counted those hours and could leave an arbitrary residual in the carried
+  total besides. The spawning solve now carries the running total forward unchanged, leaving the
+  addition to the dispatch solve that actually realizes the hours. A rolling solve that does not
+  auto-spawn a separate dispatch solve, or that has no price ladder, is unaffected.
+
+- **The same auto-spawned realized-dispatch solve fix applies to the rolling CO2 cap's "already
+  emitted" total**, for the same reason: the spawning solve's own emissions for the hours its
+  dispatch solve re-solves were a placeholder, and adding them to the running total on top of the
+  dispatch solve's own, correct contribution double-counted those hours. A rolling solve that does
+  not auto-spawn a separate dispatch solve, or that has no CO2 cap, is unaffected.
+
+- **A stochastic branch period now inherits its anchor's existing capacity and fixed cost, instead
+  of only the anchor seeing them.** A period map keyed by the anchor period (e.g. `existing` or
+  `fixed_cost` set for just that one period, the normal way to author a value that applies to the
+  whole forecast fan) used to reach only the anchor: every branch period fell back to zero existing
+  capacity, and the fixed cost of existing capacity — when that optional objective term is turned
+  on — silently dropped out of the objective because the only period left to weight was the
+  anchor's own zero-probability placeholder. Branch periods now read their anchor's value the same
+  way every other period-keyed input already does. A deterministic solve, or a value authored as a
+  plain constant, is unaffected.
+
+- **A group's per-period investment or divestment cap now applies to a stochastic branch period
+  the same way the entity's own cap already did.** Under the recourse investment feature, a branch
+  period is itself an investment period, and the entity-level cap already applied there — but the
+  group-level cap's row was missing for branch periods, so a group member could invest or divest
+  past the group's limit in every branch, constrained only by its own (looser) individual cap. A
+  deterministic solve, or a solve without the recourse feature, is unaffected.
+
+- **Fixed a follow-on bug from the group per-period cap fix above: a branch period where no group
+  member actually invests or divests (for example because its own authored value of zero wins
+  over the anchor's) no longer makes the solve infeasible.** The cap's row now only applies where a
+  group member actually has the investment or divestment there; previously the row still carried
+  the group's minimum-per-period floor at a branch with nothing to satisfy it, forcing an
+  infeasible zero-against-floor comparison instead of leaving the branch unconstrained. A
+  deterministic solve, a solve without the recourse feature, or a group cap without a minimum is
+  unaffected.
+
+- **A non-recourse stochastic solve's operating costs now get the same `years_represented` weight
+  as the investment side, instead of being weighted one year regardless of how many years the
+  period represents.** Every forecast branch period (the ones carrying the solve's probability
+  weight) used to fall back to one year per period for `p_inflation_op` even when its anchor
+  period represented several years, while the investment side was still annualised over the full
+  span — under-weighting every operating cost relative to investment by the same factor. Branch
+  periods now read their anchor's years the same way the investment annuity side already does. A
+  deterministic solve, a rolling solve, or a stochastic solve with `years_represented = 1`
+  (every stochastic fixture in the regression suite) is unaffected.
+
+- **A flow into a CO2-priced or CO2-capped node now nets against the group's emissions the way
+  the solve does, instead of only when the same process both emits and removes at the same node.**
+  The removal credit's CO2 cost and emission outputs used to require the crediting flow to belong
+  to the very process (and node) that also emits, so a removal process (e.g. direct air capture)
+  distinct from whatever emits in the group went uncredited in the reports, even though the solve
+  itself already gave it the credit. The credit is now attributed to the process that delivers it,
+  and nets against the group's total the same way the LP objective and caps do. Models with no
+  removal flow, or where removal and emission happen to be the same process and node, are
+  unaffected.
+
+- **The per-period CO2 price for a rolling solve now averages the rolls that realize a period,
+  weighted by the hours each roll keeps of it, instead of only reporting the last roll's price.**
+  When a period's hours are split across more than one rolling window, each window's own shadow
+  price covered only its own slice of the period; reporting just the last window's price silently
+  dropped every earlier window's realized hours. A period realized by a single roll is unaffected.
+
+- **The per-period CO2 price in a stochastic solve no longer comes out multiplied by the branch's
+  probability.** The per-period CO2 cap isn't weighted by the branch probability the way the
+  objective's CO2 price term is, so the raw shadow price was the path's true price times its own
+  branch weight — each path now reports its own price, the same fix item #120 flags for the node
+  price fixed in an earlier cycle. A deterministic solve is unaffected.
+
+- **The model-wide and per-group CO2 totals in a stochastic solve now report each scenario path
+  separately, instead of adding every forecast branch's emissions into one pooled number.** The
+  anchor's shared history and every branch's own periods used to be summed together as if they
+  were one timeline, counting several alternative futures' emissions against a single total. A
+  deterministic solve, or a stochastic solve with only one scenario path, is unaffected.
+
+- **A group's whole-horizon CO2 cap and a commodity price ladder's cumulative tier cap now apply
+  separately to each path of a stochastic solve, instead of being shared across every forecast
+  branch.** Both caps used to sum every forecast branch's emissions or purchases into a single
+  row, so a solve with several alternative futures let them collectively spend several times the
+  intended budget between them (one shared row instead of one per branch). Each cap now gets one
+  row per scenario path: the whole-horizon CO2 cap keeps the same remaining budget on each path
+  (the forecast branches are alternative futures, not consecutive years to divide the budget
+  across); the commodity ladder's cumulative cap gives each path its own share of the budget,
+  weighted by the periods that path actually covers. A deterministic solve, or a stochastic solve
+  with no CO2 total cap or cumulative ladder tier, is unaffected.
+
+- **A group's per-period and whole-horizon CO2 caps now carry a remaining budget across the rolls
+  of a rolling solve and across the solves of a chain, instead of re-granting the full cap every
+  time.** Both caps used to recompute the allowed emissions from the fixed input cap on every roll
+  / solve, with no memory of what had already happened, so a period touched by several rolling
+  windows could be allowed its full per-window share on each of them — over-allowing roughly in
+  proportion to the number of rolls or chained solves touching it. Each roll's / solve's cap is now
+  "the budget allocated up to the end of this roll's horizon, minus what earlier rolls or solves
+  already emitted" (the same mechanism the commodity price ladder's rolling budget already used),
+  so the remaining room only ever shrinks by what was actually realized. A single, non-rolling,
+  non-chained solve is unaffected. The internal CO2 accumulator that tracks realized emissions
+  across rolls also now counts a min-load-efficiency unit's part-load fuel, which it previously
+  missed.
+
+- **A flow into a CO2-priced or CO2-capped node now earns a removal credit, instead of being
+  ignored by the solve while the results already reported it as a credit.** Modelling CO2 removal
+  (e.g. direct air capture or bio-energy with carbon capture) as a flow into a CO2-content
+  commodity's node, where that node belongs to a group with an active CO2 price or cap, used to
+  cost and count nothing in the solve itself — even though the emission reports already netted the
+  removal off the group's total, so the reported numbers and the solve's incentives disagreed. The
+  flow now earns `co2_content × co2_price` as a negative cost (reducing the objective) and reduces
+  the same group's emission caps, matching the emission reports and the documented "CO2 price is
+  added to the price of the commodity" behaviour. Models that never route a flow into a CO2-priced
+  or capped node are unaffected.
+
+- **CO2 emission outputs now report physical emissions even when no group prices or caps CO2.**
+  The model-wide and per-unit/connection CO2 outputs used to come from the same flow set the LP
+  builds for a priced or capped CO2 group — so a commodity with a `co2_content` row, but no group
+  with an active `co2_price` or `co2_max_period`/`co2_max_total` on its node, reported zero
+  emissions even while units were burning that fuel. Emission totals are now derived from the
+  commodity's own flows whenever it has a nonzero `co2_content`, independent of whether a group
+  happens to price or cap it; the per-group breakdown is unchanged and still requires a group that
+  actually tracks CO2.
+
+- **A commodity price ladder in a rolling solve no longer crashes the solve, and its annual tier
+  quantity is now scaled to how much of the year the solve actually covers.** The annual tier
+  quantity is a per-year amount, but a short or rolling solve used to compare it against the
+  un-annualised MWh bought in that solve, so a solve covering only part of a year could spend a
+  whole year's cheap-tier allowance in that short window. The per-period cap is now scaled by the
+  solve's own share of the modelled year and of the roll's progress through it, minus what earlier
+  rolls already bought against that same allowance — so each roll's budget is exactly what the
+  model has allocated so far, never more, never less. The cumulative price ladder's rolling carry
+  used to be able to drive a later roll's remaining budget negative and crash the solve once a
+  chained run moved from one modelled period into the next; the real cause was that the per-roll
+  progress measure feeding the cap's running total silently dropped a period's contribution the
+  moment the chain finished it, instead of keeping it. Both ladders' running totals now account for
+  every period the chain has ever simulated, so the remaining budget can never go negative.
+
+- **The cumulative price ladder's running budget now accounts for how much of a modelled year
+  each period's own dispatch covers, and how many real years that period stands for.** Like the
+  annual tier's quantity, the cumulative tier's quantity is a per-modelled-year amount, but its
+  running budget used to credit a period's full allowance for every period the chain touched,
+  regardless of how much of a year that period's own simulated hours cover or how many real
+  calendar years the period represents — so a multi-year or representative-sample chain could let
+  the cumulative cap run far more permissive than intended, never actually binding. The budget is
+  now scaled the same way as the annual tier's (by the period's own share of a modelled year) and
+  further by the number of real years that period represents, so the two ladders' running budgets
+  are on a comparable footing.
+
+- **A commodity bought on a price ladder by a unit with a minimum-load efficiency curve now
+  counts the extra fuel that unit burns at part load.** The ladder's purchase balance used to
+  count only the full-load fuel use, so such a unit's actual fuel draw could exceed what the
+  ladder tiers had accounted for.
+
+- **The cost outputs now show what a commodity price ladder actually cost.** A commodity priced
+  on a ladder used to be excluded entirely from the reported commodity cost (or, if it also had a
+  flat price authored, priced at that flat price instead of what the ladder tiers actually cost) —
+  so the reported operating cost could disagree with the solved objective. The commodity cost
+  output is now priced from the ladder purchase at the tier price actually paid.
+
+- **A multi-flow unit with availability below 1 can now reach its derated full output.** The fuel
+  (input) arc of such a unit used to cap its flow at availability times the full-load fuel need,
+  which is tighter than the fuel the unit actually draws at derated full output whenever it has a
+  minimum-load fuel section or outputs with different per-output coefficients — so the unit's
+  output could fall short of availability times capacity even though nothing else limited it.
+  The fuel arc's limit now matches the fuel the unit actually needs at that output level, so a
+  unit with availability below 1 reaches its full derated output.
+
+- **Period x time maps of unit/connection efficiency, min_load, efficiency_at_min_load and
+  availability are now honoured in rolling, nested and stochastic-rolling solves, not only a
+  single solve.** A genuine two-dimensional map (period, then time within each period) of one of
+  these parameters used to be read correctly only by a solve with no rolls or nested sub-solves;
+  every roll or nested sub-solve fell back to the parameter's constant / fold default instead,
+  changing the unit's or connection's efficiency, minimum load and availability (and so its fuel
+  use, cost and feasibility) for the rest of the model run. A period x time map now gives the
+  same result in every roll and sub-period as the equivalent single solve.
+- Fixed a related case where a period sharing a name with one of the model's own timesteps could
+  lose an explicitly period-labelled map value on rolling / nested sub-solves.
+
+- **A unit with a single input and a single output now honours its per-arc `conversion_flow_coeff`
+  in its fuel use, cost and CO2, not only a multi-flow unit.** The input/output coefficient on
+  `unit--inputNode` / `unit--outputNode` used to be applied only on a unit with several input or
+  output flows; on the common one-input-one-output unit it was silently ignored (the model solved
+  to a byte-identical LP whatever the coefficient was set to). The coefficient is now folded into
+  the unit's fuel-use curve, the same way a multi-flow unit already applies it, so a non-default
+  coefficient now changes the reported input flow, fuel cost and CO2 of such a unit. A unit with a
+  minimum-load efficiency curve and a non-default output coefficient should note that its authored
+  `efficiency` / `efficiency_at_min_load` are then no longer exactly its energy efficiency at full
+  or minimum load (see the updated `conversion_flow_coeff` documentation). A coefficient of 0
+  keeps its existing "uncapped edge" meaning rather than being folded in, now with a warning
+  naming the affected unit.
+
+- **Storage capacity retired in a period now stays retired in later periods.** The storage state
+  limits, the start/end and cyclic start bindings, the reserve headroom and the cumulative
+  capacity limits now subtract every earlier retirement of a storage node, and the storage
+  capacity outputs show it. Before, a storage node's retirement earned its salvage value without
+  ever reducing the storage capacity bound, so the node could still be dispatched and cycled as
+  if nothing had been retired, and in some configurations could be "retired" again and again for
+  repeated salvage.
+
+- **A flow group's net flow now counts the fuel a min-load-efficient unit draws while online,
+  not only the fuel its output flow implies.** `flowGroup`-based flow limits (cumulative-over-
+  the-solve, cumulative-per-period and instantaneous) used to measure a flow group's net flow as
+  output flow times slope only; a unit with a minimum-load efficiency curve also draws a fixed
+  "section" fuel proportional to the capacity online, which the node balance, the CO2 price and
+  the CO2 caps already count but the flow-group limits did not. The limits now use the same fuel
+  measure throughout.
+
+- **Flow-group cumulative flow limits now weight each time step the same way every operational
+  cost does, instead of by its duration alone.** `max_cumulative_flow` / `min_cumulative_flow`
+  (per period and over the whole solve) used to multiply a step's net flow by its duration only;
+  a representative-period step's own weight (and, for the whole-solve limit, how many years a
+  period represents) used to drop out, so an under- or over-represented step counted as a full,
+  unweighted hour. Under stochastic recourse, the whole-solve limit now applies separately to
+  each scenario path instead of pooling every branch's flow into one row, so one branch's
+  surplus can no longer cover another branch's deficit; this matches how every other
+  per-scenario limit in the model already works.
+
+- **An explicit `invest_max_period` / `retire_max_period` / `invest_max_total` /
+  `retire_max_total` of 0 on a group now binds, instead of being misread as "no limit" once
+  another group sets the same parameter.** This was the same "an authored zero is a given value"
+  gap already fixed for the entity-level versions, carried over to the group readers.
+
+- **A `cumulative_limits` entity (unit, connection or storage node) with only a
+  `cumulative_min_capacity` floor and no `cumulative_max_capacity` ceiling can invest again.**
+  Such an entity used to be pinned at zero investable capacity — forbidding the very investment
+  needed to reach its own floor — because the internal ceiling used to default to 0 when nobody
+  authored a maximum. It is now unconstrained above (the actual limit, if any, is still enforced
+  by the cumulative-capacity constraint itself); an entity that also authors a
+  `cumulative_max_capacity` is unaffected. The same gap also existed on the second (later) solve
+  of a continuation/rolling chain and is fixed there too.
+
+- **A group with a `cumulative_limits` investment method now gets the same "give your own
+  maximum once a sibling sets one" check as an entity does.** Once one `cumulative_limits`
+  group sets `cumulative_max_capacity` for a period, another such group that leaves that period
+  out of its own map used to be silently read as "no limit" there instead of being asked for an
+  explicit value (or an explicit 0 to forbid investment); it now raises naming the group that
+  needs a value, matching the entity-level behaviour.
+
+- **Group cumulative capacity limits now subtract a group's process retirements, same as the
+  entity-level limit (#29).** A group of units/connections with a cumulative capacity limit
+  (`invest_method = cumulative_limits`) ignored its own retirements entirely; the group's capacity
+  in service only ever grew. Storage-node members are unaffected (the engine has no retirement
+  history to draw on for them, same pre-existing gap as the entity-level limit).
+
+- **Group cumulative capacity limits now read the documented `cumulative_max_capacity` /
+  `cumulative_min_capacity` parameters.** Groups previously needed undocumented
+  `invest_max_cumulative` / `invest_min_cumulative` values (not part of the schema) to get a
+  cumulative-capacity constraint; the documented, schema parameters were silently ignored. Also,
+  which groups get a total/cumulative investment or retirement limit is now determined by each
+  group's `invest_method`, matching the entity-level behaviour, instead of by "any group with a
+  positive value of the matching limit parameter": a group with a limit value but a different
+  (or no) method no longer gets rows it never asked for, and a group whose method does call for a
+  total limit no longer loses its own row just because another group happens to set the same
+  parameter.
+
+- **Cumulative capacity limits now subtract every earlier retirement, not just a retirement of
+  the row's own period.** `cumulative_max_capacity` / `cumulative_min_capacity` on a unit,
+  connection or storage node compare existing plus invested plus retired capacity against a
+  limit for every period; a retirement from an earlier period used to drop out of that
+  comparison again at later periods (processes/units only — storage nodes already counted every
+  retirement before this fix and are unchanged). An explicit `cumulative_max_capacity = 0` (a
+  phase-out year) now binds as given, instead of being read as "no limit"; a period an entity's
+  own map leaves out, once that entity authors the parameter at all, is now a configuration error
+  instead of silently capping investment at zero there.
+
+- **Investment and retirement totals over a chain of solves now count every earlier solve, not
+  just the capacity still alive.** `invest_max_total` / `retire_max_total` (and the group-level
+  analogues) used to ignore everything a previous solve in the same chain had already built or
+  retired, so a chain of solves could invest past its own cap. `invest_min_total` /
+  `retire_min_total` used to re-impose the full minimum in every solve instead of crediting what
+  earlier solves had already met, and a minimum on a storage node could be silently skipped
+  whenever the matching per-process check had nothing to check first. Both now count the capacity
+  the whole chain has built or retired so far and only require what is left; the minimum is now
+  one requirement per entity (or group) over the whole chain — per scenario branch under
+  stochastic recourse — instead of a repeated per-period check, so it can no longer be satisfied
+  by pooling alternative branches together. An entity or group whose investment/retirement method
+  still needs a per-period or total limit, but is never given one explicitly, now raises a clear
+  configuration error instead of silently capping it at zero; a limit nobody sets at all is
+  unaffected and stays unlimited, as before. The investment/retirement total's shadow-price
+  output is now a single value per entity/group for the whole chain instead of one per period; a
+  group's shadow price under stochastic recourse is no longer available in this output (it never
+  was for the matching per-entity value either).
+
+- **Startups and shutdowns are exact, and the ramp limit of a unit with online variables applies to its
+  online capacity.** Startups and shutdowns are now exactly the change in units online: declaring a
+  startup or a shutdown that does not match a real change in committed units is no longer possible, and
+  declaring one no longer buys ramp room or reserve room by itself. A unit with online variables now ramps
+  on the units online in both steps, reaching at most its startup output in the step it starts and
+  dropping from at least its minimum load; a start/stop pair with online unchanged can still gain a little
+  room on an input or on one output of a multi-output unit, which its startup cost pays for. Ramp-limited
+  unit-commitment models can cost more than before (the free ramp room is gone); objectives of
+  unit-commitment models without ramp limits are unchanged.
+- **Online units continue across consecutive periods of one timeline and across rolling windows from the
+  right step.** A unit with online variables used to be charged a spurious startup where a period's first
+  step continued the previous period on the same timeline (two periods on consecutive parts of one
+  timeline, or a forecast branch continuing from the step before its fan), and a continuation roll's carried
+  commitment used to land on the timeline's alphabetically first period instead of the roll's real first
+  step. Both are fixed; a unit that stays committed across either boundary is no longer re-charged a
+  startup there.
+
+- **A period or time Map with an unset/default Map index name (`index_name`) no longer drops other
+  entities' values of the same parameter.** When one entity's Map had no index name set (Spine stores
+  this as `x`) and its keys could not be matched to either a period or a timestep of the active solve,
+  FlexTool used to drop the *whole* parameter for every entity of that class, including other entities
+  whose own values were set normally. Now only the one entity with no matching key is affected (it
+  gets the parameter's usual default, exactly as if it had authored nothing); every other entity's
+  value is unaffected. The most visible case was a storage's `self_discharge_loss`: one node's
+  unrelated, unresolvable Map could silently zero out every other node's self-discharge loss. Setting
+  the Map's `index_name` explicitly to `period` or `time` (see "How to define the temporal properties
+  of the model" in the user docs) avoids the ambiguity entirely and is still recommended.
+
+- **A commodity's price ladder (`price_ladder_annual`, `price_ladder_cumulative`) is read correctly
+  regardless of how its Map levels are indexed.** A depth-2 annual ladder (the same tier prices and
+  quantities applied in every model period) was silently ignored, as was any ladder whose Map levels
+  were left with Toolbox's default index name instead of being named `tier` / `period` explicitly.
+  Two commodities authoring the ladder at different depths (one with a fixed annual price, one varying
+  by period) could also have their tier numbers and period names mixed up with each other. Every one
+  of these forms is now read correctly; naming a ladder's Map levels explicitly is no longer necessary.
+
+- **A model with a single timeline and no explicit `timeset_duration` now gets its usual
+  "the timeset covers the whole timeline" default reliably.** FlexTool has always defaulted a
+  timeset with no authored duration to the whole (sole) timeline, and a timeset with no authored
+  timeline to that sole timeline, when the model otherwise leaves this unspecified. A model built
+  without these defaults in mind (for example `model_builder.build_model`'s generated models, which
+  never write `timeset_duration` at all) could end up with several of its per-period weighting
+  Params (period-share-of-year, inflation, timestep weighting, branch weighting, profile values)
+  silently missing. Both defaults now apply consistently wherever the model's time structure is
+  read, not only on the legacy CSV-based path.
+
+- **A reused work folder no longer mixes old outputs in.** Running FlexTool twice into the same
+  work folder (for example, re-running in the same directory after a failed run or a `--csv-dump`
+  run) could mix an earlier run's per-roll output files into the new run's results, producing wrong
+  values or, in some cases, a crash. Every run now starts by clearing its own previous output stash
+  in the work folder (the raw per-roll files and the `--csv-dump` debug mirrors); nothing else there
+  is touched. The GUI and Spine Toolbox already gave each run its own folder, so this only changes
+  behaviour for a command-line run reused in the same directory.
+
+- **`invest_marginal` now shows the dual of an unbuilt entity, and group investment caps/floors
+  reach their members.** For a `unit`, `connection` or `node` entity that is eligible to invest but
+  not built, `invest_marginal` (and the `unit_invest_marginal__d` / `connection_invest_marginal__d` /
+  `node_invest_marginal__d` outputs) always showed `0` (or a near-zero `-0.0`), because the output
+  writer looked up the entity's class (unit/connection/node) from a file a run never writes. That
+  value is now read from the run's own data, so an unbuilt entity shows its true (negative) marginal
+  value — negative there means it would be unprofitable to build, which is expected, not a numerical
+  artefact (see the updated description in `docs/results.md`). A binding investment cap or floor on a
+  *group* of entities is also now correctly spread to its member entities' `invest_marginal`, instead
+  of only ever applying to the group itself.
+
+- **Five debug-only `solve_data/` files no longer leak into a normal run's work folder.**
+  `p_entity_divested.csv`, `fix_storage_quantity.csv`, `fix_storage_usage.csv`,
+  `p_roll_continue_state.csv` and `p_entity_period_existing_capacity.csv` are solve-to-solve
+  handoff mirrors that nothing in FlexTool reads back; they are debug output for `--csv-dump` only
+  and are no longer written on an ordinary run. `--csv-dump` still writes all five, unchanged.
+
+- **`--csv-dump` writes the per-solve input dump again.** With
+  `--csv-dump` (the GUI's "Full" debug level) each sub-solve's inputs
+  were supposed to be dumped to `input/` and `solve_data/` in the work
+  folder, but the setting never reached the solves, so only the
+  end-of-run snapshot was written. Each sub-solve now dumps into the work
+  folder (a later sub-solve overwrites the files of an earlier one); a
+  `decomposition=benders` solve dumps its whole, undecomposed input. The
+  dump also keeps the solve's objective scale in
+  `solve_data/scale_the_objective.csv`, which the end-of-run snapshot used
+  to replace with an empty file, so the offline output writer
+  (`python -m flextool.engine._csv_reload.offline_outputs`) no longer
+  needs `--scale`. A dump that fails is reported as an error with the
+  solve's name; the run continues.
+
+- **A database file left in the work folder no longer changes or crashes
+  the run.** When the work folder held a copy of a database named
+  `tests.sqlite` (for example the run's own input database), the run read
+  its entity names and switched the model's internal data types. The
+  solve then built the same model in a different order, or stopped with a
+  `SchemaError` (seen with rolling separate dispatch and nested
+  *fix_quantity* runs). The run now takes everything from its input
+  database and ignores such files. `load_flextool` now needs the run's
+  data provider and database reader; loading a model from a CSV dump is
+  done only by the unsupported `flextool.engine._csv_reload` package.
+
+- **Leftover CSV files in a reused work folder no longer change the
+  model.** When a run found no value for an input in memory, it read a
+  CSV file of that name from the work folder instead, if one was there
+  (for example from an earlier `--csv-dump` of another model). A stale
+  dump of a model with an *exact* connection made a *regular* connection
+  of the next model exact as well. The model is now built only from the
+  database of the run; CSV files in the work folder are ignored.
+
+- **A run that cannot read its database stops with an error.** When the
+  input database could not be opened for the scenario (for example locked
+  by another program or not migrated to the current version), the run
+  went on without the database's settings and finished normally with a
+  wrong model. It now stops with an error that names the database and the
+  scenario. A run without a scenario also stops: the command line asks for
+  `--scenario-name` (or, in Spine Toolbox, a scenario filter on the tool)
+  instead of failing later with an unrelated message.
+
+- **A nested *fix_usage* caps windows with no storage use.** With
+  `storage_nested_fix_method` *fix_usage*, a dispatch period whose matching
+  storage-solve window had zero storage usage got no usage cap at all
+  (and, with *use_reference_value*, the reference end value instead). It
+  is now capped at zero usage like any other window.
+
+- **Only the last period of a solve ends its horizon.** In a solve with
+  several periods that share a timeset, the end of every period was
+  treated as the end of the solve: `storage_solve_horizon_method`
+  *use_reference_value* pinned and *use_reference_price* valued the
+  storage at the end of each period, and *fix_end* / *fix_start_end*
+  pinned each period end of the last solve. These now apply only at the
+  end of the solve's last period (and of each stochastic branch of it), as
+  documented. In a rolling solve with *bind_intraperiod_blocks*, the end of
+  a period that a roll holds only in part, followed by a period the roll
+  holds whole, also gets the node's `storage_solve_horizon_method`, since
+  nothing else continues from it.
+
+- **The csv dump shows what each solve was built from.** With `csv_dump`,
+  `handoff/*.csv` now holds the carriers the last solve consumed (its
+  starting storage state, running totals, …), so the dump and a model
+  rebuilt from the run match the solved model; the solve's own end state
+  and final totals are in `produced_handoff/*.csv`.
+
+- **`fix_start_end` ignores the storage binding method.** As documented, a
+  storage node with `storage_start_end_method` *fix_start_end* now chains
+  forward like *bind_forward_only* whatever its `storage_binding_method`.
+  Before, a cyclic method (*bind_within_timeblock*, *bind_within_period*,
+  *bind_within_solve* and their *_blended_weights* forms) kept cycling, so
+  the start and the end were tied together, and with different
+  `storage_state_start` and `storage_state_end` the solve needed slack or
+  ended away from `storage_state_end`. A *bind_intraperiod_blocks* node
+  keeps its blocks, which now chain forward from period to period instead
+  of looping within each period.
+
+- **`fix_end` / `fix_start_end` fix the end of the storage.** The
+  `storage_state_end` of a *fix_end* or *fix_start_end* storage was never
+  applied: the storage ended wherever the model chose. The end state is now
+  pinned to `storage_state_end` (a share of the storage capacity, invested
+  storage included) at the last timestep of the entire model, in every
+  solve whose horizon contains it: e.g. both an investment solve and the
+  last dispatch roll when both reach the end of the model, each nested
+  level's solve that does, each terminal branch of a stochastic solve. A
+  solve or roll that ends earlier is not pinned. In a nested lower level, an
+  upper-level *fix_quantity* or *fix_usage* of the same step takes
+  precedence. `storage_start_end_method` is meant for simple models;
+  `storage_state_reference_value` with *use_reference_value* is usually the
+  better choice.
+
+- **The horizon-end reference value yields to a nested storage fix.** A
+  nested dispatch solve with `storage_solve_horizon_method`
+  *use_reference_value* and `storage_nested_fix_method` *fix_quantity* (the
+  recommended nested setup) pinned the end of each roll both to the
+  reference value and to the storage solve's state, and the solve was
+  infeasible. Where the upper-level solve fixes, caps or prices the storage
+  at the step, its value now overrides the reference value, as documented.
+
+- **Nested dispatch rolls keep their unit commitment, ramps and running
+  totals.** In a nested solve every dispatch roll after the first took the
+  roll-forward carriers from the storage or investment solve above it,
+  which realises no dispatch: each roll restarted its unit commitment from
+  its own cyclic wrap (charging startups again), ramped from nothing, forgot
+  the min up / down time history and, with a cumulative price ladder, the
+  tier energy already bought. They now continue from the dispatch realised
+  before them, also across a later roll of the storage solve; a storage roll
+  continues the commitment of the dispatch solved below it.
+
+- **Later solves continue from the realised storage state.** In a solve
+  sequence (e.g. one solve per investment period) every solve was pinned
+  again to `storage_state_start`, discarding the state the previous solve
+  realised, and the first dispatch roll under a later roll of a rolling
+  storage solve started with a free storage level (free energy). Now
+  `storage_start_end_method` *fix_start* applies to the first step of the
+  model and to the first appearance of each nested level; every later solve
+  or roll starts from the latest storage state realised before it at its
+  level or below (a storage or investment solve from the dispatch below it).
+  Cyclic binding methods keep cycling within each later solve without the
+  start value, and representative-period (*_blended_weights*) nodes start
+  each block free.
+
+- **`fix_start` of a *bind_within_timeblock* storage.** The start state was
+  pinned on the state at the end of the solve's first step, after that
+  step's flows, so the timeblock's cycle could start at any level and spend
+  the difference in the first step. It is now pinned at the step the first
+  step starts from, the last step of the first timeblock (in a rolling solve,
+  of the timeblock's part in the first roll), as for the other cyclic methods.
+  Where an upper-level nested solve fixes the storage state at that step
+  (a nested roll whose horizon is one timeblock), the fixed value wins.
+
+- **Non-synchronous limit: internal flows, DC connections and reverse
+  flows.** The non-synchronous limit of a group counted the flows of a
+  connection between two nodes of the group (both directions, as supply)
+  in single solves, though not in rolling solves; the optimiser could cycle
+  energy through such a connection, or through a storage connection inside
+  the group, to loosen the limit. Those flows are now excluded on every
+  solve path, as documented. An `is_DC` connection's flow into the group
+  is counted as non-synchronous also when a unit is flagged
+  `is_non_synchronous` (it was dropped then), and the reverse flow of a
+  `no_losses_no_variable_cost` or DC connection is counted (infeed into the
+  group, supply out of it). Models with a non-synchronous limit change (the
+  `non_sync_and_curtailment` how-to: higher cost, the battery no longer
+  cycles). A warning names a `no_losses_no_variable_cost` connection that
+  crosses the boundary of a group with a non-synchronous limit (flowing
+  both ways at once is free and loosens the limit; use `exact`).
+
+- **The energy margin no longer enters the non-synchronous limit and the
+  capacity margin.** An `energy_margin_multiplier` or `energy_margin_adder`
+  added its demand to the group rows of the investment solve too: the
+  non-synchronous limit allowed more non-synchronous infeed (its supply side
+  grew with the added demand) and the capacity margin asked for capacity
+  above the margined peak. Both now use the real demand, as the reserve
+  requirement already did; the margin enters only the node balance (set
+  `capacity_margin` for a capacity surplus). Models with both an energy
+  margin and one of these group limits change (in the test model the
+  tighter non-synchronous limit moves generation from wind to coal). A
+  `--csv-dump` of a solve with an energy margin now also writes
+  `pdtNodeInflow_unmargined.csv`, so a reload keeps the real demand.
+
+- **Reserve price of groups with several requirements.** `reserve_price_t`
+  is now the sum of the duals of all of a group's requirement constraints at
+  the step (timeseries, dynamic, and the large-failure constraint of every
+  failing unit or connection): the cost of one more MW of every requirement
+  of the group at once. Groups with a large-failure requirement were not
+  reported at all (`large_failure_only`, `dynamic_and_large_failure`) or
+  reported only the timeseries dual (`timeseries_and_large_failure`, `all`),
+  and `timeseries_and_dynamic` groups reported the timeseries dual alone,
+  which is 0 when the dynamic requirement is the binding one. When a
+  requirement is short the price is now `penalty_reserve`.
+
+- **Time-varying `self_discharge_loss`.** A `self_discharge_loss` given as a
+  time (or period) map was read as one value per map entry and every
+  coefficient of the storage's balance was summed over the entries (about
+  72× for a 72-step map): the storage behaved as if it were many times
+  larger, with no error. The map is now read per period and time step: each
+  step decays at its own rate, and a coarse (`new_stepduration`) step or a
+  `bind_intraperiod_blocks` block decays by the sum of its hours' losses.
+
+- **`use_reference_value` counts invested storage.** The end state of a
+  storage with `storage_solve_horizon_method` *use_reference_value* was
+  pinned to `storage_state_reference_value` × the existing capacity only, so
+  newly built storage had to end (nearly) empty. It is now that share of the
+  built capacity (existing + invested − divested), as for the start state and
+  the storage capacity limit.
+
+- **`fix_start_end` fixes the start state.** A storage node with
+  `storage_start_end_method` *fix_start_end* got no start condition at all
+  (it could start with free energy); its start is now fixed like
+  *fix_start*. Its end condition is not implemented yet.
+
+- **`fix_start` of a *bind_within_solve* storage in a solve with several
+  periods.** The start state was pinned at the last step of the first
+  period, i.e. in the middle of the solve. It is now pinned at the step the
+  solve's first step starts from: the last step of the solve (in a
+  stochastic solve, the end of each forecast branch the first step wraps
+  to).
+
+- **Storage self-discharge is exact for any time-step length** (for a loss
+  that is constant within each step). The storage
+  content now decays continuously at ln(1 + `self_discharge_loss`) per hour,
+  whatever the step length, with the energy charged or discharged within a
+  step spread evenly over the step. Before, a step lost `self_discharge_loss`
+  once whatever its length (a 24 h step lost one hour's worth, so storages
+  with self-discharge on steps longer than one hour kept far too much
+  energy), coarse (`new_stepduration`) groups and `bind_intraperiod_blocks`
+  blocks used a linear `loss × hours` that under-decays stored energy, and
+  energy charged within a step was decayed for the whole step. Results with
+  self-discharge change, slightly also at 1 h steps (the test battery's
+  states by up to 0.0025 MWh). The reported self-discharge (`balance_t`
+  *Self discharge*) now equals the loss the optimisation used; before it was
+  `state × loss` per hour, which differed for steps other than 1 h, coarse
+  nodes and blocks.
+
+- **`bind_intraperiod_blocks` storage balance.** The balance of such a node
+  over each timeset block is now exactly its per-step energy balance summed
+  over the block. Before, it left out the reverse flow of two-way connections
+  that use one flow variable (`no_losses_no_variable_cost`) and of DC
+  power-flow lines, and the part-load (minimum load) input of
+  `min_load_efficiency` units drawing from the node. The reported storage
+  state of a block is now the state at the end of the block (before: at its
+  start), like the state of every other storage node, and with `fix_start`
+  the start state is pinned at the end of the first period (the state the
+  first block starts from). The node's price keeps its sign.
+
+- **Cyclic storage in rolling solves.** In the second and later rolls of a
+  rolling solve, the first step of a *bind_within_timeblock*,
+  *bind_within_period* or *bind_within_solve* storage node mixed the cycle with
+  the storage level carried over from the previous roll (the start state was
+  forced halfway between the two). Each roll now cycles on its own, as
+  documented, and the carried level is not used for these methods. Results of
+  rolling solves with these methods change (the `fullYear_roll` test model:
+  total cost −1.1 %).
+
+- **Blended-weights storage in solves without representative periods.** A
+  solve without representative periods treats a `*_blended_weights` node as
+  the plain method (e.g. *bind_within_solve_blended_weights* as
+  *bind_within_solve*). When another node used the plain method in the
+  database, the converted nodes lost their storage chain (their energy could
+  appear or vanish freely). They now keep it.
+
+- **`bind_within_period` storage works.** A storage node with
+  `storage_binding_method` *bind_within_period* had no state-change term at
+  all (its energy could appear or vanish freely) and no error was raised; the
+  same happened to *bind_within_period_blended_weights* nodes in solves
+  without representative periods (e.g. a chronological dispatch after a
+  representative-period investment solve). The state now cycles within each
+  period: blocks chain inside the period and the period's first step
+  continues from its own last step, also in rolling, stochastic and coarse
+  (`new_stepduration`) solves. With `fix_start` the start state is pinned at
+  the last step of the first period (the step the first period wraps to).
+  `use_reference_value` does not pin the end state of a *bind_within_period*
+  node (nor of a blended-weights node a solve without representative periods
+  turns into *bind_within_period* / *bind_within_solve*), as already for
+  *bind_within_solve* / *bind_within_timeblock*: their end is tied to their
+  start.
+
+- **Representative periods in solves with several periods.** Every period of
+  a solve whose timeset has `representative_period_weights` now gets its own
+  weights, representative blocks and base-period storage chain. Before, only
+  the first such period did (unless a node used
+  `bind_within_period_blended_weights`): the other periods' representative
+  days were weighted 1.0 instead of their weights, so their operating costs
+  were under- or over-counted, and the `bind_within_solve_blended_weights` /
+  `bind_forward_only_blended_weights` storage of later periods lost its
+  base-period chain. Periods sharing a timeset, or base-period names on one
+  timeline, shared one chain and weight set. Objectives of multi-period
+  representative-period models change (the test models by −45 % to +74 %;
+  compared with the hourly model of the same days the error drops from 3–100 %
+  to under 0.3 %). The across-solve variants now chain the periods in solve
+  order; different blended-weights methods may now share a solve. A solve
+  that mixes representative and other periods with a blended-weights node, a
+  stochastic solve on a representative-period timeset, and a rolling solve
+  with blended-weights nodes now stop with an error (their representative
+  data was not defined).
+
+- **Benders with in-out stabilisation reports a valid upper bound.** With
+  `benders_in_out_weight` > 0 the decomposition could stop on an upper bound
+  below the true optimum (by up to 3e-4 on the three-region hydrogen test
+  model): the two regions at the ends of a pipe could be solved with
+  different flows on it. Both ends now always get the same flow, and the
+  upper bound is the cost of that one point, and the investments handed to
+  a following dispatch solve are the plan that bound priced. Needs
+  polar-high 3.10.0; this costs one extra master solve per iteration
+  (iteration counts are unchanged on the test models). With an older
+  polar-high a run with in-out weight > 0 prints a warning that its upper
+  bound may be invalid.
+
+- **Solver options reach every solve.** `solver_mip_gap` was ignored on the
+  default (warm) HiGHS path; it is now honoured. A solve with
+  `solver_arguments` or `solver_mip_gap` that runs cold (`warm=False`,
+  `--save-memory`) no longer loses `solver_config/highs.opt`, the CLI flags
+  (`--highs-threads`, `--solver-time-limit`, …), the determinism defaults and
+  the automatic scaling options; every HiGHS solve now gets the same layered
+  set. Benders decomposition now uses these options too (master and region
+  subproblems; see the solver docs for the details); with a thread count
+  (`--highs-threads`, or `threads` in `highs.opt`) and parallel regions this
+  needs polar-high 3.10.0, otherwise the thread count is not used for
+  Benders.
+
+- **Stochastic storage tie counts every flow into the node.** The tie that
+  keeps the net flow into a stochastic storage node equal in all forecasts
+  before the reveal now also counts the reverse flow of two-way connections
+  that use one flow variable (`no_losses_no_variable_cost`) and of DC
+  power-flow lines, and the part-load (minimum load) input of
+  `min_load_efficiency` units. Before, forecasts could move energy in or out
+  of the node through those flows differently, i.e. use knowledge of the
+  future.
+
+- **Prices are in currency per MWh.** `price_t` is now the cost of one more
+  MWh of demand at the node and step (positive when more demand costs more).
+  Before, node prices were negated and multiplied by the period's share of
+  the year, by the timestep weight and, in stochastic solves, by the branch
+  probability (e.g. −164 250 instead of 900 for an unserved-energy step).
+  Reserve prices (`reserve_price_t`) were a million times too small and are
+  now per MW of reserve held for one hour, also with the step length and
+  weights removed. In a stochastic solve each forecast branch now reports
+  its own price, and a step the objective does not weigh (e.g. a step that
+  `timeset_weights` leaves out) has no price. The nested `fix_price` storage handoff
+  passed the dispatch solve a price a million times too small (and weighted);
+  it now passes the storage solve's `price_t` to the dispatch solve, also to
+  the rolls of a rolling dispatch solve (before, a rolling dispatch solve
+  always received 0) and also for `bind_intraperiod_blocks` storage nodes.
+
+- **`bind_intraperiod_blocks` storage in rolling and nested solves.** Before,
+  such a node had no energy balance at all in a roll and in the per-period
+  sub-solves of a nested solve (energy could appear from nothing). The nested
+  sub-solves now get their timeset blocks. In a rolling solve the blocks of
+  each roll also end at the end of the roll's realized part: a period that
+  the roll holds whole loops its blocks (as in a solve that is not rolling),
+  and in a period that the roll holds only in part the blocks chain forward
+  and the storage level is carried from roll to roll, as for
+  *bind_forward_only* (`fix_start` starts the first roll, and
+  `storage_solve_horizon_method` sets the end of a roll that does not loop).
+  A `rolling_solve_jump` that is not a whole number of periods gives a
+  warning.
+
+- **Nodes in a `new_stepduration` group sum their flows over each coarse
+  step.** A node of a group whose `new_stepduration` is longer than the
+  solve's time step is now balanced once per coarse step by summing all its
+  flows of the solve's time steps; flows, online status and reserves of every
+  unit and connection stay at the solve's time step. Before, a flow between an
+  hourly and a daily node (e.g. an electrolyser from hourly electricity to
+  daily hydrogen) entered the daily balance only in the first hour of each
+  day, multiplied by 24, so the other hours produced hydrogen from free
+  electricity; flows between two daily nodes were similar, a unit listed in a
+  daily group was missing from its hourly node's balance, DC lines' reverse
+  flow was missing from a coarse bus's balance, and a node's balance could
+  pick up the output arcs of another node. Models with coarse groups now pay
+  for the energy they convert and get higher costs (the three-region hydrogen
+  test model: +14 %). Coarse groups now also work without storage nodes, in
+  rolling solves (a coarse step ends at each roll's realized end), with a
+  solve-level `new_stepduration` (coarse means longer than the solve's step;
+  a shorter group step is ignored with a warning) and with two groups of
+  different steps; coarse storage follows its `storage_binding_method`,
+  `fix_start`, `storage_solve_horizon_method` (reference value) and nested
+  `fix_price`. Online (unit commitment) variables of
+  units next to coarse nodes now exist at every time step. A group step that
+  is not a multiple of the solve's step is now an error (before the coarse
+  handling was silently dropped). Coarse nodes now report a price (the dual
+  of their coarse-step balance) with the same sign convention as every other
+  node, and `bind_intraperiod_blocks` storage nodes now also use that
+  convention (before, their sign was the opposite of the other nodes').
+  Outputs no longer copy a coarse step's value to its other time steps.
+  Listing a unit
+  or connection in a coarse group has no effect on time resolution (a
+  warning names those that touch a node outside the group). Benders
+  decomposition now allows a boundary between nodes of different time
+  resolutions.
+
+- **A representative base period that does not start at a time step of the
+  timeline is an error.** Before, it was ordered after all other base periods
+  without a message, so the storage chain between base periods linked it out
+  of time order.
+
+- **Solve-level `new_stepduration` keeps the gaps between timeset blocks and
+  every period's time steps.** With a timeset made of separate blocks (e.g.
+  sample weeks), the aggregated steps of a solve with `new_stepduration` now
+  keep the gaps between the blocks: storage bound within a timeblock or with
+  intraperiod blocks cycles within each block again (before, every aggregated
+  step looked like its own block, so storage could not shift energy), ramp
+  limits and rolling windows no longer link steps across a gap, and
+  representative blocks keep their order. When several timesets of the solve
+  share a timeline (one per period, or a period before a stochastic fan and
+  the fan's branches), every period keeps its time steps; before, only the last
+  timeset's period survived. `scale_in_proportion` inflow scaling now also
+  works with `new_stepduration` and scales as the unaggregated solve does. A
+  timeset shared by a solve with `new_stepduration` and a solve without it is
+  now an error.
+
+- **Benders decomposition checks connections between regions.** A connection
+  between regions with a `startup_method`, the `exact` transfer method or
+  reserve now stops the run with an error (its online variables, direction
+  switch or reserve would be left without flows in the region subproblems);
+  integer variables in a region subproblem print a warning.
+
+- **Connection reserve limited by the connection's flow.** A connection's
+  reserve at a node is now limited by its net position there: upward
+  reserve by its free capacity towards the node plus the flow it sends
+  away (which it can stop), downward reserve by the flow it brings plus
+  its free capacity away from the node. Before, only upward reserve at the
+  receiving node shared the capacity; a line could offer reserve at its
+  sending node it could not deliver. Models with connection reserve can
+  get less reserve from connections and higher costs.
+
+- **Reserve requirements count the reverse flow of lossless connections.** A
+  `no_losses_no_variable_cost` or DC power-flow connection flowing towards a
+  node in its reverse direction now raises the dynamic requirement there,
+  sets a large-failure requirement when it can fail, and a connection to a
+  storage node backs its reserve with stored energy also in that direction.
+
+- **`exact` connections flow in one direction at a time.** The `exact`
+  transfer method now has a direction switch (one binary variable per
+  connection and time step), as documented. Before it only added an online
+  integer that did not stop simultaneous flow in both directions, so a lossy
+  `exact` connection could still burn a surplus through its losses, and an
+  invested `exact` connection could lose capacity to the unit count.
+
+- **Online connections.** A connection's `startup_method` works again, for
+  one-way and two-way connections: the connection gets online capacity that
+  limits its flow in both directions, `startup_cost` is charged, and new
+  outputs report the online status and startups of connections. Before, a
+  two-way connection with a startup method silently became one-way and
+  lossless, and a one-way connection lost its online variables (and every
+  connection its startup cost) as soon as a unit had linear online
+  variables. A DC power-flow line with a startup method is now an error. Units
+  with binary online variables next to units with linear ones, and units
+  online only through `minimum_time_method`, keep their online variables
+  (they lost them, or had their inertia counted twice).
+
+- **Group `transfer_method` applies to the network topology.** A group's
+  `transfer_method` was applied to some of the model's inputs only: DC
+  power-flow lines kept an unconstrained reverse flow next to the one set by
+  the voltage angles, and a group `unidirectional` override left its
+  connections two-way. The group's method now decides the connections' flows
+  everywhere. A connection in several groups with different overrides is
+  now an error (the result depended on the database order).
+
+- **Startup and shutdown capacity reduction.** As documented in the how-to,
+  a unit with online variables and ramp limits can no longer run at full
+  output in the step it starts in or in the step before it shuts down: it
+  reaches at most its minimum load plus half a step's ramp on average (one
+  step's ramp from minimum load, reached at the end of the step). A unit
+  online for one step gets the smaller of the two limits. This was in the old
+  model and had not been ported.
+
+- **Reserve uses ramp room.** A unit with ramp limits could hold reserve its
+  ramp limit would not let it deliver. Its upward reserve now uses the upward
+  ramp room of the time step (after the change of its flow from the previous
+  step), downward reserve the downward room, and "consume more" reserve at a
+  unit's input the input's ramp room. Models with ramp-limited reserve
+  providers can get reserve shortfalls or a different dispatch.
+
+- **Ramp limits scale with the time step.** A ramp speed is a share of
+  capacity per minute; the change allowed between two time steps is now that
+  speed × the average length of the two steps, so 2-hour steps allow twice
+  the change of 1-hour steps (it was one hour's change whatever the step
+  length). The first step of a solve, of a period that does not continue the
+  previous one, after a gap in the timeline or of a representative period is
+  no longer ramp-limited against an unrelated step (it was tied to the last
+  step of the period, or of the look-ahead in a rolling window); a period that
+  continues the timeline, and a stochastic branch, ramps from the step before
+  it; a rolling window ramps from the flow realized by the previous window.
+  Models with different time steps per period lose a hidden cap on the first
+  step's output. The reported ramp (`unit_ramp__*Node__dt`) is empty where
+  there is no previous step.
+
+- **Dynamic and large-failure reserves without a timeseries reservation.**
+  A reserve with only a `dynamic` or `large_failure` requirement did nothing
+  unless some group of the same reserve also had a `reservation`. It now
+  applies whenever a unit or connection at a node of the group has an
+  `increase_reserve_ratio` or a `large_failure_ratio`. Models with such
+  reserves get the reserve they asked for and higher costs. The reserve price
+  (`reserve_price_t`) is now also reported for groups whose only requirement
+  is dynamic.
+
+- **Reserve requirements count what a unit consumes.** The dynamic
+  requirement and the downward large-failure requirement of a unit at a node
+  it consumes from (electrolyser, heat pump, electric boiler) now use the
+  power it draws (output / efficiency, plus the minimum-load input of a
+  `min_load_efficiency` unit), as the node balance does, not its output.
+
+- **Group `increase_reserve_ratio`.** It was ignored; it now raises a
+  dynamic reserve requirement by the ratio times the demand of the group's
+  nodes in each time step (in MW; a node with positive inflow does not
+  count). The demand added by an energy margin in investment solves does not
+  count. On a group without a dynamic `reserve_method` the ratio is ignored
+  with a warning.
+
+- **Reserve at a unit's input.** A unit consuming at full capacity, or
+  offline, can no longer offer "consume more" downward reserve at its input
+  node (electric boiler, heat pump, fuel draw of a CHP unit); `max_share` at
+  an input node is a share of the unit's input capacity there.
+
+- **`co2_max_period` applies in rolling solves.** Each roll of a
+  `rolling_window` solve compared its window's emissions, annualised as if
+  they covered the whole solve, with the annual limit, so the limit was too
+  loose by the solve length over the roll length (for example ×52 for a year
+  rolled in weekly windows) and usually did not bind. Each roll now
+  annualises its emissions over its own hours. Rolling models with a CO2
+  period limit get a tighter limit and higher costs. A roll limits its whole
+  window, look-ahead included, so the realized emissions of a period can
+  still differ somewhat from the limit. In a rolling solve the reported CO2
+  price of a period is the shadow price of the last roll that covers the
+  period.
+
+- **Warm-started rolling solves across period boundaries.** When two
+  consecutive rolls had the same number of timesteps and periods but split
+  them differently between the periods (a window moving across a period
+  boundary), or a timeblock started at a different step inside the window,
+  the warm start reused the previous roll's model unchanged: per-period
+  terms such as a per-period CO2 price, CO2 limit or inflation were applied
+  to the wrong timesteps. Such rolls are now rebuilt. Results of rolling
+  solves over several periods can change in the rolls that cross a period
+  boundary; for the rolls inside one period see the next item (every roll is
+  now rebuilt).
+
+- **Rolling solves: results of reused rolls.** When consecutive rolls
+  differed only in demand (no changing profiles), the solver reused the
+  previous roll's model. The reported results of such rolls came from other
+  hours of the window, or were zero, and the storage state was not carried
+  to the next roll. With a large spread of input magnitudes the reused roll
+  could also use a wrongly scaled demand, and a rolling solve with timestep
+  durations that vary between steps could stop as infeasible. A second solve
+  with other solver settings (for example `scaling`) could also run with the
+  previous solve's settings. Every roll is now built for its own window; a
+  built model is reused only for an identical next solve with the same
+  solver settings. Rolling models without changing profiles get correct
+  results; they can run up to about 5 % slower. Models with time-varying
+  profiles are unaffected (their rolls were already rebuilt). A rebuilt roll
+  starts the solver without a basis, as every roll of a model with profiles
+  already did; the warm-start basis cache (`FLEXTOOL_WARM_START`) still
+  starts a roll from the basis of the same roll in an earlier run of the
+  same model, and never transferred a basis from the previous roll.
+
+- **Units with an online variable no longer need a `min_load`, and
+  `min_load_efficiency` units get defaults instead of losing their fuel use.**
+  An online unit stopped the model when no unit in the model had a
+  `min_load`. A `min_load_efficiency` unit without `min_load` (or without
+  `efficiency`) could stop the model, or, next to other `min_load_efficiency`
+  units, use no fuel at all; it now uses `min_load` 0 (and `efficiency` 1,
+  the default), and no longer gets a minimum-load floor. A
+  `min_load_efficiency` unit with a `min_load` above 0 but no
+  `efficiency_at_min_load` used no fuel on single and stochastic solves and
+  a wrong curve in rolling solves; it now uses its `efficiency` at minimum
+  load too (a flat curve, as with `constant_efficiency`) while the minimum
+  load still applies, and a warning names it. Periods or timesteps that an
+  `efficiency_at_min_load` map leaves out use `efficiency` in the same way.
+
+- **The capacity margin applies only in investment periods.** A manual
+  capacity margin was enforced in every period of every solve, so dispatch
+  solves, rolling dispatch, stochastic dispatch and look-ahead periods
+  without investment paid capacity margin penalties. It now applies in the
+  periods listed in the solve's `invest_periods` (and their stochastic branch
+  periods), as the documentation says.
+
+- **A capacity margin, inertia or non-synchronous limit applies only with its
+  method or flag.** A `capacity_margin`, `inertia_limit` or
+  `non_synchronous_limit` on a group without `capacity_margin_method = manual`
+  / `has_inertia = yes` / `has_non_synchronous = yes` created the constraint
+  anyway when no group had the method or flag (on every solve type for
+  constant values, and for period maps of the inertia and non-synchronous
+  limits). Such a limit is now ignored, and a warning names the group. A group
+  with the method or flag but no limit is treated as limit 0 whether or not
+  another group sets a limit (capacity covers the peak net load; no
+  non-synchronous infeed; no inertia requirement), and a warning says so when
+  no value is given.
+
+- **Stochastic-time values of availability, efficiency, min_load, other
+  operational cost, reservation and penalties no longer stop the model.** A
+  value given as a three-level map (branch, analysis_time, time) with these
+  index names stopped the model with an "index_name 'branch'" error. Without
+  index names a stochastic efficiency set every unit's efficiency to 1, a
+  stochastic node availability or min_load was lost or stopped the model, and
+  a period-and-time map of the same parameter on another unit, node or
+  reserve was ignored. For the units, nodes and reserves in an
+  `include_stochastics` group, each entity's stochastic series now applies to
+  its forecast branches, and the other entities keep their own values.
+
+- **A period-and-time `other_operational_cost` is charged in the objective.**
+  An `other_operational_cost` of a unit input, a unit output or a connection
+  given as a map keyed by period and time was left out of the objective on
+  every solve type (the cost results still showed it). It is now charged
+  like the other shapes.
+
+- **A map of `penalty_up` / `penalty_down` on one node no longer makes the
+  other nodes' balance free.** When one node gave its penalty as a map (by
+  period, time or period and time), nodes with a constant penalty or the
+  default lost their penalty, so their unserved or excess energy cost
+  nothing. This happened on every solve type. Every node now keeps its own
+  value or the default, and periods or timesteps that a map leaves out get
+  the default. A time or stochastic `penalty_up`, and a period-and-time
+  `penalty_up` or `penalty_down`, now also apply in rolling solves, and a
+  stochastic penalty no longer stops the model.
+
+- **A group with an inertia, non-synchronous or capacity margin limit but no
+  penalty of its own now gets the default penalty (5000) when another group
+  sets one.** Before, such a group had no penalty at all, so violating its
+  limit cost nothing and the limit had no effect. A penalty of 0 still makes
+  the violation free.
+
+- **Rolling solves and the sub-solves of a nested investment use period-map
+  values of efficiency, minimum load and profiles.** A unit or connection
+  `efficiency` or a unit `min_load` given as a map keyed by period, and a
+  `profile` keyed by period, now apply in every roll
+  of a `rolling_window` solve and in the per-period sub-solves of a nested
+  investment, as they already did in a single solve. Before, these solves
+  used efficiency 1 (wrong fuel use, fuel cost, CO2 and input-flow limits),
+  dropped the minimum-load part of the conversion curve and read the profile
+  as 0. Stochastic rolling solves are fixed too.
+
+- **A `profile` keyed by period is no longer read as 0 when the model also
+  has time-series profiles.** A profile given as a map keyed by period,
+  next to profiles given as time series (and no profile keyed by period and
+  time), could be read as 0 on every solve type, depending on the order of
+  the profiles in the database.
+
+- **A period-keyed `inflow` is now an error.** `inflow` is a constant or a
+  time series. A map keyed by period (or by period and time) was silently
+  read as no inflow on every solve type, so the demand disappeared. The
+  model now stops with a message that names the node and points to
+  `annual_flow` for demand that varies by period.
+
+- **A constant `cumulative_max_capacity` or `invest_max_period` no longer
+  blocks investment.** A unit, connection or node with `invest_method`
+  `cumulative_limits`, or an `invest_method` with per-period limits
+  (`invest_period`, `invest_period_total`, `invest_retire_period`,
+  `invest_retire_period_total`), and a single value for
+  `cumulative_max_capacity` (or `invest_max_period`) now gets that limit in
+  every period, the same as the equivalent period map. Before, the single
+  value was ignored when the model computed the maximum capacity, so the
+  entity could not use new capacity (with `cumulative_limits` not even its
+  existing capacity), and the model fell back to slack or other
+  technologies. This also
+  holds for the sub-solves of a nested multi-period investment and for
+  rolling solves. The parameter definitions in the database still list the
+  `*_period` limits as period maps only, so Toolbox may flag a single value
+  until the schema is updated.
+
+- **Forecast branches use their period's per-period input values.** In a
+  stochastic solve, a value given as a map keyed by period (for example
+  `efficiency`, `startup_cost`, `min_load`, commodity `price`, `availability`,
+  `other_operational_cost`, `penalty_up` / `penalty_down`, profiles, CO2 price
+  and per-period limits such as `co2_max_period` or `capacity_margin`) now
+  also applies to the forecast branches of that period, the same way a single
+  value does. Before, the branches got the default instead (efficiency 1, no
+  startup or variable cost, free fuel, free slack), so a model with period
+  maps could report a far too low cost. A value authored for a branch period
+  itself still takes precedence.
+  With recourse investment (`stochastic_invest_method: recourse`), the
+  per-period investment limits of units, connections and nodes given as
+  period maps (e.g. `invest_max_period`) now also apply in the branch
+  periods, which are investment periods there.
+
+- **Rolling stochastic solves rebuild the LP when branch weights change.**
+  When the forecast branch weights differ from one roll to the next and
+  nothing else forces a rebuild, the next roll now gets its own weights in
+  the objective. Before, the reused LP could keep the previous roll's
+  weights.
+
+- **Forecast branches use their period's annual commodity ladder.** In a
+  stochastic solve, the forecast branches of a period now use that period's
+  `price_ladder_annual` prices and tier quantities. Before, purchases in the
+  branches had no price and no tier limit, so a ladder commodity was free
+  and unlimited in every branch. A branch period gets each tier curve whole
+  from its period.
+
+- **Commodity price ladders in stochastic solves are weighted by branch
+  probability.** The purchase cost of a `price_ladder_annual` or
+  `price_ladder_cumulative` commodity is now weighted by the probability of
+  each forecast branch, like the other operating costs. Before, every branch
+  counted in full, which overstated ladder costs by one over the branch
+  probability and pushed the dispatch away from ladder commodities.
+
+- **`co2_max_total` limits the emissions of all represented years.** The
+  total CO2 limit now applies to each period's annual emissions times its
+  `years_represented`, summed over the periods: the same measure as the
+  model-wide `CO2` output. Before, each period counted as one year, so with
+  multi-year periods the limit was `years_represented` times too loose.
+  Models that use a `co2_method` with `total` and `years_represented`
+  above 1 get a tighter limit. In a chain of solves each solve still gets
+  the full limit over only its own periods, and in a rolling solve each roll
+  compares only its own window's emissions with the full limit, so there the
+  limit binds much more loosely than intended.
+
+- **Years represented in rolling solves and stochastic branches.** The
+  outputs that scale annual values by `years_represented` (the model-wide
+  `CO2 [Mt]` and `years_represented__d`) now use each period's years also
+  in rolling-window solves, where every period counted as one year before,
+  and on the forecast branch periods of a stochastic solve, which counted
+  as zero years before (they now get their period's years).
+
+- **CO2 limits count the part-load fuel of min-load units.** The CO2
+  limits (`co2_max_period`, `co2_max_total`) now count the extra fuel that
+  `min_load_efficiency` units burn at part load, as the CO2 price and the
+  reported emissions already did. Before, the limits left that fuel out, so
+  the reported emissions of such units could exceed the limit. Models that
+  combine a CO2 limit with such units get a tighter limit and less output
+  from those units.
+
+- **Combined reserve methods keep all their requirements.** A reserve group
+  with a combined `reserve_method` (`timeseries_and_dynamic`,
+  `timeseries_and_large_failure`, `all`) lost its timeseries requirement
+  when another group in the model used `timeseries_only`. Every group now
+  gets the requirements its method names.
+
+- **N-1 reserve requirement per failing unit or connection.** A
+  `large_failure` reserve requirement now has one constraint per failing
+  unit or connection, so the largest single failure sets the requirement,
+  and the failing unit's own reserve no longer counts towards covering its
+  own failure. Before, the failures of all large-failure units in the group
+  were added up into one requirement (too much reserve when two or more can
+  fail), and a single failing unit could cover its own loss (too little).
+  The largest possible reserve shortfall of such a group is now the largest
+  single failure instead of the sum. Models with n-1 reserves will get
+  different reserve procurement and costs. Each failing unit or connection
+  adds one small constraint per reserve group and time step.
+
+- **Upward reserve of a unit with online variables comes out of its online
+  capacity.** A unit with online variables (a `startup_method` `linear` or
+  `binary`, or a `minimum_time_method` other than `none`) can hold upward
+  reserve only from the units it has online: its output plus the
+  upward reserve it holds at that output cannot exceed online capacity ×
+  availability, and for a unit with several outputs the same applies to
+  their sum. Before, only the built capacity limited the reserve, so an
+  offline unit could offer spinning reserve for free. Models with upward
+  reserve on such units will commit more units (more startup and min-load
+  cost) or show a reserve shortfall where they did not before.
+
+- **Input-side operational cost counted as a cost.** `other_operational_cost`
+  on a unit--inputNode of a unit with an efficiency now raises the objective,
+  as documented and as the cost outputs already reported. Before, the model
+  subtracted it, so a higher input-side cost made the unit run more and the
+  solver objective did not match the reported total cost. Units without an
+  efficiency, output-side costs and connections are unchanged. Models that
+  set this parameter on such units will get different dispatch and costs.
+
+- **Mixed constant / period `invest_cost` and `salvage_value`.** A model
+  with a period map of `invest_cost` or `salvage_value` on some entities and
+  constants on others (in the same or in different entity classes) no longer
+  crashes. Period maps are now applied per period also when the map has no
+  index name, so a zero cost in one period is respected. Multi-solve models
+  whose cost is a period map no longer get investment or retirement
+  variables for periods outside each solve's invest periods (before, every
+  map period got one, including past periods). These two parameters must now
+  be a constant or a map indexed by period: a time-indexed value, or a map
+  with an explicit index name other than `period` (e.g. `year`), raises a
+  configuration error instead of being accepted.
+
+- **Internal:** the engine package is renamed `flextool.engine_polars` →
+  `flextool.engine` and split into subpackages (`input`, `preprocess`,
+  `model`, `solve`, `output`, `autoscale`); `flextool/engine/README.md`
+  describes the layout. `flextool.engine_polars` stays as an alias for the
+  public API. The model build (`model/core.py`, formerly `model.py`) is
+  restructured for readability; the LP it builds is unchanged.
+
 ## Release 4.1.1 (21.10.2026) — scale_to_annual_flow over the whole timeline, multi-output indirect-unit capacity, node__dt balance under coarsening
 
 No schema change (stays v76); no migration needed.

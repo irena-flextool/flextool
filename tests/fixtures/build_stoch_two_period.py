@@ -3,9 +3,9 @@ stochastic continuation fan-out fixture (design
 ``specs/step05_continuation_fanout_design.md`` §5.1).
 
 Schema sections (entity_classes, parameter_value_lists,
-parameter_groups, parameter_definitions, parameter_types) are copied
-from the committed ``stochastics.json`` so the fixture always carries
-the current schema version; only the data sections are authored here.
+parameter_groups, parameter_definitions, parameter_types) come from
+``flextool/schemas/spinedb_schema.json`` (``schema_sections``); only the
+data sections are authored here.
 
 Model: one 6-step timeline split into two 3-step periods
 (p2035 = t0001-t0003, p2040 = t0004-t0006); a demand node ``city``
@@ -27,6 +27,9 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+
+from flextool.update_flextool.fixture_schema import schema_sections
+from flextool.update_flextool.test_fixtures import write_built_fixture
 
 FIXTURES = Path(__file__).resolve().parent
 
@@ -55,18 +58,7 @@ def _nested(pairs: list[tuple[str, object]]) -> dict:
 
 
 def build() -> dict:
-    src = json.loads((FIXTURES / "stochastics.json").read_text())
-
-    spec: dict = {
-        key: src[key]
-        for key in (
-            "entity_classes",
-            "parameter_value_lists",
-            "parameter_groups",
-            "parameter_definitions",
-            "parameter_types",
-        )
-    }
+    spec: dict = schema_sections("packed")
 
     spec["alternatives"] = [
         ["init", "Model, solve and time structure"],
@@ -192,7 +184,7 @@ def build() -> dict:
 def main() -> None:
     spec = build()
     out = FIXTURES / "stoch_two_period.json"
-    out.write_text(json.dumps(spec, indent=2) + "\n")
+    write_built_fixture(spec, out)
     print(f"Wrote {out} "
           f"({len(spec['parameter_values'])} parameter values)")
 

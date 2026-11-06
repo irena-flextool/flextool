@@ -5,22 +5,31 @@ import pandas as pd
 
 # Variables: droplevel('solve') only
 _V_DROP = [
-    'flow', 'ramp', 'reserve', 'state',
+    'flow', 'ramp', 'reserve', 'state', 'self_discharge',
     'online_linear', 'startup_linear', 'shutdown_linear',
     'online_integer', 'startup_integer', 'shutdown_integer',
     'q_state_up', 'q_state_down', 'q_reserve',
     'q_inertia', 'q_non_synchronous', 'q_state_up_group', 'q_capacity_margin',
-    'invest', 'divest',
+    'invest', 'divest', 'invest_fan',
+    # trade (v_trade, commodity price ladder, #57): period-only, same
+    # rolling treatment as invest/divest — the committing roll's tier
+    # purchase for a period wins over an earlier look-ahead roll's.
+    'trade',
     'dual_invest_connection', 'dual_invest_node', 'dual_invest_unit',
     'dual_maxInvest_period', 'dual_maxCumulative',
-    'dual_maxInvestGroup_period', 'dual_maxInvestGroup_total', 'dual_maxInvestGroup_cumulative',
-    # Investment-floor (min-side) duals — all keep a ('solve', 'period')
-    # index (the min invest-total constraint, unlike max-total, retains its
-    # period axis), so every family drops the solve level here rather than
-    # collapsing to solve-only.
-    'dual_minInvest_period', 'dual_minInvest_total', 'dual_minCumulative',
-    'dual_minInvestGroup_period', 'dual_minInvestGroup_total', 'dual_minInvestGroup_cumulative',
-    'dual_co2_max_period',
+    'dual_maxInvestGroup_period', 'dual_maxInvestGroup_cumulative',
+    # Investment-floor (min-side) duals — keep a ('solve', 'period') index,
+    # so every family drops the solve level here rather than collapsing to
+    # solve-only.  ``dual_minInvest_total`` / ``dual_minInvestGroup_total``
+    # moved to ``_V_SOLVE_ONLY`` below — the rows they mirror
+    # (``min{,InvestGroup_}entity_total_path_{p,n}``) are now one row per
+    # entity/group over the whole chain horizon (period summed out), like
+    # the max-side totals, not per (entity/group, period).
+    'dual_minInvest_period', 'dual_minCumulative',
+    'dual_minInvestGroup_period', 'dual_minInvestGroup_cumulative',
+    # dual_co2_max_period moved to its own hour-weighted reduction below
+    # (Q22) -- a period that straddles several rolling windows needs an
+    # average over the rolls that realize it, not "last roll wins".
 ]
 
 # Variables with a solve-only row index — must collapse to a single
@@ -28,6 +37,12 @@ _V_DROP = [
 # ``dual_co2_max_total`` below.
 _V_SOLVE_ONLY = [
     'dual_maxInvest_total',
+    # min{,InvestGroup_}entity_total_path_{p,n} are now one row per
+    # entity/group over the chain horizon (no period axis) — see the
+    # comment above.  dual_maxInvestGroup_total moves here too (same
+    # chain-horizon reshape, max side).
+    'dual_minInvest_total',
+    'dual_maxInvestGroup_total', 'dual_minInvestGroup_total',
 ]
 
 # Parameters: droplevel('solve') + deduplicate with keep='last'.
@@ -39,29 +54,28 @@ _V_SOLVE_ONLY = [
 # post-decision value).
 _PAR_DROP = [
     'step_duration', 'timestep_weight', 'flow_min', 'flow_max',
-    # pdt_branch_weight — same (solve, period, time) → (period, time)
-    # treatment as step_duration/timestep_weight (the per-(d, t) cost
-    # terms it multiplies are already solve-stripped).  keep='last' matches:
-    # the roll that commits a realized (period, time) carries its weight.
-    'pdt_branch_weight',
     'process_availability', 'process_source_sink_varCost',
     'process_slope', 'process_section',
     'node_self_discharge_loss', 'node_penalty_up', 'node_penalty_down',
     'node_inflow', 'commodity_price', 'group_co2_price',
+    # ladder_price_ann (commodity price ladder, #57): authored per period, invariant across rolls that
+    # touch the same period — same keep='last' bucket as commodity_price for symmetry.
+    'ladder_price_ann',
     'reserve_upDown_group_reservation',
     'reserve_upDown_group_shortfall_scale', 'profile',
+    # The invest / divest lumps come from the solve that realizes the
+    # decision period only (persist_realized_slice); keep='last' ties the
+    # rolls of one solve.
     'entity_annual_discounted', 'entity_annual_divest_discounted',
+    'entity_annuity_yearly', 'entity_divest_annuity_yearly',
+    # The reported costs' discount factors count from the start of the run,
+    # so every solve holding a period gives it the same value.
     'inflation_factor_investment_yearly',
-    # inflation_factor_operations_yearly evolves across rolls: each step
-    # carries period-d's "active" factor (4.54 ≈ Σ(1+r)^y × p_years[d,y])
-    # in its FIRST row and a forward-looking discount (3.73) in its
-    # SECOND row.  ``keep='last'`` therefore picks the value from the
-    # step that COMMITS period d (where d is the realized invest/dispatch
-    # period), matching what the LP objective uses.  ``keep='first'``
-    # would lock in the earlier step's forward-looking discount for every
-    # period after the first, leaving costs_discounted off by the
-    # active/forward ratio (~1.18 for the multi_year fixture).
     'inflation_factor_operations_yearly',
+    # The solve's own operations factor (CO2 price): only the solves that
+    # realize the period's dispatch persist it, so the realizing solve's
+    # value is the one kept (its rolls carry the same factor).
+    'inflation_factor_operations_solve',
     'group_penalty_capacity_margin', 'group_capacity_margin',
     # entity_all_existing carries the cumulative existing-capacity
     # chain (existing + Σ prior invest − Σ prior divest).  The last roll
@@ -75,6 +89,9 @@ _PAR_DROP = [
     # moved here for symmetry with entity_all_existing per the
     # 2026-05-14 investigation into the unit_capacity__d.csv lag.
     'entity_pre_existing',
+    # entity_user_existing — the user's existing capacity aged over its
+    # lifetime, the same in every solve (the fixed cost of existing capacity).
+    'entity_user_existing',
     # NOTE: complete_period_share_of_year is intentionally NOT in this
     # bucket — it needs an order-INDEPENDENT max-per-period reduction,
     # done explicitly in drop_levels() below.  See the comment there.
@@ -129,12 +146,96 @@ def _reduce_share_per_period(csoy: pd.Series) -> pd.Series:
     return csoy.groupby(level=0, sort=False).max()
 
 
+def _period_level(idx: pd.Index) -> "pd.Index | None":
+    if isinstance(idx, pd.MultiIndex):
+        return idx.get_level_values('period') if 'period' in idx.names else None
+    return idx if idx.name == 'period' else None
+
+
+def _drop_unrealized_forecast_periods(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace) -> None:
+    """Remove the rows of unrealized forecast-branch periods from every output input.
+
+    A stochastic solve's forecast-branch periods (``s.forecast_period``) are never part of the
+    realized timeline unless the solve realizes them (``s.d_realize_dispatch_or_invest``), yet the
+    parameters, sets and dual variables of the solve carry rows for them.  Normal outputs hold realized
+    rows only, so those rows go here, before any calculation: every ``Series`` / ``DataFrame`` /
+    ``Index`` of ``par``, ``s`` and ``v`` with a ``period`` index level is cut with one ``isin``.
+    No-op for a solve without forecasts.
+    """
+    forecast = getattr(s, 'forecast_period', None)
+    if forecast is None or len(forecast) == 0:
+        return
+    realized = set(_period_level(s.d_realize_dispatch_or_invest)) | set(_period_level(s.d_realized_period))
+    drop = [p for p in dict.fromkeys(_period_level(forecast)) if p not in realized]
+    if not drop:
+        return
+    for ns in (par, s, v):
+        for attr, obj in list(vars(ns).items()):
+            if attr == 'forecast_period':
+                continue
+            if isinstance(obj, (pd.Series, pd.DataFrame)):
+                periods = _period_level(obj.index)
+            elif isinstance(obj, pd.Index):
+                periods = _period_level(obj)
+            else:
+                continue
+            if periods is None:
+                continue
+            mask = periods.isin(drop)
+            if mask.any():
+                setattr(ns, attr, obj[~mask])
+
+
+def _co2_period_price_weighted(
+    v_dual: pd.DataFrame, step_duration: pd.Series, dt_realize_dispatch: pd.MultiIndex,
+) -> pd.DataFrame:
+    """Hour-weighted average of ``dual_co2_max_period`` across rolls (Q22).
+
+    A period that straddles several rolling windows (the roll boundary
+    falls inside the period, not at its edge) gets one dual per roll that
+    touches it -- each roll's own sub-LP shadow price for its own slice of
+    the period.  ``keep='last'`` (the plain ``_V_DROP`` treatment every
+    other roll-overlapping dual gets) would report only the LAST roll's
+    price and silently drop every earlier roll's realized hours. Q22
+    instead weights each roll's price by the hours THAT roll keeps
+    (realizes) of the period, and averages.
+
+    Weight[solve, period] = Σ step_duration[solve, period, t] over the
+    (period, t) pairs ``dt_realize_dispatch`` marks realized for that
+    solve.  A roll that only sees period d as look-ahead (never commits a
+    result for it) contributes zero weight and is excluded entirely.
+
+    Deterministic / single-roll solves have exactly one (solve, period)
+    row per period, so the weight cancels and this is a no-op -- byte-
+    identical to the prior ``keep='last'`` dedup.
+    """
+    has_solve = 'solve' in v_dual.index.names
+    if v_dual.empty or not has_solve:
+        return v_dual.droplevel('solve') if has_solve else v_dual
+    sd_realized = step_duration[step_duration.index.isin(dt_realize_dispatch)]
+    weight = sd_realized.groupby(level=['solve', 'period']).sum()
+    weight = weight.reindex(v_dual.index, fill_value=0.0)
+    weighted = v_dual.mul(weight, axis=0)
+    num = weighted.groupby(level='period').sum()
+    den = weight.groupby(level='period').sum()
+    out = num.div(den, axis=0)
+    # Defensive: a period with zero total realized weight across every
+    # roll that touches it shouldn't happen for a genuinely realized
+    # period, but fall back to a plain mean rather than a silent 0/0 NaN.
+    zero_den = den.index[den == 0.0]
+    if len(zero_den) > 0:
+        plain = v_dual.groupby(level='period').mean()
+        out.loc[zero_den] = plain.loc[zero_den]
+    return out
+
+
 def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     """Strip the 'solve' level from all time-indexed variables, parameters and sets.
 
     Must be called before any post-processing calculations.
     Returns (par, s, v) with the solve level removed in-place.
     """
+    _drop_unrealized_forecast_periods(par, s, v)
     for attr in _V_DROP:
         obj = getattr(v, attr)
         obj = obj.droplevel('solve')
@@ -143,9 +244,18 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
             obj = obj[~obj.index.duplicated(keep='last')]
         setattr(v, attr, obj)
 
+    # dual_co2_max_period (Q22): hour-weighted average across rolls instead
+    # of the plain keep='last' dedup above -- see _co2_period_price_weighted.
+    # par.step_duration / s.dt_realize_dispatch are still solve-indexed here
+    # (their own drops happen further down).
+    v.dual_co2_max_period = _co2_period_price_weighted(
+        v.dual_co2_max_period, par.step_duration, s.dt_realize_dispatch,
+    )
+
     # Solve-only indexes (``dual_co2_max_total`` historically, plus
     # ``dual_maxInvest_total`` which became solve-only when its reader
-    # arity was fixed): collapse to a single row (last solve wins).
+    # arity was fixed, and ``dual_minInvest_total`` since they became one row per entity): collapse
+    # to a single row (last solve wins).
     for attr in [*_V_SOLVE_ONLY, 'dual_co2_max_total']:
         obj = getattr(v, attr)
         if not obj.empty:
@@ -202,6 +312,9 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     s.dtt = s.dtt.droplevel('solve')
     dtt_pt = s.dtt.droplevel('t_previous')
     s.dtt = s.dtt[dtt_pt.isin(s.dt_realize_dispatch) & ~dtt_pt.duplicated(keep='last')]
+    s.ramp_link = s.ramp_link.droplevel('solve')
+    ramp_pt = s.ramp_link.droplevel(['period_previous', 'time_previous'])
+    s.ramp_link = s.ramp_link[ramp_pt.isin(s.dt_realize_dispatch) & ~ramp_pt.duplicated(keep='last')]
     s.dtttdt = s.dtttdt.droplevel('solve')
     dtttdt_pt = s.dtttdt.droplevel(['t_previous', 't_previous_within_timeset', 'd_previous', 't_previous_within_solve'])
     s.dtttdt = s.dtttdt[dtttdt_pt.isin(s.dt_realize_dispatch) & ~dtttdt_pt.duplicated(keep='last')]
@@ -210,5 +323,20 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
     s.edd_invest.names = ['entity', 'period_invest', 'period']
     s.edd_invest = s.edd_invest.join(s.d_realize_invest, how='inner')
     s.ed_divest = s.ed_divest.droplevel('solve').unique().join(s.d_realize_invest, how='inner')
+    # The period labels of the stochastic fans (the investment costs inside a fan are reported at its labels).
+    s.fan_label_period = s.fan_label_period.droplevel('solve').unique()
+    # Lead-time sets are keyed by the realized investment DECISION
+    # (period_invest); the period the capacity comes online or is in
+    # construction may be a look-ahead period of the deciding solve.  A
+    # recourse fan decides at its branch periods; its branch-weighted
+    # investment is at the label (``v.invest_fan``), so the labels that hold
+    # one are decisions too.
+    realized_invest = set(s.d_realize_invest) | set(v.invest_fan.index)
+    # The operating / retirement windows of the annualized costs are keyed by their decision likewise.
+    for attr, decision in (('edd_invest_commission', 'period_invest'), ('edd_invest_in_construction', 'period_invest'),
+                           ('edd_operating_window', 'period_invest'), ('edd_retire_window', 'period_divest'),
+                           ('edd_salvage_window', 'period_divest')):
+        idx = getattr(s, attr).droplevel('solve').unique()
+        setattr(s, attr, idx[idx.get_level_values(decision).isin(realized_invest)])
 
     return par, s, v

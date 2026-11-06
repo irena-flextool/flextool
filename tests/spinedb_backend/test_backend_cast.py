@@ -16,7 +16,7 @@ scenario filter the Backend was opened with.
 
 Fixture work folders are built dynamically per session via the
 ``scenario_workdir`` factory (``tests/conftest.py``).  The pre-v4.0.0
-committed ``tests/engine_polars/data/work_*`` snapshots that this
+committed ``tests/engine/data/work_*`` snapshots that this
 module used to read from disk are gone; the backend now opens the
 ``tests.sqlite`` materialised on demand from the JSON-backed SpineDB
 fixtures.

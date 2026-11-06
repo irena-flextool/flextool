@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from spinedb_api import Array, DatabaseMapping, Map, import_data
+from flextool.update_flextool.db_handle import open_database_mapping
 
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_migration import migrate_database
@@ -264,12 +265,12 @@ def create_flextool_db_from_matpower(
     url = f"sqlite:///{db_path}"
 
     # Step 2: Add MATPOWER data
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         _add_matpower_data(db, case, alternative_name)
         db.commit_session("Add MATPOWER case data")
 
     # Step 3: Add scenario
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         # The template already creates a 'base' alternative.
         # Add scenario and link it.
         _count, errors = import_data(

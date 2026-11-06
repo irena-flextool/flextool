@@ -66,7 +66,7 @@ SUB_SOLVES = ("invest_1year_5weeks", "y2020_fullYear_dispatch")
 
 # The post-mortem's R1 target: ``rel_tol=1e-9`` against v3.32.0 golden.
 # The captured value (originally lived in
-# ``tests/engine_polars/data/work_5weeks_invest_fullYear_dispatch_coal_wind/
+# ``tests/engine/data/work_5weeks_invest_fullYear_dispatch_coal_wind/
 # golden_obj.json`` and was deleted alongside the rest of the static
 # work_*/ snapshots in commit ce17da96) is inlined as a constant: it's
 # a one-shot capture from db_direct on 2026-05-04 and the cascade
@@ -105,7 +105,7 @@ def invest_chain_steps(test_db_url, tmp_path_factory):  # noqa: ANN001
     Uses ``keep_solutions=True`` so each step retains its Provider for
     frame-equality checks (R2).
     """
-    from flextool.engine_polars import run_chain_from_db
+    from flextool.engine import run_chain_from_db
     work = tmp_path_factory.mktemp("invest_chain_regression_work")
     steps = run_chain_from_db(
         test_db_url,
@@ -289,7 +289,7 @@ def test_invest_chain_lp_bound_range_smoke(invest_chain_steps, sub_solve):
 @pytest.fixture(scope="module")
 def base_steps(test_db_url, tmp_path_factory):  # noqa: ANN001
     """Run the ``base`` scenario once per module for the work_base smoke."""
-    from flextool.engine_polars import run_chain_from_db
+    from flextool.engine import run_chain_from_db
     work = tmp_path_factory.mktemp("invest_chain_regression_base_work")
     steps = run_chain_from_db(
         test_db_url,

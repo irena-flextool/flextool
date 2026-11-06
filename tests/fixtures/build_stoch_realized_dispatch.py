@@ -63,7 +63,7 @@ Two solves (``model.solves`` ORDER matters — dispatch listed AFTER)
      dispatches peaker at 60 MW.
 
 Last-wins: both solves realize p2035/t0001-t0003; ``stoch_rd`` is
-emptied of its realized window (truncated in ``_native_run_model``) so
+emptied of its realized window (truncated in ``_run_model``) so
 the deterministic dispatch solve OWNS the reported realized operations.
 
 Hand calculation (dispatch solve, assertion (d))
@@ -85,6 +85,9 @@ from __future__ import annotations
 import base64
 import json
 from pathlib import Path
+
+from flextool.update_flextool.fixture_schema import schema_sections
+from flextool.update_flextool.test_fixtures import write_built_fixture
 
 FIXTURES = Path(__file__).resolve().parent
 
@@ -111,18 +114,7 @@ def _nested(pairs: list[tuple[str, object]]) -> dict:
 
 
 def build() -> dict:
-    src = json.loads((FIXTURES / "stochastics.json").read_text())
-
-    spec: dict = {
-        key: src[key]
-        for key in (
-            "entity_classes",
-            "parameter_value_lists",
-            "parameter_groups",
-            "parameter_definitions",
-            "parameter_types",
-        )
-    }
+    spec: dict = schema_sections("packed")
 
     spec["alternatives"] = [
         ["init", "Model, solves and time structure (two-solve chain)"],
@@ -274,7 +266,7 @@ def build() -> dict:
 def main() -> None:
     spec = build()
     out = FIXTURES / "stoch_realized_dispatch.json"
-    out.write_text(json.dumps(spec, indent=2) + "\n")
+    write_built_fixture(spec, out)
     print(f"Wrote {out} "
           f"({len(spec['parameter_values'])} parameter values)")
 

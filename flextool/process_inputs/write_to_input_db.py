@@ -1,5 +1,6 @@
 import os
-from spinedb_api import DatabaseMapping, from_database, to_database, SpineDBAPIError, Asterisk
+from spinedb_api import from_database, to_database, SpineDBAPIError, Asterisk
+from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.exception import NothingToCommit
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 
@@ -121,7 +122,7 @@ def write_to_flextool_input_db(input_path, tabular_reader, target_db_url, input_
         print("No sqlite file at " + target_db_url)
         exit(-1)
 
-    with DatabaseMapping(db_url, create = False, upgrade = True) as db:
+    with open_database_mapping(db_url, create = False, upgrade = True) as db:
         sq = db.object_parameter_definition_sq
         version_parameter = db.query(sq).filter(sq.c.object_class_name == "model").filter(sq.c.parameter_name == "version").one_or_none()
         if version_parameter is None:

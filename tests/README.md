@@ -255,7 +255,7 @@ Roughly grouped:
   `test_bar_layout.py`, `test_flowgroup_indicators.py`
 - **Parity tool itself:** `test_mps_parity_harness.py` (unit tests
   for `migration.mps_parity` on synthetic MPS fixtures)
-- **Other utilities:** `test_blocks.py`, `test_precision.py`,
+- **Other utilities:** `test_blocks.py`, `test_env_knob_registry.py`,
   `test_solve_config.py`, `test_solver_options.py`,
   `test_highs_handle.py`, `test_ensure_settings_db.py`,
   `test_export_to_tabular.py`, `test_self_describing_reader.py`,

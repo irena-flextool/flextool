@@ -55,7 +55,7 @@ Solve subset mechanism
 ``cmd_run_flextool`` has NO ``--solves`` flag; the authoritative, DB-driven
 way to run a subset of a scenario's solves is the ``model.solves`` Array,
 resolved under the scenario's alternative stack
-(:meth:`flextool.engine_polars._solve_config.SolveConfig.load_from_db`).  The
+(:meth:`flextool.engine.input._solve_config.SolveConfig.load_from_db`).  The
 driver therefore writes a dedicated ``model.solves`` OVERRIDE alternative at
 the TOP of the scenario's stack (mirroring
 :mod:`flextool.calibrate._db_alt`): set to the invest solve(s) for an
@@ -72,7 +72,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import spinedb_api as api
-from spinedb_api import Array, DatabaseMapping, import_data
+from spinedb_api import Array, import_data
+from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.exception import NothingToCommit
 
 from flextool.calibrate._readers import (
@@ -81,7 +82,7 @@ from flextool.calibrate._readers import (
 )
 from flextool.calibrate._solve import run_solve
 from flextool.calibrate._solve_status import assess_solve
-from flextool.engine_polars._db_reader import get_single_entities
+from flextool.engine.input._db_reader import get_single_entities
 from flextool.gui.solve_reader import read_scenario_solves
 from flextool.representative_periods.preprocess import (
     preprocess_representative_periods,
@@ -229,7 +230,7 @@ def _guard_no_timed_energy_margin(url: str, scenario: str) -> None:
     method and adder value are seen.
     """
     scen_config = api.filters.scenario_filter.scenario_filter_config(scenario)
-    with DatabaseMapping(_normalise_url(url)) as db:
+    with open_database_mapping(_normalise_url(url)) as db:
         api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
         db.fetch_all("parameter_value")
 
@@ -282,7 +283,7 @@ def _write_solves_override_alt(
     auto-wired single-solve case) there is nothing to override, so the natural
     single solve runs and the override is skipped.
     """
-    with DatabaseMapping(_normalise_url(url)) as db:
+    with open_database_mapping(_normalise_url(url)) as db:
         models = get_single_entities(db=db, entity_class_name="model")
         if not models:
             return
@@ -323,7 +324,7 @@ def _read_rep_starts(url: str, timeset_name: str, alternative_name: str) -> tupl
     it back from the pinned ``(timeset, alternative)`` so the driver can detect
     when a re-selection reproduces the previous set (convergence).
     """
-    with DatabaseMapping(_normalise_url(url)) as db:
+    with open_database_mapping(_normalise_url(url)) as db:
         db.fetch_all("parameter_value")
         for pv in db.find_parameter_values(
             entity_class_name="timeset",

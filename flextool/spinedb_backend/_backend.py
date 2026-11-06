@@ -2,8 +2,8 @@
 
 The Backend opens a :class:`spinedb_api.DatabaseMapping`, applies a
 scenario filter, eagerly fetches the parameter / entity tables (same
-``fetch_all`` pattern used by :mod:`flextool.engine_polars._db_loader`
-and :mod:`flextool.engine_polars._solve_config`), and exposes per-spec
+``fetch_all`` pattern used by :mod:`flextool.engine.input._db_loader`
+and :mod:`flextool.engine.input._solve_config`), and exposes per-spec
 materialiser methods that each return a canonical
 :class:`polars.DataFrame`.
 
@@ -29,7 +29,7 @@ Hard rules
   polars frame.
 * **No disk read fallbacks.**  The Backend reads SpineDB, full stop.
 
-Note on :class:`flextool.engine_polars._spinedb_reader.SpineDbReader`
+Note on :class:`flextool.engine.input._spinedb_reader.SpineDbReader`
 --------------------------------------------------------------------
 
 The pre-existing ``SpineDbReader`` (used by the native cascade LP
@@ -49,21 +49,12 @@ from typing import Any, Iterable
 
 import polars as pl
 
-from flextool.common_utils.precision import format_scalar_for_csv
 from flextool.spinedb_backend._axis_enums import (
     AxisContract,
     cast_against_contract,
     load_axis_contract,
 )
 
-
-# ---------------------------------------------------------------------------
-# Structural-parameter skip list — preserved verbatim from
-# ``input_writer.write_parameter`` (lines 2166-2191).  These parameter
-# names hold method names / structural identifiers / boolean flags
-# rather than numerical coefficients; precision rounding would corrupt
-# the model, so the effective precision is forced to 0 (passthrough).
-# ---------------------------------------------------------------------------
 
 # ---------------------------------------------------------------------------
 # v56 Batch F — three entity classes carry an explicit ``is_enabled``
@@ -82,30 +73,6 @@ _IS_ENABLED_CLASSES: frozenset[str] = frozenset({
 })
 
 
-_STRUCTURAL_PARAM_NAMES: frozenset[str] = frozenset({
-    # method names
-    "ct_method", "transfer_method", "conversion_method",
-    "startup_method", "fork_method", "inflow_method",
-    "invest_method", "lifetime_method", "ramp_method",
-    "minimum_time_method", "storage_binding_method",
-    "storage_nested_fix_method", "storage_solve_horizon_method",
-    "storage_start_end_method", "profile_method", "reserve_method",
-    "co2_method", "loss_share_type", "price_method",
-    "capacity_margin_method", "energy_margin_method",
-    "solver", "solve_mode",
-    "solver_precommand", "solver_arguments",
-    # structural flags / references
-    "is_DC", "sense", "node_type",
-    "has_inertia", "has_non_synchronous", "include_stochastics",
-    "print_dispatch", "print_indicators",
-    "flow_aggregator",
-    "output_horizon",
-    # set membership / name references
-    "solves", "contains_solves", "model",
-    "realized_periods", "realized_invest_periods",
-    "fix_storage_periods", "invest_periods", "periods_available",
-    "version",
-})
 
 
 class SpineDBBackend:
@@ -125,11 +92,6 @@ class SpineDBBackend:
         Scenario filter name.  ``None`` disables filtering (matches the
         ``write_input`` semantics: when no scenario is supplied the DB
         is consumed as-is).
-    precision_digits : int, default 0
-        Precision-rounding policy passed to
-        :func:`format_scalar_for_csv` during parameter materialisation.
-        ``0`` disables rounding (byte-parity with the pre-precision-pass
-        emissions).
 
     Notes
     -----
@@ -147,7 +109,7 @@ class SpineDBBackend:
 
     # Class-level defaults so ``__new__`` paths (e.g.
     # ``flextool.input_derivation.run`` bypasses ``__init__`` and attaches
-    # ``_db`` / ``_api`` / ``_precision_digits`` manually) still expose the
+    # ``_db`` / ``_api`` manually) still expose the
     # attributes Phase-2 cast code reads.  ``_scenario_name`` defaults to
     # ``None`` (unfiltered backend); callers that *do* want a scenario
     # filter should construct via ``__init__``.
@@ -172,15 +134,12 @@ class SpineDBBackend:
         self,
         db_url: str,
         scenario_name: str | None = None,
-        *,
-        precision_digits: int = 0,
     ) -> None:
         url = str(db_url)
         if "://" not in url:
             url = f"sqlite:///{url}"
         self._db_url = url
         self._scenario_name = scenario_name
-        self._precision_digits = int(precision_digits)
         self._db: Any | None = None
         self._open()
 
@@ -370,6 +329,24 @@ class SpineDBBackend:
             parameter_definition_name=parameter_definition_name,
         )
 
+    def parameter_value_items(
+        self,
+        entity_class_name: str,
+        parameter_definition_name: str,
+    ) -> list:
+        """Scenario-filtered parameter-value items of *(entity_class_name,
+        parameter_definition_name)* from the bulk per-backend index (built
+        once, see :meth:`_get_parameter_value_index`); empty when absent.
+
+        Unlike :meth:`find_parameter_values` this does not issue a filtered
+        query per call.  The items are spinedb-api's own: a caller that
+        reads ``item["parsed_value"]`` owns evicting the cached parse
+        (Track A, see :meth:`parameter_values`).
+        """
+        return self._get_parameter_value_index().get(
+            (entity_class_name, parameter_definition_name), [],
+        )
+
     @property
     def api(self):
         """Expose the underlying :mod:`spinedb_api` module.
@@ -433,17 +410,6 @@ class SpineDBBackend:
             set(filter_in_type) if filter_in_type is not None else None
         )
 
-        precision = self._precision_digits
-        # Match write_default_values' structural-param policy: when the
-        # default is one of the structural param names the precision is
-        # forced to 0 so the emitted text round-trips byte-for-byte with
-        # the on-disk legacy CSV.  (The legacy code did not branch on
-        # the structural set for defaults — but the params in the only
-        # default_values spec entry are ``penalty_up`` / ``penalty_down``
-        # which are pure floats, so the policy is a strict superset.)
-        if any(par in _STRUCTURAL_PARAM_NAMES for _, par in cl_pars):
-            precision = 0
-
         api = self._api
         # ``find_parameter_definitions`` returns ALL definitions; filter
         # locally by (class, name) to mirror write_default_values exactly.
@@ -454,7 +420,7 @@ class SpineDBBackend:
         # FlexDataIntegrityError can name the parameter / class that
         # generated the offending row.
         row_origins: list[dict[str, Any]] = []
-        from flextool.engine_polars._solve_state import FlexToolConfigError
+        from flextool.engine.input._solve_state import FlexToolConfigError
 
         for cl_par in cl_pars:
             for definition in definitions:
@@ -473,7 +439,7 @@ class SpineDBBackend:
                     raw = api.from_database(
                         definition["default_value"], dtype,
                     )
-                    formatted = format_scalar_for_csv(raw, precision)
+                    formatted = str(raw)
                     if only_value:
                         rows.append([formatted])
                     else:
@@ -581,6 +547,7 @@ class SpineDBBackend:
         header: str,
         filter_in_type: Iterable[str] | None = None,
         filter_out_index: str | None = None,
+        filter_in_index: str | None = None,
         filter_in_value: Any = None,
         no_value: bool = False,
         param_print: bool = False,
@@ -593,24 +560,22 @@ class SpineDBBackend:
         """Materialise the parameter-value rows for one ``_PARAMETER_SPECS`` entry.
 
         Handles the 1d / 2d / … map dimensionality logic, type / value /
-        index filters, the structural-parameter precision policy, the
-        ``no_value`` /
-        ``no_entity`` / ``param_print`` / ``param_loc`` schema shaping
+        index filters, the ``no_value`` / ``no_entity`` / ``param_print`` / ``param_loc`` schema shaping
         flags — but returns a polars frame instead of writing CSV.
+
+        ``filter_in_index`` is the mirror of ``filter_out_index``: when
+        set, a map row is kept only when its outer ``index_name`` equals
+        it (a scalar / array / non-map row is unaffected — the check
+        lives inside the ``ptype == "map"`` branch, same as
+        ``filter_out_index``).
         """
         if self._db is None:
             raise RuntimeError("SpineDBBackend is closed")
-        from flextool.engine_polars._solve_state import FlexToolConfigError
+        from flextool.engine.input._solve_state import FlexToolConfigError
 
         cl_pars = list(cl_pars)
         cols = [c.strip() for c in header.split(",")]
         dimens_list = list(dimens) if dimens is not None else None
-
-        # Effective precision per the structural-param policy.
-        effective_precision = (
-            0 if any(par in _STRUCTURAL_PARAM_NAMES for _, par in cl_pars)
-            else self._precision_digits
-        )
 
         # Map-dimensionality filter parsing — exactly write_parameter's
         # rule.  At most one ``Nd_map`` entry; if present, also accept
@@ -781,6 +746,11 @@ class SpineDBBackend:
                 ):
                     continue
                 if (
+                    filter_in_index
+                    and param["parsed_value"].index_name != filter_in_index
+                ):
+                    continue
+                if (
                     filter_in_type_list
                     and isinstance(type_filter_map_dim, int)
                     and type_filter_map_dim
@@ -798,8 +768,7 @@ class SpineDBBackend:
                     indexes = [str(ind) for ind in value.indexes]
                     pairs = list(zip(
                         indexes,
-                        [format_scalar_for_csv(v, effective_precision)
-                         for v in value.values],
+                        [str(v) for v in value.values],
                     ))
                     for idx, val in pairs:
                         if no_value:
@@ -819,9 +788,7 @@ class SpineDBBackend:
                         if no_value:
                             rows.append(first_cols + row[:-1])
                         else:
-                            row[-1] = format_scalar_for_csv(
-                                row[-1], effective_precision,
-                            )
+                            row[-1] = str(row[-1])
                             rows.append(first_cols + row)
                         # The map index path is the row content before
                         # the value; render it as a joined-string for
@@ -884,7 +851,7 @@ class SpineDBBackend:
                 for i_arr, v in enumerate(param["parsed_value"].values):
                     rows.append(
                         list(entity_byname)
-                        + [format_scalar_for_csv(v, effective_precision)]
+                        + [str(v)]
                     )
                     _origin_append({
                         "parameter": pname,
@@ -907,9 +874,7 @@ class SpineDBBackend:
                 else:
                     rows.append(
                         first_cols
-                        + [format_scalar_for_csv(
-                            param["parsed_value"], effective_precision,
-                        )]
+                        + [str(param["parsed_value"])]
                     )
                 _origin_append({
                     "parameter": pname,
@@ -1095,7 +1060,7 @@ def _rows_to_frame(rows: list[list[Any]], cols: list[str]) -> pl.DataFrame:
     """Build an all-Utf8 polars frame from string-row data.
 
     The legacy CSVs are pure text — every cell is the result of
-    :func:`format_scalar_for_csv` or a raw entity name.  Reading them
+    ``str(value)`` or a raw entity name.  Reading them
     back yields :class:`polars.Utf8` columns; we materialise the
     frames with the same schema so downstream consumers see byte-
     identical bytes when the Provider is snapshotted to disk.

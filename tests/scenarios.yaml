@@ -771,6 +771,22 @@
   # probability-weighted LP objective exactly (the phantom's free slack ×0 = 0;
   # the four forecasts ×0.25 sum to the expectation).  This value IS the LP
   # objective (summary_solve ``2day_dispatch`` row == this).
-  expected_objective: 66.9291187913
-  expected_objective_tolerance: 1.0e-4
+  #
+  # Re-grounded 66.9291187913 → 67.3517305373 when the period label lost its
+  # dispatch: each forecast of this fan in the solve's first period starts
+  # from the solve-start storage form; the parent LP with exactly those edits,
+  # solved on its own from the edited MPS, gives the same value
+  # (tests/expected/REGEN_LOG.md).  The fan is forecasts-only (four forecasts,
+  # no realized: yes branch), so the run is this one stochastic solve and the
+  # calculated total equals its LP objective
+  # (tests/test_cost_aggregation_semantics.py::test_stochastic_branch_weight).
+  #
+  # Since normal outputs became realized-only (output_horizon writes a
+  # separate raw dump, tests/expected/REGEN_LOG.md) a forecasts-only fan with
+  # no realization solve realizes no step, so the calculated full-horizon total
+  # is 0 by construction (checked relationally in test_stochastic_branch_weight)
+  # and the value above is pinned as the solver objective instead: the sum of
+  # the summary_solve.csv ``<solve>,<Objective>`` rows.
+  expected_solver_objective: 67.3517305373
+  expected_objective_tolerance: 1.0e-6
   time_budget_seconds: 30.0

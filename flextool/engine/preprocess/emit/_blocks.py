@@ -1,0 +1,1171 @@
+"""
+blocks.py — Per-node temporal block derivation (group ``new_stepduration``).
+
+* Take group-level ``new_stepduration`` (v51 schema) and derive a
+  **block** for every node: the node's ``new_stepduration`` group, or
+  ``"default"``.  When no group sets ``new_stepduration`` the derivation
+  collapses to the single block ``"default"``.
+* Emit the per-solve block frames to ``solve_data/``:
+
+  * ``entity_block.csv``            — one row per node.
+  * ``block_duration.csv``          — (block, step_duration): each block's
+                                       nominal step (default = the solve's step).
+  * ``block_step_duration.csv``     — per (block, period, step) step
+                                       duration, analogous to
+                                       ``steps_in_use.csv``.
+  * ``overlap_set.csv``             — (period, block_coarse, step_coarse,
+                                       block_fine, step_fine, fraction).
+  * ``block_step_previous.csv``     — per-block predecessor relations
+                                       analogous to ``step_previous.csv``.
+  * ``block_period_time_first.csv`` / ``block_period_time_last.csv`` —
+                                       per-block first / last step of each
+                                       period.
+
+The model reads the node -> group map and the group step durations from
+these frames (``entity_block``, ``block_step_duration``) and the
+default block's period boundaries; the coarse steps of a coarse node are
+cut from the solve's own steps by
+``flextool.engine.preprocess.params._coarse.coarse_node_frames``.  The
+per-block aggregated timelines of the non-default blocks (and their
+overlap / predecessor rows) are a plain chunking of each period's steps
+(a chunk closes once it holds the group's step; a period that is not a
+multiple ends with a shorter chunk) and do not feed the model.
+
+Units and connections have no block: their flows and online status stay
+at the solve's step whatever groups they are listed in.
+"""
+from __future__ import annotations
+
+from collections import defaultdict
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import TYPE_CHECKING, Iterable
+
+import polars as pl
+
+from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.engine.preprocess.params._coarse import _warn_once, coarse_membership_warnings
+from flextool.engine.preprocess._provider_io import _emit
+
+
+# ---------------------------------------------------------------------------
+# Single-frame writer (canonical _write helper)
+# ---------------------------------------------------------------------------
+
+
+if TYPE_CHECKING:  # pragma: no cover — import cycle guard only
+    from flextool.engine.input._solve_config import SolveConfig
+    from flextool.engine.input._timeline import TimelineConfig
+
+
+# ---------------------------------------------------------------------------
+# Public types
+# ---------------------------------------------------------------------------
+
+
+DEFAULT_BLOCK = "default"
+
+
+@dataclass
+class BlockAssignments:
+    """Per-entity block mappings for a single solve.
+
+    Attributes
+    ----------
+    node_block : dict[str, str]
+        node_name → block_name.
+    block_step_duration : dict[str, float]
+        block_name → hours per step.  ``DEFAULT_BLOCK`` always present.
+    """
+    node_block: dict[str, str] = field(default_factory=dict)
+    block_step_duration: dict[str, float] = field(default_factory=dict)
+
+
+@dataclass
+class OverlapSet:
+    """Cross-resolution overlap rows.
+
+    Each row is ``(period, block_coarse, step_coarse, block_fine,
+    step_fine, fraction)``.  Fractions follow the aligned-subsets
+    convention: always 1.0 when present, non-matching tuples omitted.
+    """
+    rows: list[tuple[str, str, str, str, str, float]] = field(default_factory=list)
+
+
+@dataclass
+class BlockTimelines:
+    """Per-block (period → [(step, duration_hours)]) timelines.
+
+    Used internally to emit ``block_step_duration.csv`` and to build
+    the overlap set.
+    """
+    per_block: dict[str, dict[str, list[tuple[str, float]]]] = field(default_factory=dict)
+
+
+@dataclass
+class BlockPredecessors:
+    """Per-block predecessor relations (Agent 1.4).
+
+    One row per ``(block, period, step)`` in each block's timeline,
+    carrying the successor→predecessor mapping analogous to
+    ``dtttdt`` / ``step_previous.csv``.  In the degenerate case (only
+    the ``"default"`` block) the row set equals the solve's existing
+    ``dtttdt`` with the ``"default"`` tag prepended.
+
+    Row schema: ``(block, period, step, step_previous,
+    step_previous_within_timeset, period_previous,
+    step_previous_within_solve)``.
+    """
+    rows: list[tuple[str, str, str, str, str, str, str]] = field(default_factory=list)
+
+
+@dataclass
+class BlockBoundaries:
+    """Per-block first / last step of each period (Agent 1.4).
+
+    ``first`` and ``last`` are lists of ``(block, period, step)`` rows,
+    covering every block in ``BlockAssignments.block_step_duration``.
+    In the degenerate case ``first`` and ``last`` for the ``"default"``
+    block equal the solve's ``period__time_first`` / ``period__time_last``
+    with the ``"default"`` tag prepended.
+    """
+    first: list[tuple[str, str, str]] = field(default_factory=list)
+    last: list[tuple[str, str, str]] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Validation
+# ---------------------------------------------------------------------------
+
+
+def validate_group_membership(
+    group_unit: Iterable[tuple[str, str]],
+    group_connection: Iterable[tuple[str, str]],
+    group_node: Iterable[tuple[str, str]],
+    resolution_groups: dict[str, float],
+    decomposition_groups: dict[str, str],
+) -> None:
+    """Reject configurations with ambiguous block / region membership.
+
+    Rules
+    -----
+    Each entity (node / unit / connection) must be in **at most one**
+    resolution-group (a group with ``new_stepduration`` set) and
+    **at most one** decomposition-group (a group with
+    ``decomposition_method != 'none'``).  Membership in any number of
+    regular groups (CO2 caps, reserves, inertia …) is unconstrained.
+
+    Reserve participants may sit in a resolution-group: the reserve rows stay
+    on the solve's steps (a coarse process holds one reserve per coarse step,
+    ``model/_reserve``).
+
+    Args:
+        group_unit: ``(group, unit)`` membership tuples.
+        group_connection: ``(group, connection)`` membership tuples.
+        group_node: ``(group, node)`` membership tuples.
+        resolution_groups: group_name → new_stepduration hours.  Only
+            keys matter (the set of resolution-groups).
+        decomposition_groups: group_name → decomposition_method value.
+            Only groups with a value other than ``"none"`` count as
+            decomposition-groups.
+
+    Raises:
+        FlexToolConfigError: if any entity is in two or more
+            resolution-groups or two or more decomposition-groups.  The
+            message names the entity and both conflicting groups.
+    """
+    res_set = set(resolution_groups.keys())
+    decomp_set = {g for g, m in decomposition_groups.items() if m and m != "none"}
+
+    # Build entity → list[group_in_resolution / in_decomposition] maps.
+    entity_res: dict[str, list[str]] = defaultdict(list)
+    entity_decomp: dict[str, list[str]] = defaultdict(list)
+
+    for members in (group_unit, group_connection, group_node):
+        for g, e in members:
+            if g in res_set:
+                entity_res[e].append(g)
+            if g in decomp_set:
+                entity_decomp[e].append(g)
+
+    errors: list[str] = []
+    for e, gs in entity_res.items():
+        if len(gs) > 1:
+            errors.append(
+                f"entity '{e}' is a member of multiple resolution-groups "
+                f"({sorted(set(gs))}); each entity may belong to at most "
+                f"one group with new_stepduration set."
+            )
+    for e, gs in entity_decomp.items():
+        if len(gs) > 1:
+            errors.append(
+                f"entity '{e}' is a member of multiple decomposition-groups "
+                f"({sorted(set(gs))}); each entity may belong to at most "
+                f"one group with decomposition_method != 'none'."
+            )
+
+    if errors:
+        raise FlexToolConfigError("; ".join(errors))
+
+
+# ---------------------------------------------------------------------------
+# Block derivation
+# ---------------------------------------------------------------------------
+
+
+def _solve_step_duration(
+    solve: str,
+    solve_config: "SolveConfig | None",
+    timeline_config: "TimelineConfig | None",
+) -> float:
+    """Return the default-block step duration for *solve* in hours.
+
+    Priority (matches existing pre-v51 behaviour):
+
+    1. ``solve.new_stepduration`` (v50 parameter).
+    2. The smallest step duration that actually appears in any of the
+       solve's timelines.  This catches the pre-v50 case where the
+       timeline already encodes the desired resolution.
+
+    When neither is available (unit-test fixture with only the bare
+    block dicts) falls back to 1.0.  The return value is only used for
+    the ``DEFAULT_BLOCK`` entry in ``block_step_duration.csv`` and the
+    identity overlap rows; it does not participate in LP coefficients
+    in Agent 1.1.
+    """
+    if solve_config is not None:
+        pass  # type: ignore
+    # Solve-level new_stepduration (v50)
+    if timeline_config is not None:
+        raw = timeline_config.new_step_durations.get(solve)
+        if raw is not None:
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                pass
+
+    # Fall back to the finest step in the solve's timelines.
+    if timeline_config is not None and solve_config is not None:
+        timesets_used = solve_config.timesets_used_by_solves.get(solve, [])
+        durations: list[float] = []
+        for _period, ts in timesets_used:
+            tl = timeline_config.timesets__timeline.get(ts)
+            if not tl:
+                continue
+            for step, dur in timeline_config.timelines.get(tl, []):
+                try:
+                    durations.append(float(dur))
+                except (TypeError, ValueError):
+                    continue
+        if durations:
+            return min(durations)
+    return 1.0
+
+
+def _assign_entity_to_group(
+    entity: str,
+    memberships: Iterable[tuple[str, str]],
+    resolution_groups: dict[str, float],
+) -> str | None:
+    """Return the resolution-group *entity* belongs to, or None.
+
+    Linear scan kept for backwards compatibility with callers that pass a
+    raw membership iterable.  Hot per-entity-loop callers should build a
+    lookup once via :func:`_build_membership_index` instead — the linear
+    scan is O(M) per entity and turns the surrounding loop into O(N × M)
+    when called inside a `for entity in entities:` block.
+    """
+    for g, e in memberships:
+        if e == entity and g in resolution_groups:
+            return g
+    return None
+
+
+def _build_membership_index(
+    memberships: Iterable[tuple[str, str]],
+    resolution_groups: dict[str, float],
+) -> dict[str, str]:
+    """Pre-build {entity -> first resolution_group} so per-entity lookups
+    in `derive_blocks` go from O(M) linear scan to O(1) dict lookup.
+
+    Preserves :func:`_assign_entity_to_group`'s "first match wins"
+    semantics: when an entity appears in multiple resolution-groups, the
+    first occurrence in *memberships* iteration order wins, matching the
+    behaviour of the linear-scan helper.
+    """
+    idx: dict[str, str] = {}
+    for g, e in memberships:
+        if e in idx:
+            continue
+        if g in resolution_groups:
+            idx[e] = g
+    return idx
+
+
+def derive_blocks(
+    solve: str,
+    solve_config: "SolveConfig | None",
+    timeline_config: "TimelineConfig | None",
+    nodes: Iterable[str],
+    resolution_groups: dict[str, float],
+    group_node: Iterable[tuple[str, str]],
+) -> BlockAssignments:
+    """Compute per-node block assignments for *solve*.
+
+    Args:
+        solve: Solve name (for ``new_stepduration`` lookup).
+        solve_config: Live SolveConfig (optional — None in unit tests).
+        timeline_config: Live TimelineConfig (optional — None in unit
+            tests).
+        nodes: Iterable of node names in the solve.
+        resolution_groups: group_name → hours (``new_stepduration``).
+            Used as the set of resolution-groups and for
+            ``block_step_duration`` lookup.
+        group_node: ``(group, node)`` membership rows.
+
+    Returns:
+        BlockAssignments with node_block and block_step_duration populated.
+    """
+    gn = list(group_node)
+
+    # Step-duration table for all blocks.  Always includes the default block.
+    default_step_duration = _solve_step_duration(
+        solve, solve_config, timeline_config
+    )
+    block_step_duration: dict[str, float] = {DEFAULT_BLOCK: default_step_duration}
+    for g, dur in resolution_groups.items():
+        try:
+            block_step_duration[g] = float(dur)
+        except (TypeError, ValueError):
+            continue
+
+    # Pre-build the node→group lookup once (O(|gn|) + O(|nodes|)).
+    node_membership_index = _build_membership_index(gn, resolution_groups)
+    node_block: dict[str, str] = {}
+    for n in nodes:
+        g = node_membership_index.get(n)
+        node_block[n] = g if g is not None else DEFAULT_BLOCK
+
+    return BlockAssignments(
+        node_block=node_block,
+        block_step_duration=block_step_duration,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-block timelines
+# ---------------------------------------------------------------------------
+
+
+def _build_block_timelines(
+    solve: str,
+    solve_config: "SolveConfig | None",
+    timeline_config: "TimelineConfig | None",
+    block_assignments: BlockAssignments,
+    active_time_list: dict[str, list] | None = None,
+) -> BlockTimelines:
+    """Build per-block timelines for *solve*.
+
+    Each block's timeline is a dict of ``period → [(step, duration)]``
+    at that block's stepduration.  For the default block this is the
+    same list of (timestep, duration) rows the rest of the solve data
+    already uses (``steps_in_use.csv``).  For a resolution-group block,
+    the timeline is aggregated to that block's step count.
+
+    Aggregation rule
+    ----------------
+    See :func:`_aggregate_timeline`.  These timelines are diagnostic: the
+    model's coarse steps come from ``params._coarse.coarse_node_frames``.
+    """
+    per_block: dict[str, dict[str, list[tuple[str, float]]]] = {}
+
+    # --- Source timeline (default block) ---------------------------------
+    # Priority: active_time_list from the orchestration loop (has the
+    # trimmed per-solve windowing); otherwise reconstruct from the
+    # timeline_config.
+    block_assignments.block_step_duration[DEFAULT_BLOCK]
+    default_periods: dict[str, list[tuple[str, float]]] = {}
+
+    if active_time_list is not None:
+        for period, rows in active_time_list.items():
+            default_periods[period] = [
+                (entry.timestep, float(entry.duration)) for entry in rows
+            ]
+    elif solve_config is not None and timeline_config is not None:
+        for period, ts in solve_config.timesets_used_by_solves.get(solve, []):
+            tl = timeline_config.timesets__timeline.get(ts)
+            if not tl:
+                continue
+            tl_rows = timeline_config.timelines.get(tl, [])
+            default_periods.setdefault(period, [])
+            for step, dur in tl_rows:
+                default_periods[period].append((step, float(dur)))
+    else:
+        # Unit-test mode: no timelines known.  Caller must set them.
+        pass
+
+    per_block[DEFAULT_BLOCK] = default_periods
+
+    # --- Aggregate per-resolution-group block ----------------------------
+    for block, dur in block_assignments.block_step_duration.items():
+        if block == DEFAULT_BLOCK:
+            continue
+        # Skip blocks that no entity is assigned to (would produce
+        # empty rows); consumers still get the duration via
+        # block_step_duration.
+        if block not in block_assignments.node_block.values():
+            continue
+        block_rows: dict[str, list[tuple[str, float]]] = {}
+        for period, rows in default_periods.items():
+            aggregated = _aggregate_timeline(rows, coarse_duration=float(dur))
+            block_rows[period] = aggregated
+        per_block[block] = block_rows
+
+    return BlockTimelines(per_block=per_block)
+
+
+def _aggregate_timeline(
+    rows: list[tuple[str, float]], coarse_duration: float,
+) -> list[tuple[str, float]]:
+    """Chunk a fine-resolution timeline into *coarse_duration*-hour rows.
+
+    A chunk starts at a fine step and closes once its fine durations add up
+    to at least ``coarse_duration``; the last chunk of a period may be
+    shorter.  The coarse row's label is the label of the first fine step it
+    covers and its duration is ``coarse_duration`` (the group's step).
+    """
+    out: list[tuple[str, float]] = []
+    i = 0
+    n = len(rows)
+    eps = 1e-9
+    while i < n:
+        acc = 0.0
+        first_label = rows[i][0]
+        j = i
+        while j < n:
+            acc += float(rows[j][1])
+            j += 1
+            if acc >= coarse_duration - eps:
+                break
+        out.append((first_label, coarse_duration))
+        i = j
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Overlap set
+# ---------------------------------------------------------------------------
+
+
+def derive_overlap_set(
+    solve: str,
+    block_assignments: BlockAssignments,
+    block_timelines: BlockTimelines | None = None,
+    solve_config: "SolveConfig | None" = None,
+    timeline_config: "TimelineConfig | None" = None,
+    active_time_list: dict[str, list] | None = None,
+) -> OverlapSet:
+    """Compute the overlap rows between every pair of blocks in the solve.
+
+    Row schema: ``(period, block_coarse, step_coarse, block_fine,
+    step_fine, fraction)``.
+
+    The aligned-subsets case emits fraction = 1.0 for every fine step
+    that falls within a coarse step (same calendar moment), and omits
+    non-matching rows.  The degenerate case — only the default block
+    exists — emits identity rows ``(d, "default", t, "default", t,
+    1.0)``.
+
+    Args:
+        solve: Solve name.
+        block_assignments: From :func:`derive_blocks`.
+        block_timelines: Optional precomputed timelines; when ``None``
+            this function calls :func:`_build_block_timelines`.
+        solve_config / timeline_config: Passed through to the timeline
+            builder when *block_timelines* is ``None``.
+        active_time_list: Passed through to the timeline builder;
+            typically the ``active_time_lists[solve]`` value from the
+            orchestration loop.
+    """
+    if block_timelines is None:
+        block_timelines = _build_block_timelines(
+            solve=solve,
+            solve_config=solve_config,
+            timeline_config=timeline_config,
+            block_assignments=block_assignments,
+            active_time_list=active_time_list,
+        )
+    per_block = block_timelines.per_block
+    default_rows = per_block.get(DEFAULT_BLOCK, {})
+
+    rows: list[tuple[str, str, str, str, str, float]] = []
+
+    # Degenerate case: only the default block exists → identity rows.
+    non_default = [b for b in per_block if b != DEFAULT_BLOCK]
+    if not non_default:
+        for period, pr in default_rows.items():
+            for step, _dur in pr:
+                rows.append((period, DEFAULT_BLOCK, step, DEFAULT_BLOCK, step, 1.0))
+        return OverlapSet(rows=rows)
+
+    # Default-against-default identity rows are always emitted too so
+    # that constraints indexed on ``(b_coarse, b_fine) = (default,
+    # default)`` have the right coverage.
+    for period, pr in default_rows.items():
+        for step, _dur in pr:
+            rows.append((period, DEFAULT_BLOCK, step, DEFAULT_BLOCK, step, 1.0))
+
+    # For every resolution-group block, emit coarse↔fine rows.  We
+    # consider "fine" = default (and any block strictly finer than
+    # coarse); "coarse" = the resolution-group block itself.  Every
+    # fine step that falls inside a coarse step becomes an overlap row.
+    #
+    # Agent 1.9 fix: also emit *self-identity* rows for every
+    # non-default block (e.g. ``(d, daily, t, daily, t, 1.0)``).  The
+    # generalised node-balance constraints in ``flextool.mod`` look up
+    # ``(d, b_c, tc, b_f, t_f) in overlap`` with ``b_c = b_n`` (node
+    # block) and ``b_f`` = the process-side block.  When both the node
+    # AND the process side live on the same coarse block (e.g. an H2
+    # node and a liquefier flow both at ``daily``) the self-identity
+    # row is what carries the contribution.  Agent 1.1 only emitted
+    # ``(default, default)`` self-identity which is fine for the
+    # degenerate case but silently zeroes out coarse-coarse couplings.
+    for coarse in non_default:
+        coarse_rows = per_block.get(coarse, {})
+        # Self-identity: every (period, step) on the coarse block maps
+        # onto itself with fraction 1.0.  Without this row, a
+        # daily→daily flow would produce no contribution to the daily
+        # node balance.
+        for period, c_rows in coarse_rows.items():
+            for coarse_step, _coarse_dur in c_rows:
+                rows.append(
+                    (period, coarse, coarse_step, coarse, coarse_step, 1.0)
+                )
+        fine_rows_per_period = default_rows
+        for period, c_rows in coarse_rows.items():
+            # Walk the fine timeline in parallel, packing fine rows
+            # into the coarse row until its duration is met.
+            fine = fine_rows_per_period.get(period, [])
+            f_idx = 0
+            for coarse_step, coarse_dur in c_rows:
+                remaining = float(coarse_dur)
+                eps = 1e-9
+                # The same chunking as _aggregate_timeline: fine rows join
+                # the coarse row until it holds coarse_dur (the last coarse
+                # row of a period may be shorter).
+                while remaining > eps and f_idx < len(fine):
+                    fine_step, fine_dur = fine[f_idx]
+                    rows.append(
+                        (period, coarse, coarse_step, DEFAULT_BLOCK, fine_step, 1.0)
+                    )
+                    # Symmetric row: default↔coarse mapping for callers
+                    # that query by fine block.
+                    rows.append(
+                        (period, DEFAULT_BLOCK, fine_step, coarse, coarse_step, 1.0)
+                    )
+                    remaining -= float(fine_dur)
+                    f_idx += 1
+
+    # Pairs of resolution-group blocks (coarse vs finer-coarse): emit
+    # an overlap row for every shared fine step.  Handles e.g. a 24h
+    # block coexisting with a 6h block.  Implemented by intersecting
+    # each block's coverage against the default-block steps.
+    if len(non_default) >= 2:
+        # Build (period, step) → block coverage for each non-default
+        # block so we can cross-reference.
+        coverage: dict[str, dict[str, dict[str, str]]] = {}
+        # coverage[block][period][fine_step] = coarse_step_that_covers_it
+        for block in non_default:
+            coverage[block] = {}
+            b_rows = per_block.get(block, {})
+            for period, c_rows in b_rows.items():
+                coverage[block][period] = {}
+                fine = default_rows.get(period, [])
+                f_idx = 0
+                for coarse_step, coarse_dur in c_rows:
+                    remaining = float(coarse_dur)
+                    eps = 1e-9
+                    while remaining > eps and f_idx < len(fine):
+                        fine_step, fine_dur = fine[f_idx]
+                        coverage[block][period][fine_step] = coarse_step
+                        remaining -= float(fine_dur)
+                        f_idx += 1
+        for a in non_default:
+            for b in non_default:
+                if a == b:
+                    continue
+                for period, a_cov in coverage[a].items():
+                    b_cov = coverage[b].get(period, {})
+                    for fine_step, a_step in a_cov.items():
+                        b_step = b_cov.get(fine_step)
+                        if b_step is None:
+                            continue
+                        # Identify which is coarser by step-duration.
+                        a_dur = block_assignments.block_step_duration.get(a, 0.0)
+                        b_dur = block_assignments.block_step_duration.get(b, 0.0)
+                        # Only emit coarse→fine pairs to avoid duplication.
+                        if a_dur > b_dur:
+                            rows.append((period, a, a_step, b, b_step, 1.0))
+                        elif a_dur == b_dur and a < b:
+                            # Same duration, both cover the same fine
+                            # steps — emit the canonical direction.
+                            rows.append((period, a, a_step, b, b_step, 1.0))
+    # Deduplicate while preserving order: two different fine steps
+    # contained in the same coarse pair yields the same (a_step,
+    # b_step) pair every iteration.
+    seen: set[tuple] = set()
+    deduped: list[tuple[str, str, str, str, str, float]] = []
+    for row in rows:
+        if row in seen:
+            continue
+        seen.add(row)
+        deduped.append(row)
+    return OverlapSet(rows=deduped)
+
+
+# ---------------------------------------------------------------------------
+# Per-block predecessors + boundaries (Agent 1.4)
+# ---------------------------------------------------------------------------
+
+
+def derive_block_predecessors(
+    solve: str,
+    block_assignments: BlockAssignments,
+    block_timelines: BlockTimelines,
+    default_jump_list: Iterable[tuple] | None = None,
+) -> BlockPredecessors:
+    """Compute per-block predecessor relations analogous to ``dtttdt``.
+
+    For the ``"default"`` block the predecessor rows are taken straight
+    from *default_jump_list* — the orchestration-level
+    ``jump_list[solve]`` produced by :func:`make_step_jump` — and
+    tagged with the ``"default"`` block label.  This guarantees the
+    degenerate case is bit-identical to pre-v51 behaviour: every row
+    carries exactly the same ``(step_previous,
+    step_previous_within_timeset, period_previous,
+    step_previous_within_solve)`` values consumed from
+    ``step_previous.csv``.
+
+    For every non-default block we derive the predecessor relations
+    from that block's own aggregated timeline (``block_timelines``).
+    The block's timeline is a per-period ordered list of
+    ``(step, duration)`` rows; the predecessor of step ``i`` in
+    period ``p`` is step ``i - 1`` in the same period (``jump = 1``),
+    except the first step of the first period which wraps cyclically
+    to the last step of the last period (``jump = -N + 1``), and the
+    first step of any subsequent period which points at the last step
+    of the previous period.  This mirrors the ``make_step_jump``
+    behaviour — block aggregation preserves the simple cyclic pattern
+    because the aligned-subsets assumption collapses every block
+    internally to one monotone timestep sequence per period.
+
+    Args:
+        solve: Solve name (unused for now — kept for symmetry with
+            sibling functions).
+        block_assignments: From :func:`derive_blocks`.
+        block_timelines: From :func:`_build_block_timelines`.
+        default_jump_list: Iterable of 7-tuples as produced by
+            :func:`flextool.engine.input._timeline.make_step_jump`.
+            When ``None`` the default-block rows fall back to the
+            simple cyclic pattern used for non-default blocks — this
+            only matters for unit tests; the orchestration loop always
+            passes the real list.
+
+    Returns:
+        BlockPredecessors.  ``rows`` preserves iteration order:
+        default block first, then resolution-group blocks in insertion
+        order.
+    """
+    rows: list[tuple[str, str, str, str, str, str, str]] = []
+
+    # --- Default block ------------------------------------------------------
+    if default_jump_list is not None:
+        for entry in default_jump_list:
+            # jump_list entries are 7-tuples (period, step, previous,
+            # previous_within_timeset, previous_period,
+            # previous_within_solve, jump).  Re-project onto the block-
+            # tagged 7-tuple (block, period, step, previous,
+            # previous_within_timeset, previous_period,
+            # previous_within_solve).
+            period = entry[0]
+            step = entry[1]
+            previous = entry[2]
+            previous_within_timeset = entry[3]
+            previous_period = entry[4]
+            previous_within_solve = entry[5]
+            rows.append(
+                (
+                    DEFAULT_BLOCK,
+                    period,
+                    step,
+                    previous,
+                    previous_within_timeset,
+                    previous_period,
+                    previous_within_solve,
+                )
+            )
+    else:
+        default_rows = block_timelines.per_block.get(DEFAULT_BLOCK, {})
+        rows.extend(_cyclic_block_predecessors(DEFAULT_BLOCK, default_rows))
+
+    # --- Non-default blocks -------------------------------------------------
+    for block in block_assignments.block_step_duration:
+        if block == DEFAULT_BLOCK:
+            continue
+        block_rows_per_period = block_timelines.per_block.get(block, {})
+        if not block_rows_per_period:
+            # Block declared in block_step_duration but no entity is on
+            # it — skip to avoid empty period rows.
+            continue
+        rows.extend(_cyclic_block_predecessors(block, block_rows_per_period))
+
+    return BlockPredecessors(rows=rows)
+
+
+def _cyclic_block_predecessors(
+    block: str,
+    per_period_rows: dict[str, list[tuple[str, float]]],
+) -> list[tuple[str, str, str, str, str, str, str]]:
+    """Cyclic predecessor pattern over a block's aggregated timeline.
+
+    Cycles within the whole block's timeline: the first step of the
+    first period wraps to the last step of the last period.  Within a
+    period interior steps point at the preceding step (jump=1), and
+    the first step of non-first periods points at the last step of
+    the previous period (jump across periods).
+
+    The ``step_previous_within_timeset`` column follows the pre-v51
+    convention: it equals ``step_previous`` for interior steps
+    (rows where the previous step is the immediately adjacent row in
+    the same period).  For first-of-period rows — where the jump
+    crosses a period boundary — it's pinned at the current period's
+    block-last step (matching the ``block_last.timestep`` projection
+    used by :func:`make_step_jump`).  In the degenerate case this
+    column is populated from the real ``jump_list`` instead of this
+    fallback, so the bit-identical promise still holds.
+    """
+    periods = list(per_period_rows.keys())
+    if not periods:
+        return []
+    first_period = periods[0]
+    last_period = periods[-1]
+
+    out: list[tuple[str, str, str, str, str, str, str]] = []
+    for pi, period in enumerate(periods):
+        rows = per_period_rows[period]
+        if not rows:
+            continue
+        block_last_step = rows[-1][0]
+        for si, (step, _dur) in enumerate(rows):
+            if si > 0:
+                prev_step = rows[si - 1][0]
+                prev_within_ts = prev_step
+                prev_period = period
+                prev_within_solve = prev_step
+            else:
+                # First step of the period — cross-period predecessor.
+                if period == first_period:
+                    # Wrap to last period's last step (cyclic).
+                    prev_period_rows = per_period_rows[last_period]
+                    prev_step = prev_period_rows[-1][0] if prev_period_rows else step
+                    prev_period = last_period
+                    prev_within_solve = prev_step
+                    prev_within_ts = block_last_step
+                else:
+                    prev_period = periods[pi - 1]
+                    prev_rows = per_period_rows[prev_period]
+                    prev_step = prev_rows[-1][0] if prev_rows else step
+                    prev_within_solve = prev_step
+                    prev_within_ts = block_last_step
+            out.append(
+                (
+                    block,
+                    period,
+                    step,
+                    prev_step,
+                    prev_within_ts,
+                    prev_period,
+                    prev_within_solve,
+                )
+            )
+    return out
+
+
+def derive_block_boundaries(
+    block_assignments: BlockAssignments,
+    block_timelines: BlockTimelines,
+) -> BlockBoundaries:
+    """Compute per-block first and last step of each period.
+
+    Mirrors the solve-level ``period__time_first`` /
+    ``period__time_last`` sets, but keyed at the block level.  In the
+    degenerate (default-block-only) case ``first`` / ``last`` for
+    ``"default"`` equal the pre-v51 sets with the block tag prepended.
+    """
+    first: list[tuple[str, str, str]] = []
+    last: list[tuple[str, str, str]] = []
+    for block in block_assignments.block_step_duration:
+        rows_per_period = block_timelines.per_block.get(block, {})
+        for period, rows in rows_per_period.items():
+            if not rows:
+                continue
+            first.append((block, period, rows[0][0]))
+            last.append((block, period, rows[-1][0]))
+    return BlockBoundaries(first=first, last=last)
+
+
+# ---------------------------------------------------------------------------
+# CSV emission
+# ---------------------------------------------------------------------------
+
+
+def _entity_block_frame(block_assignments: BlockAssignments) -> pl.DataFrame:
+    rows = list(block_assignments.node_block.items())
+    return pl.DataFrame(
+        {
+            "entity": [r[0] for r in rows],
+            "block": [r[1] for r in rows],
+        },
+        schema={"entity": pl.Utf8, "block": pl.Utf8},
+    )
+
+
+def _block_duration_frame(block_assignments: BlockAssignments) -> pl.DataFrame:
+    """``(block, step_duration)``: each block's nominal step (the default block's is the solve's step,
+    ``_solve_step_duration``; a group's its ``new_stepduration``) — the one definition of the solve's step the model
+    uses to decide which groups are coarse."""
+    rows = list(block_assignments.block_step_duration.items())
+    return pl.DataFrame(
+        {"block": [r[0] for r in rows], "step_duration": [float(r[1]) for r in rows]},
+        schema={"block": pl.Utf8, "step_duration": pl.Float64},
+    )
+
+
+def _block_step_duration_frame(
+    block_timelines: BlockTimelines | None,
+) -> pl.DataFrame:
+    blocks: list[str] = []
+    periods: list[str] = []
+    steps: list[str] = []
+    durs: list[float] = []
+    if block_timelines is not None:
+        for block, period_rows in block_timelines.per_block.items():
+            for period, rows in period_rows.items():
+                for step, dur in rows:
+                    blocks.append(block)
+                    periods.append(period)
+                    steps.append(step)
+                    durs.append(float(dur))
+    return pl.DataFrame(
+        {
+            "block": blocks, "period": periods,
+            "step": steps, "step_duration": durs,
+        },
+        schema={
+            "block": pl.Utf8, "period": pl.Utf8,
+            "step": pl.Utf8, "step_duration": pl.Float64,
+        },
+    )
+
+
+def _overlap_set_frame(overlap_set: OverlapSet) -> pl.DataFrame:
+    rows = overlap_set.rows
+    return pl.DataFrame(
+        {
+            "period": [r[0] for r in rows],
+            "block_coarse": [r[1] for r in rows],
+            "step_coarse": [r[2] for r in rows],
+            "block_fine": [r[3] for r in rows],
+            "step_fine": [r[4] for r in rows],
+            "fraction": [r[5] for r in rows],
+        },
+        schema={
+            "period": pl.Utf8, "block_coarse": pl.Utf8,
+            "step_coarse": pl.Utf8, "block_fine": pl.Utf8,
+            "step_fine": pl.Utf8, "fraction": pl.Float64,
+        },
+    )
+
+
+def _block_step_previous_frame(
+    block_predecessors: BlockPredecessors | None,
+) -> pl.DataFrame:
+    rows = block_predecessors.rows if block_predecessors is not None else []
+    return pl.DataFrame(
+        {
+            "block": [r[0] for r in rows],
+            "period": [r[1] for r in rows],
+            "step": [r[2] for r in rows],
+            "step_previous": [r[3] for r in rows],
+            "step_previous_within_timeset": [r[4] for r in rows],
+            "period_previous": [r[5] for r in rows],
+            "step_previous_within_solve": [r[6] for r in rows],
+        },
+        schema={
+            "block": pl.Utf8, "period": pl.Utf8, "step": pl.Utf8,
+            "step_previous": pl.Utf8,
+            "step_previous_within_timeset": pl.Utf8,
+            "period_previous": pl.Utf8,
+            "step_previous_within_solve": pl.Utf8,
+        },
+    )
+
+
+def _block_period_time_frame(
+    rows: list[tuple[str, str, str]],
+) -> pl.DataFrame:
+    return pl.DataFrame(
+        {
+            "block": [r[0] for r in rows],
+            "period": [r[1] for r in rows],
+            "step": [r[2] for r in rows],
+        },
+        schema={"block": pl.Utf8, "period": pl.Utf8, "step": pl.Utf8},
+    )
+
+
+def emit_block_data(
+    block_assignments: BlockAssignments,
+    overlap_set: OverlapSet,
+    block_timelines: BlockTimelines | None,
+    solve_data_dir: Path,
+    block_predecessors: BlockPredecessors | None = None,
+    block_boundaries: BlockBoundaries | None = None,
+    *, provider,
+) -> None:
+    """Provider-emitting twin of :func:`write_block_data`.
+
+    Emits the seven block frames under ``solve_data/<basename>`` keys
+    via :func:`_emit` (dual-key registration: basename and
+    parent/basename).  *solve_data_dir* is retained for signature parity
+    with :func:`write_block_data`; the Provider is the only sink.
+    """
+    del solve_data_dir
+    _emit(provider, "solve_data/entity_block.csv",
+          _entity_block_frame(block_assignments))
+    _emit(provider, "solve_data/block_duration.csv",
+          _block_duration_frame(block_assignments))
+    _emit(provider, "solve_data/block_step_duration.csv",
+          _block_step_duration_frame(block_timelines))
+    _emit(provider, "solve_data/overlap_set.csv",
+          _overlap_set_frame(overlap_set))
+    _emit(provider, "solve_data/block_step_previous.csv",
+          _block_step_previous_frame(block_predecessors))
+    first_rows = (
+        block_boundaries.first if block_boundaries is not None else []
+    )
+    last_rows = (
+        block_boundaries.last if block_boundaries is not None else []
+    )
+    _emit(provider, "solve_data/block_period_time_first.csv",
+          _block_period_time_frame(first_rows))
+    _emit(provider, "solve_data/block_period_time_last.csv",
+          _block_period_time_frame(last_rows))
+
+
+# ---------------------------------------------------------------------------
+# Orchestration hook
+# ---------------------------------------------------------------------------
+
+
+def _cell_str(value: "object | None") -> str:
+    """Reproduce a ``csv.reader`` cell string for a native frame value.
+
+    ``DataFrame.write_csv`` renders ``null`` as the empty string and every
+    other scalar as its textual form; ``csv.reader`` then reads those
+    strings back.  Mirror that here so the row-of-strings shape stays
+    byte-identical to the legacy CSV round-trip the block-assembly code
+    indexes positionally and compares against.
+    """
+    return "" if value is None else str(value)
+
+
+def _read_input_rows(
+    inp: Path,
+    basename: str,
+    provider: "object | None" = None,
+) -> list[list[str]]:
+    """Return the data rows of the ``input/<stem>`` frame in *provider* as row-of-strings lists.
+
+    Looks up ``input/<stem>`` first, then the bare ``<stem>``; the first frame found wins.  No frame → ``[]``.
+    Files on disk are never read (*inp* only names the stem), so CSVs left in a reused work folder cannot
+    change the block layout.  ``provider`` is required.
+
+    ``provider.get`` returns data rows only (no header) and frames never carry empty rows, so the shape matches
+    the former ``csv.reader`` loop with its header skip and blank-row filter.  An absent key gives ``None``;
+    a provider error (``EvictedFrameError``, a READS-declaration bug) propagates.
+    """
+    if provider is None:
+        raise ValueError(f"_read_input_rows({basename!r}) requires a FlexDataProvider; the work folder is not read")
+    stem = basename[:-4] if basename.endswith(".csv") else basename
+    for key in (f"input/{stem}", stem):
+        df = provider.get(key)
+        if df is None:
+            continue
+        return [[_cell_str(c) for c in row] for row in df.iter_rows()]
+    return []
+
+
+def emit_block_data_for_solve(
+    solve: str,
+    solve_config: "SolveConfig",
+    timeline_config: "TimelineConfig",
+    work_folder: Path,
+    active_time_list: dict[str, list] | None = None,
+    default_jump_list: Iterable[tuple] | None = None,
+    provider: "object | None" = None,
+    *, emit_provider,
+) -> BlockAssignments:
+    """Provider-emitting twin of :func:`write_block_data_for_solve`.
+
+    Mirrors the orchestration hook end-to-end but routes the final
+    seven CSV emissions through :func:`emit_block_data` (Provider) rather
+    than :func:`write_block_data` (disk).
+
+    ``provider`` is the *input* Provider (required): :func:`_read_input_rows`
+    reads the ``input/*`` frames from it; the work folder is never read.
+    The keyword-only ``emit_provider`` is the *output* Provider into
+    which the seven block frames are emitted.
+    """
+    wf = Path(work_folder)
+    inp = wf / "input"
+
+    nodes: list[str] = []
+    units: list[str] = []
+    connections: list[str] = []
+    for row in _read_input_rows(inp, "node.csv", provider):
+        if row:
+            nodes.append(row[0])
+    for row in _read_input_rows(inp, "process_unit.csv", provider):
+        if row:
+            units.append(row[0])
+    for row in _read_input_rows(inp, "process_connection.csv", provider):
+        if row:
+            connections.append(row[0])
+    if not nodes and not units and not connections:
+        for row in _read_input_rows(inp, "entity.csv", provider):
+            if row:
+                nodes.append(row[0])
+
+    resolution_groups: dict[str, float] = {}
+    p_group_rows = _read_input_rows(inp, "p_group.csv", provider)
+    p_group_header: list[str] | None = None
+    # The frame's column NAMES are the header.  Same key-candidate order as
+    # ``_read_input_rows`` (``input/p_group`` before bare ``p_group``); first
+    # non-None frame wins; no frame → the default header below.
+    for key in ("input/p_group", "p_group"):
+        df = provider.get(key)
+        if df is not None:
+            p_group_header = list(df.columns)
+            break
+    if p_group_header is None:
+        p_group_header = ["group", "groupParam", "p_group"]
+
+    def _row_dict(row: list[str], header: list[str]) -> dict[str, str]:
+        return {h: (row[i] if i < len(row) else "")
+                for i, h in enumerate(header)}
+
+    for row in p_group_rows:
+        r = _row_dict(row, p_group_header)
+        if r.get("groupParam") == "new_stepduration":
+            try:
+                resolution_groups[r["group"]] = float(r["p_group"])
+            except (TypeError, ValueError):
+                continue
+    decomposition_groups: dict[str, str] = {}
+    p_group_decomp_header: list[str] | None = None
+    # Same shape as the ``p_group`` header probe above.
+    for key in ("input/p_group_decomposition", "p_group_decomposition"):
+        df = provider.get(key)
+        if df is not None:
+            p_group_decomp_header = list(df.columns)
+            break
+    if p_group_decomp_header is None:
+        p_group_decomp_header = ["group", "groupParam", "p_group"]
+    for row in _read_input_rows(inp, "p_group_decomposition.csv", provider):
+        r = _row_dict(row, p_group_decomp_header)
+        if r.get("groupParam") == "decomposition_method":
+            decomposition_groups[r["group"]] = str(r["p_group"])
+    if not decomposition_groups:
+        for row in p_group_rows:
+            r = _row_dict(row, p_group_header)
+            if r.get("groupParam") == "decomposition_method":
+                decomposition_groups[r["group"]] = str(r["p_group"])
+
+    group_node: list[tuple[str, str]] = []
+    group_process: list[tuple[str, str]] = []
+    for row in _read_input_rows(inp, "group__node.csv", provider):
+        if len(row) >= 2:
+            group_node.append((row[0], row[1]))
+    for row in _read_input_rows(inp, "group__process.csv", provider):
+        if len(row) >= 2:
+            group_process.append((row[0], row[1]))
+
+    unit_set = set(units)
+    conn_set = set(connections)
+    group_unit = [(g, p) for g, p in group_process if p in unit_set]
+    group_connection = [(g, p) for g, p in group_process if p in conn_set]
+
+    validate_group_membership(
+        group_unit, group_connection, group_node,
+        resolution_groups, decomposition_groups,
+    )
+
+    block_assignments = derive_blocks(
+        solve=solve,
+        solve_config=solve_config,
+        timeline_config=timeline_config,
+        nodes=nodes,
+        resolution_groups=resolution_groups,
+        group_node=group_node,
+    )
+
+    # Q-c15-A: a unit / connection listed in a coarse group keeps its flows and online status at the solve's
+    # step; warn where the listing would have mattered (it touches a node outside the group).
+    process_nodes: dict[str, set[str]] = defaultdict(set)
+    for basename in ("process__source.csv", "process__sink.csv"):
+        for row in _read_input_rows(inp, basename, provider):
+            if len(row) >= 2:
+                process_nodes[row[0]].add(row[1])
+    solve_step = block_assignments.block_step_duration[DEFAULT_BLOCK]
+    coarse = {g: float(st) for g, st in resolution_groups.items() if float(st) > solve_step + 1e-9}
+    for msg in coarse_membership_warnings(group_unit + group_connection, process_nodes,
+                                          block_assignments.node_block, coarse):
+        _warn_once(msg)
+
+    block_timelines = _build_block_timelines(
+        solve=solve,
+        solve_config=solve_config,
+        timeline_config=timeline_config,
+        block_assignments=block_assignments,
+        active_time_list=active_time_list,
+    )
+
+    overlap = derive_overlap_set(
+        solve=solve,
+        block_assignments=block_assignments,
+        block_timelines=block_timelines,
+    )
+
+    block_predecessors = derive_block_predecessors(
+        solve=solve,
+        block_assignments=block_assignments,
+        block_timelines=block_timelines,
+        default_jump_list=default_jump_list,
+    )
+    block_boundaries = derive_block_boundaries(
+        block_assignments=block_assignments,
+        block_timelines=block_timelines,
+    )
+
+    emit_block_data(
+        block_assignments=block_assignments,
+        overlap_set=overlap,
+        block_timelines=block_timelines,
+        solve_data_dir=wf / "solve_data",
+        block_predecessors=block_predecessors,
+        block_boundaries=block_boundaries,
+        provider=emit_provider,
+    )
+
+    return block_assignments

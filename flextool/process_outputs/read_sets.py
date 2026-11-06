@@ -32,7 +32,7 @@ from flextool.process_outputs._inmemory_helpers import (
 if TYPE_CHECKING:
     from polar_high import Solution
 
-    from flextool.engine_polars.input import FlexData
+    from flextool.engine.preprocess.flex_data import FlexData
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +95,7 @@ def _commodity_node_from_flex(
     flex_data: "FlexData",
     *,
     attrs: Sequence[tuple[str, str]],
+    extra_pieces: Sequence[pl.DataFrame] = (),
 ) -> pd.MultiIndex:
     """Derive a ``(commodity, node)`` MultiIndex from FlexData flow_* frames.
 
@@ -103,8 +104,11 @@ def _commodity_node_from_flex(
     polars frame with at least columns ``c`` and ``node_column``.  The
     union of ``(c, node_column)`` across all listed frames is returned
     as a deterministic, deduplicated ``pd.MultiIndex`` with names
-    ``("commodity", "node")``.  Returns an empty MultiIndex when no
-    listed field is populated.
+    ``("commodity", "node")``.  ``extra_pieces`` are already-projected
+    frames (columns ``commodity``, ``node``) folded into the same union —
+    used to add rows that don't come from a plain ``flex_data`` attribute
+    (e.g. a pre-filtered set).  Returns an empty MultiIndex when nothing
+    is populated.
 
     All Enum columns are cast to Utf8 before crossing the pandas
     boundary to avoid Enum-vs-Utf8 join-key mismatches downstream
@@ -124,6 +128,9 @@ def _commodity_node_from_flex(
                 pl.col(node_col).cast(pl.Utf8).alias("node"),
             )
         )
+    for fr in extra_pieces:
+        if fr is not None and fr.height > 0:
+            pieces.append(fr.select("commodity", "node"))
     if not pieces:
         return empty_multi_index(["commodity", "node"])
     df = (
@@ -154,11 +161,96 @@ _CO2_EMISSION_FLOW_ATTRS: tuple[tuple[str, str], ...] = (
     ("flow_from_co2_capped_total_noEff", "source"),
 )
 
+# Sink-side removal-credit frames (#19, Q14; c18a): a flow INTO a priced/
+# capped group's node (e.g. DAC/BECCS) credited against that group's price
+# term / cap, unsplit (no slope, no eff/noEff split -- the delivered flow
+# is the removed quantity, not a fuel input, mirroring ``flow_to_commodity``).
+# No noEff sibling exists for these.  Built into their OWN
+# (process, commodity, node) set -- keyed by the CREDITING process, not the
+# emitting one -- so ``calc_costs.py`` can net emissions against removal at
+# the GROUP level the way the LP does, instead of requiring the same
+# process to both emit and remove at the same node (see the c18a "Untested"
+# gap note).
+_CO2_REMOVAL_FLOW_ATTRS: tuple[tuple[str, str], ...] = (
+    ("flow_to_co2_priced", "sink"),
+    ("flow_to_co2_capped", "sink"),
+    ("flow_to_co2_capped_total", "sink"),
+)
+
+# Flow frames that carry EVERY commodity-consuming arc (built once per
+# process-topology load, unconditionally — unlike ``_CO2_EMISSION_FLOW_ATTRS``
+# above, which is only populated when a ``group`` prices or caps CO2).  Used
+# to recover the physical emissions of a commodity with a ``co2_content`` row
+# but no active price/cap group — see ``_physical_co2_emission_pieces``.
+_UNGATED_COMMODITY_FLOW_ATTRS: tuple[str, ...] = (
+    "flow_from_commodity_eff",
+    "flow_from_commodity_noEff",
+)
+
+
+def _co2_content_commodities(flex_data: "FlexData") -> list[str]:
+    """Commodities with a nonzero ``co2_content`` row.
+
+    Independent of whether any ``group`` prices or caps CO2 for them —
+    a commodity's ``co2_content`` makes it a physical emitter on its own
+    (docs/results.md "CO2 emissions": the ``model`` total is "across all
+    groups and units", not conditioned on a priced/capped group).
+    """
+    p = getattr(flex_data, "p_co2_content", None)
+    frame = getattr(p, "frame", None) if p is not None else None
+    if frame is None or frame.height == 0:
+        return []
+    c_col = "c" if "c" in frame.columns else "commodity"
+    if c_col not in frame.columns or "value" not in frame.columns:
+        return []
+    return (
+        frame.filter(pl.col("value") != 0.0)
+             .select(c_col).unique().to_series().cast(pl.Utf8).to_list()
+    )
+
+
+def _physical_co2_emission_pieces(
+    flex_data: "FlexData",
+) -> list[pl.DataFrame]:
+    """``(process, commodity, node)`` rows for every flow that consumes a
+    ``co2_content`` commodity, regardless of whether a price/cap group is
+    active for it.
+
+    ``flow_from_co2_priced`` / ``flow_from_co2_capped`` (and their noEff /
+    total siblings) are empty whenever no ``group`` prices or caps CO2 —
+    which silently zeroed every emissions output (model/group/process)
+    for a scenario that sets ``commodity.co2_content`` but has no priced
+    or capped group on the commodity's node.  ``flow_from_commodity_eff``
+    / ``flow_from_commodity_noEff`` carry every commodity-consuming arc
+    unconditionally, so filtering those to the co2-content commodities
+    recovers the physical emissions the price/cap-gated sets miss.
+    """
+    co2_c = _co2_content_commodities(flex_data)
+    if not co2_c:
+        return []
+    pieces: list[pl.DataFrame] = []
+    for field_name in _UNGATED_COMMODITY_FLOW_ATTRS:
+        fr = getattr(flex_data, field_name, None)
+        if fr is None or fr.height == 0:
+            continue
+        c_col = "c" if "c" in fr.columns else "commodity"
+        if c_col not in fr.columns or "source" not in fr.columns or "p" not in fr.columns:
+            continue
+        sub = fr.filter(pl.col(c_col).cast(pl.Utf8).is_in(co2_c))
+        if sub.height > 0:
+            pieces.append(sub.select(
+                pl.col("p").cast(pl.Utf8).alias("process"),
+                pl.col(c_col).cast(pl.Utf8).alias("commodity"),
+                pl.col("source").cast(pl.Utf8).alias("node"),
+            ))
+    return pieces
+
 
 def _process_commodity_node_from_flex(
     flex_data: "FlexData",
     *,
     attrs: Sequence[tuple[str, str]],
+    extra_pieces: Sequence[pl.DataFrame] = (),
 ) -> pd.MultiIndex:
     """Derive a ``(process, commodity, node)`` MultiIndex from FlexData
     flow_* frames.
@@ -166,7 +258,9 @@ def _process_commodity_node_from_flex(
     Each entry of ``attrs`` is a ``(field_name, node_column)`` tuple.  The
     union of ``(p, c, node_column)`` rows across all listed frames is
     returned as a deterministic, deduplicated ``pd.MultiIndex`` with
-    names ``("process", "commodity", "node")``.
+    names ``("process", "commodity", "node")``.  ``extra_pieces`` are
+    already-projected frames (columns ``process``, ``commodity``,
+    ``node``) folded into the same union.
     """
     pieces: list[pl.DataFrame] = []
     for field_name, node_col in attrs:
@@ -184,6 +278,9 @@ def _process_commodity_node_from_flex(
                 pl.col(node_col).cast(pl.Utf8).alias("node"),
             )
         )
+    for fr in extra_pieces:
+        if fr is not None and fr.height > 0:
+            pieces.append(fr.select("process", "commodity", "node"))
     if not pieces:
         return empty_multi_index(["process", "commodity", "node"])
     df = (
@@ -561,18 +658,27 @@ def read_sets(
     # ed_invest_set spans both, but only p2020 is a REALIZED invest
     # period).  Without this filter, ``unit_capacity__d`` emitted both
     # p2020 and p2025 rows instead of just p2020.
+    #
+    # A solve that realizes no dispatch (a forecasts-only stochastic fan
+    # with no realization solve) has no realized-dispatch periods to
+    # intersect with: its candidates are the forecast-branch copies, whose
+    # investment is never realized.  It is intersected with the solve's
+    # realized investment periods instead (the period labels of its fans).
+    # Without either source (FlexData built by hand) nothing is filtered.
     invest_periods_list: list = []
     seen: set = set()
-    realized_period_set: set = set(
-        s.d_realized_period.get_level_values("period").tolist()
-    ) if len(s.d_realized_period) > 0 else set()
+    realized_filter: "set | None" = None
+    if len(s.d_realized_period) > 0:
+        realized_filter = set(s.d_realized_period.get_level_values("period").tolist())
+    elif flex_data.realized_invest_periods is not None:
+        realized_filter = set(flex_data.realized_invest_periods)
     for src in (flex_data.ed_invest_set, flex_data.ed_divest_set):
         if (src is not None and src.height > 0
                 and "d" in src.columns):
-            for d in src.select("d").unique().to_pandas()["d"].tolist():
+            for d in src.select("d").unique(maintain_order=True).to_pandas()["d"].tolist():
                 if d in seen:
                     continue
-                if realized_period_set and d not in realized_period_set:
+                if realized_filter is not None and d not in realized_filter:
                     continue
                 seen.add(d)
                 invest_periods_list.append(d)
@@ -588,7 +694,12 @@ def read_sets(
     realized_periods: list = list(
         s.d_realized_period.get_level_values("period")
     ) if len(s.d_realized_period) > 0 else []
-    union_periods = list(dict.fromkeys(realized_periods + invest_periods))
+    # A solve that realizes no dispatch reports its realized investment
+    # periods (the period labels of a forecasts-only fan).
+    no_dispatch_invest: list = (
+        list(flex_data.realized_invest_periods)
+        if not realized_periods and flex_data.realized_invest_periods else [])
+    union_periods = list(dict.fromkeys(realized_periods + invest_periods + no_dispatch_invest))
     s.d_realize_dispatch_or_invest = pd.MultiIndex.from_arrays(
         [[solve_name] * len(union_periods), union_periods],
         names=["solve", "period"],
@@ -624,6 +735,45 @@ def read_sets(
         s.edd_invest = empty_multi_index(
             ["solve", "entity", "period_invest", "period"]
         )
+
+    # edd_invest_commission / edd_invest_in_construction — (entity,
+    # period_invest, period): the period in which the capacity of an
+    # investment decision starts to operate, and the periods in which it
+    # is in construction.  Only a solve with a construction lead time has
+    # them; empty otherwise (the decision comes online in its own period).
+    # The fan's investment of a recourse solve is reported at its label (``v_invest_fan``): the start of
+    # operation and the operating window of a branch decision are also read at the labels (``_fan_labels``).
+    from flextool.process_outputs._fan_labels import recourse_branch_labels, with_label_rows
+
+    branch_of = recourse_branch_labels(flex_data)
+    for attr in ("edd_invest_commission", "edd_invest_in_construction"):
+        frame = getattr(flex_data, attr, None)
+        if frame is not None and frame.height > 0:
+            frame = frame.select(pl.col(c).cast(pl.Utf8) for c in ("e", "d_invest", "d"))
+            if attr == "edd_invest_commission":
+                frame = with_label_rows(frame, branch_of, ("d_invest", "d"))
+        setattr(s, attr, _multi_index_with_solve(
+            frame, solve_name=solve_name, dims=("e", "d_invest", "d"),
+            names=["entity", "period_invest", "period"],
+        ))
+
+    # edd_operating_window (entity, period_invest, period) — the run periods in which the capacity of an
+    # investment decision operates; edd_retire_window (entity, period_divest, period) — the run periods a
+    # retirement applies to; edd_salvage_window likewise the run periods its salvage value is spread over
+    # (``_npv`` "Run-level fields of the reported costs").  The annualized investment and
+    # retirement costs are the yearly amounts in every period of these windows.
+    for attr, anchor, level in (("edd_operating_window", "d_invest", "period_invest"),
+                                ("edd_retire_window", "d_divest", "period_divest"),
+                                ("edd_salvage_window", "d_divest", "period_divest")):
+        frame = getattr(flex_data, attr, None)
+        if frame is not None and frame.height > 0:
+            frame = frame.select(pl.col(c).cast(pl.Utf8) for c in ("e", anchor, "d"))
+            if attr == "edd_operating_window":
+                frame = with_label_rows(frame, branch_of, (anchor, "d"))
+        setattr(s, attr, _multi_index_with_solve(
+            frame, solve_name=solve_name, dims=("e", anchor, "d"),
+            names=["entity", level, "period"],
+        ))
 
     # process__node__profile__profile_method — DataFrame from FlexData
     # process_profile_upper / lower / fixed.
@@ -686,6 +836,21 @@ def read_sets(
             ["solve", "period", "time", "t_previous"]
         )
 
+    # dtt_within_period — (solve, period, time, t_previous_within_period):
+    # the bind_within_period predecessor of each step in its own period (the
+    # first step wraps to the period's own last step); the model's lag
+    # (FlexData.dtttdt_within_period).
+    wp_lag = getattr(flex_data, "dtttdt_within_period", None)
+    if wp_lag is not None and wp_lag.height > 0:
+        pdf = (wp_lag.select(pl.lit(solve_name).alias("solve"),
+                             pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                             pl.col("t_previous_within_period").cast(pl.Utf8))
+               .sort("d", "t").to_pandas())
+        s.dtt_within_period = pd.MultiIndex.from_frame(
+            pdf, names=["solve", "period", "time", "t_previous_within_period"])
+    else:
+        s.dtt_within_period = empty_multi_index(["solve", "period", "time", "t_previous_within_period"])
+
     # dtt — typically (d, t, t_previous). Derive from dtttdt if available.
     # Sort by (solve, period, time, t_previous) so the resulting
     # MultiIndex follows the canonical iteration order — without
@@ -707,6 +872,25 @@ def read_sets(
         s.dtt = empty_multi_index(
             ["solve", "period", "time", "t_previous"]
         )
+
+    # ramp_link — (solve, period, time, period_previous, time_previous): the step each step's ramp is
+    # measured from — the adjacent predecessor of the solve (dt_ramp_link) or, at the first step of a
+    # continuation roll, the previous roll's last realized step (dt_ramp_carry).  Steps without one have
+    # no ramp.
+    link_parts = [f.select(pl.col(c).cast(pl.Utf8) for c in ("d", "t", "d_previous", "t_previous"))
+                  for f in (getattr(flex_data, "dt_ramp_link", None), getattr(flex_data, "dt_ramp_carry", None))
+                  if f is not None and f.height > 0]
+    if link_parts:
+        pdf = (pl.concat(link_parts)
+               .unique()
+               .with_columns(pl.lit(solve_name).alias("solve"))
+               .select("solve", "d", "t", "d_previous", "t_previous")
+               .sort(["solve", "d", "t"])
+               .to_pandas())
+        s.ramp_link = pd.MultiIndex.from_frame(
+            pdf, names=["solve", "period", "time", "period_previous", "time_previous"])
+    else:
+        s.ramp_link = empty_multi_index(["solve", "period", "time", "period_previous", "time_previous"])
 
     s.period__time_first = empty_multi_index(["solve", "period", "time"])
     s.period_first_of_solve = empty_multi_index(["solve", "period"])
@@ -760,24 +944,21 @@ def read_sets(
     # node__storage_binding_method — (node, method).
     #
     # Walk every storage_bind_* projection exposed by FlexData.  The four
-    # frames below mirror the entries in ``_projection_params.py:1858-1861``
-    # and the FlexData declarations in ``input.py:579-582``.  Pre-fix this
+    # frames below mirror the entries in ``_projection.py:1858-1861``
+    # and the FlexData declarations in ``flex_data.py:579-582``.  Pre-fix this
     # block walked only ``storage_bind_within_solve`` and
     # ``storage_bind_forward_only`` (audit §5.2), which silently dropped the
     # ``bind_within_timeblock`` and ``bind_within_solve_blended_weights`` methods and
     # broke ``calc_storage_vre.py`` for nodes carrying them.
     #
-    # Orthogonal gap (per audit §4): the v54 value list also accepts
-    # ``bind_within_period`` and ``bind_intraperiod_blocks``, but
-    # ``nodeBalance_eq`` (model.py:615) has no constraint branch for either,
-    # and FlexData carries no projection attribute for them.  Those methods
-    # are accepted at ingestion but currently produce no constraint term —
-    # tracked separately, not in scope here.
+    # ``bind_intraperiod_blocks`` nodes are balanced by nodeBalanceBlock_eq
+    # and have their own outputs; they are not listed here.
     binding_pieces: list[tuple[str, str]] = []
     bind_projections: tuple[tuple[str, str], ...] = (
         ("storage_bind_within_solve", "bind_within_solve"),
         ("storage_bind_forward_only", "bind_forward_only"),
         ("storage_bind_within_timeblock", "bind_within_timeblock"),
+        ("storage_bind_within_period", "bind_within_period"),
         ("storage_bind_within_solve_blended_weights", "bind_within_solve_blended_weights"),
         # Phase D — added with the constraint wiring.
         ("storage_bind_forward_only_blended_weights",
@@ -811,7 +992,7 @@ def read_sets(
     # The collapsed process_source_sink includes reverse arcs for 2-way
     # connections AND intermediate (p, p) arcs for indirect units, so it
     # cannot be projected directly.  Use the pre-computed canonical fields
-    # (populated in input.py from the raw entity tables) when available; fall
+    # (populated in flex_data.py from the raw entity tables) when available; fall
     # back to a pss-based derivation that filters out process-as-node arcs.
     if (flex_data.process_source_canonical is not None
             and flex_data.process_source_canonical.height > 0):
@@ -867,6 +1048,19 @@ def read_sets(
             ("flow_to_commodity", "sink"),
         ),
     )
+    # Commodities priced on a ladder (price_ladder_annual / price_ladder_cumulative) — calc_costs excludes
+    # them from the flat commodity_price term and prices them from v_trade instead (#57).
+    s.commodity_with_ladder = _index_or_empty(
+        getattr(flex_data, "commodity_with_ladder", None), dim="c", name="commodity",
+    )
+    # ``_physical_co2_emission_pieces`` recovers (process, commodity, node)
+    # rows for every co2_content commodity consumed, even when no group
+    # prices or caps it — ``_CO2_EMISSION_FLOW_ATTRS`` alone is empty in
+    # that case and under-reports emissions as 0 (#see read_sets diagnosis).
+    _co2_phys_pc_n = _physical_co2_emission_pieces(flex_data)
+    _co2_phys_c_n = [
+        fr.select("commodity", "node") for fr in _co2_phys_pc_n
+    ]
     s.commodity_node_co2 = _commodity_node_from_flex(
         flex_data,
         attrs=(
@@ -875,6 +1069,7 @@ def read_sets(
             ("flow_from_co2_capped", "source"),
             ("flow_from_co2_capped_noEff", "source"),
         ),
+        extra_pieces=_co2_phys_c_n,
     )
     s.process__commodity__node = _process_commodity_node_from_flex(
         flex_data,
@@ -885,7 +1080,12 @@ def read_sets(
         ),
     )
     s.process__commodity__node_co2 = _process_commodity_node_from_flex(
-        flex_data, attrs=_CO2_EMISSION_FLOW_ATTRS,
+        flex_data, attrs=_CO2_EMISSION_FLOW_ATTRS, extra_pieces=_co2_phys_pc_n,
+    )
+    # (#19, Q14; c18a) Removal-credit set, sibling of the emission-side set
+    # above but keyed by the crediting process and its SINK node.
+    s.process__commodity__node_co2_removal = _process_commodity_node_from_flex(
+        flex_data, attrs=_CO2_REMOVAL_FLOW_ATTRS,
     )
     s.group_co2_price = pd.Index([], name="group", dtype="object")
     s.group_co2_limit = pd.Index([], name="group", dtype="object")
@@ -909,6 +1109,39 @@ def read_sets(
     if _limit_groups:
         s.group_co2_limit = pd.Index(
             list(dict.fromkeys(_limit_groups)), name="group")
+
+    # d_leaf — (period, leaf) scenario-tree membership (Q16, #52/#58): a
+    # pre-reveal trunk period belongs to every leaf that shares it; a
+    # post-reveal period belongs to exactly one.  Empty / single-leaf
+    # outside a genuinely multi-leaf stochastic solve.  Used by the CO2
+    # outputs to report per scenario path instead of pooling every leaf's
+    # periods into one number (the output-side analogue of c18c's
+    # ``co2_max_total_path`` cap fix).
+    s.d_leaf = _multi_index_or_empty(
+        flex_data.d_leaf, dims=("d", "leaf"), names=("period", "leaf"),
+    )
+
+    # forecast_period — the forecast-branch periods of the solve's
+    # stochastic fans (``b`` of every ``(d, b)`` row of ``period__branch``
+    # with ``b != d``).  ``drop_levels`` removes the unrealized ones from
+    # every output frame.  Solve-keyed, so a multi-solve run unions the
+    # forecast periods of every sub-solve (persisted unfiltered).  Empty for
+    # a deterministic solve.
+    pbf = flex_data.period_branch_full
+    forecast: list = []
+    if pbf is not None and pbf.height > 0:
+        forecast = list(dict.fromkeys(
+            str(b) for d, b in zip(pbf["d"].to_list(), pbf["b"].to_list()) if b != d))
+    s.forecast_period = pd.MultiIndex.from_arrays(
+        [[solve_name] * len(forecast), forecast], names=["solve", "period"])
+    # fan_label_period — the period labels of the solve's stochastic fans: the investment costs of the capacity
+    # that starts to operate in a fan are reported at its label (calc_costs).  Persisted whole, like
+    # forecast_period.  Empty for a deterministic solve.
+    from flextool.process_outputs._fan_labels import fan_branch_labels
+
+    fan_labels = list(dict.fromkeys(fan_branch_labels(flex_data).values()))
+    s.fan_label_period = pd.MultiIndex.from_arrays(
+        [[solve_name] * len(fan_labels), fan_labels], names=["solve", "period"])
 
     # ─── Group-related sets ───────────────────────────────────────────────
     s.groupInertia = _index_or_empty(flex_data.groupInertia, dim="g", name="group")
@@ -978,9 +1211,6 @@ def read_sets(
 
     # upDown — flextool's known up/down set.
     s.upDown = pd.Index(["up", "down"], name="updown")
-
-    # enable_optional_outputs — read from FlexData if available.  Empty set OK.
-    s.enable_optional_outputs = set()
 
     # ─── DC power flow sets ───────────────────────────────────────────────
     s.node_dc_power_flow = _index_or_empty(

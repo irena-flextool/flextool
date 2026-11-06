@@ -101,5 +101,5 @@ the scaler defaults to 1 so the factor is a no-op.
    `flextool/process_outputs/read_highs_solution.py`; set
    `unscale_by="node_cap"` or `"group_cap"` if the slack appears in a
    row-scaled constraint.
-6. **Baseline comparison** — run the engine_polars gate and confirm
+6. **Baseline comparison** — run the engine gate and confirm
    no material delta on objective, slack totals, matrix range.

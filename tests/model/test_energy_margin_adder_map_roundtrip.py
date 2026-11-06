@@ -19,7 +19,7 @@ The fix has two halves, both exercised here against a REAL
    ``[node, period, time, value]`` / ``[node, period, value]`` and is
    ABSENT from the scalar frame (no longer mangled).
 
-2. **Emit (``_emit_energy_margin_adder.py``).**  The emitter now reads all
+2. **Emit (``_energy_margin_adder.py``).**  The emitter now reads all
    three authored files and unions them.  We feed the REAL ingested frame
    into a ``FlexDataProvider`` and run ``emit_energy_margin_adder`` over an
    invest ``(d, t)`` grid, asserting the demand at the map's authored
@@ -45,10 +45,10 @@ if str(_TESTS_DIR) not in sys.path:
 
 from db_utils import json_to_db  # noqa: E402
 
-from flextool.engine_polars._emit_energy_margin_adder import (  # noqa: E402
+from flextool.engine.preprocess.emit._energy_margin_adder import (  # noqa: E402
     emit_energy_margin_adder,
 )
-from flextool.engine_polars._flex_data_provider import (  # noqa: E402
+from flextool.engine.preprocess._flex_data_provider import (  # noqa: E402
     FlexDataProvider,
 )
 from flextool.spinedb_backend import SpineDBBackend  # noqa: E402

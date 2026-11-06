@@ -112,7 +112,7 @@
       "capacity",
       null,
       null,
-      "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - capacity the model decided to invest for the given period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
+      "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - Capacity that comes online in the period. 'in_construction' - Capacity decided but not yet operating in the period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
       null
     ],
     [
@@ -137,6 +137,30 @@
       null,
       null,
       "Marginal cost to invest in one more kW of capacity (zero value means that the model has invested in optimal amount; negative value means that if the model would be able to invest more, it could reduce total cost by the stated amount per kW; positive value means the cost is higher than the benefit by the stated amount per kW).",
+      null
+    ],
+    [
+      "connection",
+      "online_average",
+      null,
+      null,
+      "average online status of the connection (average number of units of the connection online during the period); only for connections with a startup_method.",
+      null
+    ],
+    [
+      "connection",
+      "online_t",
+      null,
+      null,
+      "online status of the connection (number of units of the connection online in each timestep); only for connections with a startup_method.",
+      null
+    ],
+    [
+      "connection",
+      "startup_cumulative",
+      null,
+      null,
+      "cumulative number of connection startups during the period; only for connections with a startup_method.",
       null
     ],
     [
@@ -392,7 +416,7 @@
       "capacity",
       null,
       null,
-      "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - capacity the model decided to invest for the given period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
+      "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - Capacity that comes online in the period. 'in_construction' - Capacity decided but not yet operating in the period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
       null
     ],
     [
@@ -456,7 +480,7 @@
       "capacity",
       null,
       null,
-      "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - capacity the model decided to invest for the given period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
+      "'existing' - capacity that was assumed to exist in the beginning of the solve. 'invested' - Capacity that comes online in the period. 'in_construction' - Capacity decided but not yet operating in the period. 'retired' - capacity the model decided to retire in the beginning of the given period. 'total' - sum of existing, invested and retired capacities.",
       null
     ],
     [

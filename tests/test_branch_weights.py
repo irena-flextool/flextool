@@ -37,10 +37,10 @@ from pathlib import Path
 
 import pytest
 
-from flextool.engine_polars._emit_period_calc import (
+from flextool.engine.preprocess.emit._period_calc import (
     emit_branch_weights,
 )
-from flextool.engine_polars._flex_data_provider import FlexDataProvider
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
 
 # ---------------------------------------------------------------------------
@@ -112,7 +112,7 @@ def _run_branch_weights(
     emitter consumes, then invoke ``emit_branch_weights``.
 
     The cascade's Provider-only reader contract (``_read_csv`` has no
-    disk-fallback arm; see :mod:`._emit_period_calc`) means the test
+    disk-fallback arm; see :mod:`._period_calc`) means the test
     has to surface the on-disk CSVs in the Provider before the emitter
     can find them.
     """

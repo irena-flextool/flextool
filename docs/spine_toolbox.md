@@ -39,6 +39,11 @@ Ticking scenarios there decides which ones run when you execute the workflow; To
 execute several in parallel as long as the **FlexTool** item is configured to use work
 directories.
 
+Each FlexTool run uses all available cores for its own data processing (at most 8 threads) unless told
+otherwise, and Toolbox does not pass a thread count. When Toolbox runs several scenarios at once, add
+`--threads N` to the **FlexTool** Tool's command-line arguments, with N about the number of cores divided by
+the number of runs executed at once. N covers FlexTool's data processing and the solver of each run.
+
 ## The shipped workflow
 
 The v4 workflow has been streamlined from the v3 layout: there is **no longer an

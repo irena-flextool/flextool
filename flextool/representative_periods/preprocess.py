@@ -12,8 +12,9 @@ import sys
 import numpy as np
 import spinedb_api as api
 from spinedb_api import DatabaseMapping, import_data, Map
+from flextool.update_flextool.db_handle import open_database_mapping
 
-from flextool.engine_polars._db_reader import DictMode, params_to_dict
+from flextool.engine.input._db_reader import DictMode, params_to_dict
 from flextool.representative_periods import force_include
 from flextool.representative_periods.clustering import greedy_convex_hull_clustering
 from flextool.representative_periods.netload import (
@@ -363,7 +364,7 @@ def _write_results_to_db(
     # The purge must be its own committed session: a same-session
     # remove-then-import restores the removed item and merges anyway. Scalar
     # params (``timeline``) overwrite cleanly and need no purge.
-    with DatabaseMapping(db_url) as db:
+    with open_database_mapping(db_url) as db:
         db.fetch_all("parameter_value")
         _purged = False
         for _map_param in ("timeset_duration", "representative_period_weights"):
@@ -389,7 +390,7 @@ def _write_results_to_db(
                 f"Clear stale representative periods before rewrite: {timeset_name}"
             )
 
-    with DatabaseMapping(db_url) as db:
+    with open_database_mapping(db_url) as db:
         # Ensure parameter definition exists for representative_period_weights
         parameter_definitions = [
             ("timeset", "representative_period_weights"),
@@ -561,7 +562,7 @@ def preprocess_representative_periods(
     # ------------------------------------------------------------------
     print(f"Reading time series from database (scenario: '{scenario_name}')...")
     scen_config = api.filters.scenario_filter.scenario_filter_config(scenario_name)
-    with DatabaseMapping(db_url) as db:
+    with open_database_mapping(db_url) as db:
         api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
         db.fetch_all("parameter_value")
 

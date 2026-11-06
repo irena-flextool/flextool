@@ -31,7 +31,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from spinedb_api import DatabaseMapping  # noqa: E402
+from flextool.update_flextool.db_handle import open_database_mapping  # noqa: E402
 
 from tests.db_utils import db_to_json, json_to_db  # noqa: E402
 
@@ -47,7 +47,7 @@ PV_REMOVALS = [
 
 def _apply(url: str) -> None:
     # NOTE: no create=True — json_to_db already created + committed the DB.
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         # 1. Entity removal. Cascades the entity's own parameter_values
         #    (anti_energy_group/flow_aggregator + /output_nodeGroup_dispatch).
         ents = db.find_entities(entity_class_name="group", name="anti_energy_group")

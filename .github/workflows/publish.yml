@@ -46,7 +46,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Verify tag matches pyproject version
         if: startsWith(github.ref, 'refs/tags/v')
@@ -59,6 +59,13 @@ jobs:
             echo "::error::Tag v$tag does not match pyproject version $proj — bump one to match before releasing."
             exit 1
           fi
+
+      # Behaviour-change notices name the release and its date: a release whose CHANGELOG heading is set but
+      # whose registry entries (flextool/engine/_behaviour_changes.py) are not filled in fails here, before PyPI.
+      - name: Behaviour-change registry matches the CHANGELOG
+        run: |
+          python -m pip install -e . pytest
+          python -m pytest tests/engine/test_behaviour_change_registry.py -q -p no:cacheprovider --noconftest
 
       - name: Build sdist + wheel
         run: |

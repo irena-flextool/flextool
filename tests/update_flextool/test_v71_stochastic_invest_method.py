@@ -10,7 +10,7 @@ how stochastic branches participate in investment:
 ``'none'`` (default) is byte-identical to prior behaviour; ``'recourse'``
 is hard-rejected by the Slice C guards until Slice D lands.  The
 engine-side read/resolver + guards are covered by
-``tests/engine_polars/test_recourse_guards.py``.
+``tests/engine/test_recourse_guards.py``.
 """
 
 from __future__ import annotations

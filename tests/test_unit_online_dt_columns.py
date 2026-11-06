@@ -22,7 +22,7 @@ from ``process_block ⋈ block_step_duration`` and the input data had no
 
 Root cause + fix
 ----------------
-``flextool/engine_polars/_emit_per_solve.py::write_per_solve_sets`` —
+``flextool/engine/preprocess/emit/_per_solve.py::write_per_solve_sets`` —
 when a process in ``process_online`` had no ``process_block`` entry, the
 emitted ``p_online_dt`` collapsed to zero rows, so the LP build skipped
 ``v_online_linear[(p, d, t)]`` for that process entirely, the post-solve
@@ -31,7 +31,7 @@ post-processing column-select crashed.
 
 Fix (commit ``91edd891``): when a UC process has no ``process_block``
 row, fall back to the per-step timeline (``steps_in_use.csv``), matching
-``_native_input_writer``'s documented intent that empty entity_block /
+``_input_writer``'s documented intent that empty entity_block /
 process_block stubs "fall through to identity (every entity mapped to
 'default')".  See ``# BUG p_online_dt_empty_no_blocks`` in
 ``specs/model_bugs.md``.
@@ -39,7 +39,7 @@ process_block stubs "fall through to identity (every entity mapped to
 What this test guards
 ---------------------
 The unit-level fallback already has its own assertion
-(``tests/engine_polars/constraints/test_p_online_dt_fallback.py``).  The
+(``tests/engine/constraints/test_p_online_dt_fallback.py``).  The
 test here closes the loop at the post-processing layer: it runs the full
 ``run_chain_from_db`` → ``write_outputs`` pipeline for a UC fixture and
 asserts the invariant the bug 4 traceback violated::
@@ -67,8 +67,8 @@ OUTPUT_CONFIG = str(REPO_ROOT / "templates" / "default_plots.yaml")
 if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
-from flextool.engine_polars import run_chain_from_db  # noqa: E402
-from flextool.engine_polars._flex_data_provider import FlexDataProvider  # noqa: E402
+from flextool.engine import run_chain_from_db  # noqa: E402
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider  # noqa: E402
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402
 
 

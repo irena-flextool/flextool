@@ -40,7 +40,7 @@ from flextool.process_outputs._inmemory_helpers import (
 if TYPE_CHECKING:
     from polar_high import Solution
 
-    from flextool.engine_polars.input import FlexData
+    from flextool.engine.preprocess.flex_data import FlexData
 
 
 # ---------------------------------------------------------------------------
@@ -111,7 +111,7 @@ def _pdtX_per_entity(
     # below requires explicit "d" and "t" columns, so promote via
     # flex_data.dt when needed.
     if "d" not in param.dims or "t" not in param.dims:
-        from flextool.engine_polars._param_shapes import promote_param_to_dt
+        from flextool.engine.input._param_shapes import promote_param_to_dt
         if flex_data is None or flex_data.dt is None:
             return _empty_pdtX_per_entity(
                 flex_data=flex_data,
@@ -157,7 +157,7 @@ def _pdX_per_entity(
     be present.
     """
     if flex_data is not None and flex_data.dt is not None and flex_data.dt.height > 0:
-        d_pdf = flex_data.dt.select("d").unique().to_pandas()
+        d_pdf = flex_data.dt.select("d").unique(maintain_order=True).to_pandas()
         periods_full = d_pdf["d"].tolist()
     else:
         periods_full = []
@@ -263,6 +263,44 @@ def _empty_pdtX_multi_col(
     return out
 
 
+def _empty_pdX_multi_col(
+    *, col_names: tuple[str, ...],
+) -> pd.DataFrame:
+    """Empty DataFrame with ``(solve, period)`` row index and an empty
+    column MultiIndex of ``len(col_names)`` levels.
+    """
+    idx = pd.MultiIndex.from_arrays([[], []], names=["solve", "period"])
+    out = pd.DataFrame(index=idx, dtype=float)
+    out.columns = pd.MultiIndex.from_arrays([[]] * len(col_names), names=list(col_names))
+    return out
+
+
+def _pdX_multi_col(
+    param,
+    *,
+    solve_name: str,
+    col_dims: tuple[str, ...],
+    col_names: tuple[str, ...],
+) -> pd.DataFrame:
+    """Param ``(*col_dims, d)`` → wide pandas with row ``(solve, period)`` ×
+    column MultiIndex over ``col_dims``.
+
+    Period-only sibling of :func:`_pdtX_multi_col` (no time axis).  Used for
+    the commodity-ladder tier prices, which are decided once per period, not
+    per (d, t) (#57).
+    """
+    if param is None or param.frame.height == 0:
+        return _empty_pdX_multi_col(col_names=col_names)
+    pl_df = with_solve_column(param.frame, solve_name)
+    return wide_multi_col(
+        pl_df,
+        row_dims=("solve", "d"),
+        col_dims=col_dims,
+        row_names=("solve", "period"),
+        col_names=col_names,
+    )
+
+
 def _pdtX_multi_col(
     param,
     *,
@@ -289,7 +327,7 @@ def _pdtX_multi_col(
         # when the source was authored as scalar / 1d_map.  Promote via
         # flex_data.dt so the pivot below sees explicit d/t columns.
         if "d" not in param.dims or "t" not in param.dims:
-            from flextool.engine_polars._param_shapes import promote_param_to_dt
+            from flextool.engine.input._param_shapes import promote_param_to_dt
             if flex_data is None or flex_data.dt is None:
                 out = _empty_pdtX_multi_col(col_names=col_names)
                 if densify_col_tuples is None:
@@ -342,7 +380,7 @@ def _build_pssdt_varCost_alwaysProcess(
     indexed by ``process_source_sink_alwaysProcess`` tuples, varCost
     needs the same keying.
 
-    Reference: ``_emit_period_params._derive_varCost_pair`` (used to
+    Reference: ``_period_params._derive_varCost_pair`` (used to
     write ``pdtProcess__source__sink__dt_varCost_alwaysProcess.csv``)
     for the exact algebra.  Replicated here directly on FlexData
     Params (``p_pdt_varCost_source``, ``p_pdt_varCost_sink``,
@@ -671,12 +709,13 @@ def _entity_all_capacity(
         # already gives the active (d_divest, d) pairs.
         pass
 
-    if (flex_data.edd_divest_active is not None
-            and flex_data.edd_divest_active.height > 0):
-        edd_dv = flex_data.edd_divest_active.lazy()
-        cols = flex_data.edd_divest_active.columns
-        # canonical: (e, d_divest, d).  edd_divest_active uses ``p`` for
-        # the entity dim — rename to ``e``.
+    def _normalize_divest_active(df: pl.DataFrame) -> pl.LazyFrame:
+        """``(e, d_divest, d)`` Utf8, from a frame whose entity column is
+        named ``p`` (process divest) or ``n`` (storage-node divest)."""
+        lf = df.lazy()
+        cols = df.columns
+        # canonical: (e, d_divest, d).  edd_divest_active / ndd_divest_active
+        # use ``p`` / ``n`` for the entity dim — rename to ``e``.
         rename = {}
         if cols[0] not in ("e", "entity"):
             rename[cols[0]] = "e"
@@ -687,12 +726,21 @@ def _entity_all_capacity(
         if len(cols) > 2 and cols[2] != "d":
             rename[cols[2]] = "d"
         if rename:
-            edd_dv = edd_dv.rename(rename)
-        edd_dv = edd_dv.with_columns(
+            lf = lf.rename(rename)
+        return lf.with_columns(
             pl.col("e").cast(pl.Utf8),
             pl.col("d_divest").cast(pl.Utf8),
             pl.col("d").cast(pl.Utf8),
         )
+
+    _divest_active_frames = [
+        _normalize_divest_active(frame)
+        for frame in (flex_data.edd_divest_active, flex_data.ndd_divest_active)
+        if frame is not None and frame.height > 0
+    ]
+    if _divest_active_frames:
+        edd_dv = (pl.concat(_divest_active_frames, how="vertical")
+                  if len(_divest_active_frames) > 1 else _divest_active_frames[0])
         divest_contrib = (
             edd_dv.join(divest.lazy().rename({"d": "d_divest", "value": "v_dv"}),
                         on=["e", "d_divest"], how="inner")
@@ -962,7 +1010,7 @@ def _build_entity_universe(flex_data: "FlexData") -> list[str]:
     if (flex_data.process_source_sink is not None
             and flex_data.process_source_sink.height > 0):
         universe.extend(
-            flex_data.process_source_sink.select("p").unique()
+            flex_data.process_source_sink.select("p").unique(maintain_order=True)
                 .to_pandas()["p"].tolist()
         )
     # Also include any commodity nodes that show up in process_source_sink
@@ -970,7 +1018,7 @@ def _build_entity_universe(flex_data: "FlexData") -> list[str]:
     if (flex_data.process_source_sink is not None
             and flex_data.process_source_sink.height > 0):
         for col in ("source", "sink"):
-            extra = flex_data.process_source_sink.select(col).unique().to_pandas()[col].tolist()
+            extra = flex_data.process_source_sink.select(col).unique(maintain_order=True).to_pandas()[col].tolist()
             universe.extend(extra)
     # Every invest / divest variable entity.  ``ed_invest_set`` /
     # ``ed_divest_set`` carry the (e, d) variable index that becomes the
@@ -984,7 +1032,7 @@ def _build_entity_universe(flex_data: "FlexData") -> list[str]:
     for invest_set in (flex_data.ed_invest_set, flex_data.ed_divest_set):
         if invest_set is not None and invest_set.height > 0:
             universe.extend(
-                invest_set.select("e").unique().to_pandas()["e"].tolist()
+                invest_set.select("e").unique(maintain_order=True).to_pandas()["e"].tolist()
             )
     # Solve-invariant whole-model carrier (covers cross-solve invest
     # candidates absent from this sub-solve's sets — see docstring).
@@ -993,10 +1041,48 @@ def _build_entity_universe(flex_data: "FlexData") -> list[str]:
             and getattr(carrier, "frame", None) is not None
             and carrier.frame.height > 0):
         universe.extend(
-            carrier.frame.select("e").unique().to_pandas()["e"].tolist()
+            carrier.frame.select("e").unique(maintain_order=True).to_pandas()["e"].tolist()
         )
     # Deduplicate while keeping insertion order.
     return list(dict.fromkeys(universe))
+
+
+def _with_fan_label_rows(param, flex_data: "FlexData"):
+    """``param`` (dims ``(e, d)``) with the rows of its fan branch periods also at their label, in a solve that
+    decides investments in the branches (recourse: the reported investment costs of a fan are at its label,
+    :mod:`._fan_labels`)."""
+    from flextool.process_outputs._fan_labels import recourse_branch_labels, with_label_rows
+
+    branch_of = recourse_branch_labels(flex_data)
+    if param is None or not branch_of:
+        return param
+    frame = with_label_rows(param.frame, branch_of, ("d",))
+    return param if frame is param.frame else SimpleNamespace(frame=frame)
+
+
+RUN_FIELDS_MISSING_WARNING = (
+    "Warning: the reported costs are built from solve data without the run-level cost fields (a CSV-dump "
+    "reload): investment, retirement and fixed costs are discounted from the start of each solve, not from the "
+    "start of the run, and the annualized investment, retirement and fixed costs of new and retired capacity "
+    "are 0.")
+
+
+def warn_if_run_fields_missing(flex_datas) -> bool:
+    """Print :data:`RUN_FIELDS_MISSING_WARNING` (once) when a solve's FlexData has no run-level fields of the
+    reported costs (``p_inflation_op_run`` unset while the solve's own ``p_inflation_op`` is: a CSV-dump reload,
+    whose reported costs fall back to the per-solve lumps, :func:`_run_field`).  Returns whether it printed."""
+    missing = any(getattr(fd, "p_inflation_op_run", None) is None and getattr(fd, "p_inflation_op", None) is not None
+                  for fd in flex_datas if fd is not None)
+    if missing:
+        print(RUN_FIELDS_MISSING_WARNING, flush=True)
+    return missing
+
+
+def _run_field(flex_data: "FlexData", name: str):
+    """The run-level field ``<name>_run`` of the reported costs, or the solve's own ``<name>`` when the run field
+    is not set (a csv-dump reload)."""
+    run = getattr(flex_data, f"{name}_run", None)
+    return run if run is not None else getattr(flex_data, name, None)
 
 
 def read_parameters(
@@ -1020,7 +1106,7 @@ def read_parameters(
         The active solve identifier.  Used to inject the leading
         ``solve`` index level the downstream wide-format consumers
         expect.  Defaults to ``"solve"`` for tests; production callers
-        in :mod:`flextool.engine_polars._orchestration` pass the real
+        in :mod:`flextool.engine.solve._orchestration` pass the real
         ``complete_solve_name``.
 
     Returns
@@ -1098,7 +1184,7 @@ def read_parameters(
     # reserve_upDown_group_penalty — Series with MultiIndex (reserve,
     # upDown, node_group); the same dense penalty the LP objective uses
     # (authored penalty_reserve, else the default).
-    from flextool.engine_polars._reserve import reserve_penalty
+    from flextool.engine.model._reserve import reserve_penalty
     reserve_pen = reserve_penalty(flex_data)
     if reserve_pen is not None and reserve_pen.frame.height > 0:
         p.reserve_upDown_group_penalty = series_with_multi_index(
@@ -1178,29 +1264,11 @@ def read_parameters(
 
     # node_self_discharge_loss / node_penalty_up / node_penalty_down /
     # node_inflow / commodity_price / group_co2_price / profile.
-    if (flex_data.p_state_self_discharge is not None
-            and flex_data.p_state_self_discharge.frame.height > 0):
-        # p_state_self_discharge has dims (n,).  Broadcast to (solve, d, t)
-        # via dt — matching the legacy ``pdtNode_self_discharge_loss.csv``
-        # which had per-(solve, period, time) rows × node columns even
-        # though the value is constant per node.
-        n_frame = flex_data.p_state_self_discharge.frame
-        dt_frame = flex_data.dt
-        broadcast = (
-            n_frame.lazy()
-                .join(dt_frame.lazy(), how="cross")
-                .with_columns(pl.lit(solve_name).alias("solve"))
-                .select("solve", "d", "t", pl.col("n"), pl.col("value"))
-                .collect()
-        )
-        p.node_self_discharge_loss = wide_per_entity(
-            broadcast, row_dims=("solve", "d", "t"), col_dim="n",
-            row_names=("solve", "period", "time"), col_name="node",
-        )
-    else:
-        p.node_self_discharge_loss = _empty_pdtX_per_entity(
-            flex_data=flex_data, solve_name=solve_name, col_name="node",
-        )
+    # p_state_self_discharge is (n, d, t) (a scalar is broadcast over the solve's steps by the reader).
+    p.node_self_discharge_loss = _pdtX_per_entity(
+        flex_data.p_state_self_discharge, solve_name=solve_name,
+        entity_dim="n", col_name="node", flex_data=flex_data,
+    )
 
     p.node_penalty_up = _pdtX_per_entity(
         flex_data.p_penalty_up, solve_name=solve_name,
@@ -1223,6 +1291,33 @@ def read_parameters(
         entity_dim="g", col_name="group", flex_data=flex_data,
     )
 
+    # Commodity price ladder (#57): tier prices priced from v_trade, not the
+    # flat commodity_price term.  ladder_price_ann varies per period (solve,
+    # period) × (commodity, tier); ladder_price_cum is one price per
+    # (commodity, tier), the same in every period.  commodity_unitsize is the
+    # v_trade → MWh scale, defaulting to 1.0 for every ladder commodity when
+    # unset (same default _commodity_unitsize_param applies in the LP).
+    p.ladder_price_ann = _pdX_multi_col(
+        flex_data.p_ladder_ann_price, solve_name=solve_name,
+        col_dims=("c", "i"), col_names=("commodity", "tier"),
+    )
+    _cum_price = getattr(flex_data, "p_ladder_cum_price", None)
+    p.ladder_price_cum = (
+        series_with_multi_index(_cum_price.frame, dims=("c", "i"), names=("commodity", "tier"))
+        if _cum_price is not None and _cum_price.frame.height > 0
+        else pd.Series(dtype=float, index=pd.MultiIndex.from_arrays([[], []], names=("commodity", "tier")))
+    )
+    _cwl = getattr(flex_data, "commodity_with_ladder", None)
+    _unitsize = getattr(flex_data, "p_commodity_unitsize", None)
+    if _unitsize is not None and _unitsize.frame.height > 0:
+        p.commodity_unitsize = series_with_index(_unitsize.frame, dim="c", name="commodity")
+    elif _cwl is not None and _cwl.height > 0:
+        p.commodity_unitsize = pd.Series(
+            1.0, index=pd.Index(_cwl.to_pandas()["c"].tolist(), name="commodity"),
+        )
+    else:
+        p.commodity_unitsize = pd.Series(dtype=float, index=pd.Index([], name="commodity"))
+
     # reserve_upDown_group_reservation — multi-column (r, ud, g).
     p.reserve_upDown_group_reservation = _pdtX_multi_col(
         flex_data.pdtReserve_upDown_group_reservation, solve_name=solve_name,
@@ -1236,7 +1331,7 @@ def read_parameters(
     # LP uses in the reserve balances and the penalty (largest possible
     # requirement; the reservation for timeseries groups).  The reserve
     # shortfall in MW and its penalty cost are rebuilt with it.
-    from flextool.engine_polars._reserve import reserve_shortfall_scale
+    from flextool.engine.model._reserve import reserve_shortfall_scale
     p.reserve_upDown_group_shortfall_scale = _pdtX_multi_col(
         reserve_shortfall_scale(flex_data), solve_name=solve_name,
         col_dims=("r", "ud", "g"),
@@ -1254,7 +1349,7 @@ def read_parameters(
     # ─── Per-(solve, period) scalar params ──────────────────────────────────
     # years_from_start_d / years_represented_d — Series.  FlexData
     # carries ``p_years_represented_d`` (Param, (d,) → R width sum;
-    # populated by ``_derived_params.apply_derived_a`` from
+    # populated by ``_derived.apply_derived_a`` from
     # ``solve.years_represented``).  ``years_from_start_d`` is still
     # defaulted to 0.0 (used only for divest carry-forward; the active
     # divest cascade uses ``edd_divest_active`` directly).
@@ -1343,6 +1438,19 @@ def read_parameters(
             densify_entities=_entity_universe,
         )
 
+    # entity_user_existing — the reported fixed cost of existing capacity is charged on the user's existing
+    # capacity aged over its lifetime (``p_entity_pre_existing``, set for the reported costs): the capacity
+    # carried from earlier solves is charged in the lump of the solve that invested in it, a retirement's saving
+    # in the lump of the retirement.  A csv-dump reload does not carry it: there it is ``entity_pre_existing``.
+    if getattr(flex_data, "p_entity_pre_existing", None) is not None:
+        p.entity_user_existing = _pdX_per_entity(
+            flex_data.p_entity_pre_existing, solve_name=solve_name,
+            entity_dim="e", col_name="entity", flex_data=flex_data,
+            densify_entities=_entity_universe,
+        )
+    else:
+        p.entity_user_existing = p.entity_pre_existing
+
     # entity_all_capacity — post-solve derived.
     p.entity_all_capacity = _entity_all_capacity(
         flex_data, solution, solve_name=solve_name,
@@ -1363,13 +1471,16 @@ def read_parameters(
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
+    # The reported costs read the run-level lumps (discounted from the start of the run over the run's
+    # periods, ``_npv`` "Run-level fields of the reported costs"); a csv-dump reload carries only the
+    # per-solve lumps.
     p.entity_lifetime_fixed_cost = _pdX_per_entity(
-        flex_data.ed_lifetime_fixed_cost, solve_name=solve_name,
+        _with_fan_label_rows(_run_field(flex_data, "ed_lifetime_fixed_cost"), flex_data), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
     p.entity_lifetime_fixed_cost_divest = _pdX_per_entity(
-        flex_data.ed_lifetime_fixed_cost_divest, solve_name=solve_name,
+        _run_field(flex_data, "ed_lifetime_fixed_cost_divest"), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
@@ -1382,19 +1493,14 @@ def read_parameters(
     # group_penalty_inertia / group_penalty_non_synchronous /
     # group_penalty_capacity_margin / group_inertia_limit / group_capacity_margin.
     #
-    # SCEN-6: ``pdGroup_penalty_capacity_margin`` is derived via
-    # ``_entity_period_scalar`` which drops null rows.  When a group has
-    # ``capacity_margin > 0`` but ``penalty_capacity_margin`` left blank
-    # (a common template pattern — e.g. xlsx ``Commodity_nodes``), the
-    # group lands in ``groupCapacityMargin`` (built from non-empty
-    # ``capacity_margin`` rows) but is absent from the penalty frame.
-    # ``calc_slacks.py`` indexes ``par.group_penalty_capacity_margin
-    # [s.groupCapacityMargin]`` and raises ``KeyError`` on the gap.
-    # Densify here with the same zero-fill convention used elsewhere for
-    # parity emitters: missing penalty ⇒ 0 (no slack-cost contribution,
-    # matching the LP: the slack term in
-    # ``_group_slack.compute_slack_costs`` is itself gated on a
-    # non-null ``pdGroup_penalty_capacity_margin``).
+    # SCEN-6: ``calc_slacks.py`` indexes ``par.group_penalty_capacity_margin
+    # [s.groupCapacityMargin]`` and raises ``KeyError`` on a group of
+    # ``groupCapacityMargin`` without a penalty column.  The penalty frame
+    # is dense over every group with the schema default (5000) since #62,
+    # but an explicit ``penalty_capacity_margin = 0`` drops the group's
+    # rows (no slack term in ``_group_slack``: the violation is free).
+    # Densify here with the matching zero-fill: missing penalty ⇒ 0 (no
+    # slack-cost contribution, as in the LP).
     if (flex_data.groupCapacityMargin is not None
             and flex_data.groupCapacityMargin.height > 0):
         _group_cap_margin_universe = (
@@ -1435,43 +1541,39 @@ def read_parameters(
         densify_entities=_entity_universe,
     )
     p.entity_annual_discounted = _pdX_per_entity(
-        flex_data.ed_entity_annual_discounted, solve_name=solve_name,
+        _with_fan_label_rows(_run_field(flex_data, "ed_entity_annual_discounted"), flex_data), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
     p.entity_annual_divest_discounted = _pdX_per_entity(
-        flex_data.ed_entity_annual_divest_discounted, solve_name=solve_name,
+        _run_field(flex_data, "ed_entity_annual_divest_discounted"), solve_name=solve_name,
         entity_dim="e", col_name="entity", flex_data=flex_data,
         densify_entities=_entity_universe,
     )
 
-    # Slice D (I-a, §11.3): per-period probability weight + the recourse
-    # flag, so ``calc_costs`` can weight the reported invest/divest cost by
-    # ``pd_branch_weight`` under recourse (reconciling the cost breakdown to
-    # the probability-weighted LP objective).  Flag absent / off → the
-    # weighting is skipped (byte-parity).
-    p.recourse_invest = bool(getattr(flex_data, "recourse_invest", False))
-    p.pd_branch_weight = _pd_series_solve_period(
-        getattr(flex_data, "pd_branch_weight", None), solve_name=solve_name,
+    # The undiscounted yearly annuities (CUR/MW/yr) of the investment decisions (the invest cost at the start of
+    # operation) and of the retirements (the salvage value): the annualized investment and retirement costs.
+    p.entity_annuity_yearly = _pdX_per_entity(
+        _with_fan_label_rows(getattr(flex_data, "ed_annuity", None), flex_data), solve_name=solve_name,
+        entity_dim="e", col_name="entity", flex_data=flex_data,
     )
-    # Option (A): the per-(d, t) branch weight the LP objective folds into
-    # ``op_factor`` / ``startup_factor`` (model.py).  ``calc_slacks`` /
-    # ``calc_costs`` apply it to every per-(d, t) operational + penalty cost
-    # term so ``costs__dt.csv`` and the ``Total cost (calculated)`` summary
-    # equal the probability-weighted LP objective.  Absent (deterministic)
-    # → an empty Series → the weighting is an exact ×1.0 no-op (byte-parity).
-    p.pdt_branch_weight = _pdt_series_solve_period_time(
-        getattr(flex_data, "pdt_branch_weight", None), solve_name=solve_name,
+    p.entity_divest_annuity_yearly = _pdX_per_entity(
+        getattr(flex_data, "ed_divest_annuity", None), solve_name=solve_name,
+        entity_dim="e", col_name="entity", flex_data=flex_data,
     )
 
-    # inflation factors — Series((solve, period)).
+    # inflation factors — Series((solve, period)).  The reported costs discount from the start of the run
+    # (``p_inflation_*_run``); ``inflation_factor_operations_solve`` is the solve's own factor, the one its
+    # objective and duals carry (the CO2 price of a period is its dual ÷ this factor of the realizing solve).
+    # A csv-dump reload carries only the solve's own operations factor.
     p.inflation_factor_operations_yearly = _pd_series_solve_period(
-        flex_data.p_inflation_op, solve_name=solve_name,
+        _run_field(flex_data, "p_inflation_op"), solve_name=solve_name,
     )
-    # No FlexData equivalent for "investment yearly"; reuse operations
-    # (the rate differs only when discount_rate ≠ 0; for fixtures
-    # without explicit rates they're identical).
     p.inflation_factor_investment_yearly = _pd_series_solve_period(
+        flex_data.p_inflation_inv_run if getattr(flex_data, "p_inflation_inv_run", None) is not None
+        else flex_data.p_inflation_op, solve_name=solve_name,
+    )
+    p.inflation_factor_operations_solve = _pd_series_solve_period(
         flex_data.p_inflation_op, solve_name=solve_name,
     )
 
@@ -1662,141 +1764,36 @@ def read_parameters_multi(
     if len(per_step) == 1:
         return last_ns
 
-    # Pre-filter per-step ``entity_lifetime_fixed_cost`` /
-    # ``entity_lifetime_fixed_cost_divest`` to only the step's REALIZED
-    # periods (``flex_data.realized_dispatch`` — same source as
-    # ``read_sets.d_realized_period``).  In a rolling/nested cascade
-    # each step holds a period-d "active" lifetime value in the row
-    # where d is the step's realized period, plus forward-discounted
-    # lookahead values for lookahead periods (e.g. y2020 step has
-    # p2020=827152 active + p2025=373153 lookahead).  ``v_invest[(solve,
-    # d)]`` is non-zero only for the committing step's realized period,
-    # so the cost in ``calc_costs.compute_costs`` (line 165, ``v.invest
-    # × unitsize × entity_lifetime_fixed_cost``) must use the value
-    # from that same committing step.  Filtering each piece pre-concat
-    # means ``drop_levels`` sees one row per period (no dedup
-    # ambiguity).  Without this, ``_PAR_DEDUP keep='first'`` picks the
-    # earliest step's lookahead value for every period after the first
-    # (e.g. p2025 → y2020 lookahead 373153 instead of y2025 active
-    # 827152), giving ``costs_discounted.csv:fixed cost invested``
-    # 120.6 instead of the LP-true 267.4.  ``ed_invest_set`` /
-    # ``ed_divest_set`` cover both realized + lookahead invest
-    # candidates, so we use ``realized_dispatch`` instead.
-    _lifetime_attrs = ("entity_lifetime_fixed_cost",
-                       "entity_lifetime_fixed_cost_divest")
-    for (sn, ns), step in zip(per_step, steps):
-        flex_data = step[1]
-        rd = getattr(flex_data, "realized_dispatch", None)
-        if rd is None or getattr(rd, "height", 0) == 0:
-            continue
-        realized_periods = set(
-            rd.select("period").unique().to_pandas()["period"].tolist()
-        )
-        if not realized_periods:
-            continue
-        for attr in _lifetime_attrs:
-            obj = getattr(ns, attr, None)
-            if obj is None or not _has_solve_level(obj):
-                continue
-            periods = obj.index.get_level_values("period")
-            mask = periods.isin(realized_periods)
-            setattr(ns, attr, obj[mask])
+    # Each step's realized slice of its solve-keyed attributes, by the very rules of the persisted per-roll
+    # slices the production path unions (``persist_realized_slice._apply_realized_filter``: the invest / divest
+    # lumps from the solve that realizes the decision period, the run-level factors over the solve's own
+    # periods, the solve's operations factor over its realized dispatch, ``entity_all_existing`` over its
+    # realized dispatch and investment periods, every other attribute over its realized (d, t) / periods).  So
+    # this in-memory union and the persisted union cannot drift apart.  The realized investment periods are the
+    # ones the output writer reads (``solve_data/realized_invest_periods_of_current_solve``, carried as
+    # ``flex_data.realized_invest_periods``; without them the realized dispatch periods).  The output-dead
+    # parameters the writer does not persist are left as they are.
+    from flextool.process_outputs.persist_realized_slice import (
+        _DEAD_PARAMS,
+        _apply_realized_filter,
+        _realized_dispatch_periods,
+        _realized_dt_set,
+    )
 
-    # Per-step ``entity_all_existing`` carries the period-d existing-
-    # capacity chain (pre_existing on solve_first, later_existing
-    # otherwise).  In a NESTED cascade the parent invest step and
-    # every child dispatch step both densify the (period, entity)
-    # grid: invest_24h@(wind_plant, p2020) = 1000 (pre_existing,
-    # solve_first=True) but dispatch_..._roll_17@(wind_plant, p2020)
-    # = 1288.83 (later_existing folding the parent's v_invest back
-    # in).  drop_levels' ``keep='last'`` dedup picks the dispatch
-    # row, blowing up the ``existing`` column in unit_capacity__d.csv
-    # to the cumulative-with-current-invest value (HEAD shows 1288.83
-    # for the same cell v3.32.0 emits as 1000).  v3.32.0's mod-side
-    # writer only emits rows from the FIRST solve that owns each
-    # period via ``period_capacity`` deduplication (flextool.mod
-    # L5993-6002): in nested that's the parent invest step.
-    #
-    # Fix: filter each step's ``entity_all_existing`` to ONLY the
-    # periods that step realizes (``flex_data.realized_dispatch`` ∪
-    # ``ed_invest_set/ed_divest_set`` "d"s).  Dispatch-only children
-    # in a nested cascade drop their lookahead rows; the parent
-    # invest step's per-period values are the sole contributor and
-    # win regardless of dedup direction.  In 4-solve / multi_year
-    # invest cascades each step realizes a disjoint period so no
-    # collision arises either way — the filter is a no-op there.
+    # The persisted union falls back to the last step's unfiltered value where every slice is empty.
+    last_unfiltered = dict(vars(last_ns))
     for (sn, ns), step in zip(per_step, steps):
         flex_data = step[1]
-        step_periods: set[str] = set()
-        rd = getattr(flex_data, "realized_dispatch", None)
-        if rd is not None and getattr(rd, "height", 0) > 0:
-            step_periods.update(
-                rd.select("period").unique().to_pandas()["period"].tolist()
-            )
-        for src_attr in ("ed_invest_set", "ed_divest_set"):
-            src = getattr(flex_data, src_attr, None)
-            if src is not None and getattr(src, "height", 0) > 0 and "d" in src.columns:
-                step_periods.update(
-                    src.select("d").unique().to_pandas()["d"].tolist()
-                )
-        if not step_periods:
-            # Step realizes nothing — leave as-is.  This is the legacy
-            # behaviour for fixtures that don't populate realized_*.
-            continue
-        for attr in ("entity_all_existing",):
-            obj = getattr(ns, attr, None)
-            if obj is None or not _has_solve_level(obj):
+        realized_dt = _realized_dt_set(flex_data)
+        dispatch_periods = _realized_dispatch_periods(flex_data)
+        invest = getattr(flex_data, "realized_invest_periods", None)
+        invest_periods = set(dispatch_periods) if invest is None else {str(d) for d in invest}
+        for attr, obj in list(vars(ns).items()):
+            if attr in _DEAD_PARAMS or not _has_solve_level(obj):
                 continue
-            periods = obj.index.get_level_values("period")
-            mask = periods.isin(step_periods)
-            setattr(ns, attr, obj[mask])
-
-    # Per-step ``entity_annual_discounted`` /
-    # ``entity_annual_divest_discounted`` carry the invest-side NPV
-    # coefficients used by ``calc_costs.compute_costs`` to derive
-    # ``cost_entity_invest_d = v_invest × unitsize × annual_discounted``.
-    # The polars derivation builds these from ``period_invest``: a
-    # nested-dispatch child solve has empty ``period_invest`` and the
-    # frame is therefore empty, but ``_pdX_per_entity(densify_entities=
-    # _entity_universe)`` zero-fills it to the full entity × period
-    # grid.  In a nested cascade, the parent ``invest`` step holds the
-    # real coefficients (e.g. 4.18 for ``wind_plant @ p2020``) while
-    # every child dispatch step densifies the same (period, entity)
-    # cell to 0.  Without intervention, ``drop_levels`` dedup with
-    # ``keep='last'`` picks the last child step's zero, zeroing out
-    # ``r.cost_entity_invest_d`` and dropping ``unit investment &
-    # retirement`` from ``costs_discounted.csv`` (HEAD shows 0,
-    # v3.32.0 shows 471.28).  Fix: detect a "dispatch-only" step
-    # (``flex_data.ed_entity_annual_discounted`` empty/None) and clear
-    # the densified-zero per-step frame so it doesn't compete with the
-    # parent invest step's real values.
-    _annual_attrs = ("entity_annual_discounted",
-                     "entity_annual_divest_discounted",
-                     "entity_annuity")
-    _src_field = {
-        "entity_annual_discounted": "ed_entity_annual_discounted",
-        "entity_annuity": "ed_entity_annual_discounted",
-        "entity_annual_divest_discounted":
-            "ed_entity_annual_divest_discounted",
-    }
-    for (sn, ns), step in zip(per_step, steps):
-        flex_data = step[1]
-        for attr in _annual_attrs:
-            src_attr = _src_field[attr]
-            src_param = getattr(flex_data, src_attr, None)
-            src_empty = (
-                src_param is None
-                or getattr(src_param, "frame", None) is None
-                or getattr(src_param.frame, "height", 0) == 0
-            )
-            if not src_empty:
-                continue
-            obj = getattr(ns, attr, None)
-            if obj is None or not _has_solve_level(obj):
-                continue
-            # Empty out this step's rows (preserve the index/columns
-            # frame for the concat path; head(0) keeps the schema).
-            setattr(ns, attr, obj.iloc[0:0])
+            setattr(ns, attr, _apply_realized_filter(
+                attr, obj, flex_data, realized_dt=realized_dt, realized_invest_periods=invest_periods,
+                realized_dispatch_periods=dispatch_periods))
 
     out = SimpleNamespace()
     attr_names = [a for a in vars(last_ns).keys()]
@@ -1807,15 +1804,15 @@ def read_parameters_multi(
         if any(_has_solve_level(p) for p in pieces):
             non_empty = [p for p in pieces if len(p) > 0]
             if not non_empty:
-                setattr(out, attr, pieces[-1])
+                setattr(out, attr, last_unfiltered[attr])
                 continue
             # ``pd.concat`` preserves dtypes and row order.  Each piece
             # carries a distinct ``solve`` value so no de-duplication
             # is needed.
             merged = pd.concat(non_empty, axis=0)
             # Preserve column dtype/name (concat keeps it; defensive).
-            if hasattr(pieces[-1], "columns") and hasattr(merged, "columns"):
-                merged.columns.name = pieces[-1].columns.name
+            if hasattr(last_unfiltered[attr], "columns") and hasattr(merged, "columns"):
+                merged.columns.name = last_unfiltered[attr].columns.name
             setattr(out, attr, merged)
         else:
             # Static / per-entity / not-solve-keyed: invariant across

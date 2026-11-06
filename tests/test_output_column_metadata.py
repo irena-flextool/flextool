@@ -9,7 +9,7 @@ entry, and allowlist entries must be removed once the output is declared.
 
 import pandas as pd
 
-from flextool.engine_polars._parquet_bundle import REGISTRY
+from flextool.engine.output._parquet_bundle import REGISTRY
 from flextool.process_outputs._output_meta import (
     OUTPUT_TRANSFORM,
     FORMULA_OVERRIDE,

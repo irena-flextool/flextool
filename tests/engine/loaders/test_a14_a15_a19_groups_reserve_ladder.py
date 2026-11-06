@@ -1,0 +1,198 @@
+"""Surface A.14 (group-level slack), A.15 (reserves) and A.19 (commodity
+ladder) loader tests.
+
+All three modules expose a ``load_data(...)`` helper that reads the
+``input/`` and ``solve_data/`` frames of its provider.  Tests write the
+minimal CSVs needed to exercise one transformation per spec into
+hand-built directories, pass them as a provider (``tests._support.provider.provider_from_csv_dirs``) and call
+``load_data`` directly — no ``load_flextool``/``Problem`` wiring.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+import polars as pl
+import pytest
+
+from flextool.engine.model import _group_slack
+from flextool.engine.model import _reserve
+from flextool.engine.model import _commodity_ladder
+from tests._support.provider import provider_from_csv_dirs
+
+
+# --- helpers --------------------------------------------------------
+
+def _make_dirs(tmp_path: Path) -> tuple[Path, Path]:
+    inp = tmp_path / "input"
+    sd = tmp_path / "solve_data"
+    inp.mkdir()
+    sd.mkdir()
+    return inp, sd
+
+
+def _write(p: Path, text: str) -> None:
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(text)
+
+
+# ====================================================================
+# A.14 — _group_slack.load_data
+# ====================================================================
+
+def test_inertia_constants_inertia_only_filter(tmp_path: Path):
+    """Covers A14-inertia_constants_inertia_only_filter.
+
+    ``p_process_sink.csv`` rows get filtered to ``inertia_constant`` (and
+    zero values dropped).  The three group sets are not read here (the
+    projection pass writes them; the reload's seed of them is in
+    ``tests/csv_reload/test_dump_seeds.py`` since c24 S4-4), and neither are
+    the non-synchronous arcs and internal transfers, so all five stay None
+    whatever the flag, limit and arc files hold.
+    """
+    inp, sd = _make_dirs(tmp_path)
+    _write(sd / "pdGroup_capacity_margin.csv", "period,g1,g2\nd1,0.0,0.5\n")
+    _write(inp / "groupCapacityMargin.csv", "groupCapacityMargin\ng1\n")
+    _write(inp / "groupInertia.csv", "groupInertia\ng1\n")
+    _write(inp / "groupNonSync.csv", "groupNonSync\ng1\n")
+    _write(sd / "process__sink_nonSync.csv", "process,sink\np1,n1\n")
+    _write(sd / "process__group_inside_group_nonSync.csv", "process,group\np1,g1\n")
+    # Inertia constants: filter to "inertia_constant" + drop zeros.
+    _write(inp / "p_process_sink.csv",
+           "process,sink,sourceSinkParam,p_process_sink\n"
+           "p1,n1,inertia_constant,3.0\n"
+           "p1,n1,efficiency,0.95\n"
+           "p2,n1,inertia_constant,0.0\n")
+
+    out = _group_slack.load_data(inp, sd, dt=pl.DataFrame(), provider=provider_from_csv_dirs(inp, sd),
+                                  nb=None, pss_eff=None, pss_noEff=None,
+                                  p_unitsize=None)
+    assert out["groupCapacityMargin"] is None
+    assert out["groupInertia"] is None
+    assert out["groupNonSync"] is None
+    assert out["process_sink_nonSync"] is None
+    assert out["process_group_inside_nonSync"] is None
+    # Hand-calc: only inertia_constant rows with value!=0 ⇒ {(p1,n1)}.
+    psi = out["process_sink_inertia"].sort(["p", "sink"])
+    assert psi.height == 1
+    assert psi.row(0) == ("p1", "n1")
+
+
+def test_process_unit_filter_excludes_connections(tmp_path: Path):
+    """Covers A14-process_unit_filter_excludes_connections.
+
+    ``solve_data/process_unit.csv`` carries only ``p_unit``; the loader
+    rename-selects to a 1-row ``(p,)`` frame that downstream
+    capacityMargin LHS uses to filter out the connection process.
+    """
+    inp, sd = _make_dirs(tmp_path)
+    _write(sd / "process_unit.csv", "process_unit\np_unit\n")
+    out = _group_slack.load_data(inp, sd, dt=pl.DataFrame(), provider=provider_from_csv_dirs(inp, sd),
+                                  nb=None, pss_eff=None, pss_noEff=None,
+                                  p_unitsize=None)
+    # Hand-calc: 1 row, column renamed to "p", value "p_unit".
+    pu = out["process_unit"]
+    assert pu is not None and pu.columns == ["p"]
+    assert pu["p"].to_list() == ["p_unit"]
+
+
+# ====================================================================
+# A.15 — _reserve.load_data
+# ====================================================================
+
+def test_feature_gate_empty_rug_returns_blank(tmp_path: Path):
+    """Covers A15-feature_gate_empty_rug_returns_blank.
+
+    Header-only ``reserve__upDown__group.csv`` short-circuits load_data
+    to an empty dict (no FlexData fields populated)."""
+    inp, sd = _make_dirs(tmp_path)
+    _write(sd / "reserve__upDown__group.csv", "reserve,upDown,group\n")
+    out = _reserve.load_data(inp, sd, dt=None, provider=provider_from_csv_dirs(inp, sd))
+    # Hand-calc: empty CSV ⇒ early return ⇒ {}.
+    assert out == {}
+
+
+def test_method_partition_three_way(tmp_path: Path):
+    """Covers A15-method_partition_three_way.
+
+    Each of three method CSVs holds a single distinct (r, ud, g) row;
+    loader returns three named partitions, each with exactly its row.
+    """
+    inp, sd = _make_dirs(tmp_path)
+    _write(sd / "reserve__upDown__group.csv",
+           "reserve,upDown,group\nr1,up,g1\nr1,up,g2\nr1,up,g3\n")
+    _write(sd / "reserve__upDown__group__method_timeseries.csv",
+           "reserve,upDown,group,method\nr1,up,g1,timeseries\n")
+    _write(sd / "reserve__upDown__group__method_dynamic.csv",
+           "reserve,upDown,group,method\nr1,up,g2,dynamic\n")
+    _write(sd / "reserve__upDown__group__method_n_1.csv",
+           "reserve,upDown,group,method\nr1,up,g3,n_1\n")
+
+    out = _reserve.load_data(inp, sd, dt=None, provider=provider_from_csv_dirs(inp, sd))
+    # Hand-calc: each partition exactly one row, with its own group.
+    assert out["reserve_upDown_group_method_timeseries"]["g"].to_list() == ["g1"]
+    assert out["reserve_upDown_group_method_dynamic"]["g"].to_list() == ["g2"]
+    assert out["reserve_upDown_group_method_n_1"]["g"].to_list() == ["g3"]
+
+
+def test_pdtReserve_param_slice_and_dt_clip(tmp_path: Path):
+    """Covers A15-pdtReserve_reservation_param_slice + A15-dt_clip_drops_out_of_horizon_rows.
+
+    Two reservation rows on different (d, t) plus one ``other_param`` row;
+    ``dt`` covers only one timestep.  Loader filters by param and inner-
+    joins on dt.
+    """
+    inp, sd = _make_dirs(tmp_path)
+    _write(sd / "reserve__upDown__group.csv",
+           "reserve,upDown,group\nr1,up,g1\n")
+    _write(sd / "pdtReserve_upDown_group.csv",
+           "reserve,upDown,group,period,time,param,value\n"
+           "r1,up,g1,d1,t1,reservation,50.0\n"
+           "r1,up,g1,d1,t1,other_param,9.0\n"
+           "r1,up,g1,d2,t1,reservation,77.0\n")
+    dt = pl.DataFrame({"d": ["d1"], "t": ["t1"]})
+
+    out = _reserve.load_data(inp, sd, dt=dt, provider=provider_from_csv_dirs(inp, sd))
+    # Hand-calc: param=="reservation" ⇒ 2 rows; dt-join ⇒ keep only (d1,t1)
+    # ⇒ 1 row, value=50.0.  other_param dropped, (d2,t1) clipped.
+    frame = out["pdtReserve_upDown_group_reservation"].frame
+    assert frame.height == 1
+    assert frame["value"].to_list() == pytest.approx([50.0], rel=1e-7)
+    assert frame.row(0)[:5] == ("r1", "up", "g1", "d1", "t1")
+
+
+# ====================================================================
+# A.19 — _commodity_ladder.load_data
+# ====================================================================
+
+def test_feature_gate_no_commodity_with_ladder_returns_blank(tmp_path: Path):
+    """Covers A19-feature_gate_no_commodity_with_ladder_returns_blank.
+
+    No ``commodity_with_ladder.csv`` on disk ⇒ load_data returns the
+    all-None blank dict (every key present, every value None).
+    """
+    inp, sd = _make_dirs(tmp_path)
+    out = _commodity_ladder.load_data(inp, sd, provider=provider_from_csv_dirs(inp, sd))
+    # Hand-calc: missing CSV ⇒ blank dict (all values None).
+    assert out["commodity_with_ladder"] is None
+    assert all(v is None for v in out.values())
+    # Spot-check that all expected keys are present (loader contract).
+    for k in ("p_ladder_ann_price", "p_ladder_cum_quantity", "cndi_ladder",
+              "ci_ladder_cumulative", "p_f_d_k", "p_ladder_cum_realized_mwh"):
+        assert k in out
+
+
+def test_tier_string_dtype_preservation(tmp_path: Path):
+    """Covers A19-tier_string_dtype_preservation.
+
+    Integer tier column in ``cndi_ladder_set.csv`` is cast to Utf8 so
+    Param-table joins (also Utf8) line up.
+    """
+    inp, sd = _make_dirs(tmp_path)
+    _write(sd / "commodity_with_ladder.csv", "commodity\nc1\n")
+    _write(sd / "cndi_ladder_set.csv",
+           "commodity,node,period,tier\nc1,n1,d1,1\nc1,n1,d1,2\n")
+    out = _commodity_ladder.load_data(inp, sd, provider=provider_from_csv_dirs(inp, sd))
+    cndi = out["cndi_ladder"]
+    # Hand-calc: read int tier ⇒ cast to Utf8 ⇒ values ["1","2"].
+    assert cndi["i"].dtype == pl.Utf8
+    assert sorted(cndi["i"].to_list()) == ["1", "2"]

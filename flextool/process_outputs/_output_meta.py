@@ -165,12 +165,18 @@ RAMP = Transform(
 CAPACITY_MW = Transform(
     "MW", Semantics.LEVEL,
     "Installed/usable capacity (a stock that holds over the period, not a flow).",
-    algebra="existing + invested − divested",
+    description="Capacity by period: existing, invested (capacity that comes online in the period), "
+                "in_construction (capacity decided but not yet operating; empty without a construction lead "
+                "time), divested and total (capacity in service). Capacity in construction is not in the total.",
+    algebra="total = existing + invested − divested (cumulative; in_construction excluded)",
 )
 CAPACITY_MWH = Transform(
     "MWh", Semantics.LEVEL,
     "Storage energy capacity (a stock).",
-    algebra="existing + invested − divested",
+    description="Storage capacity by period: existing, invested (capacity that comes online in the period), "
+                "in_construction (capacity decided but not yet operating; empty without a construction lead "
+                "time), divested and total (capacity in service). Capacity in construction is not in the total.",
+    algebra="total = existing + invested − divested (cumulative; in_construction excluded)",
 )
 STORAGE_STATE = Transform(
     "MWh", Semantics.LEVEL,
@@ -182,7 +188,11 @@ PRICE_ENERGY = Transform(
     "Nodal energy price (shadow price of the node balance constraint).",
     description="Nodal energy price — the shadow price (dual) of the node "
                 "balance constraint: the marginal system cost of one more unit "
-                "of the commodity at that node and timestep. For a storage "
+                "of the commodity at that node and timestep, in CUR/MWh in the "
+                "price base of the cost inputs (inflation and the years the "
+                "period represents removed; not weighted by timestep weight or "
+                "branch probability; empty where the objective does not weigh "
+                "the step). For a storage "
                 "node this is the marginal value of stored energy (the "
                 "\"water value\"): a well-defined intertemporal price, but "
                 "treat it with care — it can be non-unique when storage sits "
@@ -191,7 +201,7 @@ PRICE_ENERGY = Transform(
                 "charge and discharge sides by the round-trip efficiency, and "
                 "be shifted by end-of-horizon, rolling and inter-period "
                 "(blended-weight) storage linking.",
-    algebra="dual(node_balance)",
+    algebra="σ·dual(node_balance) / s / (timestep_weight · inflation / period_share · branch_weight)",
 )
 EMISSION_MT = Transform(
     "Mt", Semantics.HORIZON,
@@ -217,13 +227,14 @@ YEARS = Transform(
 PRICE_RESERVE = Transform(
     "CUR/MW", Semantics.PRICE,
     "Reserve price (dual of the reserve balance) — CUR per MW of reserve held "
-    "(= CUR/MWh held for one hour).",
-    algebra="dual(reserve_balance)",
+    "for one hour (CUR/MWh).",
+    algebra="dual(reserve_balance) / s / (step_duration · timestep_weight · inflation / period_share "
+            "· branch_weight)",
 )
 PRICE_CO2 = Transform(
     "CUR/t", Semantics.PRICE,
     "CO2 price (shadow price of the CO2 cap).",
-    algebra="dual(co2_cap) / 1000",
+    algebra="−dual(co2_max_period) / s / inflation",
 )
 # Investment duals carry the same convention as invest_cost: CUR/kW for
 # units & connections (CUR/kWh for storage nodes).
@@ -407,6 +418,7 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "years_represented__d": YEARS,
     # Start-ups
     "unit_startup_d_e": COUNT_ANNUAL,
+    "connection_startup_d_e": COUNT_ANNUAL,
     # Prices / duals
     "node_prices_dt_e": PRICE_ENERGY,
     "reserve_prices_dt_ppg": PRICE_RESERVE,
@@ -427,6 +439,8 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "dc_angle_diff_dt_e": ANGLE,
     "unit_online_dt_e": ONLINE_COUNT,
     "unit_online_average_d_e": ONLINE_AVG,
+    "connection_online_dt_e": ONLINE_COUNT,
+    "connection_online_average_d_e": ONLINE_AVG,
     "flowGroup_gd_t": RATE,
     "nodeGroup_slack_reserve_dt_eeg": RATE,
     "nodeGroup_slack_reserve_d_eeg": ENERGY_ANNUAL,
@@ -445,6 +459,7 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "group_node": DIMENSION_TABLE,
     "group_process": DIMENSION_TABLE,
     "group_process_node": DIMENSION_TABLE,
+    "timeline_breaks": DIMENSION_TABLE,
     "nodeGroupDispatch": DIMENSION_TABLE,
     "nodeGroupIndicators": DIMENSION_TABLE,
     "flowGroupIndicators": DIMENSION_TABLE,

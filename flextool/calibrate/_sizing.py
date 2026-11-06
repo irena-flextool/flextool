@@ -36,18 +36,18 @@ by the LAST (dispatch) sub-solve and so do NOT reflect the invest grid:
 
 * the invest ``(d, t)`` grid and per-period
   ``complete_period_share_of_year`` come from
-  :func:`flextool.engine_polars._per_solve_sets.derive_per_solve_aggregates`;
+  :func:`flextool.engine.preprocess.params._per_solve_sets.derive_per_solve_aggregates`;
 * ``Σ_t timestep_weight(d, t)`` per period comes from the ACTUAL per-``(d,
   t)`` weights the engine builds, NOT a step-count shortcut —
-  :func:`flextool.engine_polars._derived_params.p_timestep_weight_from_source`
+  :func:`flextool.engine.preprocess.params._derived.p_timestep_weight_from_source`
   for the default / ``timeset_weights`` regimes, and
-  :func:`flextool.engine_polars._emit_solve_writers._compute_rp_frames` for
+  :func:`flextool.engine.preprocess.emit._solve_writers._compute_rp_period_frames` for
   ``representative_period_weights`` (RP).
 
 Why the ACTUAL weight, not the step count ``n_d``
 -------------------------------------------------
 ``annualize_dt_to_d`` weights every ``(d, t)`` by ``p_timestep_weight``, and
-RP weights flow into ``p_timestep_weight`` (``_compute_rp_frames`` folds
+RP weights flow into ``p_timestep_weight`` (``_compute_rp_period_frames`` folds
 ``representative_period_weights`` into ``timestep_weight.csv``; the CSV
 loader puts it in ``p_timestep_weight``; ``out_node.py`` annualises
 ``node_slack_up_d_e`` with it) — so ``W`` MUST use the same weights.  For the
@@ -63,14 +63,14 @@ from collections import defaultdict
 
 import polars as pl
 
-from flextool.engine_polars._derived_params import (
+from flextool.engine.preprocess.params._derived import (
     p_timestep_weight_from_source,
 )
-from flextool.engine_polars._emit_solve_writers import _compute_rp_frames
-from flextool.engine_polars._per_solve_sets import derive_per_solve_aggregates
-from flextool.engine_polars._solve_config import SolveConfig
-from flextool.engine_polars._spinedb_reader import SpineDbReader
-from flextool.engine_polars._timeline import TimelineConfig
+from flextool.engine.preprocess.emit._solve_writers import _compute_rp_period_frames
+from flextool.engine.preprocess.params._per_solve_sets import derive_per_solve_aggregates
+from flextool.engine.input._solve_config import SolveConfig
+from flextool.engine.input._spinedb_reader import SpineDbReader
+from flextool.engine.input._timeline import TimelineConfig
 
 # Per-node absolute shed tolerance (MWh).  Nodes whose residual unserved
 # energy is at/below this are treated as non-shedding and get NO increment,
@@ -135,7 +135,7 @@ def _rp_weight_sum_by_period(
 ) -> dict[str, float]:
     """Actual ``Σ_t timestep_weight`` per period for one RP *timeset*.
 
-    Reuses the engine writer :func:`._emit_solve_writers._compute_rp_frames`
+    Reuses the engine writer :func:`._solve_writers._compute_rp_period_frames`
     — the single source of truth that folds
     ``representative_period_weights`` into ``timestep_weight.csv`` — so the
     weights match those the annualiser applies to ``node_slack_up_d_e``
@@ -147,7 +147,7 @@ def _rp_weight_sum_by_period(
     """
     timeline_name = tc.timesets__timeline[timeset]
     timeline_steps = [step for step, _dur in tc.timelines[timeline_name]]
-    frames = _compute_rp_frames(
+    frames = _compute_rp_period_frames(
         tc.rp_weights[timeset],
         tc.timeset_durations[timeset],
         period,
@@ -174,7 +174,7 @@ def _weight_sum_by_period(
     Uses the ACTUAL engine-built weights for every regime:
 
     * **default / ``timeset_weights``** — the native
-      :func:`._derived_params.p_timestep_weight_from_source` (returns dense
+      :func:`._derived.p_timestep_weight_from_source` (returns dense
       1.0 or the normalised ``timeset_weights``), summed per period;
     * **``representative_period_weights`` (RP)** — that helper returns
       ``None`` (RP weights live in the CSV the writer folds), so each active
@@ -356,7 +356,7 @@ def sized_increments(
 # NORMALISE it to the true annual residual ``res = node_slack_up_d_e[node]``.
 #
 # With the ENGINE per-cell timestep weight ``tw_rep(rep, h)`` (from
-# ``_compute_rp_frames``'s ``timestep_weight.csv`` — the same weights the
+# ``_compute_rp_period_frames``'s ``timestep_weight.csv`` — the same weights the
 # annualiser applies) and the folded shape ``slack_rep(rep, h)`` summing to
 # ``S = Σ_cell slack_rep`` over the cells we can inject on::
 #
@@ -496,7 +496,7 @@ def _rp_fold_edges_and_tw(
     representative cell ``(period, rep_time)`` that shares its within-block
     offset ``h``, weighted by the hull weight ``rp_weights[base][rep]``.
     ``tw_rep`` comes straight from the engine writer's ``timestep_weight.csv``
-    (:func:`._emit_solve_writers._compute_rp_frames`) so the sizer divides by
+    (:func:`._solve_writers._compute_rp_period_frames`) so the sizer divides by
     exactly the weight the annualiser multiplies back.
 
     Two representative-period regimes are handled:
@@ -523,7 +523,7 @@ def _rp_fold_edges_and_tw(
     for start, count in tc.timeset_durations[timeset]:
         rep_count[str(start)] = int(float(count))
 
-    frames = _compute_rp_frames(
+    frames = _compute_rp_period_frames(
         rpw, tc.timeset_durations[timeset], period, steps,
     )
     tw = frames["timestep_weight.csv"].with_columns(

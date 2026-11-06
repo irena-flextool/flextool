@@ -281,8 +281,8 @@ def test_rp_fold_edges_conserve_and_match_tw(tmp_path):
         _rp_fold_edges_and_tw,
         _rp_weight_sum_by_period,
     )
-    from flextool.engine_polars._solve_config import SolveConfig
-    from flextool.engine_polars._timeline import TimelineConfig
+    from flextool.engine.input._solve_config import SolveConfig
+    from flextool.engine.input._timeline import TimelineConfig
 
     url = json_to_db(RP_FIXTURE_JSON, tmp_path / "c.sqlite")
     sc = SolveConfig.load_from_db_url(url, RP_SCENARIO)
@@ -332,7 +332,7 @@ def test_rp_weight_sum_uses_actual_nonuniform_weights(tmp_path):
     """The RP path sums the ACTUAL (non-uniform) folded weights, not ``n_d``.
 
     ``_weight_sum_by_period`` must reproduce the engine writer's
-    ``_compute_rp_frames`` per-period weight sum, whose underlying per-step
+    ``_compute_rp_period_frames`` per-period weight sum, whose underlying per-step
     weights are genuinely non-uniform (0.6/1.4, 0.9/1.1 here) — proving the
     sizer reads the real ``timestep_weight`` the annualiser applies, not a
     step-count shortcut that would ignore the weighting.
@@ -341,12 +341,12 @@ def test_rp_weight_sum_uses_actual_nonuniform_weights(tmp_path):
         _rp_weight_sum_by_period,
         _weight_sum_by_period,
     )
-    from flextool.engine_polars._per_solve_sets import (
+    from flextool.engine.preprocess.params._per_solve_sets import (
         derive_per_solve_aggregates,
     )
-    from flextool.engine_polars._solve_config import SolveConfig
-    from flextool.engine_polars._spinedb_reader import SpineDbReader
-    from flextool.engine_polars._timeline import TimelineConfig
+    from flextool.engine.input._solve_config import SolveConfig
+    from flextool.engine.input._spinedb_reader import SpineDbReader
+    from flextool.engine.input._timeline import TimelineConfig
 
     url = json_to_db(RP_FIXTURE_JSON, tmp_path / "c.sqlite")
     src = SpineDbReader(url, RP_SCENARIO)
@@ -367,12 +367,12 @@ def test_rp_weight_sum_uses_actual_nonuniform_weights(tmp_path):
         if ts in tc.rp_weights:
             import polars as pl
 
-            from flextool.engine_polars._emit_solve_writers import (
-                _compute_rp_frames,
+            from flextool.engine.preprocess.emit._solve_writers import (
+                _compute_rp_period_frames,
             )
             tl = tc.timesets__timeline[ts]
             steps = [s for s, _ in tc.timelines[tl]]
-            tw = _compute_rp_frames(
+            tw = _compute_rp_period_frames(
                 tc.rp_weights[ts], tc.timeset_durations[ts], period, steps,
             )["timestep_weight.csv"].with_columns(pl.col("weight").cast(pl.Float64))
             uniq = set(tw["weight"].round(6).unique().to_list())
@@ -489,6 +489,7 @@ def test_empirical_a_times_W_representative_periods(tmp_path_factory):
 
 @pytest.mark.solver
 @pytest.mark.slow
+@pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
 def test_run_calibration_drives_slack_down(tmp_path_factory):
     """On the nested under-build fixture, real sizing (undamped) must raise
     the adder each iteration and drive total unserved slack DOWN, monotone,

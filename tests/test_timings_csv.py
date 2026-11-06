@@ -23,8 +23,8 @@ OUTPUT_CONFIG = str(REPO_ROOT / "templates" / "default_plots.yaml")
 if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
 
-from flextool.engine_polars import run_chain_from_db  # noqa: E402  # imports after sys.path manipulation above
-from flextool.engine_polars._flex_data_provider import FlexDataProvider  # noqa: E402
+from flextool.engine import run_chain_from_db  # noqa: E402  # imports after sys.path manipulation above
+from flextool.engine.preprocess._flex_data_provider import FlexDataProvider  # noqa: E402
 from flextool.process_outputs.write_outputs import write_outputs  # noqa: E402  # imports after sys.path manipulation above
 
 
@@ -119,17 +119,22 @@ def test_timings_csv_exists_and_has_expected_schema(
 
 @pytest.mark.smoke
 def test_timings_csv_multi_roll(
-    test_db_url: str,
+    tmp_path_factory: pytest.TempPathFactory,
     test_solver_config_dir: Path,
     workdir: Path,
 ) -> None:
     """Rolling / multi-solve scenarios get one ``solve`` row per roll.
 
     Uses ``fullYear_roll`` (a rolling fullYear scenario in scenarios.yaml)
-    which iterates the solver multiple times.  Asserts the recorder
-    distinguishes per-roll entries via the ``roll_index`` column.
+    cut to p2020's first 12 h, so the solver iterates over three rolls.
+    Asserts the recorder distinguishes per-roll entries via the
+    ``roll_index`` column.
     """
-    _run_one("fullYear_roll", test_db_url, test_solver_config_dir, workdir)
+    from tests.engine._unit_db import FULLYEAR_ROLL_CHAIN, fullyear_roll_first_hours, make_db
+
+    url, scenario = make_db(tmp_path_factory, alt="timings_roll_3", values=fullyear_roll_first_hours(12.0),
+                            base_chain=FULLYEAR_ROLL_CHAIN)
+    _run_one(scenario, url, test_solver_config_dir, workdir)
 
     csv_path = workdir / "solve_data" / "timings.csv"
     df = pd.read_csv(csv_path)

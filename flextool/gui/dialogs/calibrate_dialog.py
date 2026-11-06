@@ -1196,6 +1196,11 @@ class CalibrateDialog(tk.Toplevel):
             lines.append(command_to_display_string(argv))
         return "\n".join(lines)
 
+    def _threads_per_run(self) -> int | None:
+        """The Execution jobs window's "Threads per run", as a run would send it (``None`` without a manager)."""
+        limits = getattr(self._execution_mgr, "execution_limits", None)
+        return getattr(limits, "max_cores_per_job", None)
+
     def _render_calib_cli(self) -> str:
         """Render the calibrate command(s) exactly as "Run…" would run them."""
         s = self._settings
@@ -1220,6 +1225,7 @@ class CalibrateDialog(tk.Toplevel):
                 output_location=out,
                 debug=s.calib_keep_artifacts,
                 final_write_methods=final_write_methods_from_settings(s),
+                threads=self._threads_per_run(),
             )
             lines.append(command_to_display_string(argv))
         return "\n".join(lines)

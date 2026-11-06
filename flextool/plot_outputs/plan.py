@@ -1420,7 +1420,7 @@ def compute_plot_plans_for_result(
     plot_settings: dict,
     output_dir: Path,
     plot_rows: tuple[int, int] = (0, 167),
-    break_times: set[str] | None = None,
+    break_times: pd.MultiIndex | None = None,
     active_settings: list[str] | None = None,
     period_weights=None,
     manifest_accumulator=None,
@@ -1447,7 +1447,8 @@ def compute_plot_plans_for_result(
         reattach_file_level_for_color,
     )
     from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
-    from flextool.plot_outputs.format_helpers import insert_timeline_breaks
+    from flextool.plot_outputs.format_helpers import (
+        file_member_period, has_timeline_breaks, insert_timeline_breaks)
 
     entry = plot_settings.get(result_key)
     if not isinstance(entry, dict):
@@ -1582,8 +1583,10 @@ def compute_plot_plans_for_result(
             if cfg.multiply_by is not None:
                 df_fm = df_fm * cfg.multiply_by
 
-            if chart_type == 'time' and break_times:
-                df_fm = insert_timeline_breaks(df_fm, break_times)
+            if chart_type == 'time' and has_timeline_breaks(break_times):
+                file_level_names = [df_processed.columns.names[i] for i in file_levels]
+                df_fm = insert_timeline_breaks(
+                    df_fm, break_times, period=file_member_period(file_member, file_level_names))
 
             # Compute plan based on chart type
             if chart_type == 'bar':
@@ -1634,7 +1637,7 @@ def compute_live_plan(
     df: pd.DataFrame,
     cfg: 'PlotConfig',
     plot_name: str,
-    break_times: set[str] | None = None,
+    break_times: pd.MultiIndex | None = None,
     period_weights=None,
     color_path: Path | None = None,
 ) -> PlotPlan | None:
@@ -1648,7 +1651,8 @@ def compute_live_plan(
         reattach_file_level_for_color,
     )
     from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
-    from flextool.plot_outputs.format_helpers import insert_timeline_breaks
+    from flextool.plot_outputs.format_helpers import (
+        file_member_period, has_timeline_breaks, insert_timeline_breaks)
 
     full_range = (0, len(df))
     dim_result = _apply_dimension_rules(df, cfg, full_range, period_weights=period_weights)
@@ -1713,8 +1717,10 @@ def compute_live_plan(
     if cfg.multiply_by is not None:
         df_fm = df_fm * cfg.multiply_by
 
-    if chart_type == 'time' and break_times:
-        df_fm = insert_timeline_breaks(df_fm, break_times)
+    if chart_type == 'time' and has_timeline_breaks(break_times):
+        file_level_names = [df_processed.columns.names[i] for i in file_levels]
+        df_fm = insert_timeline_breaks(
+            df_fm, break_times, period=file_member_period(file_member, file_level_names))
 
     if chart_type == 'bar':
         return _compute_bar_plan(

@@ -28,13 +28,22 @@ import os
 # LicenseWarning; the production solve uses HiGHS anyway.  Must be set
 # before any flextool / polar_high import.
 os.environ.setdefault("FLEXTOOL_SKIP_SOLVER_PROBE", "1")
+# The suite runs single-threaded: each xdist worker and every FlexTool run a
+# test starts as a subprocess (it inherits this environment) uses one thread
+# for polars and HiGHS.  The workers already fill the cores, so more threads
+# per worker only oversubscribe the machine (subprocess timeouts on CI).
+# polars reads POLARS_MAX_THREADS only when it is imported, and the first
+# import in a worker is the constraints conftest loaded below, so this must
+# stay above it.  setdefault: a developer may set other values.  Tests of
+# the thread budget set their own environment (monkeypatch / subprocess env).
+os.environ.setdefault("FLEXTOOL_THREADS", "1")
+os.environ.setdefault("POLARS_MAX_THREADS", "1")
 
 import importlib.util
 import json
 import shutil
 import sys
 from pathlib import Path
-from urllib.parse import urlparse
 
 import pytest
 
@@ -42,8 +51,8 @@ TEST_DIR = Path(__file__).parent
 FIXTURES_DIR = TEST_DIR / "fixtures"
 
 # ---------------------------------------------------------------------------
-# Re-export the engine_polars constraint conftest as a top-level plugin so
-# the engine_polars/objective conftest can reuse its fixtures.  pytest 8.x
+# Re-export the engine constraint conftest as a top-level plugin so
+# the engine/objective conftest can reuse its fixtures.  pytest 8.x
 # forbids ``pytest_plugins`` in non-top-level conftests, so the registration
 # lives here.  The constraint conftest itself is loaded by file path because
 # ``tests/`` is not a package.  pytest also tries to import the plugin by
@@ -53,19 +62,19 @@ FIXTURES_DIR = TEST_DIR / "fixtures"
 # fixtures, not assertion-heavy test code.)
 # ---------------------------------------------------------------------------
 _CONSTRAINTS_CONFTEST = (
-    TEST_DIR / "engine_polars" / "constraints" / "conftest.py"
+    TEST_DIR / "engine" / "constraints" / "conftest.py"
 )
 if _CONSTRAINTS_CONFTEST.exists() and (
-    "_engine_polars_constraints_conftest" not in sys.modules
+    "_engine_constraints_conftest" not in sys.modules
 ):
     _spec = importlib.util.spec_from_file_location(
-        "_engine_polars_constraints_conftest", _CONSTRAINTS_CONFTEST,
+        "_engine_constraints_conftest", _CONSTRAINTS_CONFTEST,
     )
     _constraints_module = importlib.util.module_from_spec(_spec)
-    sys.modules["_engine_polars_constraints_conftest"] = _constraints_module
+    sys.modules["_engine_constraints_conftest"] = _constraints_module
     _spec.loader.exec_module(_constraints_module)
 
-pytest_plugins = ["_engine_polars_constraints_conftest"]
+pytest_plugins = ["_engine_constraints_conftest"]
 REPO_ROOT = TEST_DIR.parent
 
 # Make db_utils importable from this directory
@@ -95,6 +104,16 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "Run the opt-in GUI tests that open a real interactive Tk window. "
             "Skipped by default (they steal focus locally and have no display in "
             "CI); pass this — ideally under 'xvfb-run -a' — to exercise them."
+        ),
+    )
+    parser.addoption(
+        "--shard",
+        metavar="K/N",
+        default=None,
+        help=(
+            "Run only shard K of N: a module-atomic, time-balanced slice of the "
+            "selected tests (weights in tests/ci_durations.json; see "
+            "tests/_ci_shard.py). The N shards partition the unsharded selection."
         ),
     )
 
@@ -133,6 +152,16 @@ def pytest_configure(config: pytest.Config) -> None:
         "gui: opens a real interactive Tk window; opt-in via --run-gui "
         "(deselected by default)",
     )
+
+    shard = config.getoption("--shard", default=None)
+    if shard:
+        from _ci_shard import ShardPlugin, parse_shard
+
+        try:
+            k, n = parse_shard(shard)
+        except ValueError as exc:
+            raise pytest.UsageError(str(exc)) from None
+        config.pluginmanager.register(ShardPlugin(k, n), "flextool_ci_shard")
 
 
 # GUI test modules that open a real Tk window and therefore need an interactive
@@ -277,6 +306,46 @@ def lh2_trade_invest_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
     url = json_to_db(
         FIXTURES_DIR / "lh2_three_region_trade_invest.json", db_path
     )
+    migrate_database(url)
+    return url
+
+
+@pytest.fixture(scope="session")
+def lh2_trade_invest_retuned_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
+    """Re-tuned sibling of the trade-invest LH2 fixture (cycle c15b review F3).
+
+    Derived IN-MEMORY from ``lh2_three_region_trade_invest.json`` (same
+    single-source-of-truth rationale as :func:`lh2_master_build_db_url`).
+    Since every electrolyser hour consumes electricity (c15b, coarse
+    groups sum their hourly flows), region A's base 800 MW wind / 250 MW
+    electrolyser / 200 MW liquefier cannot ship LH2 on to C, so the base
+    fixture builds pipe_AB only and Benders converges in 2 iterations.
+    Here region A's chain is enlarged (wind_A 1 500 MW, electrolyser_A
+    1 000 MW, liquefier_A 800 MW), in the scenario's own alternative:
+    the monolith builds BOTH pipes, ships A→B→C (C's LH2 demand served,
+    no lh2_C slack) and λ = 0 Benders needs several iterations.
+    """
+    import base64
+
+    from flextool.update_flextool.db_migration import migrate_database
+
+    spec = json.loads(
+        (FIXTURES_DIR / "lh2_three_region_trade_invest.json").read_text()
+    )
+    alt = "lh2_three_region_trade_invest"
+
+    def _val(v: float) -> list:
+        return [base64.b64encode(json.dumps(v).encode()).decode(), "float"]
+
+    spec["parameter_values"] += [
+        ["unit", "wind_A", "existing", _val(1500.0), alt],
+        ["connection", "electrolyser_A", "existing", _val(1000.0), alt],
+        ["unit", "liquefier_A", "existing", _val(800.0), alt],
+    ]
+    root = tmp_path_factory.mktemp("db_lh2tir")
+    json_path = root / "lh2_trade_invest_retuned.json"
+    json_path.write_text(json.dumps(spec))
+    url = json_to_db(json_path, root / "lh2_trade_invest_retuned.sqlite")
     migrate_database(url)
     return url
 
@@ -764,11 +833,12 @@ def test_solver_config_dir(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 
 @pytest.fixture(scope="session")
-def scenario_workdir(
+def _scenario_run_factory(
     test_db_url,
     stochastic_db_url,
     lh2_db_url,
     lh2_trade_invest_db_url,
+    lh2_trade_invest_retuned_db_url,
     lh2_master_build_db_url,
     lh2_master_hourly_db_url,
     lh2_rp_invest_db_url,
@@ -786,50 +856,16 @@ def scenario_workdir(
     test_solver_config_dir,
     tmp_path_factory,
 ):
-    """Factory: build a fully-preprocessed work folder for a scenario.
-
-    Returns a callable ``factory(scenario_name, db_fixture="main")`` that
-    runs the full cascade with ``csv_dump=True`` and then snapshots the
-    last sub-solve's :class:`FlexDataProvider` to disk, materialising
-    every ``_emit_*`` output as a CSV under ``<wf>/input/*`` and
-    ``<wf>/solve_data/*``.  Results are cached per ``(scenario,
-    db_fixture)`` pair for the lifetime of the test session — calling
-    ``factory("base")`` twice returns the same ``Path``.
-
-    This mirrors the canonical CLI ``--csv-dump`` flow
-    (``flextool/cli/cmd_run_flextool.py``): the cascade itself runs
-    in-memory; ``csv_dump=True`` flushes the in-memory FlexData via
-    ``data.dump_csvs`` per sub-solve, and the post-cascade
-    ``provider.snapshot_processed_inputs`` materialises the
-    parent-qualified Provider key layout.  The combination reproduces
-    what the disk-staged generator used to seed
-    ``tests/engine_polars/data/`` produced.
-
-    The full cascade (HiGHS solve included) is required because the bulk
-    of the per-solve emitters run *inside* the cascade loop and populate
-    the live Provider; ``keep_solutions=True`` is required because that
-    Provider is otherwise slimmed away by the post-cascade memory-saver.
-
-    The ``db_fixture`` keyword selects the JSON fixture backing the DB.
-    Valid values are the keys of :data:`_DB_FIXTURE_NAMES` — currently
-    ``"main"`` (tests.json), ``"stochastic"`` (stochastics.json),
-    ``"lh2"`` (lh2_three_region.json), ``"h2_trade_parity"``,
-    ``"stochastics_pbt_inflow"``,
-    ``"branch2_parent_period"``, ``"case14"``.
-
-    Tests use it like:
-
-        def test_foo(scenario_workdir):
-            work = scenario_workdir("base")
-            data = load_flextool(work)
-    """
-    from flextool.engine_polars._orchestration import run_chain_from_db
+    """Session cache behind ``scenario_run`` and ``scenario_workdir``: one cascade per
+    ``(scenario, db_fixture)``, kept as a :class:`tests._support.load.ScenarioRun`."""
+    from tests._support.load import run_scenario
 
     url_by_fixture = {
         "main": test_db_url,
         "stochastic": stochastic_db_url,
         "lh2": lh2_db_url,
         "lh2_trade_invest": lh2_trade_invest_db_url,
+        "lh2_trade_invest_retuned": lh2_trade_invest_retuned_db_url,
         "lh2_master_build": lh2_master_build_db_url,
         "lh2_master_hourly": lh2_master_hourly_db_url,
         "lh2_rp_invest": lh2_rp_invest_db_url,
@@ -847,9 +883,9 @@ def scenario_workdir(
         "case14": case14_db_url,
     }
 
-    cache: dict[tuple[str, str], Path] = {}
+    cache: dict = {}
 
-    def factory(scenario_name: str, db_fixture: str = "main") -> Path:
+    def factory(scenario_name: str, db_fixture: str = "main"):
         key = (scenario_name, db_fixture)
         if key in cache:
             return cache[key]
@@ -860,45 +896,69 @@ def scenario_workdir(
                 f"Unknown db_fixture {db_fixture!r}; valid: "
                 f"{sorted(url_by_fixture)}"
             ) from None
-        # ``_find_scenario`` (input.py) auto-constructs a SpineDbReader
-        # for ``load_flextool`` if and only if the workdir's basename
-        # matches ``work_<scenario_name>`` EXACTLY (no numeric suffix)
-        # and the workdir contains ``tests.sqlite``.  ``tmp_path_factory.
-        # mktemp`` always appends a numeric suffix (``work_base0`` etc.),
-        # so build a uniquely-named parent and nest the precisely-named
-        # work folder inside.
+        # The work folder keeps its exact ``work_<scenario>`` name (the reload
+        # tests in ``tests/csv_reload/`` check that a ``work_<scenario>`` folder
+        # holding ``tests.sqlite`` is not discovered).  ``tmp_path_factory.mktemp`` appends a
+        # numeric suffix, so nest it in a uniquely-named parent; the parent also
+        # holds the empty ``load_<scenario>`` folder ``load_scenario`` loads from.
         parent = tmp_path_factory.mktemp(f"_root_{scenario_name}_{db_fixture}")
-        wf = parent / f"work_{scenario_name}"
-        wf.mkdir()
-        steps = run_chain_from_db(
-            input_db_url=url,
-            scenario_name=scenario_name,
-            work_folder=wf,
-            solver_config_dir=test_solver_config_dir,
-            csv_dump=True,
-            keep_solutions=True,
+        run = run_scenario(
+            url, scenario_name, parent / f"work_{scenario_name}",
+            solver_config_dir=test_solver_config_dir, db_fixture=db_fixture,
         )
-        # Copy the SQLite the cascade was driven from into the workdir
-        # so ``_find_scenario`` can auto-construct a SpineDbReader for
-        # the re-solve in tests that call ``load_flextool(wf)``.  The
-        # url is ``sqlite:///<absolute-path>``; urlparse returns the leading
-        # slash inside ``.path``.  On Windows that yields ``/C:/…``, an invalid
-        # path (OSError 22), so strip the leading slash before a drive letter.
-        sqlite_src = urlparse(url).path
-        if len(sqlite_src) >= 3 and sqlite_src[0] == "/" and sqlite_src[2] == ":":
-            sqlite_src = sqlite_src[1:]  # '/C:/…' -> 'C:/…'
-        shutil.copy(sqlite_src, wf / "tests.sqlite")
-        # Mirror the CLI ``--csv-dump`` post-cascade snapshot: only the
-        # last sub-solve's Provider holds the union of every cascade
-        # emitter's frames; snapshot it to disk so ``_emit_*`` outputs
-        # appear under ``input/`` + ``solve_data/``.
-        if steps:
-            last_step = next(reversed(list(steps.values())))
-            provider = getattr(last_step, "flex_data_provider", None)
-            if provider is not None:
-                provider.snapshot_processed_inputs(wf)
-        cache[key] = wf
-        return wf
+        cache[key] = run
+        return run
+
+    return factory
+
+
+@pytest.fixture(scope="session")
+def scenario_run(_scenario_run_factory):
+    """Factory: ``scenario_run(scenario, db_fixture="main") -> ScenarioRun``.
+
+    Runs the full cascade once per ``(scenario, db_fixture)`` per session
+    (shared with ``scenario_workdir``) and returns the
+    :class:`tests._support.load.ScenarioRun`: every step's post-solve
+    provider, the handoff each step consumed, the objectives and the last
+    step's FlexData.  Rebuild a step's FlexData with the production loader
+    call through :func:`tests._support.load.load_scenario`::
+
+        def test_foo(scenario_run):
+            run = scenario_run("base")
+            data = load_scenario(run)
+
+    The run's providers, handoffs and ``last_flex_data`` are shared by every
+    test in the session: never mutate them (``clone_provider`` first).
+
+    ``db_fixture`` selects the JSON fixture backing the DB; valid values are
+    the keys of :data:`_DB_FIXTURE_NAMES`.
+    """
+    return _scenario_run_factory
+
+
+@pytest.fixture(scope="session")
+def scenario_workdir(_scenario_run_factory):
+    """Factory: ``scenario_workdir(scenario, db_fixture="main") -> Path``.
+
+    Returns the ``work_<scenario>`` folder of the cached
+    :class:`tests._support.load.ScenarioRun` (see ``scenario_run``; one
+    cascade per ``(scenario, db_fixture)`` per session, so calling it twice
+    returns the same ``Path``).  The folder holds the cascade's own outputs
+    (``output_raw/`` …), a CSV snapshot of the last sub-solve's
+    :class:`FlexDataProvider` under ``input/`` + ``solve_data/`` (for tests
+    that read those files) and a ``tests.sqlite`` copy of the DB the cascade
+    ran on.
+
+    The cascade runs with ``csv_dump=False`` and ``keep_solutions=True``
+    (``keep_solutions`` keeps every step's provider for ``load_scenario``).
+
+    To get a sub-solve's FlexData, use ``scenario_run`` +
+    :func:`tests._support.load.load_scenario` (the production loader call:
+    the step's provider + a DB reader).  ``load_flextool(work)`` alone raises,
+    and the loader never reads the snapshot CSVs.
+    """
+    def factory(scenario_name: str, db_fixture: str = "main") -> Path:
+        return _scenario_run_factory(scenario_name, db_fixture).work_folder
 
     return factory
 
@@ -907,8 +967,8 @@ def scenario_workdir(
 def _reset_global_axis_enums() -> None:
     """Reset the cascade-wide axis_enums ContextVar before every test.
 
-    ``flextool.engine_polars.input.load_flextool`` sets the global
-    ``axis_enums`` ContextVar on success (input.py finally block
+    ``flextool.engine.preprocess.flex_data.load_flextool`` sets the global
+    ``axis_enums`` ContextVar on success (flex_data.py finally block
     ~line 4216).  The ContextVar persists into the next test in the
     same pytest worker, pinning Enum dtypes that may differ from the
     next test's fixture vocabulary — surfacing as "enum on left does
@@ -916,21 +976,21 @@ def _reset_global_axis_enums() -> None:
     as test-order-dependent flakes where a downstream test inherits
     a polluted vocabulary and silently produces wrong-shape output.
 
-    The ``tests/engine_polars/conftest.py`` already has a local
+    The ``tests/engine/conftest.py`` already has a local
     ``autouse=True`` version of this fixture covering tests in that
     subtree.  SCEN-3 (``test_examples_scenario_solves[test_a_lot]``
     passes alone, fails in full sweep) hypothesised that polluters
-    from OUTSIDE ``tests/engine_polars/`` (e.g. ``test_scenarios.py``,
+    from OUTSIDE ``tests/engine/`` (e.g. ``test_scenarios.py``,
     ``test_xlsx_workflow.py``, ``model/test_examples_e2e.py``) leak
     axis_enums state into subsequent tests because the local fixture
     didn't cover them.  Lifting the reset to the top-level conftest
-    closes that gap for ALL tests, not just the engine_polars
+    closes that gap for ALL tests, not just the engine
     subtree.
 
     Cheap (a single ContextVar assignment) and harmless to run
     between every test.
     """
-    from flextool.engine_polars._axis_enums import set_global_axis_enums
+    from flextool.engine.input._axis_enums import set_global_axis_enums
     set_global_axis_enums(None)
     yield
     set_global_axis_enums(None)

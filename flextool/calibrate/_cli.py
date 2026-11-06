@@ -225,6 +225,17 @@ def build_parser() -> argparse.ArgumentParser:
             "clearing them between iterations."
         ),
     )
+    parser.add_argument(
+        "--threads",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "Threads for each FlexTool solve of the calibration: FlexTool's data "
+            "processing and the solver (passed on as --threads). Default: the "
+            "available cores."
+        ),
+    )
     return parser
 
 
@@ -255,6 +266,7 @@ def _config_from_args(args: argparse.Namespace) -> CalibConfig:
         overshoot=args.overshoot,
         stall_fraction=args.stall_fraction,
         final_write_methods=final_write_methods,
+        threads=args.threads if args.threads is not None and args.threads >= 1 else None,
     )
 
 

@@ -62,10 +62,10 @@ def output_locations_from_db(output_info_db_url):
     written.  The DB URL may be a ``sqlite:///`` path or a Spine DB-server
     ``http://`` URL (both open via ``DatabaseMapping``).
     """
-    from spinedb_api import DatabaseMapping
+    from flextool.update_flextool.db_handle import open_database_mapping
 
     locations = []
-    with DatabaseMapping(output_info_db_url) as db:
+    with open_database_mapping(output_info_db_url) as db:
         filter_configs = db.get_filter_configs()
         scenario_names = []
         if filter_configs and filter_configs[0].get("alternatives"):

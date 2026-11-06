@@ -2,7 +2,7 @@
 
 The :mod:`input_derivation` tier sits between
 :mod:`flextool.spinedb_backend` (raw EAV → polars materialisation) and
-the in-cascade :class:`flextool.engine_polars._flex_data_provider.FlexDataProvider`
+the in-cascade :class:`flextool.engine.preprocess._flex_data_provider.FlexDataProvider`
 that the rest of the engine consumes.
 
 Architecture
@@ -40,11 +40,12 @@ import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+import polars as pl
 import spinedb_api as api
-from spinedb_api import DatabaseMapping
+from flextool.update_flextool.db_handle import open_database_mapping
 
 if TYPE_CHECKING:
-    from flextool.engine_polars._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
 
 
 __all__ = ["run"]
@@ -53,7 +54,7 @@ __all__ = ["run"]
 def _provider_key(filename: str) -> str:
     """Canonical Provider key for ``input/<stem>.csv`` style paths.
 
-    Matches the convention in :mod:`flextool.engine_polars._emit_provider_io`:
+    Matches the convention in :mod:`flextool.engine.preprocess._provider_io`:
     ``"<parent_dir_name>/<stem>"``.
     """
     p = Path(filename)
@@ -67,7 +68,6 @@ def run(
     *,
     scenario_name: "str | None" = None,
     work_folder: "Path | None" = None,
-    precision_digits: int = 0,
     memory_recorder=None,
 ) -> None:
     """Populate *provider* with the canonical ``input/`` + derivation
@@ -85,7 +85,7 @@ def run(
     3. **DB-driven derivations** (DC power flow, process method,
        commodity ladder cumulative + annual + sets).
     4. **Native preprocessing emitters** — the dozen modules under
-       :mod:`flextool.engine_polars._emit_*` that produce the
+       :mod:`flextool.engine._emit_*` that produce the
        ``solve_data/*.csv`` artefacts the cascade consumes pre-solve.
        Each is invoked directly with ``provider=`` so its frames flow
        into the Provider and disk emission is skipped.
@@ -108,22 +108,28 @@ def run(
         ported to Provider-only operation.  When ``None`` defaults to
         :func:`pathlib.Path.cwd`.  Becomes optional in a later step
         once every writer is Provider-only.
-    precision_digits
-        Float precision forwarded to ``SpineDBBackend.parameter_values``.
     """
     from flextool.spinedb_backend import SpineDBBackend
     from flextool.input_derivation._specs import (
         _ENTITY_SPECS,
         _PARAMETER_SPECS,
         _DEFAULT_VALUES_SPECS,
+        PD_PROCESS_DROP_TIMESTEP_KEYS,
     )
     from flextool.input_derivation._validators import (
         validate_timeline_timestep_duration,
+        validate_node_inflow_not_period,
         validate_ladder_methods,
         validate_group_output_memberships,
         validate_capacity_margin_groups,
+        validate_group_limit_flags,
+        validate_non_sync_one_variable_connections,
+        validate_min_load_efficiency_inputs,
         validate_connection_node_memberships,
         validate_connection_delay,
+        validate_connection_startup,
+        validate_group_increase_reserve_ratio,
+        warn_existing_not_whole_units,
         validate_unit_input_shares,
         validate_output_min_coeff,
     )
@@ -162,7 +168,6 @@ def run(
         backend = SpineDBBackend.__new__(SpineDBBackend)
         backend._db = db                              # type: ignore[attr-defined]
         backend._api = api                            # type: ignore[attr-defined]
-        backend._precision_digits = precision_digits  # type: ignore[attr-defined]
         backend._scenario_name = scenario_name        # type: ignore[attr-defined]
 
         for spec in _DEFAULT_VALUES_SPECS:
@@ -183,10 +188,41 @@ def run(
             provider.put(_provider_key(spec.filename), frame)
 
         validate_timeline_timestep_duration(db)
+        validate_node_inflow_not_period(backend)
 
+        timesteps: list[str] | None = None
         for spec in _PARAMETER_SPECS:
             kwargs = {k: v for k, v in spec.items() if k != "filename"}
             frame = backend.parameter_values(**kwargs)
+            if spec["filename"] == "input/timeline.csv":
+                timesteps = frame["timestep"].unique().to_list()
+            elif spec["filename"] == "input/pd_process.csv":
+                if timesteps is None:
+                    raise RuntimeError("_PARAMETER_SPECS: input/timeline.csv must precede input/pd_process.csv")
+                # The period twins of the ``pt_process`` parameters (and ``startup_cost``) also catch silent-``x``
+                # time maps; drop their timestep-keyed rows (a timestep is never a period) so they neither pollute
+                # ``periodAll`` nor get copied into the per-roll ``pd_process`` lookups. An explicitly
+                # period-labelled row (``index_name: "period"``) is never a silent-``x`` leak even when its key
+                # happens to also be a timestep name (#76) — re-read the spec filtered to that index and keep any
+                # row it names.
+                key_cols = ["process", "processParam", "period"]
+                explicit_period = backend.parameter_values(**{**kwargs, "filter_in_index": "period"})
+                is_explicit = (
+                    frame.join(
+                        explicit_period.select(key_cols).unique().with_columns(
+                            pl.lit(True).alias("__explicit")),
+                        on=key_cols, how="left",
+                    )["__explicit"].fill_null(False)
+                )
+                drop = (
+                    pl.col("processParam").is_in(list(PD_PROCESS_DROP_TIMESTEP_KEYS))
+                    & pl.col("period").is_in(timesteps)
+                )
+                frame = (
+                    frame.with_columns(is_explicit.alias("__explicit"))
+                    .filter(~drop | pl.col("__explicit"))
+                    .drop("__explicit")
+                )
             provider.put(_provider_key(spec["filename"]), frame)
         _mem("spine_db_read_end", "Spine DB loaded")
 
@@ -199,9 +235,12 @@ def run(
         # Once per scenario: input shares and output floors (need the
         # process method for the online / indirect classification).
         validate_unit_input_shares(db, provider, logger)
+        validate_min_load_efficiency_inputs(db, logger)
         validate_output_min_coeff(db, provider, logger)
         validate_ladder_methods(db, logger)
         validate_connection_delay(db, logger)
+        validate_connection_startup(db, provider)
+        validate_group_increase_reserve_ratio(db, logger)
         derive_commodity_ladder_cumulative(backend, provider, logger)
         derive_commodity_ladder_annual(backend, provider, logger)
         derive_commodity_ladder_sets(backend, provider)
@@ -210,13 +249,11 @@ def run(
         # Step 3 — write_input-time native preprocessing emitters.
         # Each emit_* threads the Provider directly so frames flow into
         # memory rather than disk.
-        from flextool.engine_polars import (
-            _emit_leaf_sets as _leaf,
-            _emit_mid_sets as _mid,
-            _emit_calc_params as _calc,
-            _emit_arc_unions as _arc,
-            _emit_dispatchers as _disp,
-        )
+        from flextool.engine.preprocess.emit import _leaf_sets as _leaf
+        from flextool.engine.preprocess.emit import _mid_sets as _mid
+        from flextool.engine.preprocess.emit import _calc_params as _calc
+        from flextool.engine.preprocess.emit import _arc_unions as _arc
+        from flextool.engine.preprocess.emit import _dispatchers as _disp
         input_dir = wf / "input"
         solve_data_dir = wf / "solve_data"
         os.makedirs(solve_data_dir, exist_ok=True)
@@ -239,6 +276,7 @@ def run(
         _mid.emit_process_delayed__duration(input_dir, solve_data_dir, provider=provider)
         _calc.emit_entity_total_caps(input_dir, solve_data_dir, provider=provider)
         _calc.emit_process_method_projections(input_dir, provider=provider)
+        warn_existing_not_whole_units(db, provider)
         _calc.emit_process_VRE(input_dir, provider=provider)
         _calc.emit_process_arc_method_joins(input_dir, provider=provider)
         _calc.emit_process_profile_method_joins(input_dir, provider=provider)
@@ -263,6 +301,8 @@ def run(
 
         # Step 4 — validators that need DB access.
         validate_capacity_margin_groups(db, logger)
+        validate_group_limit_flags(db, logger)
+        validate_non_sync_one_variable_connections(db, provider, logger)
         validate_group_output_memberships(db, logger)
         validate_connection_node_memberships(db, logger)
 
@@ -272,7 +312,7 @@ def run(
             api.filters.scenario_filter.scenario_filter_config(scenario_name)
             if scenario_name else None
         )
-        with DatabaseMapping(backend_or_db_url) as db:
+        with open_database_mapping(backend_or_db_url) as db:
             # Hot-load the DB: fetching upfront is faster than repeated
             # parameter_value lookups.
             db.fetch_all("entity")

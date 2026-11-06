@@ -193,11 +193,12 @@ def export_to_excel(
                 # In v2, version info is on the navigate sheet — skip separate sheet
                 del wb[spec.sheet_name]
                 continue
-            write_version_sheet(ws, db_contents.version)
+            write_version_sheet(ws, db_contents.version, db_contents.behaviour_markers)
         elif layout == "navigate":
             write_navigate_sheet(
                 ws, specs, navigate_groups=navigate_groups,
                 version=db_contents.version if use_new_format else None,
+                behaviour_markers=db_contents.behaviour_markers if use_new_format else None,
             )
         else:
             print(f"  Warning: unknown layout '{layout}' for sheet '{spec.sheet_name}', skipping.")

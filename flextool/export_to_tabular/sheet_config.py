@@ -61,7 +61,7 @@ def _has_facet_leaf_shape(entity_class: str, param_name: str) -> bool:
     if not entity_class or not param_name:
         return False
     try:
-        from flextool.engine_polars._param_shapes import (
+        from flextool.engine.input._param_shapes import (
             LeafKind,
             PARAM_ALLOWED_SHAPES,
             shape_to_axes,
@@ -152,6 +152,25 @@ def _has_time_indexed_values(
     for (cls, _byname, pname, _alt), value in db_contents.parameter_values.items():
         if cls == entity_class and pname == param_name and isinstance(value, Map):
             if _is_time_indexed_map(value):
+                return True
+    return False
+
+
+def _has_nested_map_values(
+    db_contents: DatabaseContents,
+    entity_class: str,
+    param_name: str,
+) -> bool:
+    """Whether any value of this parameter is a Map of Maps (e.g. period → time).
+
+    Such values have no place on a constant, periodic or (1-D) timeseries
+    sheet; the multi-index stochastic writer holds them.
+    """
+    from spinedb_api import Map
+
+    for (cls, _byname, pname, _alt), value in db_contents.parameter_values.items():
+        if cls == entity_class and pname == param_name and isinstance(value, Map):
+            if any(isinstance(v, Map) for v in value.values):
                 return True
     return False
 
@@ -581,6 +600,11 @@ def build_sheet_specs(
             if "timeseries" in types:
                 layout_params["timeseries"].append(pname)
             if "stochastic" in types:
+                layout_params["stochastic"].append(pname)
+            elif "2d_map" in (pdef.get("parameter_type_list") or ()) and _has_nested_map_values(
+                    db_contents, cls_name, pname):
+                # A 2-D map (e.g. period + time) without a stochastic type: written on its own
+                # multi-index sheet, only when the database holds such a value.
                 layout_params["stochastic"].append(pname)
             # For params with periodic capability but no 3d_map: check actual DB values
             if "periodic" in types and "timeseries" not in types:

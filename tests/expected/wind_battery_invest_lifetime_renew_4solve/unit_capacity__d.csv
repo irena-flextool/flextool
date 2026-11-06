@@ -1,5 +1,5 @@
-unit,solve,period,existing,invested,divested,total
-wind_plant,y2020_5week,p2020,1000.0,782.4468,,1782.4468
-wind_plant,y2025_5week,p2025,1000.0,253.6302,,2036.077
-wind_plant,y2030_5week,p2030,1000.0,253.6302,,2289.7072
-wind_plant,y2035_5week,p2035,1000.0,253.6302,,2543.3375
+unit,solve,period,existing,invested,in_construction,divested,total
+wind_plant,y2020_5week,p2020,1000.0,890.3506,,,1890.3506
+wind_plant,y2025_5week,p2025,1000.0,145.7106,,,2036.0613
+wind_plant,y2030_5week,p2030,1000.0,253.6336,,,2289.6948
+wind_plant,y2035_5week,p2035,1000.0,253.6336,,,2543.3284

@@ -1,8 +1,8 @@
 """End-to-end gating test for the ADDITIVE ``energy_margin_adder`` feature.
 
 Sibling to ``test_energy_margin_integration.py`` (the multiplier).  The
-adder (``flextool/engine_polars/_emit_energy_margin_adder.py``, wired into
-``_emit_solve_time.run`` right AFTER the multiplier) applies, ONLY in the
+adder (``flextool/engine/preprocess/emit/_energy_margin_adder.py``, wired into
+``_solve_time.run`` right AFTER the multiplier) applies, ONLY in the
 solve that carries investment periods and ONLY to nodes whose
 ``energy_margin_method == 'inflow_adder'``:
 
@@ -16,7 +16,7 @@ Why a REAL cascade test (the emit unit test is not enough)
 The sibling MULTIPLIER once shipped with an INVERTED sign that passed
 synthetic positive-demand unit tests and was only caught by a real
 negative-demand run.  The adder emitter's synthetic parity tests live in
-``tests/engine_polars/test_energy_margin_adder_emit.py``; this module
+``tests/engine/test_energy_margin_adder_emit.py``; this module
 proves the SIGN and the ROW-CREATION on real HiGHS cascade solves, where a
 sign inversion would REDUCE demand / lower cost instead of deepening it.
 
@@ -175,7 +175,7 @@ def _build_db_period_map(tmp_path_factory, tag: str) -> str:
 def _run(url: str, work_folder: Path) -> dict:
     """Drive the full cascade, retaining per-step providers for the
     emitted-``pdtNodeInflow`` assertions and per-step objectives."""
-    from flextool.engine_polars import run_chain_from_db
+    from flextool.engine import run_chain_from_db
 
     steps = run_chain_from_db(
         url, SCENARIO, work_folder=work_folder,
@@ -340,6 +340,7 @@ def test_case1_west_demand_deepened_builds_and_gated(case1_cascades):
 # deepens west's invest demand by that period's value (not a flat scalar)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
 def test_period_map_adder_deepens_per_period(period_map_cascades):
     """A period (1d) Map ``energy_margin_adder`` survives DB → ingestion →
     emit → solve: in ``invest_24h`` every ``west`` demand row in period
@@ -412,6 +413,7 @@ def test_period_map_adder_deepens_per_period(period_map_cascades):
 # Case 2 — CREATE demand rows on a genuinely zero-inflow node
 # ---------------------------------------------------------------------------
 
+@pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
 def test_case2_creates_rows_on_zero_inflow_node(case2_cascades):
     """With ``battery`` marked ``no_inflow`` it has NO inflow row adder-off;
     adder-on the emitter CREATES one ``-adder`` demand row per invest
@@ -476,6 +478,7 @@ def test_case2_creates_rows_on_zero_inflow_node(case2_cascades):
 # complete on a real solve (no silent revert to an un-scaled LP)
 # ---------------------------------------------------------------------------
 
+@pytest.mark.nightly_heavy  # PR CI skips it; runs nightly (pyproject markers)
 def test_autoscale_strict_registers_adder_param(tmp_path_factory, monkeypatch):
     """With ``FLEXTOOL_AUTOSCALE_STRICT=1`` an adder-carrying solve completes
     without the autoscale silent-revert — proving the
