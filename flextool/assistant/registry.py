@@ -28,6 +28,7 @@ Area = Literal["orientation", "discovery", "inputs", "results", "diagnostics"]
 #: The modules that define tools, in the order their tools are listed.
 TOOL_MODULES = (
     "flextool.assistant.tools.orientation",
+    "flextool.assistant.tools.discovery",
     "flextool.assistant.tools.inputs",
 )
 

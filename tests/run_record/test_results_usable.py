@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import pytest
 
-from flextool.run_record import results_usable, unusable_reason
+from flextool.run_record import results_usable, unusable_code, unusable_reason
 
 
 def _status(state: str, parquet_state: str, message: str | None = None) -> dict:
@@ -52,3 +52,28 @@ def test_unfinished_or_failed_run_is_not_usable_even_with_earlier_parquet(state,
 def test_failed_reason_carries_the_error_message():
     status = _status("failed", "previous_run", message="solve for y2030 is infeasible")
     assert unusable_reason(status) == "latest run failed: solve for y2030 is infeasible"
+
+
+@pytest.mark.parametrize("state, parquet_state, effective, code", [
+    ("succeeded", "written", None, None),
+    ("running", "previous_run", "running", "running"),
+    ("running", "partial", "unknown", "running"),
+    ("running", "previous_run", "abandoned", "abandoned"),
+    ("failed", "previous_run", None, "failed"),
+    ("interrupted", "partial", None, "failed"),
+    ("killed", "previous_run", None, "failed"),
+    ("crashed", "none", None, "failed"),
+    ("succeeded", "previous_run", None, "previous_run"),
+    ("succeeded", "partial", None, "partial"),
+    ("succeeded", "not_requested", None, "no_parquet"),
+    ("succeeded", "skipped", None, "no_parquet"),
+    ("succeeded", "none", None, "no_parquet"),
+])
+def test_unusable_code(state, parquet_state, effective, code):
+    status = _status(state, parquet_state)
+    assert unusable_code(status, effective) == code
+    assert (code is None) == results_usable(status)
+
+
+def test_legacy_folder_has_no_unusable_code():
+    assert unusable_code(None) is None
