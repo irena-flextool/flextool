@@ -36,7 +36,8 @@ def test_each_entity_once_per_run(capsys) -> None:
 
 
 def test_text_names_version_and_silence(monkeypatch) -> None:
-    change = bc.BEHAVIOUR_CHANGES[CHANGE]
+    change = dataclasses.replace(bc.BEHAVIOUR_CHANGES[CHANGE], since=None, published=None)
+    monkeypatch.setitem(bc.BEHAVIOUR_CHANGES, CHANGE, change)
     monkeypatch.setattr(bc, "_installed_version", lambda: "4.1.1")
     text = bc.notice_text(CHANGE, "storage nodes", ["a"])
     assert text.startswith("Behaviour changed in the FlexTool release after 4.1.1 (not yet published): ")

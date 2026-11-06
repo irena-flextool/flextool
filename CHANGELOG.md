@@ -1,4 +1,36 @@
-## Unreleased
+## Release 4.2.0 (7.11.2026) — coarse time steps for units and connections, stochastic realization redesign, multi-solve cost & retirement fixes, run thread budget (schema v77)
+
+A large release: units and connections can decide on coarse time steps, stochastic solves are rebuilt around
+forecasts and a separate realization dispatch, and many result fixes change what existing models report. Highlights
+(the detailed entries follow):
+
+- **Upgrade:** opening a database migrates it to database version 77 automatically (value types match what FlexTool
+  reads, group `invest_method` `not_allowed` becomes `not_active`, dropped parameters are listed). Runs on an upgraded
+  database print a behaviour-change notice naming the affected entities; delete its metadata marker to silence it.
+- **Coarse time steps for processes:** units and connections whose nodes are all in `new_stepduration` groups decide
+  once per coarse step: flows, online variables, reserves, `exact` connections and DC power flow. Coarse nodes now
+  balance the sum of their flows (hourly-to-daily conversion no longer gets free energy).
+- **Run thread budget:** `--threads N` / `FLEXTOOL_THREADS` for FlexTool's processing, HiGHS and Benders; the GUI's
+  "Cores per job" is now "Threads per run"; terminal and Toolbox runs process data on at most 8 threads.
+- **Stochastics:** a fan holds forecasts only; a `realized: yes` branch adds a realization dispatch; normal outputs
+  hold realized results only (forecast rows in the `output_horizon` raw dump); per-path CO2, ladder and flow caps.
+- **Construction lead time:** `invested` is the capacity coming online; new `in_construction` column and
+  `constraint_in_construction_capacity_coeff`.
+- **Costs and retirement:** a run of several solves reports costs from the start of the run, each once; annualized
+  investment and fixed costs are yearly amounts; retirement counts until the end of life; new user-constraint
+  `constraint_capacity_coeff` / `constraint_retired_capacity_coeff`.
+- **Storage:** default `storage_start_end_method` is `fix_nothing`; `fix_end` / `fix_start_end` pin the end;
+  self-discharge is exact for any step length; `bind_within_period` and `bind_intraperiod_blocks` fixed.
+- **Other important fixes:** node and reserve prices in currency per MWh; reserve provision in MW; one N-1 constraint
+  per failing unit; ramp limits scale with the step length; exact start-ups; unit commitment no longer links across
+  gaps; CO2 limits in rolling and chained solves; inflow scaling stops with an error instead of dropping demand.
+- **Removed / changed options:** `--precision-digits` and `--matrix-file-format` (and their environment variables)
+  removed; the GUI's MIP-gap setting removed and GUI solver settings now match terminal runs; new `--benders-workers`
+  and `--basis-cache-dir`.
+- **Dependencies:** polar-high ≥ 3.12.2, highspy ≥ 1.15.1, polars held below 2 (2.x triples peak memory); Python
+  3.11+, CI on 3.13 and 3.14.
+- **Platform:** the Windows Toolbox bundle runs Python 3.14 with FlexTool installed, needs no Visual C++ runtime and
+  is smaller; processors without AVX2 are supported through `flextool[compat]`.
 
 - **New: `--threads N` (`FLEXTOOL_THREADS`), one thread count per FlexTool run, for FlexTool's data processing and
   the solver.** FlexTool's own processing (polars) uses at most N threads and at most 8 (`POLARS_MAX_THREADS` can
@@ -761,8 +793,8 @@
 - **The per-period CO2 price in a stochastic solve no longer comes out multiplied by the branch's
   probability.** The per-period CO2 cap isn't weighted by the branch probability the way the
   objective's CO2 price term is, so the raw shadow price was the path's true price times its own
-  branch weight — each path now reports its own price, the same fix item #120 flags for the node
-  price fixed in an earlier cycle. A deterministic solve is unaffected.
+  branch weight — each path now reports its own price, as node prices now do (see "Prices are in
+  currency per MWh" below). A deterministic solve is unaffected.
 
 - **The model-wide and per-group CO2 totals in a stochastic solve now report each scenario path
   separately, instead of adding every forecast branch's emissions into one pooled number.** The
@@ -1234,7 +1266,7 @@
 - **`fix_start_end` fixes the start state.** A storage node with
   `storage_start_end_method` *fix_start_end* got no start condition at all
   (it could start with free energy); its start is now fixed like
-  *fix_start*. Its end condition is not implemented yet.
+  *fix_start*. Its end is fixed too (see "`fix_end` / `fix_start_end` fix the end of the storage" above).
 
 - **`fix_start` of a *bind_within_solve* storage in a solve with several
   periods.** The start state was pinned at the last step of the first
@@ -1327,11 +1359,9 @@
   model): the two regions at the ends of a pipe could be solved with
   different flows on it. Both ends now always get the same flow, and the
   upper bound is the cost of that one point, and the investments handed to
-  a following dispatch solve are the plan that bound priced. Needs
-  polar-high 3.10.0; this costs one extra master solve per iteration
-  (iteration counts are unchanged on the test models). With an older
-  polar-high a run with in-out weight > 0 prints a warning that its upper
-  bound may be invalid.
+  a following dispatch solve are the plan that bound priced. This costs
+  one extra master solve per iteration (iteration counts are unchanged on
+  the test models).
 
 - **Solver options reach every solve.** `solver_mip_gap` was ignored on the
   default (warm) HiGHS path; it is now honoured. A solve with
@@ -1340,10 +1370,9 @@
   (`--highs-threads`, `--solver-time-limit`, …), the determinism defaults and
   the automatic scaling options; every HiGHS solve now gets the same layered
   set. Benders decomposition now uses these options too (master and region
-  subproblems; see the solver docs for the details); with a thread count
-  (`--highs-threads`, or `threads` in `highs.opt`) and parallel regions this
-  needs polar-high 3.10.0, otherwise the thread count is not used for
-  Benders.
+  subproblems; see the solver docs for the details), including a thread
+  count (`--highs-threads`, or `threads` in `highs.opt`) with parallel
+  regions.
 
 - **Stochastic storage tie counts every flow into the node.** The tie that
   keeps the net flow into a stochastic storage node equal in all forecasts
@@ -1385,8 +1414,10 @@
 - **Nodes in a `new_stepduration` group sum their flows over each coarse
   step.** A node of a group whose `new_stepduration` is longer than the
   solve's time step is now balanced once per coarse step by summing all its
-  flows of the solve's time steps; flows, online status and reserves of every
-  unit and connection stay at the solve's time step. Before, a flow between an
+  flows of the solve's time steps; flows, online status and reserves of a
+  unit or connection with a node at the solve's step stay at the solve's time
+  step (those whose nodes are all coarse now use the coarse step, see "Units
+  and connections between coarse nodes use the coarse step" above). Before, a flow between an
   hourly and a daily node (e.g. an electrolyser from hourly electricity to
   daily hydrogen) entered the daily balance only in the first hour of each
   day, multiplied by 24, so the other hours produced hydrogen from free
@@ -1548,8 +1579,8 @@
   period limit get a tighter limit and higher costs. A roll limits its whole
   window, look-ahead included, so the realized emissions of a period can
   still differ somewhat from the limit. In a rolling solve the reported CO2
-  price of a period is the shadow price of the last roll that covers the
-  period.
+  price of a period averages the rolls that realize it (see the per-period
+  CO2 price entry above).
 
 - **Warm-started rolling solves across period boundaries.** When two
   consecutive rolls had the same number of timesteps and periods but split
@@ -1680,9 +1711,8 @@
   existing capacity), and the model fell back to slack or other
   technologies. This also
   holds for the sub-solves of a nested multi-period investment and for
-  rolling solves. The parameter definitions in the database still list the
-  `*_period` limits as period maps only, so Toolbox may flag a single value
-  until the schema is updated.
+  rolling solves. Since database version 77 the parameter definitions accept
+  a constant for these limits too.
 
 - **Forecast branches use their period's per-period input values.** In a
   stochastic solve, a value given as a map keyed by period (for example
@@ -1725,10 +1755,9 @@
   model-wide `CO2` output. Before, each period counted as one year, so with
   multi-year periods the limit was `years_represented` times too loose.
   Models that use a `co2_method` with `total` and `years_represented`
-  above 1 get a tighter limit. In a chain of solves each solve still gets
-  the full limit over only its own periods, and in a rolling solve each roll
-  compares only its own window's emissions with the full limit, so there the
-  limit binds much more loosely than intended.
+  above 1 get a tighter limit. Chains of solves and rolling solves now also
+  subtract the emissions realized before them (see the `co2_max_total` and
+  remaining-budget entries above).
 
 - **Years represented in rolling solves and stochastic branches.** The
   outputs that scale annual values by `years_represented` (the model-wide
