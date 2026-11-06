@@ -1439,7 +1439,6 @@ forecasts and a separate realization dispatch, and many result fixes change what
   of their coarse-step balance) with the same sign convention as every other
   node, and `bind_intraperiod_blocks` storage nodes now also use that
   convention (before, their sign was the opposite of the other nodes').
-  Outputs no longer copy a coarse step's value to its other time steps.
   Listing a unit
   or connection in a coarse group has no effect on time resolution (a
   warning names those that touch a node outside the group). Benders
