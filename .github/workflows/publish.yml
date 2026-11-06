@@ -91,11 +91,18 @@ jobs:
               "schemas/default_plots.yaml",
               "solver_config",
               "process_inputs/import_old_excel_input.json",
+              # The curated documentation the build step copies in (_flextool_build.py).
+              "assistant/_docs/md/reference.md",
           ]
           for rel in required:
               p = package_data_path(rel)
               assert p.exists(), f"bundled resource missing from wheel: {rel}"
               print("resource ok:", rel)
+          # python -m build makes the wheel from the sdist, so this also proves MANIFEST.in carries the docs.
+          from flextool.docs_build.scope import CURATED_DOCS
+          missing = [rel for rel in CURATED_DOCS if not package_data_path(f"assistant/_docs/md/{rel}").is_file()]
+          assert not missing, f"documentation missing from wheel: {missing}"
+          print("documentation ok:", len(CURATED_DOCS), "files")
           PY
           # The flextool-run supervisor is a top-level module (py-modules): it must be in
           # the wheel and load the run-record files by path without importing flextool.
