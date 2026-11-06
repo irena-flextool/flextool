@@ -22,6 +22,12 @@ concurrency:
   group: tests-old-python
   cancel-in-progress: false
 
+# The tests and every FlexTool run they start are single-threaded (polars and HiGHS): the xdist
+# workers already use every vCPU, so more threads per worker only oversubscribe the runner.
+env:
+  FLEXTOOL_THREADS: "1"
+  POLARS_MAX_THREADS: "1"
+
 jobs:
   gate:
     name: New commits since the last successful run?

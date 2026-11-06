@@ -2398,6 +2398,11 @@ def _run_fixture(fx: Fixture, out_root: Path,
     env = dict(os.environ)
     env["PYTHONHASHSEED"] = str(secrets.randbelow(2**32 - 1) + 1)
     env["FLEXTOOL_SKIP_SOLVER_PROBE"] = "1"
+    # One thread per fixture run (polars and HiGHS), as in the test suite: -j runs
+    # fixtures in parallel, so more threads per run only oversubscribe the cores.
+    # The LP does not depend on the thread count; setdefault keeps a caller's value.
+    env.setdefault("FLEXTOOL_THREADS", "1")
+    env.setdefault("POLARS_MAX_THREADS", "1")
     cmd = [sys.executable, str(Path(__file__).resolve()), "_worker",
            "--json", fx.json, "--scenario", fx.scenario,
            "--patch", fx.patch, "--out", str(out_dir),

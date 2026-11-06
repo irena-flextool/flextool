@@ -28,6 +28,16 @@ import os
 # LicenseWarning; the production solve uses HiGHS anyway.  Must be set
 # before any flextool / polar_high import.
 os.environ.setdefault("FLEXTOOL_SKIP_SOLVER_PROBE", "1")
+# The suite runs single-threaded: each xdist worker and every FlexTool run a
+# test starts as a subprocess (it inherits this environment) uses one thread
+# for polars and HiGHS.  The workers already fill the cores, so more threads
+# per worker only oversubscribe the machine (subprocess timeouts on CI).
+# polars reads POLARS_MAX_THREADS only when it is imported, and the first
+# import in a worker is the constraints conftest loaded below, so this must
+# stay above it.  setdefault: a developer may set other values.  Tests of
+# the thread budget set their own environment (monkeypatch / subprocess env).
+os.environ.setdefault("FLEXTOOL_THREADS", "1")
+os.environ.setdefault("POLARS_MAX_THREADS", "1")
 
 import importlib.util
 import json

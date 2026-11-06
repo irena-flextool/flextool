@@ -107,6 +107,7 @@ def test_malformed_workers_variable_warns_once(monkeypatch, caplog) -> None:
     """A malformed ``FLEXTOOL_BENDERS_WORKERS`` is reported once, by the run's option resolution; the Benders
     worker count then uses the resolved (automatic) value without reading the variable again."""
     monkeypatch.setenv("FLEXTOOL_BENDERS_WORKERS", "many")
+    monkeypatch.delenv("FLEXTOOL_THREADS", raising=False)  # no budget: the automatic count is not capped
     with caplog.at_level(logging.WARNING):
         opts = RunOptions.from_env()
         workers = _resolve_benders_workers(4, None, opts)

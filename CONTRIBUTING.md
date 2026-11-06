@@ -36,6 +36,9 @@ pytest tests/
 The suite runs one worker process per physical core by default (`-n auto`, via
 `pytest-xdist`). Pass `-n 0` to disable parallelism when you need `-s` / `--pdb`
 for interactive debugging.
+The suite and every FlexTool run it starts are single-threaded (`tests/conftest.py`
+and the CI workflows set `FLEXTOOL_THREADS=1` and `POLARS_MAX_THREADS=1` unless
+they are already set); thread-budget tests set their own environment.
 
 Tests of the unsupported CSV reload are deselected by default; run them with
 `pytest -m csv_reload tests/csv_reload/`.

@@ -329,6 +329,7 @@ def test_benders_converges_with_threads_and_parallel_regions(tmp_path, monkeypat
     from tests.db_utils import json_to_db
 
     monkeypatch.delenv("FLEXTOOL_BENDERS_WORKERS", raising=False)
+    monkeypatch.delenv("FLEXTOOL_THREADS", raising=False)  # no budget: the cores, so threads=2 is kept
     cfg = tmp_path / "solver_config"
     cfg.mkdir()
     if how == "cli":
@@ -405,6 +406,7 @@ def test_thread_budget_reaches_highs_with_parallel_off() -> None:
 def test_operator_highs_layer_comes_from_run_options(monkeypatch) -> None:
     from flextool.engine.solve._orchestration import _operator_highs_overrides
 
+    monkeypatch.delenv("FLEXTOOL_THREADS", raising=False)  # the suite's default budget is not in _READER_ENV
     for name, value in _READER_ENV.items():
         monkeypatch.setenv(name, value)
     assert _operator_highs_overrides(_env_options({})) == {}

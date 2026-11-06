@@ -15,6 +15,12 @@ on:
     - cron: "0 2 * * *"
   workflow_dispatch:
 
+# The tests and every FlexTool run they start are single-threaded (polars and HiGHS): the xdist
+# workers already use every vCPU, so more threads per worker only oversubscribe the runner.
+env:
+  FLEXTOOL_THREADS: "1"
+  POLARS_MAX_THREADS: "1"
+
 jobs:
   template-check:
     name: Verify master template is up to date
