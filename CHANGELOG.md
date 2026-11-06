@@ -5,6 +5,18 @@
   peak memory about tripled on large models (the same LP), so 4.2.0 held polars below 2. polar-high 3.12.3 runs
   these joins in the order they are written, so FlexTool now requires polar-high 3.12.3 and accepts polars 1.40 or
   newer below 3.
+- **New: every run records itself in its output folder.** `output_parquet/<run>/_run_status.json` says whether the
+  run is running, succeeded, failed, was interrupted, killed or crashed, with each solve's outcome (solver status,
+  accepted / rejected and why, objective), the error of a failed run, the input database and scenario, the
+  options and threads used, and whether the parquet files in the folder belong to this run or to an earlier one (a
+  failed run keeps the earlier run's files). `_run.log` next to it holds the run's console output; a long log keeps
+  its first 64 KiB and its last 4 MiB (`FLEXTOOL_RUN_LOG_MAX_BYTES`). Writing outputs again keeps both files. A run
+  started from Spine Toolbox or with `python -m flextool.cli.cmd_run_flextool` records the Python console output;
+  native solver lines and crash dumps are not in that log.
+- **New flags `--input-source-file PATH` and `--run-launcher NAME`** for `run_flextool`: the file the input
+  database was made from, and who started the run, both recorded in `_run_status.json`.
+- **Fixed: `timings.csv` and the output-info database ignored an `output-location` from the settings database**
+  while the outputs went there. All three now use the same location, as an absolute path.
 - **Fixed: a run whose last check found a solve without an accepted solution exited 0 and wrote the output-info
   database** (for example a Benders solve that found no feasible incumbent, or a run with no solve at all). It
   wrote no outputs, yet Spine Toolbox and the comparison steps read its `finish_time` as a finished run. Such a run

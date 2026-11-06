@@ -43,6 +43,7 @@ import polars as pl
 # remaining writers.
 # ---------------------------------------------------------------------------
 
+from flextool import run_record
 from flextool.engine.preprocess.emit._blocks import emit_block_data_for_solve
 # Step 2.5 — legacy preprocessing package deleted (item 15).  The per-
 # solve orchestrator now lives natively at
@@ -921,13 +922,15 @@ def native_run_model(state, solver) -> int:
         # Always printed so the user can see roll progression even
         # when the four phase checkpoints are suppressed for within-
         # group rolling iters.
+        # The run record keeps the marker text as the solve's log anchor.
+        _log_anchor = None
         if _memrec_iter is not None and getattr(_memrec_iter, "verbose", True):
+            _log_anchor = (
+                f"Solve start: {complete_solve[solve]}, "
+                f"{i + 1}/{len(all_solves)}"
+            )
             try:
-                print(
-                    f"Solve start: {complete_solve[solve]}, "
-                    f"{i + 1}/{len(all_solves)}",
-                    flush=True,
-                )
+                print(_log_anchor, flush=True)
             except OSError:
                 pass
 
@@ -1688,7 +1691,10 @@ def native_run_model(state, solver) -> int:
         # A committed window reaching into a forecasts-only fan must be realized by some solve when a later solve
         # continues from it (checked on the built FlexData, before the LP).
         state.current_committed_window_check = (solve, realization_plans.get(solve), i < len(all_solves) - 1)
+        _run_record = run_record.active()
+        _run_record.solve_started(solve, complete_solve[solve], i, _log_anchor)
         exit_status = solver.run(complete_solve[solve])
+        _run_record.solve_finished(exit_status)
         state.current_committed_window_check = None
         state.emit_phase_checkpoints_this_iter = False
         state.current_parent_complete = None

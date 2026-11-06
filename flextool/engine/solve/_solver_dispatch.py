@@ -549,8 +549,17 @@ def probe_solver_licenses() -> dict[str, str]:
                 p.set_objective(v.to_expr())
                 os.dup2(devnull_fd, 1)
                 os.dup2(devnull_fd, 2)
-                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
-                    polar_solve(p, solver_name=solver_name)
+                # Some solver packages (gurobipy) log through Python
+                # ``logging``, whose handlers hold their own stream objects:
+                # mute logging too, or the chatter reaches the run log copy
+                # (``flextool.run_record``) although the console is silent.
+                _logging_disabled = logging.root.manager.disable
+                logging.disable(logging.CRITICAL)
+                try:
+                    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                        polar_solve(p, solver_name=solver_name)
+                finally:
+                    logging.disable(_logging_disabled)
                 # The probe only confirms that a license file (free
                 # test license or commercial) is *installed* — not that
                 # the user holds a full commercial entitlement.  Use
