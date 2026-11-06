@@ -1,5 +1,9 @@
 ## Unreleased
 
+- **Fixed: a solve that HiGHS could not certify (status "Unknown") failed with "returned no model status"** when
+  autoscale rescaled the LP. Writing the unscaled solution back into HiGHS cleared its status and counters before
+  the accept/reject check read them, so the near-optimal check never ran and the real status was not reported. The
+  check now uses the status and counters of the solve itself.
 - **Changed: polars is held below 2.** polars 2.x roughly triples FlexTool's peak memory on large models
   (the same LP); installs keep polars 1.x until that is resolved.
 - **Fixed: after "Update FlexTool" in the Windows Toolbox bundle, moving the bundle folder broke FlexTool** in

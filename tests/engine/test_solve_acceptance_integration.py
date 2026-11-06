@@ -103,3 +103,41 @@ def test_reject_still_raises(scenario_workdir, monkeypatch) -> None:
 
     with pytest.raises(FlexToolSolveError):
         run_chain_from_db(sqlite, scenario, keep_solutions=True)
+
+
+def test_layer2_unscale_keeps_the_solve_status_for_the_gate() -> None:
+    """The Layer-2 unscale pushes the unscaled solution into HiGHS with
+    ``setSolution``, which resets the live model status to ``kNotset``.  The
+    gate must still judge the solve that ran: classifying after the unscale
+    gives the same verdict as classifying before it (an infeasible LP stays
+    "is infeasible", not "returned no model status")."""
+    import numpy as np
+    import polars as pl
+    from polar_high.engine import Problem, Sum
+
+    from flextool.engine.autoscale import unscale_solution
+    from flextool.engine.autoscale._layer2 import Layer2Plan
+
+    def _infeasible_solve():
+        pb = Problem()
+        x = pb.add_var("v_x", "i", pl.DataFrame({"i": [0]}), lower=0.0, upper=1.0)
+        pb.add_cstr("x_floor", sense=">=", lhs_terms={"x": Sum(x, over=("i",))}, rhs_terms={"floor": 2.0})
+        pb.set_objective(Sum(x), sense="min")
+        return pb.solve(keep_solver=True)
+
+    before = _infeasible_solve()
+    acc_before = _real_classify(before, ranges_post=None, solve_name="s")
+
+    after = _infeasible_solve()
+    plan = Layer2Plan(
+        col_factors=np.ones(len(after.col_value)),
+        row_factors=np.ones(len(after.row_dual)),
+        type_exponents={},
+        type_buckets_before={},
+    )
+    unscale_solution(after, plan)
+    assert after.highs.getModelStatus().name == "kNotset"  # the reset the gate must see past
+    acc_after = _real_classify(after, ranges_post=None, solve_name="s")
+
+    assert "is infeasible" in acc_before.message
+    assert (acc_after.accepted, acc_after.message) == (acc_before.accepted, acc_before.message)

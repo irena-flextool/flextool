@@ -200,8 +200,15 @@ def classify_acceptance(
     # Guard the call so an environment that somehow has an older polar-high
     # degrades to the honest "cannot diagnose → reject" path below instead of
     # crashing the whole cascade with an AttributeError.
-    diag_fn = getattr(sol, "solve_diagnostics", None)
-    diag = diag_fn() if callable(diag_fn) else None
+    #
+    # The autoscale Layer-2 unscale pushes the unscaled solution back into
+    # HiGHS with ``setSolution``, which resets the live model status to
+    # ``kNotset`` and clears the info counters; it keeps the solve's own
+    # diagnostics as ``pre_unscale_diagnostics``, so read those first.
+    diag = getattr(sol, "pre_unscale_diagnostics", None)
+    if diag is None:
+        diag_fn = getattr(sol, "solve_diagnostics", None)
+        diag = diag_fn() if callable(diag_fn) else None
 
     # No queryable solver handle (synthesised Solution, or the read-only
     # subprocess/commercial shim), or a polar-high too old to diagnose: we

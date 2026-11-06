@@ -1277,6 +1277,17 @@ def _push_unscaled_to_highs(
         # rescue path captures whatever the live HiGHS just reported,
         # including HiGHS's own user_bound_scale unscale.
         pre_obj = float(h.getObjectiveValue())
+        # ``setSolution`` also resets the model status to ``kNotset`` and the
+        # info counters (infeasibilities, primal-dual objective error) to "not
+        # computed".  Keep a snapshot of the solve's diagnostics on the
+        # Solution, so the accept/reject gate (``classify_acceptance``) judges
+        # the solve that ran, not the wiped handle.
+        _diag_fn = getattr(sol, "solve_diagnostics", None)
+        if callable(_diag_fn):
+            try:
+                sol.pre_unscale_diagnostics = _diag_fn()
+            except Exception:  # pragma: no cover — Solution may forbid setattr
+                pass
         hs = highspy.HighsSolution()
         cv_push = new_col_value if new_col_value is not None else sol.col_value
         hs.col_value = np.asarray(cv_push, dtype=np.float64).tolist()
