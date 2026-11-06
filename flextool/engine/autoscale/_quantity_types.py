@@ -30,15 +30,15 @@ class QuantityType(Enum):
     INERTIA_PER_CAPACITY = "inertia_per_capacity"  # [MWs/MW] (= seconds)
     CURRENCY = "currency"                        # [CUR]  reserved; no template parameter uses it directly
     PRICE_PER_ENERGY = "price_per_energy"        # [CUR/MWh]
-    PRICE_PER_CAPACITY = "price_per_capacity"    # [CUR/kW], [CUR/MW]
-    PRICE_PER_STORAGE = "price_per_storage"      # [CUR/kWh]
-    PRICE_PER_MASS = "price_per_mass"            # [CUR/ton]
-    PRICE_PER_INERTIA = "price_per_inertia"      # [CUR/MWs]
-    EMISSION_MASS = "emission_mass"              # [tCO2]
-    EMISSION_INTENSITY = "emission_intensity"    # [CO2 ton per MWh]
-    FRACTION = "fraction"                        # [factor], [0-1], [%], availability/efficiency-style
+    PRICE_PER_CAPACITY = "price_per_capacity"    # [CUR/kW], [CUR/kW/a], [CUR/MW]
+    PRICE_PER_STORAGE = "price_per_storage"      # [CUR/kWh], [CUR/kWh/a]
+    PRICE_PER_MASS = "price_per_mass"            # [CUR/tCO2]
+    PRICE_PER_INERTIA = "price_per_inertia"      # [CUR/MWs per hour]
+    EMISSION_MASS = "emission_mass"              # [tCO2], [tCO2/a]
+    EMISSION_INTENSITY = "emission_intensity"    # [tCO2/MWh]
+    FRACTION = "fraction"                        # [-]: shares, ratios, efficiencies, weights
     DURATION = "duration"                        # [hours], [years], "Hours."
-    RAMP_RATE = "ramp_rate"                      # [per unit / minute]
+    RAMP_RATE = "ramp_rate"                      # [share of capacity per minute]
     DIMENSIONLESS = "dimensionless"              # method choices, flags, name arrays, user-supplied coefficients
     UNKNOWN = "unknown"                          # unit cannot be determined from the description; requires operator action
 
@@ -633,6 +633,64 @@ def lookup(parameter_name: str, entity_class: str) -> QuantityType:
     rescaling currency as energy or vice-versa.
     """
     return PARAMETER_TYPES[(parameter_name, entity_class)]
+
+
+#: The unit brackets a parameter description may start with, per quantity
+#: (the bracket is the description up to its first ``]``).  The units are the
+#: default convention (MW, MWh, CUR, tCO2); FlexTool does not check them.
+#: ``DIMENSIONLESS`` lists the markers of non-numeric parameters and the
+#: words of use-dependent units; it never accepts ``[-]`` (a parameter with
+#: a true ratio there needs a :data:`UNIT_OVERRIDES` entry).
+QUANTITY_UNITS: dict[QuantityType, frozenset[str]] = {
+    QuantityType.ENERGY: frozenset({"[MWh]"}),
+    QuantityType.POWER: frozenset({"[MW]"}),
+    QuantityType.APPARENT_POWER: frozenset({"[MVA]"}),
+    QuantityType.INERTIA: frozenset({"[MWs]"}),
+    QuantityType.INERTIA_PER_CAPACITY: frozenset({"[MWs/MW]"}),
+    QuantityType.CURRENCY: frozenset({"[CUR]"}),
+    QuantityType.PRICE_PER_ENERGY: frozenset({"[CUR/MWh]"}),
+    QuantityType.PRICE_PER_CAPACITY: frozenset({"[CUR/kW]", "[CUR/kW/a]", "[CUR/MW]"}),
+    QuantityType.PRICE_PER_STORAGE: frozenset({"[CUR/kWh]", "[CUR/kWh/a]"}),
+    QuantityType.PRICE_PER_MASS: frozenset({"[CUR/tCO2]"}),
+    QuantityType.PRICE_PER_INERTIA: frozenset({"[CUR/MWs per hour]"}),
+    QuantityType.EMISSION_MASS: frozenset({"[tCO2]", "[tCO2/a]"}),
+    QuantityType.EMISSION_INTENSITY: frozenset({"[tCO2/MWh]"}),
+    QuantityType.FRACTION: frozenset({"[-]"}),
+    QuantityType.DURATION: frozenset({"[hours]", "[years]"}),
+    QuantityType.RAMP_RATE: frozenset({"[share of capacity per minute]"}),
+    QuantityType.DIMENSIONLESS: frozenset({
+        "[choice]", "[yes/no]", "[name]", "[text]", "[count]", "[version number]", "[p.u.]",
+        "[unit of the constraint per MW]", "[unit of the constraint per MWh]", "[the constraint's own unit]",
+    }),
+    QuantityType.UNKNOWN: frozenset({"[MW or MWh]"}),
+}
+
+#: Parameters whose user unit is not the one their autoscale quantity implies,
+#: keyed like :data:`PARAMETER_TYPES` (parameter, class) -> the exact bracket.
+UNIT_OVERRIDES: dict[tuple[str, str], str] = {
+    # A scaling divisor for autoscale, but the user value is an amount of the commodity.
+    ("unitsize", "commodity"): "[MWh]",
+    # Price-ladder tiers carry two quantities: the tier price and its quantity.
+    ("price_ladder_annual", "commodity"): "[CUR/MWh; MWh/a]",
+    ("price_ladder_cumulative", "commodity"): "[CUR/MWh; MWh]",
+    ("price", "commodity"): "[CUR/MWh or other unit]",
+    # A capacity, or a number of units with virtual_unitsize.
+    ("existing", "unit"): "[MW or count]",
+    ("existing", "connection"): "[MW or count]",
+    ("existing", "node"): "[MWh or count]",
+    ("annual_flow", "node"): "[MWh/a]",
+    # A reserve shortfall is paid per MW and hour.
+    ("penalty_reserve", "reserve__upDown__group"): "[CUR/MW per hour]",
+    ("timeset_duration", "timeset"): "[count of time steps]",
+    # True ratios typed DIMENSIONLESS (never an LP coefficient, or not scaled as a fraction).
+    ("energy_margin_multiplier", "node"): "[-]",
+    ("benders_in_out_weight", "solve"): "[-]",
+    ("benders_tolerance", "solve"): "[-]",
+    ("stochastic_branches", "solve"): "[-]",
+    ("timeline_hole_multiplier", "solve"): "[-]",
+    # Compared with every LP coefficient and right-hand side in its own unit.
+    ("small_number_threshold", "model"): "[unit of each LP coefficient]",
+}
 
 
 # Parameters whose unit is ``[MW or MWh]`` — the description is context-dependent

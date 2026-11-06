@@ -77,11 +77,11 @@ def _as_v76(data: dict) -> None:
             pd[2] = b64("fix_start", "str")
 
 
-def _db(tmp_path_factory, name: str, data: dict) -> str:
+def _db(tmp_path_factory, name: str, data: dict, up_to: int | None = None) -> str:
     work = tmp_path_factory.mktemp(name)
     (work / "f.json").write_text(json.dumps(data))
     url = json_to_db(work / "f.json", work / "f.sqlite")
-    migrate_database(url)
+    migrate_database(url, up_to=up_to)
     return url
 
 
@@ -331,7 +331,7 @@ def test_storage_steps_rerun_change_nothing(tmp_path_factory):
     _put(upgraded, "ev_battery", "storage_start_end_method", "fix_start", "str", "ev")
     _scenario(upgraded, "case", CHAIN)
     _as_v76(upgraded)
-    url = _db(tmp_path_factory, "rerun", upgraded)
+    url = _db(tmp_path_factory, "rerun", upgraded, up_to=77)  # the v77 step only: v78 changes the description
     with DatabaseMapping(url) as db:
         m._v77_storage_fix_rewrite(db)
         m._v77_storage_default_explicit(db)
@@ -351,7 +351,8 @@ def test_storage_default_marker_only_where_the_old_default_fixed(tmp_path_factor
     assert (PREFIX + "storage_default_fix_nothing" in _markers(url)) is marked
     with DatabaseMapping(url) as db:
         pdef = db.get_item("parameter_definition", entity_class_name="node", name="storage_start_end_method")
-        assert pdef["description"] == m._V77_STORAGE_START_END_DESCRIPTION
+        assert pdef["description"] == m._v78_new_description(
+            "node", "storage_start_end_method", m._V77_STORAGE_START_END_DESCRIPTION)
         new_default = from_database(pdef["default_value"], pdef["default_type"]) if pdef["default_value"] else None
         assert new_default == ("fix_nothing" if marked else None)
 

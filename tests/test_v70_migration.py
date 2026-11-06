@@ -30,6 +30,7 @@ from flextool.update_flextool.db_migration import (
     _V70_INPUT_SHARE_MIN_DESCRIPTION,
     _V70_PENALTY_RESERVE_DESCRIPTION,
     _migrate_v70_capacity_coefficient_descriptions,
+    _v78_new_description,
     migrate_database,
 )
 
@@ -146,15 +147,19 @@ def test_input_values_move_to_input_share(tmp_path: Path, capsys) -> None:
             entity_class_name="unit__inputNode", name="input_share_min")
         assert from_database(share_min["default_value"],
                              share_min["default_type"]) == 0.0
-        assert share_min["description"] == _V70_INPUT_SHARE_MIN_DESCRIPTION
+        # The v70 texts, with the unit bracket of database version 78.
+        assert share_min["description"] == _v78_new_description(
+            "unit__inputNode", "input_share_min", _V70_INPUT_SHARE_MIN_DESCRIPTION)
         for d in (share_max, share_min):
             assert "fuel" not in d["description"].lower()
         out_max = db.get_parameter_definition_item(
             entity_class_name="unit__outputNode", name="capacity_max_coeff")
-        assert out_max["description"] == _V70_CAPACITY_MAX_COEFF_DESCRIPTION
+        assert out_max["description"] == _v78_new_description(
+            "unit__outputNode", "capacity_max_coeff", _V70_CAPACITY_MAX_COEFF_DESCRIPTION)
         out_min = db.get_parameter_definition_item(
             entity_class_name="unit__outputNode", name="capacity_min_coeff")
-        assert out_min["description"] == _V70_CAPACITY_MIN_COEFF_DESCRIPTION
+        assert out_min["description"] == _v78_new_description(
+            "unit__outputNode", "capacity_min_coeff", _V70_CAPACITY_MIN_COEFF_DESCRIPTION)
         assert from_database(out_min["default_value"],
                              out_min["default_type"]) == 0.0
     finally:
