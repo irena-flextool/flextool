@@ -1,4 +1,4 @@
-"""The input tools only read: nothing under the project changes, no file appears, no file stays open.
+"""The input and discovery tools only read: nothing under the project changes, no file appears, no file stays open.
 
 The project path has a space, ``#``, ``%25`` and ``ä``: an unencoded SQLite URI breaks there and makes SQLite create
 another file next to the project, which the folder listing would show.  A database is opened through the read-only
@@ -29,6 +29,9 @@ from tests.assistant.conftest import make_project
 
 CALLS = [
     ("get_gui_context", {}),
+    ("list_sources", {}),
+    ("list_runs", {}),
+    ("list_runs", {"source": "1", "scenario": "coal"}),
     ("list_entities", {"entity_class": "unit", "scenario": "coal"}),
     ("list_entities", {"entity_class": "unit__outputNode", "member": "heat"}),
     ("get_entity", {"name": ["west"], "scenario": "coal"}),

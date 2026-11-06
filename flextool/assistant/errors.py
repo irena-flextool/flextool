@@ -48,6 +48,19 @@ MESSAGES: dict[str, str] = {
     "bad_time_range": "time_range takes {{\"from\": first index, \"to\": last index}}, for example {example}.",
     # Runs
     "no_runs": "The project has no scenario results (no folders in output_parquet).",
+    "bad_run_name": "'{run}' is not a result folder name; use a folder name that list_runs gives.",
+    "unknown_run": "There is no result folder '{run}'. The folders include: {runs}.",
+    "run_running": "Scenario folder {run} is running now; its results are not complete.",
+    "run_abandoned": ("The latest run of {run} stopped without finishing. Read the run log (get_run_log) and run "
+                      "it again."),
+    "run_failed": ("The latest run of {run} failed: {error}. Result files left in the folder belong to an earlier "
+                   "run. Read the run log (get_run_log) and get the scenario to run successfully first."),
+    "run_no_parquet": ("The latest run of {run} wrote no result files to read (its write methods: {methods}). Run "
+                       "it with parquet output."),
+    "needs_migration": ("This database is at version {db}; this FlexTool uses version {tool}. Some values may be "
+                        "stored under older parameter names. Open the project in the FlexTool window to update it."),
+    "newer_database": ("This database is at version {db}, newer than this FlexTool (version {tool}). Update "
+                       "FlexTool to read all its parameters."),
 }
 
 

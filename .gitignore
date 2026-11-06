@@ -12,6 +12,8 @@ paramNotWritten.dat
 .spinetoolbox/items/exporttocsv/exported.json
 .spinetoolbox/items/
 results/
+# The assistant's result-side package is source code, not a results folder.
+!flextool/assistant/results/
 *.bak*
 *.log
 *.mps
