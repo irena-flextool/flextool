@@ -271,6 +271,8 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         _user("MALLOC_ARENA_MAX", "glibc malloc arena cap; run_flextool sets 4 unless you set it"),
         _user("POLARS_PREFER_PKG", "which polars build loads first; a value you set is kept"),
         _user("POLARS_FORCE_PKG", "force one polars build; also skips FlexTool's processor check"),
+        _user("FLEXTOOL_RUN_LOG_MAX_BYTES", "bytes of a run's _run.log kept from its end (4 MiB); the first 64 KiB "
+              "are kept too"),
         _user("POLARS_MAX_THREADS", "polars thread pool size, in place of FlexTool's limit of 8 but at most the "
               "run's --threads; the run header prints the effective count", read_by="polars"),
         # --- dev: solve acceptance ------------------------------------------------------------------------
@@ -321,6 +323,9 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         _dev("POLAR_HIGH_LAYER2_PROFILE", "profile line per term of the autoscale Layer 2 walk"),
         _dev("POLAR_HIGH_RANGES_MAX_FAMILY_ROWS",
              "row cap per constraint family of Layer 2 bucketing with an old polar-high (1000000)"),
+        # --- dev: run record ------------------------------------------------------------------------------
+        _dev("FLEXTOOL_RUN_LOG_OWNER", "set by the GUI / flextool-run for the engine it starts: they write _run.log "
+             "from its output pipe; the engine removes it"),
         # --- dev: process level ---------------------------------------------------------------------------
         _dev("POLARS_ENGINE_AFFINITY", "polars engine; FlexTool sets in-memory, the only engine it verifies"),
         _dev("_RJEM_MALLOC_CONF", "jemalloc settings of polars' allocator; FlexTool sets page decay"),

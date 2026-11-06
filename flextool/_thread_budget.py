@@ -206,6 +206,18 @@ def _same_command_line() -> bool:
     return _applied_argv is not None and _applied_argv[1:] == tuple(sys.argv[1:])
 
 
+def polars_pool() -> tuple[int | None, PolarsSource]:
+    """polars' thread count in this process and what limited it, for this command line.
+
+    The decision :func:`apply_before_polars` made for this command line; for a later run in the same interpreter
+    (another command line) or before any decision, the pool polars already has, as ``already_loaded``.
+    """
+    applied = current()
+    if applied is None or not _same_command_line():
+        return _loaded_pool_size(), "already_loaded"
+    return applied.polars, applied.polars_source
+
+
 def highs_thread_options(run_options: "RunOptions") -> tuple[dict[str, object], str | None]:
     """The HiGHS ``threads`` / ``parallel`` options of a run, and a warning to show once (or ``None``).
 
@@ -296,6 +308,7 @@ __all__ = [
     "header_text",
     "highs_thread_options",
     "peek_mismatch",
+    "polars_pool",
     "polars_threads",
     "resolve_budget",
     "restore_env",

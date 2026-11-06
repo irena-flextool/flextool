@@ -1580,7 +1580,7 @@ def _solve_highs_subprocess(
             objective=obj,
         )
 
-        return Solution(
+        sol = Solution(
             optimal=optimal,
             obj=obj,
             col_value=col_value,
@@ -1591,6 +1591,11 @@ def _solve_highs_subprocess(
             vars=dict(problem._vars),
             highs=h,
         )
+        # The child's exit code is all the parent knows of its status
+        # (``cmd_solve_mps`` exits 0 for kOptimal, 1 otherwise); the
+        # acceptance check records it as the solve's model status.
+        sol.shim_status = "OPTIMAL" if optimal else "OTHER"
+        return sol
     finally:
         if cleanup:
             paths = [mps_path, sol_path, opts_path]
@@ -1855,7 +1860,7 @@ def _solve_commercial_subprocess(
             objective=obj,
         )
 
-        return Solution(
+        sol = Solution(
             optimal=optimal,
             obj=obj,
             col_value=col_value,
@@ -1866,6 +1871,11 @@ def _solve_commercial_subprocess(
             vars=dict(problem._vars),
             highs=h,
         )
+        # The status parsed from the solution file (OPTIMAL / INFEASIBLE /
+        # UNBOUNDED / TIME_LIMIT / OTHER); the acceptance check records it
+        # as the solve's model status (no HiGHS diagnostics exist here).
+        sol.shim_status = status_str
+        return sol
     finally:
         if cleanup:
             # out_dir is a dedicated per-solve tempdir; remove it wholesale

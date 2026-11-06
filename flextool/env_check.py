@@ -149,9 +149,10 @@ def is_native_fault(returncode: int | None, plat: str | None = None) -> bool:
         # Windows exit codes are 32-bit DWORDs; NTSTATUS *fault* codes have
         # the top two bits set (0xC0000000 range): 0xC0000005 access
         # violation, 0xC000001D illegal instruction, 0xC00000FD stack
-        # overflow, 0xC0000409 stack buffer overrun, etc.
+        # overflow, 0xC0000409 stack buffer overrun, etc.  0xC000013A
+        # (STATUS_CONTROL_C_EXIT) is in that range but is a Ctrl-C, not a crash.
         u = returncode & 0xFFFFFFFF
-        return u >= 0xC0000000
+        return u >= 0xC0000000 and u != 0xC000013A
 
     # POSIX: subprocess reports a signal-terminated child as ``-signal``.
     # Treat the fatal "the code itself is broken / corrupted memory" signals
