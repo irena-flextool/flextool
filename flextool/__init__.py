@@ -50,6 +50,12 @@ if _ensure_polars_runtime() != "diagnostics":
     # do NOT touch polars memory: this is the lever that does.  When polars was
     # imported before flextool (a Toolbox console, a notebook), the same values
     # are written into jemalloc at runtime; see ``flextool/_allocator.py``.
+    # The run's thread budget (``--threads`` / ``FLEXTOOL_THREADS`` / the available cores) sizes polars' thread
+    # pool, which polars also reads only at import: ``POLARS_MAX_THREADS`` is set here and put back as it was once
+    # polars is loaded (below), so the environment does not carry it to child processes.  See
+    # ``flextool/_thread_budget.py``.
+    from flextool._thread_budget import apply_before_polars as _apply_thread_budget  # noqa: E402
+    _polars_threads_before = _apply_thread_budget()
     from flextool._allocator import configure_polars_allocator as _configure_polars_allocator  # noqa: E402
     _configure_polars_allocator()
     # polars' default ``engine="auto"`` lets polars 2.x run some lazy queries on the
@@ -77,8 +83,15 @@ if _ensure_polars_runtime() != "diagnostics":
         "ignore",
         message=r"urllib3 .*doesn't match a supported version",
     )
-    from flextool.process_outputs import write_outputs  # noqa: E402  (after env/warning config above)
-    from flextool.update_flextool import migrate_database, initialize_database, update_flextool  # noqa: E402
+    try:
+        import polars as _pl  # noqa: E402,F811  (the pool size is fixed here)
+        from flextool._thread_budget import absorb_polar_high_default as _absorb_polar_high_default  # noqa: E402
+        _absorb_polar_high_default()
+        from flextool.process_outputs import write_outputs  # noqa: E402  (after env/warning config above)
+        from flextool.update_flextool import migrate_database, initialize_database, update_flextool  # noqa: E402
+    finally:
+        from flextool._thread_budget import restore_env as _restore_thread_env  # noqa: E402
+        _restore_thread_env(_polars_threads_before)
 
 __all__ = [
     'write_outputs',

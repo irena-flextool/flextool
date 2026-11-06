@@ -9,7 +9,7 @@ import os
 # subproblem runs) without serialising every malloc through one heap.
 # No measured benefit on the FlexTool cascade workload as of this
 # writing — FlexTool's hot path is essentially single-threaded
-# (polars pinned to 1 thread, --highs-threads typically 1).  Kept
+# (polars at most 8 threads, HiGHS serial simplex by default).  Kept
 # only as a cheap precaution against future workloads where arena
 # growth could matter.  ``setdefault`` so the shell wins.
 os.environ.setdefault("MALLOC_ARENA_MAX", "4")
@@ -41,6 +41,7 @@ from flextool.process_outputs.write_outputs import write_outputs
 from flextool.cli._console import run_tool
 from flextool.cli._timing import TimingRecorder
 from flextool.run_options import RunOptions
+from flextool._thread_budget import header_text, peek_mismatch
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 from spinedb_api.filters.tools import name_from_dict
 from spinedb_api import to_database, DateTime
@@ -448,12 +449,6 @@ def _run_options_from_args(args):
     return RunOptions.from_cli(args)
 
 
-def _polars_thread_count() -> int:
-    """Size of polars' thread pool (``POLARS_MAX_THREADS``, else the core count), for the run header."""
-    import polars as pl
-    return pl.thread_pool_size()
-
-
 def build_parser() -> argparse.ArgumentParser:
     """The ``cmd_run_flextool`` command line (also used to check what the GUI and child runs send)."""
     parser = argparse.ArgumentParser()
@@ -576,12 +571,25 @@ def build_parser() -> argparse.ArgumentParser:
     # CLI flags were removed — the orchestrator reads the scheme per solve
     # so a single chain can mix monolithic and Benders solves.  See
     # docs/dev/decomposition.md.
+    parser.add_argument('--threads', type=int, default=None, metavar='N',
+                        help='Threads for one FlexTool run: FlexTool\'s data '
+                             'processing and the solver.  FlexTool\'s own '
+                             'processing (polars) uses at most N and at most 8 '
+                             '(POLARS_MAX_THREADS can set another limit below '
+                             'N); HiGHS gets threads=N (its parallel simplex '
+                             'stays off) and a Benders solve runs at most N '
+                             'region solves at once.  Default: the available '
+                             'cores, with HiGHS and Benders as before.  When '
+                             'several runs execute in parallel, give each about '
+                             'cores / runs.  Environment variable: '
+                             'FLEXTOOL_THREADS; the flag wins.')
     parser.add_argument('--highs-threads', type=int, default=None, metavar='N',
                         help='Number of HiGHS solver threads (default 1). '
                              'Values > 1 enable HiGHS parallel mode and trade '
                              'determinism for wall-clock speedup; goldens are '
                              'not guaranteed to reproduce across runs in that '
-                             'mode.  Environment variable: '
+                             'mode.  At most --threads when that is given.  '
+                             'Environment variable: '
                              'FLEXTOOL_HIGHS_THREADS; the flag wins.')
     parser.add_argument('--benders-workers', type=int, default=None, metavar='N',
                         help='Threads for the region solves of a Benders '
@@ -868,8 +876,11 @@ def main():
         ("Scenario", scenario_name),
         ("Output", str(args.output_location or output_path)),
         ("Options", ", ".join(run_options.summary_lines()) or "defaults"),
-        ("Polars threads", str(_polars_thread_count())),
+        ("Threads", header_text(run_options)),
     ]
+    _threads_warning = peek_mismatch(run_options)
+    if _threads_warning is not None:
+        logging.warning(_threads_warning)
     _header_keyw = max(len(k) for k, _ in _header_pairs) + 2
     print("")
     for _k, _v in _header_pairs:

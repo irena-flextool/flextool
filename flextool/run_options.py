@@ -150,6 +150,12 @@ OPTIONS: dict[str, OptionSpec] = {
     spec.key: spec
     for spec in (
         _spec(
+            key="threads", flag="--threads", env="FLEXTOOL_THREADS", db=None,
+            parse=_positive_int, default=None, audience="user",
+            help="threads for one FlexTool run: FlexTool's data processing (at most 8 unless POLARS_MAX_THREADS) "
+                 "and the solver; unset uses the available cores",
+        ),
+        _spec(
             key="highs_threads", flag="--highs-threads", env="FLEXTOOL_HIGHS_THREADS", db=None,
             parse=_positive_int, default=1, audience="user",
             help="HiGHS solver threads; more than 1 turns on HiGHS parallel mode",
@@ -265,8 +271,8 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         _user("MALLOC_ARENA_MAX", "glibc malloc arena cap; run_flextool sets 4 unless you set it"),
         _user("POLARS_PREFER_PKG", "which polars build loads first; a value you set is kept"),
         _user("POLARS_FORCE_PKG", "force one polars build; also skips FlexTool's processor check"),
-        _user("POLARS_MAX_THREADS", "polars thread pool size; the run header prints the effective count",
-              read_by="polars"),
+        _user("POLARS_MAX_THREADS", "polars thread pool size, in place of FlexTool's limit of 8 but at most the "
+              "run's --threads; the run header prints the effective count", read_by="polars"),
         # --- dev: solve acceptance ------------------------------------------------------------------------
         _dev("FLEXTOOL_ACCEPT_NEAR_OPTIMAL", "0 rejects every HiGHS status other than optimal (default on)"),
         _dev("FLEXTOOL_ACCEPT_PD_GAP", "largest primal-dual gap of an accepted near-optimal solve (1e-2)"),

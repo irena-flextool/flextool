@@ -18,6 +18,7 @@ _OPTION_ENV_VARS = (
     "FLEXTOOL_HIGHS_THREADS", "FLEXTOOL_HIGHS_PRESOLVE", "FLEXTOOL_SOLVER_LOG_LEVEL", "FLEXTOOL_HIGHS_TIME_LIMIT",
     "FLEXTOOL_HIGHS_MIP_GAP", "FLEXTOOL_SCALING", "FLEXTOOL_USER_BOUND_SCALE",
     "FLEXTOOL_SAVE_MEMORY", "FLEXTOOL_WARM_START", "FLEXTOOL_BASIS_CACHE_DIR", "FLEXTOOL_BENDERS_WORKERS",
+    "FLEXTOOL_THREADS",
 )
 
 
@@ -87,7 +88,7 @@ def test_run_options_reach_the_engine_with_their_sources(clean_env, monkeypatch,
     header = capsys.readouterr().out
     assert "presolve=off (env FLEXTOOL_HIGHS_PRESOLVE)" in header
     assert "scaling=basic (flag)" in header
-    assert "Polars threads:" in header
+    assert "Threads:" in header
 
 
 def test_given_flags_are_not_written_into_the_environment(clean_env, monkeypatch, tmp_path):
@@ -101,3 +102,16 @@ def test_given_flags_are_not_written_into_the_environment(clean_env, monkeypatch
         "scaling": "basic", "save_memory": True, "warm_start": True, "highs_threads": 3, "benders_workers": 2,
         "presolve": "off", "user_bound_scale": -3}
     assert seen["highs_overrides"] == {"threads": 3, "parallel": "on", "presolve": "off"}
+
+
+def test_threads_flag_reaches_highs_and_the_header(clean_env, monkeypatch, tmp_path, capsys):
+    """``--threads 2``: HiGHS gets ``threads=2`` without its parallel simplex, the run header names the budget, and
+    the flag is not written into the environment."""
+    seen = _run_main(monkeypatch, tmp_path, "--threads", "2")
+    opts = seen["kwargs"]["run_options"]
+    assert (opts.value("threads"), opts.source("threads")) == (2, "cli")
+    assert seen["highs_overrides"] == {"threads": 2}
+    assert "FLEXTOOL_THREADS" not in os.environ
+    header = capsys.readouterr().out
+    line = next(ln for ln in header.splitlines() if ln.startswith("Threads:"))
+    assert "2 (flag)" in line and "HiGHS 2" in line

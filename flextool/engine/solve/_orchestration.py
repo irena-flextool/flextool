@@ -60,6 +60,7 @@ from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 from flextool.engine.solve._acceptance import classify_acceptance
 from flextool.run_options import RunOptions
+from flextool._thread_budget import highs_thread_options
 from flextool.engine.solve._handoff import SolveHandoff
 from flextool.engine.preprocess._stochastic_detect import (
     is_genuinely_stochastic as _is_genuinely_stochastic,
@@ -240,6 +241,10 @@ def _run_options_or_env(run_options: "RunOptions | None") -> RunOptions:
     return run_options if run_options is not None else RunOptions.from_env()
 
 
+# A --highs-threads above --threads is reported once per process, not once per solve.
+_THREAD_WARNINGS_SHOWN: set[str] = set()
+
+
 def _operator_highs_overrides(run_options: "RunOptions | None" = None) -> dict[str, object]:
     """HiGHS options the operator set for this run, by flag or environment variable.
 
@@ -251,11 +256,14 @@ def _operator_highs_overrides(run_options: "RunOptions | None" = None) -> dict[s
     * ``--solver-mip-gap GAP`` (``FLEXTOOL_HIGHS_MIP_GAP``) → ``mip_rel_gap``
       (only bites MIP solves)
     * ``--presolve {on,off,choose}`` (``FLEXTOOL_HIGHS_PRESOLVE``) → ``presolve``
-    * ``--highs-threads N`` (``FLEXTOOL_HIGHS_THREADS``): N > 1 → ``threads=N``
-      and ``parallel=on`` (trades determinism for wall-clock speed); N = 1
-      keeps the deterministic DETERMINISM_OPTIONS pins.  Every Highs instance
-      of a sub-solve sees the same value, which sidesteps HiGHS' "global
-      scheduler already initialised" rejection.
+    * ``--threads B`` (``FLEXTOOL_THREADS``) and ``--highs-threads N``
+      (``FLEXTOOL_HIGHS_THREADS``), by
+      :func:`flextool._thread_budget.highs_thread_options`: N > 1 →
+      ``threads=N`` and ``parallel=on`` (trades determinism for wall-clock
+      speed), N at most B; B alone → ``threads=B`` with ``parallel`` left to
+      the DETERMINISM_OPTIONS pin (off); neither → nothing.  Every Highs
+      instance of a sub-solve sees the same value, which sidesteps HiGHS'
+      "global scheduler already initialised" rejection.
     * ``--solver-log-level {silent,normal,verbose}``
       (``FLEXTOOL_SOLVER_LOG_LEVEL``): ``silent`` → ``output_flag=False``,
       ``verbose`` → ``output_flag=True`` + ``log_dev_level=2``, ``normal`` →
@@ -279,11 +287,11 @@ def _operator_highs_overrides(run_options: "RunOptions | None" = None) -> dict[s
     presolve = given("presolve")
     if presolve is not None:
         cli["presolve"] = presolve
-    threads = given("highs_threads")
-    if threads is not None and int(threads) > 1:
-        cli["threads"] = int(threads)
-        # HiGHS needs ``parallel="on"`` before it uses the threads.
-        cli["parallel"] = "on"
+    thread_options, thread_warning = highs_thread_options(opts)
+    cli.update(thread_options)
+    if thread_warning is not None and thread_warning not in _THREAD_WARNINGS_SHOWN:
+        _THREAD_WARNINGS_SHOWN.add(thread_warning)
+        logging.getLogger(__name__).warning(thread_warning)
     log_level = given("solver_log_level")
     if log_level == "silent":
         cli["output_flag"] = False

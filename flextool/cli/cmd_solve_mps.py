@@ -43,6 +43,11 @@ def main(argv: list[str] | None = None) -> int:
         "--options", type=Path, default=None,
         help="Optional HiGHS options file (key=value per line)",
     )
+    parser.add_argument(
+        "--threads", type=int, default=None, metavar="N",
+        help="Thread budget of the parent run; read before polars starts (flextool/_thread_budget.py).  "
+             "HiGHS' own threads come from --options",
+    )
     args = parser.parse_args(argv)
 
     import highspy

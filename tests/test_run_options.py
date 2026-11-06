@@ -13,6 +13,7 @@ from flextool.run_options import OPTIONS, RunOptions, resolve
 # Per option: (flag value, environment text, value that text means, database value).  The flag and database
 # values differ from the default and from each other so the winning tier is visible in the value.
 SAMPLES: dict[str, tuple[object, str, object, object]] = {
+    "threads": (6, "4", 4, 3),
     "highs_threads": (6, "4", 4, 3),
     "presolve": ("off", "choose", "choose", "on"),
     "solver_log_level": ("verbose", "silent", "silent", "verbose"),
@@ -63,6 +64,8 @@ def test_precedence_table(key, present):
 @pytest.mark.parametrize(
     ("key", "bad"),
     [
+        ("threads", "four"),
+        ("threads", "0"),
         ("highs_threads", "four"),
         ("highs_threads", "0"),
         ("presolve", "maybe"),
@@ -106,6 +109,7 @@ def test_benders_workers_zero_means_automatic_without_warning(caplog):
         ("solver_time_limit", -5.0, "-5"),
         ("solver_mip_gap", -0.1, "-0.1"),
         ("highs_threads", 0, "0"),
+        ("threads", 0, "0"),
     ],
 )
 def test_out_of_range_flag_is_ignored_like_its_environment_variable(key, bad, bad_text, caplog):
@@ -186,16 +190,18 @@ def test_summary_lines_name_the_source():
 def test_to_argv_forwards_only_flag_given_options():
     opts = RunOptions.from_cli(
         _flags(scaling="off", save_memory=True, solver_mip_gap=0.0005),
-        environ={"FLEXTOOL_HIGHS_THREADS": "4"},
+        environ={"FLEXTOOL_HIGHS_THREADS": "4", "FLEXTOOL_THREADS": "2"},
     )
     assert opts.to_argv() == ["--solver-mip-gap", "0.0005", "--scaling", "off", "--save-memory"]
+    flagged = RunOptions.from_cli(_flags(threads=3), environ={"FLEXTOOL_THREADS": "2"})
+    assert flagged.to_argv() == ["--threads", "3"]
 
 
 def test_to_argv_round_trips_through_the_run_parser():
     from flextool.cli.cmd_run_flextool import build_parser
 
     given = {
-        "highs_threads": 3, "presolve": "off", "solver_log_level": "silent", "solver_time_limit": 12.5,
+        "threads": 5, "highs_threads": 3, "presolve": "off", "solver_log_level": "silent", "solver_time_limit": 12.5,
         "solver_mip_gap": 0.0005, "scaling": "basic", "user_bound_scale": -3,
         "save_memory": True, "warm_start": True, "basis_cache_dir": "/tmp/cache", "benders_workers": 2,
     }
