@@ -1111,13 +1111,19 @@ class _BendersMaster:
         # --- build the hand master as a polar_high.Problem -----------------
         m = Problem()
 
-        # Invest vars C[conn] >= 0 — one row per connection (single invest col).
+        # ─── VAR. ─── C ──────────────────────────────────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────────
+        # C[conn] ≥ 0   ∀ conn ∈ the connections of the cross-region arcs
+        # Capacity invested in a trade connection, in units of its unitsize (as v_invest_p): one column per
+        # connection, summed over the periods it may invest in (the hand master, master="hand").
         c_frame = pl.DataFrame({"conn": conns})
         C = m.add_var("C", ("conn",), c_frame, lower=0.0)
 
-        # Trade flow vars f[arc_p, arc_source, arc_sink, d, t] >= 0 over the
-        # union of every arc's (d,t) grid, keyed by the SAME (p,source,sink)
-        # triple the region half-flows carry so the pin values map 1:1.
+        # ─── VAR. ─── f ──────────────────────────────────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────────
+        # f[p,source,sink,d,t] ≥ 0   ∀ cross-region arcs (p,source,sink), (d,t) on the arc's grid
+        # Trade flow on a cross-region arc, in units of the connection's unitsize, keyed by the same
+        # (p,source,sink) triple the region half-flows carry so the pin values map 1:1.
         f_rows = []
         for a in arcs:
             for (p, s, k, d, t) in a.dim_tuples:
@@ -1125,16 +1131,22 @@ class _BendersMaster:
         f_frame = pl.DataFrame(f_rows)
         f = m.add_var("f", ("p", "source", "sink", "d", "t"), f_frame, lower=0.0)
 
-        # eta_r recourse vars, lower-bounded by a large-negative finite floor
-        # (see _ETA_FLOOR — keeps the cut-less iter-0 master kOptimal without
-        # cutting off the optimum; the f̄=0 bootstrap then seeds the real cuts).
+        # ─── VAR. ─── eta ────────────────────────────────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────────
+        # eta[r] ≥ eta_floor   ∀ regions r
+        # The recourse cost of region r that the optimality cuts bound from below (scaled objective units).
+        # The large-negative finite floor (_ETA_FLOOR_MULT) keeps the cut-less iter-0 master optimal without
+        # cutting off the optimum; the f̄ = 0 bootstrap then seeds the real cuts.
         eta_frame = pl.DataFrame({"region": self.regions})
         eta = m.add_var("eta", ("region",), eta_frame, lower=self._eta_floor)
 
-        # Capacity coupling  f[arc,d,t] <= C[conn]   <=>   C[conn] - f >= 0
-        # (NORMALISED: unitsize cancels — both f and C are unitsize-normalised).
-        # Build one row per (arc, d, t).  We attach the connection key as a
-        # join column so `Where` aligns f with its connection's C.
+        # ─── EQ. ─── trade_capacity ─────────────────────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────────
+        # C[conn] − f[p,source,sink,d,t] ≥ 0   ∀ arcs (p,source,sink) of conn, (d,t) on the arc's grid
+        # A trade flow stays within the capacity invested in its connection.  Both sides are in units of the
+        # connection's unitsize, so it cancels.  One row per (arc, d, t); the connection key is a join column
+        # so Where aligns f with its connection's C.  Existing capacity of the connection is not in the row:
+        # the hand master treats every trade connection as greenfield (the flextool master path counts it).
         cap_idx = pl.DataFrame(
             [
                 {"conn": a.conn, "p": p, "source": s, "sink": k, "d": d, "t": t}
@@ -1142,8 +1154,7 @@ class _BendersMaster:
                 for (p, s, k, d, t) in a.dim_tuples
             ]
         )
-        # C[conn] - f[arc,d,t] >= 0  (f and C broadcast onto `over` by their
-        # shared dims — `conn` for C, the 5 arc dims for f).
+        # f and C broadcast onto `over` by their shared dims — `conn` for C, the 5 arc dims for f.
         m.add_cstr(
             "trade_capacity",
             over=cap_idx,
@@ -1152,8 +1163,11 @@ class _BendersMaster:
             rhs_terms={"zero": 0.0},
         )
 
-        # Invest upper bound  C[conn] <= max_units[conn]  (mirrors the
-        # monolith maxInvest_var_bound; bounds the master).
+        # ─── EQ. ─── maxInvest ──────────────────────────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────────
+        # C[conn] ≤ Σ_{d ∈ invest periods of conn} max_units[conn,d]   ∀ conn
+        # Caps the invested capacity (max_units = p_entity_max_units, units of unitsize), mirroring the
+        # monolith's maxInvest_var_bound; it also bounds the master before enough cuts accumulate.
         cap_param = Param(
             ("conn",),
             pl.DataFrame(
@@ -1168,7 +1182,14 @@ class _BendersMaster:
             rhs_terms={"max_units": cap_param},
         )
 
-        # Objective: Σ_conn C_cost[conn]·C[conn] + Σ_r eta_r.
+        # ─── OBJ. ─── master_objective ──────────────────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────────
+        # Σ_conn C_cost[conn] · C[conn] + Σ_r eta[r]
+        #   C_cost[conn] = s · unitsize[conn] · Σ_{d ∈ invest periods of conn} (annual_discounted[conn,d]
+        #                                                                   + lifetime_fixed_cost[conn,d])
+        #   s = obj_scale (scale_the_objective), so the master lives in the scaled space of the regions
+        # The invest cost of the trade capacity, as OBJ. invest_cost_p of the monolith, plus the regions'
+        # recourse costs.
         cost_param = Param(
             ("conn",),
             pl.DataFrame(
