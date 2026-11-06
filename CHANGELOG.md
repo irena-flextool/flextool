@@ -5,6 +5,17 @@
   peak memory about tripled on large models (the same LP), so 4.2.0 held polars below 2. polar-high 3.12.3 runs
   these joins in the order they are written, so FlexTool now requires polar-high 3.12.3 and accepts polars 1.40 or
   newer below 3.
+- **Changed: every parameter description starts with its unit**, in the default convention (MW, MWh, CUR,
+  tCO2): `[MW]`, `[CUR/MWh]`, `[hours]`; `[-]` for a share or ratio, followed by an example (`[-] e.g. 0.9 means
+  90%`); words where the unit depends on the use (`[unit of the constraint per MW]`); `[choice]`, `[yes/no]`,
+  `[name]`, `[text]`, `[count]` for the other parameters. Units that were wrong or incomplete are corrected:
+  `penalty_inertia` is `[CUR/MWs per hour]` and `penalty_reserve` `[CUR/MW per hour]` (both are paid for each hour
+  of the shortfall); `fixed_cost` and `penalty_capacity_margin` are per year (`[CUR/kW/a]`, storage `[CUR/kWh/a]`)
+  and `annual_flow` is `[MWh/a]`. One spelling per unit (`[tCO2/MWh]`, `[CUR/tCO2]`, `[hours]`). `inflow`,
+  `peak_inflow` and `energy_margin_adder` say they are MWh per time step, when you must rescale them for another
+  step length and when FlexTool does it; `max_flow_for_unconstrained_variables` no longer mentions commodity tiers
+  (it does not bound them). Upgrading a database adds the units to its descriptions. Values and results are
+  unchanged.
 - **New: every run records itself in its output folder.** `output_parquet/<run>/_run_status.json` says whether the
   run is running, succeeded, failed, was interrupted, killed or crashed, with each solve's outcome (solver status,
   accepted / rejected and why, objective), the error of a failed run, the input database and scenario, the
