@@ -18,16 +18,19 @@ alternatives built from JSON under the pytest tmp dir.
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import polars as pl
 import pytest
 
 from tests.engine._lp_rows import row_bounds, row_terms
 from tests.engine._unit_db import (
-    FLEXTOOL_ROOT, b64, build, is_realization, last_stochastic, make_db, run, utf8, without_realization,
+    BASE_FIXTURE_JSON, FLEXTOOL_ROOT, RunCache, b64, build, is_realization, last_stochastic, make_db, run, utf8,
+    without_realization,
 )
 from tests.engine.test_coarse_flows import (
-    LH2, LH2_COARSE, LH2_RP, STOCH, _chain, _coarse_procs, _f, _forecasts, _keys, _lh2, _s, _stoch_values,
+    LH2, LH2_COARSE, LH2_RP, STOCH, _chain, _coarse_procs, _f, _forecasts, _keys, _s, _stoch_values,
     _STOCH_ENTITIES, _tmap_lh2, _total_objective,
 )
 
@@ -45,6 +48,38 @@ _UC_FULL = _UC + [["unit", "liquefier_A", "startup_cost", _f(50.0)],
                   ["node", "lh2_A", "inflow", _tmap_lh2(lambda h: -10.0 if (h // 24) % 2 == 0 else -150.0)],
                   ["unit", "liquefier_A", "minimum_time_method", _s("both")],
                   ["unit", "liquefier_A", "min_uptime", _f(30.0)], ["unit", "liquefier_A", "min_downtime", _f(30.0)]]
+
+
+# The coarse models two tests solve alike share one run.  ``_tied_fine`` sets ``_STATE["tied"]`` (undone with its
+# monkeypatch at the test's end): every run of the tied hourly model is made afresh, never from the cache.
+_RUNS = RunCache()
+_STATE = {"tied": False}
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _free_runs():
+    yield
+    _RUNS.clear()
+
+
+def _model(tmp_path_factory, *, alt: str, values: list, base_chain: list[str], entities: list | None = None,
+           fixture_json: Path = BASE_FIXTURE_JSON) -> dict:
+    """``run`` of the model: shared within the module unless the tied hourly model is being built (read only)."""
+    if _STATE["tied"]:
+        url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=base_chain, entities=entities,
+                            fixture_json=fixture_json)
+        return run(tmp_path_factory, url, scen)
+    steps, _wf, _scen = _RUNS.get(tmp_path_factory, alt=alt, values=values, base_chain=base_chain,
+                                  entities=entities, fixture_json=fixture_json)
+    assert steps, "run_chain_from_db produced no orchestration steps"
+    for step in steps.values():
+        assert step.solution is not None, "solve produced no solution"
+    return steps
+
+
+def _lh2(tmp_path_factory, alt, values=(), entities=None) -> dict:
+    return _model(tmp_path_factory, alt=alt, values=list(values), base_chain=_chain(LH2, "lh2_three_region"),
+                  entities=entities, fixture_json=LH2)
 
 
 def _cols(pb, prefix: str) -> list[str]:
@@ -145,6 +180,7 @@ def _tied_fine(monkeypatch) -> None:
     from flextool.engine.model import _coarse_flows
 
     monkeypatch.delenv("FLEXTOOL_AUTOSCALE_STRICT", raising=False)
+    monkeypatch.setitem(_STATE, "tied", True)
     monkeypatch.setattr(_coarse_flows, "prepare", lambda b: None)
     original = core.build_flextool
 
@@ -169,9 +205,8 @@ _SECTION = [["unit", "liquefier_A", "conversion_method", _s("min_load_efficiency
 
 def _uc_case(tmp_path_factory, case: str, alt: str) -> dict:
     if case == "rp":
-        url, scen = make_db(tmp_path_factory, alt=alt, values=_UC_FULL, fixture_json=LH2_RP,
-                            base_chain=_chain(LH2_RP, "lh2_three_region_rp_invest"))
-        return run(tmp_path_factory, url, scen)
+        return _model(tmp_path_factory, alt=alt, values=_UC_FULL, fixture_json=LH2_RP,
+                      base_chain=_chain(LH2_RP, "lh2_three_region_rp_invest"))
     extra = {"single": [], "rolling": _ROLLING, "integer": _INTEGER, "section": _SECTION}[case]
     base = [v for v in _UC_FULL if case != "integer" or v[2] != "startup_method"]
     return _lh2(tmp_path_factory, alt, base + extra)
@@ -302,9 +337,8 @@ def _hand_uc_values(min_uptime: float) -> list:
 
 
 def _hand_uc(tmp_path_factory, alt: str, min_uptime: float):
-    url, scen = make_db(tmp_path_factory, alt=alt, values=_hand_uc_values(min_uptime), base_chain=_HAND_CHAIN,
-                        entities=_HAND_ENTITIES)
-    return last_stochastic(run(tmp_path_factory, url, scen))
+    return last_stochastic(_model(tmp_path_factory, alt=alt, values=_hand_uc_values(min_uptime),
+                                  base_chain=_HAND_CHAIN, entities=_HAND_ENTITIES))
 
 
 def _hourly(step, var: str) -> list[float]:
@@ -494,13 +528,17 @@ def test_outputs_equal_tied_fine_model(tmp_path_factory, monkeypatch) -> None:
 
     folders = {}
     for kind in ("coarse", "tied"):
-        if kind == "tied":
-            _tied_fine(monkeypatch)
         alt = f"co_out_{kind}"
-        url, scen = make_db(tmp_path_factory, alt=alt, values=_hand_uc_values(30.0), base_chain=_HAND_CHAIN,
-                            entities=_HAND_ENTITIES)
-        folders[kind] = tmp_path_factory.mktemp(f"{alt}_w")
-        steps = run_chain_from_db(url, scen, work_folder=folders[kind], keep_solutions=True)
+        if kind == "coarse":
+            # The coarse run is test_hand_built_coarse_unit_commitment's (min_uptime 30): read only.
+            steps, folders[kind], _scen = _RUNS.get(tmp_path_factory, alt=alt, values=_hand_uc_values(30.0),
+                                                    base_chain=_HAND_CHAIN, entities=_HAND_ENTITIES)
+        else:
+            _tied_fine(monkeypatch)
+            url, scen = make_db(tmp_path_factory, alt=alt, values=_hand_uc_values(30.0), base_chain=_HAND_CHAIN,
+                                entities=_HAND_ENTITIES)
+            folders[kind] = tmp_path_factory.mktemp(f"{alt}_w")
+            steps = run_chain_from_db(url, scen, work_folder=folders[kind], keep_solutions=True)
         assert "gen_d" in _coarse_procs(last_stochastic(steps).flex_data)
     assert_outputs_equal(folders["coarse"], folders["tied"], "y2020_2day_dispatch")
     outs = output_frames(folders["coarse"], "y2020_2day_dispatch")
@@ -563,9 +601,8 @@ def _ramp_values(speed: float) -> list:
 
 
 def _hand_ramp(tmp_path_factory, alt: str, speed: float, min_uptime: float = 24.0, extra=()):
-    url, scen = make_db(tmp_path_factory, alt=alt, values=_hand_uc_values(min_uptime) + _ramp_values(speed)
-                        + list(extra), base_chain=_HAND_CHAIN, entities=_HAND_ENTITIES)
-    return run(tmp_path_factory, url, scen)
+    return _model(tmp_path_factory, alt=alt, values=_hand_uc_values(min_uptime) + _ramp_values(speed) + list(extra),
+                  base_chain=_HAND_CHAIN, entities=_HAND_ENTITIES)
 
 
 @pytest.mark.parametrize("speed, su_share", [(1e-4, 0.572), (5e-4, 1.0 - 0.25 / 1.44)])
@@ -748,9 +785,8 @@ def _lh2_reserves() -> tuple[list, list]:
 def _lh2_res_case(tmp_path_factory, alt: str, case: str) -> dict:
     ents, vals = _lh2_reserves()
     if case == "rp":
-        url, scen = make_db(tmp_path_factory, alt=alt, values=_UC_FULL + vals, fixture_json=LH2_RP, entities=ents,
-                            base_chain=_chain(LH2_RP, "lh2_three_region_rp_invest"))
-        return run(tmp_path_factory, url, scen)
+        return _model(tmp_path_factory, alt=alt, values=_UC_FULL + vals, fixture_json=LH2_RP, entities=ents,
+                      base_chain=_chain(LH2_RP, "lh2_three_region_rp_invest"))
     return _lh2(tmp_path_factory, alt, _UC_FULL + vals + (_ROLLING if case == "rolling" else []), entities=ents)
 
 
@@ -818,11 +854,14 @@ _RES_HAND_ENTITIES = [["node", "hd", None], ["unit", "gen_d", None], ["group", "
 
 
 def _hand_res(tmp_path_factory, alt: str, ramp: bool):
-    url, scen = _hand_res_db(tmp_path_factory, alt, ramp)
-    return run(tmp_path_factory, url, scen)
+    return _model(tmp_path_factory, alt=alt, **_hand_res_model(ramp))
 
 
 def _hand_res_db(tmp_path_factory, alt: str, ramp: bool) -> tuple[str, str]:
+    return make_db(tmp_path_factory, alt=alt, **_hand_res_model(ramp))
+
+
+def _hand_res_model(ramp: bool) -> dict:
     demand = b64({"index_type": "str", "index_name": "time",
                   "data": [[t, -25.0 if h < 24 else 0.0] for h, t in enumerate(_HOURS)]}, "map")
     req = b64({"index_type": "str", "index_name": "time",
@@ -836,7 +875,7 @@ def _hand_res_db(tmp_path_factory, alt: str, ramp: bool) -> tuple[str, str]:
     if ramp:
         vals += [["unit__outputNode", ["gen_d", "hd"], "ramp_method", _s("ramp_limit")],
                  ["unit__outputNode", ["gen_d", "hd"], "ramp_speed_up", _f(0.2 / 60.0)]]
-    return make_db(tmp_path_factory, alt=alt, values=vals, base_chain=_HAND_CHAIN, entities=_RES_HAND_ENTITIES + ents)
+    return {"values": vals, "base_chain": _HAND_CHAIN, "entities": _RES_HAND_ENTITIES + ents}
 
 
 def _hourly_of(step, var: str, **keys) -> list[float]:
@@ -1029,11 +1068,15 @@ def test_reserve_outputs_equal_tied_fine_model(tmp_path_factory, monkeypatch) ->
 
     folders = {}
     for kind in ("coarse", "tied"):
-        if kind == "tied":
+        if kind == "coarse":
+            # The coarse run is test_hand_built_coarse_reserve's (no ramp): read only.
+            steps, folders[kind], _scen = _RUNS.get(tmp_path_factory, alt=f"co_res_out_{kind}",
+                                                    **_hand_res_model(False))
+        else:
             _tied_fine(monkeypatch)
-        url, scen = _hand_res_db(tmp_path_factory, f"co_res_out_{kind}", False)
-        folders[kind] = tmp_path_factory.mktemp(f"co_res_out_{kind}_w")
-        steps = run_chain_from_db(url, scen, work_folder=folders[kind], keep_solutions=True)
+            url, scen = _hand_res_db(tmp_path_factory, f"co_res_out_{kind}", False)
+            folders[kind] = tmp_path_factory.mktemp(f"co_res_out_{kind}_w")
+            steps = run_chain_from_db(url, scen, work_folder=folders[kind], keep_solutions=True)
         assert "gen_d" in _coarse_procs(last_stochastic(steps).flex_data)
     assert_outputs_equal(folders["coarse"], folders["tied"], "y2020_2day_dispatch")
     outs = output_frames(folders["coarse"], "y2020_2day_dispatch")

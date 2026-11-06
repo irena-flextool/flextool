@@ -20,7 +20,7 @@ import polars as pl
 import pytest
 
 from tests.engine._lp_rows import row_bounds, row_terms
-from tests.engine._unit_db import b64, build, make_db, run, time_map, utf8
+from tests.engine._unit_db import RunCache, b64, build, make_db, run, time_map, utf8
 
 REPO = Path(__file__).resolve().parents[2]
 PIN = "storage_state_start_binding_cyclic_period"
@@ -30,6 +30,25 @@ FULLYEAR_ROLL = ["init", "west", "battery", "wind", "fullYear", "dispatch_fullYe
 NESTED = ["init", "west", "coal", "coal_invest", "wind", "wind_invest", "battery", "battery_invest",
           "invest_solveSequence_5weeks", "invest_allYears_5weeks", "fullYear", "dispatch_fullYear_roll",
           "storage_fullYear_6h", "invest_24h", "bind_battery_forward", "unlimited_investment"]
+
+
+# The chains two tests solve alike share one run (read only); ``_shared`` is never called under a monkeypatch.
+_RUNS = RunCache()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _free_runs():
+    yield
+    _RUNS.clear()
+
+
+def _shared(tmp_path_factory, *, alt: str, base_chain: list[str], values: list) -> dict:
+    """``run`` of the model, shared within the module."""
+    steps, _wf, _scen = _RUNS.get(tmp_path_factory, alt=alt, values=values, base_chain=base_chain)
+    assert steps, "run_chain_from_db produced no orchestration steps"
+    for step in steps.values():
+        assert step.solution is not None, "solve produced no solution"
+    return steps
 
 
 def _f(x: float) -> list:
@@ -232,15 +251,16 @@ def _assert_continues(step, prev, node: str = "battery") -> None:
     assert lo == pytest.approx(-want, abs=1e-9) and hi == pytest.approx(lo)
 
 
+_SEQ_FORWARD = [["node", "battery", "storage_binding_method", _s("bind_forward_only")],
+                ["node", "battery", "storage_solve_horizon_method", _s("free")], NO_LOSS]
+
+
 def test_sequence_forward_carries_realized_state(tmp_path_factory):
     """Manual 4-solve sequence (y2020 → y2035, one realised period each), battery bind_forward_only + fix_start 0.1,
     horizon free, no self-discharge.  Each later solve starts from the state its predecessor realised at its last
     realised step (fix_start is for the first step of the whole model only, reference.md).  Before, each solve was
     re-pinned to 0.1·(50 + invested) = 85 MWh: the first-step row carried the invest column and bound −5."""
-    url, scen = make_db(tmp_path_factory, alt="sse_seq_fo", base_chain=SEQ, values=[
-        ["node", "battery", "storage_binding_method", _s("bind_forward_only")],
-        ["node", "battery", "storage_solve_horizon_method", _s("free")], NO_LOSS])
-    steps = list(run(tmp_path_factory, url, scen).values())
+    steps = list(_shared(tmp_path_factory, alt="sse_seq_fo", base_chain=SEQ, values=_SEQ_FORWARD).values())
     assert [s.solve_name for s in steps] == ["y2020_5week", "y2025_5week", "y2030_5week", "y2035_5week"]
     first = steps[0].flex_data
     assert _carry(first) is None
@@ -271,7 +291,7 @@ def test_sequence_cyclic_no_repin(tmp_path_factory):
 def _nested_rolling_parent(tmp_path_factory, alt: str) -> dict:
     """Rolling storage solve (48 h / 24 h, 6-h steps) containing a rolling dispatch (12 h / 6 h); battery
     bind_forward_only + fix_start 0.1, use_reference_value 0.4, no nested fix, no self-discharge."""
-    url, scen = make_db(tmp_path_factory, alt=alt, base_chain=NESTED, values=[
+    return _shared(tmp_path_factory, alt=alt, base_chain=NESTED, values=[
         ["solve", "storage_fullYear_6h", "solve_mode", _s("rolling_window")],
         ["solve", "storage_fullYear_6h", "rolling_solve_horizon", _f(48.0)],
         ["solve", "storage_fullYear_6h", "rolling_solve_jump", _f(24.0)],
@@ -279,7 +299,6 @@ def _nested_rolling_parent(tmp_path_factory, alt: str) -> dict:
         ["solve", "dispatch_fullYear_roll", "rolling_solve_jump", _f(6.0)],
         ["node", "battery", "storage_solve_horizon_method", _s("use_reference_value")],
         ["node", "battery", "storage_nested_fix_method", _s("fix_nothing")], NO_LOSS])
-    return run(tmp_path_factory, url, scen)
 
 
 def test_nested_child_under_later_parent_roll_carries(tmp_path_factory):
@@ -343,10 +362,10 @@ def _realised_end_period(step) -> str:
 def test_two_chains_in_one_process_start_from_fix_start(tmp_path_factory):
     """The carry registry is scoped to one cascade run: a second run in the same process starts from fix_start
     again (its first solve's first-step row equals the first run's), not from the first run's last state."""
-    url, scen = make_db(tmp_path_factory, alt="sse_two", base_chain=SEQ, values=[
-        ["node", "battery", "storage_binding_method", _s("bind_forward_only")],
-        ["node", "battery", "storage_solve_horizon_method", _s("free")], NO_LOSS])
-    a = list(run(tmp_path_factory, url, scen).values())
+    # The first run is test_sequence_forward_carries_realized_state's (an earlier cascade of this process when that
+    # test ran first); the second is a fresh cascade of the same model in this process.
+    a = list(_shared(tmp_path_factory, alt="sse_two", base_chain=SEQ, values=_SEQ_FORWARD).values())
+    url, scen = make_db(tmp_path_factory, alt="sse_two", base_chain=SEQ, values=_SEQ_FORWARD)
     b = list(run(tmp_path_factory, url, scen).values())
     assert _realised_end(a[-1]) != pytest.approx(0.1 * 50.0)
     assert _carry(b[0].flex_data) is None

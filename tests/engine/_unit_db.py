@@ -90,6 +90,47 @@ def run(tmp_path_factory, url: str, scenario: str) -> dict:
     return steps
 
 
+class RunCache:
+    """One cascade per distinct model within a test module.
+
+    Tests of one module that solve the same model share its run: the key is the fixture JSON, the base chain, the
+    override values and entities and the run options, not the override alternative's name (it only names the
+    scenario).  A run made while a test patches the engine (``monkeypatch`` on the build, the scaling, ...) must not
+    go through the cache.  Callers only read the cached steps and work folder (copy the folder before writing into
+    it).  Hold one per module and clear it at module teardown, so a module's runs are freed when it ends and the
+    cache never crosses modules (``--dist loadfile`` keeps a module on one worker)::
+
+        _RUNS = RunCache()
+
+        @pytest.fixture(scope="module", autouse=True)
+        def _free_runs():
+            yield
+            _RUNS.clear()
+    """
+
+    def __init__(self) -> None:
+        self._runs: dict[str, tuple[dict, Path, str]] = {}
+
+    def get(self, tmp_path_factory: pytest.TempPathFactory, *, alt: str, values: list, base_chain: list[str],
+            entities: list | None = None, fixture_json: Path = BASE_FIXTURE_JSON,
+            **run_kwargs) -> tuple[dict, Path, str]:
+        """``(steps, work_folder, scenario)`` of the model, solved on first use (``keep_solutions=True``)."""
+        from flextool.engine import run_chain_from_db
+
+        key = json.dumps([str(fixture_json), list(base_chain), values, entities, sorted(run_kwargs.items())],
+                         default=str)
+        if key not in self._runs:
+            url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=base_chain,
+                                entities=entities, fixture_json=fixture_json)
+            wf = tmp_path_factory.mktemp(f"{alt}_w")
+            steps = run_chain_from_db(url, scen, work_folder=wf, keep_solutions=True, **run_kwargs)
+            self._runs[key] = (steps, wf, scen)
+        return self._runs[key]
+
+    def clear(self) -> None:
+        self._runs.clear()
+
+
 #: Name suffix of the realization solve the engine adds after a stochastic solve with a ``realized: yes``
 #: designation (``solve._orchestration._spawn_realized_dispatch_siblings``); its rolls are ``<name>_roll_<k>``.
 REALIZATION_SUFFIX = "__realized_dispatch"
@@ -243,3 +284,18 @@ def assert_outputs_equal(wf_a: Path, wf_b: Path, solve_name: str, *,
                                check_column_order=False)
         except AssertionError as exc:
             raise AssertionError(f"{solve_name}: output {name} differs: {exc}") from None
+
+
+#: The ``fullYear_roll`` scenario of tests.json: dispatch_fullYear_roll, 8-h horizon / 4-h jump over the 72-h
+#: fullYear timeset of four periods (72 rolls).
+FULLYEAR_ROLL_CHAIN = ["init", "west", "battery", "wind", "fullYear", "dispatch_fullYear_roll"]
+
+
+def fullyear_roll_first_hours(hours: float) -> list:
+    """Override values that cut ``fullYear_roll`` to the first ``hours`` hours of p2020 (``hours / 4`` same-level
+    rolls of 8 h / 4 h, the same solve, timeline and units)."""
+    return [["solve", "dispatch_fullYear_roll", "period_timeset",
+             b64({"index_type": "str", "index_name": "period", "data": [["p2020", "fullYear"]]}, "map")],
+            ["solve", "dispatch_fullYear_roll", "realized_periods",
+             b64({"value_type": "str", "data": ["p2020"]}, "array")],
+            ["solve", "dispatch_fullYear_roll", "rolling_duration", b64(float(hours), "float")]]

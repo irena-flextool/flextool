@@ -21,7 +21,7 @@ import sys
 import polars as pl
 import pytest
 
-from tests.engine._unit_db import FLEXTOOL_ROOT, b64, build, make_db, utf8
+from tests.engine._unit_db import BASE_FIXTURE_JSON, FLEXTOOL_ROOT, RunCache, b64, build, make_db, utf8
 
 pytestmark = pytest.mark.solver
 
@@ -51,14 +51,20 @@ TWO_PERIODS = [
 ]
 
 
+# Tests that solve the same model share one run (``_run`` is never called under a monkeypatch).
+_RUNS = RunCache()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _free_runs():
+    yield
+    _RUNS.clear()
+
+
 def _run(tmp_path_factory, alt: str, values: list, *, warm: bool = False, base_chain=CHAIN,
          fixture_json=None) -> dict:
-    from flextool.engine import run_chain_from_db
-
-    kw = {} if fixture_json is None else {"fixture_json": fixture_json}
-    url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=base_chain, **kw)
-    steps = run_chain_from_db(url, scen, warm=warm, keep_solutions=True,
-                              work_folder=tmp_path_factory.mktemp(f"{alt}_w{int(warm)}"))
+    steps, _wf, _scen = _RUNS.get(tmp_path_factory, alt=alt, values=values, base_chain=base_chain,
+                                  fixture_json=fixture_json or BASE_FIXTURE_JSON, warm=warm)
     assert steps and all(st.solution is not None for st in steps.values())
     return steps
 

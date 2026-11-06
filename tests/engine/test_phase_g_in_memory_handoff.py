@@ -92,38 +92,15 @@ _PHASE_G_TARGETS = (
 )
 
 
-def _pick_multi_solve_fixture(scenario_workdir) -> tuple[Path, str]:
-    """Return ``(sqlite_path, scenario)`` for a multi-sub-solve fixture."""
-    # First in this list is preferred — falls through only if any of the
-    # callers' targets gain a future cascade-build failure.
-    scen = "fullYear_roll"
-    work = scenario_workdir(scen)
-    return work / "tests.sqlite", scen
+_SCEN = "fullYear_roll"
 
 
-def test_phase_g_per_iter_reads_drop(
-    tmp_path: Path, scenario_workdir
-) -> None:
-    """Run a representative cascade and confirm migrated readers no
-    longer hit disk on the per-iter hot path.
-
-    Strategy: count ``pd.read_csv`` calls per basename, then for each
-    Phase G target, assert the count is bounded by a small constant
-    (not linear in number of sub-solves).
-
-    The bound chosen is generous: we allow up to ``len(sols) - 1`` reads
-    per target (rather than 0) because:
-      * One-shot post-cascade reads in ``write_outputs`` still happen.
-      * Some readers stay on the file path when ``flex_data`` does not
-        cover that field (the audit's "deferred" entries — currently
-        only ``solve__p_entity_pre_existing.csv`` falls here).
-
-    If a regression reintroduces per-iter reads, the count will scale
-    with sub-solve count, blowing the bound.
-    """
-    sqlite, scen = _pick_multi_solve_fixture(scenario_workdir)
-
-    work = tmp_path / "work"
+@pytest.fixture(scope="module")
+def counted_run(test_db_url, tmp_path_factory) -> tuple[dict, dict[str, int]]:
+    """``(steps, read counts)``: the representative multi-sub-solve cascade (``fullYear_roll``, default options) run
+    once per module with ``pd.read_csv`` counted per basename for the calls from ``process_outputs/`` (the
+    counting wrapper passes every call through unchanged).  Read only."""
+    work = tmp_path_factory.mktemp("phase_g") / "work"
     work.mkdir(parents=True, exist_ok=True)
 
     read_counts: dict[str, int] = collections.Counter()
@@ -155,10 +132,32 @@ def test_phase_g_per_iter_reads_drop(
     pd.read_csv = patched_read_csv  # type: ignore[assignment]
     try:
         sols = run_chain_from_db(
-            sqlite, scenario_name=scen, work_folder=work,
+            test_db_url, scenario_name=_SCEN, work_folder=work,
         )
     finally:
         pd.read_csv = real_read_csv  # type: ignore[assignment]
+    return sols, dict(read_counts)
+
+
+def test_phase_g_per_iter_reads_drop(counted_run) -> None:
+    """Run a representative cascade and confirm migrated readers no
+    longer hit disk on the per-iter hot path.
+
+    Strategy: count ``pd.read_csv`` calls per basename, then for each
+    Phase G target, assert the count is bounded by a small constant
+    (not linear in number of sub-solves).
+
+    The bound chosen is generous: we allow up to ``len(sols) - 1`` reads
+    per target (rather than 0) because:
+      * One-shot post-cascade reads in ``write_outputs`` still happen.
+      * Some readers stay on the file path when ``flex_data`` does not
+        cover that field (the audit's "deferred" entries — currently
+        only ``solve__p_entity_pre_existing.csv`` falls here).
+
+    If a regression reintroduces per-iter reads, the count will scale
+    with sub-solve count, blowing the bound.
+    """
+    sols, read_counts = counted_run
 
     assert sols, "cascade produced no sub-solves"
     n_sub_solves = len(sols)
@@ -187,20 +186,13 @@ def test_phase_g_per_iter_reads_drop(
         )
 
 
-def test_phase_g_cascade_succeeds_with_kwargs(
-    tmp_path: Path, scenario_workdir
-) -> None:
+def test_phase_g_cascade_succeeds_with_kwargs(counted_run) -> None:
     """Smoke test — Phase G wiring (flex_data + is_first_solve +
     writer_state threaded through ``write_outputs_for_solve``) does not
     break a representative cascade run.  The other handoff suites
     cover correctness; this test guards Phase G's wiring specifically.
     """
-    sqlite, scen = _pick_multi_solve_fixture(scenario_workdir)
-
-    work = tmp_path / "work"
-    work.mkdir(parents=True, exist_ok=True)
-
-    sols = run_chain_from_db(sqlite, scenario_name=scen, work_folder=work)
+    sols, _counts = counted_run
 
     assert sols, "Phase G wiring broke the cascade — no sub-solves returned"
     # Every sub-solve should be optimal on the canonical fixtures.

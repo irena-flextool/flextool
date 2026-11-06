@@ -25,7 +25,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from tests.engine._unit_db import FLEXTOOL_ROOT, b64, make_db, utf8
+from tests.engine._unit_db import FLEXTOOL_ROOT, RunCache, b64, make_db, utf8
 
 pytestmark = pytest.mark.solver
 
@@ -61,6 +61,24 @@ def _run(tmp_path_factory, alt, chain, values=(), fixture_json=None, entities=No
                         entities=entities, **kw)
     wf = tmp_path_factory.mktemp(f"{alt}_w")
     steps = run_chain_from_db(url, scen, work_folder=wf, keep_solutions=True)
+    assert steps and all(s.solution is not None for s in steps.values())
+    return steps, wf
+
+
+# Unpatched runs of one model are shared by the tests that read it (the network + reserve model, the rolling coal
+# model); a run made under a monkeypatch goes through ``_run``.
+_RUNS = RunCache()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _free_runs():
+    yield
+    _RUNS.clear()
+
+
+def _shared_run(tmp_path_factory, alt, chain):
+    """``_run`` of an unpatched model with no overrides, shared within the module (read only)."""
+    steps, wf, _scen = _RUNS.get(tmp_path_factory, alt=alt, values=[], base_chain=list(chain))
     assert steps and all(s.solution is not None for s in steps.values())
     return steps, wf
 
@@ -171,7 +189,7 @@ def test_network_and_reserve_prices(tmp_path_factory) -> None:
     (efficiency 0.8): 500 / 0.8 = 625; west exports to east over west_east (0.9): 500 · 0.9 = 450.  Reserve
     primary/up/electricity: every MW is held back on wind (reliability 0.5 → 2 MW of wind, each worth the west
     price 450): 900.  Before: −91 250 / −114 062.5 / −82 125 and a reserve price of 0.0009 (no 1/s)."""
-    _steps, wf = _run(tmp_path_factory, "pr_net", NET_RES)
+    _steps, wf = _shared_run(tmp_path_factory, "pr_net", NET_RES)
     prices = _node_prices(wf)
     t1 = next(v for (s, d, t), v in prices.items() if t == "t0001")
     assert t1["east"] == pytest.approx(500.0, rel=1e-9)
@@ -188,7 +206,7 @@ def test_reserve_price_weighted_and_multi_hour(tmp_path_factory) -> None:
     with a 2-h step the t0001 situation of the network test holds again (east short, west exporting, wind
     holding the reserve): east 500, west 450, reserve 2 · 450 = 900, not 1800 (no Δt in the price).
     Before: the reserve price was ×1e-6, × tw and × Δt off."""
-    _s0, wf0 = _run(tmp_path_factory, "pr_rw0", NET_RES)
+    _s0, wf0 = _shared_run(tmp_path_factory, "pr_rw0", NET_RES)
     _s1, wf1 = _run(tmp_path_factory, "pr_rw1", NET_RES + ["weighted_2day"])
     n0, n1 = _node_prices(wf0), _node_prices(wf1)
     r0, r1 = _reserve_prices(wf0), _reserve_prices(wf1)
@@ -240,7 +258,7 @@ def test_slack_step_price_equals_penalty(tmp_path_factory, case) -> None:
         steps, wf = _run(tmp_path_factory, "pr_sl_rp", _chain(LH2_RP, "lh2_three_region_rp_invest"),
                          [["node", "elec_A", "penalty_up", b64(30.0, "float")]], fixture_json=LH2_RP)
     elif case == "rolling":
-        steps, wf = _run(tmp_path_factory, "pr_sl_roll", ROLL)
+        steps, wf = _shared_run(tmp_path_factory, "pr_sl_roll", ROLL)
     elif case == "rolling_discounted":
         steps, wf = _run(tmp_path_factory, "pr_sl_disc", ROLL,
                          [["model", "flexTool", "inflation_rate", b64(0.05, "float")]])
@@ -302,7 +320,7 @@ def test_rolling_price_per_roll(tmp_path_factory) -> None:
     """Rolling coal (dispatch_fullYear_roll, 8 h window / 4 h jump, 4 periods of 5 years): every roll writes west
     = 900 (unserved) or 50 (coal), with the complete solve's period share and inflation 5 removed.  Before:
     −109 500 / −6 083."""
-    steps, wf = _run(tmp_path_factory, "pr_roll", ROLL)
+    steps, wf = _shared_run(tmp_path_factory, "pr_roll", ROLL)
     assert len(steps) > 4
     for name in steps:
         west = _values(_node_prices(wf, name), "west")
@@ -349,7 +367,7 @@ def test_coarse_price_absolute(tmp_path_factory) -> None:
 def test_price_independent_of_objective_scale(tmp_path_factory, monkeypatch) -> None:
     """network + reserve solved with scale_the_objective 1 instead of the default 1e-6: identical node and
     reserve prices (the live scale is divided out).  Before: the reserve price differed by 1e6."""
-    _s0, wf0 = _run(tmp_path_factory, "pr_s6", NET_RES)
+    _s0, wf0 = _shared_run(tmp_path_factory, "pr_s6", NET_RES)
     import flextool.engine.solve._orchestration as orch
     monkeypatch.setattr(orch, "_resolve_effective_obj_scale", lambda _v: 1.0)
     _s1, wf1 = _run(tmp_path_factory, "pr_s1", NET_RES)

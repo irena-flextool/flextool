@@ -15,7 +15,8 @@ in the in-memory path.
 
 We exercise the parity gate:
 
-* Run ``work_fullYear_roll`` (a multi-roll fixture).
+* Run ``fullYear_roll`` (a multi-roll scenario) once per module with the
+  default options (``default_run``); every test reads that run.
 * Assert: the cascade completes without exception, with > 1 sub-solve.
 * Assert: the final objective is finite.
 * Assert: no CSVs in ``solve_data/cross_solve/`` (cross-solve carriers
@@ -44,33 +45,30 @@ def _final_objective(sols) -> float:
     return float(last.solution.obj)
 
 
-def test_multi_roll_cascade_completes(
-    tmp_path: Path, scenario_workdir
-) -> None:
-    """``fullYear_roll`` must complete in-memory with >= 2 sub-solves."""
-    db = scenario_workdir(SCENARIO) / "tests.sqlite"
-    work = tmp_path / "multi_roll"
+@pytest.fixture(scope="module")
+def default_run(test_db_url, tmp_path_factory) -> tuple[dict, Path]:
+    """``(steps, work folder)`` of the in-memory ``fullYear_roll`` cascade with the default options, once per
+    module (read only)."""
+    work = tmp_path_factory.mktemp("multi_roll") / "multi_roll"
     work.mkdir(parents=True, exist_ok=True)
     sols = run_chain_from_db(
-        db, scenario_name=SCENARIO, work_folder=work,
+        test_db_url, scenario_name=SCENARIO, work_folder=work,
     )
+    return sols, work
+
+
+def test_multi_roll_cascade_completes(default_run) -> None:
+    """``fullYear_roll`` must complete in-memory with >= 2 sub-solves."""
+    sols, _work = default_run
     assert len(sols) >= 2, (
         f"expected multi-roll fixture to yield >= 2 sub-solves; got "
         f"{len(sols)}: {list(sols)}"
     )
 
 
-def test_multi_roll_final_objective_finite(
-    tmp_path: Path, scenario_workdir
-) -> None:
+def test_multi_roll_final_objective_finite(default_run) -> None:
     """Multi-roll cascade produces a finite final objective."""
-    db = scenario_workdir(SCENARIO) / "tests.sqlite"
-
-    work = tmp_path / "multi_roll"
-    work.mkdir(parents=True, exist_ok=True)
-    sols = run_chain_from_db(
-        db, scenario_name=SCENARIO, work_folder=work,
-    )
+    sols, _work = default_run
     assert len(sols) >= 2, (
         f"expected multi-roll fixture to yield >= 2 sub-solves; got "
         f"{len(sols)}: {list(sols)}"
@@ -81,17 +79,10 @@ def test_multi_roll_final_objective_finite(
     )
 
 
-def test_multi_roll_no_cross_solve_csvs(
-    tmp_path: Path, scenario_workdir
-) -> None:
+def test_multi_roll_no_cross_solve_csvs(default_run) -> None:
     """In-memory multi-roll run leaves no CSVs in ``cross_solve/``
     (cross-solve carriers ride in ``state.cross_solve_carriers``)."""
-    db = scenario_workdir(SCENARIO) / "tests.sqlite"
-    work = tmp_path / "multi_roll"
-    work.mkdir(parents=True, exist_ok=True)
-    run_chain_from_db(
-        db, scenario_name=SCENARIO, work_folder=work,
-    )
+    _sols, work = default_run
     cs = work / "cross_solve"
     if not cs.is_dir():
         return

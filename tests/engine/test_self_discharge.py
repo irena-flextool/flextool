@@ -29,7 +29,7 @@ import pytest
 
 from flextool.engine.model import _self_discharge
 from tests.engine._lp_rows import row_bounds, row_terms
-from tests.engine._unit_db import b64, build, make_db, run, utf8
+from tests.engine._unit_db import RunCache, b64, build, utf8
 
 REPO = Path(__file__).resolve().parents[2]
 CHAIN = ["init", "west", "wind", "coal", "battery"]
@@ -53,9 +53,22 @@ def _values(loss: float, *, method: str = "bind_forward_only", start: str = "fix
             ["connection", "battery_inverter", "existing", b64(0.0, "float")]]
 
 
+# Tests that solve the same model share one run (the closed-form, output and LP checks of one case).
+_RUNS = RunCache()
+
+
+@pytest.fixture(scope="module", autouse=True)
+def _free_runs():
+    yield
+    _RUNS.clear()
+    _JSON_RUNS.clear()
+
+
 def _solve(tmp_path_factory, alt: str, values: list, *, entities=None, chain=CHAIN, all_steps: bool = False):
-    url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=chain, entities=entities)
-    steps = run(tmp_path_factory, url, scen)
+    steps, _wf, _scen = _RUNS.get(tmp_path_factory, alt=alt, values=values, base_chain=chain, entities=entities)
+    assert steps, "run_chain_from_db produced no orchestration steps"
+    for step in steps.values():
+        assert step.solution is not None, "solve produced no solution"
     return list(steps.values()) if all_steps else list(steps.values())[-1]
 
 
@@ -258,19 +271,27 @@ def _lp_snapshot():
     return sys.modules[name]
 
 
+def _agg_rp_last_step(tmp_path_factory):
+    """The last step of the lp_snapshot ``agg_rp`` model (one run per module, shared by its tests)."""
+    if "agg_rp" not in _JSON_RUNS:
+        from flextool.engine import run_chain_from_db
+        from flextool.update_flextool.db_migration import migrate_database
+        from tests.db_utils import json_to_db
+
+        data = _lp_snapshot()._patch_agg_rp(json.loads((REPO / "tests" / "fixtures" / "tests.json").read_text()))
+        work = tmp_path_factory.mktemp("sd_rp")
+        (work / "f.json").write_text(json.dumps(data))
+        url = json_to_db(work / "f.json", work / "f.sqlite")
+        migrate_database(url)
+        _JSON_RUNS["agg_rp"] = list(run_chain_from_db(url, "agg_rp", work_folder=work / "w",
+                                                      keep_solutions=True).values())
+    return _JSON_RUNS["agg_rp"][-1]
+
+
 def test_rp_block_start_weighted(tmp_path_factory):
     """Representative periods (lp_snapshot ``agg_rp``): at a representative block's first step the free start
     state v_state_rp_start carries su·(1 − β) and the step's own state −su·(1 + α) (before su and −su·(1 + loss))."""
-    from flextool.engine import run_chain_from_db
-    from flextool.update_flextool.db_migration import migrate_database
-    from tests.db_utils import json_to_db
-
-    data = _lp_snapshot()._patch_agg_rp(json.loads((REPO / "tests" / "fixtures" / "tests.json").read_text()))
-    work = tmp_path_factory.mktemp("sd_rp")
-    (work / "f.json").write_text(json.dumps(data))
-    url = json_to_db(work / "f.json", work / "f.sqlite")
-    migrate_database(url)
-    step = list(run_chain_from_db(url, "agg_rp", work_folder=work / "w", keep_solutions=True).values())[-1]
+    step = _agg_rp_last_step(tmp_path_factory)
     fd = step.flex_data
     loss = float(utf8(fd.p_state_self_discharge.frame).filter(pl.col("n") == "battery")["value"][0])
     su = float(utf8(fd.p_state_unitsize.frame).filter(pl.col("n") == "battery")["value"][0])
@@ -292,11 +313,9 @@ def test_rp_block_start_weighted(tmp_path_factory):
 
 
 def _run_wf(tmp_path_factory, alt: str, values: list, *, entities=None, chain=CHAIN):
-    from flextool.engine import run_chain_from_db
-
-    url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=chain, entities=entities)
-    wf = tmp_path_factory.mktemp(f"{alt}_wf")
-    steps = list(run_chain_from_db(url, scen, work_folder=wf, keep_solutions=True).values())
+    """``(steps, work folder, scenario)``; the work folder is shared with every test of the same model: read only."""
+    run_steps, wf, scen = _RUNS.get(tmp_path_factory, alt=alt, values=values, base_chain=chain, entities=entities)
+    steps = list(run_steps.values())
     assert steps and all(s.solution is not None and s.solution.optimal for s in steps)
     return steps, wf, scen
 
@@ -377,8 +396,13 @@ def test_output_node_dt_column(tmp_path_factory):
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
     from flextool.process_outputs.write_outputs import write_outputs
 
+    import shutil
+
     vals = _values(0.01) + [["solve", "y2020_2day_dispatch", "new_stepduration", b64(24.0, "float")]]
-    steps, wf, scen = _run_wf(tmp_path_factory, "sdo_csv", vals)
+    steps, shared_wf, scen = _run_wf(tmp_path_factory, "sdo_csv", vals)
+    # The run is shared with the step24 cases: write the CSV outputs into a copy of its work folder.
+    wf = tmp_path_factory.mktemp("sdo_csv_out") / "w"
+    shutil.copytree(shared_wf, wf)
     step = steps[-1]
     write_outputs(scenario_name=scen, output_location=str(wf), subdir=scen,
                   output_config_path=str(REPO / "templates" / "default_plots.yaml"), write_methods=["csv"],
@@ -480,23 +504,14 @@ def test_output_stochastic(tmp_path_factory):
     exactly those rows and non-zero values; the model's previous-state columns are the writer's links.  The
     reservoir is bind_forward_only + fix_start: each forecast's first-step row starts from the start state (no
     self-wrap); the values are compared with the LP in test_output_stochastic_values."""
-    from flextool.engine import run_chain_from_db
     from flextool.lean_parquet import read_lean_parquet
-    from flextool.update_flextool.db_migration import migrate_database
-    from tests.db_utils import json_to_db
 
-    data = json.loads((REPO / "tests" / "fixtures" / "stochastics.json").read_text())
-    data = _lp_snapshot()._overlay(data, name="custom", base="2_day_stochastic_dispatch",
-                                   values=[["node", "hydro_reservoir", "self_discharge_loss", 0.01]])
-    work = tmp_path_factory.mktemp("sd_stoch")
-    (work / "f.json").write_text(json.dumps(data))
-    url = json_to_db(work / "f.json", work / "f.sqlite")
-    migrate_database(url)
-    steps = list(run_chain_from_db(url, "custom", work_folder=work / "w", keep_solutions=True).values())
+    steps = _shared_run_json(tmp_path_factory, STOCH_JSON, "2_day_stochastic_dispatch",
+                      [["node", "hydro_reservoir", "self_discharge_loss", 0.01]], "sd_stoch")
     (step,) = steps
-    out = work / "w" / "output_raw"
+    out = _WORK[id(steps[-1])] / "output_raw"
     assert read_lean_parquet(out / f"v_self_discharge__{step.solve_name}.parquet").shape[0] == 0
-    sd, rows = _self_discharge_all_rows(step, work / "all_rows")
+    sd, rows = _self_discharge_all_rows(step, tmp_path_factory.mktemp("sd_stoch_rows") / "all_rows")
     assert [(str(d), str(t)) for _s, d, t in sd.index] == rows
     assert "hydro_reservoir" in sd.columns and (sd["hydro_reservoir"].abs() > 0).any()
     assert all("_" in d for d, _t in rows)  # every dispatch period of the fan is a forecast branch
@@ -512,16 +527,7 @@ def test_links_match_lp(tmp_path_factory, fixture):
         fd = _solve(tmp_path_factory, "sd_lk_ws", vals, chain=["init", "west", "wind", "battery", "5weeks"]).flex_data
         assert len(set(utf8(fd.dt)["d"].to_list())) > 1
     else:
-        from flextool.engine import run_chain_from_db
-        from flextool.update_flextool.db_migration import migrate_database
-        from tests.db_utils import json_to_db
-
-        data = _lp_snapshot()._patch_agg_rp(json.loads((REPO / "tests" / "fixtures" / "tests.json").read_text()))
-        work = tmp_path_factory.mktemp("sd_lk_rp")
-        (work / "f.json").write_text(json.dumps(data))
-        url = json_to_db(work / "f.json", work / "f.sqlite")
-        migrate_database(url)
-        fd = list(run_chain_from_db(url, "agg_rp", work_folder=work / "w", keep_solutions=True).values())[-1].flex_data
+        fd = _agg_rp_last_step(tmp_path_factory).flex_data
     assert _guard_links_match_lp(fd) > 0
 
 
@@ -574,7 +580,16 @@ def _run_json(tmp_path_factory, fixture: Path, base: str, values: list, tag: str
     return steps
 
 
+def _shared_run_json(tmp_path_factory, fixture: Path, base: str, values: list, tag: str) -> list:
+    """``_run_json``, one run per model within this module (read only; other modules call ``_run_json``)."""
+    key = json.dumps([str(fixture), base, values])
+    if key not in _JSON_RUNS:
+        _JSON_RUNS[key] = _run_json(tmp_path_factory, fixture, base, values, tag)
+    return _JSON_RUNS[key]
+
+
 _WORK: dict = {}       # last step id → its work folder (_run_json)
+_JSON_RUNS: dict = {}  # runs from an overlaid fixture JSON, keyed by model (cleared with _RUNS)
 
 
 TESTS_JSON = REPO / "tests" / "fixtures" / "tests.json"
@@ -612,10 +627,10 @@ def test_constant_equals_map_stochastic(tmp_path_factory, base):
     """Stochastic dispatch and rolling stochastic (stochastics.json): hydro_reservoir loss 0.01 as a constant and as
     the equivalent time map give the same LP in every sub-solve (branch periods inherit their anchor's values)."""
     steps = _timeline_steps(STOCH_JSON)
-    a = _run_json(tmp_path_factory, STOCH_JSON, base, [["node", "hydro_reservoir", "self_discharge_loss", 0.01]],
+    a = _shared_run_json(tmp_path_factory, STOCH_JSON, base, [["node", "hydro_reservoir", "self_discharge_loss", 0.01]],
                   "sdcs_c")
     m = {"type": "map", "index_type": "str", "index_name": "time", "data": [[t, 0.01] for t in steps]}
-    b = _run_json(tmp_path_factory, STOCH_JSON, base, [["node", "hydro_reservoir", "self_discharge_loss", m]],
+    b = _shared_run_json(tmp_path_factory, STOCH_JSON, base, [["node", "hydro_reservoir", "self_discharge_loss", m]],
                   "sdcs_m")
     _assert_same_lp(a, b)
 
@@ -710,9 +725,10 @@ def test_output_stochastic_values(tmp_path_factory, method):
     RHS: (1 − β)·E0 = −RHS − inflow, inflow = 400 MW · 1 h.  The implied loss is then
     (E0 − S·su) − coef·S − (1 − β)·E0 = α·su·S + β·E0."""
 
-    steps = _run_json(tmp_path_factory, STOCH_JSON, "2_day_stochastic_dispatch", [
+    steps = _shared_run_json(tmp_path_factory, STOCH_JSON, "2_day_stochastic_dispatch", [
         ["node", "hydro_reservoir", "storage_binding_method", method],
         ["node", "hydro_reservoir", "self_discharge_loss", 0.01]], "sdo_sv")
+    rows_dir = tmp_path_factory.mktemp("sdo_sv_rows")
     compared = starts = 0
     for step in steps:
         fd = step.flex_data
@@ -722,7 +738,7 @@ def test_output_stochastic_values(tmp_path_factory, method):
         sol = utf8(step.solution.value("v_state")).filter(pl.col("n") == "hydro_reservoir")
         S = {f"v_state[hydro_reservoir,{d},{t}]": v for d, t, v in sol.select("d", "t", "value").iter_rows()}
         su = float(utf8(fd.p_state_unitsize.frame).filter(pl.col("n") == "hydro_reservoir")["value"][0])
-        sd, _rows = _self_discharge_all_rows(step, _WORK[id(steps[-1])] / f"all_rows_{step.solve_name}")
+        sd, _rows = _self_discharge_all_rows(step, rows_dir / f"all_rows_{step.solve_name}")
         assert sd.index.is_unique
         rep = {(str(d), str(t)): float(v) for (_s, d, t), v in sd["hydro_reservoir"].items()}
         for name, cols in rows.items():
