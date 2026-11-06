@@ -345,7 +345,13 @@ FlexTool uses the HiGHS solver, called via the `highspy` Python package (install
   ref): builds the Windows zip with a frozen Spine Toolbox and FlexTool. The runner's Python (3.14) only builds the
   frozen Toolbox; the Python embedded in the bundle (`_internal/Python/python.exe`, same 3.14.x, which Toolbox runs
   the FlexTool tools with) gets FlexTool and all its dependencies installed with its own pip, and
-  `update_flextool.py` runs with it. odfpy is published only as an sdist and the embedded Python cannot build it
+  `update_flextool.py` runs with it. FlexTool is an editable install of the bundled clone (`<bundle>/flextool`);
+  setuptools writes the clone's absolute path, so `flextool/update_flextool/bundle_install.py` rewrites the
+  `__editable__.flextool-*.pth` to the path relative to site-packages (`../../../../flextool`) and deletes
+  setuptools' finder module, and the bundle keeps working wherever it is unzipped or moved. The workflow runs it as
+  a script after moving the clone into the bundle, and "Update FlexTool" (`self_update._reinstall_if_needed`) calls
+  it after every editable reinstall; it acts only when the running Python is the bundle's `_internal/Python` next to
+  the clone, so venvs are untouched (tests: `tests/update_flextool/test_bundle_install.py`). odfpy is published only as an sdist and the embedded Python cannot build it
   (its `._pth` file makes it ignore `PYTHONPATH`), so its wheel is built with the runner's Python first. The job
   ends with smoke steps: imports and `flextool.env_check` in the bundled Python, a solve of the `base` example, and
   `spinetoolbox.exe --list-items flextool` (headless). The embedded Python has no tkinter, so the FlexTool GUI does

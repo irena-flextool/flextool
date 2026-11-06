@@ -72,6 +72,25 @@ def _reinstall_if_needed():
             f"Warning: pip install failed.  Run "
             f"'pip install --upgrade {flag}{repo_root}' manually."
         )
+    if is_editable:
+        _keep_bundle_relocatable()
+
+
+def _keep_bundle_relocatable():
+    """In the Windows Toolbox bundle, point the editable install to the clone by a relative path again.
+
+    ``pip install -e`` writes the clone's absolute path; the bundle must keep
+    working after it is moved.  Does nothing outside the bundle.
+    """
+    from flextool.update_flextool.bundle_install import relativise_bundle_install
+
+    try:
+        relative = relativise_bundle_install()
+    except (OSError, RuntimeError) as exc:
+        print(f"Warning: could not make the FlexTool editable install relative: {exc}")
+        return
+    if relative is not None:
+        print(f"FlexTool editable install made relative: {relative}")
 
 
 def _run_fix_steps(steps) -> bool:

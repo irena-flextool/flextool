@@ -1,5 +1,9 @@
 ## Unreleased
 
+- **Fixed: after "Update FlexTool" in the Windows Toolbox bundle, moving the bundle folder broke FlexTool** in
+  processes started outside its `flextool` folder (`python -m ...`, a Jupyter console): the reinstall wrote the
+  folder's absolute path into the bundled Python. "Update FlexTool" now points the install to the clone by a path
+  relative to the bundled Python again, so the bundle can be moved or unzipped anywhere.
 - **Fixed: on Windows, a database could not be deleted or replaced after a run in the same Python session**
   (Spine Toolbox console, a script calling FlexTool): the run kept the input database, the output-info database
   and `results.sqlite` open after it finished. Every database FlexTool opens is now closed when it is done.

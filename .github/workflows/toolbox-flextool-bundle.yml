@@ -149,26 +149,8 @@ jobs:
           # Leave the clone as cloned (no build/ or *.egg-info in the bundle).
           git -C ../flextool clean -fdxq
           # setuptools' editable install finds the clone by its absolute path,
-          # which is wrong once the bundle is moved or unzipped elsewhere. The
-          # script points it to the clone by a path relative to site-packages
-          # instead; it runs again after "Update FlexTool" reinstalls.
-          $script = Join-Path $Env:RUNNER_TEMP "relocatable-flextool.ps1"
-          Set-Content -Path $script -Value @'
-          param([string]$SitePackages, [switch]$Check)
-          # From _internal/Python/Lib/site-packages to the clone in the bundle root.
-          $relative = "../../../../flextool"
-          $sp = (Resolve-Path -LiteralPath $SitePackages).Path
-          $pth = @(Get-ChildItem -LiteralPath $sp -Filter "__editable__.flextool-*.pth")
-          if ($pth.Count -ne 1) { throw "expected one FlexTool editable .pth in $sp, found $($pth.Count)" }
-          # A path line: site adds it to sys.path, relative to site-packages.
-          Set-Content -LiteralPath $pth[0].FullName -Value $relative
-          Get-ChildItem -LiteralPath $sp -Filter "__editable___flextool_*" | Remove-Item -Force
-          Get-ChildItem -LiteralPath (Join-Path $sp "__pycache__") -Filter "__editable___flextool_*" -ErrorAction SilentlyContinue | Remove-Item -Force
-          if (Test-Path -LiteralPath (Join-Path $sp "flextool")) { throw "site-packages has a copy of flextool" }
-          if ($Check -and -not (Test-Path -LiteralPath (Join-Path $sp "$relative/flextool/__init__.py"))) { throw "no FlexTool clone at $relative from $sp" }
-          Write-Output "$($pth[0].Name): $relative"
-          '@
-          pwsh -NoProfile -ExecutionPolicy Bypass -File $script -SitePackages Lib/site-packages
+          # which is wrong once the bundle is moved or unzipped elsewhere; the
+          # step that moves the clone into the bundle makes it relative.
       - name: Add the compatible polars runtime to embedded Python
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
@@ -224,7 +206,16 @@ jobs:
           python -c "from importlib.metadata import version; print('version=' + version('spinetoolbox'))" >> $GITHUB_OUTPUT
       - name: Move FlexTool into the bundle
         run: |
+          $PSNativeCommandUseErrorActionPreference = $true
           Move-Item flextool "dist/Spine Toolbox/flextool"
+          # Point the editable install to the clone by a path relative to
+          # site-packages, so the bundle works wherever it is unzipped. The
+          # same function runs in "Update FlexTool" after its reinstall. Run
+          # as a script: the absolute path setuptools wrote no longer leads
+          # to the clone, so `import flextool` would fail.
+          cd "dist/Spine Toolbox"
+          .\_internal\Python\python.exe flextool\flextool\update_flextool\bundle_install.py
+          .\_internal\Python\python.exe flextool\flextool\update_flextool\bundle_install.py --check
       - name: Update FlexTool
         run: |
           $PSNativeCommandUseErrorActionPreference = $true
@@ -232,11 +223,13 @@ jobs:
           # The bundled interpreter, so the reinstall and the solver-stack
           # check of update_flextool act on what the bundle ships. It starts
           # from the relocatable editable install, as on a user's computer,
-          # and must take the editable reinstall.
+          # and must take the editable reinstall, after which it makes the
+          # install relative again.
           ..\_internal\Python\python.exe update_flextool.py --skip-git | Tee-Object -Variable out
           if (-not ($out -match '^Refreshing flextool install and dependencies \(editable,')) { throw "update_flextool did not reinstall FlexTool as editable" }
           if ($out -match '^Warning: pip install failed') { throw "update_flextool: pip install failed" }
-          pwsh -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Env:RUNNER_TEMP "relocatable-flextool.ps1") -SitePackages ../_internal/Python/Lib/site-packages -Check
+          if (-not ($out -match '^FlexTool editable install made relative')) { throw "update_flextool did not make the editable install relative" }
+          ..\_internal\Python\python.exe flextool\update_flextool\bundle_install.py --check
       - name: Add flextool start bat-file
         run: |
           cd "dist/Spine Toolbox"
