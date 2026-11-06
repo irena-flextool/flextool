@@ -1112,8 +1112,8 @@ slack semantics.
      `_quantity_types.py`). Buckets matrix columns by quantity-type
      (energy, capacity, monetary, …) and applies a power-of-2 scaler
      per type to compress the median-of-type onto O(1). Has structural
-     limits: cannot compress within-type spread, and the Rivendell
-     guard prevents over-shrinking columns with mixed-magnitude
+     limits: cannot compress within-type spread, and a guard
+     prevents over-shrinking columns with mixed-magnitude
      coefficients on a single row. Like Layer 1, the magnitude-bucketing
      readout walks the spine in bounded row-batches via
      `bounded_coefficient_walk` (the log2-magnitude histogram reducer)
