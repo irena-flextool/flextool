@@ -18,14 +18,36 @@ from typing import Callable
 
 import psutil
 
-from flextool.gui.cli_format import format_cmd_for_log
+from flextool.gui.cli_format import format_cmd_for_log, terminal_command
 from flextool.gui.data_models import GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.scenario_key import choose_output_subdir_for_write
+from flextool.run_record import RUN_LOG_OWNER_ENV, RunLogOwner
 
 logger = logging.getLogger(__name__)
 
 
 _slice_probe_cache: dict[str, bool] = {}
+
+
+def kill_process_tree(proc: subprocess.Popen) -> None:
+    """Kill *proc* and every process it started (a ``--save-memory`` solve child, a calibrator's engine run).
+
+    Killing only *proc* would leave such a child running and holding the output pipe, so the job's reader would
+    wait for it.  The children are listed before *proc* dies (afterwards they are no longer its children).
+    """
+    try:
+        children = psutil.Process(proc.pid).children(recursive=True)
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        children = []
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    for child in children:
+        try:
+            child.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
 
 
 def _slice_exists(name: str) -> bool:
@@ -316,12 +338,9 @@ class MemoryWatchdog:
             with self._manager._lock:
                 victim.killed_for_memory = True
                 victim.kill_reason = reason
-            try:
-                vproc = victim.process
-                if vproc is not None:
-                    vproc.kill()
-            except OSError:
-                pass
+            vproc = victim.process
+            if vproc is not None:
+                kill_process_tree(vproc)
 
 
 class JobStatus(Enum):
@@ -750,10 +769,7 @@ class ExecutionManager:
             for old in list(self._jobs):
                 if old.action_key and old.action_key == action_key:
                     if old.status == JobStatus.RUNNING and old.process:
-                        try:
-                            old.process.kill()
-                        except OSError:
-                            pass
+                        kill_process_tree(old.process)
                     self._jobs.remove(old)
 
             job = ExecutionJob(
@@ -834,10 +850,7 @@ class ExecutionManager:
                     match = True
                 if match:
                     if job.status == JobStatus.RUNNING and job.process:
-                        try:
-                            job.process.kill()
-                        except OSError:
-                            pass
+                        kill_process_tree(job.process)
                     to_remove.append(job)
             for job in to_remove:
                 self._jobs.remove(job)
@@ -942,8 +955,19 @@ class ExecutionManager:
 
         candidate: ExecutionJob | None = None
         forced: ExecutionJob | None = None
+        # A job whose output folder belongs to a running job, or to a pending job ahead of it, waits: two runs
+        # in one folder would overwrite each other's results and run record, and the second would empty the
+        # first's work folder.
+        busy = {
+            j.output_subdir for j in self._jobs
+            if j.job_type == JobType.SCENARIO and j.status == JobStatus.RUNNING and j.output_subdir
+        }
         for job in self._jobs:
             if job.job_type == JobType.SCENARIO and job.status == JobStatus.PENDING:
+                if job.output_subdir and job.output_subdir in busy:
+                    continue
+                if job.output_subdir:
+                    busy.add(job.output_subdir)
                 if candidate is None:
                     candidate = job
                 if forced is None and job.force_start:
@@ -1030,7 +1054,14 @@ class ExecutionManager:
     # ------------------------------------------------------------------
 
     def _run_job(self, job: ExecutionJob) -> None:
-        """Run a single job in a worker thread."""
+        """Run a single job in a worker thread.
+
+        The GUI is the run's pipe owner: a :class:`RunLogOwner` (created before the engine starts, holding the
+        command line) writes the engine's output into the run's ``_run.log`` and, in the ``finally`` block,
+        finishes a ``_run_status.json`` the engine could not finish (a kill, a crash).
+        """
+        owner: RunLogOwner | None = None
+        proc: subprocess.Popen | None = None
         try:
             # Mark as RUNNING
             with self._lock:
@@ -1061,8 +1092,11 @@ class ExecutionManager:
             wrapped_cmd, popen_extras, post_spawn = _wrap_for_memory_cap(
                 cmd, estimate_gb
             )
-            cmd_str = format_cmd_for_log(wrapped_cmd)
-            logger.info("Running job %d (%s):\n%s", job.job_id, job.scenario_name, cmd_str)
+            logger.info("Running job %d (%s):\n%s", job.job_id, job.scenario_name, format_cmd_for_log(wrapped_cmd))
+            # The command as a terminal would run it (``flextool-run ...``): the first line of the progress
+            # output, for copying, and of the run's _run.log.
+            cmd_str = format_cmd_for_log(terminal_command(wrapped_cmd))
+            owner = RunLogOwner(launcher="gui", preamble=[cmd_str, ""])
 
             # Log the CLI command as the first line in the progress output
             with self._lock:
@@ -1073,10 +1107,18 @@ class ExecutionManager:
             # Run from flextool root so relative paths (templates/, etc.) work
             flextool_root = Path.cwd()  # subprocess cwd — user workspace, formerly the repo root
 
-            env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+            # The pipe-owner variables (docs/dev/architecture.md, "Runtime options" item 4): the engine prints
+            # the run-record marker instead of copying its own output into _run.log, and writes UTF-8 unbuffered.
+            env = {
+                **os.environ,
+                "PYTHONUNBUFFERED": "1",
+                "PYTHONIOENCODING": "utf-8",
+                RUN_LOG_OWNER_ENV: "1",
+            }
             popen_kwargs = dict(
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1, cwd=str(flextool_root), env=env,
+                text=True, encoding="utf-8", errors="replace", bufsize=1,
+                cwd=str(flextool_root), env=env,
             )
             popen_kwargs.update(popen_extras)
             proc = subprocess.Popen(wrapped_cmd, **popen_kwargs)
@@ -1091,7 +1133,7 @@ class ExecutionManager:
                     job.memory_cap_handle = cap_handle
 
             if killed:
-                proc.kill()
+                kill_process_tree(proc)
                 proc.wait()
                 return
 
@@ -1099,6 +1141,8 @@ class ExecutionManager:
             assert proc.stdout is not None
             for line in proc.stdout:
                 stripped = line.rstrip("\n")
+                if not owner.feed(stripped):
+                    continue  # the engine's run-record marker
                 with self._lock:
                     job.stdout_lines.append(stripped)
                     # Fast-path warmed flip: the solver has loaded the matrix
@@ -1172,6 +1216,20 @@ class ExecutionManager:
                 job.finish_timestamp = job.end_time.strftime("%d.%m.%y %H:%M")
             self._notify_status_change(job)
         finally:
+            if proc is not None and proc.poll() is None:
+                # The job failed here while its engine still runs: stop it, so no second run starts in its
+                # folder and the run record below is finished.
+                kill_process_tree(proc)
+                proc.wait()
+            if owner is not None:
+                with self._lock:
+                    killed = job.status is JobStatus.KILLED or job.killed_for_memory
+                    kill_reason = job.kill_reason or "stopped from the FlexTool window"
+                owner.close(
+                    proc.returncode if proc is not None else None,
+                    killed=killed,
+                    kill_reason=kill_reason if killed else None,
+                )
             with self._lock:
                 self._running_count -= 1
 
@@ -1211,7 +1269,14 @@ class ExecutionManager:
             job.output_subdir,
             "--write-methods",
             *write_methods,
+            # Recorded in the run's _run_status.json.
+            "--run-launcher",
+            "gui",
         ]
+        if job.is_xlsx_source and job.xlsx_path is not None:
+            # The spreadsheet the input database is converted from (each batch): a reader of the run record
+            # compares its time, not the database's, to tell whether the results are older than their input.
+            cmd.extend(["--input-source-file", str(job.xlsx_path)])
 
         # Output config file
         single = settings.single_plot_settings
@@ -1304,13 +1369,28 @@ class ExecutionManager:
         # Gather on-disk subdirs from successful SCENARIO jobs only. Each
         # job records its chosen subdir (bare when uncontested, suffixed
         # on collision), so same-named scenarios from different sources
-        # stay distinct.
+        # stay distinct.  A folder counts by its latest finished job: when
+        # that one failed or was killed, the folder's results are not this
+        # run's (its run record says so), so it leaves the comparison, also
+        # when an earlier batch had put it there.
         with self._lock:
+            latest: dict[str, ExecutionJob] = {}
+            for j in self._jobs:
+                if j.job_type != JobType.SCENARIO or not j.output_subdir:
+                    continue
+                if j.status not in (JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.KILLED):
+                    continue
+                prev = latest.get(j.output_subdir)
+                if prev is None or (j.end_time or datetime.min) >= (prev.end_time or datetime.min):
+                    latest[j.output_subdir] = j
+            failed = {sub for sub, j in latest.items() if j.status is not JobStatus.SUCCESS}
             successful = [
                 j.output_subdir
                 for j in self._jobs
                 if j.job_type == JobType.SCENARIO and j.status == JobStatus.SUCCESS
+                and j.output_subdir not in failed
             ]
+            self._comparison_scenarios = [s for s in self._comparison_scenarios if s not in failed]
             # Merge in any externally-specified comparison subdirs
             extra = [s for s in self._comparison_scenarios if s not in successful]
             all_scenarios = successful + extra
@@ -1470,10 +1550,7 @@ class ExecutionManager:
             self._stopped = True
             for job in self._jobs:
                 if job.status == JobStatus.RUNNING and job.process:
-                    try:
-                        job.process.kill()
-                    except OSError:
-                        pass
+                    kill_process_tree(job.process)
                     job.status = JobStatus.KILLED
                 elif job.status == JobStatus.PENDING:
                     job.status = JobStatus.KILLED
@@ -1484,7 +1561,8 @@ class ExecutionManager:
         This method is registered with ``atexit`` so it runs when Python
         exits normally (``sys.exit``, end of script).  It is also safe to
         call explicitly from signal handlers or window-close callbacks --
-        the method is idempotent.
+        the method is idempotent.  It only kills: each job's worker thread finishes
+        that run's record when its engine has ended.
         """
         if self._watchdog is not None:
             self._watchdog.stop()
@@ -1493,7 +1571,7 @@ class ExecutionManager:
             for job in self._jobs:
                 if job.status == JobStatus.RUNNING and job.process:
                     try:
-                        job.process.kill()
+                        kill_process_tree(job.process)
                         job.process.wait(timeout=5)
                     except Exception:
                         pass
@@ -1503,10 +1581,7 @@ class ExecutionManager:
         with self._lock:
             job = self._get_job(job_id)
             if job and job.status == JobStatus.RUNNING and job.process:
-                try:
-                    job.process.kill()
-                except OSError:
-                    pass
+                kill_process_tree(job.process)
                 job.status = JobStatus.KILLED
                 job.end_time = datetime.now()
                 job.finish_timestamp = job.end_time.strftime("%d.%m.%y %H:%M")

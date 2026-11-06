@@ -1,8 +1,10 @@
 """Child FlexTool runs get the parent's choices as flags and inherit its environment untouched.
 
-The calibrator and the workflow runner each launch ``cmd_run_flextool`` as a subprocess.  Their command lines must
-parse with the real ``cmd_run_flextool`` parser, and an option they choose must arrive as a flag (source ``cli``)
-rather than as an edited copy of the environment.
+The calibrator and the workflow runner each launch an engine run as a subprocess, through the ``flextool-run``
+supervisor (``python -m flextool_run_supervisor``), which passes its arguments to ``cmd_run_flextool`` unchanged.
+Their command lines must parse with the real ``cmd_run_flextool`` parser, an option they choose must arrive as a
+flag (source ``cli``) rather than as an edited copy of the environment, and each names itself as the run's
+launcher (``--run-launcher``).
 """
 
 from __future__ import annotations
@@ -27,8 +29,8 @@ def _capture_subprocess(monkeypatch) -> list[dict]:
 
 
 def _child_options(argv: list[str], environ: dict[str, str]) -> RunOptions:
-    # argv = [python, "-m", "flextool.cli.cmd_run_flextool", *args]
-    assert argv[1:3] == ["-m", "flextool.cli.cmd_run_flextool"]
+    # argv = [python, "-m", "flextool_run_supervisor", *args]; the supervisor passes args to the engine unchanged.
+    assert argv[1:3] == ["-m", "flextool_run_supervisor"]
     return RunOptions.from_cli(build_parser().parse_args(argv[3:]), environ=environ)
 
 
@@ -53,6 +55,7 @@ def test_calibrator_requests_warm_start_by_flag_and_inherits_the_environment(mon
     # An option the calibrator does not choose still comes from the inherited environment.
     assert child.get("highs_threads").source == "env" and child.value("highs_threads") == 3
     assert {k for k, r in child.resolved.items() if r.source == "cli"} == {"warm_start", "basis_cache_dir"}
+    assert build_parser().parse_args(call["argv"][3:]).run_launcher == "calibrator"
 
 
 def test_workflow_child_command_parses_and_sets_no_solver_option():
@@ -65,6 +68,7 @@ def test_workflow_child_command_parses_and_sets_no_solver_option():
     assert (parsed.input_db_url, parsed.output_db_url, parsed.scenario_name) == ("in.sqlite", "out.sqlite", "base")
     assert parsed.write_methods == ["parquet", "csv"]
     assert parsed.debug == "basic"
+    assert parsed.run_launcher == "workflow"
     child = RunOptions.from_cli(parsed, environ={})
     assert all(child.source(key) == "default" for key in OPTIONS)
 
@@ -90,3 +94,19 @@ def test_calibrator_forwards_the_thread_budget_as_a_flag(monkeypatch, tmp_path):
     (call,) = calls
     child = _child_options(call["argv"], environ={})
     assert (child.value("threads"), child.source("threads")) == (4, "cli")
+
+
+def test_workflow_runs_the_engine_under_the_supervisor(monkeypatch, tmp_path):
+    """Phase 2 of the workflow starts ``python -m flextool_run_supervisor`` with no environment of its own."""
+    calls = _capture_subprocess(monkeypatch)
+    monkeypatch.setattr(workflow, "ensure_settings_db", lambda *a, **k: None)
+    db = tmp_path / "in.sqlite"
+    db.touch()
+    monkeypatch.setattr("sys.argv", ["cmd_execute_flextool_workflow", f"sqlite:///{db}", "out.sqlite", "base",
+                                     "--write-methods", "parquet"])
+    workflow.main()
+    runs = [c for c in calls if c["argv"][1:3] == ["-m", "flextool_run_supervisor"]]
+    assert len(runs) == 1
+    assert runs[0].get("env") is None
+    parsed = build_parser().parse_args(runs[0]["argv"][3:])
+    assert parsed.scenario_name == "base" and parsed.run_launcher == "workflow"

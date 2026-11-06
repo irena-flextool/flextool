@@ -15,6 +15,19 @@
   native solver lines and crash dumps are not in that log.
 - **New flags `--input-source-file PATH` and `--run-launcher NAME`** for `run_flextool`: the file the input
   database was made from, and who started the run, both recorded in `_run_status.json`.
+- **Changed: `flextool-run` runs the engine as a child process and writes the run's `_run.log`**, so the log also
+  holds the solver's native output, a `--save-memory` solve's output and a crash dump. Arguments and exit code are
+  the engine's, and Ctrl-C stops the run as before (a second Ctrl-C kills it). The process that stays for the whole
+  run is small (about 20 MB, no polars). On a processor that needs the compatible polars build, `flextool-run`
+  asks before it starts the engine. The GUI, the workflow runner and the calibrator (also the representative-period
+  iteration) write the log the same way; a run that crashed or was killed is recorded as such. Output with
+  characters outside the Windows console code page no longer crashes these runs. Update FlexTool (`flextool-update`,
+  or `pip install -e .` in a source checkout) to get the new `flextool-run`; until then it runs the engine in the
+  same process as before. The documentation and the command the GUI shows for a run use `flextool-run`.
+- **Fixed: two GUI runs of the same scenario could run at once into the same output folder**, the second deleting
+  the first one's work folder. A run now waits until the earlier run of its folder has finished.
+- **Fixed: stopping a GUI run left its `--save-memory` solver process running**; it now stops the run's whole
+  process tree.
 - **Fixed: `timings.csv` and the output-info database ignored an `output-location` from the settings database**
   while the outputs went there. All three now use the same location, as an absolute path.
 - **Fixed: a run whose last check found a solve without an accepted solution exited 0 and wrote the output-info

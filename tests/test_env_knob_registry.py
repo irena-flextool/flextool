@@ -3,7 +3,8 @@
 The registry is :data:`flextool.run_options.OPTIONS` (variables that are the twin of a flag) plus
 :data:`flextool.run_options.ENV_KNOBS` (process-level, developer and test variables).  The checks:
 
-* every variable name in ``flextool/`` -- a string literal ``FLEXTOOL_*`` / ``POLARS_*`` / ``POLAR_HIGH_*`` /
+* every variable name in ``flextool/`` and the top-level modules (``[tool.setuptools] py-modules``, such as the
+  ``flextool-run`` supervisor) -- a string literal ``FLEXTOOL_*`` / ``POLARS_*`` / ``POLAR_HIGH_*`` /
   ``MALLOC_*`` / ``_RJEM_*`` (a direct read or a ``*_ENV = "..."`` constant), or any literal passed to
   ``os.environ[...]`` / ``.get`` / ``.setdefault`` / ``.pop`` / ``os.getenv`` / ``in os.environ`` -- is
   registered, except a few system variables FlexTool reads but does not define;
@@ -20,6 +21,7 @@ from __future__ import annotations
 import ast
 import re
 import subprocess
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -29,6 +31,13 @@ from flextool.run_options import AUDIENCE_PAGES, ENV_KNOBS, OPTIONS
 REPO = Path(__file__).resolve().parents[1]
 PACKAGE = REPO / "flextool"
 TESTS = REPO / "tests"
+#: Shipped modules outside the package (they may not import it, so they name their variables themselves).
+TOP_LEVEL_MODULES = [
+    REPO / f"{name}.py"
+    for name in tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["tool"]["setuptools"].get(
+        "py-modules", []
+    )
+]
 
 _PREFIXED = re.compile(r"^(FLEXTOOL|POLARS|POLAR_HIGH|MALLOC|_RJEM)_[A-Z0-9_]+$")
 # Read by FlexTool, defined by the operating system / desktop / Python, not by FlexTool.
@@ -97,7 +106,16 @@ def _env_names_in(root: Path, *, prefixed_only: bool) -> dict[str, list[str]]:
 
 @pytest.fixture(scope="module")
 def package_names() -> dict[str, list[str]]:
-    return _env_names_in(PACKAGE, prefixed_only=False)
+    names = _env_names_in(PACKAGE, prefixed_only=False)
+    for module in TOP_LEVEL_MODULES:
+        for name, where in _env_names_in(module, prefixed_only=False).items():
+            names.setdefault(name, []).extend(where)
+    return names
+
+
+def test_top_level_modules_are_scanned():
+    assert REPO / "flextool_run_supervisor.py" in TOP_LEVEL_MODULES
+    assert all(_python_files(module) == [module] for module in TOP_LEVEL_MODULES)
 
 
 @pytest.fixture(scope="module")
@@ -113,7 +131,7 @@ def test_every_variable_flextool_reads_is_registered(package_names):
         if name not in registered and name not in _SYSTEM_VARIABLES and name not in _NOT_ENV
     }
     assert not missing, (
-        "environment variables read in flextool/ but not registered in flextool/run_options.py "
+        "environment variables read in flextool/ or a top-level module but not registered in flextool/run_options.py "
         f"(OPTIONS or ENV_KNOBS): {missing}"
     )
 
