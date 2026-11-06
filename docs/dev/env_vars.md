@@ -92,6 +92,15 @@ FLEXTOOL_MEM_SAMPLER=1 FLEXTOOL_MEM_SAMPLER_INTERVAL_MS=50 \
     python run_flextool.py input.sqlite output_info.sqlite --scenario-name base
 ```
 
+## Run record
+
+Each run writes `_run_status.json` and `_run.log` into its `output_parquet/<run>/` folder. `_run.log` is written by
+the process that holds the run's output pipe, when there is one.
+
+| Variable | Default | Set to | What it does |
+|---|---|---|---|
+| `FLEXTOOL_RUN_LOG_OWNER` | unset | `1` | Set by the GUI and `flextool-run` in the environment of the engine run they start (only that direct child; the engine removes it, so no run it starts sees it). It tells the engine that its parent writes `_run.log` from the output pipe, with the native solver lines and crash dumps: the engine prints one marker line for the parent instead of copying its own console output into the log. Not for use by hand. |
+
 ## Process level
 
 Set when `flextool` is imported, with `setdefault` semantics: a value already in the environment wins.
