@@ -36,6 +36,8 @@ from flextool.gui.scenario_lists import (
     AvailableScenarioManager,
     ExecutedScenarioManager,
     prune_dangling_scenario_state,
+    row_check_glyph,
+    row_state_tag,
 )
 from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobStatus
 from flextool.gui.execution_window import ExecutionWindow
@@ -320,6 +322,11 @@ class MainWindow(tk.Tk):
 
         # Tooltip for input source status column
         self._input_status_tip: tk.Toplevel | None = None
+        # Executed-tree rows by item id (their run record decides whether they can be checked), the tooltip of a
+        # row that cannot, and the jobs whose start (run record written) already refreshed the executed list.
+        self._executed_row_info: dict[str, Any] = {}
+        self._executed_state_tip: tk.Toplevel | None = None
+        self._executed_refreshed_jobs: set[int] = set()
 
         # Sort mode for each treeview: "alpha" (by name) or "number" (by # column)
         self._input_sort_mode: str = "alpha"
@@ -934,6 +941,11 @@ class MainWindow(tk.Tk):
         # any current input source (parent source was deleted). Greyed so
         # the user can see them and decide whether to delete the outputs.
         self.executed_tree.tag_configure("orphan", foreground="#888888")
+        # Rows whose latest run did not succeed (run record): not checkable, ▶ opens the run's log; the check
+        # column shows ✗ (failed, interrupted, killed, crashed, abandoned), … (running) or – (no parquet).
+        self.executed_tree.tag_configure("run_failed", foreground="#d9534f")
+        self.executed_tree.tag_configure("run_running", foreground="#4a90d9")
+        self.executed_tree.tag_configure("run_no_results", foreground="#888888")
 
         exec_scroll = ttk.Scrollbar(exec_frame, orient="vertical", command=self.executed_tree.yview)
         exec_scroll.grid(row=0, column=1, sticky="ns")
@@ -950,7 +962,10 @@ class MainWindow(tk.Tk):
             checked_glyph=CHECK_ON,
             unchecked_glyph=CHECK_OFF,
             on_toggle=self._on_executed_toggled,
+            can_check=self._executed_row_checkable,
         )
+        self.executed_tree.bind("<Motion>", self._on_executed_motion, add="+")
+        self.executed_tree.bind("<Leave>", lambda _e: self._hide_executed_state_tip(), add="+")
         self.executed_tree.bind("<<TreeviewSelect>>", self._on_executed_selection_changed)
         self.executed_tree.bind("<Button-3>", self._on_executed_right_click)
         self.executed_tree.bind("<Shift-Up>", self._on_shift_arrow_up)
@@ -2296,12 +2311,94 @@ class MainWindow(tk.Tk):
             if item:
                 values = tree.item(item, "values")
                 if values and values[3]:
-                    scenario_name = values[2]
-                    try:
-                        src_num = int(values[1])
-                    except (ValueError, IndexError):
-                        src_num = None
-                    self._view_scenario_plots(scenario_name, src_num)
+                    self._open_executed_row(item)
+
+    def _executed_row_checkable(self, item: str) -> bool:
+        """Whether an executed-tree row may be checked (``run_record.results_usable`` of its folder's record)."""
+        info = self._executed_row_info.get(item)
+        return info is None or info.checkable
+
+    def _open_executed_row(self, item: str) -> None:
+        """The ▶ of an executed row: its results, or, when its latest run did not succeed, that run's log."""
+        values = self.executed_tree.item(item, "values")
+        if not values:
+            return
+        if not self._executed_row_checkable(item):
+            self._open_run_log(item)
+            return
+        try:
+            src_num = int(values[1])
+        except (ValueError, IndexError):
+            src_num = None
+        self._view_scenario_plots(values[2], src_num)
+
+    def _open_run_log(self, item: str) -> None:
+        """Show the ``_run.log`` of an executed row's folder in a log window."""
+        from flextool.gui.output_log_window import OutputLogWindow
+        from flextool.gui.scenario_key import resolve_subdir_for_read
+        from flextool.run_record import RUN_LOG_FILE
+
+        if not self.current_project:
+            return
+        values = self.executed_tree.item(item, "values")
+        info = self._executed_row_info.get(item)
+        try:
+            src_num = int(values[1])
+        except (ValueError, IndexError):
+            return
+        subdir = resolve_subdir_for_read(self.project_settings.bare_output_owners, src_num, values[2])
+        log_path = get_projects_dir() / self.current_project / "output_parquet" / subdir / RUN_LOG_FILE
+        window = OutputLogWindow(self, f"Run log: {subdir}")
+        if info is not None and info.unusable_reason:
+            window.append_line(f"# {info.unusable_reason}")
+            window.append_line("")
+        try:
+            # Read and closed at once: the run may still be writing it (Windows keeps no lock then).
+            text = log_path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            window.append_line(f"No run log in {log_path.parent}: {exc}")
+        else:
+            for line in text.splitlines():
+                window.append_line(line)
+        window.mark_finished(False)
+
+    def _on_executed_motion(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Over a row that cannot be checked, say why and that ▶ opens its log."""
+        item = self.executed_tree.identify_row(event.y)
+        info = self._executed_row_info.get(item) if item else None
+        if info is None or info.checkable:
+            self._hide_executed_state_tip()
+            return
+        tip_text = (
+            f"{info.unusable_reason or 'latest run did not succeed'}.\n"
+            "Its results cannot be checked for plots or comparison; click \u25b6 to open its log."
+        )
+        tip = self._executed_state_tip
+        if tip is not None:
+            try:
+                tip.wm_geometry(f"+{event.x_root + 15}+{event.y_root + 10}")
+                tip.children["!label"].configure(text=tip_text)
+                return
+            except (tk.TclError, KeyError):
+                self._executed_state_tip = None
+        tw = tk.Toplevel(self)
+        tw.wm_overrideredirect(True)
+        tw.wm_attributes("-topmost", True)
+        tw.wm_geometry(f"+{event.x_root + 15}+{event.y_root + 10}")
+        tk.Label(
+            tw, text=tip_text, justify="left",
+            background="#333333", foreground="#ffffff",
+            relief="solid", borderwidth=1, padx=8, pady=4,
+        ).pack()
+        self._executed_state_tip = tw
+
+    def _hide_executed_state_tip(self) -> None:
+        if self._executed_state_tip is not None:
+            try:
+                self._executed_state_tip.destroy()
+            except tk.TclError:
+                pass
+            self._executed_state_tip = None
 
     # ── Right-click context menus ──────────────────────────────────
 
@@ -2538,14 +2635,9 @@ class MainWindow(tk.Tk):
         if item:
             values = tree.item(item, "values")
             if values and values[3]:  # has view text
-                scenario_name = values[2]
-                try:
-                    src_num = int(values[1])
-                except (ValueError, IndexError):
-                    src_num = None
                 menu.add_command(
-                    label="View results",
-                    command=lambda s=scenario_name, n=src_num: self._view_scenario_plots(s, n),
+                    label="View results" if self._executed_row_checkable(item) else "Open run log",
+                    command=lambda i=item: self._open_executed_row(i),
                 )
                 menu.add_separator()
         menu.add_command(
@@ -2979,12 +3071,18 @@ class MainWindow(tk.Tk):
     def _refresh_and_autocheck_scenario(
         self, scenario_name: str, finish_timestamp: str = "",
     ) -> None:
-        """Refresh executed scenarios and auto-check the newly completed one."""
+        """Refresh executed scenarios and auto-check the newly completed one.
+
+        A row that cannot be checked (its run record says the run did not succeed or wrote no parquet) is
+        left unchecked.
+        """
         self._refresh_executed_scenarios()
         # Find and check the newly completed scenario, updating timestamp
         for item in self.executed_tree.get_children():
             values = self.executed_tree.item(item, "values")
             if values and values[2] == scenario_name:
+                if not self._executed_row_checkable(item):
+                    break
                 self.executed_tree.set(item, "check", CHECK_ON)
                 if finish_timestamp:
                     self.executed_tree.set(item, "timestamp", finish_timestamp)
@@ -4701,17 +4799,28 @@ class MainWindow(tk.Tk):
         current_source_numbers = set(
             self.project_settings.input_source_numbers.values()
         )
+        self._executed_row_info = {}
+        dropped_check = False
         for info in executed:
             key = (info.source_number, info.name)
-            check_char = CHECK_ON if key in previously_checked else CHECK_OFF
+            check_char = row_check_glyph(info, key in previously_checked)
+            if key in previously_checked and not info.checkable:
+                # Its latest run stopped succeeding: unchecked, so no checked list holds it.
+                dropped_check = True
             view_text = "\u25b6"
             tags = ("orphan",) if info.source_number not in current_source_numbers else ()
-            self.executed_tree.insert(
+            state_tag = row_state_tag(info)
+            if state_tag is not None:
+                tags = (*tags, state_tag)
+            iid = self.executed_tree.insert(
                 "",
                 "end",
                 values=(check_char, info.source_number, info.name, view_text, info.timestamp),
                 tags=tags,
             )
+            self._executed_row_info[iid] = info
+        if dropped_check:
+            self._save_checked_executed_scenarios()
 
         # Apply current sort mode
         if self._executed_sort_mode == "alpha":
@@ -5228,7 +5337,13 @@ class MainWindow(tk.Tk):
 
     def _apply_job_status_change(self, job: ExecutionJob) -> None:
         """Apply a job status change; runs on the main thread."""
-        if job.status == JobStatus.SUCCESS:
+        if job.status == JobStatus.RUNNING:
+            # Once per job, when its engine has written its run record ("running"): the executed list shows
+            # the run in progress (and stops offering the folder's earlier results).
+            if job.run_record_folder is not None and job.job_id not in self._executed_refreshed_jobs:
+                self._executed_refreshed_jobs.add(job.job_id)
+                self._refresh_executed_scenarios()
+        elif job.status == JobStatus.SUCCESS:
             self._refresh_and_autocheck_scenario(
                 job.scenario_name, job.finish_timestamp,
             )
@@ -6066,6 +6181,9 @@ class MainWindow(tk.Tk):
             target_item = item
             break
 
+        if target_item is not None and not self._executed_row_checkable(target_item):
+            self._open_run_log(target_item)
+            return
         was_already_checked = (
             target_item is not None
             and self.executed_tree.item(target_item, "values")[0] == CHECK_ON

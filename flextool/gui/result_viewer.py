@@ -713,8 +713,17 @@ class ResultViewer(tk.Toplevel):
         followed by any newly-seen names in alphabetical order. The
         settings list is rewritten to match (drops missing names, appends
         new ones) and persisted via the debounced save path.
+
+        A folder whose latest run did not succeed (its run record says
+        running, failed, interrupted, killed or crashed, or that it wrote no
+        parquet) is left out of the result, also when an earlier run's
+        parquet is still there.  It is dropped after the ordering merge, so
+        it keeps its place in ``executed_scenario_order`` for when a run
+        succeeds again.  This matters with nothing checked, when every
+        folder on disk is listed.
         """
         from flextool.gui.scenario_key import resolve_source_number, format_key
+        from flextool.gui.scenario_lists import folder_results_usable
         parquet_dir = self._project_path / "output_parquet"
         if not parquet_dir.is_dir():
             return []
@@ -747,7 +756,7 @@ class ResultViewer(tk.Toplevel):
                     exc_info=True,
                 )
 
-        return resolved
+        return [s for s in resolved if folder_results_usable(parquet_dir / s)]
 
     def _populate_scenarios(self) -> None:
         """Populate the scenario listbox."""

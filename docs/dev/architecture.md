@@ -963,6 +963,47 @@ work_folder/
 Cross-solve state moves through `FlexDataProvider` keys; the `solve_data/`
 CSVs exist only as a debugging aid.
 
+## Run record
+
+Every engine run (`cmd_run_flextool.main`, once its scenario and output folder are known) writes two files into
+`output_parquet/<subdir>/` (`flextool/run_record/`):
+
+- **`_run_status.json`** (schema `flextool.run_status`) — written by the **engine**, the only process that knows
+  the verdicts: `RunRecorder` (`_status.py`) creates it as `running`, rewrites it atomically as solves start and
+  are classified, and finishes it in `main()`'s `finally` (`succeeded` / `failed` / `interrupted`). It records each
+  solve's model status and acceptance, the error, the input, the options and threads, and `outputs.parquet_state`:
+  a failed run keeps the earlier run's parquet, marked `previous_run`. `write_outputs` keeps both files when it
+  empties the folder.
+- **`_run.log`** — written by the **pipe owner**, the process that reads the engine's stdout + stderr pipe and so
+  also sees native solver output and crash dumps: the GUI job thread (`ExecutionManager._run_job`) or the
+  `flextool-run` supervisor (`flextool_run_supervisor.py`, also used by the workflow runner, the calibrator and the
+  representative-period iteration). The owner sets `FLEXTOOL_RUN_LOG_OWNER=1` in its child's `env=` (the one
+  exception in "Runtime options" item 4); the engine then prints one marker line with the folder and `run_id`, and
+  the owner (`RunLogOwner`, `_owner.py`) writes the log from there, hiding the marker. Without an owner (Spine
+  Toolbox, `python -m flextool.cli.cmd_run_flextool`, a Python console) the engine copies its own Python streams
+  (`_tee.py`, `log_capture: "python"`). The log keeps its first 64 KiB and last `FLEXTOOL_RUN_LOG_MAX_BYTES`.
+- When the engine dies without finishing its status (a crash, a kill, a signal), the owner finishes it from the
+  exit code (`classify_exit`: `killed`, `interrupted`, `crashed`). Without an owner a reader derives `abandoned` from
+  a stale `running` (`effective_state`).
+
+The supervisor is a top-level module that never imports `flextool` (that imports polars): it loads `_owner.py` and
+`env_check.py` by path, so `_owner.py` stays stdlib-only with no relative imports.
+
+**Whether a folder's results may be offered** is one pure rule, `run_record.results_usable(status)` (with
+`unusable_reason`): no record (a folder from before run records) → usable; otherwise only `succeeded` with
+`parquet_state == "written"`. Every consumer calls it and none restates it:
+
+- the GUI executed list (`ExecutedScenarioManager.scan_executed` → `ExecutedScenarioInfo.status` /
+  `run_state` / `checkable`): a row that is not usable shows its state in the check column (✗ / … / –) with a
+  tooltip, cannot be checked, is unchecked on a rescan, and its ▶ opens `_run.log`. The timestamp is the run's
+  `finished_at` (else `started_at`), so sorting is unchanged. The list is refreshed once when a job's engine has
+  written its record;
+- the result viewer (`ResultViewer._scan_scenarios` drops such folders after the ordering merge) and the
+  comparison (`OutputActionManager._build_comparison_cmd`; after a batch `ExecutionManager._run_post_execution`
+  leaves out folders whose latest job failed). A new reader of run folders calls it too.
+
+`ExecutionManager` also starts at most one job per output folder at a time (`_pick_next_pending`).
+
 ## Solve-to-solve handoff
 
 When a solve is part of a rolling-horizon, nested, or sub-solve chain, the
