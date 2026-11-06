@@ -32,7 +32,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Install dependencies
         run: |
@@ -59,7 +59,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Install dependencies
         run: |
@@ -71,7 +71,7 @@ jobs:
           if [ -f bin/highs ]; then chmod +x bin/highs; fi
 
       - name: Run slow tests
-        run: pytest tests/ -v --tb=short -m slow
+        run: pytest tests/ -v --tb=short -n logical -m slow
 
   enum-mode:
     name: Axis-Enum mode LP parity (nightly, non-gating)
@@ -87,7 +87,7 @@ jobs:
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Install dependencies
         run: |
@@ -99,4 +99,4 @@ jobs:
           if [ -f bin/highs ]; then chmod +x bin/highs; fi
 
       - name: Run axis-Enum mode LP parity
-        run: pytest -m axis_enums tests/engine/axis_enums -v --tb=short
+        run: pytest -m axis_enums tests/engine/axis_enums -v --tb=short -n logical

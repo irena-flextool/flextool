@@ -33,7 +33,7 @@ Run the full test suite:
 ```bash
 pytest tests/
 ```
-The suite runs across 8 worker processes by default (`-n 8`, via
+The suite runs one worker process per physical core by default (`-n auto`, via
 `pytest-xdist`). Pass `-n 0` to disable parallelism when you need `-s` / `--pdb`
 for interactive debugging.
 
@@ -56,6 +56,13 @@ nightly_heavy"` — a command-line `-m` replaces the `addopts` one), and its
 Mark a test `nightly_heavy` only when it costs minutes and a faster test of the
 same area stays in the PR run.
 
+The PR "Tests" workflow runs Linux 3.13 + 3.14, Windows 3.14 and macOS 3.14,
+each with one xdist worker per logical core (`-n logical`: 4 on the Linux /
+Windows runners, whose 4 vCPUs are 2 SMT cores — the default `-n auto` counts
+physical cores — and 3 on macOS); `.github/scripts/peak_mem.py` prints each
+job's cores and peak memory. Python 3.11 and 3.12 (still supported,
+`requires-python >= 3.11`) run in `tests-old-python.yml`; test them locally
+when a change touches version-specific code.
 CI splits the PR run of each OS/Python cell into 4 shards with
 `--shard K/N` (`tests/_ci_shard.py`): module-atomic (a module's tests stay in
 one shard, so module-scoped fixtures are built once) and balanced by the
@@ -338,8 +345,16 @@ FlexTool uses the HiGHS solver, called via the `highspy` Python package (install
 
 ## CI Workflows
 
-- **`tests.yml`** — runs pytest on all three platforms and verifies the master template is up to date. Triggered on push/PR to `main`.
-- **`ci.yml`** — smoke gate on every push/PR; slow tests nightly (the whole suite runs sharded in `tests.yml`); the axis-Enum mode LP parity run (`enum-mode`) nightly, non-gating.
+- **`tests.yml`** — push/PR to `main`: the suite minus `nightly_heavy` on Linux 3.13 + 3.14, Windows 3.14 and macOS
+  3.14, 4 shards each (16 jobs: within the free plan's 20 concurrent jobs / 5 macOS jobs), `-n logical`; verifies the
+  master template is up to date (3.14). Nightly: the `nightly_heavy` tests on Linux 3.13 + 3.14.
+- **`tests-old-python.yml`** — the full sharded suite (nightly_heavy included) on Linux 3.11 and 3.12, on the 1st and
+  15th of the month and on *Run workflow*. A scheduled run skips its tests when the default branch has no commits
+  since the workflow's last successful run (compares `github.sha` with that run's head sha); a manual run always tests.
+  Not a required check.
+- **`ci.yml`** — smoke gate on every push/PR; slow tests nightly (the whole suite runs sharded in `tests.yml`); the
+  axis-Enum mode LP parity run (`enum-mode`) nightly, non-gating. All on Python 3.14, like `canary.yml`, `docs.yml`,
+  `publish.yml` and `old-cpu.yml`.
 - **`canary.yml`** — weekly dependency canary (see below).
 - **`toolbox-flextool-bundle.yml`** — manual (*Run workflow*, inputs: the Spine Toolbox ref and the FlexTool
   ref): builds the Windows zip with a frozen Spine Toolbox and FlexTool. The runner's Python (3.14) only builds the

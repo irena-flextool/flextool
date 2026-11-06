@@ -2,7 +2,7 @@ name: Dependency canary
 
 # Weekly early warning for FlexTool's capped dependencies (pyproject.toml):
 # install the NEWEST versions of everything with the upper caps lifted and run
-# the whole test suite (one job, ~3-4 h on the free runner).  Opens (or updates) one GitHub
+# the whole test suite (one job, ~2-3 h on the free runner).  Opens (or updates) one GitHub
 # issue titled "canary: dependency drift" when the tests fail or when a
 # capped package has a release past its cap (e.g. a new highspy minor or a new
 # polars major); closes that issue when a later run is clean.
@@ -27,14 +27,15 @@ jobs:
   canary:
     name: Newest dependencies (caps lifted)
     runs-on: ubuntu-latest
-    # A complete run takes ~2.5-3.5 h on the 2-vCPU runner (6.4k tests).
+    # A complete run took ~2.5-3.5 h with 2 xdist workers (6.4k tests); `-n logical`
+    # uses all 4 vCPUs of the runner (2 SMT cores, which `-n auto` counts).
     timeout-minutes: 300
     steps:
       - uses: actions/checkout@v4
 
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.14"
 
       - name: Lift upper caps
         run: |
@@ -63,7 +64,7 @@ jobs:
         continue-on-error: true
         run: |
           set -o pipefail
-          pytest tests/ -q --tb=short -rfE --ignore=tests/test_xlsx_workflow.py 2>&1 | tee "$RUNNER_TEMP/pytest.log"
+          pytest tests/ -q --tb=short -rfE -n logical --ignore=tests/test_xlsx_workflow.py 2>&1 | tee "$RUNNER_TEMP/pytest.log"
 
       - name: Open, update or close the canary issue
         if: always()
