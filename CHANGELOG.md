@@ -3355,7 +3355,7 @@ work.
 - **Report CO₂ for `co2_max_total` (total-cap) models**: the emissions output set
   wired only the period-cap and price flow sets; the multi-period total-cap port
   (`flow_from_co2_capped_total`, `group_co2_max_total`) was never added, so a
-  `co2_method=total` model (e.g. SouthAfrica) reported `CO2 [Mt] = 0` despite a
+  `co2_method=total` model reported `CO2 [Mt] = 0` despite a
   correct engine cap.
 - Read the **CO₂-accumulator unitsize on its actual entity axis** — the
   rolling-accumulator preferred the `e`-keyed `p_all_entity_unitsize` carrier but
@@ -3784,7 +3784,7 @@ frame with vectorized polars — a dense `(entity × dt)` or `(entity × period)
 a left-join for each parameter source, a priority `coalesce` across the cascade
 branches, and group-by-sum folds for stochastic / parent-period terms — once per
 roll over that roll's own window, replacing the per-cell Python loops. There is no
-cache and no full-domain frame. On the RETO-Africa **DES** scenario (9 rolling
+cache and no full-domain frame. On a large multi-country **DES** scenario (9 rolling
 solves) the run is ~25% faster end-to-end, with **every output byte-identical** to
 the previous release and the global peak working set unchanged (~18 GB). No model or
 input changes.
@@ -3823,7 +3823,7 @@ FlexTool's automatic scaling (Layers 1-3) and LP coefficient build no longer
 materialise wide coefficient products to read magnitude statistics. polar-high's
 new block-COO evaluation slices the pre-sorted `(period, timestep)` dense axis as
 contiguous numpy blocks, and the autoscale range / bucket readouts walk the
-constraint spine in bounded row-batches. On the large RETO-Africa **DES** scenario
+constraint spine in bounded row-batches. On a large multi-country **DES** scenario
 (9 rolling solves): autoscale peak working set dropped **~46 -> ~23 GB**, ~15%
 faster, with **every solve objective byte-identical** to the previous release. No
 model or input changes.
@@ -4757,7 +4757,7 @@ together.
   col-bound, row-bound) and apply a `user_bound_scale` recommendation
   via `setOptionValue` before `Highs.run()`.  The embedded heuristic
   is col-bound-only with a 6-decade gate and `[-10, 0]` clamp —
-  identical policy to flextool's Rivendell-bug-1+5+6 fix, deliberately
+  identical policy to flextool's customer-model bug 1+5+6 fix, deliberately
   ignoring row-bound spread to avoid crushing tight column bounds on
   energy-system LPs with wide cumulative-resource RHS magnitudes.
   Ranges are exposed on `Solution.streamed_lp_ranges` for callers
@@ -4809,7 +4809,7 @@ together.
     of rebuilding the LP via `Problem()` + `build_flextool()` +
     `pb.peek_lp_ranges()`.
   - New `tests/engine_polars/test_polar_high_recommend_user_bound_scale.py`
-    — Rivendell-bug-1+5+6 unit tests now live against polar-high's
+    — customer-model bug 1+5+6 unit tests now live against polar-high's
     helper.  Replaces the deleted
     `tests/engine_polars/scaling/test_user_bound_scale_recommendation.py`.
 
@@ -4835,7 +4835,7 @@ the migrated `test_invest_chain_regression.py` 6/6, the new
 
 Patch release on top of 3.43.1.  Five-commit fix for the cascade peak-RSS
 climb that surfaced on the multi-invest fixtures and was causing OOMs on
-1-year South Africa DES (storage → dispatch transition).  Implements
+a 1-year multi-region DES model (storage → dispatch transition).  Implements
 Design A from the per-level Provider memory investigation: one
 `FlexDataProvider` per distinct LP shape, reused across iterations
 within the same level; fresh Provider on level transition.
@@ -4873,7 +4873,7 @@ within the same level; fresh Provider on level transition.
   variable, sized to the LP).  The slim block at `_native_run_model`'s
   tail (`step.solution = None` for non-last steps) only runs AFTER
   `native_run_model` returns — so during the cascade every Solution
-  was fully retained.  On 1-year South Africa DES (two sub-solves at
+  was fully retained.  On a 1-year multi-region DES model (two sub-solves at
   very different shapes) this was tens of GB and the cause of the
   storage → dispatch OOM: the dispatch sub-solve tried to allocate
   its own ~30 GB LP on top of the storage sub-solve's still-parked
@@ -5390,7 +5390,7 @@ Ten cleanup commits — every one removes a file or symbol that the
 ## Release 3.41.1 (20.5.2026) — Toolbox/cascade bug-fix sweep
 
 Patch release on top of 3.41.0.  Clears four user-visible regressions that
-surface when running from Spine Toolbox or comparing many Rivendell scenarios.
+surface when running from Spine Toolbox or comparing many scenarios of a large customer model.
 
 **Bug fixes**
 
@@ -5690,7 +5690,7 @@ Wall-clock cost +4 s / +16 % on test_24h `input_derivation`
   `tests/engine_polars/conftest.py` clears it before/after each
   test.  Unblocked ~20 previously-flaky tests across
   `test_warm_chain_runner`, `test_orchestration_parity`,
-  `test_axis_rename_helpers`, Rivendell scaling, synthetic toys,
+  `test_axis_rename_helpers`, customer-model scaling, synthetic toys,
   loaders.
 - *pbt_node_inflow + dump_csvs_roundtrip + anchor-window (10
   tests).*  Cluster A (3): cascade uses `capture_frames` so disk
@@ -5723,7 +5723,7 @@ Wall-clock cost +4 s / +16 % on test_24h `input_derivation`
   fixes surfaced by post-Phase-4 enum activation, all following
   the established `cast_dim / align_join_dtypes` pattern.
   Cleared ~30 tests across `test_warm_chain_runner`,
-  `test_warm_param_autoupdate`, Rivendell, `test_scaling_bench`,
+  `test_warm_param_autoupdate`, customer-model tests, `test_scaling_bench`,
   toys, `test_orchestration_parity`, `test_native_cascade_parity`,
   `test_output_writer`, emission, capacity-margin, loaders.
 - *Phase-4 omnibus cleanup (15 tests).*  3 obsolete
@@ -5911,17 +5911,17 @@ test_24h fixture (the canonical large-fixture diagnostic).
 
 ---
 
-## Release 3.38.0 (18.5.2026) — Rivendell bug-fix suite
+## Release 3.38.0 (18.5.2026) — bug-fix suite (large customer model)
 
-Built on 3.37.0's in-memory cascade. Fixes a cluster of regressions that surfaced on the Rivendell customer database after the cascade rewrite, plus a final round of test ports.
+Built on 3.37.0's in-memory cascade. Fixes a cluster of regressions that surfaced on a large customer database after the cascade rewrite, plus a final round of test ports.
 
 **This release is the last known-stable point before the in-flight `enum dtype` refactor (Phase 0 → 4.8); pin to 3.38.0 until that lands green.**
 
 **Bug fixes**
-- Rivendell bug 1+5+6: `engine_polars/scaling.user_bound_scale` recommendation is now column-only (a previous row+col recommendation collapsed solver progress on S17/B0)
-- Rivendell bug 2 / BUG A2: `engine_polars` casts `user_constraints` coefficients to Float64 — previously left as int when authored as integer, breaking polars joins downstream
-- Rivendell bug 3: `co2_price` shape probing uses value-domain inspection instead of column count when the shape is ambiguous
-- Rivendell bug 4: regression test added for the `process_online_dt` UC column carry
+- Customer-model bug 1+5+6: `engine_polars/scaling.user_bound_scale` recommendation is now column-only (a previous row+col recommendation collapsed solver progress on two of its scenarios)
+- Customer-model bug 2 / BUG A2: `engine_polars` casts `user_constraints` coefficients to Float64 — previously left as int when authored as integer, breaking polars joins downstream
+- Customer-model bug 3: `co2_price` shape probing uses value-domain inspection instead of column count when the shape is ambiguous
+- Customer-model bug 4: regression test added for the `process_online_dt` UC column carry
 - BUG A1: `blocks` + output writer route input/block reads through the Provider so they observe in-memory writer output rather than a stale on-disk snapshot
 - BUG A3: `process_outputs.process_source_sink_varCost` keyed by `alwaysProcess` (previously dropped rows for processes that only exist in some subsolves)
 - BUG A4 / A2-followup: branch-weight Provider-routed read + 1000× cap-margin restored on the cascade scaling/state path; provider threaded into cascade scaling/state helpers
@@ -5946,7 +5946,7 @@ Two new packages factor the cascade I/O surface: `spinedb_backend` (Spine DB →
 **FlexData Accumulator (Phases C–H)**
 - Phase C: per-sub-solve `FlexDataAccumulator`
 - Phase D: `load_flextool(seed=FlexDataAccumulator)`
-- Phase E (a–j): cascade consumes accumulator via `seed=`; 8 batches of monolith-writer "lifts" so writers populate the accumulator rather than emit CSVs (`_writer_arc_unions`, `chain_params` + `co2_accumulators`, `_writer_pdt_params`, `_writer_period_params`, `dispatchers` + `calc_params`, the remaining 4 monolith writers, `_writer_solve_writers`, `period_calc` + `per_solve` + `reserve`); `--csv-dump` gating; cross-solve carriers lifted into `capture_frames`; seed-aware `csv.reader` + `path.exists()` audits in writer + loader modules; fixes for Rivendell `B0_base_hourly_rp` and `S08_co2cap_slice` regressions surfaced by the lift
+- Phase E (a–j): cascade consumes accumulator via `seed=`; 8 batches of monolith-writer "lifts" so writers populate the accumulator rather than emit CSVs (`_writer_arc_unions`, `chain_params` + `co2_accumulators`, `_writer_pdt_params`, `_writer_period_params`, `dispatchers` + `calc_params`, the remaining 4 monolith writers, `_writer_solve_writers`, `period_calc` + `per_solve` + `reserve`); `--csv-dump` gating; cross-solve carriers lifted into `capture_frames`; seed-aware `csv.reader` + `path.exists()` audits in writer + loader modules; fixes for customer-model regressions (an hourly representative-period base case and a CO2-cap slice) surfaced by the lift
 - Phase C.5: slimmed `OrchestrationStep` with `keep_solutions` opt-in
 - Phase F: parquet-bundle registry + `manifest.json` for hand-off between sub-solves
 - Phase G: `process_outputs` disk reads migrated to in-memory kwargs
