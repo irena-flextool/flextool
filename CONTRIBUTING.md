@@ -350,10 +350,22 @@ FlexTool uses the HiGHS solver, called via the `highspy` Python package (install
   ends with smoke steps: imports and `flextool.env_check` in the bundled Python, a solve of the `base` example, and
   `spinetoolbox.exe --list-items flextool` (headless). The embedded Python has no tkinter, so the FlexTool GUI does
   not run from the bundle. It also gets both polars runtimes (`polars[rtcompat]` of the installed polars, when the
-  bundled FlexTool selects the default runtime on AVX2 processors) and the Visual C++ runtime DLLs (`msvcp140*.dll`,
-  `concrt140.dll`, `vcruntime140*.dll` from the runner's Visual Studio `VC\Redist\MSVC\<version>\x64\Microsoft.VC14x.CRT`
-  folder, Microsoft's redistributable files) next to `python.exe`; smoke steps check that the default runtime loads
-  on the runner, that the compatible one imports and runs, and that `python.exe` loads its own `msvcp140.dll`.
+  bundled FlexTool selects the default runtime on AVX2 processors); smoke steps check that the default runtime loads
+  on the runner and that the compatible one imports and runs. No Visual C++ runtime is copied in: the libraries that
+  need `msvcp140.dll` (highspy >= 1.15, numpy, pandas, pyarrow) carry their own, and the two that import the system
+  one (pywin32's MAPI, debugpy) are removed. The bundle is slimmed before the smoke steps, which then test the slim
+  bundle: FlexTool's `tests/` is left out of the clone (sparse checkout, so the self-update's `git restore` /
+  `git pull` keep it out); in the bundled Python, debugpy is uninstalled (ipykernel's optional debugger; `pip check`
+  is allowed to report it), and the step "Slim the bundled Python" deletes the packages' `tests`/`test` folders,
+  `*.lib` import libraries and C headers, jedi's third-party stubs, unused pyarrow parts (Flight, Substrait, S3, C++
+  tests), matplotlib's sample data and unused pywin32 parts (Pythonwin, help file, demos, ADO, ISAPI, MAPI); the
+  frozen Toolbox is built without ipykernel, debugpy, jedi and parso (the spec's `excludes`, patched in the workflow;
+  kernels run in the bundled Python) and loses Qt's software OpenGL renderer (`opengl32sw.dll`) and the same pyarrow
+  parts. Kept on purpose: pip and setuptools (self-update reinstall, env_check fixes), ipykernel (Toolbox's Jupyter
+  Console; FlexTool's tools run in the Basic Console, which needs only the standard library), jill (Toolbox's
+  "Install Julia") and both polars runtimes. "Size report" steps print the total and the 20 largest entries before
+  and after slimming, and the zipped size, also to the job summary. A smoke step starts a Jupyter kernel with the
+  bundled Python and imports FlexTool in it.
 - **`old-cpu.yml`** — nightly and manual, non-gating: FlexTool under qemu user-mode emulation of processors without
   AVX2 (`-cpu Nehalem`, `-cpu SandyBridge`), driven by `.github/scripts/old_cpu_emulation.sh`. It checks that polars'
   default runtime crashes there, that `env_check` and `import flextool` refuse it with the fix, that

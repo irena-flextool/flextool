@@ -53,8 +53,11 @@
 - **Fixed: `python -m flextool.env_check` crashed on a processor without AVX2** when the compatible polars build was
   missing, before printing anything. It now prints the diagnostics and the pip command.
 - **Windows Toolbox bundle: runs on processors without AVX2 and on Windows without the Visual C++ runtime.** The
-  bundle's Python now has both polars builds (FlexTool picks the right one at start) and the Microsoft Visual C++
-  runtime DLLs (`msvcp140.dll` and companions) next to `python.exe`.
+  bundle's Python now has both polars builds (FlexTool picks the right one at start). The libraries it loads carry
+  their own C++ runtime, so no Visual C++ Redistributable is needed.
+- **Windows Toolbox bundle is smaller**: no debugger (debugpy), no test suites of FlexTool or of the bundled
+  packages, no C headers or import libraries, and no unused pyarrow, pywin32 and Qt parts. The Jupyter Console still
+  works, without debugging.
 - **highspy 1.15.1 or newer is required** (was `>=1.14.0,<1.15`; now `>=1.15.1,<1.16`). From 1.15 the Windows
   highspy carries its own C++ runtime; highspy 1.14.0 crashed on import on Windows 10 1809 / Server 2019. The
   automatic fix for a crashing highspy now installs this requirement instead of downgrading to 1.13.1. Two test
