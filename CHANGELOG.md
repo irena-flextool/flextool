@@ -1,5 +1,7 @@
 ## Unreleased
 
+- **Changed: polars is held below 2.** polars 2.x roughly triples FlexTool's peak memory on large models
+  (the same LP); installs keep polars 1.x until that is resolved.
 - **Fixed: after "Update FlexTool" in the Windows Toolbox bundle, moving the bundle folder broke FlexTool** in
   processes started outside its `flextool` folder (`python -m ...`, a Jupyter console): the reinstall wrote the
   folder's absolute path into the bundled Python. "Update FlexTool" now points the install to the clone by a path
