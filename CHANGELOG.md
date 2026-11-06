@@ -1,5 +1,10 @@
 ## Unreleased
 
+- **Fixed: a run whose last check found a solve without an accepted solution exited 0 and wrote the output-info
+  database** (for example a Benders solve that found no feasible incumbent, or a run with no solve at all). It
+  wrote no outputs, yet Spine Toolbox and the comparison steps read its `finish_time` as a finished run. Such a run
+  now exits 1 and leaves the output-info database unchanged. A calibration no longer takes the outputs of an
+  earlier run for those of a Benders run without an incumbent.
 - **New: `--threads N` (`FLEXTOOL_THREADS`), one thread count per FlexTool run, for FlexTool's data processing and
   the solver.** FlexTool's own processing (polars) uses at most N threads and at most 8 (`POLARS_MAX_THREADS` can
   set a lower limit), HiGHS gets `threads=N` (its parallel simplex stays off) and a Benders solve runs at most N

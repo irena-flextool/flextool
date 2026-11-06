@@ -50,7 +50,10 @@ def _run_main(monkeypatch, tmp_path, *flags):
         "--work-folder", str(tmp_path / "work"), "--output-location", str(tmp_path / "out"), *flags,
     ]
     monkeypatch.setattr(sys, "argv", argv)
-    cmd_run_flextool.main()
+    # The recorder runs no solve, and a run without solve steps exits 1.
+    with pytest.raises(SystemExit) as exc:
+        cmd_run_flextool.main()
+    assert exc.value.code == 1
     return seen
 
 
