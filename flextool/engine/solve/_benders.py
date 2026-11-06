@@ -243,11 +243,21 @@ def _resolve_benders_workers(n_regions: int, workers, run_options: RunOptions | 
     """Resolve the effective region-solve worker count.
 
     Precedence: an explicit ``workers`` argument > the run's ``--benders-workers`` /
-    ``FLEXTOOL_BENDERS_WORKERS`` (from *run_options*; ``None`` reads the environment) > auto
-    ``min(n, cpu-1)``.  Clamped to ``[1, n_regions]`` by :func:`resolve_worker_count`.
+    ``FLEXTOOL_BENDERS_WORKERS`` (from *run_options*; ``None`` reads the environment) > the run's thread budget
+    ``--threads`` / ``FLEXTOOL_THREADS`` (one region solve per thread: with more than one worker the region
+    solves run single-threaded) > auto ``min(n, cpu-1)``.  Clamped to ``[1, n_regions]`` by
+    :func:`resolve_worker_count`.  An explicit worker count above the budget is kept, with one warning.
     """
     if workers is None:
         workers = _benders_run_option("benders_workers", run_options)
+    budget = _benders_run_option("threads", run_options)
+    if workers is None:
+        workers = budget
+    elif budget is not None and min(int(workers), n_regions) > int(budget):
+        _logger.warning(
+            "Benders: --benders-workers %d is more than the run's --threads %d; %d region solves run at once",
+            int(workers), int(budget), min(int(workers), n_regions),
+        )
     return resolve_worker_count(n_regions, workers)
 
 

@@ -69,6 +69,7 @@ def run_solve(
     work_dir: Path,
     out_root: Path,
     cache_dir: Path,
+    threads: int | None = None,
 ) -> SolveRun:
     """Run one calibrator solve and return its raw :class:`SolveRun`.
 
@@ -89,8 +90,11 @@ def run_solve(
         Warm-start basis-cache directory, shared across iterations
         (``--basis-cache-dir``).  Keep it stable across the whole
         calibration run so HiGHS can reuse the prior iteration's basis.
+    threads:
+        Thread budget of each solve (``--threads``); ``None`` sends no flag (the child inherits the
+        environment's ``FLEXTOOL_THREADS``, else uses the available cores).
     """
-    argv = solve_argv(url, scenario, work_dir=work_dir, out_root=out_root, cache_dir=cache_dir)
+    argv = solve_argv(url, scenario, work_dir=work_dir, out_root=out_root, cache_dir=cache_dir, threads=threads)
     assess_dir = Path(out_root) / "output_parquet" / scenario
 
     started_at = time.time()
@@ -110,13 +114,18 @@ def run_solve(
     )
 
 
-def solve_argv(url: str, scenario: str, *, work_dir: Path, out_root: Path, cache_dir: Path) -> list[str]:
+def solve_argv(
+    url: str, scenario: str, *, work_dir: Path, out_root: Path, cache_dir: Path, threads: int | None = None,
+) -> list[str]:
     """The ``cmd_run_flextool`` command line of one calibrator iteration (parameters as :func:`run_solve`)."""
     url_norm = url if "://" in url else f"sqlite:///{url}"
-    warm = RunOptions(resolved={
+    chosen = {
         "warm_start": Resolved(True, "cli"),
         "basis_cache_dir": Resolved(str(cache_dir), "cli"),
-    })
+    }
+    if threads is not None:
+        chosen["threads"] = Resolved(int(threads), "cli")
+    warm = RunOptions(resolved=chosen)
     return [
         sys.executable,
         "-m",

@@ -183,6 +183,31 @@ def test_save_memory_receives_the_same_options(options_db, tmp_path, monkeypatch
     _assert_expected(_opt_file_options(tmp_path / "save_memory"), "save_memory")
 
 
+def test_save_memory_child_gets_the_thread_budget(options_db, tmp_path, monkeypatch) -> None:
+    """The ``--save-memory`` child solve gets the run's budget as ``--threads`` (it sizes the child's polars pool
+    before polars is imported) and HiGHS ``threads`` in its options file."""
+    import subprocess
+
+    url, cfg = options_db
+    monkeypatch.setenv("FLEXTOOL_SAVE_MEMORY", "1")
+    monkeypatch.setenv("FLEXTOOL_THREADS", "2")
+    real_run = subprocess.run
+    commands: list[list[str]] = []
+
+    def recording_run(cmd, *args, **kwargs):
+        commands.append([str(c) for c in cmd])
+        return real_run(cmd, *args, **kwargs)
+
+    monkeypatch.setattr(subprocess, "run", recording_run)
+    _run(url, cfg, tmp_path / "save_memory", warm=True)
+    children = [c for c in commands if "flextool.cli.cmd_solve_mps" in c]
+    assert children, "no save-memory child solve ran"
+    for cmd in children:
+        i = cmd.index("--threads")
+        assert cmd[i + 1] == "2", cmd
+    assert _norm(_opt_file_options(tmp_path / "save_memory")["threads"]) == 2.0
+
+
 # ---------------------------------------------------------------------------
 # Benders master and regions (#39)
 # ---------------------------------------------------------------------------
@@ -358,6 +383,23 @@ def test_no_flag_and_no_env_leave_highs_serial() -> None:
     assert effective["parallel"] == "off" and "threads" not in effective
     one = _env_options({"FLEXTOOL_HIGHS_THREADS": "1"})
     assert _operator_highs_overrides(one) == _operator_highs_overrides(_env_options({}))
+
+
+def test_thread_budget_reaches_highs_with_parallel_off() -> None:
+    """``--threads B`` (FLEXTOOL_THREADS) alone gives HiGHS ``threads=B`` and leaves the engine's ``parallel=off``
+    pin standing; ``--highs-threads`` keeps its parallel opt-in, at most B."""
+    from flextool.engine.solve._orchestration import _baseline_highs_options, _operator_highs_overrides
+
+    budget = _env_options({"FLEXTOOL_THREADS": "4"})
+    assert _operator_highs_overrides(budget) == {"threads": 4}
+    effective = _resolve_effective_highs_options(
+        solver_arguments_map={}, highs_opt_path=None, cli_overrides=_operator_highs_overrides(budget),
+        baseline=_baseline_highs_options(), solver_config=SolverConfig())
+    assert effective["threads"] == 4 and effective["parallel"] == "off"
+    assert _operator_highs_overrides(_env_options({"FLEXTOOL_THREADS": "4", "FLEXTOOL_HIGHS_THREADS": "2"})) == {
+        "threads": 2, "parallel": "on"}
+    assert _operator_highs_overrides(_env_options({"FLEXTOOL_THREADS": "4", "FLEXTOOL_HIGHS_THREADS": "8"})) == {
+        "threads": 4, "parallel": "on"}
 
 
 def test_operator_highs_layer_comes_from_run_options(monkeypatch) -> None:

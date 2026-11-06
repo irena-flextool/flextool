@@ -128,6 +128,7 @@ def _run_cold_probe(
     probe_sol: Path,
     probe_stats: Path,
     logger: logging.Logger | None,
+    threads: int | None = None,
 ) -> float | None:
     """Spawn a throwaway COLD child solve purely to measure its wall time.
 
@@ -148,6 +149,8 @@ def _run_cold_probe(
             "--options", str(opts_path),
             "--stats", str(probe_stats),
         ]
+        if threads is not None:
+            probe_cmd += ["--threads", str(threads)]
         subprocess.run(probe_cmd)
         if not probe_stats.exists():
             return None
@@ -1283,6 +1286,9 @@ def _solve_highs_subprocess(
 
     if run_options is None:
         run_options = RunOptions.from_env()
+    from flextool._thread_budget import run_budget
+
+    child_threads = run_budget(run_options)[0]
     cleanup = work_folder is None
     if work_folder is not None:
         out_dir = Path(work_folder) / "solve_data" / "subprocess"
@@ -1328,6 +1334,9 @@ def _solve_highs_subprocess(
             "--mps", str(mps_path),
             "--solution", str(sol_path),
             "--options", str(opts_path),
+            # The run's thread budget sizes the child's polars pool (read before polars is imported); the
+            # child's HiGHS threads come from the options file.
+            "--threads", str(child_threads),
         ]
 
         # --- Warm-start arm (opt-in) ------------------------------------
@@ -1385,6 +1394,7 @@ def _solve_highs_subprocess(
                                 probe_sol=warm_probe_sol,
                                 probe_stats=warm_probe_stats,
                                 logger=logger,
+                                threads=child_threads,
                             )
                             cmd += ["--warm-basis", str(warm_cached)]
                             if logger is not None:

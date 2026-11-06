@@ -67,3 +67,26 @@ def test_workflow_child_command_parses_and_sets_no_solver_option():
     assert parsed.debug == "basic"
     child = RunOptions.from_cli(parsed, environ={})
     assert all(child.source(key) == "default" for key in OPTIONS)
+
+
+def test_workflow_forwards_the_thread_budget_as_a_flag():
+    args = workflow.build_parser().parse_args(["in.sqlite", "out.sqlite", "base", "--threads", "3"])
+    child_args = workflow.run_flextool_args(args, output_config="plots.yaml", output_subdir="base")
+    child = RunOptions.from_cli(build_parser().parse_args(child_args), environ={"FLEXTOOL_THREADS": "7"})
+    assert (child.value("threads"), child.source("threads")) == (3, "cli")
+
+
+def test_calibrator_forwards_the_thread_budget_as_a_flag(monkeypatch, tmp_path):
+    from flextool.calibrate._cli import _config_from_args, build_parser as calibrate_parser
+    from flextool.calibrate._solve import run_solve
+
+    config = _config_from_args(calibrate_parser().parse_args(
+        ["input.sqlite", "base", "--iterations", "1", "--threads", "4", "--work-dir", str(tmp_path / "w"),
+         "--output-location", str(tmp_path / "o")]))
+    assert config.threads == 4
+    calls = _capture_subprocess(monkeypatch)
+    run_solve("input.sqlite", "base", work_dir=tmp_path / "work", out_root=tmp_path / "out",
+              cache_dir=tmp_path / "bc", threads=config.threads)
+    (call,) = calls
+    child = _child_options(call["argv"], environ={})
+    assert (child.value("threads"), child.source("threads")) == (4, "cli")

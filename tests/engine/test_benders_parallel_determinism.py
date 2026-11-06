@@ -122,6 +122,24 @@ def test_explicit_workers_beat_the_run_options() -> None:
     assert _resolve_benders_workers(4, 1, opts) == 1
 
 
+def test_thread_budget_limits_the_region_workers(caplog) -> None:
+    """``--threads B`` (FLEXTOOL_THREADS) caps the automatic worker count at B region solves at once (with more
+    than one worker each region solve is single-threaded); an explicit worker count wins, with a warning when it
+    is above B."""
+    budget = RunOptions.from_env(environ={"FLEXTOOL_THREADS": "3"})
+    assert _resolve_benders_workers(10, None, budget) == 3
+    assert _resolve_benders_workers(2, None, budget) == 2
+    assert _resolve_benders_workers(10, None, RunOptions.from_env(environ={})) == resolve_worker_count(10, None)
+    with caplog.at_level(logging.WARNING):
+        both = RunOptions.from_env(environ={"FLEXTOOL_THREADS": "3", "FLEXTOOL_BENDERS_WORKERS": "5"})
+        assert _resolve_benders_workers(10, None, both) == 5
+    assert any("--threads 3" in r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        assert _resolve_benders_workers(2, None, both) == 2  # clamped to the regions: within the budget
+    assert not [r for r in caplog.records if r.levelno == logging.WARNING]
+
+
 def test_env_override_resolves(ti_data, monkeypatch) -> None:
     """The machine-local ``FLEXTOOL_BENDERS_WORKERS`` override drives the same
     deterministic result as the explicit ``workers`` arg / the sequential path."""

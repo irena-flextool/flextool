@@ -20,7 +20,13 @@ Pinned:
   ``--highs-threads N`` / ``FLEXTOOL_HIGHS_THREADS`` (N > 1), which flips
   ``parallel`` to ``on`` and sets ``threads=N`` in the operator layer of the
   HiGHS options (``_operator_highs_overrides``) — N == 1 leaves this pin
-  intact and keeps default behaviour byte-identical.  HiGHS still initialises
+  intact and keeps default behaviour byte-identical.  The run's thread budget
+  (``--threads B`` / ``FLEXTOOL_THREADS``) sets only ``threads=B`` and keeps
+  this pin: with ``parallel=off``, HiGHS' ``threads`` sizes its process-global
+  task scheduler (B - 1 worker threads), which MIP solves use; the dual
+  simplex, IPX and presolve stay serial (checked with highspy 1.15.1, whose
+  wheel also lacks the HiPO solver: ``solver=hipo`` falls back to simplex).
+  HiGHS still initialises
   a single, process-global thread scheduler on the FIRST ``Highs::run()`` of
   the process; subsequent ``Highs`` instances that try to set ``threads`` to
   a different value are rejected with
