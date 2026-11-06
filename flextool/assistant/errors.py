@@ -57,6 +57,47 @@ MESSAGES: dict[str, str] = {
                    "run. Read the run log (get_run_log) and get the scenario to run successfully first."),
     "run_no_parquet": ("The latest run of {run} wrote no result files to read (its write methods: {methods}). Run "
                        "it with parquet output."),
+    # Result tables
+    "unknown_table": "There is no result table '{table}' in {run}.{similar}",
+    "unknown_topic": "There is no topic '{topic}' among the result tables of {run}. The topics are: {topics}.",
+    "result_damaged": ("This result file is being written or is damaged. If a run is in progress, wait for it to "
+                       "finish."),
+    "unknown_level": "The table {table} has no level '{level}' (in {what}). Its levels are: {levels}.",
+    "no_match": "No value of the level {level} of {table} matches the filter. Its values include: {values}.",
+    "no_match_combination": "No column of {table} matches all the filters together.",
+    "no_time_steps": "{what} needs a table with time steps; {table} has none.",
+    "bad_time_step": ("time_range: the table {table} has no time step '{value}'. Its time steps run from {first} "
+                      "to {last}."),
+    "budget": "This would return about {n} values. Add filters, group_by or top_n.",
+    "bad_sort": "sort.by must be one of the result's columns: {columns} (not '{by}').",
+    "membership_table": ("{table} is a set of names with no values; it can be listed (with filters) but not "
+                         "aggregated."),
+    "mixed_units": ("The values of {table} combined here have different units ({units}). Keep the level {level} "
+                    "in group_by or filter one of its values."),
+    "sum_rate_over_time": ("This table holds power at each timestep. Its sum over time is not energy unless each "
+                           "step is weighted by its duration, which the result files do not record.{use}"),
+    "sum_rate_over_periods": ("This table holds power at each timestep; adding it across periods gives no "
+                              "meaningful total. Compare periods side by side (keep period in group_by).{use}"),
+    "sum_annual_over_periods": ("These are annual values; adding them across periods does not give a total over "
+                                "the horizon. Use the discounted cost table, or compare periods side by side."),
+    "sum_per_period_over_periods": ("These values are sums over the sampled time steps of each period, not "
+                                    "scaled to the years a period represents; adding them across periods does not "
+                                    "give a total over the horizon. Compare periods side by side."),
+    "sum_level": ("This table holds levels or averages (a capacity, a storage state, a mean over the period); "
+                  "adding them over {span} gives no meaningful total. Use mean, min or max, or keep the {span} "
+                  "apart in group_by."),
+    "sum_ratio": "This table holds {what}; adding them gives no meaningful total. Use mean, min or max.",
+    "sum_unknown": ("FlexTool does not record what kind of quantity {table} holds, so a sum may mean nothing. Use "
+                    "mean, min or max."),
+    "compare_needs_runs": ("compare_runs needs two or more result folders from list_runs, or [\"comparison\"] for "
+                           "the comparison files."),
+    "no_comparison": ("The project has no comparison files (output_parquet_comparison). Name the scenario folders "
+                      "to compare."),
+    "table_in_no_run": "None of the runs {runs} has the result table '{table}'.",
+    # Run logs and slacks
+    "no_run_record": ("This run has no run record (it ran before FlexTool kept run logs, or with an older "
+                      "FlexTool). Run the scenario again to get one."),
+    "unknown_solve": "The run {run} has no solve named '{solve}'. Its solves include: {solves}.",
     "needs_migration": ("This database is at version {db}; this FlexTool uses version {tool}. Some values may be "
                         "stored under older parameter names. Open the project in the FlexTool window to update it."),
     "newer_database": ("This database is at version {db}, newer than this FlexTool (version {tool}). Update "

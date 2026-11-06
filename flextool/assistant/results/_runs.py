@@ -277,11 +277,11 @@ class ResolvedRun:
     status: dict | None
     entry: dict
     run_notes: list[str]
+    run: Run | None = field(default=None, repr=False)
 
 
-def resolve_run(ctx: AssistantContext, run: str) -> ResolvedRun:
-    """The run folder *run* (a name from :func:`list_runs`) when its results may be read; else the message of its
-    ``unusable_code`` (O1: never an earlier run's files)."""
+def find_run(ctx: AssistantContext, run: str) -> Run:
+    """The run folder *run*, a name :func:`list_runs` gives, whatever its latest run did."""
     if not run or any(part in run for part in ("/", "\\", "..")):
         raise ToolError("bad_run_name", run=run)
     all_runs = runs(ctx)
@@ -291,6 +291,13 @@ def resolve_run(ctx: AssistantContext, run: str) -> ResolvedRun:
         if not names:
             raise ToolError("no_runs")
         raise ToolError("unknown_run", run=run, runs=name_list(close_names(run, names) or names))
+    return found
+
+
+def resolve_run(ctx: AssistantContext, run: str) -> ResolvedRun:
+    """The run folder *run* (a name from :func:`list_runs`) when its results may be read; else the message of its
+    ``unusable_code`` (O1: never an earlier run's files)."""
+    found = find_run(ctx, run)
     status = found.status
     if not found.entry["results_usable"]:
         code = found.entry["unusable_code"] or "failed"
@@ -311,7 +318,7 @@ def resolve_run(ctx: AssistantContext, run: str) -> ResolvedRun:
     if found.entry["other_flextool_version"]:
         notes.append(f"This run was made with FlexTool {found.entry['flextool_version']}; this is FlexTool "
                      f"{_flextool_version()}.")
-    return ResolvedRun(found.folder, status, found.entry, notes)
+    return ResolvedRun(found.folder, status, found.entry, notes, found)
 
 
 # ---------------------------------------------------------------------------------------------------------
