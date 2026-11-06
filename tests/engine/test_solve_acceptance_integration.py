@@ -141,3 +141,29 @@ def test_layer2_unscale_keeps_the_solve_status_for_the_gate() -> None:
 
     assert "is infeasible" in acc_before.message
     assert (acc_after.accepted, acc_after.message) == (acc_before.accepted, acc_before.message)
+
+
+def test_gate_reads_the_tolerance_highs_ran_with_after_the_unscale() -> None:
+    """The ceiling uses the solve's primal_feasibility_tolerance.  The Layer-2
+    unscale's ``setSolution`` resets status and info, not the options: after
+    it, the Solution still reports the tolerance the solve was run with."""
+    import numpy as np
+    import polars as pl
+    from polar_high.engine import Problem, Sum
+
+    from flextool.engine.autoscale import unscale_solution
+    from flextool.engine.autoscale._layer2 import Layer2Plan
+
+    pb = Problem()
+    x = pb.add_var("v_x", "i", pl.DataFrame({"i": [0]}), lower=0.0, upper=1.0)
+    pb.add_cstr("x_floor", sense=">=", lhs_terms={"x": Sum(x, over=("i",))}, rhs_terms={"floor": 0.5})
+    pb.set_objective(Sum(x), sense="min")
+    sol = pb.solve(keep_solver=True, options={"primal_feasibility_tolerance": 1e-3})
+    plan = Layer2Plan(
+        col_factors=np.ones(len(sol.col_value)),
+        row_factors=np.ones(len(sol.row_dual)),
+        type_exponents={},
+        type_buckets_before={},
+    )
+    unscale_solution(sol, plan)
+    assert sol.primal_feasibility_tolerance == 1e-3

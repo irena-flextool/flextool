@@ -4776,7 +4776,7 @@ _V77_UNCONDITIONAL_MARKERS = ("user_constraint_prebuilt_nets_retirements", "dc_p
                               "price_ladder_periods_from_solve_periods", "construction_lead_time_commissioning",
                               "coarse_process_flows", "chained_solve_costs_from_run_start",
                               "stochastic_branch_period_years", "retirement_of_existing_capacity_only",
-                              "ramp_branch_point_shutdown_once")
+                              "ramp_branch_point_shutdown_once", "acceptance_ceiling_follows_tolerance")
 
 # Definitions the schema no longer has but old databases may still carry.
 _V77_STALE_DEFINITIONS = (

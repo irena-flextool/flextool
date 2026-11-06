@@ -170,6 +170,15 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "retirement_of_existing_capacity_only"),
         ),
         BehaviourChange(
+            id="acceptance_ceiling_follows_tolerance",
+            summary=("A solve HiGHS could not certify as optimal (status Unknown) is now accepted as near-optimal "
+                     "when its largest relative primal infeasibility is within max(1e-6, 10 x its "
+                     "primal_feasibility_tolerance), and its primal-dual objective error is within the accepted "
+                     "gap. Before, the limit was 1e-6 whatever the tolerance, so a solve run with a looser "
+                     "tolerance (e.g. 1e-3) stopped the run without results; it now writes results."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "acceptance_ceiling_follows_tolerance"),
+        ),
+        BehaviourChange(
             id="gui_solver_defaults",
             summary=("Runs started from the FlexTool GUI now use the same solver settings as terminal and Spine "
                      "Toolbox runs: presolve is on (before: choose), and the MIP gap of each solve comes from its "

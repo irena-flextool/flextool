@@ -1121,11 +1121,17 @@ snapshot of `getModelStatus()` + `getInfo()`):
   tolerance-derived absolute backstop) *and* `primal_dual_objective_error`
   is within the accepted optimality gap; otherwise reject.
 
-Thresholds default to primal-relative `1e-6`, absolute margin `10×` the
-solver's `primal_feasibility_tolerance`, and P-D gap `1e-2` (the same
-order as the `mip_rel_gap` models routinely accept); each has a
-`FLEXTOOL_ACCEPT_*` env override, and `FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0`
-restores the legacy hard-fail. The subprocess/commercial path exposes no
+Thresholds follow the solve's own `primal_feasibility_tolerance` (the
+option value HiGHS ran with, read from the live handle; the Layer-2
+unscale resets status and info, not options): primal-relative ceiling
+`max(1e-6, 10 × tolerance)`, absolute margin `10×` the tolerance, and P-D
+gap `1e-2` (the same order as the `mip_rel_gap` models routinely accept).
+The dual side is judged by the P-D gap only, so there is no dual ceiling.
+Each has a `FLEXTOOL_ACCEPT_*` env override; a set (positive)
+`FLEXTOOL_ACCEPT_PRIMAL_REL` replaces the derived relative ceiling outright.
+`FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0` restores the legacy hard-fail. A solve
+accepted above the former fixed `1e-6` prints the
+`acceptance_ceiling_follows_tolerance` behaviour-change notice. The subprocess/commercial path exposes no
 queryable handle, so `solve_diagnostics()` returns `None` and the solve is
 never near-optimal-accepted — it falls back to the strict `kOptimal` gate.
 

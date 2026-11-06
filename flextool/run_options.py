@@ -270,7 +270,8 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         # --- dev: solve acceptance ------------------------------------------------------------------------
         _dev("FLEXTOOL_ACCEPT_NEAR_OPTIMAL", "0 rejects every HiGHS status other than optimal (default on)"),
         _dev("FLEXTOOL_ACCEPT_PD_GAP", "largest primal-dual gap of an accepted near-optimal solve (1e-2)"),
-        _dev("FLEXTOOL_ACCEPT_PRIMAL_REL", "relative primal infeasibility of an accepted near-optimal solve (1e-6)"),
+        _dev("FLEXTOOL_ACCEPT_PRIMAL_REL", "relative primal infeasibility of an accepted near-optimal solve; "
+             "replaces the default max(1e-6, 10 x primal_feasibility_tolerance)"),
         _dev("FLEXTOOL_ACCEPT_PRIMAL_ABS_MARGIN",
              "absolute primal infeasibility allowed, as a multiple of HiGHS' feasibility tolerance (10)"),
         # --- dev: Benders ---------------------------------------------------------------------------------

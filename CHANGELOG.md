@@ -1,5 +1,11 @@
 ## Unreleased
 
+- **Changed: a solve HiGHS could not certify as optimal (status "Unknown") is judged against its own feasibility
+  tolerance.** It is accepted as near-optimal when its largest relative primal infeasibility is within
+  max(1e-6, 10 × `primal_feasibility_tolerance`) (before: 1e-6 whatever the tolerance) and its primal-dual
+  objective error is within the accepted gap. A solve run with a looser tolerance (e.g. 1e-3) that stopped the run
+  before now writes results; with the HiGHS default 1e-7 nothing changes. A set `FLEXTOOL_ACCEPT_PRIMAL_REL` still
+  replaces the limit. Upgraded databases print a behaviour-change notice for each solve accepted this way.
 - **Fixed: a solve that HiGHS could not certify (status "Unknown") failed with "returned no model status"** when
   autoscale rescaled the LP. Writing the unscaled solution back into HiGHS cleared its status and counters before
   the accept/reject check read them, so the near-optimal check never ran and the real status was not reported. The

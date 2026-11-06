@@ -4120,6 +4120,11 @@ def _drive_cascade(
                 return 1
             if _acc.near_optimal:
                 self.state.logger.info(_acc.message)
+            if _acc.above_fixed_ceiling:
+                from flextool.engine import _behaviour_changes
+                _behaviour_changes.notice(
+                    "acceptance_ceiling_follows_tolerance", "solves", [complete_solve_name],
+                )
 
             prior = prior_for_load
             # ``--csv-dump``: gate ``data.dump_csvs`` behind the

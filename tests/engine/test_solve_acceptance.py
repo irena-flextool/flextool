@@ -332,3 +332,97 @@ def test_pd_gap_env_override_loosens(monkeypatch) -> None:
         solve_name="s",
     )
     assert acc.accepted and acc.near_optimal
+
+
+# --- relative ceiling follows the solve's own tolerance ----------------------
+#
+# Ceiling = max(1e-6, 10 x primal_feasibility_tolerance), unless
+# FLEXTOOL_ACCEPT_PRIMAL_REL is set.  Hand derivation:
+#   tol 1e-7 (HiGHS default): 10 x 1e-7 = 1e-6, max(1e-6, 1e-6) = 1e-6
+#   tol 1e-3:                 10 x 1e-3 = 1e-2, max(1e-6, 1e-2) = 1e-2
+#   tol 0 (no live handle):   max(1e-6, 0)                      = 1e-6
+
+
+@pytest.mark.parametrize(
+    ("tolerance", "ceiling"), [(1e-7, 1e-6), (1e-3, 1e-2), (1e-8, 1e-6), (0.0, 1e-6)],
+)
+def test_relative_ceiling_follows_the_tolerance(monkeypatch, tolerance, ceiling) -> None:
+    from flextool.engine.solve._acceptance import primal_rel_ceiling
+
+    monkeypatch.delenv("FLEXTOOL_ACCEPT_PRIMAL_REL", raising=False)
+    assert primal_rel_ceiling(tolerance) == pytest.approx(ceiling, rel=1e-12)
+
+
+def _cyprus_like(tolerance: float) -> _StubSolution:
+    """The reported dual-simplex solve: status Unknown with 124 dual
+    infeasibilities, 0 primal infeasibilities, max primal infeasibility
+    9.93e-4 (relative 5.82e-5), primal-dual objective error 7.4e-13."""
+    return _StubSolution(
+        optimal=False,
+        diagnostics=_diag(
+            status_name="kUnknown",
+            max_primal_infeasibility=9.93e-4,
+            max_relative_primal_infeasibility=5.82e-5,
+            primal_dual_objective_error=7.4e-13,
+        ),
+        primal_feasibility_tolerance=tolerance,
+    )
+
+
+def test_loose_tolerance_solve_accepted_near_optimal(monkeypatch) -> None:
+    """tol 1e-3: 5.82e-5 <= ceiling 1e-2; absolute 9.93e-4 <= 10 x 1e-3;
+    gap 7.4e-13 <= 1e-2 -> accepted.  5.82e-5 > 1e-6, so it passes only
+    because of the tolerance-derived ceiling (the notice flag is set)."""
+    monkeypatch.delenv("FLEXTOOL_ACCEPT_PRIMAL_REL", raising=False)
+    acc = classify_acceptance(_cyprus_like(1e-3), ranges_post=None, solve_name="s")
+    assert acc.accepted and acc.near_optimal, acc.message
+    assert acc.above_fixed_ceiling
+
+
+def test_default_tolerance_rejects_the_same_residual(monkeypatch) -> None:
+    """tol 1e-7: ceiling 1e-6 < 5.82e-5 -> rejected as primal infeasible."""
+    monkeypatch.delenv("FLEXTOOL_ACCEPT_PRIMAL_REL", raising=False)
+    acc = classify_acceptance(_cyprus_like(1e-7), ranges_post=None, solve_name="s")
+    assert not acc.accepted
+    assert "NOT feasible" in acc.message
+    assert "5.82e-05 > 1.0e-06" in acc.message
+
+
+def test_accept_within_the_fixed_floor_needs_no_notice(monkeypatch) -> None:
+    """The observed crossover-off roll (relative 1.89e-11 <= 1e-6) was
+    accepted before too: no behaviour-change notice."""
+    monkeypatch.delenv("FLEXTOOL_ACCEPT_PRIMAL_REL", raising=False)
+    acc = classify_acceptance(
+        _StubSolution(optimal=False, diagnostics=_diag(status_name="kUnknown")),
+        ranges_post=None,
+        solve_name="s",
+    )
+    assert acc.accepted and not acc.above_fixed_ceiling
+
+
+def test_explicit_primal_rel_knob_wins_over_the_derived_ceiling(monkeypatch) -> None:
+    """A set FLEXTOOL_ACCEPT_PRIMAL_REL replaces the derived ceiling, both
+    ways: 1e-6 rejects the tol-1e-3 solve (derived would accept), 1e-4
+    accepts 5.82e-5 at tol 1e-7 (derived 1e-6 would reject; the absolute
+    backstop is moved out of the way with the margin knob)."""
+    from flextool.engine.solve._acceptance import primal_rel_ceiling
+
+    monkeypatch.setenv("FLEXTOOL_ACCEPT_PRIMAL_REL", "1e-6")
+    assert primal_rel_ceiling(1e-3) == 1e-6
+    acc = classify_acceptance(_cyprus_like(1e-3), ranges_post=None, solve_name="s")
+    assert not acc.accepted
+    assert "5.82e-05 > 1.0e-06" in acc.message
+
+    monkeypatch.setenv("FLEXTOOL_ACCEPT_PRIMAL_REL", "1e-4")
+    monkeypatch.setenv("FLEXTOOL_ACCEPT_PRIMAL_ABS_MARGIN", "1e5")
+    acc = classify_acceptance(_cyprus_like(1e-7), ranges_post=None, solve_name="s")
+    assert acc.accepted and acc.near_optimal
+    assert not acc.above_fixed_ceiling  # the user's own limit, not the new rule
+
+
+def test_malformed_primal_rel_knob_falls_back_to_the_derived_ceiling(monkeypatch) -> None:
+    from flextool.engine.solve._acceptance import primal_rel_ceiling
+
+    for raw in ("abc", "0", "-1e-3"):
+        monkeypatch.setenv("FLEXTOOL_ACCEPT_PRIMAL_REL", raw)
+        assert primal_rel_ceiling(1e-3) == pytest.approx(1e-2, rel=1e-12)

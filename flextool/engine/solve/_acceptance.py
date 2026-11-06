@@ -23,10 +23,24 @@ non-``kOptimal`` solve is safe to accept:
 * ``kUnknown`` that is primal-feasible with a small primal--dual objective
   gap → accept as *near-optimal* (use the primal solution), else reject.
 
-The predicate is conjunctive and derives its primal-feasibility margin
-from the solver's own ``primal_feasibility_tolerance`` rather than a magic
-constant, so it cannot silently wave through an infeasible solution.  All
-policy and thresholds live here; polar-high only supplies the facts
+The predicate is conjunctive and derives its primal-feasibility limits
+from the solver's own ``primal_feasibility_tolerance`` (the option value
+HiGHS ran with, read from the live ``Highs`` handle; the Layer-2 unscale's
+``setSolution`` resets the status and info counters, not the options):
+
+* relative ceiling ``max(1e-6, 10 x primal_feasibility_tolerance)`` -- a
+  solve run with a loose tolerance (e.g. 1e-3) is judged against what it
+  was asked to achieve, while the HiGHS default 1e-7 keeps the 1e-6 floor;
+* absolute backstop ``10 x primal_feasibility_tolerance``.
+
+The dual side is judged by the primal--dual objective error only (FlexTool
+consumes the primal), so there is no dual-infeasibility ceiling to scale.
+
+Precedence: an explicit ``FLEXTOOL_ACCEPT_PRIMAL_REL`` (a positive float)
+replaces the derived relative ceiling outright, tighter or looser; a
+malformed or non-positive value is ignored and the derived ceiling applies.
+
+All policy and thresholds live here; polar-high only supplies the facts
 (:meth:`polar_high.Solution.solve_diagnostics`).
 """
 
@@ -59,10 +73,13 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 # while rejecting the ~3% stalls seen in decomposition subproblems.
 _ACCEPT_PD_GAP_DEFAULT = 1e-2
 
-# Scale-invariant primal-feasibility ceiling: two decades above the default
-# ``primal_feasibility_tolerance`` (1e-7) but far below any physically
-# meaningful constraint violation.
+# Scale-invariant primal-feasibility ceiling: the floor is one decade above
+# the HiGHS default ``primal_feasibility_tolerance`` (1e-7) and far below any
+# physically meaningful constraint violation; a solve run with a looser
+# tolerance gets ``_ACCEPT_PRIMAL_REL_TOL_FACTOR`` times its own tolerance
+# (see :func:`primal_rel_ceiling`).
 _ACCEPT_PRIMAL_REL_DEFAULT = 1e-6
+_ACCEPT_PRIMAL_REL_TOL_FACTOR = 10.0
 
 # Absolute backstop: HiGHS enforces feasibility on the internally-scaled LP,
 # so the unscaled slack can exceed the nominal tolerance.  One decade of
@@ -84,6 +101,35 @@ def _env_float(name: str, default: float) -> float:
     except (TypeError, ValueError):
         return default
     return val if val > 0.0 else default
+
+
+def _env_override(name: str) -> float | None:
+    """The positive float set in ``os.environ[name]``, else ``None`` (unset,
+    malformed or non-positive)."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    try:
+        val = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return val if val > 0.0 else None
+
+
+def primal_rel_ceiling(primal_feasibility_tolerance: float) -> float:
+    """Largest max relative primal infeasibility of an accepted near-optimal
+    solve: ``FLEXTOOL_ACCEPT_PRIMAL_REL`` when set, else
+    ``max(1e-6, 10 x primal_feasibility_tolerance)``.
+
+    A tolerance of 0 (no live solver handle) gives the 1e-6 floor.
+    """
+    override = _env_override("FLEXTOOL_ACCEPT_PRIMAL_REL")
+    if override is not None:
+        return override
+    return max(
+        _ACCEPT_PRIMAL_REL_DEFAULT,
+        _ACCEPT_PRIMAL_REL_TOL_FACTOR * float(primal_feasibility_tolerance),
+    )
 
 
 def _near_optimal_enabled() -> bool:
@@ -150,12 +196,18 @@ class Acceptance:
     ``message``       — human-readable line describing the decision.
     ``scaling_hint``  — optional multi-line remediation hint, populated only
                         when scaling is genuinely implicated in a *reject*.
+    ``above_fixed_ceiling`` — accepted near-optimal with a max relative primal
+                        infeasibility above the former fixed 1e-6 ceiling
+                        (accepted only because the ceiling follows the
+                        solve's tolerance); the caller prints the
+                        behaviour-change notice for it.
     """
 
     accepted: bool
     near_optimal: bool
     message: str
     scaling_hint: str | None
+    above_fixed_ceiling: bool = False
 
 
 def _scaling_hint_for_reject(
@@ -265,9 +317,8 @@ def classify_acceptance(
             scaling_hint=_scaling_hint_for_reject(ranges_post),
         )
 
-    primal_rel_tol = _env_float(
-        "FLEXTOOL_ACCEPT_PRIMAL_REL", _ACCEPT_PRIMAL_REL_DEFAULT
-    )
+    primal_tol = float(sol.primal_feasibility_tolerance)
+    primal_rel_tol = primal_rel_ceiling(primal_tol)
     primal_abs_margin = _env_float(
         "FLEXTOOL_ACCEPT_PRIMAL_ABS_MARGIN", _ACCEPT_PRIMAL_ABS_MARGIN_DEFAULT
     )
@@ -281,7 +332,7 @@ def classify_acceptance(
         and diag.num_primal_infeasibilities == 0
         and diag.max_relative_primal_infeasibility <= primal_rel_tol
         and diag.max_primal_infeasibility
-        <= sol.primal_feasibility_tolerance * primal_abs_margin
+        <= primal_tol * primal_abs_margin
     )
     if not primal_ok:
         return Acceptance(
@@ -292,7 +343,7 @@ def classify_acceptance(
                 "certify optimality and the returned primal solution is NOT "
                 "feasible (max relative primal infeasibility "
                 f"{diag.max_relative_primal_infeasibility:.2e} > "
-                f"{primal_rel_tol:.0e}; "
+                f"{primal_rel_tol:.1e}; "
                 f"{diag.num_primal_infeasibilities} infeasibilities). The "
                 "solution cannot be used"
             ),
@@ -319,7 +370,7 @@ def classify_acceptance(
         f"Accepted near-optimal solve for {solve_name}: HiGHS could not "
         "certify optimality after postsolve (status Unknown), but the primal "
         "solution is feasible (max relative primal infeasibility "
-        f"{diag.max_relative_primal_infeasibility:.2e} <= {primal_rel_tol:.0e}"
+        f"{diag.max_relative_primal_infeasibility:.2e} <= {primal_rel_tol:.1e}"
         f"; {diag.num_primal_infeasibilities} infeasibilities) and the "
         f"primal-dual objective error {diag.primal_dual_objective_error:.3%} "
         f"is within the accepted optimality gap {pd_gap_tol:.2%}. Using the "
@@ -330,9 +381,14 @@ def classify_acceptance(
             " The dual solution is also feasible; only the post-solve dual "
             "objective certificate is inconsistent."
         )
+    above_fixed = (
+        _env_override("FLEXTOOL_ACCEPT_PRIMAL_REL") is None
+        and diag.max_relative_primal_infeasibility > _ACCEPT_PRIMAL_REL_DEFAULT
+    )
     return Acceptance(
         accepted=True, near_optimal=True, message=msg, scaling_hint=None,
+        above_fixed_ceiling=above_fixed,
     )
 
 
-__all__ = ["Acceptance", "classify_acceptance"]
+__all__ = ["Acceptance", "classify_acceptance", "primal_rel_ceiling"]
