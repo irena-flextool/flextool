@@ -70,6 +70,7 @@ def run_solve(
     out_root: Path,
     cache_dir: Path,
     threads: int | None = None,
+    launcher: str = "calibrator",
 ) -> SolveRun:
     """Run one calibrator solve and return its raw :class:`SolveRun`.
 
@@ -93,8 +94,16 @@ def run_solve(
     threads:
         Thread budget of each solve (``--threads``); ``None`` sends no flag (the child inherits the
         environment's ``FLEXTOOL_THREADS``, else uses the available cores).
+    launcher:
+        Who runs the solve, recorded in the run's ``_run_status.json`` (``--run-launcher``): ``calibrator``, or
+        ``netload`` for the representative-period iteration.
+
+    The solve runs under the ``flextool-run`` supervisor, which writes the run's ``_run.log``; its output still
+    comes back here in ``stdout``.  No environment is passed: the child inherits this process's.
     """
-    argv = solve_argv(url, scenario, work_dir=work_dir, out_root=out_root, cache_dir=cache_dir, threads=threads)
+    argv = solve_argv(
+        url, scenario, work_dir=work_dir, out_root=out_root, cache_dir=cache_dir, threads=threads, launcher=launcher,
+    )
     assess_dir = Path(out_root) / "output_parquet" / scenario
 
     started_at = time.time()
@@ -115,9 +124,20 @@ def run_solve(
 
 
 def solve_argv(
-    url: str, scenario: str, *, work_dir: Path, out_root: Path, cache_dir: Path, threads: int | None = None,
+    url: str,
+    scenario: str,
+    *,
+    work_dir: Path,
+    out_root: Path,
+    cache_dir: Path,
+    threads: int | None = None,
+    launcher: str = "calibrator",
 ) -> list[str]:
-    """The ``cmd_run_flextool`` command line of one calibrator iteration (parameters as :func:`run_solve`)."""
+    """The command line of one calibrator iteration (parameters as :func:`run_solve`).
+
+    ``python -m flextool_run_supervisor`` followed by ``cmd_run_flextool`` arguments: the supervisor passes them
+    to the engine unchanged and owns the run's ``_run.log``.
+    """
     url_norm = url if "://" in url else f"sqlite:///{url}"
     chosen = {
         "warm_start": Resolved(True, "cli"),
@@ -129,7 +149,7 @@ def solve_argv(
     return [
         sys.executable,
         "-m",
-        "flextool.cli.cmd_run_flextool",
+        "flextool_run_supervisor",
         url_norm,
         "--scenario-name",
         scenario,
@@ -140,6 +160,8 @@ def solve_argv(
         "--write-methods",
         "parquet",
         *warm.to_argv(),
+        "--run-launcher",
+        launcher,
     ]
 
 

@@ -3,7 +3,7 @@
 FlexTool takes its settings from three places:
 
 - the **database**: what changes the model or its answer (for example a solve's `scaling` or `solver_mip_gap`);
-- a **command-line flag** of `run_flextool`: a choice for one run (threads, time limit, `--save-memory`, ...);
+- a **command-line flag** of `flextool-run`: a choice for one run (threads, time limit, `--save-memory`, ...);
 - an **environment variable**: a setting for a whole process, and the twin of a flag where you have no command
   line — a Spine Toolbox tool, a Python console or script, a CI job.
 
@@ -16,7 +16,7 @@ set by a flag or an environment variable, and where it came from.
 All variables are optional, and an empty value counts as unset. In the first table, a value FlexTool cannot
 read (for example `FLEXTOOL_HIGHS_THREADS=many`) is ignored with one warning that names the variable.
 
-## Twins of `run_flextool` flags
+## Twins of `flextool-run` flags
 
 | Variable | Flag | Set to | What it does |
 |---|---|---|---|
@@ -42,7 +42,7 @@ read (for example `FLEXTOOL_HIGHS_THREADS=many`) is ignored with one warning tha
 | `FLEXTOOL_NO_UPDATE_CHECK` | `1` | The GUI does not look for a newer FlexTool at start. |
 | `FLEXTOOL_DPI` | DPI value, e.g. `144` | GUI screen resolution, when the automatic detection is wrong. |
 | `FLEXTOOL_SLICE` | systemd slice name | Linux: GUI-started runs go into this systemd slice (needs `systemd-run`). |
-| `MALLOC_ARENA_MAX` | integer | Linux: cap on glibc's malloc arenas. `run_flextool` sets `4`, which keeps memory from fragmenting over long runs, unless you set a value. |
+| `MALLOC_ARENA_MAX` | integer | Linux: cap on glibc's malloc arenas. The FlexTool engine (what `flextool-run` runs) sets `4`, which keeps memory from fragmenting over long runs, unless you set a value. |
 | `FLEXTOOL_RUN_LOG_MAX_BYTES` | bytes (default `4194304`, 4 MiB) | Size limit of the run log `_run.log` in each run's `output_parquet/<run>/` folder. A longer log keeps its first 64 KiB and its last this many bytes, with a line that says how many bytes were left out between them. |
 | `POLARS_PREFER_PKG` | `64` / `32` / `compat` | polars' own: which polars build loads first. On a processor with AVX2, `import flextool` sets the fast build when the compatible build is installed too; a value you set is kept. |
 | `POLARS_FORCE_PKG` | `64` / `32` / `compat` | polars' own: load only this build. Also skips FlexTool's processor check. |

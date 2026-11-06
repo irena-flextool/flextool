@@ -389,6 +389,7 @@ def _solve_once(
         work_dir=config.work_dir,
         out_root=config.out_root,
         cache_dir=cache_dir,
+        launcher="netload",
     )
     outcome = assess_solve(
         run.assess_dir,

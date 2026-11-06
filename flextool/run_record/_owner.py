@@ -384,11 +384,19 @@ class RunLogOwner:
                 writer.close()
             return True
 
-    def close(self, returncode: int | None, *, killed: bool = False, kill_reason: str | None = None) -> Path | None:
+    def close(
+        self,
+        returncode: int | None,
+        *,
+        killed: bool = False,
+        kill_reason: str | None = None,
+        outcome: tuple[str, str] | None = None,
+    ) -> Path | None:
         """Finish the relay when the engine has ended; return the run folder (``None`` when no marker came).
 
         Idempotent.  A status the engine left ``running`` is finalised from *returncode* (see
-        :func:`finalize_unfinished`); *killed* marks a run the owner stopped on purpose.
+        :func:`finalize_unfinished`); *killed* marks a run the owner stopped on purpose, *outcome* a
+        ``(state, reason)`` the owner knows better than the exit code (an interrupted run it had to kill).
         """
         with self._lock:
             if self._closed:
@@ -399,6 +407,7 @@ class RunLogOwner:
                 try:
                     finalized = finalize_unfinished(
                         self.folder, self.run_id, returncode, killed=killed, kill_reason=kill_reason,
+                        outcome=outcome,
                     )
                 except OSError as exc:
                     _logger.warning("Cannot finish the run record in %s: %s", self.folder, exc)
@@ -615,12 +624,14 @@ def finalize_unfinished(
     *,
     killed: bool = False,
     kill_reason: str | None = None,
+    outcome: tuple[str, str] | None = None,
 ) -> bool:
     """Finish a status the engine left ``running``; return whether it was changed.
 
     Only a status that still says ``running`` with *run_id* is touched.  *killed* (the owner stopped the run) gives
-    ``killed`` with *kill_reason*; otherwise :func:`classify_exit` decides.  A solve still running becomes
-    ``error``.
+    ``killed`` with *kill_reason*; *outcome* gives that ``(state, reason)`` (the supervisor killing a run that a
+    signal had already asked to stop: ``interrupted``); otherwise :func:`classify_exit` decides.  A solve still
+    running becomes ``error``.
     """
     folder = Path(folder)
     status = read_status_file(folder)
@@ -628,6 +639,8 @@ def finalize_unfinished(
         return False
     if killed:
         state, reason = "killed", kill_reason or "stopped by the user"
+    elif outcome is not None:
+        state, reason = outcome
     else:
         state, reason = classify_exit(returncode)
     now = now_iso()

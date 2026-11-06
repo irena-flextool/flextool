@@ -1,17 +1,46 @@
 """Format CLI command lists for readable log output."""
 from __future__ import annotations
 
+#: The engine module the GUI runs; a terminal runs the same run as ``flextool-run``.
+ENGINE_MODULE = "flextool.cli.cmd_run_flextool"
+#: The console script that supervises an engine run from a terminal.
+RUN_SCRIPT = "flextool-run"
+
+
+def terminal_command(cmd: list[str]) -> list[str]:
+    """The command a user can paste into a terminal for the same engine run as *cmd*.
+
+    The GUI starts the engine itself (``<python> -m flextool.cli.cmd_run_flextool ...``) and writes its log; in a
+    terminal ``flextool-run`` does that, so the interpreter and module become ``flextool-run``.  The GUI's
+    ``--run-launcher gui`` is dropped: the pasted run is not a GUI run.  Any other command is returned unchanged.
+    """
+    out = list(cmd)
+    for i in range(1, len(out) - 1):
+        if out[i] == "-m" and out[i + 1] == ENGINE_MODULE:
+            out[i - 1:i + 2] = [RUN_SCRIPT]
+            break
+    else:
+        return out
+    for i, tok in enumerate(out):
+        if tok == "--run-launcher" and i + 1 < len(out):
+            del out[i:i + 2]
+            break
+        if tok.startswith("--run-launcher="):
+            del out[i]
+            break
+    return out
+
 
 def _is_program_group(group: list[str]) -> bool:
-    """True when *group* holds the program invocation (``python -m mod`` or
-    a ``…/script.py`` form)."""
-    return any(tok == "-m" or tok.endswith(".py") for tok in group)
+    """True when *group* holds the program invocation (``python -m mod``,
+    a ``…/script.py`` form or ``flextool-run``)."""
+    return any(tok == "-m" or tok.endswith(".py") or tok == RUN_SCRIPT for tok in group)
 
 
 def _split_program_positionals(group: list[str]) -> tuple[list[str], list[str]]:
     """Split a program-invocation *group* into ``(head, positionals)``.
 
-    ``head`` is the interpreter + ``-m module`` (or ``script.py``) prefix;
+    ``head`` is the interpreter + ``-m module`` (or ``script.py``, or ``flextool-run``) prefix;
     ``positionals`` are the obligatory positional arguments that follow it
     (e.g. the input-DB URL passed to ``cmd_run_flextool``).  Flags already
     start their own group upstream, so everything after the program entry
@@ -22,7 +51,7 @@ def _split_program_positionals(group: list[str]) -> tuple[list[str], list[str]]:
         if tok == "-m" and i + 1 < len(group):
             end = i + 2  # interpreter … -m module
             break
-        if tok.endswith(".py"):
+        if tok.endswith(".py") or tok == RUN_SCRIPT:
             end = i + 1
             break
     if end is None:
@@ -42,7 +71,7 @@ def format_cmd_for_log(cmd: list[str]) -> str:
     Example::
 
         systemd-run --user --scope --quiet \\
-          -- /path/python -m flextool.cli.cmd_run_flextool \\
+          -- flextool-run \\
              sqlite:////path/to/input_data.sqlite \\
           --scenario-name DES-Inv \\
           --work-folder /path/to/work
