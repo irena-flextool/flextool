@@ -132,6 +132,9 @@ dependencies = [
     # first use, flextool.assistant.docs_store) on every platform, instead of
     # reading LOCALAPPDATA / XDG_* by hand; later also the user config folder.
     "platformdirs>=4",
+    # The assistant tools validate each call's arguments against the tool's JSON schema
+    # (flextool.assistant.registry); the connection server for AI agents does not.
+    "jsonschema>=4.18",
 ]
 
 [project.urls]

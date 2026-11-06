@@ -64,3 +64,66 @@ def test_overrides_name_schema_parameters_and_are_needed() -> None:
     for key, bracket in UNIT_OVERRIDES.items():
         assert key in DEFINITIONS, f"UNIT_OVERRIDES {key} is not a schema parameter"
         assert bracket not in QUANTITY_UNITS[PARAMETER_TYPES[key]], f"UNIT_OVERRIDES {key} is not needed"
+
+
+# ---------------------------------------------------------------------------------------------------------
+# How the assistant tools word units, and the notes on parameters (P0 §4.3, §4.4)
+
+
+@pytest.mark.parametrize("unit,shown", [
+    ("MW·s", "MW·s (default convention)"),
+    ("Mt", "Mt (default convention)"),
+    ("M CUR/a", "M CUR/a (default convention)"),
+    ("CUR/kWh", "CUR/kWh (default convention)"),
+    ("tCO2/MWh", "tCO2/MWh (default convention)"),
+    ("units/a", "units/a"),
+    ("h", "h"),
+    ("fraction", "fraction"),
+    ("p.u.", "p.u."),
+    ("hours", "hours"),
+])
+def test_shown_unit_marks_the_default_convention(unit: str, shown: str) -> None:
+    from flextool.assistant.unit_wording import shown_unit
+
+    assert shown_unit(unit) == shown
+
+
+def test_no_unit_wording_outside_unit_wording_py() -> None:
+    from pathlib import Path
+
+    import flextool.assistant
+
+    root = Path(flextool.assistant.__file__).parent
+    offenders = [p.relative_to(root).as_posix() for p in root.rglob("*.py")
+                 if p.name != "unit_wording.py" and "default convention" in p.read_text(encoding="utf-8")]
+    assert offenders == []
+
+
+def test_every_trap_names_a_schema_parameter() -> None:
+    from flextool.assistant.inputs._notes import traps
+
+    keys = {(cls, param) for (param, cls) in DEFINITIONS}
+    assert set(traps()) <= keys
+
+
+def test_option_traps_are_the_options_a_database_parameter_sets() -> None:
+    from flextool.assistant.inputs._notes import option_trap_text, traps
+    from flextool.run_options import OPTIONS
+
+    expected = {tuple(spec.db.split(".", 1)): option_trap_text(spec.flag, spec.env)
+                for spec in OPTIONS.values() if spec.db}
+    found = {key: t.text for key, ts in traps().items() for t in ts if "overrides this value" in t.text}
+    assert found == expected
+    assert all("()" not in text and "None" not in text for text in found.values())
+
+
+def test_per_kw_traps_are_the_per_kw_parameters() -> None:
+    from flextool.assistant.inputs._notes import traps
+
+    per_kw = {(cls, param) for (param, cls), desc in DEFINITIONS.items() if desc.startswith("[CUR/kW")}
+    found = {key for key, ts in traps().items() for t in ts if "multiplies the value by 1000" in t.text}
+    # The ×1000 parameters: invest_cost, fixed_cost and salvage_value of units, connections and nodes, and the
+    # group penalty_capacity_margin (P0 §1, verified in the engine).
+    assert found == per_kw == {
+        (cls, p) for cls in ("unit", "connection", "node") for p in ("invest_cost", "fixed_cost", "salvage_value")
+    } | {("group", "penalty_capacity_margin")}
