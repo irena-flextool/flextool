@@ -445,7 +445,6 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "nodeGroup_slack_reserve_dt_eeg": RATE,
     "nodeGroup_slack_reserve_d_eeg": ENERGY_ANNUAL,
     "nodeGroup_slack_capacity_margin_d_g": SLACK_CAP_MARGIN,
-    "nodeGroup_total_inflow": PREENERGY_ANNUAL,
     # Node balance tables.  _dt_ep is the un-integrated MW level (assembled
     # from raw flow_dt / inflow / slacks with no step_duration, like the dt
     # group flows); _d_ep integrates + annualizes to MWh/a.
@@ -483,6 +482,322 @@ DOCS_ANCHOR: dict[str, str] = {
     "cost_unit_discounted_d_ec": "results.html#cost-by-entity",
     "cost_connection_discounted_d_ec": "results.html#cost-by-entity",
     "cost_node_discounted_d_ec": "results.html#cost-by-entity",
+}
+
+
+@dataclass(frozen=True)
+class OutputDims:
+    """The layout of one result table: its row index levels and its column levels (below the top
+    ``scenario`` level of the parquet), declared per table, not parsed from the table name.
+
+    A membership set (``DIMENSION_TABLE``) has no measure columns: its ``rows`` are the set's columns.
+    ``counterpart`` is the same quantity at the other time resolution (a per-step table and its
+    per-period table), or ``None``.
+    """
+
+    rows: tuple[str, ...]
+    columns: tuple[str, ...] = ()
+    counterpart: str | None = None
+
+    @property
+    def has_time(self) -> bool:
+        return "time" in self.rows
+
+    @property
+    def has_period(self) -> bool:
+        return "period" in self.rows
+
+
+_DT = ("period", "time")
+_D = ("period",)
+
+# One sentence per result table: what it holds.  Table names are the parquet stems
+# (``output_parquet/<scenario>/<stem>.parquet``); every key of OUTPUT_TRANSFORM and of the
+# results-database spec (``write_spinedb.SPINEDB_OUTPUT_SPEC``) has one.
+OUTPUT_DESCRIPTION: dict[str, str] = {
+    # Costs
+    "costs_dt_p": "Operational and penalty costs incurred in each time step by cost category, in currency (not "
+                  "millions), with the step duration and timestep weight applied and not scaled to a year.",
+    "annualized_costs_d_p": "Total cost of each period by cost category, scaled to a full year of operation, "
+                            "including the yearly investment, retirement and fixed costs.",
+    "costs_discounted_d_p": "Cost of each period by cost category, discounted and multiplied by the years the "
+                            "period represents (the net present value the objective counts).",
+    "costs_discounted_p_": "Discounted cost by cost category, totalled over all periods of the run.",
+    "cost_unit_annualized_d_ec": "Annualized cost of each unit and period by cost category; summed over units, "
+                                 "connections and nodes it gives the system annualized costs.",
+    "cost_connection_annualized_d_ec": "Annualized cost of each connection and period by cost category.",
+    "cost_node_annualized_d_ec": "Annualized cost of each node and period by cost category (storage investment "
+                                 "and retirement, fixed costs, balance slack penalties).",
+    "cost_unit_discounted_d_ec": "Discounted cost of each unit and period by cost category; summed over units, "
+                                 "connections and nodes it gives the system discounted costs.",
+    "cost_connection_discounted_d_ec": "Discounted cost of each connection and period by cost category.",
+    "cost_node_discounted_d_ec": "Discounted cost of each node and period by cost category.",
+    "discountFactors_d_p": "Operations and investment discount factors of each period (written only in a debug "
+                           "run).",
+    "entity_annuity_d_p": "Discounted investment cost per MW of the capacity of each unit, connection and storage "
+                          "node decided in a period (written only in a debug run).",
+    "years_represented__d": "Number of years each period represents.",
+    # Unit and connection flows
+    "unit_outputNode_dt_ee": "Flow from each unit to each of its output nodes in each time step.",
+    "unit_outputNode_d_ee": "Flow from each unit to each of its output nodes summed over the period and scaled "
+                            "to a full year.",
+    "unit_inputNode_dt_ee": "Flow from each input node into each unit in each time step, as a negative value.",
+    "unit_inputNode_d_ee": "Flow from each input node into each unit summed over the period and scaled to a full "
+                           "year, as a negative value.",
+    "unit_outputs_cf_d_ee": "Capacity factor of each unit's output flow in each period: the period's flow divided "
+                            "by the unit capacity and the period's hours.",
+    "unit_inputs_cf_d_ee": "Capacity factor of each unit's input flow in each period: the period's flow divided "
+                           "by the unit capacity and the period's hours.",
+    "connection_dt_eee": "Net flow through each connection in each time step, positive from the first to the "
+                         "second node.",
+    "connection_d_eee": "Net flow through each connection summed over the period and scaled to a full year, "
+                        "positive from the first to the second node.",
+    "connection_leftward_dt_eee": "Net flow of each connection into its first node in each time step.",
+    "connection_leftward_d_eee": "Net flow of each connection into its first node summed over the period and "
+                                 "scaled to a full year.",
+    "connection_rightward_dt_eee": "Net flow of each connection into its second node in each time step.",
+    "connection_rightward_d_eee": "Net flow of each connection into its second node summed over the period and "
+                                  "scaled to a full year.",
+    "connection_losses_dt_eee": "Losses of each connection in each time step: the flow out minus the flow in, "
+                                "negative when energy is lost.",
+    "connection_losses_d_eee": "Losses of each connection summed over the period and scaled to a full year, "
+                               "negative when energy is lost.",
+    "connection_cf_d_e": "Capacity factor of each connection in each period: the absolute flow in either "
+                         "direction divided by the connection capacity and the period's hours.",
+    # CO2
+    "CO2__": "CO2 emissions of the whole model totalled over the years the periods represent (one column per "
+             "scenario path when a stochastic run has several).",
+    "CO2_d_g": "Annual CO2 emissions of each CO2-priced or CO2-capped group, by period.",
+    "process_co2_d_eee": "Annual CO2 emissions of each unit and connection flow by commodity and node, by "
+                         "period (negative for a removal).",
+    # Nodes and node groups
+    "node_dt_ep": "Energy balance of each node in each time step by category: flows from and to units and "
+                  "connections, self-discharge, loss of load, excess load and inflow.",
+    "node_d_ep": "Energy balance of each node by category, summed over the period and scaled to a full year.",
+    "node_state_dt_e": "Stored energy of each storage node at each time step.",
+    "node_inflow__dt": "Inflow of each node in each time step as given to the model (demand is negative).",
+    "node_prices_dt_e": "Price of energy at each balanced node and time step: the cost of one more unit of demand "
+                        "there (the dual of the node balance), in the price base of the cost inputs.",
+    "node_slack_up_dt_e": "Upward slack (loss of load) of each balanced node in each time step.",
+    "node_slack_down_dt_e": "Downward slack (excess load) of each balanced node in each time step.",
+    "node_slack_up_d_e": "Upward slack (loss of load) of each balanced node summed over the period and scaled to "
+                         "a full year.",
+    "node_slack_down_d_e": "Downward slack (excess load) of each balanced node summed over the period and scaled "
+                           "to a full year.",
+    "nodeGroup_flows_dt_g": "Inflow summed over the member nodes of each indicator group (nodes with an inflow "
+                            "method) in each time step.",
+    "nodeGroup_flows_d_g": "Inflow summed over the member nodes of each indicator group, summed over the period "
+                           "and scaled to a full year.",
+    "nodeGroup_flows_dt_gpe": "Energy in each time step into and out of each dispatch group by type (slack, units, "
+                              "unit groups, connections, connection groups, inflow, internal losses) and item.",
+    "nodeGroup_flows_d_gpe": "Energy into and out of each dispatch group by type and item, summed over the period "
+                             "and scaled to a full year.",
+    "nodeGroup_gdt_p": "Indicator building blocks of each indicator group in each time step: loss of load, VRE "
+                       "generation, excess load, curtailed VRE, inflow and VRE shares.",
+    "nodeGroup_gd_p": "Indicators of each indicator group in each period: loss of load, excess load and "
+                      "curtailment as shares of demand, the VRE share of demand and the annualized inflow.",
+    "nodeGroup_VRE_share_dt_g": "Share of the inflow (demand) of each indicator group covered by VRE units in "
+                                "each time step.",
+    "nodeGroup_VRE_share_d_g": "Share of the inflow (demand) of each indicator group covered by VRE units, "
+                               "averaged over the time steps of the period.",
+    # VRE curtailment and potential
+    "unit_VRE_potential_outputNode_dt_ee": "Potential output of each VRE unit to each output node in each time "
+                                           "step: capacity times the upper-limit profile.",
+    "unit_VRE_potential_outputNode_d_ee": "Potential output of each VRE unit to each output node summed over the "
+                                          "period with the timestep weights, not scaled to a full year.",
+    "unit_curtailment_outputNode_dt_ee": "Curtailment of each VRE unit at each output node in each time step: "
+                                         "the potential minus the actual output.",
+    "unit_curtailment_outputNode_d_ee": "Curtailment of each VRE unit at each output node summed over the period "
+                                        "with the timestep weights, not scaled to a full year.",
+    "unit_curtailment_share_outputNode_dt_ee": "Curtailment of each VRE unit as a share of its potential output "
+                                               "in each time step.",
+    "unit_curtailment_share_outputNode_d_ee": "Curtailment of each VRE unit as a share of its potential output "
+                                              "over the period.",
+    # Ramps
+    "unit_ramp_inputs_dt_ee": "Change of each unit's input flow from the previous time step.",
+    "unit_ramp_outputs_dt_ee": "Change of each unit's output flow from the previous time step.",
+    # Online units and startups
+    "unit_online_dt_e": "Number of units online of each unit with online variables, in each time step.",
+    "unit_online_average_d_e": "Average number of units online of each unit with online variables over the "
+                               "period, weighted by step duration.",
+    "unit_startup_d_e": "Startups of each unit with online variables in the period, scaled to a full year.",
+    "connection_online_dt_e": "Number of units online of each connection with a startup method, in each time "
+                              "step.",
+    "connection_online_average_d_e": "Average number of units online of each connection with a startup method "
+                                     "over the period, weighted by step duration.",
+    "connection_startup_d_e": "Startups of each connection with a startup method in the period, scaled to a full "
+                              "year.",
+    # Capacity and investment
+    "unit_capacity_ed_p": "Capacity of each unit in each period: existing, invested, in construction, divested "
+                          "and the total in service.",
+    "connection_capacity_ed_p": "Capacity of each connection in each period: existing, invested, in construction, "
+                                "divested and the total in service.",
+    "node_capacity_ed_p": "Storage capacity of each storage node in each period: existing, invested, in "
+                          "construction, divested and the total in service.",
+    "dual_invest_effective_unit_d_e": "Marginal value of one more unit of capacity of each investable unit in "
+                                      "each period (positive: more capacity would lower the cost).",
+    "dual_invest_effective_connection_d_e": "Marginal value of one more unit of capacity of each investable "
+                                            "connection in each period (positive: more capacity would lower the "
+                                            "cost).",
+    "dual_invest_effective_node_d_e": "Marginal value of one more unit of storage capacity of each investable "
+                                      "storage node in each period (positive: more capacity would lower the "
+                                      "cost).",
+    # Prices of constraints
+    "co2_price_period_d_g": "Shadow price of the per-period CO2 cap of each group, in the currency of the period "
+                            "(positive when the cap binds).",
+    "co2_price_total_d_g": "Shadow price of the cumulative CO2 cap of each group, in discounted currency per "
+                           "tonne, the same in every period.",
+    "reserve_prices_dt_ppg": "Price of each reserve, direction and group in each time step: the cost of one more "
+                             "MW of every requirement of the group held for the step.",
+    # Reserves
+    "process_reserve_upDown_node_dt_eppe": "Reserve held by each unit or connection for each reserve, direction "
+                                           "and node in each time step.",
+    "process_reserve_average_d_eppe": "Reserve held by each unit or connection for each reserve, direction and "
+                                      "node, averaged over the period.",
+    # Inertia
+    "nodeGroup_inertia_dt_g": "Inertia available in each inertia group in each time step.",
+    "nodeGroup_unit_node_inertia_dt_gee": "Inertia contribution of each unit or connection at each node of each "
+                                          "inertia group in each time step.",
+    "nodeGroup_inertia_largest_flow_dt_g": "Largest single flow into the nodes of each inertia group in each time "
+                                           "step.",
+    # Slacks of group constraints
+    "nodeGroup_slack_capacity_margin_d_g": "Capacity margin shortfall of each group in each investment period, "
+                                           "not scaled to a year.",
+    "nodeGroup_slack_inertia_dt_g": "Inertia shortfall of each inertia group in each time step.",
+    "nodeGroup_slack_inertia_d_g": "Inertia shortfall of each inertia group summed over the period and scaled to "
+                                   "a full year.",
+    "nodeGroup_slack_nonsync_dt_g": "Non-synchronous generation above the allowed share of each group in each "
+                                    "time step.",
+    "nodeGroup_slack_nonsync_d_g": "Non-synchronous generation above the allowed share of each group summed over "
+                                   "the period and scaled to a full year.",
+    "nodeGroup_slack_reserve_dt_eeg": "Reserve shortfall of each reserve, direction and group in each time step.",
+    "nodeGroup_slack_reserve_d_eeg": "Reserve shortfall of each reserve, direction and group summed over the "
+                                     "period and scaled to a full year.",
+    # Flow groups
+    "flowGroup_gd_p": "Sum of the absolute flows of the member legs of each flow group over the period "
+                      "(cumulative_flow) and its average power (average_flow).",
+    "flowGroup_gd_t": "Signed net flow into the nodes of each flow group in each time step (into the group's "
+                      "nodes positive).",
+    # DC power flow
+    "dc_angle_dt_e": "Voltage angle of each DC power-flow node in each time step.",
+    "dc_angle_diff_dt_e": "Voltage angle difference between the first and the second node of each DC power-flow "
+                          "connection in each time step.",
+    # Membership sets
+    "group_node": "Membership set: the nodes of each group.",
+    "group_process": "Membership set: the units and connections of each group.",
+    "group_process_node": "Membership set: the (unit or connection, node) flows of each group.",
+    "timeline_breaks": "Realized time steps at which a time-series plot starts a new line (gaps, representative "
+                       "period starts, periods that do not continue the previous one).",
+    "nodeGroupDispatch": "Set of the node groups with dispatch output (print_dispatch).",
+    "nodeGroupIndicators": "Set of the node groups with indicator output (print_indicators).",
+    "flowGroupIndicators": "Set of the flow groups with indicator output.",
+    "connection_dc_power_flow": "Set of the connections in a DC power-flow network.",
+    "node_dc_power_flow": "Set of the nodes in a DC power-flow network.",
+}
+
+OUTPUT_DIMS: dict[str, OutputDims] = {
+    "costs_dt_p": OutputDims(_DT, ("category",), "annualized_costs_d_p"),
+    "annualized_costs_d_p": OutputDims(_D, ("category",), "costs_dt_p"),
+    "costs_discounted_d_p": OutputDims(_D, ("category",)),
+    "costs_discounted_p_": OutputDims(("category",)),
+    "cost_unit_annualized_d_ec": OutputDims(("period", "unit"), ("category",)),
+    "cost_connection_annualized_d_ec": OutputDims(("period", "connection"), ("category",)),
+    "cost_node_annualized_d_ec": OutputDims(("period", "node"), ("category",)),
+    "cost_unit_discounted_d_ec": OutputDims(("period", "unit"), ("category",)),
+    "cost_connection_discounted_d_ec": OutputDims(("period", "connection"), ("category",)),
+    "cost_node_discounted_d_ec": OutputDims(("period", "node"), ("category",)),
+    "discountFactors_d_p": OutputDims(_D, ("param",)),
+    "entity_annuity_d_p": OutputDims(("solve", "period"), ("entity",)),
+    "years_represented__d": OutputDims(_D, ("param",)),
+    "unit_outputNode_dt_ee": OutputDims(_DT, ("unit", "node"), "unit_outputNode_d_ee"),
+    "unit_outputNode_d_ee": OutputDims(_D, ("unit", "node"), "unit_outputNode_dt_ee"),
+    "unit_inputNode_dt_ee": OutputDims(_DT, ("unit", "node"), "unit_inputNode_d_ee"),
+    "unit_inputNode_d_ee": OutputDims(_D, ("unit", "node"), "unit_inputNode_dt_ee"),
+    "unit_outputs_cf_d_ee": OutputDims(_D, ("unit", "sink")),
+    "unit_inputs_cf_d_ee": OutputDims(_D, ("unit", "source")),
+    "connection_dt_eee": OutputDims(_DT, ("process",), "connection_d_eee"),
+    "connection_d_eee": OutputDims(_D, ("process",), "connection_dt_eee"),
+    "connection_leftward_dt_eee": OutputDims(_DT, ("process", "node"), "connection_leftward_d_eee"),
+    "connection_leftward_d_eee": OutputDims(_D, ("process", "node"), "connection_leftward_dt_eee"),
+    "connection_rightward_dt_eee": OutputDims(_DT, ("process", "node"), "connection_rightward_d_eee"),
+    "connection_rightward_d_eee": OutputDims(_D, ("process", "node"), "connection_rightward_dt_eee"),
+    "connection_losses_dt_eee": OutputDims(_DT, ("process",), "connection_losses_d_eee"),
+    "connection_losses_d_eee": OutputDims(_D, ("process",), "connection_losses_dt_eee"),
+    "connection_cf_d_e": OutputDims(_D, ("connection",)),
+    "CO2__": OutputDims(("param_CO2",), ("scope",)),
+    "CO2_d_g": OutputDims(_D, ("group",)),
+    "process_co2_d_eee": OutputDims(_D, ("type", "process", "commodity", "node")),
+    "node_dt_ep": OutputDims(_DT, ("node", "category"), "node_d_ep"),
+    "node_d_ep": OutputDims(_D, ("node", "category"), "node_dt_ep"),
+    "node_state_dt_e": OutputDims(_DT, ("node",)),
+    "node_inflow__dt": OutputDims(_DT, ("node",)),
+    "node_prices_dt_e": OutputDims(("solve", "period", "time"), ("node",)),
+    "node_slack_up_dt_e": OutputDims(_DT, ("node",), "node_slack_up_d_e"),
+    "node_slack_down_dt_e": OutputDims(_DT, ("node",), "node_slack_down_d_e"),
+    "node_slack_up_d_e": OutputDims(_D, ("node",), "node_slack_up_dt_e"),
+    "node_slack_down_d_e": OutputDims(_D, ("node",), "node_slack_down_dt_e"),
+    "nodeGroup_flows_dt_g": OutputDims(_DT, ("group",), "nodeGroup_flows_d_g"),
+    "nodeGroup_flows_d_g": OutputDims(_D, ("group",), "nodeGroup_flows_dt_g"),
+    "nodeGroup_flows_dt_gpe": OutputDims(_DT, ("group", "type", "item"), "nodeGroup_flows_d_gpe"),
+    "nodeGroup_flows_d_gpe": OutputDims(_D, ("group", "type", "item"), "nodeGroup_flows_dt_gpe"),
+    "nodeGroup_gdt_p": OutputDims(("group", "period", "time"), ("parameter",), "nodeGroup_gd_p"),
+    "nodeGroup_gd_p": OutputDims(("group", "period"), ("parameter",), "nodeGroup_gdt_p"),
+    "nodeGroup_VRE_share_dt_g": OutputDims(_DT, ("group",), "nodeGroup_VRE_share_d_g"),
+    "nodeGroup_VRE_share_d_g": OutputDims(_D, ("group",), "nodeGroup_VRE_share_dt_g"),
+    "unit_VRE_potential_outputNode_dt_ee": OutputDims(_DT, ("unit", "sink"), "unit_VRE_potential_outputNode_d_ee"),
+    "unit_VRE_potential_outputNode_d_ee": OutputDims(_D, ("unit", "sink"), "unit_VRE_potential_outputNode_dt_ee"),
+    "unit_curtailment_outputNode_dt_ee": OutputDims(_DT, ("unit", "sink"), "unit_curtailment_outputNode_d_ee"),
+    "unit_curtailment_outputNode_d_ee": OutputDims(_D, ("unit", "sink"), "unit_curtailment_outputNode_dt_ee"),
+    "unit_curtailment_share_outputNode_dt_ee": OutputDims(_DT, ("unit", "sink"),
+                                                          "unit_curtailment_share_outputNode_d_ee"),
+    "unit_curtailment_share_outputNode_d_ee": OutputDims(_D, ("unit", "sink"),
+                                                         "unit_curtailment_share_outputNode_dt_ee"),
+    "unit_ramp_inputs_dt_ee": OutputDims(_DT, ("unit", "source")),
+    "unit_ramp_outputs_dt_ee": OutputDims(_DT, ("unit", "sink")),
+    "unit_online_dt_e": OutputDims(_DT, ("process",), "unit_online_average_d_e"),
+    "unit_online_average_d_e": OutputDims(_D, ("process",), "unit_online_dt_e"),
+    "unit_startup_d_e": OutputDims(_D, ("process",)),
+    "connection_online_dt_e": OutputDims(_DT, ("process",), "connection_online_average_d_e"),
+    "connection_online_average_d_e": OutputDims(_D, ("process",), "connection_online_dt_e"),
+    "connection_startup_d_e": OutputDims(_D, ("process",)),
+    "unit_capacity_ed_p": OutputDims(("unit", "period"), ("parameter",)),
+    "connection_capacity_ed_p": OutputDims(("connection", "period"), ("parameter",)),
+    "node_capacity_ed_p": OutputDims(("node", "period"), ("parameter",)),
+    "dual_invest_effective_unit_d_e": OutputDims(_D, ("entity",)),
+    "dual_invest_effective_connection_d_e": OutputDims(_D, ("entity",)),
+    "dual_invest_effective_node_d_e": OutputDims(_D, ("entity",)),
+    "co2_price_period_d_g": OutputDims(_D, ("group",)),
+    "co2_price_total_d_g": OutputDims(_D, ("group",)),
+    "reserve_prices_dt_ppg": OutputDims(("solve", "period", "time"), ("reserve", "updown", "node_group")),
+    "process_reserve_upDown_node_dt_eppe": OutputDims(_DT, ("process", "reserve", "updown", "node"),
+                                                      "process_reserve_average_d_eppe"),
+    "process_reserve_average_d_eppe": OutputDims(_D, ("process", "reserve", "updown", "node"),
+                                                 "process_reserve_upDown_node_dt_eppe"),
+    "nodeGroup_inertia_dt_g": OutputDims(_DT, ("group",)),
+    "nodeGroup_unit_node_inertia_dt_gee": OutputDims(_DT, ("group", "process", "node")),
+    "nodeGroup_inertia_largest_flow_dt_g": OutputDims(_DT, ("group",)),
+    "nodeGroup_slack_capacity_margin_d_g": OutputDims(_D, ("group",)),
+    "nodeGroup_slack_inertia_dt_g": OutputDims(_DT, ("group",), "nodeGroup_slack_inertia_d_g"),
+    "nodeGroup_slack_inertia_d_g": OutputDims(_D, ("group",), "nodeGroup_slack_inertia_dt_g"),
+    "nodeGroup_slack_nonsync_dt_g": OutputDims(_DT, ("group",), "nodeGroup_slack_nonsync_d_g"),
+    "nodeGroup_slack_nonsync_d_g": OutputDims(_D, ("group",), "nodeGroup_slack_nonsync_dt_g"),
+    "nodeGroup_slack_reserve_dt_eeg": OutputDims(_DT, ("reserve", "updown", "node_group"),
+                                                 "nodeGroup_slack_reserve_d_eeg"),
+    "nodeGroup_slack_reserve_d_eeg": OutputDims(_D, ("reserve", "updown", "node_group"),
+                                                "nodeGroup_slack_reserve_dt_eeg"),
+    "flowGroup_gd_p": OutputDims(("group", "period"), ("parameter",), "flowGroup_gd_t"),
+    "flowGroup_gd_t": OutputDims(("group", "period", "time"), ("parameter",), "flowGroup_gd_p"),
+    "dc_angle_dt_e": OutputDims(_DT, ("node",)),
+    "dc_angle_diff_dt_e": OutputDims(_DT, ("connection",)),
+    "group_node": OutputDims(("group", "node")),
+    "group_process": OutputDims(("group", "process")),
+    "group_process_node": OutputDims(("group", "process", "node")),
+    "timeline_breaks": OutputDims(_DT),
+    "nodeGroupDispatch": OutputDims(("group",)),
+    "nodeGroupIndicators": OutputDims(("group",)),
+    "flowGroupIndicators": OutputDims(("group",)),
+    "connection_dc_power_flow": OutputDims(("connection",)),
+    "node_dc_power_flow": OutputDims(("node",)),
 }
 
 

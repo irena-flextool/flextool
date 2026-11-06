@@ -15,6 +15,14 @@ on:
       - "docs/**"
       - "mkdocs.yml"
       - ".github/workflows/docs.yml"
+      # The formulation page and the results catalogue are generated from the code (tools/mkdocs_hooks.py).
+      - "flextool/engine/model/**"
+      - "flextool/engine/solve/_benders.py"
+      - "flextool/process_outputs/_output_meta.py"
+      - "flextool/process_outputs/write_spinedb.py"
+      - "flextool/schemas/default_plots.yaml"
+      - "flextool/docs_build/**"
+      - "tools/mkdocs_hooks.py"
   workflow_dispatch:
 
 permissions:
@@ -33,10 +41,12 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install MkDocs toolchain
-        # Matches mkdocs.yml: material theme, mermaid2 plugin, pymdownx extensions.
+      - name: Install FlexTool and the MkDocs toolchain
+        # FlexTool: the mkdocs hook generates the formulation page and the results catalogue from the code.
+        # MkDocs: matches mkdocs.yml (material theme, mermaid2 plugin, pymdownx extensions).
         run: |
           python -m pip install --upgrade pip
+          pip install -e .
           pip install mkdocs mkdocs-material mkdocs-mermaid2-plugin pymdown-extensions
 
       - name: Configure git identity for the gh-pages commit

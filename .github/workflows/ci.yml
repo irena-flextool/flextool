@@ -2,6 +2,7 @@ name: CI
 
 # CI gate:
 #   smoke  — every push and pull_request; <1 min, blocks merge
+#   docs-check — every push and pull_request: tests/docs and a mkdocs build with the generated pages
 #   slow   — nightly only; xlsx workflow + other slow integration tests
 # The whole suite runs sharded in the Tests workflow (tests.yml) and its heaviest
 # modules in that workflow's nightly-heavy job.
@@ -54,6 +55,31 @@ jobs:
         # gate. The whole suite runs sharded in the Tests workflow (it ran ~the
         # whole suite here and blew the 1-min cap).
         run: pytest -m smoke -v --tb=short
+
+  docs-check:
+    name: Docs check (generated pages + mkdocs build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        # As the smoke job, plus the MkDocs toolchain of docs.yml.
+        run: |
+          pip install -e .
+          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib
+          pip install mkdocs mkdocs-material mkdocs-mermaid2-plugin pymdown-extensions
+
+      - name: Header grammar, generated pages and output metadata
+        run: pytest tests/docs -n 0 -v --tb=short
+
+      - name: Build the web docs
+        # The hook (tools/mkdocs_hooks.py) generates the formulation page and the results catalogue.
+        run: mkdocs build
 
   slow:
     name: Slow (nightly only)
