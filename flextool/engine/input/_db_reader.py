@@ -8,6 +8,7 @@ from enum import Enum
 
 import spinedb_api as api
 
+from flextool import run_record
 from flextool.engine.input._solve_state import FlexToolConfigError
 
 
@@ -25,6 +26,11 @@ def check_version(db: api.DatabaseMapping, logger: logging.Logger) -> None:
         logger.error(message)
         raise FlexToolConfigError(message)
     database_version = api.from_database(db_version_item["default_value"], db_version_item["default_type"])
+    try:
+        _version = float(database_version)
+        run_record.active().note_input(db_version=int(_version) if _version.is_integer() else _version)
+    except (TypeError, ValueError):
+        run_record.active().note_input(db_version=str(database_version))
     tool_version = 25.0
     if float(database_version) < tool_version:
         message = (
