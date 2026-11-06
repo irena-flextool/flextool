@@ -51,6 +51,32 @@ def read_variables(output_dir, *, group_entity_invest: pd.DataFrame):
     return v
 
 
+def _unlink_with_retry(path: Path, *, attempts: int = 40, delay: float = 0.05) -> None:
+    """Delete ``path``, retrying transient Windows sharing errors.
+
+    On Windows a file that was just written and read back can stay briefly
+    locked (an antivirus / indexer handle opened without ``FILE_SHARE_DELETE``),
+    so ``unlink`` raises ``PermissionError`` (WinError 32) and a one-shot
+    best-effort delete left the ``.<var>__concat_*.parquet`` temp in
+    ``output_raw/``.  POSIX never hits this, so the first attempt succeeds."""
+    import time
+
+    for i in range(attempts):
+        try:
+            path.unlink(missing_ok=True)
+            return
+        except PermissionError:
+            if i == attempts - 1:
+                import logging
+                logging.getLogger(__name__).warning(
+                    "could not remove temp file %s (still locked)", path,
+                )
+                return
+            time.sleep(delay)
+        except OSError:
+            return
+
+
 def _stream_concat_parts(parts: list[Path], *, zero_fill: bool = True) -> pd.DataFrame:
     """Concatenate per-solve parquet *parts* without materialising them
     all at once.
@@ -216,11 +242,8 @@ def _stream_concat_parts(parts: list[Path], *, zero_fill: bool = True) -> pd.Dat
         df = result_table.to_pandas(self_destruct=True)
         del result_table
     finally:
-        # Best-effort cleanup — never let a stray temp file accumulate.
-        try:
-            tmp_path.unlink()
-        except OSError:
-            pass
+        # Never let a stray temp file accumulate in ``output_raw/``.
+        _unlink_with_retry(tmp_path)
 
     # --- Rebuild row index from the flextool metadata ---
     # ``read_lean_parquet`` does this for a single file; we replicate
