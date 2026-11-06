@@ -198,7 +198,6 @@ tests/                             Test suite (single root):
   tests/spinedb_backend/             — backend unit tests
   tests/model/                       — model-level end-to-end suites
   tests/gui/                         — GUI startup tests
-  tests/decomposition/               — Benders / region-filter tests
   tests/fixtures/*.json              — single authoritative source for all
                                        test data; sqlite DBs are built on
                                        demand

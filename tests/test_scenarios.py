@@ -1,16 +1,24 @@
 """Parametrized end-to-end scenario tests for FlexTool.
 
-Each test:
+``test_scenario``, per scenario:
   1. Uses the session-scoped SQLite DB (imported from test/fixtures/tests.json)
-  2. Runs FlexToolRunner for the given scenario in an isolated tmp workdir
+  2. Runs the cascade for the given scenario in an isolated tmp workdir
   3. Calls write_outputs(write_methods=['csv'])
   4. Compares selected CSVs against golden files in test/expected/<scenario>/
+
+``test_obj_decomposition``, per scenario: the per-category objective
+breakdown (``costs_discounted.csv``) sums to the full-horizon total of
+``summary_solve.csv``.  It reads the outputs ``test_scenario`` wrote for
+the scenario (one solve per scenario and module; ``--dist loadfile`` keeps
+the module on one worker) and solves only when that run is missing (the
+test selected alone).
 
 Scenario definitions live in test/scenarios.yaml — edit that file to add
 or modify scenarios. See test/README.md for the full workflow.
 """
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
@@ -144,6 +152,27 @@ def _parse_summary_solve_objective(summary_path: Path) -> float:
     )
 
 
+def _parse_costs_discounted(path: Path) -> float:
+    """Sum all numeric values in ``costs_discounted.csv`` (M CUR).
+
+    The first column is the category label; every remaining column is a period (or the single ``0`` column the
+    writer emits for the horizon total).  ``out_costs`` divides every entry by 1e6 before writing, so the total is
+    in M CUR like the ``summary_solve.csv`` row ``_parse_summary_solve_objective`` reads: no unit conversion.
+    """
+    df = pd.read_csv(path)
+    if df.columns[0] != "category":
+        # Defensive: if the writer's header ever changes, error loudly.
+        raise ValueError(
+            f"Unexpected header in {path}: expected first column 'category', "
+            f"got {df.columns[0]!r}"
+        )
+    total = 0.0
+    for col in df.columns[1:]:
+        series = pd.to_numeric(df[col], errors="coerce")
+        total += float(series.fillna(0.0).sum())
+    return total
+
+
 # CSVs with non-standard formatting that pd.read_csv cannot parse.
 # These are compared as plain text instead.
 _FREEFORM_CSVS = {"summary_solve.csv"}
@@ -223,26 +252,19 @@ def _strip_timestamps(text: str) -> str:
 SCENARIOS = _load_scenarios()
 
 
-@pytest.mark.parametrize(
-    "scenario,csvs,expected_objective,expected_objective_tolerance,expected_solver_objective,time_budget_seconds,"
-    "db_fixture",
-    SCENARIOS,
-)
-def test_scenario(
-    scenario: str,
-    csvs: list[str],
-    expected_objective: float | None,
-    expected_objective_tolerance: float,
-    expected_solver_objective: float | None,
-    time_budget_seconds: float | None,
-    db_fixture: str,
-    scenario_db_url: str,
-    test_solver_config_dir: Path,
-    workdir: Path,
-    request: pytest.FixtureRequest,
-) -> None:
-    regenerate = request.config.getoption("--regenerate")
+# (scenario, db_fixture) -> work folder whose ``output_csv/<scenario>/`` test_scenario wrote this module run.
+_SOLVED: dict[tuple[str, str], Path] = {}
 
+
+@pytest.fixture(scope="module", autouse=True)
+def _forget_solved():
+    yield
+    _SOLVED.clear()
+
+
+def _solve_and_write(scenario: str, db_fixture: str, scenario_db_url: str, test_solver_config_dir: Path,
+                     workdir: Path) -> None:
+    """Run ``scenario`` and write its CSV outputs to ``workdir/output_csv/<scenario>/``; record the folder."""
     # Run the model via the engine cascade (the legacy GMPL
     # ``FlexToolRunner.run_model`` path was removed in Δ.22 — see
     # ``flextool/engine/solve/_solver_base.py``).  ``run_chain_from_db``
@@ -250,7 +272,6 @@ def test_scenario(
     # cascade end-to-end; the post-process CSVs are then written by
     # ``write_outputs`` below (which needs the last sub-solve's
     # ``flex_data`` + ``solution`` after Δ.31).
-    t_start = time.perf_counter()
     steps = run_chain_from_db(
         input_db_url=scenario_db_url,
         scenario_name=scenario,
@@ -308,6 +329,31 @@ def test_scenario(
         # ``group_flows__dt.csv`` / ``flowGroup__*.csv``.
         flex_data_provider=last_step.flex_data_provider,
     )
+    _SOLVED[(scenario, db_fixture)] = workdir
+
+
+@pytest.mark.parametrize(
+    "scenario,csvs,expected_objective,expected_objective_tolerance,expected_solver_objective,time_budget_seconds,"
+    "db_fixture",
+    SCENARIOS,
+)
+def test_scenario(
+    scenario: str,
+    csvs: list[str],
+    expected_objective: float | None,
+    expected_objective_tolerance: float,
+    expected_solver_objective: float | None,
+    time_budget_seconds: float | None,
+    db_fixture: str,
+    scenario_db_url: str,
+    test_solver_config_dir: Path,
+    workdir: Path,
+    request: pytest.FixtureRequest,
+) -> None:
+    regenerate = request.config.getoption("--regenerate")
+
+    t_start = time.perf_counter()
+    _solve_and_write(scenario, db_fixture, scenario_db_url, test_solver_config_dir, workdir)
     elapsed_seconds = time.perf_counter() - t_start
 
     # Compare (or regenerate) each expected CSV
@@ -409,3 +455,61 @@ def test_scenario(
             warnings.warn(f"{msg} [not failing: parallel CPU contention]", stacklevel=2)
         else:
             raise AssertionError(msg)
+
+
+# Each SCENARIOS entry re-wrapped to carry just (scenario_name, db_fixture); ``-k '<scenario>'`` still selects the
+# same case as in test_scenario because the ``id`` is preserved.
+_DECOMP_PARAMS = [
+    pytest.param(p.values[0], p.values[-1], marks=p.marks, id=p.id)
+    for p in SCENARIOS
+]
+
+
+@pytest.mark.decomposition
+@pytest.mark.parametrize("scenario,db_fixture", _DECOMP_PARAMS)
+def test_obj_decomposition(
+    scenario: str,
+    db_fixture: str,
+    scenario_db_url: str,
+    test_solver_config_dir: Path,
+    workdir: Path,
+) -> None:
+    """Tier 8 obj-decomposition parity: ``sum(costs_discounted.csv)`` equals the
+    "Total cost (calculated) full horizon (M CUR)" row of ``summary_solve.csv`` to ``1e-6`` relative.
+
+    A failure pinpoints the obj writer summing something twice, dropping a term, or getting a sign wrong — the
+    diagnostic gap that the golden-CSV comparison cannot localise on its own.  The outputs are the ones
+    ``test_scenario`` wrote for the scenario (solved here only when that run is missing).  A scenario that does not
+    emit ``costs_discounted.csv`` (pure-dispatch runs where the writer drops it) is skipped.
+    """
+    solved = _SOLVED.get((scenario, db_fixture))
+    if solved is None:
+        _solve_and_write(scenario, db_fixture, scenario_db_url, test_solver_config_dir, workdir)
+        solved = workdir
+
+    out_dir = solved / "output_csv" / scenario
+    costs_path = out_dir / "costs_discounted.csv"
+    summary_path = out_dir / "summary_solve.csv"
+
+    if not costs_path.exists():
+        pytest.skip(
+            f"costs_discounted.csv not emitted for {scenario!r} "
+            f"(pure-dispatch / writer drops it)"
+        )
+
+    assert summary_path.exists(), (
+        f"summary_solve.csv missing for scenario '{scenario}' "
+        f"— required for decomposition check"
+    )
+
+    decomposition_total = _parse_costs_discounted(costs_path)
+    obj_total = _parse_summary_solve_objective(summary_path)
+
+    assert math.isclose(
+        decomposition_total, obj_total, rel_tol=1e-6, abs_tol=1e-9
+    ), (
+        f"obj decomposition mismatch: scenario={scenario} "
+        f"sum(costs_discounted.csv)={decomposition_total!r} "
+        f"summary_solve obj={obj_total!r} "
+        f"abs_err={abs(decomposition_total - obj_total)!r}"
+    )

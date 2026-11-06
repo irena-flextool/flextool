@@ -212,7 +212,7 @@ on the same loop):
   per commit batch (~27 minutes on a recent reference run).
 - **Activation truth** — `pytest tests/` (Layer 1 + scenario
   integration suite + `tests/model/` + `tests/gui/` +
-  `tests/decomposition/` + `tests/spinedb_backend/`), run rarely
+  `tests/spinedb_backend/`), run rarely
   (overnight / pre-release).
 
 Inner loop ≠ confidence to merge; activation truth is the only gate
@@ -246,7 +246,7 @@ Defined in `pyproject.toml` and re-asserted in `tests/conftest.py`:
 | `smoke`         | Layer-1 + scenarios on the per-commit CI gate (<1 min)        |
 | `solver`        | Touches a real solver (HiGHS), 5–60 s each                    |
 | `slow`          | >~30 s — nightly only                                         |
-| `decomposition` | Tier 8 objective-decomposition parity tests                   |
+| `decomposition` | Tier 8 objective-decomposition parity (`tests/test_scenarios.py`) |
 | `perturbation`  | Tier 6 single-multiplier perturbation tests                   |
 | `emission`      | Tier 7 MPS row-count emission tests                           |
 | `csv_reload`    | CSV reload contract tests in `tests/csv_reload/` — opt-in     |
