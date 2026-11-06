@@ -232,14 +232,14 @@ class InputSourceManager:
         not a valid Spine database or spinedb_api is not installed.
         """
         try:
-            from spinedb_api import DatabaseMapping
+            from flextool.update_flextool.db_handle import open_database_mapping
         except ImportError:
             logger.warning("spinedb_api is not installed -- cannot read sqlite scenarios")
             return None
 
         db_url = f"sqlite:///{filepath}"
         try:
-            with DatabaseMapping(db_url) as db_map:
+            with open_database_mapping(db_url) as db_map:
                 # Try scenarios first
                 try:
                     items = db_map.get_scenario_items()

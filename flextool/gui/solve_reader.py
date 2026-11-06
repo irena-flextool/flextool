@@ -23,7 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import spinedb_api as api
-from spinedb_api import DatabaseMapping
+from flextool.update_flextool.db_handle import open_database_mapping
 
 from flextool.engine.input._db_reader import (
     DictMode,
@@ -62,7 +62,7 @@ def read_scenario_solves(db_url: str, scenario_name: str) -> list[SolveInfo]:
         ValueError: If *scenario_name* is not a scenario in the database.
     """
     scen_config = api.filters.scenario_filter.scenario_filter_config(scenario_name)
-    with DatabaseMapping(db_url) as db:
+    with open_database_mapping(db_url) as db:
         # Existence check before filtering: an unknown scenario would otherwise
         # silently resolve to an empty stack rather than a loud error.
         scenario_names = {s["name"] for s in db.find_scenarios()}

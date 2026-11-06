@@ -2,6 +2,7 @@ from flextool.cli._console import run_tool
 from flextool.process_outputs.write_outputs import write_outputs
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 from spinedb_api import DatabaseMapping
+from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.filters.tools import name_from_dict
 import logging
 import sys
@@ -67,7 +68,7 @@ def main():
         db_map = None
         try:
             if input_db_url:
-                with DatabaseMapping(input_db_url) as db_map_tmp:
+                with open_database_mapping(input_db_url) as db_map_tmp:
                     scenario_names = [name_from_dict(db_map_tmp.get_filter_configs()[0])]
             elif output_locations_db_url:
                 db_map = DatabaseMapping(output_locations_db_url)

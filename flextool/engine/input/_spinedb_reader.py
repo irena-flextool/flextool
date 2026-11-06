@@ -165,12 +165,13 @@ class SpineDbReader:
         self._run_memo: dict[tuple, Any] = {}
 
         # Build caches once.
-        from spinedb_api import DatabaseMapping, from_database
+        from spinedb_api import from_database
+        from flextool.update_flextool.db_handle import open_database_mapping
         from spinedb_api.filters.scenario_filter import (
             apply_scenario_filter_to_subqueries,
         )
 
-        with DatabaseMapping(url) as db:
+        with open_database_mapping(url) as db:
             apply_scenario_filter_to_subqueries(db, scenario)
 
             # Class id ↔ name map.

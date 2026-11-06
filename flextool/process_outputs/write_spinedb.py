@@ -44,6 +44,7 @@ from typing import Any
 
 import pandas as pd
 from spinedb_api import DatabaseMapping, import_data
+from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.parameter_value import Map
 
 from flextool.process_outputs._output_meta import FACTOR, result_key_summary
@@ -379,7 +380,7 @@ def _top_up_schema_if_stale(db_url: str) -> None:
     # never take the lock and never write.  The gate mapping MUST be closed
     # before we take the lock: its item cache would otherwise go stale under
     # another process's concurrent commit (critique BLOCKER #1).
-    with DatabaseMapping(db_url) as db:
+    with open_database_mapping(db_url) as db:
         have_classes = {c["name"] for c in db.get_entity_class_items()}
         have_params = {(p["entity_class_name"], p["name"])
                        for p in db.get_parameter_definition_items()}
@@ -696,7 +697,7 @@ def write_spinedb(results, s, db_url, scenario_name, solve_name,
         results, s, alternative_name, solve_name, par=par,
     )
 
-    with DatabaseMapping(db_url) as db:
+    with open_database_mapping(db_url) as db:
         count, errors = import_data(
             db,
             alternatives=[(alternative_name, f"FlexTool results: {alternative_name}")],
@@ -1267,7 +1268,7 @@ def _purge_alternative(db_url, alternative_name):
     """Delete existing ``parameter_value`` items in ``alternative_name`` so a
     re-run replaces rather than duplicates.  Entities are shared across
     alternatives and are not purged."""
-    with DatabaseMapping(db_url) as db:
+    with open_database_mapping(db_url) as db:
         items = db.get_parameter_value_items(alternative_name=alternative_name)
         if not items:
             return

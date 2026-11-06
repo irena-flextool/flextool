@@ -4,7 +4,8 @@ import os
 import subprocess
 import shutil
 try: 
-    from spinedb_api import import_data, DatabaseMapping
+    from spinedb_api import import_data
+    from flextool.update_flextool.db_handle import open_database_mapping
 except ModuleNotFoundError:
     exit("Cannot find the required Spine-Toolbox module. Check that the environment is activated and the toolbox is installed")
 from spinedb_api.exception import NothingToCommit
@@ -167,7 +168,7 @@ def _sync_settings_param_defs(json_template, sqlite_path):
         }
         if not payload:
             return
-        with DatabaseMapping('sqlite:///' + sqlite_path, create=False) as db:
+        with open_database_mapping('sqlite:///' + sqlite_path, create=False) as db:
             (num, _log) = import_data(db, unparse_value=keep_serialized_unparse, **payload)
             if num:
                 db.commit_session(
@@ -410,7 +411,7 @@ def update_flextool(skip_git):
     #get template JSON. This can be the master or old template if conflicting migrations in between
     with open (result_template_path) as json_file:
         template = json.load(json_file)
-    with DatabaseMapping('sqlite:///' + 'results.sqlite', create = False, upgrade = True) as db:
+    with open_database_mapping('sqlite:///' + 'results.sqlite', create = False, upgrade = True) as db:
         #these update the old descriptions, but wont remove them or change names (the new name is created, but old stays)
         (num,log) = import_data(db, parameter_definitions = template["parameter_definitions"])
         try:
@@ -423,7 +424,7 @@ def initialize_result_database(filename,json_path):
 
     with open (json_path) as json_file:
         template = json.load(json_file)
-    with DatabaseMapping('sqlite:///' + filename, create = True) as db:
+    with open_database_mapping('sqlite:///' + filename, create = True) as db:
         (num,log) = import_data(db,**template)
         print("Result database initialized")
         db.commit_session("Result database initialized")

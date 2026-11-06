@@ -43,7 +43,8 @@ from flextool.cli._timing import TimingRecorder
 from flextool.run_options import RunOptions
 from flextool.update_flextool.ensure_settings_db import ensure_settings_db
 from spinedb_api.filters.tools import name_from_dict
-from spinedb_api import DatabaseMapping, to_database, DateTime
+from spinedb_api import to_database, DateTime
+from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.exception import NothingToCommit
 
 # Start the memory sampler as the first statement after imports.  The
@@ -846,7 +847,7 @@ def main():
     # active filter.  ``run_chain_from_db`` requires a concrete
     # scenario (it never picks one), so stop here when there is none.
     if not scenario_name:
-        with DatabaseMapping(input_db_url) as db_map:
+        with open_database_mapping(input_db_url) as db_map:
             _filters = db_map.get_filter_configs()
             if _filters:
                 scenario_name = name_from_dict(_filters[0])
@@ -1020,7 +1021,7 @@ def main():
         # Check if database exists
         db_exists = os.path.exists(args.output_db_url.replace('sqlite:///', ''))
 
-        with DatabaseMapping(args.output_db_url, create=not db_exists) as output_db:
+        with open_database_mapping(args.output_db_url, create=not db_exists) as output_db:
             # Create/update scenario class if it doesn't exist
             output_db.add_or_update_entity_class(name="scenario")
 

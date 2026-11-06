@@ -238,9 +238,9 @@ def discover_decomposition_regions_from_db(input_db_url: str) -> list[str]:
     Used by the CLI to present the list of available regions and by
     ``build_region_directory`` to know other regions' membership.
     """
-    from spinedb_api import DatabaseMapping  # lazy import
+    from flextool.update_flextool.db_handle import open_database_mapping
 
-    with DatabaseMapping(input_db_url) as db:
+    with open_database_mapping(input_db_url) as db:
         names: list[str] = []
         for pv in db.find_parameter_values(
             entity_class_name="group",

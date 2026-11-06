@@ -35,7 +35,8 @@ from __future__ import annotations
 
 from collections import defaultdict
 
-from spinedb_api import DatabaseMapping, import_data
+from spinedb_api import import_data
+from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.exception import NothingToCommit
 from spinedb_api.parameter_value import Map
 
@@ -130,7 +131,7 @@ def write_calib_alt(
         value = _adder_map(adder) if isinstance(adder, dict) else float(adder)
         pvs.append(("node", node, "energy_margin_adder", value, alt))
 
-    with DatabaseMapping(_normalise_url(url)) as db:
+    with open_database_mapping(_normalise_url(url)) as db:
         # 1. Materialise the calibration alternative and its per-node adders.
         #    Deliberately NO ``scenario_alternatives`` here — see the module
         #    docstring: routing the link through import_data re-ranks the whole

@@ -12,7 +12,8 @@ matplotlib.use('Agg')  # Use non-interactive backend; must precede any pyplot im
 import pandas as pd
 import polars as pl
 import yaml
-from spinedb_api import DatabaseMapping, from_database, Array
+from spinedb_api import from_database, Array
+from flextool.update_flextool.db_handle import open_database_mapping
 
 from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
 from flextool.process_outputs._output_meta import (
@@ -765,7 +766,7 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
         else:
             db_reachable = True  # HTTP or other remote URLs — let DatabaseMapping handle errors
     if db_reachable:
-        with DatabaseMapping(settings_db_url) as settings_db:
+        with open_database_mapping(settings_db_url) as settings_db:
             settings_entities = settings_db.get_entity_items(entity_class_name="settings")
             if len(settings_entities) == 1:
                 settings_name = settings_entities[0]["name"]

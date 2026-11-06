@@ -72,7 +72,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import spinedb_api as api
-from spinedb_api import Array, DatabaseMapping, import_data
+from spinedb_api import Array, import_data
+from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.exception import NothingToCommit
 
 from flextool.calibrate._readers import (
@@ -229,7 +230,7 @@ def _guard_no_timed_energy_margin(url: str, scenario: str) -> None:
     method and adder value are seen.
     """
     scen_config = api.filters.scenario_filter.scenario_filter_config(scenario)
-    with DatabaseMapping(_normalise_url(url)) as db:
+    with open_database_mapping(_normalise_url(url)) as db:
         api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
         db.fetch_all("parameter_value")
 
@@ -282,7 +283,7 @@ def _write_solves_override_alt(
     auto-wired single-solve case) there is nothing to override, so the natural
     single solve runs and the override is skipped.
     """
-    with DatabaseMapping(_normalise_url(url)) as db:
+    with open_database_mapping(_normalise_url(url)) as db:
         models = get_single_entities(db=db, entity_class_name="model")
         if not models:
             return
@@ -323,7 +324,7 @@ def _read_rep_starts(url: str, timeset_name: str, alternative_name: str) -> tupl
     it back from the pinned ``(timeset, alternative)`` so the driver can detect
     when a re-selection reproduces the previous set (convergence).
     """
-    with DatabaseMapping(_normalise_url(url)) as db:
+    with open_database_mapping(_normalise_url(url)) as db:
         db.fetch_all("parameter_value")
         for pv in db.find_parameter_values(
             entity_class_name="timeset",

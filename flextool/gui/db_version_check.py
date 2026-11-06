@@ -52,9 +52,10 @@ def _read_flextool_version(db_url: str) -> int | None:
     Returns the integer version, or ``None`` if it cannot be determined.
     """
     try:
-        from spinedb_api import DatabaseMapping, from_database
+        from spinedb_api import from_database
+        from flextool.update_flextool.db_handle import open_database_mapping
 
-        with DatabaseMapping(db_url, create=False, upgrade=True) as db:
+        with open_database_mapping(db_url, create=False, upgrade=True) as db:
             sq = db.object_parameter_definition_sq
             settings_param = (
                 db.query(sq)
@@ -139,7 +140,7 @@ def check_and_upgrade_database(
     failed = False
 
     try:
-        from spinedb_api import DatabaseMapping
+        from flextool.update_flextool.db_handle import open_database_mapping
     except ImportError as exc:
         messages.append(f"Cannot check database version (spinedb_api not available): {exc}")
         return was_upgraded, failed, messages
@@ -149,7 +150,7 @@ def check_and_upgrade_database(
     # Probe the schema read-only first so a database that is already current
     # is never copied.  An out-of-date schema makes this raise.
     try:
-        with DatabaseMapping(db_url, create=False, upgrade=False):
+        with open_database_mapping(db_url, create=False, upgrade=False):
             pass
         schema_current = True
     except Exception:
@@ -181,7 +182,7 @@ def check_and_upgrade_database(
                     f"upgrading; the database was left untouched."
                 )
                 return was_upgraded, True, messages
-            with DatabaseMapping(db_url, create=False, upgrade=True):
+            with open_database_mapping(db_url, create=False, upgrade=True):
                 pass
             messages.append(f"{db_path.name}: SpineDB schema upgraded to latest version.")
             was_upgraded = True

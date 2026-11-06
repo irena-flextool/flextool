@@ -19,6 +19,7 @@ from collections import defaultdict
 from typing import Any
 
 from spinedb_api import Array, Asterisk, DatabaseMapping, Map, SpineDBAPIError, to_database
+from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.exception import NothingToCommit
 
 from flextool.process_inputs.read_self_describing_excel import SheetData
@@ -922,7 +923,7 @@ def restore_behaviour_markers(db_url: str, markers: list[tuple[str, str]]) -> No
     of that name are removed."""
     if not markers:
         return
-    with DatabaseMapping(db_url, create=False) as db:
+    with open_database_mapping(db_url, create=False) as db:
         changed = False
         for name, value in markers:
             same = [md for md in db.get_items("metadata") if md["name"] == name]
@@ -965,7 +966,7 @@ def write_sheet_data_to_db(
             entities during purge.  Useful when importing into a fresh
             template DB that has structural entities (like upDown).
     """
-    with DatabaseMapping(db_url, create=False, upgrade=True) as db:
+    with open_database_mapping(db_url, create=False, upgrade=True) as db:
         if purge_first:
             _purge_database(db, keep_entities=keep_entities)
 

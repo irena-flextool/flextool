@@ -20,6 +20,7 @@ from typing import Any
 
 import spinedb_api as api
 from spinedb_api import Array, DatabaseMapping, Map, SpineDBAPIError
+from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api.exception import NothingToCommit
 
 from flextool.process_inputs.read_old_flextool import (
@@ -1892,7 +1893,7 @@ def write_old_flextool_to_db(
     """
     logger.info("Opening database: %s", db_url)
 
-    with DatabaseMapping(db_url, create=False, upgrade=True) as db:
+    with open_database_mapping(db_url, create=False, upgrade=True) as db:
         if purge:
             logger.info("Purging existing data...")
             _purge_database(db)
@@ -2735,7 +2736,7 @@ def write_sensitivities_to_db(
         len(sensitivities), db_url,
     )
 
-    with DatabaseMapping(db_url, create=False, upgrade=True) as db:
+    with open_database_mapping(db_url, create=False, upgrade=True) as db:
         counters = _Counters()
         entity_alts_added: set[tuple[str, tuple[str, ...], str]] = set()
 
@@ -3013,7 +3014,7 @@ def _sqlite_path_from_url(db_url: str) -> str | None:
 def _db_is_initialized(db_url: str) -> bool:
     """True if the DB already carries the FlexTool schema (``model.version``)."""
     try:
-        with DatabaseMapping(db_url) as db:
+        with open_database_mapping(db_url) as db:
             return db.get_parameter_definition_item(
                 entity_class_name="model", name="version"
             ) is not None

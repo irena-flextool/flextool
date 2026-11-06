@@ -220,7 +220,7 @@ class TimelineConfig:
         Mirrors :meth:`flextool.engine.input._solve_config.SolveConfig.load_from_db_url`
         — same pattern.
         """
-        from spinedb_api import DatabaseMapping
+        from flextool.update_flextool.db_handle import open_database_mapping
         from spinedb_api.filters.scenario_filter import (
             apply_scenario_filter_to_subqueries,
         )
@@ -230,7 +230,7 @@ class TimelineConfig:
         url = str(db_url)
         if "://" not in url:
             url = f"sqlite:///{url}"
-        with DatabaseMapping(url) as db:
+        with open_database_mapping(url) as db:
             apply_scenario_filter_to_subqueries(db, scenario)
             # Pre-warm caches — see SolveConfig.load_from_db_url for
             # the rationale.  Measured 1.76× speedup on large customer

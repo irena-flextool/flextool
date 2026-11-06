@@ -114,7 +114,8 @@ def _resolve_native_scenario(db_path: Path, work: Path) -> str | None:
     as the parity tests.  Returns ``None`` when no rule matches.
     """
     import re
-    import spinedb_api as api
+
+    from flextool.update_flextool.db_handle import open_database_mapping
 
     if work.name in _NATIVE_SCENARIO_OVERRIDES:
         return _NATIVE_SCENARIO_OVERRIDES[work.name]
@@ -124,7 +125,7 @@ def _resolve_native_scenario(db_path: Path, work: Path) -> str | None:
         return None
 
     try:
-        with api.DatabaseMapping("sqlite:///" + str(db_path)) as db:
+        with open_database_mapping("sqlite:///" + str(db_path)) as db:
             scenarios = sorted(s.name for s in db.query(db.scenario_sq).all())
     except Exception:
         return None

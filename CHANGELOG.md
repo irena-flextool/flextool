@@ -1,5 +1,8 @@
 ## Unreleased
 
+- **Fixed: on Windows, a database could not be deleted or replaced after a run in the same Python session**
+  (Spine Toolbox console, a script calling FlexTool): the run kept the input database, the output-info database
+  and `results.sqlite` open after it finished. Every database FlexTool opens is now closed when it is done.
 - **Fixed: on Windows, creating or migrating a database wrote garbled parameter descriptions** (`â†’` for `→`,
   `â€”` for `—`). The schema and template JSON files were read with the Windows code page instead of UTF-8;
   they are now always read as UTF-8.

@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 import pandas as pd
-from spinedb_api import DatabaseMapping
+from flextool.update_flextool.db_handle import open_database_mapping
 
 from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
 from flextool.scenario_comparison.data_models import TimeSeriesResults
@@ -35,7 +35,7 @@ def read_scenario_folders(db_url: str) -> dict[str, str]:
     """
     scenario_folders: dict[str, str] = {}
 
-    with DatabaseMapping(db_url) as db_map:
+    with open_database_mapping(db_url) as db_map:
         # At the results stage, scenarios have been flattened to alternatives.
         # Get alternative names from URL filter config (set by Spine Toolbox)
         # or fall back to reading all alternatives from the database.

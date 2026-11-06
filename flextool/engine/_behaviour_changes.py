@@ -203,10 +203,11 @@ def read_markers_from_url(db_url: str) -> dict[str, str]:
 
     A database that cannot be opened gives ``{}``: the run reports that itself when it reads the model.
     """
-    from spinedb_api import DatabaseMapping, SpineDBAPIError
+    from spinedb_api import SpineDBAPIError
+    from flextool.update_flextool.db_handle import open_database_mapping
 
     try:
-        with DatabaseMapping(str(db_url)) as db:
+        with open_database_mapping(str(db_url)) as db:
             return read_markers(db)
     except SpineDBAPIError:
         return {}

@@ -712,7 +712,7 @@ class SolveConfig:
         the DB.  Useful for tests / CLI entry points that don't already
         own a session.
         """
-        from spinedb_api import DatabaseMapping
+        from flextool.update_flextool.db_handle import open_database_mapping
         from spinedb_api.filters.scenario_filter import (
             apply_scenario_filter_to_subqueries,
         )
@@ -722,7 +722,7 @@ class SolveConfig:
         url = str(db_url)
         if "://" not in url:
             url = f"sqlite:///{url}"
-        with DatabaseMapping(url) as db:
+        with open_database_mapping(url) as db:
             apply_scenario_filter_to_subqueries(db, scenario)
             # Pre-warm the entity + parameter_value caches so the
             # ``find_entities`` / ``find_parameter_values`` calls inside

@@ -1,7 +1,7 @@
 import logging
 import sys
 import spinedb_api as api
-from spinedb_api import DatabaseMapping
+from flextool.update_flextool.db_handle import open_database_mapping
 from pathlib import Path
 
 from flextool.engine.input._db_reader import check_version
@@ -62,7 +62,7 @@ class FlexToolRunner:
             # open connection to input db
             if scenario_name:
                 scen_config = api.filters.scenario_filter.scenario_filter_config(scenario_name)
-            with (DatabaseMapping(input_db_url) as db):
+            with (open_database_mapping(input_db_url) as db):
                 if scenario_name:
                     api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
                 else:

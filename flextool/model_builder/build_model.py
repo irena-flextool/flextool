@@ -560,9 +560,10 @@ def build_model(
 
     # Direct database import
     if db_url is not None:
-        from spinedb_api import DatabaseMapping, import_data
+        from spinedb_api import import_data
+        from flextool.update_flextool.db_handle import open_database_mapping
 
-        with DatabaseMapping(db_url) as db:
+        with open_database_mapping(db_url) as db:
             num, log = import_data(db, **result)
             print(f"  Database import: {num} items")
             if log:

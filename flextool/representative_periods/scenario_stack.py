@@ -17,7 +17,7 @@ already in the stack is left untouched.
 
 from __future__ import annotations
 
-from spinedb_api import DatabaseMapping
+from flextool.update_flextool.db_handle import open_database_mapping
 
 
 def existing_alternative_names(db_url: str) -> set[str]:
@@ -33,7 +33,7 @@ def existing_alternative_names(db_url: str) -> set[str]:
     Returns:
         The names of every alternative in the (unfiltered) database.
     """
-    with DatabaseMapping(db_url) as db:
+    with open_database_mapping(db_url) as db:
         return {alt["name"] for alt in db.get_alternative_items()}
 
 
@@ -81,7 +81,7 @@ def add_alternative_to_scenario(
     Raises:
         ValueError: If the scenario or the alternative does not exist.
     """
-    with DatabaseMapping(db_url) as db:
+    with open_database_mapping(db_url) as db:
         # ``get_*_item`` returns an empty dict (falsy) when nothing matches.
         if not db.get_scenario_item(name=scenario_name):
             raise ValueError(f"Scenario '{scenario_name}' does not exist in the database.")
@@ -138,7 +138,7 @@ def create_scenario_with_alternative(
     Raises:
         ValueError: If the base scenario or the alternative does not exist.
     """
-    with DatabaseMapping(db_url) as db:
+    with open_database_mapping(db_url) as db:
         if not db.get_scenario_item(name=base_scenario_name):
             raise ValueError(
                 f"Scenario '{base_scenario_name}' does not exist in the database."

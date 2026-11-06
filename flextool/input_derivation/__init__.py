@@ -42,7 +42,7 @@ from typing import TYPE_CHECKING
 
 import polars as pl
 import spinedb_api as api
-from spinedb_api import DatabaseMapping
+from flextool.update_flextool.db_handle import open_database_mapping
 
 if TYPE_CHECKING:
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
@@ -312,7 +312,7 @@ def run(
             api.filters.scenario_filter.scenario_filter_config(scenario_name)
             if scenario_name else None
         )
-        with DatabaseMapping(backend_or_db_url) as db:
+        with open_database_mapping(backend_or_db_url) as db:
             # Hot-load the DB: fetching upfront is faster than repeated
             # parameter_value lookups.
             db.fetch_all("entity")
