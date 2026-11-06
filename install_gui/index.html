@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../img/irena_flextool_favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -1068,6 +1068,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1383,14 +1411,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../dev/engine_polars/" class="md-nav__link">
+      <a href="../dev/engine/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    The engine_polars pipeline
+    The engine pipeline
   
 
     
@@ -1558,7 +1586,7 @@
   <span class="md-ellipsis">
     
   
-    Environment variables
+    Environment variables (developer)
   
 
     
@@ -2057,6 +2085,8 @@
 <h2 id="requirements">Requirements</h2>
 <ul>
 <li><strong>Python ≥ 3.11</strong> (see <code>requires-python</code> in <code>pyproject.toml</code> for up-to-date requirements)</li>
+<li><strong>64-bit Windows 10 or 11, Linux or macOS.</strong> Windows 7 and 8.1 cannot run FlexTool 4 (its libraries need Windows 10). If a library reports "DLL load failed" on Windows, install the Microsoft Visual C++ Redistributable (x64, https://aka.ms/vs/17/release/vc_redist.x64.exe).</li>
+<li><strong>Processor (Intel/AMD):</strong> at least SSE4.2 and POPCNT (x86-64-v2: Intel Core i3/i5/i7 from 2009 on, AMD FX or Ryzen; Core 2 and Phenom II are not supported). AVX2 (most processors from 2013 on) runs the fastest build. Without AVX2 (for example Celeron/Pentium laptops up to about 2021, Intel Core before 2013, AMD FX), FlexTool uses the compatible build of the <code>polars</code> data library (about 10-30% slower): add the <code>compat</code> extra (<code>pip install "flextool[compat]"</code>). Without it, FlexTool says why it needs the compatible build and gives the pip command: in a terminal it asks before running it, the GUI asks at startup (in its terminal, or in a small yes/no dialog when started from a shortcut) before it loads polars and closes if you decline, a Spine Toolbox tool stops with the message, and <code>flextool-update</code> installs it. Run <code>python -m flextool.env_check</code> to see what FlexTool found.</li>
 <li><strong>Git</strong> (optional, but recommended for easy updates)</li>
 </ul>
 <h2 id="installation-steps">Installation Steps</h2>
@@ -2226,10 +2256,10 @@ python<span class="w"> </span>update_flextool.py
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
         <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
       

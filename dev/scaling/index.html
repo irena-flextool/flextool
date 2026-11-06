@@ -13,7 +13,7 @@
       
       
       
-        <link rel="prev" href="../engine_polars/">
+        <link rel="prev" href="../engine/">
       
       
         <link rel="next" href="../slack_convention/">
@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../img/irena_flextool_favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -766,6 +766,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1081,14 +1109,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../engine_polars/" class="md-nav__link">
+      <a href="../engine/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    The engine_polars pipeline
+    The engine pipeline
   
 
     
@@ -1230,6 +1258,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#small-coefficients-rounded-to-zero" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Small coefficients rounded to zero
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#legacy-lp-row-scaling" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1241,10 +1280,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#precision-rounding" class="md-nav__link">
+  <a href="#input-values-are-not-rounded" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Precision rounding
+        Input values are not rounded
       
     </span>
   </a>
@@ -1397,7 +1436,7 @@
   <span class="md-ellipsis">
     
   
-    Environment variables
+    Environment variables (developer)
   
 
     
@@ -1673,6 +1712,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#small-coefficients-rounded-to-zero" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Small coefficients rounded to zero
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#legacy-lp-row-scaling" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1684,10 +1734,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#precision-rounding" class="md-nav__link">
+  <a href="#input-values-are-not-rounded" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Precision rounding
+        Input values are not rounded
       
     </span>
   </a>
@@ -1843,6 +1893,36 @@ acceptance policy in <code>_solve_acceptance.py</code>.)</p>
   Layer 2 leaves those columns alone — the YAML records that the
   scaler was clamped.</li>
 </ul>
+<h2 id="small-coefficients-rounded-to-zero">Small coefficients rounded to zero</h2>
+<p>Two cutoffs remove near-zero coefficients before any scaling (both are
+judged on the coefficient's own, unscaled value):</p>
+<ul>
+<li><strong>Matrix and right-hand side</strong> — <code>model.small_number_threshold</code>
+  (default <code>1e-4</code>; polar-high <code>Problem.coef_zero_threshold</code>). A
+  constraint coefficient or RHS term with <code>|value| &lt; threshold</code>
+  becomes 0. It does not apply to the objective.</li>
+<li><strong>Tiny cost coefficients (objective)</strong> — polar-high
+  <code>Problem.obj_coef_zero_rel_threshold</code>, which FlexTool sets to
+  <code>OBJ_COEF_ZERO_REL_THRESHOLD = 1e-14</code> (<code>flextool/engine/model/core.py</code>,
+  not a database parameter). A variable's total cost coefficient below
+  <code>2**floor(log2(1e-14 · max|cost|))</code> becomes 0. Layer 3 centres the
+  objective on the cost range <code>[min|c|, max|c|]</code>; one float leftover
+  such as a <code>1e-17</code> cost (from an algebraic cancellation) stretched
+  that range to 17 decades, Layer 3 then scaled the objective by
+  <code>2**25</code> and HiGHS' dual simplex failed with "excessive dual values"
+  (#140). The cutoff is applied to the cost vector the solver gets,
+  the pre-solve range readout that Layer 3 uses, and the warm-start
+  cost updates.</li>
+</ul>
+<p>The cutoff is <strong>relative</strong> to the largest cost on purpose. Costs
+  legitimately span many decades. Across the LP-snapshot fixtures the
+  smallest real cost is <code>4.1e-5</code> (slack penalties of
+  <code>rolling_separate_dispatch</code>), so reusing <code>small_number_threshold</code>
+  (<code>1e-4</code>) would delete real costs. The widest real spread is
+  min/max = <code>1.4e-12</code> (11.8 decades). <code>1e-14</code> is about 100 machine
+  epsilons below the largest cost: below every real spread, above
+  cancellation residue. Being relative, it also scales with
+  <code>scale_the_objective</code>. It changes none of the snapshot LPs.</p>
 <h2 id="legacy-lp-row-scaling">Legacy LP row-scaling</h2>
 <p>Separate from the autoscale package, FlexTool still ships an LP
 row-scaling family that multiplies node-balance / group-balance rows by
@@ -1855,17 +1935,16 @@ the autoscaler. Every solve emits <code>p_use_row_scaling=0</code> by default, s
 the legacy family is off unless forced via the
 <code>FLEXTOOL_FORCE_ROW_SCALING</code> test hook. Output un-scaling is wired into
 <code>process_outputs/read_highs_solution.py</code> either way.</p>
-<h2 id="precision-rounding">Precision rounding</h2>
-<p>Every numeric CSV cell is rounded to 10 significant figures by default
-before it is written to <code>input/</code> or <code>solve_data/</code>. On very large
-values (e.g. annual flows in the 1e9 range) this may shift downstream
-objectives by <code>≤ 1e-11</code> relative — sub-microscopic but real and
-deterministic.</p>
-<p>Override with <code>--precision-digits 15</code> to effectively disable rounding.</p>
+<h2 id="input-values-are-not-rounded">Input values are not rounded</h2>
+<p>FlexTool passes every input value to the model at full double
+precision; nothing rounds parameter values before the LP is built.
+(An earlier <code>--precision-digits</code> option claimed to round inputs to 10
+significant figures, but it never reached a normal run; it was removed.)</p>
 <h2 id="troubleshooting-checklist">Troubleshooting checklist</h2>
 <ul>
-<li><strong>"My objective doesn't match a pre-scaling reference."</strong> Check
-  <code>--precision-digits</code>. Default 10; was effectively 16 before.</li>
+<li><strong>"My objective doesn't match a pre-scaling reference."</strong> Compare
+  with <code>--scaling=off</code>: the scaled and unscaled solves agree within the
+  solver tolerance, not bit for bit.</li>
 <li><strong>"HiGHS reports non-optimal."</strong> Read the console hint and open
   <code>solve_data/autoscale_&lt;solve&gt;.yaml</code>. The post-Layer-2 ranges show
   whether Layer 2 compressed the spread; the <code>layer3</code> section shows
@@ -1937,10 +2016,10 @@ deterministic.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
         <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
       

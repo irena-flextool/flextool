@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../img/irena_flextool_favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -962,6 +962,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1277,14 +1305,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../dev/engine_polars/" class="md-nav__link">
+      <a href="../dev/engine/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    The engine_polars pipeline
+    The engine pipeline
   
 
     
@@ -1452,7 +1480,7 @@
   <span class="md-ellipsis">
     
   
-    Environment variables
+    Environment variables (developer)
   
 
     
@@ -1868,6 +1896,10 @@ reconstructs the workflow, item positions, and connections.</p>
 Ticking scenarios there decides which ones run when you execute the workflow; Toolbox can
 execute several in parallel as long as the <strong>FlexTool</strong> item is configured to use work
 directories.</p>
+<p>Each FlexTool run uses all available cores for its own data processing (at most 8 threads) unless told
+otherwise, and Toolbox does not pass a thread count. When Toolbox runs several scenarios at once, add
+<code>--threads N</code> to the <strong>FlexTool</strong> Tool's command-line arguments, with N about the number of cores divided by
+the number of runs executed at once. N covers FlexTool's data processing and the solver of each run.</p>
 <h2 id="the-shipped-workflow">The shipped workflow</h2>
 <p>The v4 workflow has been streamlined from the v3 layout: there is <strong>no longer an
 <code>Export_to_csv</code> step</strong>, because the v4 engine builds the LP in memory directly from the
@@ -2071,10 +2103,10 @@ project file lives wherever you put it.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
         <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
       

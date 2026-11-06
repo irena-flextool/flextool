@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../img/irena_flextool_favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -561,6 +561,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Costs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#costs-of-a-run-of-several-solves" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Costs of a run of several solves
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -640,6 +657,17 @@
     <span class="md-ellipsis">
       
         Unit online and startup
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connection-online-and-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connection online and startup
       
     </span>
   </a>
@@ -1017,6 +1045,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1332,14 +1388,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../dev/engine_polars/" class="md-nav__link">
+      <a href="../dev/engine/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    The engine_polars pipeline
+    The engine pipeline
   
 
     
@@ -1507,7 +1563,7 @@
   <span class="md-ellipsis">
     
   
-    Environment variables
+    Environment variables (developer)
   
 
     
@@ -1730,6 +1786,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Costs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#costs-of-a-run-of-several-solves" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Costs of a run of several solves
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1809,6 +1882,17 @@
     <span class="md-ellipsis">
       
         Unit online and startup
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connection-online-and-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connection online and startup
       
     </span>
   </a>
@@ -1990,9 +2074,11 @@
 </tr>
 </tbody>
 </table>
+<p><code>output_parquet/&lt;scenario&gt;/timeline_breaks.parquet</code> (columns <code>period</code>, <code>time</code>) lists the realized steps at which time-series plots start a new line, so a plot leaves a gap there instead of drawing a straight line across it: the step after a gap in the timeline, the start of every representative period (also when two representative periods are adjacent on the timeline, since they represent different base periods), and the first step of a period that does not continue the previous one (also a later year that reuses the same timeset). Rolling windows that follow each other on the timeline, and periods that continue the previous one, are drawn as one line. The file is written also when there are no breaks. Results saved before this file had the <code>period</code> and <code>time</code> columns are drawn without gaps until the scenario is run again. In scenario comparison plots the scenarios share one time axis, so a break of any selected scenario cuts every scenario's line at that step.</p>
 <p>The CSV / Excel / plot files are <strong>derived</strong> from the parquets, so deleting or regenerating them is safe. <code>summary_solve.csv</code> is a diagnostic file aimed at a quick overview of a solve — it lists objective decomposition, period weighting, CO2 total, and any non-zero slack uses.</p>
 <p>All annualized numbers are scaled to <strong>a full year of operation</strong> by dividing through by <code>complete_period_share_of_year</code>. All values are returned in user units — auto-scaling (see <a href="../dev/scaling/">LP scaling pipeline</a>) and time-block aggregation under flex-temporal decomposition are unwound before they reach the parquets, so users always read MW / MWh / [CUR] in the original problem space.</p>
-<p>For stochastic models the parquets carry only the <strong>realised / committed</strong> results of each solve by default — the here-and-now committed decisions plus, where a branch is designated realized, its dispatch — not the individual forecast branches. Setting the <code>model</code> parameter <code>output_horizon = yes</code> adds the forecast-branch (unrealised) rows to the time-series tables (<code>*_t</code>, <code>*_dt</code>) so the unrealised futures are visible for debugging — note that cost aggregates in that mode mix the committed results with the unrealised forecast contributions and should not be used as final results (see also <a href="../how_to/#how-to-use-stochastics-representing-uncertainty">How to use stochastics</a>).</p>
+<p>For stochastic models the parquets carry only the <strong>realised / committed</strong> results of each solve by default — the investment decisions, the operations of the periods before the reveal and, where a branch is designated realized, the realization dispatch of the fan — not the individual forecast branches. A forecasts-only fan has no realized operation, so its operational results are empty (the period label of the fan has no dispatch) and its operating costs and CO2 total are zero; its results hold the investment decisions and the investment and fixed costs (see <a href="#costs-of-a-run-of-several-solves">Costs of a run of several solves</a>). The same holds for a rolling solve: only the realized steps of each roll (up to <code>rolling_solve_jump</code>) are reported, never its look-ahead. This does not depend on the <code>model</code> parameter <code>output_horizon</code> — the unrealized rows are only in its separate raw dump, below (see also <a href="../how_to/#how-to-use-stochastics-representing-uncertainty">How to use stochastics</a>).</p>
+<p>With <code>output_horizon = yes</code> (a debug option), <code>output_parquet/&lt;scenario&gt;/horizon/</code> holds a <strong>raw LP dump</strong>: one parquet per LP variable and constraint, named as in the model (<code>v_flow.parquet</code>, <code>v_invest_p.parquet</code>, <code>nodeBalance_eq.parquet</code>, …), with every row of every solve — realized and unrealized (forecast branches, rolling look-ahead) alike — appended over the solves and rolls. Columns: the LP index columns (<code>p</code>, <code>n</code>, <code>d</code>, <code>t</code>, …), <code>solve</code>, <code>roll</code>, <code>realized</code> (<code>true</code> for the rows that also reach the normal results; empty for a variable or constraint without a period index), and <code>value</code> + <code>reduced_cost</code> for a variable or <code>dual</code> for a constraint. The values are raw solver values: primal values per unitsize as in the LP, duals and reduced costs only divided by <code>scale_the_objective</code> (HiGHS sign convention, probability and time weights included, empty for a MIP solve) — no unitsize, price or cost conversion. A solve decomposed with Benders is not dumped. The dump keeps every constraint's index until the solve's outputs are written, so it raises peak memory on large models.</p>
 <ul>
 <li><a href="#costs">Costs</a></li>
 <li><a href="#cost-by-entity">Cost by entity</a></li>
@@ -2001,6 +2087,7 @@
 <li><a href="#capacity-factors">Capacity factors</a></li>
 <li><a href="#energy-balance-in-nodes">Energy balance in nodes</a></li>
 <li><a href="#unit-online-and-startup">Unit online and startup</a></li>
+<li><a href="#connection-online-and-startup">Connection online and startup</a></li>
 <li><a href="#unit-curtailment-and-vre-potential">Unit curtailment and VRE potential</a></li>
 <li><a href="#node-group-results">Node group results</a></li>
 <li><a href="#flow-group-results">Flow group results</a></li>
@@ -2014,7 +2101,9 @@
 </ul>
 <h2 id="costs">Costs</h2>
 <ul>
-<li><code>model</code> entity <code>cost_annualized</code> parameter — M[CUR] (millions of user-chosen currency); annualized total cost broken down by category:<ul>
+<li>
+<p><code>model</code> entity <code>cost_annualized</code> parameter — M[CUR] (millions of user-chosen currency); annualized total cost broken down by category:</p>
+<ul>
 <li><em>unit investment &amp; retirement</em> — M[CUR] cost of investing in unit capacity or salvage from retiring it</li>
 <li><em>connection investment &amp; retirement</em> — M[CUR] same for connections</li>
 <li><em>storage investment &amp; retirement</em> — M[CUR] same for node states (storages)</li>
@@ -2022,7 +2111,7 @@
 <li><em>fixed cost invested</em> — M[CUR] fixed O&amp;M for newly invested capacity</li>
 <li><em>fixed cost reduction of divestments</em> — M[CUR] fixed O&amp;M removed by divestments</li>
 <li><em>commodity cost</em> / <em>commodity sales</em> — M[CUR] cost of buying / revenue from selling commodities</li>
-<li><em>co2</em> — M[CUR] cost of CO2 emissions caused by commodities with CO2 content</li>
+<li><em>co2</em> — M[CUR] cost of CO2 emissions caused by commodities with CO2 content, net of the removal credit (negative cost) for flows into the same priced group's node(s)</li>
 <li><em>other operational</em> — M[CUR] other variable O&amp;M costs</li>
 <li><em>starts</em> — M[CUR] start-up costs</li>
 <li><em>upward / downward slack penalty</em> — M[CUR] cost of involuntary demand reduction / increase</li>
@@ -2031,11 +2120,57 @@
 <li><em>capacity margin penalty</em> — M[CUR] cost of not meeting the capacity margin constraint</li>
 <li><em>upward / downward reserve slack penalty</em> — M[CUR] cost of not meeting the reserve constraint</li>
 </ul>
+<p>The annualized investment &amp; retirement, <em>fixed cost invested</em> and <em>fixed cost reduction of divestments</em> are
+the yearly amounts of every vintage and retirement in effect in the period: an investment adds its annuity (the
+<code>invest_cost</code> annuity of the period the capacity starts to operate) and its yearly fixed cost in every period it
+operates within the run (within its <code>lifetime</code>, or every later period with <code>reinvest_automatic</code>); a retirement
+subtracts its salvage annuity in every period from the retirement until <code>lifetime</code> later, and the yearly fixed
+cost of the retired capacity in every period the retirement counts in (until the end of life of the existing
+capacity). They are reported only for capacity whose investment cost is reported (see the next section). For these
+columns the annualized value is therefore not the discounted value divided by the period's discount factor,
+which holds for the other columns.
+- <code>model</code> entity <code>cost_t</code> parameter — [CUR] (currency, not millions) same categories as above but per timestep: the cost incurred during the step, with the step duration and timestep weight applied but not scaled to a full year (no investment / fixed terms). The CSV / parquet output <code>costs__dt</code> has the same values and unit.
+- <code>model</code> entity <code>cost_discounted_solve</code> parameter — M[CUR] costs for the solve considering discounting and years represented (NPV currency)
+- <code>model</code> entity <code>cost_discounted_total</code> parameter — M[CUR] same, totalled over all realised periods</p>
 </li>
-<li><code>model</code> entity <code>cost_t</code> parameter — M[CUR] same categories as above but per timestep (no investment / fixed terms)</li>
-<li><code>model</code> entity <code>cost_discounted_solve</code> parameter — M[CUR] costs for the solve considering discounting and years represented (NPV currency)</li>
-<li><code>model</code> entity <code>cost_discounted_total</code> parameter — M[CUR] same, totalled over all realised periods</li>
 </ul>
+<h3 id="costs-of-a-run-of-several-solves">Costs of a run of several solves</h3>
+<p>When <code>model.solves</code> holds several solves (a chain of investment solves, an investment solve and its dispatch
+solves, a stochastic solve and its realization solve), the reported costs are those of the run as a whole, the same
+as one solve over the same periods with the same decisions would report:</p>
+<ul>
+<li><strong>One discount base, the start of the run.</strong> Every discounted cost counts its years from the first period of the
+  run, not from the first period of the solve that reports it.</li>
+<li><strong>Each realized period is reported once, by the solve that realizes it</strong>: its operating and penalty costs come
+  from that solve's dispatch.</li>
+<li><strong>New capacity</strong> is reported in the period where it starts to operate (the decision period without a
+  <code>construction_lead_time</code>; during the lead time it is only <code>in_construction</code>, at no cost). Its investment cost
+  (the annuity over the years it operates within the run, at the <code>invest_cost</code>, <code>lifetime</code> and <code>discount_rate</code> of
+  that period) and the fixed cost over the same years come once, from the solve that decided it, and are reported
+  only once a solve realizes the period it starts to operate in. Capacity carried from an earlier solve is
+  therefore not charged again as existing capacity.</li>
+<li><strong>Retirements</strong> are reported in the retirement period: the salvage annuity over the years from the retirement
+  until <code>lifetime</code> later, and the fixed cost saved in the periods the retirement counts in. The fixed cost of existing capacity (<em>fixed cost pre-existing</em>) is that of the
+  capacity given in <code>existing</code>, aged over its lifetime, in every period of the run, also in the last solve's
+  look-ahead periods that no solve realizes (the fixed cost of new capacity covers them too).</li>
+<li><strong>Inside a stochastic fan</strong> the investment cost and the fixed cost of the new capacity that operates in the fan's
+  branch periods are reported, weighted by each branch's probability weight, at the fan's period label of the
+  period the capacity starts to operate in (with or without a <code>construction_lead_time</code>, and also without a
+  realization solve). A shared investment (<code>stochastic_invest_method</code> none) is one decision whose branch weights
+  sum to 1, so it is reported at its full amount; under <code>recourse</code> each forecast's own investment is reported
+  times its branch weight (the expected investment, as in the objective). Retirements in the branch periods of a
+  recourse fan are not reported.</li>
+<li>In a stochastic solve with a realization solve, the investments come from the stochastic solve and the
+  operations and the fixed cost of existing capacity from the realization solve. A fan without a realization
+  solve reports no operating or penalty costs; the fixed cost of existing capacity is reported in the fan's
+  period labels.</li>
+</ul>
+<p>The printed objective of each solve, the cumulative CO2 cap price and the investment duals (<code>invest_marginal</code>,
+the value of one more MW of capacity) stay discounted from the start of that solve, so <code>cost_discounted_total</code> is
+not the sum of the solves' objectives and the investment duals of later solves of a chain are on a later discount
+base. The CO2 price of a period is its dual divided by the discount factor of the solve that realizes the period.
+A CSV-dump reload has no run-level cost data: its reported costs are discounted from the start of each solve and
+its annualized investment, retirement and fixed costs of new and retired capacity are 0 (a warning is printed).</p>
 <h2 id="cost-by-entity">Cost by entity</h2>
 <p>The system <a href="#costs">Costs</a> above are also broken down <strong>per entity at the period level</strong>, so you can see which unit, connection or node drives each cost category. Six result tables are produced — one for each entity type (<code>unit</code>, <code>connection</code>, <code>node</code>) in each of two flavours:</p>
 <ul>
@@ -2056,21 +2191,22 @@
 <li><em>starts</em> — M[CUR] start-up costs (units)</li>
 <li><em>investment</em> / <em>retirement</em> — M[CUR] cost of investing in unit / connection capacity or salvage from retiring it (named <em>storage investment</em> / <em>storage retirement</em> in the <code>node</code> table, where the capacity is node-state storage energy)</li>
 <li><em>fixed cost pre-existing</em> / <em>fixed cost invested</em> / <em>fixed cost reduction of divestments</em> — M[CUR] fixed O&amp;M for pre-existing, newly invested and divested capacity</li>
+<li>in the <em>annualized</em> tables, <em>investment</em>, <em>retirement</em>, <em>fixed cost invested</em> and <em>fixed cost reduction of divestments</em> are the yearly amounts in every period the capacity operates or the retirement applies, as in the system <a href="#costs">Costs</a></li>
 <li><em>upward slack penalty</em> / <em>downward slack penalty</em> (<code>node</code> table only) — M[CUR] cost of involuntary demand reduction / increase at the node</li>
 </ul>
 <p>Attribution rules (matching the LP objective):</p>
 <ul>
 <li><strong>Fuel / commodity cost</strong> is attributed to the <strong>consuming process</strong> — the unit or connection that draws the commodity — not to the source node.</li>
-<li><strong>CO2 cost</strong> for a process is the <strong>sum over every priced group the process touches</strong>, so a flow that contributes emissions to several priced groups carries the full cost of each.</li>
+<li><strong>CO2 cost</strong> for a process is the <strong>sum over every priced group the process touches</strong>, so a flow that contributes emissions to several priced groups carries the full cost of each. A flow into a priced group's node (removal) carries a negative cost (credit) the same way.</li>
 </ul>
 <p>By construction these tables are purely additive collapses of the same per-entity intermediates the system summary uses, so <strong>summing any category over all entities reproduces the system summary</strong>: the <code>unit</code> + <code>connection</code> + <code>node</code> contributions for a given category and period add up to the matching <code>cost_annualized</code> / <code>cost_discounted_total</code> category value (<code>annualized_costs_d_p</code> / <code>costs_discounted_d_p</code> in the parquet store).</p>
 <p>These are period-level tables only — there are no per-timestep per-entity cost tables.</p>
 <h2 id="prices">Prices</h2>
 <ul>
-<li><code>node</code> entity <code>price_t</code> parameter — [CUR/MWh] dual of the balance constraint for every node that maintains an energy balance (nominal currency at period <code>d</code>, un-discounted from NPV)</li>
-<li><code>group__reserve__upDown</code> entity <code>reserve_price_t</code> parameter — [CUR/MWh] dual of the reserve balance constraint</li>
-<li><code>group</code> entity <code>co2_price_period</code> parameter — [CUR/tCO2] shadow price of the per-period CO2 cap (nominal currency, sign-flipped so a binding cap shows positive)</li>
-<li><code>group</code> entity <code>co2_price_total</code> parameter — [CUR/tCO2] shadow price of the cumulative CO2 cap (NPV currency, broadcast across periods)</li>
+<li><code>node</code> entity <code>price_t</code> parameter — [CUR/MWh] the cost of one more MWh of demand at that node and time step (the dual of the node's energy balance; positive when more demand would cost more), for every node that maintains an energy balance. It is in the price base of the cost inputs: the inflation / discounting of the period and the years it represents are removed, and it is not weighted by the timestep weight (<code>timeset_weights</code>, representative-period weights) or by the branch probability — in a stochastic solve each forecast branch reports its own price, not its probability-weighted contribution (the cost outputs per step are probability-weighted, so price × flow is not the branch's cost row). A step that the objective does not weigh (e.g. a step that <code>timeset_weights</code> leaves out) has no price (empty). A node of a group with a coarser <code>new_stepduration</code> (and a <code>bind_intraperiod_blocks</code> storage node) has one balance per coarse step (per timeset block); its price is that balance's dual, the same at every time step of the coarse step when the steps have the same weight. Within a coarse step the energy may be moved freely between time steps, so for such a node the hour at which a slack (or any flow that only the coarse balance limits) is reported is one of several equally good choices; with a time-varying penalty the solver picks the cheapest hour. For a storage node the price is the value of stored energy.</li>
+<li><code>group__reserve__upDown</code> entity <code>reserve_price_t</code> parameter — [CUR/MWh] the cost of one more MW of reserve requirement held for one hour (in the same price base and with the same weights removed as <code>price_t</code>): the sum of the duals of the group's requirement constraints at the step (the timeseries requirement, the dynamic requirement and the large-failure requirement of every failing unit or connection), i.e. the cost of one more MW of every requirement of the group at once. Reported for every group with a requirement. When the requirement is not met it equals <code>penalty_reserve</code>.</li>
+<li><code>group</code> entity <code>co2_price_period</code> parameter — [CUR/tCO2] shadow price of the per-period CO2 cap (nominal currency, sign-flipped so a binding cap shows positive). In a rolling solve where a period's hours are split across more than one roll, the reported price is the hour-weighted average of the rolls that realize it (weighted by the hours each roll keeps of the period). In a stochastic solve each scenario path reports its own price, not its price times the path's branch probability.</li>
+<li><code>group</code> entity <code>co2_price_total</code> parameter — [CUR/tCO2] shadow price of the cumulative CO2 cap, per tonne over the represented years (NPV currency, broadcast across periods)</li>
 </ul>
 <h2 id="energy-flows">Energy flows</h2>
 <ul>
@@ -2096,7 +2232,7 @@
 <h2 id="energy-balance-in-nodes">Energy balance in nodes</h2>
 <ul>
 <li><code>node</code> entity <code>balance</code> parameter — [MWh] annualized period sum of all balance contributions: <em>From units</em>, <em>From connections</em>, <em>To units</em>, <em>To connections</em>, <em>Self discharge</em>, <em>Loss of load</em> (upward slack), <em>Excess load</em> (downward slack), <em>Inflow</em></li>
-<li><code>node</code> entity <code>balance_t</code> parameter — [MW] same categories per timestep</li>
+<li><code>node</code> entity <code>balance_t</code> parameter — [MW] same categories per timestep. <em>Self discharge</em> is the energy the storage lost in the step (the loss the optimisation used) divided by the step length; the loss of a coarse step (<code>new_stepduration</code> group) or of a <code>bind_intraperiod_blocks</code> block is spread evenly over its time steps.</li>
 <li><code>node</code> entity <code>state_t</code> parameter — [MWh] storage state of the node at each timestep (state nodes only; multiplied by <code>entity_unitsize</code> so the value is in storage MWh, not the scaled LP variable)</li>
 </ul>
 <h2 id="unit-online-and-startup">Unit online and startup</h2>
@@ -2104,6 +2240,13 @@
 <li><code>unit</code> entity <code>online_t</code> parameter — [count] number of units online at each timestep</li>
 <li><code>unit</code> entity <code>online_average</code> parameter — [count] average online status over the period (weighted by step duration)</li>
 <li><code>unit</code> entity <code>startup_annualized</code> parameter — [count] startups during the period scaled to a full year (weighted by <code>rp_cost_weight</code> to handle representative periods correctly)</li>
+</ul>
+<h2 id="connection-online-and-startup">Connection online and startup</h2>
+<p>Only for connections with a <code>startup_method</code>:</p>
+<ul>
+<li><code>connection</code> entity <code>online_t</code> parameter — [count] units of the connection online at each timestep</li>
+<li><code>connection</code> entity <code>online_average</code> parameter — [count] average online status over the period (weighted by step duration)</li>
+<li><code>connection</code> entity <code>startup_cumulative</code> parameter — [count] startups during the period scaled to a full year (as for units)</li>
 </ul>
 <h2 id="unit-curtailment-and-vre-potential">Unit curtailment and VRE potential</h2>
 <p>For VRE units (units that use an <code>upper_limit</code> profile) the model also reports curtailment and potential generation against each output node:</p>
@@ -2155,17 +2298,19 @@
 <p><code>unit</code>, <code>connection</code>, <code>node</code> entities <code>capacity</code> parameter — [MW or MWh] decomposed into:</p>
 <ul>
 <li><em>existing</em> — capacity assumed at the start of the period</li>
-<li><em>invested</em> — capacity the model decided to invest in for the period</li>
+<li><em>invested</em> — capacity that comes online in the period (without a construction lead time, the capacity invested in that period)</li>
+<li><em>in_construction</em> — capacity decided but not yet operating in the period; always present, empty without a construction lead time</li>
 <li><em>divested</em> — capacity the model decided to retire at the start of the period</li>
-<li><em>total</em> — <code>existing + invested − divested</code></li>
+<li><em>total</em> — capacity in service: <code>existing + invested − divested</code>, cumulated over the periods; capacity in construction is not included</li>
 </ul>
+<p>In combined solves (e.g. a chain of solves, or invest then dispatch), each realized investment is counted once, in the period it comes online.</p>
 <p>Period axis covers every period in which an investment <strong>or</strong> a divestment decision occurs (both the invest-eligible and divest-eligible periods feed into <code>d_realize_invest</code>), so divest-only periods are visible even when no new capacity is added.
-- <code>unit</code>, <code>connection</code>, <code>node</code> entities <code>invest_marginal</code> parameter — [CUR/MW or MWh] effective dual of the investment decision: zero means the model is at the unconstrained optimum; positive means an active upper bound (per-entity, per-group, period, total or cumulative caps are summed automatically); negative is not expected and indicates a numerical artefact worth investigating</p>
+- <code>unit</code>, <code>connection</code>, <code>node</code> entities <code>invest_marginal</code> parameter — [CUR/MW or MWh] effective dual of the investment decision: zero means the model is at the unconstrained optimum; positive means an active upper bound (per-entity, per-group, period, total or cumulative caps are summed automatically); negative means the entity is not built and is unprofitable to build (the v_invest column's own reduced cost) — this is the ordinary reading for an unbuilt entity, not an artefact; a numerical artefact instead looks like a non-zero value on a <em>built</em> (or at-bound) entity, or an inconsistent sign across these regimes, and is worth investigating</p>
 </li>
 </ul>
 <h2 id="co2-emissions">CO2 emissions</h2>
 <ul>
-<li><code>model</code> entity <code>CO2</code> parameter — [Mt] horizon-total CO2 across all groups and units (uses <code>years_represented_d</code> to convert annualized emissions to horizon totals)</li>
+<li><code>model</code> entity <code>CO2</code> parameter — [Mt] horizon-total CO2 across all groups and units (uses <code>years_represented_d</code> to convert annualized emissions to horizon totals). In a stochastic solve with more than one scenario path this is reported per path (one column per path) instead of pooling every path's emissions into one number — the anchor's shared pre-reveal history and each forecast branch's own periods are alternative futures, not consecutive years to add together.</li>
 <li><code>group</code> entity <code>CO2_annualized</code> parameter — [Mt/yr] annualized CO2 emissions caused (or removed) by units and connections in the group</li>
 <li><code>unit__source__sink</code> entity <code>CO2_annualized</code> parameter — [Mt/yr] annualized CO2 emissions per flow leg</li>
 </ul>
@@ -2182,7 +2327,7 @@
 </ul>
 <h2 id="ramps">Ramps</h2>
 <ul>
-<li><code>unit__node</code> entity <code>ramp_t</code> parameter — [MW] ramp of the unit input or output flow at each timestep (one table per direction: <code>unit_ramp__inputNode__dt</code>, <code>unit_ramp__outputNode__dt</code>)</li>
+<li><code>unit__node</code> entity <code>ramp_t</code> parameter — [MW] ramp of the unit input or output flow at each timestep: the change from the previous step (one table per direction: <code>unit_ramp__inputNode__dt</code>, <code>unit_ramp__outputNode__dt</code>). The ramp at a step with no previous step in the solve (the first step, the first step after a gap in the timeline, the first step of a representative period) is empty; at the first step of a rolling window it is measured from the previous window's last step.</li>
 </ul>
 <p>The "ramp room" envelope on the <code>node</code> entity (additional headroom for upward / downward ramps from non-VRE units, VRE units, and connections) is currently not emitted by the new pipeline — it is on the roadmap for re-exposure once the corresponding post-processing is ported.</p>
 <h2 id="dc-power-flow">DC power flow</h2>
@@ -2253,10 +2398,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
         <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
       

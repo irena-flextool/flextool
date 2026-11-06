@@ -10,9 +10,9 @@
 <link href="../slack_convention/" rel="prev"/>
 <link href="../db_schema/" rel="next"/>
 <link href="../../img/irena_flextool_favicon.png" rel="icon"/>
-<meta content="mkdocs-1.6.1, mkdocs-material-9.7.7" name="generator"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.8.0" name="generator"/>
 <title>Decomposition - IRENA FlexTool</title>
-<link href="../../assets/stylesheets/main.ec1eaa64.min.css" rel="stylesheet"/>
+<link href="../../assets/stylesheets/main.57a0d79d.min.css" rel="stylesheet"/>
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
 <link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
 <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
@@ -363,6 +363,18 @@
   </span>
 </a>
 </li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../env_vars/">
+<span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+</a>
+</li>
 </ul>
 </nav>
 </li>
@@ -500,11 +512,11 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../engine_polars/">
+<a class="md-nav__link" href="../engine/">
 <span class="md-ellipsis">
     
   
-    The engine_polars pipeline
+    The engine pipeline
   
 
     
@@ -696,46 +708,55 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#33-blocklayout">
+<a class="md-nav__link" href="#33-block-layout-and-coarse-steps">
 <span class="md-ellipsis">
       
-        3.3 BlockLayout
+        3.3 Block layout and coarse steps
       
     </span>
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#34-overlap-set-aggregation">
+<a class="md-nav__link" href="#34-the-coarse-balance">
 <span class="md-ellipsis">
       
-        3.4 Overlap-set aggregation
+        3.4 The coarse balance
       
     </span>
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#35-block-aware-emitters">
+<a class="md-nav__link" href="#35-paths">
 <span class="md-ellipsis">
       
-        3.5 Block-aware emitters
+        3.5 Paths
       
     </span>
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#36-output-expansion">
+<a class="md-nav__link" href="#36-coarse-processes-and-the-row-rule">
 <span class="md-ellipsis">
       
-        3.6 Output expansion
+        3.6 Coarse processes and the row rule
       
     </span>
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#37-caveats">
+<a class="md-nav__link" href="#37-outputs">
 <span class="md-ellipsis">
       
-        3.7 Caveats
+        3.7 Outputs
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#38-caveats">
+<span class="md-ellipsis">
+      
+        3.8 Caveats
       
     </span>
 </a>
@@ -842,7 +863,7 @@
 <span class="md-ellipsis">
     
   
-    Environment variables
+    Environment variables (developer)
   
 
     
@@ -1072,46 +1093,55 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#33-blocklayout">
+<a class="md-nav__link" href="#33-block-layout-and-coarse-steps">
 <span class="md-ellipsis">
       
-        3.3 BlockLayout
+        3.3 Block layout and coarse steps
       
     </span>
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#34-overlap-set-aggregation">
+<a class="md-nav__link" href="#34-the-coarse-balance">
 <span class="md-ellipsis">
       
-        3.4 Overlap-set aggregation
+        3.4 The coarse balance
       
     </span>
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#35-block-aware-emitters">
+<a class="md-nav__link" href="#35-paths">
 <span class="md-ellipsis">
       
-        3.5 Block-aware emitters
+        3.5 Paths
       
     </span>
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#36-output-expansion">
+<a class="md-nav__link" href="#36-coarse-processes-and-the-row-rule">
 <span class="md-ellipsis">
       
-        3.6 Output expansion
+        3.6 Coarse processes and the row rule
       
     </span>
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="#37-caveats">
+<a class="md-nav__link" href="#37-outputs">
 <span class="md-ellipsis">
       
-        3.7 Caveats
+        3.7 Outputs
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#38-caveats">
+<span class="md-ellipsis">
+      
+        3.8 Caveats
       
     </span>
 </a>
@@ -1197,7 +1227,7 @@
 <p>Decomposition in FlexTool means splitting a monolithic LP into smaller
 solvable pieces, then recombining their solutions. FlexTool supports
 three independent flavours, all implemented natively in
-<code>engine_polars</code>:</p>
+<code>engine</code>:</p>
 <ul>
 <li><strong>Spatial / Benders</strong> — partition the network into regions joined
   only by the inter-regional trade flows; a coordinating master holds
@@ -1206,14 +1236,14 @@ three independent flavours, all implemented natively in
   cuts the master accumulates until the optimality gap closes. Selected
   <strong>per solve</strong> from the database (<code>solve.decomposition = benders</code>); see
   <a href="#28-selecting-the-scheme-per-solve">§2.8</a>.</li>
-<li><strong>Flex-temporal</strong> — let different parts of the same solve run at
-  different timestep resolutions (hourly power, daily hydrogen, …) in
-  one LP. Configured per-entity via <code>group.new_stepduration</code>.</li>
+<li><strong>Flex-temporal</strong> — balance some nodes at a coarser step than the
+  solve (hourly power, daily hydrogen, …) in one LP; every flow stays on
+  the solve's steps. Configured per node via <code>group.new_stepduration</code>.</li>
 <li><strong>Sequential / rolling / nested</strong> — split a long horizon into
   overlapping windows (rolling) or into an outer long-horizon solve
   whose decisions feed an inner short-horizon solve (nested). The user
   configuration is in <code>solve.solve_mode</code> / <code>solve.contains_solves</code>; the
-  engine wiring is in <code>_recursive_solve.py</code> + <code>_solve_handoff.py</code>.</li>
+  engine wiring is in <code>solve/_recursive_solve.py</code> + <code>solve/_handoff.py</code>.</li>
 </ul>
 <p>Spatial and flex-temporal are LP-level decompositions (one solve, many
 sub-problems). Rolling / nested is a <em>meta</em>-level decomposition (one
@@ -1221,7 +1251,7 @@ chain of solves, each with its own LP). They compose, with one
 exception noted in <a href="#6-where-they-compose">§6</a>.</p>
 <p>The engine-side overview of the per-solve pipeline and warm-start /
 Benders / cascade solve modes lives in
-<a href="../engine_polars/">engine_polars.md</a>; this page focuses on the
+<a href="../engine/">engine.md</a>; this page focuses on the
 decomposition mechanics themselves.</p>
 <h2 id="1-picking-a-decomposition">1. Picking a decomposition</h2>
 <table>
@@ -1326,7 +1356,9 @@ error (use the monolithic path instead).</p>
 <code>benders_regional</code> (the <code>_region</code> suffix makes the geographic flavour
 explicit, leaving naming room for any future temporal variant). The
 source of truth is
-<code>flextool/engine_polars/_region_filter.py:load_decomposition_method</code>.</p>
+<code>flextool/engine/solve/_region_filter.py:load_decomposition_method</code>, which
+reads the sub-solve provider's <code>input/p_group_decomposition</code> frame (a
+provider is required; the work folder is never read).</p>
 <h3 id="23-half-flow-rewriting">2.3 Half-flow rewriting</h3>
 <p>Every connection whose endpoints straddle two region groups is
 rewritten into a pair of <strong>import / export half-flows</strong> through a
@@ -1400,7 +1432,7 @@ that authors neither falls back to these defaults.</p>
 <h3 id="25-existing-vs-investable-trade-capacity">2.5 Existing vs investable trade capacity</h3>
 <p>The master handles existing and investable trade connections in ONE
 build. An existing-only arc (<code>existing &gt; 0</code>, no <code>invest_method</code>) carries
-no invest variable; its flow is bounded by <code>existing / unitsize</code> through
+no invest variable; its flow is bounded by the existing unit count (<code>existing_count</code> = capacity / unitsize) through
 the FlexTool <code>maxFlow</code> RHS (<code>p_flow_upper_existing</code>). An investable arc
 gets a <code>v_invest</code> var and its capacity is bounded by <code>existing +
 invested</code>. A greenfield arc (<code>existing = 0</code>) is unchanged — all its trade
@@ -1476,7 +1508,7 @@ want decomposed, optionally overriding the two <code>benders_*</code> knobs:</p>
 <p>Because the decision is per solve, a single chain can mix schemes — for
 example a Benders investment solve followed by a monolithic
 full-resolution dispatch solve. The orchestrator
-(<code>engine_polars._orchestration</code>) reads each solve's resolved
+(<code>engine.solve._orchestration</code>) reads each solve's resolved
 <code>decomposition</code> value as it iterates <code>model.solves</code>. This is distinct
 from the group-level <code>group.decomposition_method</code>
 (<code>none</code> / <code>benders_regional</code>), which declares <em>which groups are
@@ -1505,7 +1537,7 @@ solving — useful for inspecting how the rewriter sees a given region.</p>
 <tbody>
 <tr>
 <td><code>solve_benders(data, *, ...)</code> — top-level entry</td>
-<td><code>flextool/engine_polars/_benders.py</code></td>
+<td><code>flextool/engine/solve/_benders.py</code></td>
 </tr>
 <tr>
 <td><code>BendersResult</code> — return type</td>
@@ -1517,14 +1549,14 @@ solving — useful for inspecting how the rewriter sees a given region.</p>
 </tr>
 <tr>
 <td><code>master_network_data</code> (network-only reduced FlexData for the master)</td>
-<td><code>flextool/engine_polars/_region_filter.py</code></td>
+<td><code>flextool/engine/solve/_region_filter.py</code></td>
 </tr>
 <tr>
 <td><code>RegionSplit</code>, <code>HalfFlow</code>, <code>split</code></td>
 <td>same</td>
 </tr>
 <tr>
-<td><code>load_decomposition_method</code> (reads <code>decomposition_method</code> from solve_data)</td>
+<td><code>load_decomposition_method</code> (reads <code>decomposition_method</code> from the provider's <code>input/p_group_decomposition</code>)</td>
 <td>same</td>
 </tr>
 <tr>
@@ -1533,24 +1565,35 @@ solving — useful for inspecting how the rewriter sees a given region.</p>
 </tr>
 </tbody>
 </table>
-<p>The per-solve routing lives in <code>flextool/engine_polars/_orchestration.py</code>
+<p>The per-solve routing lives in <code>flextool/engine/solve/_orchestration.py</code>
 (<code>_PolarHighCascadeSolver._run_benders_solve</code>, driven by
 <code>SolveConfig.decomposition_for</code>). The Benders path is also surfaced
 as a "Solve modes" entry in
-<a href="../engine_polars/#solve-modes">engine_polars.md § Solve modes</a>.</p>
+<a href="../engine/#solve-modes">engine.md § Solve modes</a>.</p>
 <h2 id="3-flex-temporal-decomposition">3. Flex-temporal decomposition</h2>
 <h3 id="31-concept">3.1 Concept</h3>
-<p>Mixed-resolution scheduling: some entities (power demand, VRE
-generation, batteries) need fine timesteps; others (long-duration
-storage, hydrogen, district heat) only need coarser steps for their
-dynamics to be well-represented. A monolithic LP at the fine
-resolution wastes solve time on the slow entities. Flex-temporal
-decomposition lets a single LP carry both — every entity runs on the
-block resolution it needs, joined by overlap-set aggregation across
-the LP's constraints.</p>
+<p>Mixed-resolution scheduling: some nodes (power demand, VRE, batteries)
+need fine timesteps; others (long-duration storage, hydrogen, district
+heat) only need a coarser energy balance.  A node of a group whose
+<code>new_stepduration</code> is longer than the solve's step is a <em>coarse node</em>:
+it is balanced once per coarse step by summing its fine balance terms
+(<code>nodeBalanceCoarse_eq</code>), and a coarse storage node keeps one state per
+coarse step (<code>stateConstantCoarse_eq</code>).  An arc between a fine and a
+coarse node stays on the solve's steps and enters both balances, so it
+conserves energy at both ends without any per-arc weights or filters.</p>
+<p>A unit or connection whose every balance node is coarse is a <em>coarse
+process</em> (<code>params._coarse.coarse_process_frames</code> → <code>processCoarse</code>,
+<code>process_coarse_step</code>): its flows, units online, start-ups / shut-downs,
+reserve and the direction of an exact connection have one column per
+coarse step (<code>model/_coarse_flows</code>, §3.6).  Only a process with a delay
+keeps the solve's steps (<code>flex_data.coarse_process_exclusions</code>), plus
+Benders cross-region arcs and master flows (§3.5), stochastic processes
+whose coarse step a forecast tie covers in part
+(<code>flex_data.coarse_tie_straddles</code>) and realization-solve processes whose
+pin varies within a step (<code>flex_data.coarse_pin_varies</code>); an info line
+names each with its reason.</p>
 <p>This is structurally different from the Benders path: there is one
-LP, one HiGHS run, no outer loop. The decomposition lives in the LP
-<em>structure</em> (which <code>(entity, block)</code> rows the <code>_emit_*</code> modules produce).</p>
+LP, one HiGHS run, no outer loop.</p>
 <h3 id="32-schema-surface">3.2 Schema surface</h3>
 <table>
 <thead>
@@ -1564,130 +1607,140 @@ LP, one HiGHS run, no outer loop. The decomposition lives in the LP
 <tr>
 <td><code>solve.new_stepduration</code></td>
 <td><code>solve</code></td>
-<td>Solve-wide default block duration (existing parameter, predates the multi-block work)</td>
+<td>Solve-wide step (aggregates the solve's timeline)</td>
 </tr>
 <tr>
 <td><code>group.new_stepduration</code></td>
 <td><code>group</code></td>
-<td>Override: members of this group operate at this step duration</td>
+<td>The group's balance / storage nodes are balanced per coarse step of this length (when longer than the solve's step)</td>
 </tr>
 <tr>
 <td><code>group.decomposition_method</code></td>
 <td><code>group</code></td>
-<td>Tag a group as a <em>resolution group</em>. Used together with <code>new_stepduration</code>.</td>
+<td>Benders region groups</td>
 </tr>
 <tr>
-<td><code>group__node</code> / <code>group__unit</code> / <code>group__connection</code></td>
+<td><code>group__node</code></td>
 <td>(relation)</td>
-<td>Membership lists for the resolution group</td>
+<td>The coarse nodes</td>
+</tr>
+<tr>
+<td><code>group__unit</code> / <code>group__connection</code></td>
+<td>(relation)</td>
+<td>No effect on time resolution (a warning names a listed process that touches a node outside the group — Q-c15-A)</td>
 </tr>
 </tbody>
 </table>
-<p>Validation in <code>BlockLayout.validate_group_membership</code>:</p>
+<p>Validation in <code>validate_group_membership</code>:</p>
 <ul>
-<li>every entity may belong to at most one resolution-group (otherwise
-  block assignment is ambiguous)</li>
+<li>every entity may belong to at most one resolution-group</li>
 <li>every entity may belong to at most one decomposition-group (the
   Benders region groups counted here too)</li>
-<li>reserve participants must NOT sit in any resolution-group (reserve
-  blocks are V1 only — preserved compatibility quirk)</li>
+<li>reserve participants may sit in a resolution-group (a coarse provider
+  holds one reserve per coarse step; the requirement stays per solve step)</li>
 </ul>
-<p>Violations raise <code>FlexToolConfigError</code> at solve setup.</p>
-<h3 id="33-blocklayout">3.3 BlockLayout</h3>
-<p><code>BlockLayout.build</code> (in <code>_block_layout.py</code>) is called once per solve
-and produces, in one pass, every per-solve block-related frame:</p>
+<p>Validation in <code>params._coarse.coarse_node_frames</code>: a group step that is
+not a multiple of the solve's step, a fine step crossing the end of a
+coarse step, a coarse step that would straddle a representative period,
+and a <code>bind_intraperiod_blocks</code> node in a coarse group raise
+<code>FlexToolConfigError</code>; a group step shorter than the solve's step is
+ignored with a warning.</p>
+<h3 id="33-block-layout-and-coarse-steps">3.3 Block layout and coarse steps</h3>
+<p><code>emit/_blocks.py</code> (production) and its port <code>BlockLayout.build</code> (in
+<code>_block_layout.py</code>) emit the per-solve block frames:</p>
 <ul>
-<li><code>entity_block_frame</code> — <code>(entity, block)</code></li>
-<li><code>process_side_block_frame</code> — <code>(process, side, block)</code></li>
-<li><code>process_block_frame</code> — <code>(process, block)</code> (process-unified)</li>
-<li><code>block_step_duration_frame</code> — <code>(block, period, step, step_duration)</code></li>
-<li><code>overlap_set_frame</code> —
-  <code>(period, block_coarse, step_coarse, block_fine, step_fine, fraction)</code></li>
-<li><code>block_step_previous_frame</code> — per-block predecessor 7-tuples</li>
-<li><code>block_period_time_first_frame</code> / <code>block_period_time_last_frame</code> —
-  per-block period boundaries</li>
+<li><code>entity_block</code> — <code>(entity, block)</code>: each node's group, else <code>default</code></li>
+<li><code>block_step_duration</code> — <code>(block, period, step, step_duration)</code></li>
+<li><code>overlap_set</code>, <code>block_step_previous</code>, <code>block_period_time_first/_last</code></li>
 </ul>
-<p>The <code>DEFAULT_BLOCK</code> block always exists and inherits
-<code>solve.new_stepduration</code> (or the bare timeline if unset). Every
-resolution group becomes one additional named block at its own step
-duration.</p>
-<pre class="mermaid"><code>flowchart LR
-    A[group.new_stepduration<br/>+ group__*] --&gt; B[BlockLayout.build]
-    C[solve.new_stepduration] --&gt; B
-    D[timeline_config] --&gt; B
-    B --&gt; E[entity_block]
-    B --&gt; F[overlap_set]
-    B --&gt; G[block_step_duration]
-    B --&gt; H[block_step_previous]
-    E &amp; F &amp; G &amp; H --&gt; I[BlockBundle]
-    I --&gt; J[block-aware _emit_*.py]
-</code></pre>
-<p><code>BlockBundle</code> (in <code>_derived_block.py</code>) wraps the <code>BlockLayout</code> with
-cached lazy-frame join helpers (<code>block_compat_frame</code>,
-<code>process_side_block_lf</code>, …) that the <code>_emit_*</code> modules use to filter and
-re-project their rows.</p>
-<h3 id="34-overlap-set-aggregation">3.4 Overlap-set aggregation</h3>
-<p>The <code>overlap_set</code> is the cross-block aggregation key. For each
-<code>(period, block_coarse, step_coarse)</code> row there are one or more
-<code>(block_fine, step_fine, fraction)</code> rows whose <code>fraction</code> sums to 1.
-The constraint generators use this to project fine-block decision
-variables onto coarse-block constraints (and vice versa).</p>
-<p>Concretely, when a coarse-block (e.g. daily hydrogen) node balance
-joins an hourly arc, the hourly <code>v_flow</code> rows are aggregated to the
-daily key via <code>arc_sink_block_dt</code> / <code>arc_source_block_dt</code>
-(<code>_derived_block.py</code>), weighted by <code>block_step_duration</code>. The other
-direction — a fine-block constraint reading a coarse-block variable —
-projects the coarse value onto each fine step at fraction 1
-(piecewise-constant).</p>
-<p>Two structural assumptions:</p>
+<p>The model reads the node → group map and the group step durations from
+these frames and the default block's period boundaries
+(<code>nodeState_last_dt</code>).  The per-block aggregated timelines of the coarse
+blocks are a plain chunking of each period and do not feed the model.</p>
+<p>The coarse steps come from one place, <code>params._coarse.coarse_node_frames</code>,
+called at the end of <code>load_flextool</code> for every solve, roll, nested and
+stochastic sub-solve.  It takes the solve's own steps (<code>dt</code> in order, step
+durations, <code>dtttdt</code>), splits each period into runs of consecutive steps — a
+run ends where <code>t_previous_within_timeset</code> is not the step before (a gap, a
+timeset block start, a period or roll start), at every representative-block
+start (<code>rp_block_first</code>) and after the period's last realized step (a roll's
+realized end, so the state a roll hands over excludes look-ahead flows) — and
+chunks each run from its start: a coarse step closes once its fine durations
+add up to the group step (a run that is not a multiple ends with a shorter
+step).  Result: <code>nodeCoarse (n)</code>, <code>node_coarse_step (n, d, b_first, t)</code> and
+<code>node_coarse_interior (n, d, t, t_previous)</code>.</p>
+<h3 id="34-the-coarse-balance">3.4 The coarse balance</h3>
+<p><code>nodeBalanceCoarse_eq[n, d, b]</code> is <code>nodeBalance_eq</code> summed over the fine
+steps <code>t ∈ b</code>: flows, slacks, the state change of the node's binding
+method, the <code>fix_start</code> and roll-continuation start terms and
+self-discharge, with the summed <code>−inflow</code> as RHS.  With the state constant
+inside the coarse step the state terms telescope to
+<code>v_state[b⁻] − v_state[b]</code>, so every storage binding method applies.
+Same orientation and units as <code>nodeBalance_eq</code>: its dual is the node's
+price over the coarse step.  <code>bind_intraperiod_blocks</code> nodes have the
+same summed row per timeset block (<code>nodeBalanceBlock_eq</code>) with the block
+lag <code>dtttdt_block_lag</code> (the blocks of a period form a loop; in a rolling
+solve the blocks also end at the roll's realized end, and in a period the
+roll holds only in part — <code>period_block_chain</code>, from
+<code>solve_data/roll_period_whole</code> — the lag is the <code>bind_forward_only</code> lag,
+so the blocks chain forward and the roll carry starts the chain).</p>
+<h3 id="35-paths">3.5 Paths</h3>
 <ul>
-<li><strong>Two-block-deep limit</strong> — one resolution-group block plus the
-  natural default fine block. Lifting it is a model-design question.</li>
-<li><strong>Aligned subsets only</strong> — every coarse step must align with an
-  integer number of fine steps. Non-aligned configurations raise
-  <code>NotImplementedError</code> from <code>_build_overlap_set</code>.</li>
+<li><strong>Rolling / nested / stochastic:</strong> every sub-solve builds its own
+  coarse frames from its own steps; nested <code>fix_price</code> reads the coarse
+  row's dual for a coarse parent node.</li>
+<li><strong>Benders:</strong> region subproblems and the master filter the coarse frames
+  by node; half-flows enter coarse rows like any arc, so a region↔master
+  boundary may join nodes of different resolutions.  Cross-region arcs and
+  master flows stay on the solve's steps (<code>_region_filter</code>); a process
+  inside one region may be coarse in its subproblem.</li>
+<li><strong>Warm start:</strong> the coarse frames are in the fingerprint.</li>
 </ul>
-<h3 id="35-block-aware-emitters">3.5 Block-aware emitters</h3>
-<p>The <code>_emit_*.py</code> modules in <code>engine_polars</code> (formerly <code>_writer_*.py</code>,
-renamed in the writer→emitter Phases 1–5; see
-<a href="../engine_polars/#emitters-formerly-writer-ports">engine_polars.md § Emitters</a>)
-are block-aware. The major touch points:</p>
+<h3 id="36-coarse-processes-and-the-row-rule">3.6 Coarse processes and the row rule</h3>
+<p><code>model/_coarse_flows</code> (module docstring is the reference):</p>
 <ul>
-<li><strong>Node balance</strong> — built on the block of the node, joined with
-  per-side arcs through <code>overlap_set</code> (loss-aware when the arc
-  efficiency depends on flow direction).</li>
-<li><strong>Storage transition</strong> — <code>v_state</code> ties at block boundaries; the
-  <code>block_step_previous_frame</code> provides the per-block predecessor
-  lookup so storage state continuity is enforced on the block
-  granularity, not the fine granularity.</li>
-<li><strong>Ramp / minimum-load</strong> — block-aware: ramps use the block's step
-  duration, not the underlying timeline's.</li>
-<li><strong>Reserves</strong> — V1-only-on-default-block; reserves cannot ride a
-  coarse block (the validation rule above guarantees this).</li>
+<li><strong>Levels</strong> (<code>v_flow(_back)</code>, <code>v_online_*</code>, <code>v_reserve</code>,
+  <code>v_exact_forward</code>; <code>v_angle</code> of a coarse-angle node, <code>vq_inertia</code> /
+  <code>vq_non_synchronous</code> of an averaged row) are registered at each coarse
+  step's first fine step <code>b_first</code> and read through <code>alias</code>, which maps
+  every fine row to its step's column.</li>
+<li><strong>Events</strong> (<code>v_startup_*</code>, <code>v_shutdown_*</code>) live at <code>b_first</code> only and are
+  not aliased; minimum up / down times count whole coarse steps.</li>
+<li><strong>Arc-local rows</strong> (capacity, conversion, profiles, online capacity,
+  minimum load, start-up / shut-down reduction, reserve limits) are written
+  once per coarse step as the twin family <code>&lt;family&gt;_coarse</code>, the
+  Δt-weighted average of the fine row (<code>add_cstr</code>).</li>
+<li><strong>Row rule</strong> (<code>add_row_rule_cstr</code>, <code>row_partition</code>;
+  <code>flex_data.coarse_row_members</code> / <code>COARSE_ROW_FAMILIES</code>): a row coupling
+  several entities (capacity margin, inertia, non-synchronous, flow-group
+  instant flow, user constraint, forecast storage-use tie, DC power flow)
+  whose every member is coarse is one averaged <code>&lt;family&gt;_coarse</code> row per
+  coarse step; a row with a fine member stays per solve step and reads the
+  coarse terms at their constant value.  The reserve requirement
+  (<code>reserveBalance_*</code>) is always per solve step.</li>
+<li>Ramps run between coarse steps (<code>ramp_rows</code>, <code>reserve_room_rows</code>).</li>
+<li>The behaviour notice <code>coarse_process_flows</code> (upgraded databases only)
+  names coarse processes whose result can differ from the fine model
+  (<code>flex_data.coarse_process_reasons</code>).</li>
 </ul>
-<h3 id="36-output-expansion">3.6 Output expansion</h3>
-<p>Coarse-block decision variables are expanded back onto the fine
-timeline before the <code>_emit_*</code> modules write results, using the same
-<code>overlap_set</code> (read in reverse). Per-fraction attribution stays
-consistent across the solve / write boundary; downstream tooling sees
-the same fine-grained output regardless of which entities ran on
-which block.</p>
-<p>This expansion is the reason that <code>output_node_state_t</code>,
-<code>output_node_balance_t</code>, etc. emit one row per <code>(period, fine_step)</code>
-even for entities on a coarse block.</p>
-<h3 id="37-caveats">3.7 Caveats</h3>
+<h3 id="37-outputs">3.7 Outputs</h3>
+<p>Every reader of a coarse variable expands it to the solve's steps through
+<code>engine/output/_coarse_flows</code> (<code>COARSE_VARS</code>: <code>copy</code> for levels, <code>first</code>
+for events — the whole start-up at the step's first fine step, 0 at the
+others, so totals and costs are the LP's); a grep gate in the tests keeps
+direct reads out.  A coarse storage state is constant within its coarse
+step.  Coarse-node prices are the <code>nodeBalanceCoarse_eq</code> duals broadcast
+to the fine steps of each coarse step
+(<code>read_highs_solution._broadcast_block_node_duals</code>).</p>
+<h3 id="38-caveats">3.8 Caveats</h3>
 <ul>
-<li><code>representative_period_weights</code> interacts with block durations via
-  the per-period normalisation in <code>TimelineConfig.timeset_weights</code>;
-  picking arbitrary block durations on top of an RP-clustered timeset
-  is supported but requires the block step duration to divide the RP
-  period length evenly.</li>
-<li>Block-aware reserves are not implemented; if you tag a reserve
-  participant into a resolution group, the validator refuses the
-  scenario.</li>
+<li>A process with a delay keeps the solve's steps (its flow is shifted by
+  solve steps).</li>
+<li>An averaged row sees step means: a capacity margin covers the mean net
+  demand of the step, not its peak.</li>
 </ul>
 <p>The engine-side overview of flex-temporal lives in
-<a href="../engine_polars/#flex-temporal-decomposition">engine_polars.md § Flex-temporal decomposition</a>.</p>
+<a href="../engine/#flex-temporal-decomposition">engine.md § Flex-temporal decomposition</a>.</p>
 <h2 id="4-rolling-nested-solves">4. Rolling / nested solves</h2>
 <p>These are user-facing patterns documented in
 <a href="../../how_to/">how_to.md</a>; this section covers the engine wiring.</p>
@@ -1712,11 +1765,13 @@ window's "jump" point with the storage state at that point fixed.</p>
   <code>solve_roll_0, solve_roll_1, …</code> with per-roll active-time and
   realized-time lists.</li>
 <li>Per-roll storage carry-over rides
-  <code>SolveHandoff.roll_end_state</code> (<code>_solve_handoff.py</code>).</li>
-<li>The cascade reuses the same LP shell via <code>polar_high.WarmProblem</code>
-  when consecutive rolls' <code>FlexData</code> fingerprints match; otherwise
-  cold-rebuild. See
-  <a href="../engine_polars/#warm-start-cascade-polar_highwarmproblem">engine_polars.md § Warm-start cascade</a>.</li>
+  <code>SolveHandoff.roll_end_state</code> (<code>solve/_handoff.py</code>), routed to the
+  sub-solve that continues from it by <code>solve/_carry_routing.py</code>.</li>
+<li>Every roll builds its own LP: the in-process <code>polar_high.WarmProblem</code>
+  is reused only for an identical sub-solve (every <code>FlexData</code> field,
+  labels included, and the solver configuration), and a roll's <code>dt</code>
+  labels always shift. See
+  <a href="../engine/#warm-start-cascade-polar_highwarmproblem">engine.md § Warm-start cascade</a>.</li>
 </ul>
 <h3 id="42-nested">4.2 Nested</h3>
 <p>An outer long-horizon solve fixes long-term decisions (capacity, long-
@@ -1741,8 +1796,7 @@ solve dispatches within those decisions.</p>
   <code>SolveHandoff.realized_invest</code> / <code>realized_existing</code> /
   <code>fix_storage</code> / <code>fix_storage_timesteps</code>.</li>
 <li>The child's preprocessing reads from <code>state.handoffs[parent_name]</code>
-  (in-memory by default) or from the legacy
-  <code>solve_data_&lt;parent&gt;/fix_storage_*.csv</code> (fallback).</li>
+  (in memory; there is no disk fallback).</li>
 </ul>
 <p>The single-matching-period rename quirk: when a child solve's period
 set intersects its parent's by exactly one period, the child is
@@ -1758,8 +1812,8 @@ realised branch contributes to <code>realized_time_lists</code> and
 the optimisation but do not enter the realised outputs.</p>
 <p>The wiring lives in <code>_stochastic.StochasticSolver</code> (called from
 <code>RecursiveSolveBuilder</code>); non-anticipativity constraints are emitted
-by <code>_add_non_anticipativity_constraints</code> in <code>model.py</code>. See
-<a href="../engine_polars/#stochastic-branches">engine_polars.md § Stochastic branches</a>.</p>
+by <code>_non_anticipativity.py</code> (<code>add_dispatch_constraints</code>, <code>add_invest_constraints</code>). See
+<a href="../engine/#stochastic-branches">engine.md § Stochastic branches</a>.</p>
 <h2 id="5-release-notes-context">5. RELEASE notes context</h2>
 <p>The 3.29.0–3.33.0 release cycle is the relevant window for these
 features. Quick map (full text in
@@ -1798,7 +1852,7 @@ features. Quick map (full text in
 <tr>
 <td>Benders + flex-temporal</td>
 <td>Yes</td>
-<td>Each region's <code>build_flextool</code> runs through the block-aware <code>_emit_*</code> modules unchanged.</td>
+<td>Region subproblems and the master filter the coarse-step frames by node; a region↔master boundary may join nodes of different resolutions (the half-flows are hourly on both sides).</td>
 </tr>
 <tr>
 <td>Benders + rolling</td>
@@ -1813,17 +1867,17 @@ features. Quick map (full text in
 <tr>
 <td>Flex-temporal + rolling</td>
 <td>Yes</td>
-<td>The rolling jump is on the fine timeline; coarse blocks honour the jump boundary inside each window.</td>
+<td>Each roll cuts its own coarse steps; a coarse step ends at the roll's realized end, and the roll carry reaches the first coarse row.</td>
 </tr>
 <tr>
 <td>Flex-temporal + nested</td>
 <td>Yes</td>
-<td>Each parent / child solve carries its own <code>BlockLayout</code>.</td>
+<td>Each parent / child solve builds its own coarse steps; <code>fix_price</code> reads a coarse parent node's coarse-row dual.</td>
 </tr>
 <tr>
 <td>Flex-temporal + stochastic</td>
 <td>Yes</td>
-<td>Branches enter the active-time lists at the fine resolution; coarse-block constraints pick up the relevant branch-suffixed steps via the same overlap set.</td>
+<td>Every branch period gets its own coarse steps; a branch's first coarse row starts from the trunk's state.</td>
 </tr>
 <tr>
 <td>Rolling + nested</td>
@@ -1839,9 +1893,9 @@ features. Quick map (full text in
 </table>
 <h2 id="7-see-also">7. See also</h2>
 <ul>
-<li><a href="../engine_polars/">engine_polars.md</a> — the engine guide; Solve modes
+<li><a href="../engine/">engine.md</a> — the engine guide; Solve modes
   section covers monolithic / warm / Benders and Flex-temporal
-  decomposition section covers the BlockLayout shape.</li>
+  decomposition section covers the coarse-group frames.</li>
 <li><a href="../architecture/">architecture.md</a> — top-level architecture; how the
   decomposition pieces fit into the larger pipeline.</li>
 <li><a href="../scaling/">scaling.md</a> — auto-scaling pipeline; runs per
@@ -1883,8 +1937,8 @@ features. Quick map (full text in
 <div class="md-dialog" data-md-component="dialog">
 <div class="md-dialog__inner md-typeset"></div>
 </div>
-<script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
-<script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+<script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+<script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
 <script src="../../assets/mathjaxhelper.js"></script>
 <script type="module">import mermaid from "https://unpkg.com/mermaid@10.4.0/dist/mermaid.esm.min.mjs";

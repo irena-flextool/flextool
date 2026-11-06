@@ -19,7 +19,7 @@
       
       
       <link rel="icon" href="../../img/irena_flextool_favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -27,7 +27,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -762,6 +762,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1077,14 +1105,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../engine_polars/" class="md-nav__link">
+      <a href="../engine/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    The engine_polars pipeline
+    The engine pipeline
   
 
     
@@ -1252,7 +1280,7 @@
   <span class="md-ellipsis">
     
   
-    Environment variables
+    Environment variables (developer)
   
 
     
@@ -1489,10 +1517,76 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#upward-reserve-and-online-capacity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Upward reserve and online capacity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#source-side-reserve-and-capacity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Source-side reserve and capacity
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reserve-and-ramp-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reserve and ramp rows
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#startup-shutdown-capacity-reduction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Startup / shutdown capacity reduction
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#reserve-shortfall-multiplier" class="md-nav__link">
     <span class="md-ellipsis">
       
         Reserve shortfall multiplier
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#n-1-rows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        n-1 rows
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connections-and-reserve" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connections and reserve
       
     </span>
   </a>
@@ -1531,7 +1625,7 @@
 
 
 <h1 id="unit-floors-input-shares-and-reserve-shortfall">Unit floors, input shares and reserve shortfall</h1>
-<p>Engine notes for <code>model.py::_add_unit_floors</code>, <code>_add_min_input_share</code> and
+<p>Engine notes for <code>_unit_floors.py</code>, <code>model/core.py::_eq_min_input_share</code> and
 <code>_reserve.reserve_shortfall_scale</code>. User-facing semantics are in
 <code>docs/reference.md</code> (<code>min_load</code>, <code>capacity_min_coeff</code>, <code>input_share_min</code>,
 Reserves).</p>
@@ -1588,6 +1682,255 @@ an indirect unit's input-side <code>up</code> reserve gets only the zero floor o
 input arc (expressing "the input cut takes the outputs below min load" needs
 the conversion mix), so combined with output-side <code>down</code> reserve such a unit
 can end up below <code>min_load</code>.</p>
+<h2 id="upward-reserve-and-online-capacity">Upward reserve and online capacity</h2>
+<p>Upward reserve held at a node a process delivers into (<code>b.reserve_up_to_sink</code>,
+<code>b.reserve_up_sink_parts</code> from <code>core._reserve_coupling</code>) sits on the LHS of
+the capacity rows, with coefficient 1 (<code>v_flow</code> and <code>v_reserve</code> are both in
+output units of unitsize):</p>
+<ul>
+<li>
+<p>built capacity, units: <code>maxFlow</code> (per arc) and <code>maxOutputSum</code>
+  (sum of an indirect unit's outputs).  On an indirect unit's INPUT arc
+  <code>maxFlow</code>'s M (<code>core._max_flow_rhs</code>) uses <code>x(availability)</code> in place of
+  plain availability — the min-load section is drawn per unit online, not
+  per available unit, credited only to a unit with an online variable
+  (#102; same <code>x</code> as <code>maxInputFlow_online</code> below, computed once and shared);</p>
+</li>
+<li>
+<p>online capacity, units with online variables (<code>_online.py</code>):
+  <code>maxFlow_online_&lt;kind&gt;</code>: <code>v_flow + Σ_r Rup ≤ v_online·avail·cap_max_coeff</code>
+  per capped arc, and <code>maxOutputSum_online_&lt;kind&gt;</code>:
+  <code>Σ_k v_flow + Σ_k Σ_r Rup ≤ v_online·avail</code>.</p>
+</li>
+</ul>
+<p><code>maxFlow</code> / <code>maxFlow_negCap</code> / <code>maxFlow_online_*</code> read the units-only
+aggregate <code>b.reserve_up_to_sink_units</code>; a connection's reserve is limited
+by its own rows (<code>connection_reserve_*</code>, "Connections and reserve"
+below). <code>profile_flow_upper_limit</code> keeps the term for every process
+(<code>b.reserve_up_to_sink</code>). Hand-built data without <code>process_unit</code> keeps
+the process-generic coupling.</p>
+<p>So an offline unit holds no upward reserve (spinning reserve). The
+built-capacity rows keep their term for online processes too (redundant
+while online ≤ built; they carry the invest/divest terms).
+<code>reserve_process_upward</code> (<code>max_share</code>) still uses the built capacity.
+Together with the floors the online band is
+<code>v_online·min_load + Rdn ≤ Σ out ≤ v_online·cap·avail − Rup</code>.</p>
+<h2 id="source-side-reserve-and-capacity">Source-side reserve and capacity</h2>
+<p>The mirror of the floors: reserve that raises a unit arc's flow.
+<code>_unit_floors.increasing_source_selectors(d, arcs)</code> gives <code>(down_src_flow,
+down_src_eff)</code> keyed <code>(p, r, ud, source)</code> over all unit arcs
+(<code>all_unit_arcs</code>): <code>down</code> reserve at the source node of an arc whose
+<code>v_flow</code> is the input (<code>sink == p</code>: an indirect unit's input, a sink-less
+unit; φ = 1) or of a direct input→output arc (<code>source ≠ p ≠ sink</code>; φ =
+<code>1/slope</code>, <code>_inverse_slope</code>). <code>core._reserve_coupling</code> turns them into
+<code>b.reserve_down_at_source</code> (per arc <code>(p, source, sink, d, t)</code>, converted
+by φ) and <code>b.reserve_down_input_arcs</code>; the reducing <code>up</code> source selectors
+give <code>b.reserve_up_at_source</code> for <code>profile_flow_lower_limit</code>.</p>
+<table>
+<thead>
+<tr>
+<th>row</th>
+<th>term</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>maxFlow</code></td>
+<td><code>+ Σ_r v_reserve_down[p,r,s]·φ</code>; a bound input arc carrying the reserve gets a row too (the v_flow bound stays, redundant)</td>
+</tr>
+<tr>
+<td><code>maxFlow_online_&lt;kind&gt;</code></td>
+<td>same term against online capacity</td>
+</tr>
+<tr>
+<td><code>maxInputFlow_online_&lt;kind&gt;</code> (new)</td>
+<td>an online indirect unit's input arc with the reserve: <code>v_flow + Σ_r v_reserve_down ≤ v_online·x(avail)·p_indirect_input_cap</code>, <code>x(y) = (slope·W(y) + section)/(slope·W(1) + section)</code> — the min-load section is drawn per unit online, so <code>avail·p_indirect_input_cap</code> would cap the derated full output (<code>x = avail</code> without a section)</td>
+</tr>
+<tr>
+<td><code>profile_flow_upper_limit</code> / <code>_lower_limit</code></td>
+<td><code>+ down at the source</code> / <code>− up at the source</code>, × φ</td>
+</tr>
+<tr>
+<td><code>reserve_process_{upward,downward}</code></td>
+<td><code>max_share · c</code>, c = input capacity per unit at an input node (<code>_reserve._input_capacity_factor</code>: <code>p_indirect_input_cap</code>, <code>slope + section</code>, 1)</td>
+</tr>
+</tbody>
+</table>
+<p>Per-arc simplifications (as the floors): a direct unit with several outputs
+has one arc per output from the same input, and the reserve term joins each
+of them on <code>(p, source)</code>, so the reserve needs headroom on every output arc
+(conservative; <code>_input_capacity_factor</code> de-duplicates <code>(p, n)</code>). An indirect
+unit's up reserve at an output (<code>maxOutputSum</code>) and down reserve at an input
+(<code>maxFlow</code> on the input arc) are the same "burn more" action but are
+checked in separate rows, so the headroom can be counted twice; a
+multi-input indirect unit is only kept within each input's own capacity.
+The reverse arc of a two-way unit (2way_2var) is a direct arc in
+<code>process_source_sink_eff</code>: down reserve at its node is headroom on the arc
+that draws from the node and a floor on the arc that feeds it. Connections
+have their own rows ("Connections and reserve" below).</p>
+<h2 id="reserve-and-ramp-rows">Reserve and ramp rows</h2>
+<p><code>core._eq_ramp</code> adds the reserve of an arc to its ramp rows, from the same
+<code>_reserve_coupling</code> aggregates as <code>maxFlow</code> and the floors (no new selector):</p>
+<table>
+<thead>
+<tr>
+<th>row</th>
+<th>reserve term</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ramp_{sink,source}_up_constraint</code></td>
+<td><code>+ b.reserve_up_to_sink</code> (up at the arc's sink) <code>+</code> every <code>b.reserve_down_at_source</code> entry (down at its source, ×φ)</td>
+<td>R↑: raises the arc's flow</td>
+</tr>
+<tr>
+<td><code>ramp_{sink,source}_down_constraint</code></td>
+<td><code>− b.reserve_down_to_sink</code> <code>−</code> every <code>b.reserve_up_at_source</code> entry (×φ)</td>
+<td>R↓: lowers it</td>
+</tr>
+</tbody>
+</table>
+<p>Sink-side and source-side rows of a direct arc limit the same <code>v_flow</code> and
+both carry the terms.  The rule is per arc, as the floors: upward reserve at
+an indirect unit's output does not load the ramp room of its input arcs.
+For a unit WITHOUT online variables (or a built-only row) the row is
+<code>v_flow[t] − v_flow[t′] ± R ≤/≥ ±ρ·c·cap</code> with ρ the room of the pair of
+steps (<code>ramp_speed·60·(Δ′+Δ)/2</code>) and <code>cap = existing_count</code> (±invest/divest);
+a unit ramping down from t′ to t can hold its decrease in addition as upward
+reserve (that is what "reserve reduces the ramp room" means per model step;
+activation-time-scaled room is item 81).</p>
+<p>For a unit WITH online variables (c14c part C, design §3) the room is on the
+<em>units online</em>, split by state, instead of on <code>existing_count</code> flat: the
+<code>existing_count</code>/invest/divest terms drop out of that row entirely and are
+replaced (per UC class <code>linear</code>/<code>integer</code>) by</p>
+<div class="highlight"><pre><span></span><code>up:    + c·ρ̄·v_online + c·(SU − ρ̄)·v_startup − F[t′]·v_shutdown
+down:  − c·ρ̄·v_online + (c·ρ̄ + F[t])·v_startup − c·SD′·v_shutdown
+</code></pre></div>
+<p>(<code>SU</code>/<code>SD′</code> as in "Startup / shutdown capacity reduction" below, this row's
+own side only — not the min over sides <code>maxFlow_online</code> keeps).  <code>F</code> is the
+arc's OWN per-unit-online floor (<code>_unit_floors.arc_floor_share</code>, the same
+sets <code>minFlow_minload</code> / <code>minFlow_output_floor</code> use):</p>
+<table>
+<thead>
+<tr>
+<th>arc</th>
+<th>F</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>the only arc of the unit's output measure <code>A_p</code> (a direct unit's single arc, or a single-output indirect unit's output)</td>
+<td><code>min_load</code></td>
+</tr>
+<tr>
+<td>an output of a multi-output unit with <code>capacity_min_coeff &gt; 0</code></td>
+<td><code>min_load · capacity_min_coeff</code></td>
+</tr>
+<tr>
+<td>any other (other outputs, input arcs, units without <code>min_load</code>)</td>
+<td>0</td>
+</tr>
+</tbody>
+</table>
+<p>A single-input indirect unit's own fuel (input) arc also gets <code>F = 0</code> here, by design, not oversight
+(c14c critique item 10): <code>conversion_indirect</code> plus the output floor already give
+<code>input ≥ (slope·ml + section)·on = c·ml_in·on</code> structurally, so <code>F_in = c·ml_in</code> would be a valid,
+tighter floor there too (closing the same pair-gain gap the output-side table closes). c14c's own
+target was single-output arcs only; the input-arc floor is left for a follow-up (see "Follow-ups"
+below, item 6), not adopted silently.</p>
+<p>So a continuing unit's online capacity changes by at most <code>ρ̄</code> each step, a
+starter reaches at most <code>SU</code> (reusing <code>maxFlow_online</code>'s startup-step limit)
+and a stopper floors at <code>F</code> at the predecessor step; downwards a stopper
+drops at most from <code>SD′</code> and a starter rises at least to <code>F</code>.  <code>v_startup</code> /
+<code>v_shutdown</code> are relative to the SAME online predecessor <code>online_change</code>
+uses, so a start/stop pair with online unchanged gains at most
+<code>c·(ml − ½·ρ·Δ) − F ≤ 0</code> of room on a single-output arc (strictly negative:
+no free room from declaring a pair there); an input, or one output of a
+multi-output unit, can still gain up to the min-load share, paid by the
+startup cost (<code>research_backbone_startup_ramp.md</code> §1/§3).</p>
+<p>On a continuation roll's carry row (the period's first step ramping from the
+previous roll's realized flow, <code>dt_ramp_carry</code>) the predecessor is history,
+not this roll's data: the up row's stopper floor is <code>F = 0</code> (no
+<code>v_shutdown</code> term at all there — the carried step's <code>min_load</code> isn't in this
+roll), and the down row's stopper allowance is
+<code>SD′_carry = max(1, f̂ / (c·ĉ))</code> (<code>f̂</code> = the carried flow, <code>ĉ</code> =
+<code>p_roll_continue_online</code>; <code>1</code> where <code>ĉ = 0</code>, no stoppers then) — exact and
+always feasible for any history the previous roll realized, unlike a fixed
+<code>κ/c</code> guess (critique item 3).  Starters at the carry row keep <code>SU</code>/<code>F</code> as
+usual (this roll's own data).</p>
+<p>Steps without a predecessor (<code>dt_ramp_link</code> / <code>dt_ramp_carry</code>),
+where the arc holds reserve in that direction (<code>prundt</code>: at its sink in the
+same direction, at its source in the opposite one), get a reserve-only row
+<code>R ≤ ρ·c·cap</code> with ρ = <code>ramp_speed·60·Δ</code> (the linked row with
+<code>v_flow[t′] = v_flow[t]</code>); <code>cap = v_online</code> for a unit with online
+variables, <code>existing_count</code> otherwise.  Rows inside a period with ρ ≥ 1 are
+dropped also with reserve: <code>maxFlow*</code> carries the same R↑ and the floors
+(<code>minFlow_*</code>) the same R↓.  Declaring a startup or shutdown no longer buys
+extra ramp or reserve room by itself (the c14a flat <code>+ v_startup</code> /
+<code>− v_shutdown</code> term is gone; Q-c14a-B is resolved by this split, not left
+open).  Connections have no ramp parameters.</p>
+<h2 id="startup-shutdown-capacity-reduction">Startup / shutdown capacity reduction</h2>
+<p><code>_online._cap_reduction</code> (Q8, item 49): for an online unit's arc with a ramp
+<strong>limit</strong> on a side (<code>process_source_sink_ramp_limit_*</code>, docs: "if the unit also
+has ramp limits"; GMPL keyed it on the speed alone),
+<code>SU = min(1, ml + ½·ramp_speed_up·60·Δt)</code> (the tighter side when both),
+<code>red_su = max(0, availability − SU)</code>; <code>SD</code> / <code>red_sd</code> with the down speed at the
+pre-shutdown step.  The half step is the step average of a unit synchronising at
+min load (owner question Q-c14a-A; GMPL used the full step).  Availability
+correction: GMPL subtracted <code>(1 − SU)·v_startup</code> from <code>availability·online</code>,
+limiting started units to <code>availability − 1 + SU</code>; <code>red_su</code> gives them
+<code>min(availability, SU)</code> (identical at availability 1).</p>
+<p>Rows (<code>maxFlow_online_&lt;kind&gt;</code>, and <code>maxInputFlow_online_&lt;kind&gt;</code> on an indirect
+unit's input arc):</p>
+<table>
+<thead>
+<tr>
+<th>row</th>
+<th>reduction</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>base row</td>
+<td><code>κ·red_su·v_startup[t] + κ·max(0, red_sd − red_su)·v_shutdown[t⁺]</code></td>
+</tr>
+<tr>
+<td><code>…_shutdown_&lt;kind&gt;</code> (where <code>red_sd &gt; 0</code> and t has a UNIQUE successor t⁺)</td>
+<td><code>κ·red_sd·v_shutdown[t⁺] + κ·max(0, red_su − red_sd)·v_startup[t]</code></td>
+</tr>
+<tr>
+<td><code>…_shutdown_branch_&lt;kind&gt;</code> (one row PER successor, where t has SEVERAL successors — a branch point)</td>
+<td><code>κ·red_sd·v_shutdown[t⁺] + κ·max(0, red_su − red_sd)·v_startup[t]</code></td>
+</tr>
+</tbody>
+</table>
+<p>The pair is the exact aggregate bound for any mix of starts at t and stops at
+t⁺ (one-step runs get <code>min(SU, SD)</code>); GMPL's single row with both reductions is
+the minimum-uptime ≥ 2 form and forbids one-step runs.  t⁺ ranges over every
+successor whose <code>dt_ramp_link</code> predecessor is t (c14c #98 / critique item 1):
+the same period (the original case), or the next period continuing the
+timeline (two periods on consecutive parts of one timeline, or a mid-horizon
+branch continuing from its trunk step) — none at a period's last step that
+does not continue, before a gap, a representative-block start or a roll's
+last step.  At a branch point (several mid-horizon branches continuing from
+the same trunk step) the shutdown cross-term cannot be split across the
+single base row (one <code>v_flow[t]</code> variable, one row): the base row keeps only
+its startup term there (a valid, looser bound) and <code>…_shutdown_branch_&lt;kind&gt;</code>
+gives the tight bound per branch instead — summing the branches' <code>v_shutdown</code>
+into one row would let several mutually-exclusive branches each buy back a
+whole unit of ramp room from the shared trunk step.  κ =
+<code>capacity_max_coeff</code> on capped arcs, <code>p_indirect_input_cap</code> on input arcs.  <code>ml</code>:
+<code>min_load</code> on output-measured arcs (direct arcs: also for an input-side ramp,
+v_flow is the output); on an indirect unit's input arc the input drawn at min
+load per unit of input limit, <code>x / input_share_max</code> with
+<code>x = (slope·W(min_load) + section)/(slope·W(1) + section)</code> (<code>W(y)</code> the output fuel
+width filled to y, as <code>p_indirect_input_cap</code>), so a started unit can always draw
+its min-load input.  A ramp-limited input arc of an online indirect unit gets
+<code>maxInputFlow_online</code> rows even without reserve.  On input arcs availability is replaced by
+<code>x(availability)</code> in the row and in <code>red = max(0, x(availability) − SU_in)</code> (<code>_online._input_availability_share</code>).  Per arc: <code>maxOutputSum_online</code>
+of a multi-output unit is not reduced (as GMPL; ramps are arc attributes).</p>
 <h2 id="reserve-shortfall-multiplier">Reserve shortfall multiplier</h2>
 <p><code>vq_reserve ∈ [0, 1]</code> (bounded for numerics) is multiplied by
 <code>reserve_shortfall_scale(d)</code> in every <code>reserveBalance_*</code> row, in the
@@ -1597,31 +1940,118 @@ objective penalty and in <code>process_outputs</code> (<code>calc_slacks</code>)
   dynamic / n-1 group exists (byte-identical LP);</li>
 <li>dynamic: <code>Σ p_flow_upper·unitsize·increase_reserve_ratio</code> over the flows
   of the dynamic RHS (sink and source side);</li>
-<li>n-1: <code>Σ p_flow_upper·unitsize·large_failure_ratio</code> over the failing flows —
-  a SUM over failing processes because the V1 n-1 RHS sums them (the .mod
-  has one row per failing process; switch to a max if that is ported);</li>
+<li>n-1: <code>max_f Σ p_flow_upper·unitsize·large_failure_ratio</code>, the sum over
+  the failing flows of one process f, maximised over the failing processes
+  (<code>_flow_requirement_bound(per_process_max=True)</code>): the largest single
+  n-1 row;</li>
+<li>source side (a flow out of the group's node, dynamic and n-1 down): the
+  bound of an arc in <code>process_source_sink_eff</code> is multiplied by the
+  full-load draw <code>slope + section</code> (<code>_with_full_load_draw</code>; section only for
+  <code>min_load_efficiency</code> units with online variables), because the rows count
+  the flow drawn from the node as <code>nodeBalance_eq</code> does
+  (<code>_reserve._drawn_terms</code>: <code>v_flow·unitsize·slope + v_online·section·unitsize</code>
+  on an efficiency arc, <code>v_flow·unitsize</code> elsewhere); <code>v_online ≤
+  p_flow_upper</code> makes it a valid bound;</li>
+<li>dynamic group demand: <code>group_demand_requirement(d)</code> = <code>ratio_g · Σ_{n∈g}
+  max(−inflow, 0) / Δt</code> (exact, a constant), the same Param as the RHS term
+  of <code>reserveBalance_dynamic_eq</code>. The inflow is <code>p_negative_inflow_unmargined</code>:
+  the energy-margin emitters write <code>solve_data/pdtNodeInflow_unmargined</code>
+  (the inflow before the margin) whenever a solve applies a margin, and keep
+  it equal to <code>pdtNodeInflow</code> in later solves sharing the Provider; without
+  the key the field is <code>p_negative_inflow</code>. Benders: the field is not
+  region-filtered (like <code>penalty_reserve</code>); a subproblem joins it with its
+  filtered <code>group_node</code>, so each region gets its own nodes' demand;</li>
 <li>authored <code>reservation</code> is added for any group; methods add up.</li>
 </ul>
 <p><code>p_flow_upper</code> is the structural bound (existing + max invest by that
 period, per unit size); unlimited invest and <code>conversion_flow_coeff = 0</code>
 arcs carry <code>max_flow_for_unconstrained_variables</code>, so the multiplier stays
 finite. Rows with a zero multiplier are dropped (no coefficient).</p>
-<p>Activation (unchanged, .mod parity): a reserve's relationships are active
-only if some group of the same (reserve, up/down) authors a non-zero
-<code>reservation</code> (<code>prundt_from_source</code>, <code>_emit_reserve</code>). A dynamic / n-1-only
-reserve without any <code>reservation</code> is therefore inactive.</p>
+<p>Activation (<code>_reserve_methods.demanded_reserves</code>, shared by
+<code>_derived.prundt_from_source</code> and <code>emit/_reserve_sets</code>): a reserve's
+relationships are active when the (reserve, up/down) has a requirement — a
+non-zero <code>reservation</code> on some group, a dynamic group driven by an
+<code>increase_reserve_ratio</code> at one of its nodes (or by its own group ratio), or an n-1 group with a
+<code>large_failure_ratio</code> at one of its nodes: dynamic and n-1 requirements are reserve demand by themselves. A dynamic
+/ n-1 group without a driving ratio stays inactive. An n-1 ratio on a
+process without a flow in the failing direction activates the reserve with
+no n-1 row (inert columns).</p>
+<h2 id="n-1-rows">n-1 rows</h2>
+<p><code>reserveBalance_{up,down}_n_1_eq[r, ud, g, p_fail, d, t]</code>: one row per
+failing process <code>p_fail</code> (a process with <code>large_failure_ratio</code> at a node of
+g and a flow into, for up, or out of, for down, that node). LHS:
+<code>v_reserve_total[r, ud, g, d, t]</code> minus the reserve of <code>p_fail</code> at every
+node of g (× unitsize × reliability) plus the group's shared
+<code>vq_reserve · scale</code>; RHS: <code>p_fail</code>'s failing flows × unitsize × ratio. The
+shared slack prices the largest deficit once (.mod parity).</p>
+<p><code>v_reserve_total</code> (POWER column, no cost) exists for every group with an
+n-1 row and at least one provider; <code>reserve_total_upper</code> bounds it by the
+reserve of all providers: <code>v_reserve_total − reserve_sum ≤ 0</code>. Eliminating
+the total gives back the per-provider form (each n-1 row counts every
+provider except <code>p_fail</code>), so the reformulation is an exact projection.
+The inequality suffices because the total enters only <code>≥</code> requirement rows,
+with a positive sign, and has no cost. It needs <code>reserve_sum ≥ 0</code>, which
+holds because providers have reliability &gt; 0
+(<code>process_reserve_upDown_node_active</code>) and unitsize &gt; 0; otherwise
+<code>v_reserve_total ≥ 0</code> would add a constraint. A group without providers
+(or without reliability data) has no total: its rows are
+<code>vq_reserve · scale ≥ failure</code>.</p>
+<p>The <code>reserveBalance_timeseries_eq</code> / <code>reserveBalance_dynamic_eq</code> rows of a
+group that has a total use <code>v_reserve_total</code> in place of <code>reserve_sum</code>
+(exact by the same projection; groups without n-1 rows keep <code>reserve_sum</code>).
+This roughly halves the reserve block of groups combining n-1 with another
+method. The value function in the timeseries right-hand side is unchanged,
+so the reported reserve price (the timeseries row duals) is the same
+wherever it is unique.</p>
+<p>Nonzeros per <code>(r, ud, g, d, t)</code>, with P provider pairs <code>(p, n)</code>, and per
+failing process f its own provider pairs <code>own_f</code> and failing arcs <code>a_f</code>:
+<code>(P + 1) + Σ_f (2 + own_f + a_f)</code> (the per-provider form had
+<code>Σ_f (P − own_f + 1 + a_f)</code>), so they grow with providers plus failing
+processes. HiGHS presolve keeps the total columns (measured with HiGHS 1.14:
+presolve neither removes the total columns nor re-densifies the rows).</p>
+<p>Results: the objective and every value that is unique at the optimum are
+those of the per-provider form; <code>v_reserve</code> is costless, so its split among
+providers is often not unique and may differ between the two forms. The
+n-1 row duals keep their meaning; when the total is positive, the magnitude
+of the <code>reserve_total_upper</code> dual is the sum of the duals of the group-step's
+rows that use the total (HiGHS reports the <code>≤</code> row with the opposite sign to
+the <code>≥</code> rows). The total is not written to the outputs.</p>
+<h2 id="connections-and-reserve">Connections and reserve</h2>
+<p><code>_reserve._add_connection_reserve_constraints</code>.  Connections are the processes of <code>process_source_sink</code>
+that are not in <code>process_unit</code> (<code>_common._connection_procs</code>; <code>process_unit</code> None — hand-built data — keeps
+the old process-generic coupling; an empty <code>process_unit</code> makes every process a connection, so the DB
+projection keeps it empty instead of None).  <code>maxFlow</code>, <code>maxFlow_negCap</code> and <code>maxFlow_online_*</code> carry the
+upward reserve of units only (<code>b.reserve_up_to_sink_units</code>).</p>
+<p>At a reserve node n a connection p has at most one <em>in-channel</em> (a flow variable arriving at n:
+<code>v_flow[p,m,n]</code>, or <code>v_flow_back[p,n,m]</code> of a one-variable / DC arc) and at most one <em>out-channel</em>
+(<code>v_flow[p,n,m]</code> drawing <code>slope·v_flow</code> on an efficiency arc, or <code>v_flow_back[p,m,n]</code>); more raises.
+Flows are measured where they arrive; <code>s_out</code> is the power drawn at n per unit of the out-channel.
+Net-position rule:</p>
+<div class="highlight"><pre><span></span><code>R↑_n ≤ (C_in − x_in) + s_out·x_out        R↓_n ≤ x_in + s_out·(C_out − x_out)
+up:   x_in − s_out·x_out + R↑ ≤ C_in                  (connection_reserve_up)
+down: x_out − x_in/s_out + R↓/s_out ≤ C_out           (connection_reserve_down)
+</code></pre></div>
+<p>One row per capacity bound of the channel whose capacity the reserve uses (in-channel for up, out-channel
+for down): built (<code>C</code> and the invest / divest terms of that arc's <code>maxFlow</code> / <code>maxFlow_back</code>),
+<code>_online_{linear,integer}</code> (<code>κ·availability·v_online</code>), <code>_exact</code> (<code>Ū·y</code> on the forward arc, <code>Ū·(1−y)</code> on
+the reverse arc), so each row holds a single channel's capacity and is exact.  A missing channel
+contributes nothing (C = 0, s_out = 1): a one-way connection gets the floor <code>R↑ ≤ s·x_out</code> at its sending
+node and <code>x + R↑ ≤ C</code> (the old maxFlow coupling) at its receiving node; a one-variable connection gets
+<code>R↑ ≤ C − f</code>, <code>R↓ ≤ C + f</code> for its signed flow f into n; reserve at a node the connection does not link
+is 0.  The same capacity may back upward reserve at one end and downward reserve at the other (one
+action serves both), as for units (separate up / down rows).</p>
+<p>Kept as they were: <code>reserve_process_*</code> (<code>max_share</code> × built capacity, c = 1 for connections) and
+<code>profile_flow_upper_limit</code>, which keeps the upward-reserve term on the in-arc of a connection with a
+<code>connection__profile</code> — conservative: it does not count reserve from stopping the out-flow.</p>
+<p>The reverse flow <code>v_flow_back</code> also counts in the dynamic and n-1 requirements, their shortfall scale
+and the storage energy rows (reverse orientation of a one-variable connection to a storage node, slope 1),
+with the orientation of <code>nodeBalance_eq</code> (into the arc's source, out of its sink).</p>
 <h2 id="follow-ups-not-implemented">Follow-ups (not implemented)</h2>
 <ol>
-<li>Upward reserve is not online-aware: an online-capable unit that is off
-   can offer upward reserve (<code>reserve_process_upward</code> is capacity-based and
-   <code>maxFlow_online</code> / <code>maxOutputSum_online</code> carry no reserve-up term). This
-   touches existing fixtures (reserves on <code>coal_plant</code>).</li>
-<li>Increasing reserves on the source side (a consumer offering <code>down</code> by
-   consuming more) are not bounded by input headroom.</li>
-<li>Connections: a net-position rule (<code>down at n ≤ f_into_n + (cap·avail −
-   f_out_of_n)</code>), interacting with <code>v_flow_back</code> and the other end.</li>
+<li>(Done: "Source-side reserve and capacity" above.)</li>
+<li>(Done: "Connections and reserve" above.)</li>
 <li><code>reserveBalance</code> lacks the .mod's slope factor for source-side reserves
-   of direct units; <code>_inverse_slope</code> in <code>model.py</code> follows the current
+   of direct units; <code>_unit_floors._inverse_slope</code> follows the current
    convention and must change with it (tripwire:
    <code>test_down_reserve_floor.py::test_direct_unit_input_side_up_reserve</code>).</li>
 <li>Connection <code>delay</code> is not implemented. Connections are never in
@@ -1632,28 +2062,19 @@ reserve without any <code>reservation</code> is therefore inactive.</p>
    <code>process_source_sink_eff</code> to <code>_noEff</code> (efficiency losses dropped) and
    turned a <code>regular</code> connection one-way. Now every reader of <code>delay</code>
    reads <code>unit.delay</code> only (<code>input_derivation/_specs.py</code> delay tables,
-   <code>input_derivation/_process_method.py</code>, <code>_derived_params</code>
+   <code>input_derivation/_process_method.py</code>, <code>_derived</code>
    <code>_classify_process_method</code> / <code>_delay_distributions_from_source</code>,
-   <code>_projection_params.process_delayed</code>), so a connection is modelled as
+   <code>_projection.process_delayed</code>), so a connection is modelled as
    if no delay were set, and <code>_validators.validate_connection_delay</code> warns
    once per connection with a non-zero delay
-   (<code>tests/engine_polars/test_connection_delay_ignored.py</code>). Applying a
+   (<code>tests/engine/test_connection_delay_ignored.py</code>). Applying a
    connection delay needs a delayed term in the node balance; when it is
    added, drop the filters and the warning.</li>
-<li>Dynamic and n-1 reserves activate only if some group of the same
-   (reserve, up/down) has a non-zero <code>reservation</code> (<code>prundt_from_source</code>,
-   <code>_emit_reserve</code>; see "Activation" above). A dynamic / n-1-only reserve
-   is silently inactive — e.g. <code>network_coal_wind_reserve_n_1</code> does not
-   test any n-1 requirement. Activation should follow the group's
-   <code>reserve_method</code> (dynamic: any <code>increase_reserve_ratio</code>; n-1: any
-   <code>large_failure_ratio</code>), not the presence of a timeseries reservation.</li>
-<li>The n-1 requirement is one <code>reserveBalance</code> row per (r, ud, g, d, t)
-   whose RHS sums <code>large_failure_ratio × flow</code> over ALL large-failure
-   processes of the group; the .mod had one constraint per failing process
-   (the largest single failure sets the requirement). The sum over-procures
-   reserve whenever two or more processes can fail. When split per failing
-   process, the n-1 component of <code>reserve_shortfall_scale</code> must become the
-   max over the failing processes instead of the sum.</li>
+<li>(Done: <code>v_flow_back</code> in the dynamic and n-1 rows, see "Connections and reserve".)</li>
+<li>A single-input indirect unit's fuel (input) arc gets <code>F = 0</code> in the ramp-row table above
+   (c14c critique item 10) instead of <code>F_in = c·ml_in</code>, which <code>conversion_indirect</code> plus the output
+   floor would justify structurally. Deliberately left: c14c's target was single-output arcs; see
+   <code>specs/github_issues.md</code> §3 item 178.</li>
 </ol>
 
 
@@ -1708,10 +2129,10 @@ reserve without any <code>reservation</code> is therefore inactive.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
         <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
       

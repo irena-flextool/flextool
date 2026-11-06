@@ -16,14 +16,14 @@
         <link rel="prev" href="../excel_interface/">
       
       
-        <link rel="next" href="../solvers/">
+        <link rel="next" href="../env_vars/">
       
       
         
       
       
       <link rel="icon" href="../img/irena_flextool_favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -1323,6 +1323,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1638,14 +1666,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../dev/engine_polars/" class="md-nav__link">
+      <a href="../dev/engine/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    The engine_polars pipeline
+    The engine pipeline
   
 
     
@@ -1813,7 +1841,7 @@
   <span class="md-ellipsis">
     
   
-    Environment variables
+    Environment variables (developer)
   
 
     
@@ -2878,7 +2906,10 @@ python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_run_fle
 </tr>
 </tbody>
 </table>
-<p><strong>Numerical precision and solver tuning:</strong></p>
+<p><strong>Scaling and solver tuning:</strong></p>
+<p>Each of these flags has an environment-variable twin for runs without a command line (Spine Toolbox, a
+script); a given flag wins over the variable, and the variable over the solve's database value. See
+<a href="../env_vars/">Environment variables</a>.</p>
 <table>
 <thead>
 <tr>
@@ -2888,28 +2919,52 @@ python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_run_fle
 </thead>
 <tbody>
 <tr>
-<td><code>--precision-digits N</code></td>
-<td>Round every numeric input parameter to N significant figures before writing CSVs (typical: 10). Collapses float noise so HiGHS <code>mip_detect_symmetry</code> can aggregate structurally identical coefficients. Overrides <code>FLEXTOOL_PRECISION_DIGITS</code>; <code>0</code> or unset disables rounding</td>
-</tr>
-<tr>
 <td><code>--scaling {off,solver_only,basic,full}</code></td>
 <td>FlexTool autoscaler strategy (see <a href="../dev/scaling/">scaling.md</a>). <code>off</code> disables all scaling including HiGHS' internal equilibration; <code>solver_only</code> keeps only HiGHS' default matrix scaling; <code>basic</code> adds FlexTool's Layer-1 range detection and Layer-3 <code>user_*_scale</code> recommendation without LP mutation; <code>full</code> (default) adds Layer-2 semantic per-type column/row/cost scaling. Env fallback: <code>FLEXTOOL_SCALING</code></td>
 </tr>
 <tr>
 <td><code>--user-bound-scale N</code></td>
-<td>Pin HiGHS' <code>user_bound_scale</code> exponent (multiplies all column bounds and RHS by <code>2**N</code>). Use the value HiGHS suggests in its scaling warning; clamped to <code>[-10, 0]</code>. Overrides the Layer-3 auto-pick and any DB value</td>
+<td>Pin HiGHS' <code>user_bound_scale</code> exponent (multiplies all column bounds and RHS by <code>2**N</code>). Use the value HiGHS suggests in its scaling warning; clamped to <code>[-10, 0]</code>. Overrides the Layer-3 auto-pick. Env fallback: <code>FLEXTOOL_USER_BOUND_SCALE</code></td>
 </tr>
 <tr>
 <td><code>--presolve {on,off,choose}</code></td>
-<td>HiGHS <code>presolve</code> override. Default keeps the determinism-pinned <code>on</code>; <code>off</code> disables presolve (slower but useful for memory or numerical diagnostics)</td>
+<td>HiGHS <code>presolve</code> override. Default keeps the determinism-pinned <code>on</code>; <code>off</code> disables presolve (slower but useful for memory or numerical diagnostics). Env fallback: <code>FLEXTOOL_HIGHS_PRESOLVE</code></td>
+</tr>
+<tr>
+<td><code>--threads N</code></td>
+<td>Threads for one FlexTool run: FlexTool's data processing and the solver. FlexTool's own processing (polars) uses at most N and at most 8 (<code>POLARS_MAX_THREADS</code> sets another limit below N); HiGHS gets <code>threads=N</code> with its parallel simplex off; a Benders solve runs at most N region solves at once. Default: the available cores, with HiGHS and Benders as before. When you run several FlexTool runs at once (for example an AI agent or a script starting them in parallel), give each about cores / runs, e.g. <code>flextool-run input.sqlite --scenario-name base --threads 4</code>. Env fallback: <code>FLEXTOOL_THREADS</code></td>
 </tr>
 <tr>
 <td><code>--highs-threads N</code></td>
-<td>Number of HiGHS solver threads (default <code>1</code>). Values &gt;1 enable HiGHS parallel mode and trade determinism for wall-clock speedup</td>
+<td>Number of HiGHS solver threads (default <code>1</code>). Values &gt;1 enable HiGHS parallel mode and trade determinism for wall-clock speedup; at most <code>--threads</code> when that is given. Env fallback: <code>FLEXTOOL_HIGHS_THREADS</code></td>
+</tr>
+<tr>
+<td><code>--solver-time-limit SECONDS</code></td>
+<td>HiGHS wall-clock time limit per solve, a positive number (default: none; 0 or a negative value is ignored with a warning). Env fallback: <code>FLEXTOOL_HIGHS_TIME_LIMIT</code></td>
+</tr>
+<tr>
+<td><code>--solver-mip-gap GAP</code></td>
+<td>HiGHS MIP relative gap for every solve of the run. Unset: each solve's <code>solver_mip_gap</code>, else <code>mip_rel_gap</code> in <code>solver_config/highs.opt</code>. Env fallback: <code>FLEXTOOL_HIGHS_MIP_GAP</code></td>
+</tr>
+<tr>
+<td><code>--solver-log-level {silent,normal,verbose}</code></td>
+<td>HiGHS log output (default <code>normal</code>). Env fallback: <code>FLEXTOOL_SOLVER_LOG_LEVEL</code></td>
 </tr>
 <tr>
 <td><code>--save-memory</code></td>
-<td>Opt-in peak-RSS reduction: after the LP matrix is built, drop polar-high's polars/numpy source, write the LP to a temp MPS file, and solve it in a separate HiGHS subprocess (via <code>cmd_solve_mps</code>) so the solver's working set lives outside the FlexTool address space. Frees ~5-10 GB on large models at ~+90 s I/O per sub-solve. Also disables warm-LP reuse across cascade iterations. See <a href="../dev/architecture/">architecture.md</a></td>
+<td>Opt-in peak-RSS reduction: after the LP matrix is built, drop polar-high's polars/numpy source, write the LP to a temp MPS file, and solve it in a separate HiGHS subprocess (via <code>cmd_solve_mps</code>) so the solver's working set lives outside the FlexTool address space. Frees ~5-10 GB on large models at ~+90 s I/O per sub-solve. Also disables warm-LP reuse across cascade iterations. See <a href="../dev/architecture/">architecture.md</a>. Env fallback: <code>FLEXTOOL_SAVE_MEMORY=1</code></td>
+</tr>
+<tr>
+<td><code>--warm-start</code></td>
+<td>Reuse a cached HiGHS basis for solves of the same model structure, in-process and with <code>--save-memory</code> (Benders solves excepted); any mismatch falls back to a cold solve. Env fallback: <code>FLEXTOOL_WARM_START=1</code></td>
+</tr>
+<tr>
+<td><code>--basis-cache-dir PATH</code></td>
+<td>Folder of the <code>--warm-start</code> basis cache (default <code>&lt;work folder&gt;/basis_cache</code>); share one folder to reuse bases between runs. Env fallback: <code>FLEXTOOL_BASIS_CACHE_DIR</code></td>
+</tr>
+<tr>
+<td><code>--benders-workers N</code></td>
+<td>Threads for the region solves of a Benders solve (default, or <code>0</code>: the number of regions, at most cores minus one). Env fallback: <code>FLEXTOOL_BENDERS_WORKERS</code></td>
 </tr>
 </tbody>
 </table>
@@ -3415,10 +3470,10 @@ python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_read_se
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
       
         <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
       

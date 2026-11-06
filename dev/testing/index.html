@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../img/irena_flextool_favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -766,6 +766,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1081,14 +1109,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../engine_polars/" class="md-nav__link">
+      <a href="../engine/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    The engine_polars pipeline
+    The engine pipeline
   
 
     
@@ -1281,10 +1309,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#layer-1-engine_polars-unit-integration" class="md-nav__link">
+  <a href="#layer-1-engine-unit-integration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Layer 1 — engine_polars unit &amp; integration
+        Layer 1 — engine unit &amp; integration
       
     </span>
   </a>
@@ -1394,6 +1422,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Markers and gating">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-suite-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test-suite environment variables
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1463,7 +1508,7 @@
   <span class="md-ellipsis">
     
   
-    Environment variables
+    Environment variables (developer)
   
 
     
@@ -1678,10 +1723,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#layer-1-engine_polars-unit-integration" class="md-nav__link">
+  <a href="#layer-1-engine-unit-integration" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Layer 1 — engine_polars unit &amp; integration
+        Layer 1 — engine unit &amp; integration
       
     </span>
   </a>
@@ -1791,6 +1836,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Markers and gating">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#test-suite-environment-variables" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Test-suite environment variables
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -1859,7 +1921,7 @@
 
 <h1 id="testing">Testing</h1>
 <p>FlexTool has a multi-layer test pyramid: fast unit/integration tests on
-the <code>engine_polars</code> building blocks, scenario goldens built on demand
+the <code>engine</code> building blocks, scenario goldens built on demand
 from JSON fixtures, and end-to-end scenario runs that compare output
 CSVs against committed reference files. This page is a developer
 pointer — where the tests live, how the JSON-fixture architecture
@@ -1868,10 +1930,10 @@ markers gate CI.</p>
 <p>For the high-level test-layout inventory see
 <a href="../architecture/"><code>architecture.md</code></a> ("Test layout and fixture
 architecture"). For the engine internals being tested see
-<a href="../engine_polars/"><code>engine_polars.md</code></a>. For the JSON-fixture rollout
+<a href="../engine/"><code>engine.md</code></a>. For the JSON-fixture rollout
 narrative see the <code>CHANGELOG.md</code> entry for v3.47.0.</p>
-<h2 id="layer-1-engine_polars-unit-integration">Layer 1 — engine_polars unit &amp; integration</h2>
-<p>Lives under <code>tests/engine_polars/</code>. Covers the LP build path, derived
+<h2 id="layer-1-engine-unit-integration">Layer 1 — engine unit &amp; integration</h2>
+<p>Lives under <code>tests/engine/</code>. Covers the LP build path, derived
 parameter expansion, writer port, scaling pipeline (see
 <a href="../scaling/"><code>scaling.md</code></a>), decomposition (see
 <a href="../decomposition/"><code>decomposition.md</code></a>), warm-start handoff, fast load,
@@ -1893,11 +1955,11 @@ stochastic / PBT pieces, and the Surface A audit subdirectories:</p>
 fixtures.</p>
 <p>Tests range from millisecond-class unit tests (block layout, derived
 params) to solver-touching parity tests. Synthetic flextool-flavoured
-fixtures live in <code>tests/engine_polars/fixtures/</code> and are auto-added to
-<code>sys.path</code> by <code>tests/engine_polars/conftest.py</code> so test modules can
+fixtures live in <code>tests/engine/fixtures/</code> and are auto-added to
+<code>sys.path</code> by <code>tests/engine/conftest.py</code> so test modules can
 <code>from flex_toy_&lt;feature&gt; import …</code> directly.</p>
 <p><strong>Meta-provider invariants.</strong>
-<code>tests/engine_polars/test_meta_provider_invariants.py</code> enforces the
+<code>tests/engine/test_meta_provider_invariants.py</code> enforces the
 Provider-only cascade contract as executable tests, not convention:</p>
 <ul>
 <li><code>test_no_disk_csv_reads_in_cascade</code> — fails if a cascade module
@@ -1935,7 +1997,7 @@ the current <code>FLEXTOOL_DB_VERSION</code>.</p>
 <tbody>
 <tr>
 <td><code>tests.json</code></td>
-<td>Main fixture; <code>tests/scenarios.yaml</code> and most engine_polars tests build their work-folders from here. Also the source for the generated <code>templates_examples.json</code> canonical DB.</td>
+<td>Main fixture; <code>tests/scenarios.yaml</code> and most engine tests build their work-folders from here. Also the source for the generated <code>templates_examples.json</code> canonical DB.</td>
 </tr>
 <tr>
 <td><code>stochastics.json</code></td>
@@ -1967,22 +2029,32 @@ the current <code>FLEXTOOL_DB_VERSION</code>.</p>
 </tr>
 </tbody>
 </table>
-<p>The <code>_augment_*.py</code> and <code>build_*.py</code> scripts alongside these JSONs are
-one-shot builders / overlays kept for provenance, not runtime
-dependencies.</p>
+<p>The <code>_augment_*.py</code>, <code>build_*.py</code> and <code>regen_lh2_three_region.py</code> scripts
+alongside these JSONs are builders / overlays kept for provenance, not
+runtime dependencies.  They take the schema sections from
+<code>spinedb_schema.json</code> (<code>fixture_schema.schema_sections</code>), and
+<code>tests/update_flextool/test_fixture_builders.py</code> checks that each still
+reproduces the data of its committed fixture.  Every fixture carries
+exactly the schema's sections (<code>test_fixture_schema_drift.py</code>).</p>
 <h3 id="scenario_workdir-on-demand-cascade-fixture"><code>scenario_workdir</code> — on-demand cascade fixture</h3>
 <p><code>scenario_workdir(scenario_name, db_fixture="main")</code>, defined in
-<code>tests/engine_polars/conftest.py</code>, is the session-scoped fixture that
-replaced the historical <code>tests/engine_polars/data/work_*/</code> snapshot
-pattern. For a requested <code>(scenario, db_fixture)</code> pair it:</p>
+<code>tests/conftest.py</code>, is the session-scoped fixture that
+replaced the historical <code>tests/engine/data/work_*/</code> snapshot
+pattern. It shares one cached run with <code>scenario_run</code> (which returns the
+<code>tests._support.load.ScenarioRun</code> instead of the folder). For a requested
+<code>(scenario, db_fixture)</code> pair it:</p>
 <ol>
 <li>Resolves <code>db_fixture</code> against the per-fixture session-scoped DB
    (built once per session from the matching JSON).</li>
-<li>Runs the full cascade with <code>csv_dump=True</code> + <code>keep_solutions=True</code>
-   in a <code>tmp_path_factory</code> workdir.</li>
-<li>Snapshots the last orchestration step's <code>flex_data_provider</code> so the
-   on-disk CSV layout matches what the legacy disk fixtures shipped.</li>
-<li>Caches the resulting work-folder per <code>(scenario, db_fixture)</code> —
+<li>Runs the full cascade (<code>tests._support.load.run_scenario</code>:
+   <code>csv_dump=False</code>, <code>keep_solutions=True</code>) in a <code>tmp_path_factory</code>
+   work folder.</li>
+<li>Copies the DB to <code>tests.sqlite</code> and snapshots the last step's
+   provider into <code>input/</code> + <code>solve_data/</code>, for tests that read those
+   files. Nothing in a run reads them back: to get a sub-solve's
+   <code>FlexData</code>, use <code>scenario_run</code> + <code>load_scenario</code> (the production
+   loader call: the step's provider + a DB reader).</li>
+<li>Caches the result per <code>(scenario, db_fixture)</code> —
    each scenario pays its ~2 s cascade cost once per test session
    regardless of how many tests consume it.</li>
 </ol>
@@ -1993,7 +2065,7 @@ pattern. For a requested <code>(scenario, db_fixture)</code> pair it:</p>
     <span class="n">work</span> <span class="o">=</span> <span class="n">scenario_workdir</span><span class="p">(</span><span class="s2">"coal_ladder_annual"</span><span class="p">,</span> <span class="n">db_fixture</span><span class="o">=</span><span class="s2">"main"</span><span class="p">)</span>
     <span class="c1"># work is a Path to a populated workdir with input/output CSVs.</span>
 </code></pre></div>
-<p>The two <code>tests/engine_polars/data/work_&lt;scenario&gt;/</code> directories that
+<p>The two <code>tests/engine/data/work_&lt;scenario&gt;/</code> directories that
 survive after Stage 4 (<code>work_lh2_three_region</code>, <code>work_test_a_lot</code>)
 hold only a single <code>golden_obj.json</code> golden objective each. No
 migrated test depends on the gitignored bulk CSV snapshot pattern;
@@ -2061,13 +2133,13 @@ through the Toolbox DAG rather than the Python runner directly.</p>
 on the same loop):</p>
 <ul>
 <li><strong>Inner loop</strong> — module-specific tests after every edit, typically
-  <code>pytest tests/engine_polars/&lt;area&gt;/</code>. Run continuously while
+  <code>pytest tests/engine/&lt;area&gt;/</code>. Run continuously while
   iterating.</li>
-<li><strong>Broader gate</strong> — <code>pytest tests/engine_polars/</code> full sweep, once
+<li><strong>Broader gate</strong> — <code>pytest tests/engine/</code> full sweep, once
   per commit batch (~27 minutes on a recent reference run).</li>
 <li><strong>Activation truth</strong> — <code>pytest tests/</code> (Layer 1 + scenario
   integration suite + <code>tests/model/</code> + <code>tests/gui/</code> +
-  <code>tests/decomposition/</code> + <code>tests/spinedb_backend/</code>), run rarely
+  <code>tests/spinedb_backend/</code>), run rarely
   (overnight / pre-release).</li>
 </ul>
 <p>Inner loop ≠ confidence to merge; activation truth is the only gate
@@ -2136,7 +2208,7 @@ contract.</p>
 </tr>
 <tr>
 <td><code>decomposition</code></td>
-<td>Tier 8 objective-decomposition parity tests</td>
+<td>Tier 8 objective-decomposition parity (<code>tests/test_scenarios.py</code>)</td>
 </tr>
 <tr>
 <td><code>perturbation</code></td>
@@ -2146,10 +2218,23 @@ contract.</p>
 <td><code>emission</code></td>
 <td>Tier 7 MPS row-count emission tests</td>
 </tr>
+<tr>
+<td><code>csv_reload</code></td>
+<td>CSV reload contract tests in <code>tests/csv_reload/</code> — opt-in</td>
+</tr>
 </tbody>
 </table>
 <p>The <code>smoke</code> marker is attached automatically to scenarios in
 <code>scenarios.yaml</code> that set <code>smoke: true</code>.</p>
+<p><code>csv_reload</code> is attached by <code>tests/csv_reload/conftest.py</code> to every test
+in that folder: tests that load a CSV work folder (a provider snapshot, a
+<code>dump_csvs</code> tree, hand-written CSVs) with the unsupported
+<code>flextool.engine._csv_reload.load_from_dump</code> (a provider seeded from the
+folder's CSVs), which production never does: <code>load_flextool</code> needs the
+sub-solve's provider and a DB reader, and never reads the work folder. The default <code>addopts</code> (<code>-m 'not csv_reload'</code>)
+deselects them, and because a command-line <code>-m</code> replaces that one, the
+conftest also skips them unless the <code>-m</code> expression names <code>csv_reload</code>.
+Run them with <code>pytest -m csv_reload tests/csv_reload/</code>.</p>
 <p><code>.github/workflows/ci.yml</code> defines the three-tier CI gate:</p>
 <ul>
 <li><strong>smoke</strong> — every push and PR; runs
@@ -2159,10 +2244,39 @@ contract.</p>
   Layer-2 MPS parity (30-minute timeout).</li>
 <li><strong>slow</strong> — nightly only; <code>-m slow</code>.</li>
 </ul>
+<h3 id="test-suite-environment-variables">Test-suite environment variables</h3>
+<p>Opt-in switches read by the test suite only (registered with audience <code>test</code> in <code>ENV_KNOBS</code>,
+<code>flextool/run_options.py</code>). The runtime developer switches the suite also uses, such as
+<code>FLEXTOOL_AUTOSCALE_STRICT</code> and <code>FLEXTOOL_SKIP_SOLVER_PROBE</code>, are in
+<a href="../env_vars/">Environment variables (developer)</a>.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Set to</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FLEXTOOL_NATIVE_PARITY_SWEEP</code></td>
+<td>unset (skipped)</td>
+<td><code>1</code></td>
+<td>Run the slow parity sweep of <code>tests/engine/test_orchestration.py</code> over every fixture (about 5 min per fixture).</td>
+</tr>
+<tr>
+<td><code>FLEXTOOL_TEST_RSS_BUDGET_MB</code></td>
+<td><code>1500</code></td>
+<td>MB</td>
+<td>RSS budget of the input-derivation memory test <code>tests/spinedb_backend/test_memory_budget.py</code>, for machines with unrelated memory pressure.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="running-the-tests">Running the tests</h2>
 <div class="highlight"><pre><span></span><code>pytest<span class="w"> </span>-m<span class="w"> </span>smoke<span class="w">              </span><span class="c1"># the CI smoke gate, fast</span>
 pytest<span class="w"> </span>-m<span class="w"> </span><span class="s2">"not solver"</span><span class="w">       </span><span class="c1"># everything that doesn't touch a solver</span>
-pytest<span class="w"> </span>tests/engine_polars/<span class="w">  </span><span class="c1"># broader gate — engine layer</span>
+pytest<span class="w"> </span>tests/engine/<span class="w">  </span><span class="c1"># broader gate — engine layer</span>
 pytest<span class="w"> </span>tests/<span class="w">                </span><span class="c1"># activation truth (slow)</span>
 </code></pre></div>
 <p>Regenerate a single scenario's golden CSVs in place:</p>
@@ -2171,7 +2285,7 @@ pytest<span class="w"> </span>tests/<span class="w">                </span><span
 <p>This runs only the matching <code>scenario</code> parametrize-case, writes fresh
 CSVs into <code>tests/expected/coal/</code>, and lets you commit the diff.</p>
 <h2 id="determinism-guards">Determinism guards</h2>
-<p><code>engine_polars</code> emitters keep cross-solve determinism through explicit
+<p><code>engine</code> emitters keep cross-solve determinism through explicit
 polars sort keys on every set / parameter frame before it enters the
 <code>polar_high.Problem</code>. The downstream LP row / column IDs are then
 assigned in canonical order regardless of Python hash randomisation.</p>
@@ -2181,7 +2295,7 @@ test so scenarios that share solve names cannot cross-contaminate.</p>
 <h2 id="adding-a-new-test">Adding a new test</h2>
 <ul>
 <li><strong>Engine unit test.</strong> Drop a <code>test_*.py</code> file into
-  <code>tests/engine_polars/</code> (or the matching <code>loaders/</code> / <code>constraints/</code>
+  <code>tests/engine/</code> (or the matching <code>loaders/</code> / <code>constraints/</code>
   / <code>objective/</code> subdirectory) — pytest auto-discovers.</li>
 <li><strong>New scenario golden.</strong> Append a scenario entry to
   <code>tests/scenarios.yaml</code>, then
@@ -2198,7 +2312,7 @@ test so scenarios that share solve names cannot cross-contaminate.</p>
 <ul>
 <li><a href="../architecture/"><code>architecture.md</code></a> — pipeline end-to-end,
   Repository layout, verify-hook inventory</li>
-<li><a href="../engine_polars/"><code>engine_polars.md</code></a> — the core under Layer 1</li>
+<li><a href="../engine/"><code>engine.md</code></a> — the core under Layer 1</li>
 <li><a href="../db_schema/"><code>db_schema.md</code></a> — schema migration chain that
   <code>sync_master_json_template --verify</code> enforces</li>
 <li><a href="../decomposition/"><code>decomposition.md</code></a> — Benders parity context</li>
@@ -2258,10 +2372,10 @@ test so scenarios that share solve names cannot cross-contaminate.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
         <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
       

@@ -21,7 +21,7 @@
       
       
       <link rel="icon" href="img/irena_flextool_favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -29,7 +29,7 @@
       
     
     
-      <link rel="stylesheet" href="assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -774,6 +774,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1089,14 +1117,14 @@
   
   
     <li class="md-nav__item">
-      <a href="dev/engine_polars/" class="md-nav__link">
+      <a href="dev/engine/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    The engine_polars pipeline
+    The engine pipeline
   
 
     
@@ -1264,7 +1292,7 @@
   <span class="md-ellipsis">
     
   
-    Environment variables
+    Environment variables (developer)
   
 
     
@@ -1529,11 +1557,11 @@
 <p>The <strong>Spine Toolbox workflow</strong> is the alternative for advanced users who combine FlexTool with other models or build custom input/output processing pipelines (<a href="install_toolbox/">install</a>, <a href="spine_toolbox/">workflow guide</a>).</p>
 <p><strong>Excel / LibreOffice</strong> spreadsheets are supported for spreadsheet-driven data entry and bulk edits alongside either interface (<a href="excel_interface/">Excel interface</a>).</p>
 <h1 id="pure-python-optimisation-core">Pure-Python optimisation core</h1>
-<p>FlexTool's optimisation core is <strong>pure Python</strong>: it builds the LP/MIP matrix in <a href="https://pola.rs/">polars</a> DataFrames with <a href="https://github.com/nodal-tools/polar-high">polar-high</a> and solves it directly with <a href="https://highs.dev/">HiGHS</a>. This <code>engine_polars</code> backend has replaced the older GLPSOL-based pre-processing and is a lot (~3-10x) faster on the model-build side (the solver itself is unchanged).</p>
+<p>FlexTool's optimisation core is <strong>pure Python</strong>: it builds the LP/MIP matrix in <a href="https://pola.rs/">polars</a> DataFrames with <a href="https://github.com/nodal-tools/polar-high">polar-high</a> and solves it directly with <a href="https://highs.dev/">HiGHS</a>. This <code>engine</code> backend has replaced the older GLPSOL-based pre-processing and is a lot (~3-10x) faster on the model-build side (the solver itself is unchanged).</p>
 <h1 id="video-tutorials">Video tutorials</h1>
 <div class="admonition warning">
 <p class="admonition-title">Video tutorials may be out of date</p>
-<p>Some of the video tutorials linked from this site predate the FlexTool GUI and the <code>engine_polars</code> solver backend. The core modelling concepts still apply, but the screens and CLI flags shown may differ from the current release. Treat them as supplementary; the written tutorial and how-to pages are authoritative.</p>
+<p>Some of the video tutorials linked from this site predate the FlexTool GUI and the <code>engine</code> solver backend. The core modelling concepts still apply, but the screens and CLI flags shown may differ from the current release. Treat them as supplementary; the written tutorial and how-to pages are authoritative.</p>
 </div>
 <h1 id="monthly-user-support-telcos">Monthly user support telcos</h1>
 <p>The monthly user support telco is held on the last Monday of each month at 12-13 UTC (skipping December and July). (Notice that time is according to UTC and in places where day-light saving time is applied, the time of the meeting may change between winter/summer) Each 1 h session starts with a ~15 min presentation on simple IRENA FlexTool demos or tutorials, followed by 45 min Q&amp;A session.</p>
@@ -1601,10 +1629,10 @@
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["content.code.copy", "navigation.expand"], "search": "assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": ".", "features": ["content.code.copy", "navigation.expand"], "search": "assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="assets/javascripts/bundle.c21346df.min.js"></script>
       
         <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
       

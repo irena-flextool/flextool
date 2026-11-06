@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../img/irena_flextool_favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -766,6 +766,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -1081,14 +1109,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../engine_polars/" class="md-nav__link">
+      <a href="../engine/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    The engine_polars pipeline
+    The engine pipeline
   
 
     
@@ -1256,7 +1284,7 @@
   <span class="md-ellipsis">
     
   
-    Environment variables
+    Environment variables (developer)
   
 
     
@@ -1737,7 +1765,7 @@
 
 <h1 id="injecting-parameters-between-solves">Injecting parameters between solves</h1>
 <p>Reference for the programmatic <code>override_provider</code> hook on
-<a href="../../flextool/engine_polars/_orchestration.py"><code>run_chain_from_db</code></a>. This is the supported mechanism for feeding
+<a href="https://github.com/irena-flextool/flextool/blob/main/flextool/engine/solve/_orchestration.py"><code>run_chain_from_db</code></a>. This is the supported mechanism for feeding
 data from an external tool — another optimisation model, a market
 simulator, a Python data step — into a FlexTool cascade <em>between</em>
 sub-solves of the same run.</p>
@@ -1761,11 +1789,11 @@ Python wrapper substitute values for any of those handoff carriers
 <p>The mechanism is programmatic only — there is no CLI flag. The wrapper
 script imports <code>run_chain_from_db</code> and passes a callable.</p>
 <h2 id="api">API</h2>
-<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">flextool.engine_polars</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_chain_from_db</span>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">flextool.engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_chain_from_db</span>
 
 <span class="n">run_chain_from_db</span><span class="p">(</span>
     <span class="n">input_db_url</span><span class="p">,</span>
-    <span class="n">scenario_name</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
+    <span class="n">scenario_name</span><span class="p">,</span>  <span class="c1"># required: None or "" raises FlexToolConfigError</span>
     <span class="n">work_folder</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>
     <span class="o">*</span><span class="p">,</span>
     <span class="n">override_provider</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>  <span class="c1"># Callable[[], dict[str, pl.DataFrame]] | None</span>
@@ -1777,16 +1805,16 @@ mapping a whitelisted <code>K.HANDOFF_*</code> constant to a <code>polars.DataFr
 It is invoked <strong>once per sub-solve iteration</strong>, after the natural
 handoff translators and before preprocessing. Returning <code>{}</code> (or
 <code>None</code>) means "no override this iteration".</p>
-<p>Full source: <code>flextool/engine_polars/_orchestration.py</code> (entry point),
-<code>flextool/engine_polars/_native_run_model.py</code> (invocation site),
-<code>flextool/engine_polars/_provider_translators.py</code>
+<p>Full source: <code>flextool/engine/solve/_orchestration.py</code> (entry point),
+<code>flextool/engine/solve/_run_model.py</code> (invocation site),
+<code>flextool/engine/preprocess/_provider_translators.py</code>
 (<code>translate_overrides_to_provider</code>, <code>read_handoff_frame</code>,
 <code>dump_provider_sources</code>).</p>
 <h2 id="whitelisted-handoff-keys">Whitelisted handoff keys</h2>
 <p>Only the 11 keys below are overridable. Supplying any other key raises
 <code>ValueError</code> in <code>translate_overrides_to_provider</code>. The constants live
-in <code>flextool.engine_polars._provider_keys</code>; import as
-<code>from flextool.engine_polars import _provider_keys as K</code>.</p>
+in <code>flextool.engine.preprocess._provider_keys</code>; import as
+<code>from flextool.engine.preprocess import _provider_keys as K</code>.</p>
 <table>
 <thead>
 <tr>
@@ -1866,9 +1894,20 @@ following steps in order:</p>
 <ol>
 <li><strong>Sequential handoff translation.</strong> The previous sub-solve's
    <code>SolveHandoff</code> is fanned into <code>handoff/*</code> Provider keys
-   (<code>translate_handoff_to_provider</code>).</li>
+   (<code>translate_handoff_to_provider</code>). A realised-dispatch roll takes
+   only <code>PIN_FIELDS</code> from its UC roll and <code>ROLL_FORWARD_FIELDS</code> from the
+   previous dispatch roll.</li>
 <li><strong>Parent handoff translation.</strong> In nested cascades, the parent's
-   handoff is translated next.</li>
+   handoff is translated next, <code>PIN_FIELDS</code> only (realised investment /
+   existing / divest, fixed online, the nested storage fixes).</li>
+<li><strong>Routed carriers.</strong> The carriers tied to the realised end — the
+   storage state (<code>handoff/roll_end_state</code>, <code>handoff/upward_roll_end_state</code>)
+   and the step carriers (online state, last flow, last step, online
+   history) — are written by the carry router (<code>solve/_carry_routing.py</code>):
+   the latest state realised before this sub-solve at its nesting level or
+   deeper, or empty when the sub-solve is the first of its level. The
+   running totals (<code>cumulative_*</code>, <code>cum_sim_hours</code>) are not routed: every
+   sub-solve passes them on, so they come from the sequential predecessor.</li>
 <li><strong>Override callable.</strong> If <code>state.override_provider</code> is non-<code>None</code>,
    it is invoked. The returned dict is fanned into the parallel
    <code>override/*</code> Provider keys
@@ -1878,6 +1917,12 @@ following steps in order:</p>
    falls back to <code>handoff/*</code>. Consumers stay key-stable.</li>
 <li><strong>Solve.</strong> The LP is built (cold) or updated (warm) and dispatched
    to the solver.</li>
+<li><strong>Produced handoff.</strong> After the solve, the sub-solve's own
+   <code>SolveHandoff</code> is written under <code>produced_handoff/*</code>
+   (<code>translate_produced_handoff_to_provider</code>). The <code>handoff/*</code> keys keep
+   the values the solve consumed, so a LP rebuilt from the post-solve
+   provider is the LP that was solved; read <code>produced_handoff/*</code> for what
+   the solve passes on (e.g. a roll's final running totals).</li>
 </ol>
 <p>The callable is invoked <strong>on every iteration</strong> including the first.
 Return <code>{}</code> whenever no override applies — that iteration falls through
@@ -1889,21 +1934,22 @@ cascade aborts; clean error handling is the wrapper's responsibility.</p>
 </code></pre>
 <p>with the sorted key list at DEBUG.</p>
 <h2 id="warm-path-interaction">Warm-path interaction</h2>
-<p>Under <code>--warm</code>, the warm <code>Problem</code> for iteration N is built from the
-previous iteration's LP coefficients and is reused <em>before</em> the
-override callable fires for iteration N. Concretely:</p>
+<p>Under <code>warm=True</code> (the default) an LP is reused for iteration N only when
+iteration N's <code>FlexData</code> — computed after the override callable has fired
+and preprocessing has read the overridden handoff — is identical to
+iteration N-1's in every field, labels included, and the solver
+configuration is the same (<code>_reuse_blocker</code> in <code>solve/_warm.py</code>).
+Concretely:</p>
 <ul>
-<li>Overrides at iteration N <strong>do not</strong> retroactively mutate the warm LP
-  matrix entering iteration N. They affect only what preprocessing
-  computes downstream of <code>read_handoff_frame</code>.</li>
-<li>For example, overriding <code>K.HANDOFF_REALIZED_INVEST</code> at iteration N
-  changes <code>p_entity_previously_invested_capacity</code> (and anything
-  computed from it) for iteration N's preprocessing, but the warm LP
-  coefficients still reflect iteration N-1's value of
-  <code>realized_invest</code>.</li>
+<li>An override that changes anything preprocessing computes (for example
+  <code>K.HANDOFF_REALIZED_INVEST</code> at iteration N changes
+  <code>p_entity_previously_invested_capacity</code>) makes iteration N's <code>FlexData</code>
+  differ, so iteration N builds its own LP: the override always reaches
+  the LP matrix, the objective and the right-hand sides.</li>
+<li>An override that changes nothing in <code>FlexData</code> leaves the LP identical,
+  and reusing it is equivalent to rebuilding it.</li>
 </ul>
-<p>If the wrapper needs the override to influence the LP matrix itself,
-run the cascade cold (omit <code>warm=True</code>).</p>
+<p>No <code>warm=False</code> run is needed for overrides to take effect.</p>
 <h2 id="audit">Audit</h2>
 <p>Set <code>FLEXTOOL_AUDIT_SOURCES=1</code> (see <a href="../env_vars/">Environment variables</a>)
 to enable the per-sub-solve audit dump. Every Provider key written with
@@ -1932,8 +1978,8 @@ don't exist are treated as "no override for that iteration".</p>
 
 <span class="kn">import</span><span class="w"> </span><span class="nn">polars</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pl</span>
 
-<span class="kn">from</span><span class="w"> </span><span class="nn">flextool.engine_polars</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_chain_from_db</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">flextool.engine_polars</span><span class="w"> </span><span class="kn">import</span> <span class="n">_provider_keys</span> <span class="k">as</span> <span class="n">K</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flextool.engine</span><span class="w"> </span><span class="kn">import</span> <span class="n">run_chain_from_db</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">flextool.engine.preprocess</span><span class="w"> </span><span class="kn">import</span> <span class="n">_provider_keys</span> <span class="k">as</span> <span class="n">K</span>
 
 
 <span class="n">WATCH_DIR</span> <span class="o">=</span> <span class="n">Path</span><span class="p">(</span><span class="s2">"overrides_in"</span><span class="p">)</span>
@@ -2028,11 +2074,12 @@ input, the trust boundary is the wrapper around <code>run_chain_from_db</code>
 itself, not this hook.</p>
 <h2 id="see-also">See also</h2>
 <ul>
-<li><a href="../../tests/engine_polars/test_override_provider.py"><code>tests/engine_polars/test_override_provider.py</code></a> —
+<li><a href="https://github.com/irena-flextool/flextool/blob/main/tests/engine/test_override_provider.py"><code>tests/engine/test_override_provider.py</code></a> —
   end-to-end test of the override path plus the audit-dump variant.
   Useful as a reference for additional patterns (capturing a real
   handoff frame, scaling it, asserting the propagated effect).</li>
-<li><a href="../../specs/architecture_provider_and_future_duckdb.md"><code>specs/architecture_provider_and_future_duckdb.md</code></a>
+<li><code>specs/architecture_provider_and_future_duckdb.md</code> (internal design notes,
+  not in the public repository)
   (sections on Phases 5 and 6) — design rationale for the
   <code>override/*</code> namespace, the override-aware <code>read_handoff_frame</code>
   lookup, and the audit-dump format.</li>
@@ -2092,10 +2139,10 @@ itself, not this hook.</p>
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
         <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
       

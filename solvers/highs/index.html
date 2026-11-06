@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../../img/irena_flextool_favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.7.7">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
     
     
       
@@ -31,7 +31,7 @@
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.ec1eaa64.min.css">
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
       
       
 
@@ -766,6 +766,34 @@
 
               
             
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
           </ul>
         </nav>
       
@@ -961,10 +989,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-matrix-file-format-choices-for-highs" class="md-nav__link">
+  <a href="#how-highs-is-called" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The --matrix-file-format choices for HiGHS
+        How HiGHS is called
       
     </span>
   </a>
@@ -1233,14 +1261,14 @@
   
   
     <li class="md-nav__item">
-      <a href="../../dev/engine_polars/" class="md-nav__link">
+      <a href="../../dev/engine/" class="md-nav__link">
         
   
   
   <span class="md-ellipsis">
     
   
-    The engine_polars pipeline
+    The engine pipeline
   
 
     
@@ -1408,7 +1436,7 @@
   <span class="md-ellipsis">
     
   
-    Environment variables
+    Environment variables (developer)
   
 
     
@@ -1667,10 +1695,10 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#the-matrix-file-format-choices-for-highs" class="md-nav__link">
+  <a href="#how-highs-is-called" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The --matrix-file-format choices for HiGHS
+        How HiGHS is called
       
     </span>
   </a>
@@ -1757,9 +1785,11 @@ environment variables. Every FlexTool scenario that does not explicitly set
 the <code>solver</code> parameter runs on HiGHS.</p>
 <p>Internally FlexTool runs HiGHS via one of two paths:</p>
 <ul>
-<li><strong>Warm-active path</strong> — the default for cascade runs. Keeps a single live
-  <code>highspy.Highs</code> instance across structurally-compatible sub-solves so each
-  iteration's right-hand-side updates flow into the same in-memory model.</li>
+<li><strong>Warm-active path</strong> — the default for cascade runs. Builds and solves each
+  sub-solve in-process with <code>highspy.Highs</code>; the built model is re-solved for
+  the next sub-solve only when that sub-solve is identical (same data, same
+  labels, same solver settings). Rolls of a rolling solve are always built
+  anew.</li>
 <li><strong>Subprocess path</strong> — for cold solves, <code>--save-memory</code>, and single-solve
   invocations. FlexTool writes the LP to a temporary MPS via the polar-high
   polars→MPS writer, then runs <code>python -m flextool.cli.cmd_solve_mps</code> in a
@@ -1792,36 +1822,10 @@ wrappers are installed, but <code>'highs'</code> must appear):</p>
 </code></pre></div>
 <p>If <code>'highs'</code> is missing, your FlexTool install is broken — reinstall
 FlexTool or run <code>pip install highspy</code> to repair.</p>
-<h2 id="the-matrix-file-format-choices-for-highs">The <code>--matrix-file-format</code> choices for HiGHS</h2>
-<p>The on-disk format used when a solver is dispatched via a matrix file is
-selected by the <code>--matrix-file-format</code> CLI flag (it replaced the old
-<code>solver_io_api</code> DB parameter):</p>
-<table>
-<thead>
-<tr>
-<th>Value</th>
-<th>What it does</th>
-<th>When to use it</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>mps</code></td>
-<td>Default. On-disk MPS when a matrix file is written.</td>
-<td>The default; required for commercial-solver dispatch.</td>
-</tr>
-<tr>
-<td><code>lp</code></td>
-<td>On-disk LP format instead of MPS.</td>
-<td>When you prefer human-readable LP files.</td>
-</tr>
-</tbody>
-</table>
-<p>For HiGHS without <code>--save-memory</code>, FlexTool dispatches in-process (the
-fastest path) and the flag has no effect. With <code>--save-memory</code>, HiGHS
-round-trips through MPS internally; the flag again has no effect on HiGHS.
-The flag matters for commercial solvers, which are always dispatched via a
-matrix file.</p>
+<h2 id="how-highs-is-called">How HiGHS is called</h2>
+<p>Without <code>--save-memory</code>, FlexTool calls HiGHS in-process (the fastest path).
+With <code>--save-memory</code>, the model is written to an MPS file and solved by HiGHS
+in a separate process. Commercial solvers are always given an MPS file.</p>
 <h2 id="highs-specific-options-worth-knowing">HiGHS-specific options worth knowing</h2>
 <p>HiGHS exposes a long list of options; FlexTool surfaces them through the
 generic <code>solver_arguments</code> Map plus the convenience knobs. The most
@@ -1981,10 +1985,10 @@ solve_advanced.solver_arguments:
     
       
       
-      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../../assets/javascripts/bundle.d7400e89.min.js"></script>
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
       
         <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
       

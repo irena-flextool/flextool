@@ -10,9 +10,9 @@
 <link href="../advanced_concepts/" rel="prev"/>
 <link href="../spine_toolbox/" rel="next"/>
 <link href="../img/irena_flextool_favicon.png" rel="icon"/>
-<meta content="mkdocs-1.6.1, mkdocs-material-9.7.7" name="generator"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.8.0" name="generator"/>
 <title>FlexTool GUI - IRENA FlexTool</title>
-<link href="../assets/stylesheets/main.ec1eaa64.min.css" rel="stylesheet"/>
+<link href="../assets/stylesheets/main.57a0d79d.min.css" rel="stylesheet"/>
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
 <link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
 <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
@@ -557,6 +557,18 @@
   </span>
 </a>
 </li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../env_vars/">
+<span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+</a>
+</li>
 </ul>
 </nav>
 </li>
@@ -694,11 +706,11 @@
 </a>
 </li>
 <li class="md-nav__item">
-<a class="md-nav__link" href="../dev/engine_polars/">
+<a class="md-nav__link" href="../dev/engine/">
 <span class="md-ellipsis">
     
   
-    The engine_polars pipeline
+    The engine pipeline
   
 
     
@@ -770,7 +782,7 @@
 <span class="md-ellipsis">
     
   
-    Environment variables
+    Environment variables (developer)
   
 
     
@@ -1247,7 +1259,7 @@
 <h2 id="execution-jobs">Execution jobs</h2>
 <p>The <strong>Execution jobs</strong> window is a separate <code>Toplevel</code> dedicated to queue management. It coexists with the main window — actions in the main window keep working while the jobs window is open.</p>
 <h3 id="resource-controls">Resource controls</h3>
-<p>The top row of the window holds five spinboxes; each is a per-project setting persisted to <code>settings.yaml</code>. Their defaults are deliberately conservative — one job at a time, one HiGHS thread, auto-budget — so the GUI never starves the host machine by default:</p>
+<p>The top row of the window holds five spinboxes; each is a per-project setting persisted to <code>settings.yaml</code>. Their defaults are deliberately conservative — one job at a time, one thread per run, auto-budget — so the GUI never starves the host machine by default:</p>
 <table>
 <thead>
 <tr>
@@ -1263,9 +1275,9 @@
 <td>Number of scenario subprocesses that may run concurrently.</td>
 </tr>
 <tr>
-<td>Cores per job</td>
+<td>Threads per run</td>
 <td><strong>1</strong></td>
-<td>Passed to each subprocess as <code>--highs-threads</code>.</td>
+<td>Threads of each run: FlexTool's data processing and the solver. Passed to each subprocess as <code>--threads</code>; runs executed in parallel each use this many.</td>
 </tr>
 <tr>
 <td>Memory budget/job (GB, 0=auto)</td>
@@ -1409,8 +1421,8 @@
 <div class="md-dialog" data-md-component="dialog">
 <div class="md-dialog__inner md-typeset"></div>
 </div>
-<script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.2c215733.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
-<script src="../assets/javascripts/bundle.d7400e89.min.js"></script>
+<script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+<script src="../assets/javascripts/bundle.c21346df.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
 <script src="../assets/mathjaxhelper.js"></script>
 <script type="module">import mermaid from "https://unpkg.com/mermaid@10.4.0/dist/mermaid.esm.min.mjs";
