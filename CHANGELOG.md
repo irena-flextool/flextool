@@ -11,6 +11,10 @@
   step length and when FlexTool does it; `max_flow_for_unconstrained_variables` no longer mentions commodity tiers
   (it does not bound them). Upgrading a database adds the units to its descriptions. Values and results are
   unchanged.
+- **Fixed: result labels.** `node_inflow__dt`, `nodeGroup_flows_dt_g` and the "Timestep inflow" of
+  `nodeGroup_gdt_p` are MWh per time step (labelled MW before); `entity_annuity_d_p` is the discounted investment
+  cost per MW (labelled as a yearly annuity before); the capacity factor tables `unit_outputs_cf_d_ee`,
+  `unit_inputs_cf_d_ee` and `connection_cf_d_e` now carry their metadata (a ratio).
 - **New: every run records itself in its output folder.** `output_parquet/<run>/_run_status.json` says whether the
   run is running, succeeded, failed, was interrupted, killed or crashed, with each solve's outcome (solver status,
   accepted / rejected and why, objective), the error of a failed run, the input database and scenario, the
