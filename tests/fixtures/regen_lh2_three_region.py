@@ -57,7 +57,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from spinedb_api import DatabaseMapping, import_data
+from flextool.update_flextool.db_handle import open_database_mapping
+from spinedb_api import import_data
 from spinedb_api.exception import SpineDBAPIError
 
 # Allow running this script standalone from any cwd.
@@ -1036,7 +1037,7 @@ def _build_sqlite(
     # Step 2: drop the baseline alternatives added to tests.json after the
     # LH2 fixtures were built, so the build reproduces the committed JSONs.
     url = f"sqlite:///{db_path.resolve()}"
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         for name in BASELINE_ALTERNATIVES_NOT_CARRIED:
             alt = db.get_item("alternative", name=name)
             if alt:
@@ -1045,7 +1046,7 @@ def _build_sqlite(
 
     # Step 3: layer the LH2 fixture on top.
     payload = _build_payload(hz=hz, extra_overlay=extra_overlay)
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         count, errors = import_data(db, **payload)
         if errors:
             raise RuntimeError(f"LH2 fixture import errors: {errors[:5]}")
@@ -1115,7 +1116,7 @@ def _prune_baseline_topology(url: str) -> None:
         "upDown": set(),
     }
 
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         ids_to_remove: list[tuple[str, int]] = []
         for class_name, keepers in keep_by_class.items():
             for ent in db.find_entities(entity_class_name=class_name):

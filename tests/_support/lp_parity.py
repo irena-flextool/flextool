@@ -20,7 +20,9 @@ _EXIT = re.compile(r"^exit=(-?\d+)$", re.MULTILINE)
 
 
 def _env() -> dict[str, str]:
-    return {k: v for k, v in os.environ.items() if k != "FLEXTOOL_AXIS_ENUMS"}
+    env = {k: v for k, v in os.environ.items() if k != "FLEXTOOL_AXIS_ENUMS"}
+    env["PYTHONIOENCODING"] = "utf-8"  # the child's prints must not depend on the console code page (Windows)
+    return env
 
 
 def snapshot(out_dir: Path, fixtures: tuple[str, ...], *, axis_enums: bool, jobs: int,

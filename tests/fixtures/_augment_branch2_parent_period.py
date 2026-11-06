@@ -93,7 +93,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from db_utils import db_to_json, json_to_db  # noqa: E402
 
-from spinedb_api import DatabaseMapping, Map, to_database  # noqa: E402
+from flextool.update_flextool.db_handle import open_database_mapping  # noqa: E402
+from spinedb_api import Map, to_database  # noqa: E402
 
 from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
 from flextool.update_flextool.test_fixtures import migrate_fixture  # noqa: E402
@@ -132,7 +133,7 @@ def _build_3d_map() -> Map:
 
 def _augment_db(db_path: Path) -> None:
     url = f"sqlite:///{db_path.resolve()}"
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         pvs = db.find_parameter_values(
             entity_class_name="node", parameter_definition_name="inflow"
         )

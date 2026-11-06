@@ -44,7 +44,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from spinedb_api import DatabaseMapping, to_database  # noqa: E402
+from flextool.update_flextool.db_handle import open_database_mapping  # noqa: E402
+from spinedb_api import to_database  # noqa: E402
 
 from tests.db_utils import db_to_json, json_to_db  # noqa: E402
 
@@ -62,7 +63,7 @@ PV_UPDATE = (
 
 def _apply(url: str) -> None:
     # NOTE: no create=True — json_to_db already created + committed the DB.
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         # 1. Remove the spurious dispatch override on to_west_node.
         cls, name, param, alt = PV_REMOVAL
         pvs = db.find_parameter_values(

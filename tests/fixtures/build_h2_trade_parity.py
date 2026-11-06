@@ -62,6 +62,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from flextool.update_flextool.db_handle import open_database_mapping
 from spinedb_api import DatabaseMapping, Map, export_data, from_database, to_database
 
 from flextool.update_flextool.test_fixtures import migrate_fixture
@@ -168,7 +169,7 @@ def build_payload(source_url: str) -> dict[str, list]:
     EXCEPT the alternative-keyed / scenario-keyed ones, which we pin to
     just the data needed for ``scenario_test_6h_no_carrier_storage``.
     """
-    with DatabaseMapping(source_url) as db:
+    with open_database_mapping(source_url) as db:
         kept_ts = _resolve_kept_timestamps(db)
 
         keep_alt_ids = [

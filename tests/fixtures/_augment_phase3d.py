@@ -51,8 +51,8 @@ sys.path.insert(0, str(REPO_ROOT / "tests"))
 
 from db_utils import db_to_json, json_to_db  # noqa: E402
 
+from flextool.update_flextool.db_handle import open_database_mapping  # noqa: E402
 from spinedb_api import (  # noqa: E402
-    DatabaseMapping,
     Map,
     to_database,
 )
@@ -113,7 +113,7 @@ def _ladder_cumulative_map_2d() -> Map:
 
 def _augment_tests_db(db_path: Path) -> None:
     url = f"sqlite:///{db_path.resolve()}"
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         # Alternatives
         for alt_name, desc in (
             ("ladder_ann_on", "Phase 3d: enable coal annual price ladder."),
@@ -255,7 +255,7 @@ def _augment_tests_db(db_path: Path) -> None:
 
 def _augment_stochastics_db(db_path: Path) -> None:
     url = f"sqlite:///{db_path.resolve()}"
-    with DatabaseMapping(url) as db:
+    with open_database_mapping(url) as db:
         db.add_alternative_item(
             name="no_storage_override",
             description=(

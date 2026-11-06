@@ -39,7 +39,7 @@ def db_to_json(db_path: Path, json_path: Path) -> None:
     with open_database_mapping(url) as db_map:
         data = export_data(db_map, parse_value=_pack_value)
     dump_fixture_json(data, json_path)
-    print(f"Exported {len(data.get('parameter_values', []))} parameter values → {json_path}")
+    print(f"Exported {len(data.get('parameter_values', []))} parameter values -> {json_path}")
 
 
 def json_to_db(json_path: Path, db_path: Path) -> str:
@@ -56,7 +56,7 @@ def json_to_db(json_path: Path, db_path: Path) -> str:
         if errors:
             raise RuntimeError(f"Import errors: {errors[:5]}")
         db_map.commit_session("Import test fixture")
-    print(f"Imported {count} items → {db_path}")
+    print(f"Imported {count} items -> {db_path}")
     return url
 
 
