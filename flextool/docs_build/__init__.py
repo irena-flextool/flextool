@@ -1,7 +1,9 @@
 """Generated documentation pages: the model formulation and the results catalogue, built from the installed code.
 
-One generator for the web docs (the mkdocs hook ``tools/mkdocs_hooks.py``) and for ``python -m
-flextool.docs_build``.  ``scope`` lists what the documentation ships.
+One generator for the web docs (the mkdocs hook ``tools/mkdocs_hooks.py``), for ``python -m
+flextool.docs_build`` and for the assistant's documentation cache (``index.generate``, called on first use by
+``flextool.assistant.docs_store``; that path skips the private-names check).  ``scope`` lists what the
+documentation ships.
 
 Private names: when the local, git-ignored list ``.private_names`` (``scope.PRIVATE_NAMES_FILE``) exists at the
 repository root, a generated page or a shipped Markdown file that matches one of its lines fails the build
