@@ -16,7 +16,6 @@ import sys
 from pathlib import Path
 
 import pytest
-from setuptools.command.editable_wheel import _finder_template
 
 from flextool.update_flextool import bundle_install, self_update
 
@@ -37,11 +36,14 @@ def _make_bundle(root: Path, style: str) -> tuple[Path, Path]:
     if style == "path":
         pth.write_text(str(clone.resolve()), encoding="utf-8")
     else:
+        # setuptools' own finder template, so the test sees the file setuptools writes; setuptools is not
+        # installed in every test environment (Python ≥ 3.12 venvs do not ship it).
+        editable_wheel = pytest.importorskip("setuptools.command.editable_wheel")
         finder = f"__editable___flextool_{VERSION.replace('.', '_')}_finder"
         mapping = {"flextool": str(package.resolve())}
         namespaces = {"flextool.schemas": [str((package / "schemas").resolve())]}
         (site_packages / f"{finder}.py").write_text(
-            _finder_template(f"__editable__.flextool-{VERSION}.finder", mapping, namespaces), encoding="utf-8"
+            editable_wheel._finder_template(f"__editable__.flextool-{VERSION}.finder", mapping, namespaces), encoding="utf-8"
         )
         pth.write_text(f"import {finder}; {finder}.install()", encoding="utf-8")
         (site_packages / "__pycache__").mkdir()
