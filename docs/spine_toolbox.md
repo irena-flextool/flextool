@@ -121,7 +121,7 @@ The project folder is set by editing **one line** in the user-local, gitignored
 file `templates/project_folder.txt` (seeded for you by `flextool-update`):
 
 ```
-projects/Rivendell
+projects/MyProject
 ```
 
 The path may be **absolute** or **relative to the FlexTool root**. Leave the
