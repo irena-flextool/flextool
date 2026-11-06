@@ -624,6 +624,7 @@ def objective_terms(b: _Build) -> Expr | None:
     d = b.d
 
     # ─── OBJ. ─── commodity ladder ───────────────────────────────────────────
+    # names: commodity_ladder_cost
     # ─────────────────────────────────────────────────────────────────────────
     # + Σ_{(c,n,d,i) ∈ cndi_ladder_cum} v_trade[c,n,d,i] · cu[c] · price_cum[c,i]
     #                                   · inflation_op[d] / period_share[d] · bw[d]
