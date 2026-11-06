@@ -50,6 +50,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "was fixed at the start: at its own storage_state_start, or at 0 when only other nodes had "
                      "one (results change)."),
             silence="Set storage_start_end_method on these nodes (fix_nothing keeps the new behaviour).",
+            since="4.2.0",
+            published="7.11.2026",
         ),
         BehaviourChange(
             id="storage_fix_method_rewritten",
@@ -58,6 +60,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "storage_state_end is now an error. The default is now fix_nothing, so a node that used the "
                      "old default fix_start with its own storage_state_start now has fix_start written."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "storage_fix_method_rewritten"),
+            since="4.2.0",
+            published="7.11.2026",
         ),
         BehaviourChange(
             id="user_constraint_prebuilt_nets_retirements",
@@ -66,6 +70,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "earlier periods of the same solve too (before: only retirements of earlier solves of a "
                      "chain), so a single solve and a chain of solves agree."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "user_constraint_prebuilt_nets_retirements"),
+            since="4.2.0",
+            published="7.11.2026",
         ),
         BehaviourChange(
             id="dc_power_flow_lines_beside_dc_links",
@@ -74,6 +80,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "instead: the group's lines had no angle constraints and the reference node could move "
                      "(results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "dc_power_flow_lines_beside_dc_links"),
+            since="4.2.0",
+            published="7.11.2026",
         ),
         BehaviourChange(
             id="ladder_tier_labels_as_written",
@@ -81,6 +89,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "tiers. Before, a label was read as a whole number, so 01 became 1 (such tiers were bought "
                      "at no cost, and 1 and 01 were merged) and tiers like a were dropped (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "ladder_tier_labels_as_written"),
+            since="4.2.0",
+            published="7.11.2026",
         ),
         BehaviourChange(
             id="unnamed_maps_read_per_depth",
@@ -89,6 +99,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "time. Before, its time steps were read as periods and its values were lost (results "
                      "change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "unnamed_maps_read_per_depth"),
+            since="4.2.0",
+            published="7.11.2026",
         ),
         BehaviourChange(
             id="price_ladder_periods_from_solve_periods",
@@ -96,6 +108,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "has no period_timeset (the model's only timeset is used). Before, when the model had no "
                      "periods_available either, the ladder was skipped with a warning (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "price_ladder_periods_from_solve_periods"),
+            since="4.2.0",
+            published="7.11.2026",
         ),
         BehaviourChange(
             id="coarse_process_flows",
@@ -115,6 +129,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "row limit varies, two or more limits vary, ramp limits apply, the unit has online "
                      "variables or provides reserves, or a row mixes coarse and solve-step flows)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "coarse_process_flows"),
+            since="4.2.0",
+            published="7.11.2026",
         ),
         BehaviourChange(
             id="construction_lead_time_commissioning",
@@ -124,6 +140,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "the whole model's periods; investments starting after the solve or model horizon are not "
                      "offered (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "construction_lead_time_commissioning"),
+            since="4.2.0",
+            published="7.11.2026",
         ),
         BehaviourChange(
             id="chained_solve_costs_from_run_start",
@@ -135,6 +153,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "retired is no longer charged again as existing capacity.  The printed objectives stay "
                      "discounted from each solve's start (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "chained_solve_costs_from_run_start"),
+            since="4.2.0",
+            published="7.11.2026",
         ),
         BehaviourChange(
             id="stochastic_branch_period_years",
@@ -144,6 +164,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "operate in a later period after a construction lead time, was missing from the branches of "
                      "that period, and lifetimes ended late in the branches (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "stochastic_branch_period_years"),
+            since="4.2.0",
+            published="7.11.2026",
         ),
         BehaviourChange(
             id="ramp_branch_point_shutdown_once",
@@ -153,6 +175,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "branches squared, so units shutting down there could drop their flow faster than the "
                      "ramp limit allows (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "ramp_branch_point_shutdown_once"),
+            since="4.2.0",
+            published="7.11.2026",
         ),
         BehaviourChange(
             id="retirement_of_existing_capacity_only",
@@ -168,6 +192,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "chained solves subtracted it from every period, and its fixed-cost saving was counted over "
                      "the lifetime from the retirement (results change)."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "retirement_of_existing_capacity_only"),
+            since="4.2.0",
+            published="7.11.2026",
         ),
         BehaviourChange(
             id="acceptance_ceiling_follows_tolerance",
@@ -177,6 +203,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "gap. Before, the limit was 1e-6 whatever the tolerance, so a solve run with a looser "
                      "tolerance (e.g. 1e-3) stopped the run without results; it now writes results."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "acceptance_ceiling_follows_tolerance"),
+            since="4.2.0",
+            published="7.11.2026",
         ),
         BehaviourChange(
             id="gui_solver_defaults",
@@ -188,6 +216,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "objective value."),
             silence=("This notice is shown once. To keep the old behaviour, choose presolve 'Choose' in the "
                      "Solver options dialog and set solver_mip_gap on the solves in the database."),
+            since="4.2.0",
+            published="7.11.2026",
         ),
     )
 }
