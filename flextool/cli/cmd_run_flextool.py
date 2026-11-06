@@ -1027,6 +1027,16 @@ def main():
     except Exception as _exc:
         logging.warning("Failed to copy timings.csv to output dir: %s", _exc)
 
+    # A failed cascade (a solve the scan did not accept, or no solve at all)
+    # wrote no outputs of this run: exit 1 and leave the output-info database
+    # alone, so no reader takes this run's ``finish_time`` for finished results.
+    if return_code != 0:
+        logging.error(
+            "Run of scenario %r failed; no outputs were written and the "
+            "output-info database was not updated.", scenario_name,
+        )
+        sys.exit(1)
+
     # Write scenario information to output database if provided
     if args.output_db_url:
         # Check if database exists

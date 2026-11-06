@@ -1,3 +1,11 @@
+## Unreleased
+
+- **Fixed: a run whose last check found a solve without an accepted solution exited 0 and wrote the output-info
+  database** (for example a Benders solve that found no feasible incumbent, or a run with no solve at all). It
+  wrote no outputs, yet Spine Toolbox and the comparison steps read its `finish_time` as a finished run. Such a run
+  now exits 1 and leaves the output-info database unchanged. A calibration no longer takes the outputs of an
+  earlier run for those of a Benders run without an incumbent.
+
 ## Release 4.2.2 (8.11.2026) — time steps other than 1 h: new_stepduration and inflow scaling fixes
 
 These bugs affect models whose time steps are not 1 h, solves with `new_stepduration`, nested solves where a solve
