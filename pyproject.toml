@@ -74,7 +74,9 @@ dependencies = [
     # shared-column terms of a Var (the one flow column of a coarse process,
     # read at every fine step) in a fixed order and keeps their column ids —
     # required: without it a coarse LP is not byte-deterministic across runs.
-    "polar-high>=3.12.1",
+    # 3.12.2 leaves POLARS_MAX_THREADS alone once polars is imported — required:
+    # an older one sets it to 1 at import, and child processes inherit that value.
+    "polar-high>=3.12.2",
     # Autoscale Layer 3 drives HiGHS' power-of-two objective conditioning
     # through the ``user_objective_scale`` option.  HiGHS renamed the older
     # ``user_cost_scale`` to ``user_objective_scale`` after 1.10.0, so older

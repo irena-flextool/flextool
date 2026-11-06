@@ -85,8 +85,6 @@ if _ensure_polars_runtime() != "diagnostics":
     )
     try:
         import polars as _pl  # noqa: E402,F811  (the pool size is fixed here)
-        from flextool._thread_budget import absorb_polar_high_default as _absorb_polar_high_default  # noqa: E402
-        _absorb_polar_high_default()
         from flextool.process_outputs import write_outputs  # noqa: E402  (after env/warning config above)
         from flextool.update_flextool import migrate_database, initialize_database, update_flextool  # noqa: E402
     finally:

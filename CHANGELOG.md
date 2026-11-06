@@ -6,7 +6,7 @@
   region solves at once. Default: the available cores, with HiGHS and Benders as before. Give each run about
   cores / runs when several run at once (a script or an AI agent driving the terminal, Spine Toolbox running
   scenarios in parallel: add `--threads N` to the FlexTool Tool's arguments). The run header prints the threads
-  in use. The workflow runner and the calibrator take `--threads` too and pass it on.
+  in use. The workflow runner and the calibrator take `--threads` too and pass it on. Requires polar-high 3.12.2.
 - **Changed: the GUI's "Cores per job" is now "Threads per run" and also sets FlexTool's own data processing.**
   GUI runs used one thread for FlexTool's processing by accident, about 30-45 % slower before the solver; a GUI
   run now sends its "Threads per run" as `--threads` (default 1, as before). It no longer turns on HiGHS' parallel

@@ -183,45 +183,6 @@ def restore_env(previous: str | None, environ: "os._Environ[str] | dict[str, str
         env[_POLARS_ENV] = previous
 
 
-#: The first polar-high that leaves ``POLARS_MAX_THREADS`` alone when polars is already imported.
-_POLAR_HIGH_GUARDED = (3, 12, 2)
-
-
-def _version_tuple(text: str) -> tuple[int, ...]:
-    parts: list[int] = []
-    for piece in text.split("."):
-        digits = "".join(ch for ch in piece if ch.isdigit()) if piece else ""
-        if not digits or not piece[0].isdigit():
-            break
-        parts.append(int(digits))
-        if digits != piece:
-            break
-    return tuple(parts)
-
-
-def absorb_polar_high_default() -> None:
-    """With a polar-high older than 3.12.2, import it now, while the environment is about to be restored.
-
-    Those versions run ``os.environ.setdefault("POLARS_MAX_THREADS", "1")`` at import even when polars is
-    already loaded.  That does not change this process, but a child process started later inherits ``1`` and
-    reads it as the user's setting.  Imported here, before :func:`restore_env`, the value it sets is removed.
-    A newer polar-high is not imported (it sets nothing once polars is loaded).
-    """
-    if "polar_high" in sys.modules:
-        return
-    try:
-        from importlib.metadata import PackageNotFoundError, version
-        try:
-            installed = _version_tuple(version("polar-high"))
-        except PackageNotFoundError:
-            return
-    except ImportError:
-        return
-    if installed >= _POLAR_HIGH_GUARDED:
-        return
-    import polar_high  # noqa: F401
-
-
 def _loaded_pool_size() -> int | None:
     polars = sys.modules.get("polars")
     size = getattr(polars, "thread_pool_size", None)
@@ -327,7 +288,6 @@ def header_text(run_options: "RunOptions", environ: Mapping[str, str] | None = N
 
 __all__ = [
     "THREAD_CAP_POLARS",
-    "absorb_polar_high_default",
     "ThreadBudget",
     "apply_before_polars",
     "available_cores",

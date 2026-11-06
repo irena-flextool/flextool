@@ -93,36 +93,6 @@ def test_restore_env_puts_the_variable_back_exactly():
     assert env == {}
 
 
-def test_old_polar_high_is_imported_only_when_it_would_leak(monkeypatch):
-    """A polar-high below 3.12.2 sets POLARS_MAX_THREADS at import even with polars loaded; FlexTool imports it
-    while the variable is about to be restored.  A newer one is not imported at all."""
-    import importlib.metadata as md
-
-    monkeypatch.delitem(sys.modules, "polar_high", raising=False)
-    imported = []
-    monkeypatch.setattr("builtins.__import__", _recording_import(imported))
-    monkeypatch.setattr(md, "version", lambda name: "3.12.2")
-    tb.absorb_polar_high_default()
-    assert "polar_high" not in imported
-    monkeypatch.setattr(md, "version", lambda name: "3.12.1")
-    tb.absorb_polar_high_default()
-    assert "polar_high" in imported
-
-
-def _recording_import(seen: list[str]):
-    import builtins
-
-    real = builtins.__import__
-
-    def fake(name, globals=None, locals=None, fromlist=(), level=0):
-        if name == "polar_high":
-            seen.append(name)
-            return SimpleNamespace()
-        return real(name, globals, locals, fromlist, level)
-
-    return fake
-
-
 # ---------------------------------------------------------------------------
 # HiGHS keys from the budget
 # ---------------------------------------------------------------------------
@@ -181,9 +151,9 @@ def test_user_polars_max_threads_below_the_budget_wins_and_is_kept():
 
 
 def test_env_budget_is_capped_for_polars():
-    # FLEXTOOL_THREADS=16 on a machine with at least 8 cores gives polars the cap of 8.
-    expected = min(16, tb.THREAD_CAP_POLARS, tb.available_cores())
-    assert _probe(["flextool-run"], FLEXTOOL_THREADS="16") == (expected, "None")
+    # An explicit budget is taken as given (not reduced to the machine's cores), so FLEXTOOL_THREADS=16 gives
+    # polars the cap on any runner.
+    assert _probe(["flextool-run"], FLEXTOOL_THREADS="16") == (min(16, tb.THREAD_CAP_POLARS), "None")
 
 
 def test_non_flextool_command_line_is_ignored():
