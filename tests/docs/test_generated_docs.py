@@ -2,12 +2,15 @@
 
 They render from the installed code and are written as UTF-8 with LF line ends whatever the locale; the
 private-names check fails the build with a list file and is silent without one; results.md names a result
-table in every result bullet; the mkdocs hook adds the pages without writing into docs/.
+table in every result bullet; the mkdocs hook adds the pages without writing into docs/; the build step copies
+exactly the curated Markdown of the scope into the package, and the sdist and package data carry it.
 """
 from __future__ import annotations
 
+import fnmatch
 import os
 import subprocess
+import tomllib
 import sys
 from pathlib import Path
 
@@ -127,3 +130,55 @@ def test_the_mkdocs_hook_adds_the_pages_and_writes_nothing_to_docs() -> None:
     for name, f in added.items():
         assert f.content_string == pages[name]
     assert sorted(p.relative_to(DOCS) for p in DOCS.rglob("*")) == before
+
+
+def test_the_build_step_copies_exactly_the_scope(tmp_path: Path) -> None:
+    """``BuildPy.run`` on a tmp build folder writes every ``CURATED_DOCS`` file, byte-identical, and nothing
+    else under ``flextool/assistant/_docs/md``; a stale file of an earlier build is removed."""
+    from setuptools.dist import Distribution
+
+    import _flextool_build
+
+    stale = tmp_path / _flextool_build.PACKAGED_DOCS / "dropped_from_scope.md"
+    stale.parent.mkdir(parents=True)
+    stale.write_text("old\n", encoding="utf-8")
+    cmd = _flextool_build.BuildPy(Distribution({"name": "flextool-docs-copy-test", "packages": []}))
+    cmd.build_lib = str(tmp_path)
+    cmd.ensure_finalized()
+    cmd.run()
+    target = tmp_path / _flextool_build.PACKAGED_DOCS
+    copied = sorted(p.relative_to(target).as_posix() for p in target.rglob("*") if p.is_file())
+    assert copied == sorted(scope.CURATED_DOCS)
+    for rel in copied:
+        assert (target / rel).read_bytes() == (DOCS / rel).read_bytes(), rel
+    outputs = {Path(p).resolve() for p in cmd.get_outputs()}
+    assert {(target / rel).resolve() for rel in copied} <= outputs
+
+
+def test_the_build_step_fails_on_a_scope_file_missing_from_docs(tmp_path: Path) -> None:
+    import _flextool_build
+
+    project = tmp_path / "project"
+    (project / _flextool_build.SCOPE_FILE).parent.mkdir(parents=True)
+    (project / _flextool_build.SCOPE_FILE).write_bytes((REPO / _flextool_build.SCOPE_FILE).read_bytes())
+    (project / "docs").mkdir()
+    (project / "docs" / "index.md").write_text("# FlexTool\n", encoding="utf-8")
+    with pytest.raises(FileNotFoundError, match=r"reference\.md"):
+        _flextool_build.copy_docs(tmp_path / "build", project_root=project)
+
+
+def test_the_sdist_and_the_package_data_carry_the_scope() -> None:
+    """MANIFEST.in includes the build step and exactly the scope's docs (an sdist without them cannot build a
+    wheel); the package-data globs of pyproject.toml match every copied file."""
+    manifest = [line.split() for line in (REPO / "MANIFEST.in").read_text(encoding="utf-8").splitlines()
+                if line.strip() and not line.lstrip().startswith("#")]
+    assert all(len(words) == 2 and words[0] == "include" for words in manifest), manifest
+    included = [words[1] for words in manifest]
+    assert sorted(included) == sorted(["_flextool_build.py"] + [f"docs/{rel}" for rel in scope.CURATED_DOCS])
+    config = tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))
+    assert config["tool"]["setuptools"]["cmdclass"] == {"build_py": "_flextool_build.BuildPy"}
+    globs = [g for g in config["tool"]["setuptools"]["package-data"]["flextool"] if g.startswith("assistant/")]
+    for rel in scope.CURATED_DOCS:
+        path = f"assistant/_docs/md/{rel}"
+        # setuptools globs do not cross folders: "*" must not match a "/".
+        assert any(fnmatch.fnmatch(path, g) and path.count("/") == g.count("/") for g in globs), path

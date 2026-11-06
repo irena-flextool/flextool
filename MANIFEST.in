@@ -1,0 +1,28 @@
+# The sdist carries what the wheel build needs beyond the package: the build step that copies the
+# documentation into the package (_flextool_build.py, setuptools cmdclass build_py) and the Markdown files it
+# copies.  The list equals CURATED_DOCS of flextool/docs_build/scope.py (tests/docs/test_generated_docs.py).
+include _flextool_build.py
+include docs/index.md
+include docs/interface_overview.md
+include docs/install_gui.md
+include docs/install_toolbox.md
+include docs/tutorial.md
+include docs/reference.md
+include docs/results.md
+include docs/how_to.md
+include docs/advanced_concepts.md
+include docs/flextool_gui_interface.md
+include docs/spine_toolbox.md
+include docs/spine_database.md
+include docs/excel_interface.md
+include docs/terminal_workflow.md
+include docs/env_vars.md
+include docs/solvers/index.md
+include docs/solvers/highs.md
+include docs/solvers/gurobi.md
+include docs/solvers/cplex.md
+include docs/solvers/xpress.md
+include docs/solvers/copt.md
+include docs/dev/architecture.md
+include docs/dev/slack_convention.md
+include docs/dev/engine.md

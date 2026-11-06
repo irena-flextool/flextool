@@ -128,6 +128,10 @@ dependencies = [
     # back to a maximise-probe if this is unavailable.
     "screeninfo",
     "pywin32; sys_platform == 'win32'",
+    # The per-user cache folder of the assistant's documentation index (built on
+    # first use, flextool.assistant.docs_store) on every platform, instead of
+    # reading LOCALAPPDATA / XDG_* by hand; later also the user config folder.
+    "platformdirs>=4",
 ]
 
 [project.urls]
@@ -240,6 +244,12 @@ timeout_method = "thread"
 # install learns a new top-level name only when it is reinstalled.
 py-modules = ["flextool_run_supervisor"]
 
+[tool.setuptools.cmdclass]
+# Copies the curated documentation Markdown (flextool/docs_build/scope.py) into
+# flextool/assistant/_docs/md/ of the build; build-time only, so the module
+# reaches the sdist through MANIFEST.in, not py-modules.
+build_py = "_flextool_build.BuildPy"
+
 [tool.setuptools.packages.find]
 # Auto-discover all flextool subpackages.  Excludes test/scratch dirs.
 where = ["."]
@@ -262,6 +272,10 @@ exclude = ["flextool*.__pycache__"]
 #   * process_inputs/*.json             — old-Excel/CSV import spec
 #                                         (import_old_excel_input.json), loaded by
 #                                         the flextool-read-tabular-input CLI.
+#   * assistant/_docs/md/**.md          — the curated documentation, copied in by
+#                                         the build step (_flextool_build.py) and
+#                                         indexed by the assistant on first use;
+#                                         not in the source tree (.gitignore).
 #
 # NOTE (intentionally NOT shipped): schemas/canonical_databases/_recipes.yaml is
 # a *maintainer/build-only* recipe consumed solely by
@@ -279,4 +293,7 @@ flextool = [
     "solver_config/*.opt.template",
     "export_to_tabular/*.yaml",
     "process_inputs/*.json",
+    "assistant/_docs/md/*.md",
+    "assistant/_docs/md/dev/*.md",
+    "assistant/_docs/md/solvers/*.md",
 ]
