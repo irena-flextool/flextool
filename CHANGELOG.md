@@ -5,6 +5,11 @@
   peak memory about tripled on large models (the same LP), so 4.2.0 held polars below 2. polar-high 3.12.3 runs
   these joins in the order they are written, so FlexTool now requires polar-high 3.12.3 and accepts polars 1.40 or
   newer below 3.
+- **Fixed: a run whose last check found a solve without an accepted solution exited 0 and wrote the output-info
+  database** (for example a Benders solve that found no feasible incumbent, or a run with no solve at all). It
+  wrote no outputs, yet Spine Toolbox and the comparison steps read its `finish_time` as a finished run. Such a run
+  now exits 1 and leaves the output-info database unchanged. A calibration no longer takes the outputs of an
+  earlier run for those of a Benders run without an incumbent.
 
 ## Release 4.2.0 (7.11.2026) — coarse time steps for units and connections, stochastic realization redesign, multi-solve cost & retirement fixes, run thread budget (schema v77)
 
