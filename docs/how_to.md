@@ -1428,7 +1428,7 @@ decomposed (optionally tuning `benders_max_iter` and `benders_tolerance`;
 they default to `50` / `1e-3`). Then run normally:
 
 ```bash
-python -m flextool.cli.cmd_run_flextool \
+flextool-run \
     sqlite:///input_data.sqlite \
     --scenario-name multi_region
 ```

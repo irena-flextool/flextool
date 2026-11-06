@@ -1,11 +1,15 @@
 """An engine run records itself: ``_run_status.json`` and ``_run.log`` in its ``output_parquet/<subdir>/`` folder.
 
-The input is the ``base`` scenario of ``tests.json`` with one more alternative.  ``base`` has a single balance
-node, ``west``, with demand (negative inflow, 589 MW in the first hour) and no unit or connection, so only the
-node's balance slack can meet it.  The extra alternative ``no_slack`` sets ``west.penalty_method = off``: the node
-balance becomes a hard equality ``0 = demand``, which no solution satisfies, so the LP is infeasible.  The run is
-started as ``python -m flextool.cli.cmd_run_flextool`` with no pipe owner, so the engine writes the log itself
-(``log_capture: "python"``).
+The input is the ``base`` scenario of ``tests.json``: one solve, ``y2020_2day_dispatch`` (``model.solves`` of
+alternative ``init``, ``solve_mode = single_solve``), and a single balance node, ``west``, with demand (negative
+inflow, 589 MW in the first hour) and no unit or connection, so only the node's balance slack can meet it.
+
+* The successful run starts under the ``flextool-run`` supervisor (``python -m flextool_run_supervisor``), which
+  owns the output pipe and writes ``_run.log`` (``log_capture: "parent"``, launcher ``flextool-run``).
+* The infeasible run adds the alternative ``no_slack``, which sets ``west.penalty_method = off``: the node balance
+  becomes a hard equality ``0 = demand``, which no solution satisfies.  It is started as ``python -m
+  flextool.cli.cmd_run_flextool`` with no pipe owner, so the engine writes the log itself (``log_capture:
+  "python"``).
 """
 from __future__ import annotations
 
@@ -18,7 +22,7 @@ import pytest
 import spinedb_api as api
 
 from flextool.engine.solve._acceptance import _FAILURE_MESSAGES
-from flextool.run_record import RUN_LOG_FILE, RUN_LOG_OWNER_ENV, read_status_file
+from flextool.run_record import MARKER, RUN_LOG_FILE, RUN_LOG_OWNER_ENV, read_status_file
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool.db_handle import open_database_mapping
 from flextool.update_flextool.db_migration import migrate_database
@@ -30,6 +34,54 @@ REPO = Path(__file__).resolve().parents[2]
 FIXTURE = REPO / "tests" / "fixtures" / "tests.json"
 SCENARIO = "base_no_slack"
 SOLVE = "y2020_2day_dispatch"
+
+
+@pytest.fixture
+def base_db(tmp_path) -> str:
+    url = json_to_db(FIXTURE, tmp_path / "input.sqlite")
+    migrate_database(url)
+    return url
+
+
+def _engine_env() -> dict[str, str]:
+    env = dict(os.environ, FLEXTOOL_THREADS="1")
+    env.pop(RUN_LOG_OWNER_ENV, None)
+    env.pop("POLARS_MAX_THREADS", None)
+    return env
+
+
+def test_successful_run_writes_both_files(base_db, tmp_path):
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "flextool_run_supervisor", base_db,
+            "--scenario-name", "base",
+            "--work-folder", str(tmp_path / "work"),
+            "--output-location", str(tmp_path / "out"),
+            "--write-methods", "parquet",
+        ],
+        capture_output=True, text=True, encoding="utf-8", cwd=str(REPO), env=_engine_env(), timeout=600,
+    )
+    assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+
+    folder = tmp_path / "out" / "output_parquet" / "base"
+    status = read_status_file(folder)
+    assert status is not None, result.stdout
+    assert status["state"] == "succeeded" and status["exit_code"] == 0 and status["error"] is None
+    assert status["verdict"] == "optimal"
+    assert status["launcher"] == "flextool-run" and status["log_capture"] == "parent"
+    assert [s["name"] for s in status["solves"]] == [SOLVE]
+    assert [(s["state"], s["acceptance"]) for s in status["solves"]] == [("accepted", "optimal")]
+    assert status["outputs"]["parquet_state"] == "written"
+    # write_outputs emptied the folder before writing the parquet; the run record stayed.
+    assert list(folder.glob("*.parquet"))
+    assert (folder / RUN_LOG_FILE).is_file()
+
+    log_lines = (folder / RUN_LOG_FILE).read_text(encoding="utf-8").splitlines()
+    assert log_lines[0] == f"# FlexTool run {status['run_id']} started {status['started_at']}"
+    assert not any(line.startswith(MARKER) for line in log_lines)
+    assert MARKER not in result.stdout
+    # Native HiGHS output reaches the log only through the pipe owner.
+    assert any("Running HiGHS" in line for line in log_lines)
 
 
 @pytest.fixture
@@ -51,9 +103,7 @@ def infeasible_db(tmp_path) -> str:
 
 
 def test_infeasible_run_writes_both_files(infeasible_db, tmp_path):
-    env = dict(os.environ, FLEXTOOL_THREADS="1")
-    env.pop(RUN_LOG_OWNER_ENV, None)
-    env.pop("POLARS_MAX_THREADS", None)
+    env = _engine_env()
     result = subprocess.run(
         [
             sys.executable, "-m", "flextool.cli.cmd_run_flextool", infeasible_db,

@@ -25,7 +25,8 @@ def run_flextool_args(args: argparse.Namespace, *, output_config: str, output_su
     """The ``cmd_run_flextool`` arguments of the model-execution phase.
 
     The workflow's only run option is ``--threads``, passed on as given; otherwise the child run inherits this
-    process's environment unchanged, so solver settings given as environment variables reach it as set.
+    process's environment unchanged, so solver settings given as environment variables reach it as set.  The run
+    records ``workflow`` as its launcher (``--run-launcher``).
     """
     argv = [args.input_db_url, args.output_db_url,
             '--scenario-name', args.scenario_name,
@@ -36,6 +37,7 @@ def run_flextool_args(args: argparse.Namespace, *, output_config: str, output_su
         argv.append(f'--debug={args.debug}')
     if args.threads is not None:
         argv.extend(['--threads', str(args.threads)])
+    argv.extend(['--run-launcher', 'workflow'])
     return argv
 
 
@@ -178,7 +180,8 @@ def main():
     }:
         output_config = str(package_data_path("schemas/default_plots.yaml"))
 
-    cmd = [sys.executable, '-m', 'flextool.cli.cmd_run_flextool',
+    # The flextool-run supervisor runs the engine and writes the run's _run.log.
+    cmd = [sys.executable, '-m', 'flextool_run_supervisor',
            *run_flextool_args(args, output_config=output_config, output_subdir=output_subdir)]
 
     result = subprocess.run(cmd)

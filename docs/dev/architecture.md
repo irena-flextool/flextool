@@ -105,7 +105,14 @@ The contract:
    solve with `RunOptions.with_db` (e.g. `scaling`).
 4. A child FlexTool process (GUI job, calibration iteration, workflow run) gets the parent's flag-given choices
    as flags (`RunOptions.to_argv()`) and inherits the parent's environment untouched. Benders region workers are
-   threads and read the same `RunOptions`.
+   threads and read the same `RunOptions`. The launcher label is a flag too (`--run-launcher`; the outermost one
+   is kept). **One exception:** a *pipe owner* — the GUI's `_run_job` and the `flextool-run` supervisor
+   (`flextool_run_supervisor.py`), which read the engine's output pipe and write `_run.log` — adds
+   `FLEXTOOL_RUN_LOG_OWNER=1`, `PYTHONIOENCODING=utf-8` and `PYTHONUNBUFFERED=1` to the `env=` copy of its
+   **direct** child. They describe the pipe, not a run choice. The engine reads and removes
+   `FLEXTOOL_RUN_LOG_OWNER`, so no process it starts inherits it; the owner's own `os.environ` is not changed.
+   The calibrator, the representative-period iteration and the workflow runner start the supervisor with
+   `env=None`.
 5. Process-level variables (`MALLOC_ARENA_MAX`, `_RJEM_MALLOC_CONF`, `POLARS_*`) keep `setdefault` semantics: a
    value already in the environment wins.  The exception is `POLARS_MAX_THREADS` while `flextool/__init__.py`
    imports polars: see "Thread budget" below.
@@ -928,8 +935,10 @@ affinity) limits FlexTool's processing and the solver (`flextool/_thread_budget.
 `POLARS_MAX_THREADS` only at import, and `import flextool` imports it, so `flextool/__init__.py` runs, in this
 order: the thread budget (`apply_before_polars`: when the process is a FlexTool command that accepts
 `--threads` — `sys.orig_argv` holds `-m flextool.cli.cmd_run_flextool` / `cmd_solve_mps` /
-`cmd_execute_flextool_workflow` / `flextool.calibrate`, or `sys.argv[0]` is `flextool-run[.exe]` or the
-`cmd_run_flextool.py` file Spine Toolbox runs — the flag is read from the command line, full name only; then
+`cmd_execute_flextool_workflow` / `flextool.calibrate` (`-m flextool.cli.cmd_run_flextool` is also the engine
+that `flextool-run` supervises), or `sys.argv[0]` is a `flextool-run[.exe]` installed before the supervisor (which
+ran the engine in-process) or the `cmd_run_flextool.py` file Spine Toolbox runs — the flag is read from the
+command line, full name only; then
 `POLARS_MAX_THREADS = min(B, the user's POLARS_MAX_THREADS, else 8)`), the allocator config, `import polars`,
 the rest of the package, and finally `restore_env`, which puts `POLARS_MAX_THREADS` back exactly as it was.
 The environment therefore never carries B: a child gets `--threads` on its command line (workflow, calibrator,

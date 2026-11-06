@@ -75,8 +75,8 @@ The items that actually ship in `.spinetoolbox/project.json` are:
   roots its outputs at. See [Choosing the project folder](#choosing-the-project-folder)
   below. (This replaces the older `flextool_location.txt`; you may rename the
   connection to "Project folder" in the Toolbox GUI if you like.)
-- **FlexTool** (Tool) — the solve step. Runs `flextool/cli/cmd_run_flextool.py` (the same
-  module as the `flextool-run` console script) as a subprocess. Receives the **Input
+- **FlexTool** (Tool) — the solve step. Runs `flextool/cli/cmd_run_flextool.py` (the engine
+  that the `flextool-run` console script supervises) as a subprocess. Receives the **Input
   data**, **Output info**, and **Output settings** database URLs as arguments.
 - **Output info** (Data Store) — `output_info.sqlite`, where the FlexTool run records
   what it produced (scenario list, output locations).
@@ -92,9 +92,10 @@ The items that actually ship in `.spinetoolbox/project.json` are:
 ## How FlexTool itself runs
 
 The **FlexTool** workflow item is a Spine Toolbox `Tool` whose specification is a thin
-Python entry that calls `flextool/cli/cmd_run_flextool.py` — the same CLI command the
-FlexTool GUI and the `flextool-run` console script invoke. Once it starts, no Spine
-Toolbox code is in the loop:
+Python entry that calls `flextool/cli/cmd_run_flextool.py` — the engine that the FlexTool
+GUI runs and the `flextool-run` console script supervises. Once it starts, no Spine
+Toolbox code is in the loop (the run's `_run.log` holds FlexTool's own console output; the
+solver's native lines are only in the Tool's console):
 
 - The engine reads inputs from the **Input data** Spine database via `SpineDBBackend`.
 - Per-solve preprocessing produces polars frames in memory.

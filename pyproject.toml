@@ -174,7 +174,10 @@ flextool-gui = "flextool.gui.__main__:main"
 
 [project.scripts]
 # Primary entry points — kept hyphen-cased for `flextool-*` CLI uniformity.
-flextool-run = "flextool.cli.cmd_run_flextool:main"
+# ``flextool-run`` is the stdlib-only supervisor that runs the engine
+# (``flextool.cli.cmd_run_flextool``) as its child and writes the run's
+# ``_run.log``; it never imports ``flextool`` (see ``[tool.setuptools]``).
+flextool-run = "flextool_run_supervisor:main"
 flextool-update = "flextool.cli.cmd_update_flextool:main"
 flextool-write-outputs = "flextool.cli.cmd_write_outputs:main"
 flextool-migrate-database = "flextool.cli.cmd_migrate_database:main"
@@ -230,6 +233,12 @@ testpaths = ["tests"]
 # default ``signal`` mode can't fire from a non-main thread.
 timeout = 900
 timeout_method = "thread"
+
+[tool.setuptools]
+# Top-level modules outside the ``flextool`` package.  ``flextool_run_supervisor``
+# must load without ``import flextool`` (which imports polars); an editable
+# install learns a new top-level name only when it is reinstalled.
+py-modules = ["flextool_run_supervisor"]
 
 [tool.setuptools.packages.find]
 # Auto-discover all flextool subpackages.  Excludes test/scratch dirs.
