@@ -374,7 +374,6 @@ for _key, _producer, _note in (
     ("nodeGroup_slack_nonsync_dt_g",        "out_ancillary.slack_variables", "Per-(period,time) non-sync slack."),
     ("nodeGroup_slack_reserve_d_eeg",       "out_ancillary.slack_variables", "Per-period reserve slack."),
     ("nodeGroup_slack_reserve_dt_eeg",      "out_ancillary.slack_variables", "Per-(period,time) reserve slack."),
-    ("nodeGroup_total_inflow",              "out_group.nodeGroup_total_inflow", "Total per-period node-group inflow."),
     ("flowGroup_gd_p",                      "out_flowgroup.flowGroup_indicators", "Per-(period) flow-group indicators; only with flow groups configured."),
     ("flowGroup_gd_t",                      "out_flowgroup.flowGroup_indicators", "Per-(period,time) SIGNED net flow per flow group (MW); only with flow groups configured."),
     ("flowGroupIndicators",                 "out_ancillary.input_sets",     "Set of flow groups configured for indicator output."),

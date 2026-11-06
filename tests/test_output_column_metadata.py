@@ -7,10 +7,14 @@ not land without either a transform declaration or an explicit allowlist
 entry, and allowlist entries must be removed once the output is declared.
 """
 
+import re
+
 import pandas as pd
 
 from flextool.engine.output._parquet_bundle import REGISTRY
 from flextool.process_outputs._output_meta import (
+    OUTPUT_DESCRIPTION,
+    OUTPUT_DIMS,
     OUTPUT_TRANSFORM,
     FORMULA_OVERRIDE,
     DOCS_ANCHOR,
@@ -18,6 +22,7 @@ from flextool.process_outputs._output_meta import (
     Semantics,
     derive_column_meta,
 )
+from flextool.process_outputs.write_spinedb import SPINEDB_OUTPUT_SPEC
 
 # Processed outputs not yet given a transform declaration.  This list may only
 # SHRINK: declaring one of these requires removing it here (enforced by
@@ -91,3 +96,43 @@ def test_allowlist_has_no_stale_entries():
         "Stale allowlist entries (now declared or no longer a processed "
         f"output) — remove them: {sorted(stale)}"
     )
+
+
+def _result_tables() -> set[str]:
+    """Every result table the docs describe: the declared outputs and the results-database tables."""
+    return set(OUTPUT_TRANSFORM) | set(SPINEDB_OUTPUT_SPEC)
+
+
+def test_every_result_table_has_a_description_and_dims():
+    """Ratchet: OUTPUT_DESCRIPTION and OUTPUT_DIMS cover every result table, and only those."""
+    tables = _result_tables()
+    assert sorted(tables - set(OUTPUT_DESCRIPTION)) == [], "result tables without an OUTPUT_DESCRIPTION"
+    assert sorted(set(OUTPUT_DESCRIPTION) - tables) == [], "OUTPUT_DESCRIPTION keys that are no result table"
+    assert sorted(tables - set(OUTPUT_DIMS)) == [], "result tables without OUTPUT_DIMS"
+    assert sorted(set(OUTPUT_DIMS) - tables) == [], "OUTPUT_DIMS keys that are no result table"
+
+
+def test_descriptions_are_one_sentence():
+    for key, text in OUTPUT_DESCRIPTION.items():
+        assert text and text == text.strip(), key
+        assert text[0].isupper() and text.endswith("."), key
+        assert not re.search(r"[.;] [A-Z]", text[:-1]), f"{key}: more than one sentence"
+
+
+def test_dims_are_consistent():
+    """Counterparts pair up (each names the other, one per step and one per period); a table named for a
+    per-step layout has a time level and one named for a per-period layout has none."""
+    for key, dims in OUTPUT_DIMS.items():
+        assert dims.rows, key
+        assert "scenario" not in dims.rows + dims.columns, key
+        if dims.counterpart is not None:
+            other = OUTPUT_DIMS[dims.counterpart]
+            assert other.counterpart == key, key
+            assert dims.has_time != other.has_time, key
+            assert dims.has_period and other.has_period, key
+        if "_dt" in key:
+            assert dims.has_time, key
+        if re.search(r"(_d_|__d$)", key) and "_dt" not in key:
+            assert not dims.has_time, key
+        if isinstance(OUTPUT_TRANSFORM.get(key), Transform) and OUTPUT_TRANSFORM[key].semantics is Semantics.DIMENSION:
+            assert dims.columns == (), f"{key}: a membership set has no column levels"

@@ -28,6 +28,8 @@ dist/
 .idea/
 .claude/
 site/
+# Documentation generated at build time (flextool.docs_build); never committed.
+flextool/assistant/_docs/
 example_input.xlsx
 *.xls*
 *.ods
