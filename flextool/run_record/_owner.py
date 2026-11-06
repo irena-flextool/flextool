@@ -12,8 +12,8 @@ its file without importing ``flextool`` (which imports polars).  It holds:
 * the file names, the marker the engine prints for its pipe owner and the environment variable names;
 * :class:`RunLogWriter`, the tail-capped ``_run.log`` writer, and :class:`RunLogOwner`, the pipe owner's relay;
 * :func:`read_status_file` / :func:`write_status_atomic` and the owner's :func:`finalize_unfinished`;
-* :func:`results_usable` / :func:`unusable_reason`, the one rule the GUI and the assistant share for whether a
-  folder's results may be offered.
+* :func:`results_usable` / :func:`unusable_reason` / :func:`unusable_code`, the one rule the GUI and the
+  assistant share for whether a folder's results may be offered.
 """
 from __future__ import annotations
 
@@ -715,6 +715,32 @@ def unusable_reason(status: Mapping[str, Any] | None) -> str | None:
     return f"latest run state is {state!r}"
 
 
+#: The values of :func:`unusable_code`.
+UNUSABLE_CODES = ("failed", "running", "abandoned", "no_parquet", "previous_run", "partial")
+
+
+def unusable_code(status: Mapping[str, Any] | None, effective: str | None = None) -> str | None:
+    """Why :func:`results_usable` says no, as one of :data:`UNUSABLE_CODES` (``None`` when the results are usable).
+
+    ``running`` -- the latest run has not finished; ``abandoned`` -- the same, when *effective* (the caller's
+    ``effective_state`` of the status) says the recording process is gone; ``failed`` -- the latest run failed,
+    was interrupted, killed or crashed; for a run that succeeded: ``previous_run`` -- the parquet files are an
+    earlier run's, ``partial`` -- its parquet output is incomplete, ``no_parquet`` -- it wrote none.  Pure: no I/O.
+    """
+    if results_usable(status):
+        return None
+    assert status is not None
+    state = status.get("state")
+    if state == "running":
+        return "abandoned" if effective == "abandoned" else "running"
+    if state != "succeeded":
+        return "failed"
+    parquet = (status.get("outputs") or {}).get("parquet_state")
+    if parquet in ("previous_run", "partial"):
+        return parquet
+    return "no_parquet"
+
+
 __all__ = [
     "LOG_HEAD_BYTES",
     "LOG_TAIL_BYTES_DEFAULT",
@@ -741,6 +767,8 @@ __all__ = [
     "read_status_file",
     "results_usable",
     "solve_verdict",
+    "UNUSABLE_CODES",
+    "unusable_code",
     "unusable_reason",
     "worst_verdict",
     "write_log_header",
