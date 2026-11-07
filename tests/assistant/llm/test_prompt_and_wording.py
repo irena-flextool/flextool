@@ -19,6 +19,7 @@ from flextool.assistant import chat_cli, cli, endpoint, llm_errors, net, probes,
 from flextool.assistant.context import ContextSnapshot, GuiState, ResultRef, ViewerState, gui_snapshot
 from flextool.assistant.tools import orientation
 from flextool.assistant.providers import PRESETS
+from flextool.gui.assistant import strings as gui_strings
 
 ABBREVIATIONS = ("LLM", "ZDR", "DB", "LP", "MCP", "API")
 #: Promises about the data no text makes ("safety" as a refusal reason is not a promise).
@@ -29,6 +30,8 @@ LITERAL_FIELDS = re.compile(r"`[^`]*`")
 #: what FlexTool cannot guarantee.
 FORBIDDING_RULE = "Never say the data is private or not used for training."
 CANNOT_GUARANTEE = "FlexTool cannot guarantee"
+#: The one abbreviation the window's welcome keeps, explained in place (P2-O6).
+WELCOME_LLM = "AI model (LLM)"
 URL = re.compile(r"https?://[\w.\[\]:-]+[^\s)'\",]*")
 
 
@@ -65,6 +68,9 @@ def _texts() -> list[tuple[str, str]]:
     out += [(f"chat TEXTS[{k}]", v) for k, v in chat_cli.TEXTS.items()]
     out += [(f"chat {name}", getattr(chat_cli, name)) for name in dir(chat_cli)
             if name.startswith(("BANNER", "PRIVACY_", "CONTEXT_")) or name in ("WAITING", "THINKING", "TOOL_WAITING")]
+    out += [(f"window {name}", getattr(gui_strings, name)) for name in dir(gui_strings)
+            if name.isupper() and isinstance(getattr(gui_strings, name), str)]
+    out.append(("window welcome", gui_strings.welcome_text()))
     out.append(("cli DATA_NOTICE", cli.DATA_NOTICE))     # cli.EXAMPLES names the --mcp flag: test_tool_wording
     for preset in PRESETS.values():
         out.append((f"{preset.id} label", preset.label))
@@ -79,7 +85,7 @@ def _texts() -> list[tuple[str, str]]:
 
 @pytest.mark.parametrize("where,text", _texts(), ids=[w for w, _ in _texts()])
 def test_plain_english(where, text):
-    prose = LITERAL_FIELDS.sub("", text)
+    prose = LITERAL_FIELDS.sub("", text).replace(WELCOME_LLM, "")
     for word in ABBREVIATIONS:
         assert not re.search(rf"\b{word}\b", prose, re.IGNORECASE), f"{where}: {word}"
     for promise in PROMISES:
