@@ -167,6 +167,22 @@ jobs:
             }
             cap { print }
           ' CHANGELOG.md > RELEASE_NOTES.md
+          # GitHub rejects release notes over 125,000 characters.  A longer section keeps its heading and summary
+          # (everything up to the first "### " sub-heading, or the whole entries within 100,000 characters) and links
+          # to the full CHANGELOG at the tag.
+          if [ "$(wc -m < RELEASE_NOTES.md)" -gt 120000 ]; then
+            python3 - "$GITHUB_REF_NAME" <<'PY'
+          import pathlib, sys
+          tag = sys.argv[1]
+          text = pathlib.Path("RELEASE_NOTES.md").read_text(encoding="utf-8")
+          cut = text.find("\n### ")
+          if cut < 0 or cut > 100_000:
+              cut = text.rfind("\n- ", 0, 100_000)  # end at a whole entry
+          link = f"https://github.com/${{ github.repository }}/blob/{tag}/CHANGELOG.md"
+          note = f"\n\nThe full list of changes is in [CHANGELOG.md]({link}).\n"
+          pathlib.Path("RELEASE_NOTES.md").write_text(text[:cut].rstrip() + note, encoding="utf-8")
+          PY
+          fi
           if [ -s RELEASE_NOTES.md ]; then
             title="$(head -n1 RELEASE_NOTES.md | sed 's/^##[[:space:]]*//')"
           else
