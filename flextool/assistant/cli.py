@@ -94,6 +94,10 @@ def build_parser() -> argparse.ArgumentParser:
                              "results; standard and advanced only set the result size. In the chat: a level the "
                              "model allows (its automatic level or lower; FlexTool picks the automatic one from "
                              "the model name and its context size when this is not given)")
+    parser.add_argument("--free-tier", choices=("on", "off", "auto"), default=None,
+                        help="the free plan of the chat: fewer steps for each question, to stay within a free "
+                             "plan's request limits (auto: on only for an OpenRouter model whose name ends :free; "
+                             "default: the saved setting, else auto)")
     parser.add_argument("-q", "--question", metavar="QUESTION",
                         help="ask one question, print the answer and stop; nothing is asked in the terminal")
     parser.add_argument("--accept-data-notice", action="store_true",
