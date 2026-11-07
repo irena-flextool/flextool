@@ -80,6 +80,7 @@ nav:
     - 'Decomposition': dev/decomposition.md
     - 'Database schema and migration': dev/db_schema.md
     - 'Testing': dev/testing.md
+    - 'Evaluating the AI assistant': dev/assistant_evaluation.md
     - 'Environment variables (developer)': dev/env_vars.md
     - 'Injecting parameters between solves': dev/inject_between_solves.md
   - 'Changelog': release.md

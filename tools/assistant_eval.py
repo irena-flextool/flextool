@@ -5,6 +5,10 @@ run in CI, never collected by pytest.
     python tools/assistant_eval.py run --project DIR --provider ID --model M --out RESULTS [...]
     python tools/assistant_eval.py grade RESULTS [--resume]
     python tools/assistant_eval.py summary RESULTS ... [--record]
+    python tools/assistant_eval.py calibrate [results.jsonl]
+    python tools/assistant_eval.py dual sample RESULTS ... --dir DUAL
+    python tools/assistant_eval.py dual grade-ai --dir DUAL
+    python tools/assistant_eval.py dual report --dir DUAL [--record]
 
 ``build`` makes the synthetic grounding project (``tests/assistant/grounding_projects.py``: ``tests.json`` and its
 overrides, solved with ``flextool-run``) and its marker.  ``run`` asks every question of
@@ -15,8 +19,9 @@ marker and the source database's hash must match, so case data of a real project
 model.  Keys come from the keyring or the owner's environment, never from the command line.  ``grade`` runs the
 automatic checks against the oracle's ``answer_key.yaml`` and asks the owner, blind, for the items only a person
 can judge; ``summary`` prints the rates and with ``--record`` appends the graded cells to
-``tools/assistant_eval_data/results.jsonl`` (no answer or tool text).  How to run and read it:
-``docs/dev/assistant_evaluation.md``.
+``tools/assistant_eval_data/results.jsonl`` (no answer or tool text).  ``calibrate`` turns ``results.jsonl`` into
+the evidence tables for the owner and ``dual`` runs the second grader on a subset and reports the agreement
+(``tools/assistant_eval_analysis.py``).  How to run and read it: ``docs/dev/assistant_evaluation.md``.
 
 Exit codes: 0 done (also: the daily request budget is used, run again with --resume) · 1 failed · 2 usage or a
 refused project / results folder · 3 the data notice was not accepted.
@@ -54,8 +59,6 @@ DEFAULT_OUT = ROOT / "_audit_reports" / "assistant_eval"
 #: The daily request budget of an OpenRouter ``:free`` model (P3 §7.2).
 FREE_DAILY_REQUESTS = 45
 DEFAULT_SITTING = 37
-#: Tool results shown to a grader, folded to this many characters each.
-FOLD_CHARS = 4_000
 #: The ledger provider key of calibration requests: the route's key with this suffix (shown apart in /usage).
 CALIBRATION_SUFFIX = "#calibration"
 OLLAMA_CONTEXTS = {"small": 16_384, "medium": 32_768, "large": 65_536}
@@ -648,7 +651,7 @@ def finish_grade(record: dict, items: Sequence[scoring.Item], grader: str) -> No
                               "verdicts": {i.id: i.verdict for i in items if i.state in ("review", "manual")}})
 
 
-def _fold(text: str, limit: int = FOLD_CHARS) -> str:
+def _fold(text: str, limit: int = scoring.FOLD_CHARS) -> str:
     return text if len(text) <= limit else text[:limit] + f" … [{len(text) - limit} more characters]"
 
 
@@ -920,6 +923,178 @@ def cmd_summary(args: argparse.Namespace, *, say: Callable[[str], None] = print)
     return 0
 
 
+# --- calibrate and dual (tools/assistant_eval_analysis.py) ----------------------------------------------------
+def cmd_calibrate(args: argparse.Namespace, *, say: Callable[[str], None] = print) -> int:
+    import assistant_eval_analysis as analysis
+
+    return analysis.cmd_calibrate(args, say=say)
+
+
+def _dual_records(sample: Sequence[Any]) -> dict[tuple[str, str], dict]:
+    records: dict[tuple[str, str], dict] = {}
+    for folder in sorted({c.folder for c in sample}):
+        for cid, record in read_cells(Path(folder)).items():
+            records[(folder, cid)] = record
+    missing = [c.cell for c in sample if (c.folder, c.cell) not in records]
+    if missing:
+        raise Refused(f"Sampled cells are missing from their results folders: {', '.join(missing)}.")
+    return records
+
+
+def _read_sample(folder: Path) -> tuple[dict, list[Any]]:
+    import assistant_eval_analysis as analysis
+
+    path = Path(folder) / analysis.SAMPLE_FILE
+    if not path.is_file():
+        raise Refused(f"No dual sample in {folder}: run dual sample first.")
+    data = read_json(path)
+    return data, [analysis.DualCell(**c) for c in data["cells"]]
+
+
+def dual_sample(args: argparse.Namespace, say: Callable[[str], None]) -> int:
+    import assistant_eval_analysis as analysis
+
+    folder = Path(args.dir)
+    path = folder / analysis.SAMPLE_FILE
+    if path.is_file():
+        raise Refused(f"{path} exists: the subset is drawn once (its seed is recorded).")
+    loaded = _load_results([Path(p) for p in args.results])
+    pool = [c for f, run, cells in loaded for c in analysis.eligible(f, run, cells)]
+    if not pool:
+        raise Refused("No cell depends on a manual item yet: run grade first (it makes the automatic checks).")
+    seed = args.seed if args.seed is not None else random.SystemRandom().randrange(2**31)
+    sample = analysis.draw_sample(pool, seed=seed)
+    write_json(path, {"format": RECORD_FORMAT, "seed": seed, "created": iso(utc_now()),
+                      "results": [str(f) for f, _r, _c in loaded], "pool": len(pool),
+                      "cells": [dataclasses.asdict(c) for c in sample]})
+    authored = sum(1 for c in sample if c.grader_authored)
+    say(f"Drew {len(sample)} of {len(pool)} eligible cells (seed {seed}; {authored} written by "
+        f"{analysis.GRADER_MODEL}).")
+    return 0
+
+
+def dual_grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say: Callable[[str], None]) -> int:
+    import assistant_eval_analysis as analysis
+    from flextool.assistant import endpoint, keys, providers
+    from flextool.assistant.backends._common import error_context
+    from flextool.assistant.llm_adapter import Connection
+    from flextool.assistant.llm_errors import LLMError, message_for, render
+    from flextool.assistant.usage import Ledger
+
+    folder = Path(args.dir)
+    data, sample = _read_sample(folder)
+    records = _dual_records(sample)
+    qset = scoring.load_set(Path(args.set))
+    key = _key_for(args, {f"{c.folder}::{c.cell}": records[(c.folder, c.cell)] for c in sample})
+    if key.placeholder:
+        raise Refused("The answer key is a placeholder: the second grader needs the oracle's key.")
+    preset = providers.PRESETS[analysis.GRADER_PROVIDER]
+    base_url = preset.base_url or ""
+    api_key, source, note = keys.resolve_key(preset, base_url)
+    route = endpoint.route_for(preset, base_url, model=analysis.GRADER_MODEL)
+    conn = Connection(base_url=base_url, model=analysis.GRADER_MODEL, api_key=api_key or "",
+                      key_source=source.describe(preset) if api_key else "", knobs={}, route=route)
+    if not api_key:
+        raise Refused(render("no_key", error_context(preset, conn)) + (f" ({note})" if note else ""))
+    consent = endpoint.consent_key(preset.id, base_url, route)
+    if endpoint.needs_consent(consent):
+        print(endpoint.consent_notice(route, required_headers=preset.required_headers), file=sys.stderr)
+        if not args.accept_data_notice:
+            raise Refused("Nothing was sent. Run again with --accept-data-notice to accept this notice for the "
+                          "synthetic grounding answers.", code=3)
+        endpoint.record_consent(consent)
+    sealed_path = folder / analysis.SEALED_FILE
+    sealed = read_json(sealed_path) if sealed_path.is_file() else {}
+    ledger = CalibrationLedger(Ledger())
+    backend = backend_factory(preset, conn)
+    try:
+        for n, c in enumerate(sample, 1):
+            name = f"{c.folder}::{c.cell}"
+            if name in sealed:
+                continue
+            record = records[(c.folder, c.cell)]
+            if record.get("key_version") != key.key_version:
+                raise Refused(f"{c.cell} was checked with key version {record.get('key_version')}, the key is "
+                              f"{key.key_version}: run grade first.")
+            question = qset.questions[c.question]
+            try:
+                result = analysis.grade_with_ai(record, question, key.questions[c.question], backend)
+            except LLMError as exc:
+                write_json(sealed_path, sealed)
+                say(f"Stopped at cell {n} of {len(sample)}: {message_for(exc, 'terminal')} Run again to continue.")
+                return 1
+            for usage in result.pop("usage"):
+                ledger.record(providers.PRESETS[analysis.GRADER_PROVIDER].id, route.label, analysis.GRADER_MODEL,
+                              usage)
+            sealed[name] = {**result, "key_version": key.key_version, "graded_at": iso(utc_now())}
+            write_json(sealed_path, sealed)
+            say(f"Graded {n} of {len(sample)} (sealed until dual report).")
+    finally:
+        backend.close()
+    say(f"The second grader's verdicts are sealed in {sealed_path}.")
+    return 0
+
+
+def dual_report(args: argparse.Namespace, say: Callable[[str], None]) -> int:
+    import assistant_eval_analysis as analysis
+
+    folder = Path(args.dir)
+    data, sample = _read_sample(folder)
+    records = _dual_records(sample)
+    sealed_path = folder / analysis.SEALED_FILE
+    sealed = read_json(sealed_path) if sealed_path.is_file() else {}
+    missing_ai = [c.cell for c in sample if f"{c.folder}::{c.cell}" not in sealed]
+    if missing_ai:
+        raise Refused(f"The second grader has not graded {len(missing_ai)} sampled cell(s): run dual grade-ai.")
+    waiting = []
+    for c in sample:
+        record = records[(c.folder, c.cell)]
+        verdicts = (record.get("manual") or {}).get("verdicts") or {}
+        if record.get("outcome") is None or any(i.id not in verdicts for i in analysis.manual_items(record)):
+            waiting.append(c.cell)
+        elif record.get("key_version") != sealed[f"{c.folder}::{c.cell}"].get("key_version"):
+            raise Refused(f"{c.cell} was graded with another key version than the second grader's: draw a new "
+                          "subset.")
+    if waiting:
+        raise Refused(f"The owner grades the sampled cells first (grade): {len(waiting)} cell(s) wait.")
+    text = analysis.dual_report(sample, records, sealed, seed=int(data["seed"]))
+    (folder / analysis.REPORT_FILE).write_text(text + "\n", encoding="utf-8")
+    say(text)
+    if args.record:
+        runs = {f: read_json(Path(f) / RUN_FILE) for f in {c.folder for c in sample}}
+        lines = []
+        for c in sample:
+            name = f"{c.folder}::{c.cell}"
+            if sealed[name].get("recorded"):
+                continue
+            record = records[(c.folder, c.cell)]
+            if "unparsed" in sealed[name]:
+                items, result = [scoring.Item.from_json(i) for i in record["checks"]], "unparsed"
+            else:
+                items = analysis.ai_items(record, sealed[name])
+                result = scoring.outcome(items)
+            lines.append(summary_line(record, grader=analysis.GRADER_MODEL, authoritative=False, first_pass=True,
+                                      result=result, items=items, run=runs[c.folder]))
+            sealed[name]["recorded"] = True
+        added = append_lines(Path(args.results_file), lines)
+        write_json(sealed_path, sealed)
+        say(f"{added} line(s) of the second grader appended to {args.results_file}.")
+    return 0
+
+
+def cmd_dual(args: argparse.Namespace, *, backend_factory: BackendFactory | None = None,
+             say: Callable[[str], None] = print) -> int:
+    try:
+        if args.action == "sample":
+            return dual_sample(args, say)
+        if args.action == "grade-ai":
+            return dual_grade_ai(args, backend_factory or _default_backend_factory, say)
+        return dual_report(args, say)
+    except Refused as exc:
+        print(str(exc), file=sys.stderr)
+        return exc.code
+
+
 # --- the command line -----------------------------------------------------------------------------------------
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="assistant_eval.py", description=__doc__.split("\n\n")[0],
@@ -963,11 +1138,26 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("results", nargs="+", type=Path)
     p.add_argument("--record", action="store_true")
     p.add_argument("--results-file", default=str(scoring.RESULTS_PATH), help=argparse.SUPPRESS)
+
+    p = sub.add_parser("calibrate", help="the evidence tables of results.jsonl for the owner")
+    p.add_argument("results_file", nargs="?", default=str(scoring.RESULTS_PATH))
+
+    p = sub.add_parser("dual", help="the second grader on a subset: sample, grade-ai, report")
+    p.add_argument("action", choices=("sample", "grade-ai", "report"))
+    p.add_argument("results", nargs="*", type=Path, help="sample: the results folders of the matrix")
+    p.add_argument("--dir", required=True, type=Path, help="the dual grading folder")
+    p.add_argument("--seed", type=int, help="sample: the seed (default: a random one, recorded)")
+    p.add_argument("--accept-data-notice", action="store_true", help="grade-ai: accept Anthropic's data notice")
+    p.add_argument("--record", action="store_true", help="report: append the second grader's lines")
+    p.add_argument("--results-file", default=str(scoring.RESULTS_PATH), help=argparse.SUPPRESS)
+    p.add_argument("--key", default=str(scoring.KEY_PATH), help=argparse.SUPPRESS)
+    p.add_argument("--set", default=str(scoring.SET_PATH), help=argparse.SUPPRESS)
     return parser
 
 
 COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
-    "build": cmd_build, "run": cmd_run, "grade": cmd_grade, "summary": cmd_summary,
+    "build": cmd_build, "run": cmd_run, "grade": cmd_grade, "summary": cmd_summary, "calibrate": cmd_calibrate,
+    "dual": cmd_dual,
 }
 
 

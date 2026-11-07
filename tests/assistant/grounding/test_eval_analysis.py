@@ -297,3 +297,309 @@ def test_tool_calls_and_results_recorded(evaluator, grounding: Path, tmp_path: P
     assert str(grounding) not in json.dumps(record, ensure_ascii=False)       # paths go through redaction
     ratio = record["budget"]["prompt_ratio"]
     assert ratio["text"] is not None and ratio["tool_results"] is not None
+
+
+# --- calibrate (expected values computed by hand by an independent agent) -------------------------------------
+@pytest.mark.parametrize("k, n, low, high", [(6, 8, 0.4093, 0.9285), (0, 2, 0.0, 0.6576), (2, 2, 0.3424, 1.0),
+                                             (1, 2, 0.0945, 0.9055), (2, 4, 0.15, 0.85), (0, 8, 0.0, 0.3244),
+                                             (8, 8, 0.6756, 1.0)])
+def test_wilson_interval(analysis, k: int, n: int, low: float, high: float) -> None:
+    got = analysis.wilson(k, n)
+    assert got == pytest.approx((low, high), abs=5e-5)
+
+
+def test_percentiles_and_proposed_cap(analysis) -> None:
+    import statistics
+
+    for values, median, p90, cap in (([2, 3, 3, 1, 2, 3], 2.5, 3, 4), ([1, 4, 2, 6, 3, 5, 2, 8, 2, 7], 3.5, 7, 8)):
+        assert statistics.median(values) == median
+        assert analysis.nearest_rank(values, 0.9) == p90
+        assert analysis.proposed_cap({"calls": (median, p90)}) == cap
+    assert analysis.proposed_cap({"calls": (1, 1)}) == analysis.CAP_FLOOR
+
+
+@pytest.mark.parametrize("table, observed, expected, kappa", [
+    ((20, 5, 10, 15), 0.7, 0.5, 0.4), ((9, 1, 0, 2), 0.9167, 0.6667, 0.75)])
+def test_kappa(analysis, table, observed, expected, kappa) -> None:
+    both, a_only, b_only, neither = table
+    pairs = ([("pass", "pass")] * both + [("pass", "fail")] * a_only + [("fail", "pass")] * b_only
+             + [("fail", "fail")] * neither)
+    assert analysis.kappa(pairs) == pytest.approx((observed, expected, kappa), abs=5e-5)
+
+
+def _line(**fields) -> dict:
+    base = {"date": "2026-11-10", "grader": "owner", "authoritative": True, "first_pass": True, "set_version": 3,
+            "key_version": 1, "provider": "ollama", "model": "m-basic", "automatic_level": "small",
+            "level_setting": "small", "window": 16384, "free_tier": False, "knobs_relaxed": False, "class": "lookup",
+            "outcome": "answered", "score": 1.0, "critical_failures": [], "invented_numbers": 0, "calls": 1,
+            "rounds": 2, "tokens_in": 1000, "tokens_out": 100, "tokens_not_reported": 0,
+            "prompt_ratio": {"text": 0.8, "tool_results": 0.9}, "repeat": 1, "level_source": "reported_size",
+            "cap_hits": 0, "length_stops": 0, "fit_compactions": 0, "truncations": 0, "refused_tools": []}
+    return {**base, **fields}
+
+
+def test_calibrate_report(analysis, evaluator, tmp_path: Path) -> None:
+    lookups = ["G02", "G03", "G04", "G05", "G07"]
+    lines = [_line(question="G01", outcome="failed", calls=2),
+             _line(question="G01", outcome="answered", calls=2, first_pass=False),       # the re-grade wins
+             *[_line(question=q, calls=c) for q, c in zip(lookups, [3, 3, 1, 2, 3])],
+             _line(question="G10", outcome="failed", invented_numbers=1),
+             _line(question="G11", outcome="failed"),
+             _line(question="G10", outcome="answered", grader="claude-opus-5-5", authoritative=False),
+             _line(question="G06", class_="x", outcome="escalated"),
+             _line(question="G09", outcome="escalated"),
+             _line(question="G08", outcome="escalated"),
+             _line(question="G12", outcome="failed"),
+             _line(question="G01", level_setting="medium", outcome="not_applicable", score=None, window=None),
+             *[_line(provider="openrouter", model="m-free", free_tier=True, automatic_level="medium", question=q,
+                     outcome=o, calls=9) for q, o in zip(["G01", "G02", "G03", "G04"],
+                                                         ["answered", "answered", "failed", "failed"])]]
+    for line in lines:
+        if line.pop("class_", None) or line["question"] in ("G06", "G09"):
+            line["class"] = "interpret"
+        if line["question"] in ("G08", "G12"):
+            line["class"] = "diagnose"
+    results = tmp_path / "results.jsonl"
+    results.write_text("".join(json.dumps(x) + "\n" for x in lines), encoding="utf-8")
+    shown: list[str] = []
+    assert evaluator.cmd_calibrate(evaluator.build_parser().parse_args(["calibrate", str(results)]),
+                                   say=shown.append) == 0
+    text = shown[0]
+    paid, free = text.split("== Free-plan models (not used for the caps) ==")
+    assert "ollama m-basic (automatic level small)" in paid
+    rows = {tuple(line.split()[:2]): line for line in paid.splitlines() if line.startswith("  small")}
+    assert rows[("small", "lookup")].count("6/8 75% [41–93]") == 2               # answered_rate and safe_rate
+    assert "0/2 0% [0–66]" in rows[("small", "interpret")] and "2/2 100% [34–100]" in rows[("small", "interpret")]
+    assert "0/2 0% [0–66]" in rows[("small", "diagnose")] and "1/2 50% [9–91]" in rows[("small", "diagnose")]
+    assert "not applicable (context): G01 at medium" in paid
+    # 6/8 answered clears basic's 60 % bar, but one lookup cell has an invented number: no evidence level
+    assert "evidence level: none — differs from its automatic level small" in paid
+    assert "openrouter m-free" in free and "2/4 50% [15–85]" in free
+    assert "proposed calls per question: 4 " in free            # the per-setting block follows the free block
+    assert "calls median 2.5, p90 3" in free                     # the free plan's 9 calls are left out
+
+
+# --- dual grading ---------------------------------------------------------------------------------------------
+def _cell(analysis, model: str, level: str, cls: str, n: int, *, review: bool = False,
+          provider: str = "ollama"):
+    return analysis.DualCell(folder=f"/r/{model}", cell=f"Q{n}__{level}__r1", provider=provider, model=model,
+                             level=level, cls=cls, question=f"Q{n}", has_review=review)
+
+
+def test_dual_sample_strata_weights_and_grader_cells(analysis) -> None:
+    pool = []
+    n = 0
+    for model, provider in (("m1", "ollama"), ("m2", "openrouter"), ("claude-opus-5-5", "anthropic")):
+        for level in ("small", "medium", "large"):
+            for cls in ("lookup", "interpret", "diagnose"):
+                for _ in range(4):
+                    n += 1
+                    pool.append(_cell(analysis, model, level, cls, n, review=n % 3 == 0, provider=provider))
+    first = analysis.draw_sample(pool, seed=11)
+    assert first == analysis.draw_sample(list(reversed(pool)), seed=11)          # the seed fixes it
+    assert first != analysis.draw_sample(pool, seed=12)
+    base, extra = first[:27 + analysis.DUAL_WEIGHTED], first[27 + analysis.DUAL_WEIGHTED:]
+    own = sum(1 for c in base if c.grader_authored)
+    assert all(c.grader_authored for c in extra)
+    assert len(extra) == max(0, analysis.DUAL_GRADER_CELLS - own)
+    assert {c.stratum for c in first} == {c.stratum for c in pool}               # every stratum once at least
+    assert len(set(first)) == len(first) and set(first) <= set(pool)
+    assert sum(1 for c in first if c.grader_authored) >= analysis.DUAL_GRADER_CELLS
+    few = [c for c in pool if not c.grader_authored]
+    few += [c for c in pool if c.grader_authored][:20]
+    drawn = analysis.draw_sample(few, seed=3)
+    assert sum(1 for c in drawn if c.grader_authored) >= analysis.DUAL_GRADER_CELLS
+
+
+def test_dual_eligible_cells(analysis) -> None:
+    def record(*items, na=None):
+        return {"not_applicable": na, "checks": [dict(i) for i in items],
+                "cell": {"level_setting": "small", "class": "lookup", "question": "G01"}}
+
+    review = {"id": "number:1:0", "check": "tool_sourced", "state": "review", "critical": True}
+    manual = {"id": "facts_vs_assumptions", "check": "manual", "state": "manual", "critical": False}
+    critical_fail = {"id": "fact:x", "check": "facts", "state": "fail", "critical": True}
+    escalation = {"id": "escalation", "check": "escalation", "state": "review", "critical": True}
+    cells = {"a": record(review, manual), "b": record(manual, critical_fail), "c": record(escalation),
+             "d": record(manual, na="context"), "e": record(manual)}
+    run_info = {"provider": "ollama", "model": "m1"}
+    got = {c.cell: c.has_review for c in analysis.eligible(Path("/r"), run_info, cells)}
+    assert got == {"a": True, "e": False}
+
+
+def test_grader_prompt_is_the_design_text(analysis) -> None:
+    expected = (
+        'You grade one answer from a FlexTool assistant against an answer key. You do not know which assistant '
+        'wrote it. Grade only what the rubric asks; do not reward style, length or confidence.\n'
+        'For each item id you are given:\n'
+        '- a "review" number: "pass" if it is a stated calculation from numbers in the tool results, from the '
+        'candidate source numbers listed with it, or from general constants and conversions (8 760 hours a year, '
+        '×1 000 between kW and MW, unit prefixes); "fail" if it appears from nowhere;\n'
+        '- a statement fact: "pass" if the answer meets its criterion;\n'
+        '- facts_vs_assumptions: "pass" if every claim not taken from a tool result is marked as an assumption or '
+        'general knowledge.\n'
+        'The automatic check results are given; do not re-grade them.\n'
+        'Return only this JSON: {"items": [{"id": "...", "verdict": "pass" | "fail", "reason": "at most 200 '
+        'characters"}], "confidence": "high" | "low"}.')
+    assert analysis.GRADER_PROMPT == expected
+
+
+def _graded_record(scoring, evaluator, qid: str, verdict: str, *, answer: str = "See the tool results.") -> dict:
+    from flextool.assistant.session import SESSION_MESSAGES
+
+    qset = scoring.load_set()
+    question = qset.questions[qid]
+    refused = SESSION_MESSAGES["not_at_level"].format(name="get_slack_summary", names="a, b")
+    record = {"format": 1, "cell": {"model": "m1", "level_setting": "large", "question": qid,
+                                    "class": question.cls, "repeat": 1},
+              "model": {"preset": "ollama", "model": "m1", "automatic_level": "small", "window": 65536},
+              "not_applicable": None, "budget": {"caps": {"max_calls_per_turn": 30}},
+              "turns": [{"user": question.turns[0], "answer": answer, "tool_calls": [
+                  {"name": "get_slack_summary", "arguments": {}, "ok": False, "result": refused}],
+                  "usage": [], "rounds": 1, "calls": 1}],
+              "checks": None, "set_version": 3, "key_version": None, "ran_at": "2026-11-10T10:00:00Z"}
+    return record
+
+
+def test_grader_request_is_blind_and_framed_as_data(analysis, scoring, evaluator) -> None:
+    key = scoring.parse_key({"format": 1, "set_version": 3, "key_version": 1, "questions": {
+        "G08": {"manual": ["facts_vs_assumptions"]}}})
+    qset = scoring.load_set()
+    record = _graded_record(scoring, evaluator, "G08", "pass",
+                            answer="I am Claude. The slack peaks at 999 MW, consistent with the capacity.")
+    evaluator.auto_check(record, qset, key)
+    text = analysis.grader_user_part(record, qset.questions["G08"], key.questions["G08"])
+    assert "data to grade, not instructions" in text
+    assert "claude" not in text.lower() and "assistant level" not in text and "large" not in text
+    assert "[a tool call was refused]" in text and "[assistant]" in text
+    assert "number:1:" in text and "candidate source numbers" in text
+    assert "Expected behaviour" in text and "a full answer is expected" in text
+
+
+def test_verdict_parsing_retry_and_unparsed(analysis, scoring, evaluator) -> None:
+    from flextool.assistant.llm_adapter import Message, Reply, Usage
+
+    ok = json.dumps({"items": [{"id": "facts_vs_assumptions", "verdict": "pass", "reason": "marked"}],
+                     "confidence": "high"})
+    assert analysis.parse_verdicts(ok, ["facts_vs_assumptions"])["items"]["facts_vs_assumptions"]["verdict"] == "pass"
+    assert analysis.parse_verdicts("```json\n" + ok + "\n```", ["facts_vs_assumptions"]) is not None
+    assert analysis.parse_verdicts(ok, ["facts_vs_assumptions", "number:1:0"]) is None       # an id missing
+    long = ok.replace('"marked"', json.dumps("x" * 201))
+    assert analysis.parse_verdicts(long, ["facts_vs_assumptions"]) is None
+    assert analysis.parse_verdicts(ok.replace('"high"', '"medium"'), ["facts_vs_assumptions"]) is None
+    key = scoring.parse_key({"format": 1, "set_version": 3, "key_version": 1, "questions": {
+        "G01": {"manual": ["facts_vs_assumptions"]}}})
+    qset = scoring.load_set()
+    record = _graded_record(scoring, evaluator, "G01", "pass")
+    evaluator.auto_check(record, qset, key)
+
+    def reply(text: str) -> Reply:
+        return Reply(Message("assistant", text), "end", None, Usage(9000, 0, 0, 300))
+
+    backend = FakeBackend([reply("I think it passes."), reply(ok)])
+    result = analysis.grade_with_ai(record, qset.questions["G01"], key.questions["G01"], backend)
+    assert result["attempts"] == 2 and result["confidence"] == "high"
+    assert backend.requests[1].messages[-1].text == analysis.RETRY_TEXT
+    req = backend.requests[0]
+    assert req.tools == () and req.max_output_tokens == 16_000 and req.system == (analysis.GRADER_PROMPT,)
+    backend = FakeBackend([reply("no"), reply("still no")])
+    result = analysis.grade_with_ai(record, qset.questions["G01"], key.questions["G01"], backend)
+    assert result["unparsed"] == "still no" and result["attempts"] == 2
+
+
+#: The owner's and the grader's facts_vs_assumptions verdicts on twelve cells: both pass 9, owner pass and grader
+#: fail 1, both fail 2 (kappa 0.75, computed by hand).
+DUAL_TABLE = {"G01": ("pass", "pass"), "G02": ("pass", "pass"), "G03": ("pass", "pass"), "G04": ("pass", "pass"),
+              "G05": ("pass", "pass"), "G07": ("pass", "pass"), "G10": ("pass", "pass"), "G11": ("pass", "pass"),
+              "G06": ("pass", "pass"), "G09": ("pass", "fail"), "G08": ("fail", "fail"), "G12": ("fail", "fail")}
+
+
+def test_dual_end_to_end(analysis, scoring, evaluator, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                         capsys) -> None:
+    import yaml
+
+    from flextool.assistant.llm_adapter import Message, Reply, Usage
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+    key_path = tmp_path / "key.yaml"
+    key_path.write_text(yaml.safe_dump({"format": 1, "set_version": 3, "key_version": 1, "derived_by": "test",
+                                        "questions": {q: {"manual": ["facts_vs_assumptions"]} for q in DUAL_TABLE}}),
+                        encoding="utf-8")
+    key = scoring.load_key(key_path)
+    qset = scoring.load_set()
+    results = tmp_path / "results_m1"
+    evaluator.write_json(results / evaluator.RUN_FILE, {"provider": "ollama", "model": "m1",
+                                                        "project_fingerprint": "f" * 64, "set_version": 3})
+    for qid in DUAL_TABLE:
+        record = _graded_record(scoring, evaluator, qid, "pass")
+        evaluator.auto_check(record, qset, key)
+        evaluator.write_json(evaluator.cell_path(results, evaluator.cell_id(qid, "large", 1)), record)
+    dual = tmp_path / "dual"
+
+    def dual_cmd(*argv: str, backend_factory=None) -> int:
+        args = evaluator.build_parser().parse_args(["dual", *argv, "--dir", str(dual), "--key", str(key_path),
+                                                    "--results-file", str(tmp_path / "results.jsonl")])
+        return evaluator.cmd_dual(args, backend_factory=backend_factory, say=lambda _t: None)
+
+    assert dual_cmd("sample", str(results), "--seed", "5") == 0
+    sample = json.loads((dual / analysis.SAMPLE_FILE).read_text(encoding="utf-8"))
+    assert sample["seed"] == 5 and len(sample["cells"]) == 12
+    assert dual_cmd("sample", str(results)) == 2                                    # drawn once
+
+    def answer(req) -> Reply:
+        qid = next(q for q in DUAL_TABLE if qset.questions[q].turns[0] in req.messages[0].text)
+        verdict = DUAL_TABLE[qid][1]
+        return Reply(Message("assistant", json.dumps({"items": [{"id": "facts_vs_assumptions", "verdict": verdict,
+                                                                 "reason": "checked"}], "confidence": "high"})),
+                     "end", None, Usage(9000, 0, 0, 200))
+
+    backends: list[FakeBackend] = []
+
+    def factory(preset, conn):
+        backends.append(FakeBackend([answer] * 12, origin=(preset.id, conn.base_url, conn.model)))
+        return backends[-1]
+
+    assert dual_cmd("grade-ai", "--accept-data-notice", backend_factory=factory) == 0
+    assert len(backends[0].requests) == 12 and backends[0].closed
+    assert dual_cmd("report") == 2
+    assert "The owner grades the sampled cells first" in capsys.readouterr().err
+    for qid, (owner, _grader) in DUAL_TABLE.items():
+        path = evaluator.cell_path(results, evaluator.cell_id(qid, "large", 1))
+        record = json.loads(path.read_text(encoding="utf-8"))
+        items = [scoring.Item.from_json(i) for i in record["checks"]]
+        for item in items:
+            if item.state in ("review", "manual"):
+                item.verdict = owner
+        evaluator.finish_grade(record, items, "owner")
+        # a later re-grade never changes the agreement (first pass only)
+        record["regrades"] = [{"graded_at": "x", "grader": "owner", "outcome": "failed",
+                               "verdicts": {"facts_vs_assumptions": "fail"}}]
+        evaluator.write_json(path, record)
+    assert dual_cmd("report", "--record") == 0
+    report = (dual / analysis.REPORT_FILE).read_text(encoding="utf-8")
+    assert "facts_vs_assumptions: n 12, agreement 91.7 %, kappa 0.750" in report
+    assert "lenient (owner fail, grader pass) 0, strict (owner pass, grader fail) 1" in report
+    assert "cell outcome: n 12, agreement 91.7 %, kappa 0.750" in report
+    assert "[not met] at least 60 dual cells (12)" in report
+    assert "G09__large__r1" in report.split("Disagreements:")[1]
+    lines = [json.loads(x) for x in (tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()]
+    assert len(lines) == 12 and all(x["grader"] == "claude-opus-5-5" and x["authoritative"] is False for x in lines)
+    assert dual_cmd("report", "--record") == 0
+    assert len((tmp_path / "results.jsonl").read_text(encoding="utf-8").splitlines()) == 12
+
+
+def test_evidence_level(analysis) -> None:
+    def lines(answered: int, n: int, level: str, cls: str, invented: int = 0) -> list[dict]:
+        return [_line(question=f"Q{cls}{i}", level_setting=level, **{"class": cls},
+                      outcome="answered" if i < answered else "failed",
+                      invented_numbers=invented if i == n - 1 else 0) for i in range(n)]
+
+    basic = lines(5, 8, "small", "lookup")                                   # 62.5 % ≥ 60 %
+    standard = lines(6, 8, "medium", "lookup") + lines(2, 2, "medium", "interpret")
+    (ev,) = analysis.evidence(basic + standard).values()
+    assert analysis.evidence_level(ev) == "medium"
+    (ev,) = analysis.evidence(lines(4, 8, "small", "lookup") + standard).values()      # 50 %: not even basic
+    assert analysis.evidence_level(ev) is None
+    (ev,) = analysis.evidence(basic + lines(6, 8, "medium", "lookup")
+                              + lines(1, 2, "medium", "interpret")).values()           # interpret 50 % < 75 %
+    assert analysis.evidence_level(ev) == "small"

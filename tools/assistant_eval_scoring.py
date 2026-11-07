@@ -69,6 +69,8 @@ MANUAL_ITEMS = ("facts_vs_assumptions",)
 DEFAULT_REL_TOLERANCE = 1e-3
 #: The share of the non-critical items an answered cell passes.
 ANSWERED_SHARE = 0.75
+#: Tool results shown to a grader, folded to this many characters each.
+FOLD_CHARS = 4_000
 #: Characters around a number in which its unit must stand.
 UNIT_WINDOW = 40
 #: Numbers that are general constants and conversions, never needing a tool source (m16).
