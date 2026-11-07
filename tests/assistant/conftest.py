@@ -83,12 +83,7 @@ def fresh_input_cache() -> Iterator[None]:
 @pytest.fixture(scope="session")
 def tests_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
     """``tests/fixtures/tests.json`` as a database at this FlexTool's version, in a plain tmp folder."""
-    from flextool.update_flextool.db_migration import migrate_database
-    from tests.db_utils import json_to_db
-
-    path = tmp_path_factory.mktemp("tests_db") / "tests.sqlite"
-    migrate_database(json_to_db(FIXTURES / "tests.json", path))
-    return path
+    return build_tests_db(tmp_path_factory.mktemp("tests_db") / "tests.sqlite")
 
 
 def make_project(root: Path, db: Path, name: str = "tests.sqlite", number: int = 1) -> Path:
@@ -159,11 +154,21 @@ def record_run(project: Path, folder_name: str, scenario: str, outcome: Callable
     return rec.run_id
 
 
-@pytest.fixture(scope="session")
-def assistant_project(tmp_path_factory: pytest.TempPathFactory, tests_db: Path) -> Path:
+def build_tests_db(path: Path) -> Path:
+    """``tests/fixtures/tests.json`` as a database at this FlexTool's version, at *path*."""
+    from flextool.update_flextool.db_migration import migrate_database
+    from tests.db_utils import json_to_db
+
+    migrate_database(json_to_db(FIXTURES / "tests.json", path))
+    return path
+
+
+def build_assistant_project(root: Path, db: Path) -> Path:
+    """The synthetic project of the assistant tests (see the module text) under *root*; also used by
+    ``tools/record_llm_replies.py``, so recorded replies come from this project only."""
     from flextool.run_record import now_iso
 
-    project = make_project(tmp_path_factory.mktemp("assistant"), tests_db)
+    project = make_project(root, db)
     coal = record_run(project, "coal_1", "coal", succeed)
     record_run(project, "coal_chp_1", "coal_chp", succeed)
     record_run(project, "coal_chp_1", "coal_chp", fail_with(f"solve y2020 is infeasible; see {project}/work/log"))
@@ -174,6 +179,11 @@ def assistant_project(tmp_path_factory: pytest.TempPathFactory, tests_db: Path) 
         "scenarios": ["coal_1"], "members": [{"folder": "coal_1", "run_id": coal}], "written_at": now_iso()}),
         encoding="utf-8")
     return project
+
+
+@pytest.fixture(scope="session")
+def assistant_project(tmp_path_factory: pytest.TempPathFactory, tests_db: Path) -> Path:
+    return build_assistant_project(tmp_path_factory.mktemp("assistant"), tests_db)
 
 
 @pytest.fixture
