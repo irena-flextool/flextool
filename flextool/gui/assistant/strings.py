@@ -166,11 +166,8 @@ SET_LEVEL = "Level"
 LEVEL_AUTOMATIC = "Automatic ({level} for this model)"
 LEVEL_AUTOMATIC_NO_MODEL = "Automatic"
 LEVEL_RISK = "{level} (at your own risk)"
-LEVEL_PLACED = "This model is placed at the {level} level from its name ({reason})."
-LEVEL_NO_HIGHER = "Higher levels are not available for it."
-LEVEL_UNRECOGNISED = ("FlexTool does not recognise this model, so its level is a guess. A higher level may give "
-                      "unreliable answers.")
-LEVEL_LOWERED = "The level chosen before ({level}) is above this model's level, so the automatic level is used."
+LEVEL_WINDOW_TOO_SMALL = ("FlexTool last saw this model run with a {window}-token context, too small for the "
+                          "assistant.")
 SET_PARALLEL = "Questions answered at the same time"
 SET_PARALLEL_NOTE = "(more chats wait their turn)"
 PARALLEL_INVALID = "Enter a whole number from 1 to 4."

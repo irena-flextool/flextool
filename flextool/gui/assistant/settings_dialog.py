@@ -19,9 +19,10 @@ run on short daemon threads.  Their results come back through *post_to_main* (th
 own queue when none is given), each with the dialog's generation number, and are dropped when the dialog is closed
 or the provider or address changed since (critique m16).  The saved settings file is read once at open (P2-D2).
 
-* **Level** (P3-O7, P3-O12): the list offers "Automatic (…)" and only the levels at or below the one the model
-  name gives (:func:`~flextool.assistant.providers.allowed_tiers`); for a name FlexTool does not recognise, the
-  higher levels too, marked "(at your own risk)".  The line below says why.
+* **Level** (P3-O7, P3-O12): the list offers "Automatic (…)" and only the levels at or below the model's automatic
+  level (:func:`~flextool.assistant.tiers.resolve_tier`: its name or size, and the context FlexTool last saw it
+  run with); for a model FlexTool does not recognise, the higher levels too, marked "(at your own risk)".  The
+  lines below say why, and that the level may be lowered when no context is known yet.
 * **Data use**: one check box per privacy setting the requests carry (unchecking one that is on by default asks
   first; "Keep on" checks it again), the settings only the account can change as a list (no links).
 * **Save** writes P1's ``settings.json`` (keeping keys this FlexTool does not know), then calls *on_saved()* —
@@ -717,8 +718,9 @@ class AssistantSettingsDialog(_AssistantDialog):
         self.cpu_hint.configure(text=probes.PARTLY_ON_CPU if facts is not None and facts.partly_on_cpu else "")
 
     def _update_level(self) -> None:
-        """The level list of the model: "Automatic", then only the levels the model may be used at."""
-        from flextool.assistant.providers import TIER_ORDER, allowed_tiers, model_level
+        """The level list of the model (P3 §3.3): "Automatic", then only the levels the model may be used at, from
+        the facts FlexTool last found for it (the settings never ask a server) or its name alone."""
+        from flextool.assistant import endpoint, probes, tiers
 
         preset = self._preset
         model = self.model_var.get().strip()
@@ -728,29 +730,32 @@ class AssistantSettingsDialog(_AssistantDialog):
             self.level_var.set(strings.LEVEL_AUTOMATIC_NO_MODEL)
             self.level_reason.configure(text="")
             return
-        level = model_level(preset.id, model)
-        allowed = allowed_tiers(level)
-        automatic = _USER_LEVEL[level.tier]
+        url = self._checked_address()
+        facts = probes.cached_facts(preset.id, url, model) if url else None
+        route = endpoint.route_for(preset, url, facts=facts, model=model) if url else None
+        choice = self._level_choice
+        try:
+            tier = tiers.resolve_tier(preset, model, facts, choice, route)
+            too_small = None
+        except tiers.WindowTooSmall as exc:
+            tier = tiers.resolve_tier(preset, model, None, choice, route)
+            too_small = strings.LEVEL_WINDOW_TOO_SMALL.format(window=exc.window)
+        automatic = _USER_LEVEL[tier.automatic]
         labels = [strings.LEVEL_AUTOMATIC.format(level=automatic)]
         values: list[str | None] = [None]
-        for tier in allowed:
-            name = _USER_LEVEL[tier]
-            above = TIER_ORDER.index(tier) > TIER_ORDER.index(level.tier)
+        for level in tier.allowed:
+            name = _USER_LEVEL[level]
+            above = tiers.LEVEL_ORDER.index(level) > tiers.LEVEL_ORDER.index(tier.automatic)
             labels.append(strings.LEVEL_RISK.format(level=name) if above else name)
             values.append(name)
         self._level_values = values
         self.level_box["values"] = labels
-        lines: list[str] = []
-        choice = self._level_choice
         if choice is not None and choice not in values:
-            lines.append(strings.LEVEL_LOWERED.format(level=choice))
             choice = None
         self.level_var.set(labels[values.index(choice)])
-        if level.recognised:
-            placed = strings.LEVEL_PLACED.format(level=automatic, reason=level.reason)
-            lines.insert(0, f"{placed} {strings.LEVEL_NO_HIGHER}" if len(allowed) < len(TIER_ORDER) else placed)
-        else:
-            lines.insert(0, strings.LEVEL_UNRECOGNISED)
+        lines = tier.lines()
+        if too_small:
+            lines.append(too_small)
         self.level_reason.configure(text="\n".join(lines))
 
     def _on_level_selected(self, _event: object = None) -> None:

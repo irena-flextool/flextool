@@ -1,4 +1,5 @@
-"""The presets (P1 §7): no model names, knobs inside the allowed fields, the defaults the owner chose."""
+"""The presets (P1 §7): no model names, knobs inside the allowed fields, the defaults the owner chose.  The level
+of a model is ``test_tier_resolution.py``."""
 from __future__ import annotations
 
 import dataclasses
@@ -7,13 +8,10 @@ import pytest
 
 from flextool.assistant.providers import (
     PRESETS,
-    allowed_tiers,
     knob_on,
     knob_reports,
     relaxed_knobs,
-    model_level,
     request_fields,
-    tier_from_model,
 )
 
 
@@ -60,44 +58,3 @@ def test_openai_sends_store_false_by_default():
     assert request_fields(openai, {}) == {"store": False}
     assert request_fields(openai, {"openai.store": False}) == {}
     assert knob_reports(openai, {}) == ["request sent with `store: false`"]
-
-
-@pytest.mark.parametrize("model,tier", [
-    ("example-7b-instruct", "small"),
-    ("library/example:14b", "small"),
-    ("example:30b-a3b", "small"),
-    ("example-8x7b", "small"),
-    ("example-70b", "medium"),
-    ("example-mini", "small"),
-    ("example-nano-2", "small"),
-    ("claude-haiku-9", "small"),
-    ("gemini-9-flash-lite", "small"),
-    ("mistral-small-latest", "small"),
-    ("claude-opus-9", "large"),
-    ("gemini-9-pro", "large"),
-    ("mistral-large-latest", "large"),
-    ("gpt-5", "large"),
-    ("gpt-5.2", "large"),
-    ("gpt-5-mini", "small"),
-    ("o3", "large"),
-    ("gemini-9-flash", "medium"),
-    ("example-chat", "medium"),
-    ("example:235b-cloud", "medium"),
-    ("example-production", "medium"),
-])
-def test_tier_from_model(model, tier):
-    assert tier_from_model("any", model) == tier
-
-
-@pytest.mark.parametrize(("model", "tier", "reason", "allowed"), [
-    ("example:14b", "small", "a model of about 14 billion parameters", ("small",)),
-    ("gpt-5-mini", "small", "a small model of its family (mini)", ("small",)),
-    ("example-70b-chat", "medium", "a model of about 70 billion parameters", ("small", "medium")),
-    ("claude-opus-9", "large", "a large model family (opus)", ("small", "medium", "large")),
-    ("example-chat", "medium", None, ("small", "medium", "large")),      # not recognised: higher levels offered
-])
-def test_model_level_and_the_allowed_levels(model, tier, reason, allowed):
-    """P3-O7: a recognised model only at its level or lower; P3-O12: an unrecognised one also higher."""
-    level = model_level("any", model)
-    assert (level.tier, level.reason, level.recognised) == (tier, reason, reason is not None)
-    assert allowed_tiers(level) == allowed

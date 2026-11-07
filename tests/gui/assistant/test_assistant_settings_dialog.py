@@ -32,6 +32,7 @@ from flextool.assistant.llm_adapter import ModelEntry
 from flextool.assistant.llm_errors import ErrorContext, TimedOut, make_error
 from flextool.assistant.probes import ModelFacts
 from flextool.assistant.providers import PRESETS
+from flextool.assistant.tiers import NAME_ONLY
 from flextool.gui.assistant.settings_dialog import AssistantSettingsDialog
 from tests.assistant.llm.fake_backend import FakeBackend
 from tests.gui.assistant.tk_helpers import pump, widgets
@@ -215,7 +216,7 @@ def test_level_list_is_capped_and_level_and_parallel_are_saved(open_dialog, host
     assert list(dialog.level_box["values"]) == ["Automatic (basic for this model)", "basic"]
     assert dialog.level_reason.cget("text") == (
         "This model is placed at the basic level from its name (a small model of its family (mini)). Higher "
-        "levels are not available for it.")
+        "levels are not available for it.\n" + NAME_ONLY)
 
     dialog.model_var.set("my-finetune")
     pump(host, timeout=0.2)
@@ -223,7 +224,7 @@ def test_level_list_is_capped_and_level_and_parallel_are_saved(open_dialog, host
                                                 "advanced (at your own risk)"]
     assert dialog.level_reason.cget("text") == (
         "FlexTool does not recognise this model, so its level is a guess. A higher level may give unreliable "
-        "answers.")
+        "answers.\n" + NAME_ONLY)
 
     dialog.model_var.set("gpt-5.1")
     pump(host, timeout=0.2)
@@ -249,6 +250,21 @@ def test_a_saved_level_above_the_model_is_lowered(open_dialog, host, user_config
     assert ("The level chosen before (advanced) is above this model's level, so the automatic level is used."
             in dialog.level_reason.cget("text"))
     assert dialog.chosen_level() is None
+
+
+def test_the_context_flextool_last_saw_lowers_the_level(open_dialog, host, user_config_in_tmp):
+    """P3 §3.3: the settings never probe; the facts of the last probe (kept in the user cache) set the ceiling."""
+    probes.remember_facts("ollama", "http://localhost:11434/v1", "example:70b",
+                          ModelFacts(context_window=131_072, loaded_context=16_384, source="ollama"))
+    dialog = open_dialog()
+    dialog.select_preset("ollama")
+    dialog.model_var.set("example:70b")
+    pump(host, timeout=0.2)
+    assert list(dialog.level_box["values"]) == ["Automatic (basic for this model)", "basic"]
+    assert dialog.level_reason.cget("text") == (
+        "This model is placed at the standard level from its size (a model of about 70 billion parameters).\n"
+        "This model runs with a 16384-token context, so the highest level is basic. A larger context allows a "
+        "higher level. Set OLLAMA_CONTEXT_LENGTH or the model's context length in its load settings.")
 
 
 def test_parallel_out_of_range_is_refused(open_dialog, host, user_config_in_tmp):

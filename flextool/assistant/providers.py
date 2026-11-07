@@ -1,4 +1,5 @@
-"""The AI services FlexTool's chat can use (P1 §7): one :class:`Preset` each, and the level a model name suggests.
+"""The AI services FlexTool's chat can use (P1 §7): one :class:`Preset` each.  The level of a model is
+:mod:`flextool.assistant.tiers`.
 
 A preset names no models (P1-O1): the model is chosen from the service's live model list.  It says which request
 fields the service accepts (``allowed_params``; a field outside it is never sent), which privacy switches FlexTool
@@ -204,81 +205,15 @@ def relaxed_knobs(preset: Preset, knobs: Mapping[str, object]) -> list[str]:
 # --- the level a model name suggests ------------------------------------------------------------------------------
 Tier = Literal["small", "medium", "large"]
 
-#: (pattern, tier), tried in order on the lower-case model name; the first match wins, else medium.  Size tags
-#: are handled by :func:`tier_from_model` before these.
-TIER_PATTERNS: tuple[tuple[str, Tier], ...] = tuple((rf"(?<![a-z0-9]){word}(?![a-z0-9])", tier) for word, tier in (
-    ("mini", "small"),
-    ("nano", "small"),
-    ("haiku", "small"),
-    ("flash-lite", "small"),
-    ("small", "small"),
-    ("tiny", "small"),
-    ("opus", "large"),
-    ("fable", "large"),
-    ("pro", "large"),
-    ("large", "large"),
-    (r"gpt-5(\.\d+)?", "large"),
-    ("o3", "large"),
-))
-#: A parameter-count tag such as ``7b``, ``14b``, ``8x7b`` or ``1.5b``.
-_SIZE_TAG = re.compile(r"(?<![a-z0-9.])(?:\d+x)?(\d+(?:\.\d+)?)b(?![a-z0-9])")
-SMALL_SIZE_LIMIT = 32.0         # billion parameters
-
-
-#: The order of the levels, lowest first.
-TIER_ORDER: tuple[Tier, ...] = ("small", "medium", "large")
-#: A model whose name is not recognised may be used at a higher level than its guessed one, at the user's risk
-#: (P3-O12).  A recognised model is usable only at its level or lower (P3-O7).
-ALLOW_HIGHER_WHEN_UNRECOGNISED = True
-
-REASON_SIZE = "a model of about {n} billion parameters"
-REASON_SMALL_FAMILY = "a small model of its family ({token})"
-REASON_LARGE_FAMILY = "a large model family ({token})"
-
-
-@dataclass(frozen=True)
-class ModelLevel:
-    """The level a model name suggests and why; *reason* is ``None`` when the name is not recognised (the level
-    is then a guess)."""
-
-    tier: Tier
-    reason: str | None
-
-    @property
-    def recognised(self) -> bool:
-        return self.reason is not None
-
-
-def model_level(preset_id: str, model: str) -> ModelLevel:
-    """The level a model name suggests: small for size tags up to about 30 billion parameters and small-model
-    words, large for the providers' top families, a larger size tag alone medium, anything else medium as a
-    guess."""
-    name = model.lower()
-    sizes = [float(m.group(1)) for m in _SIZE_TAG.finditer(name)]
-    if sizes and max(sizes) <= SMALL_SIZE_LIMIT:
-        return ModelLevel("small", REASON_SIZE.format(n=f"{max(sizes):g}"))
-    for pattern, tier in TIER_PATTERNS:
-        match = re.search(pattern, name)
-        if match:
-            reason = REASON_SMALL_FAMILY if tier == "small" else REASON_LARGE_FAMILY
-            return ModelLevel(tier, reason.format(token=match.group(0)))
-    if sizes:
-        return ModelLevel("medium", REASON_SIZE.format(n=f"{max(sizes):g}"))
-    return ModelLevel("medium", None)
-
 
 def tier_from_model(preset_id: str, model: str) -> Tier:
-    """The level a model name suggests (:func:`model_level`).  The user's choice wins over this, within
-    :func:`allowed_tiers`."""
-    return model_level(preset_id, model).tier
+    """The level the name of *model* gives (internal name), before any probe: :func:`flextool.assistant.tiers.
+    resolve_tier` without facts, an unrecognised name guessed from where the preset's models run.  P1's callers
+    keep this name; the level in use comes from ``resolve_tier`` with the probe's facts."""
+    from flextool.assistant import tiers
 
-
-def allowed_tiers(level: ModelLevel) -> tuple[Tier, ...]:
-    """The levels a model of *level* may be used at: its own and the lower ones; every level when its name is not
-    recognised (:data:`ALLOW_HIGHER_WHEN_UNRECOGNISED`)."""
-    if not level.recognised and ALLOW_HIGHER_WHEN_UNRECOGNISED:
-        return TIER_ORDER
-    return TIER_ORDER[:TIER_ORDER.index(level.tier) + 1]
+    preset = PRESETS.get(preset_id)
+    return tiers.resolve_tier(preset, model, None, None).automatic  # type: ignore[return-value]
 
 
 # --- the live model list ------------------------------------------------------------------------------------------

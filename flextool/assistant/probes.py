@@ -18,7 +18,15 @@ anything reaches the model:
   note only (LM Studio can prompt a model for tools).
 * **OpenRouter**: the public model list (``GET <base>/models``), cached for a day in the user cache folder: the
   context length and whether ``tools`` is a supported parameter.
-* **Anthropic**: the model's ``max_input_tokens``.  Other services: nothing is checked.
+* **Anthropic**: the model's ``max_input_tokens``.
+* **Custom endpoint** (``openai_compatible``): the model list (``GET <base>/models``); the model's entry may give
+  its context as ``context_length``, ``max_model_len`` or ``context_window`` (vLLM, llama.cpp and others; the
+  field differs per server).  A list that cannot be read gives no facts.  Other services: nothing is checked.
+
+Ollama's ``/api/show`` also gives the model's parameter count (``general.parameter_count``, else
+``details.parameter_size``), which places a model whose name has no size tag (P3 §3.1).  The facts of every probe
+are kept in this process and in ``<user cache>/flextool/assistant/model_facts.json`` with the time they were
+found, so the settings show the level and context of a model without asking any server (:func:`cached_facts`).
 
 Local servers are asked through a proxy-less opener (a local endpoint never goes through a proxy, whatever the
 environment says), with a 2 second timeout; no redirect is followed.  Only the standard library is used, apart
@@ -27,6 +35,7 @@ from the Anthropic library for the Anthropic check.
 from __future__ import annotations
 
 import json
+import re
 import socket
 import threading
 import time
@@ -71,6 +80,7 @@ ANSWER_MARGIN = 4_000
 #: The OpenRouter model list is fetched again after this many seconds.
 MODEL_LIST_MAX_AGE = 24 * 3600.0
 MODEL_LIST_CACHE = "openrouter_models.json"
+FACTS_CACHE = "model_facts.json"
 
 #: The settings hint for an Ollama model that does not fit in graphics memory (P1-O10).
 PARTLY_ON_CPU = "This model doesn't fit fully in graphics memory and will be slower."
@@ -90,6 +100,8 @@ class ModelFacts:
     source: str = "none"
     partly_on_cpu: bool = False
     notes: tuple[str, ...] = ()             # shown to the user, never sent to the model
+    parameter_count: int | None = None      # the parameters the local server reports (Ollama)
+    listed_context: int | None = None       # the context a custom endpoint's model list gives
 
     @property
     def context(self) -> int | None:
@@ -229,6 +241,20 @@ def _small_context(key: str, ctx: ErrorContext, n: int, needed: int) -> LLMError
     return make_error(ContextTooSmall, key, ctx, message_fields={"n": n, "needed": needed})
 
 
+def window_error(preset: Preset, conn: Connection, err: Exception) -> LLMError:
+    """The :class:`ContextTooSmall` error of a model whose context is below the assistant's minimum
+    (:class:`flextool.assistant.tiers.WindowTooSmall`): the local server's advice when it runs here."""
+    from flextool.assistant.backends._common import error_context
+    from flextool.assistant.tiers import MIN_WINDOW
+
+    ctx = error_context(preset, conn)
+    window = getattr(err, "window", 0)
+    key = {"ollama": "small_context_ollama", "lmstudio": "small_context_lmstudio"}.get(preset.context_probe or "")
+    if key is None or not getattr(err, "local", False):
+        key = "small_context"
+    return _small_context(key, ctx, window, MIN_WINDOW)
+
+
 def _tools_unsupported(ctx: ErrorContext) -> LLMError:
     err = make_error(ToolsUnsupported, "tools", ctx)
     err.user_message = tools_message(ctx)
@@ -259,6 +285,25 @@ def _ollama_context_window(show: Mapping[str, Any]) -> int | None:
     return next((_int(v) for k, v in info.items() if k.endswith(".context_length") and _int(v)), None)
 
 
+_PARAMETER_SIZE = re.compile(r"\s*(\d+(?:\.\d+)?)\s*([KMBT])\s*", re.IGNORECASE)
+_SCALE = {"k": 1e3, "m": 1e6, "b": 1e9, "t": 1e12}
+
+
+def ollama_parameter_count(show: Mapping[str, Any]) -> int | None:
+    """The parameter count in an ``/api/show`` answer: ``model_info["general.parameter_count"]``, else
+    ``details.parameter_size`` (``"20.9B"``, ``"568M"``); ``None`` when neither is there."""
+    info = show.get("model_info")
+    if isinstance(info, dict) and _int(info.get("general.parameter_count")):
+        return _int(info["general.parameter_count"])
+    details = show.get("details")
+    size = details.get("parameter_size") if isinstance(details, dict) else None
+    if isinstance(size, str):
+        match = _PARAMETER_SIZE.fullmatch(size)
+        if match:
+            return int(float(match.group(1)) * _SCALE[match.group(2).lower()])
+    return None
+
+
 def _same_model(entry: Mapping[str, Any], model: str) -> bool:
     names = {entry.get("name"), entry.get("model")}
     wanted = {model, model if ":" in model else f"{model}:latest"}
@@ -274,9 +319,11 @@ def _probe_ollama(conn: Connection, ctx: ErrorContext, cancel: threading.Event, 
     if tools is False:
         raise _tools_unsupported(ctx)
     context_window = _ollama_context_window(show)
+    parameters = ollama_parameter_count(show)
     remote = remote_host_of(show, conn.model)
     if remote is not None:
-        return ModelFacts(context_window=context_window, tools=tools, remote_host=remote, source="ollama")
+        return ModelFacts(context_window=context_window, tools=tools, remote_host=remote, source="ollama",
+                          parameter_count=parameters)
     # Load the model, so the context it runs with can be read (P1 §7.2).  Nothing but the model and how long to
     # keep it is sent: the server uses the graphics card and its own threads as it sees fit (P1-O10).
     asker.ask("POST", "/api/generate", {"model": conn.model, "keep_alive": KEEP_ALIVE}, timeout=LOAD_TIMEOUT,
@@ -295,7 +342,8 @@ def _probe_ollama(conn: Connection, ctx: ErrorContext, cancel: threading.Event, 
     size, vram = _int(entry.get("size")), entry.get("size_vram")
     partly_on_cpu = size is not None and isinstance(vram, int) and not isinstance(vram, bool) and vram < size
     return ModelFacts(context_window=context_window, loaded_context=loaded, tools=tools, source="ollama",
-                      partly_on_cpu=partly_on_cpu, notes=(PARTLY_ON_CPU,) if partly_on_cpu else ())
+                      partly_on_cpu=partly_on_cpu, notes=(PARTLY_ON_CPU,) if partly_on_cpu else (),
+                      parameter_count=parameters)
 
 
 # --- LM Studio ----------------------------------------------------------------------------------------------------
@@ -411,6 +459,29 @@ def _probe_openrouter(conn: Connection, ctx: ErrorContext, cancel: threading.Eve
     return ModelFacts(context_window=_int(entry.get("context_length")), tools=tools, source="openrouter")
 
 
+# --- a custom endpoint -----------------------------------------------------------------------------------------
+#: The fields a custom endpoint's model list may give the context in, tried in order (P3 §3.3).
+LISTED_CONTEXT_FIELDS = ("context_length", "max_model_len", "context_window")
+
+
+def _probe_openai_compatible(conn: Connection, ctx: ErrorContext, cancel: threading.Event) -> ModelFacts:
+    proxy = None if ctx.local else net.proxy_for(conn.base_url)
+    asker = _Asker(conn.base_url, conn, ctx, cancel, None, proxy=proxy)
+    try:
+        listing = asker.ask_object("GET", "/models", timeout=LOCAL_TIMEOUT if ctx.local else REMOTE_TIMEOUT)
+    except LLMError as exc:
+        if exc.code == "cancelled":
+            raise
+        return ModelFacts(source="openai_compatible (the model list could not be read)")
+    items = listing.get("data", listing.get("models"))
+    entry = next((m for m in items if isinstance(m, dict) and (m.get("id") or m.get("name")) == conn.model), None) \
+        if isinstance(items, list) else None
+    if entry is None:
+        return ModelFacts(source="openai_compatible (the model is not in the model list)")
+    listed = next((_int(entry.get(name)) for name in LISTED_CONTEXT_FIELDS if _int(entry.get(name))), None)
+    return ModelFacts(listed_context=listed, source="openai_compatible")
+
+
 # --- the probe ----------------------------------------------------------------------------------------------------
 def probe(preset: Preset, conn: Connection, cancel: threading.Event, *, needed: int | None = None,
           on_event: OnEvent | None = None, backend: Any = None,
@@ -435,6 +506,8 @@ def probe(preset: Preset, conn: Connection, cancel: threading.Event, *, needed: 
         facts = _probe_openrouter(conn, ctx, cancel, clock)
     elif preset.context_probe == "anthropic":
         facts = _probe_anthropic(preset, conn, cancel, backend)
+    elif preset.id == "openai_compatible":
+        facts = _probe_openai_compatible(conn, ctx, cancel)
     else:
         facts = ModelFacts()
     remember_facts(preset.id, conn.base_url, conn.model, facts)
@@ -450,10 +523,85 @@ def _recent_key(preset_id: str, base_url: str, model: str) -> tuple[str, str, st
     return preset_id, net.normalise_endpoint(base_url), model
 
 
-def remember_facts(preset_id: str, base_url: str, model: str, facts: ModelFacts) -> None:
-    """Keep *facts* as the last probe's of *model* at *base_url* (in this process only)."""
+_STORED_FIELDS = ("context_window", "loaded_context", "tools", "remote_host", "source", "partly_on_cpu",
+                  "parameter_count", "listed_context")
+
+
+def remember_facts(preset_id: str, base_url: str, model: str, facts: ModelFacts, *,
+                   clock: Callable[[], float] = time.time) -> None:
+    """Keep *facts* as the last probe's of *model* at *base_url*: in this process, and in the user cache with the
+    time (a file that cannot be written is skipped; the next probe tries again)."""
+    try:
+        key = _recent_key(preset_id, base_url, model)
+    except ValueError:
+        return
     with _RECENT_LOCK:
-        _RECENT[_recent_key(preset_id, base_url, model)] = facts
+        _RECENT[key] = facts
+    _store_facts("|".join(key), facts, clock())
+
+
+def _store_facts(key: str, facts: ModelFacts, now: float) -> None:
+    from flextool.assistant import _files
+
+    path = cache_root() / FACTS_CACHE
+    try:
+        with _files.locked(path):
+            try:
+                data = _files.read_json(path, check_format=False) or {}
+            except _files.UnreadableFile:
+                data = {}
+            data[key] = {"found": now, **{name: getattr(facts, name) for name in _STORED_FIELDS}}
+            _files.write_json_atomic(path, data)
+    except (OSError, _files.LockTimeout):
+        return
+
+
+def _stored_facts(key: str) -> ModelFacts | None:
+    from flextool.assistant import _files
+
+    try:
+        data = _files.read_json(cache_root() / FACTS_CACHE, check_format=False)
+    except (OSError, _files.UnreadableFile):
+        return None
+    entry = (data or {}).get(key)
+    if not isinstance(entry, dict):
+        return None
+    values: dict[str, Any] = {}
+    for name in _STORED_FIELDS:
+        value = entry.get(name)
+        if name in ("source", "remote_host"):
+            values[name] = value if isinstance(value, str) else (None if name == "remote_host" else "cache")
+        elif name in ("tools",):
+            values[name] = value if isinstance(value, bool) else None
+        elif name == "partly_on_cpu":
+            values[name] = value is True
+        else:
+            values[name] = _int(value)
+    return ModelFacts(**values)
+
+
+def cached_facts(preset_id: str, base_url: str, model: str, *,
+                 clock: Callable[[], float] = time.time) -> ModelFacts | None:
+    """The facts FlexTool last found for *model* at *base_url* without asking any server (P3 §3.3, for the
+    settings): this process's last probe, else the user cache, else — for OpenRouter — the model's entry in the
+    day's cached model list; ``None`` when there are none."""
+    try:
+        key = _recent_key(preset_id, base_url, model)
+    except ValueError:
+        return None
+    with _RECENT_LOCK:
+        recent = _RECENT.get(key)
+    if recent is not None:
+        return recent
+    stored = _stored_facts("|".join(key))
+    if stored is not None:
+        return stored
+    if preset_id == "openrouter":
+        models = _cached_models(base_url, clock())
+        entry = next((m for m in models or [] if m.get("id") == model), None)
+        if entry is not None and _int(entry.get("context_length")):
+            return ModelFacts(context_window=_int(entry["context_length"]), source="openrouter (cached model list)")
+    return None
 
 
 def recent_facts(preset_id: str, base_url: str, model: str) -> ModelFacts | None:
