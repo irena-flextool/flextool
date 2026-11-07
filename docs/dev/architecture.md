@@ -179,7 +179,9 @@ flextool/                          The installed Python package
 │                                    catalogue) and the assistant's docs index.
 ├── gui/                           Tkinter desktop application (main_window,
 │                                    result_viewer, plot_canvas,
-│                                    network_graph, check_tree, dialogs/...).
+│                                    network_graph, check_tree, dialogs/...,
+│                                    assistant/ — the AI assistant's chat
+│                                    window).
 ├── helpers/                       Small standalone diagnostic utilities
 │                                    (file compare, LP coefficient inspector,
 │                                    schema converters).
@@ -1081,8 +1083,8 @@ Toolbox bundle, the old-CPU emulation's degraded server).
 
 ### AI assistant chat
 
-`flextool-assistant` without `--mcp` / `--call` is the chat (`chat_cli.py`); the same layers will serve the
-FlexTool window. `--mcp` and `--call` import none of the service libraries (`anthropic`, `openai`, `keyring`)
+`flextool-assistant` without `--mcp` / `--call` is the chat (`chat_cli.py`); the same layers serve the FlexTool
+window ("AI assistant in the FlexTool window" below). `--mcp` and `--call` import none of the service libraries (`anthropic`, `openai`, `keyring`)
 nor the chat (`tests/assistant/test_import_hygiene.py`).
 
 - **Neutral model** (`llm_adapter.py`): `Message`, `ToolCall`, `Request`, `Reply`, `Usage`, the events a front
@@ -1119,6 +1121,43 @@ nor the chat (`tests/assistant/test_import_hygiene.py`).
   preset, normalised address, proxy host, forwarded host and notice wording.
 - **Terminal** (`chat_cli.py`): the REPL (a terminal only) and `-q` (only the answer on stdout; exit codes 0 / 1 /
   2 / 3 / 130). The question and the probe run in daemon threads, so Ctrl-C stops them at once.
+
+### AI assistant in the FlexTool window
+
+`flextool/gui/assistant/` is the window's front end on the same session, store, settings, keys, notices and ledger
+(user page: [The AI assistant](../ai_assistant.md), "Chat in the FlexTool window"). Everything without Tk — the
+worker, the provider gate, the Markdown parser, the window geometry, the strings — is tested in the sharded job
+(`tests/assistant/gui_support/`); the Tk modules in the `gui-tests` job ([Testing](testing.md), "GUI tests").
+
+- **Entry and lifecycle** (`entry.py`, `AssistantEntry`, created by `MainWindow`): "AI assistant…" + ⚙ in side-menu
+  row 5. Building it only runs `importlib.util.find_spec`; the chat window, the dialogs, the SDKs, the keyring and
+  the store are imported on the first click. It closes the chat window on a project switch, rename or deletion
+  (one window per project) and waits for its workers (5 s; the Project dialog and the project combo refuse a
+  rename or deletion while one still runs a tool call, `before_project_change`); `project_utils.rename_project`
+  moves the saved chats (`store.rename_project`), `notify_assistant_project_deleted` deletes them
+  (`store.forget_project`). At FlexTool close (`MainWindow._on_close`, before the settings save) it withdraws the
+  windows, shuts the workers down, deletes the runtime file and purges, within 3 s; at start (after 3 s) it purges
+  and removes runtime files of gone processes.
+- **Threads**: one `AssistantWorker` daemon thread per chat tab owns its `Session`, conversation and lock; the Tk
+  thread never calls the network, keyring, probes, store or ledger (except reading the settings and the welcome
+  flag when a window opens). Worker → Tk only through queues drained by one `after(50)` poll. The process-wide
+  `ProviderGate` (`gate.py`) lets `parallel_requests` (1–4) model requests per provider run at once and shares a
+  rate-limit cool-down between chats; tool calls run outside it, under the process-wide tool lock. A shut-down
+  worker saves a checkpoint in which a running tool call is "Not run: FlexTool was closed…", so the file is
+  always a resumable history.
+- **Window** (`chat_window.py`, `chat_tab.py`, `transcript.py`, `notices.py`, `settings_dialog.py`): chats as
+  `ttk.Notebook` tabs with an overflow budget (the Chats menu shows the hidden ones), restored when the window
+  opens again (`store.open_chats`); one data notice at a time; the size per monitor configuration in
+  `GlobalSettings.assistant_window_geometry`; a key shield on every assistant Toplevel so the main window's
+  `bind_all` shortcuts never fire from it.
+- **What the window shows** (`gui_state.py`): `snapshot_from_main` reads the main window's checks and highlights
+  and `ResultViewer.view_state()` on the Tk thread (each part on its own, about 2 ms); every Send takes its own
+  snapshot (`ContextSnapshot.gui`), which the prompt renders as the context block. While a project is open,
+  `ContextPublisher` polls it every second and hands a changed payload to the `RuntimeContextWriter`
+  (`flextool/assistant/runtime_context.py`): one file per process,
+  `<config>/assistant/runtime/<project key>.<pid>.json`, names and selections only, rewritten every 30 s, deleted by
+  the writer thread at close. An agent's `get_gui_context` (`--mcp`, `--call`) reads the newest live file of the
+  project (`read_runtime_context`: process alive, written within 120 s).
 
 Tests: `tests/assistant/llm/` — no network (a socket guard refuses anything but loopback), synthetic provider
 payloads through `httpx2.MockTransport`, a scripted `FakeBackend` for the session and the chat, loopback servers
