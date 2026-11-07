@@ -26,16 +26,41 @@ def _store():
         raise ToolError("docs_unavailable", text=str(exc)) from None
 
 
-def get_gui_context(ctx: AssistantContext, args: dict) -> dict:
+NOT_SHARED = ("The input source and scenario are the defaults this connection was started with; the tools use "
+              "them when a request names none. What is selected in the FlexTool window is not shared.")
+WINDOW_CLOSED = "The FlexTool window is not open for this project; showing the startup options."
+FROM_WINDOW = ("What is selected in the FlexTool window for this project and shown in its result viewer, as of "
+               "written_at. The tools still use the input source and scenario this connection was started with "
+               "when a request names none.")
+
+
+def _startup_options(ctx: AssistantContext, note: str) -> dict:
     return {
         "front_end": ctx.front_end,
         "project": ctx.project_name,
         "input_source": ctx.default_source,
         "scenario": ctx.default_scenario,
         "gui": "not running",
-        "note": ("The input source and scenario are the defaults this connection was started with; the tools use "
-                 "them when a request names none. What is selected in the FlexTool window is not shared."),
+        "note": note,
     }
+
+
+def get_gui_context(ctx: AssistantContext, args: dict) -> dict:
+    """In the FlexTool window: the snapshot taken when the question was sent.  For an agent (the connection
+    server, ``--call``): what the window publishes in its runtime context file, else the startup options.  In the
+    terminal: the startup options."""
+    from flextool.assistant.context import snapshot_payload
+
+    if ctx.front_end == "gui":
+        return snapshot_payload(ctx.snapshot(), gui_running="running", redact=ctx.redact)
+    if ctx.front_end == "agent":
+        from flextool.assistant.runtime_context import read_runtime_context
+
+        context, running = read_runtime_context(ctx.project_path)
+        if context is None or running != "running":
+            return _startup_options(ctx, WINDOW_CLOSED)
+        return {**context, "front_end": ctx.front_end, "note": FROM_WINDOW}
+    return _startup_options(ctx, NOT_SHARED)
 
 
 def search_docs(ctx: AssistantContext, args: dict) -> Fit:
@@ -128,7 +153,10 @@ _KINDS = ["docs", "formulations", "all"]
 TOOLS = [
     make_tool(
         name="get_gui_context", title="Connection context",
-        description="The project this connection reads, and the input source and scenario it uses by default.",
+        description=("The project this connection reads, the input source and scenario it uses by default, and what "
+                     "is selected in the FlexTool window and shown in its result viewer when the window is open "
+                     "for the project (input sources, scenarios, result folders with whether their results may "
+                     "be used, the plot and time range shown)."),
         properties={}, handler=get_gui_context, area="orientation", small_tier=False),
     make_tool(
         name="search_docs", title="Search the FlexTool documentation",

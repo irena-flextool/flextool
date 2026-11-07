@@ -16,7 +16,8 @@ import sys
 import pytest
 
 from flextool.assistant import chat_cli, cli, endpoint, llm_errors, net, probes, prompt, session
-from flextool.assistant.context import ContextSnapshot
+from flextool.assistant.context import ContextSnapshot, GuiState, ResultRef, ViewerState, gui_snapshot
+from flextool.assistant.tools import orientation
 from flextool.assistant.providers import PRESETS
 
 ABBREVIATIONS = ("LLM", "ZDR", "DB", "LP", "MCP", "API")
@@ -31,6 +32,16 @@ CANNOT_GUARANTEE = "FlexTool cannot guarantee"
 URL = re.compile(r"https?://[\w.\[\]:-]+[^\s)'\",]*")
 
 
+#: Every line of the window's context block (P2 §7): checked lists, an unusable and a usable selected run, the viewer.
+_GUI = GuiState(
+    sources_checked=(("base", 1),), source_selected="base", scenarios_checked=(("base", "a"), ("other", "b")),
+    scenario_selected=None,
+    results_checked=tuple(ResultRef(f"r{i}", 1, "a", "succeeded", True, None, None) for i in range(12)),
+    results_selected=(ResultRef("a_1", 1, "a", "failed", False, "failed", None),
+                      ResultRef("b_1", 1, "b", "succeeded", True, None, None)),
+    viewer=ViewerState("dispatch", ("a_1",), "1", "Dispatch", "a", "node_dt_e", None, 0, 24, None, "west", ()))
+
+
 def _texts() -> list[tuple[str, str]]:
     out = [(f"MESSAGES[{k}]", v) for k, v in llm_errors.MESSAGES.items()]
     out += [(f"refusal category {k}", v) for k, v in llm_errors.REFUSAL_CATEGORIES.items()]
@@ -43,6 +54,9 @@ def _texts() -> list[tuple[str, str]]:
                     for i, t in enumerate(prompt.system_layers(front_end, tier))]
     out.append(("instructions", prompt.instructions("project")))
     out.append(("context block", prompt.context_block(ContextSnapshot("project"))))
+    out.append(("context block gui", prompt.context_block(gui_snapshot("project", _GUI))))
+    out += [(f"get_gui_context {name}", getattr(orientation, name))
+            for name in ("NOT_SHARED", "WINDOW_CLOSED", "FROM_WINDOW")]
     out += [(f"SESSION_MESSAGES[{k}]", v) for k, v in session.SESSION_MESSAGES.items()]
     out += [(f"probes {name}", getattr(probes, name)) for name in ("PARTLY_ON_CPU", "LMSTUDIO_NO_TOOL_USE")]
     out += [(f"endpoint {name}", getattr(endpoint, name)) for name in dir(endpoint) if name.startswith("INDICATOR_")]
