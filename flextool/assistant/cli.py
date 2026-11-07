@@ -4,10 +4,12 @@
   (:mod:`flextool.assistant.mcp_server`); the agent starts this command itself.
 * ``--call TOOL [JSON | @file.json]`` runs one tool and prints its result (for support and testing).
 
-Both need the project: ``--project-path`` (an absolute folder) or ``--project NAME`` (``projects/NAME`` under the
-current folder, as the FlexTool window keeps them).  ``--threads N`` sets FlexTool's own threads in this process;
-the default is 1, so the tools never compete with a running model (``flextool/_thread_budget.py`` reads the flag
-before polars is imported; this parser only checks it).
+Both first delete the saved chat conversations older than the expiry in the assistant settings
+(:func:`flextool.assistant.store.purge_at_start`).  Both need the project: ``--project-path`` (an absolute
+folder) or ``--project NAME`` (``projects/NAME`` under the current folder, as the FlexTool window keeps them).
+``--threads N`` sets FlexTool's own threads in this process; the default is 1, so the tools never compete with a
+running model (``flextool/_thread_budget.py`` reads the flag before polars is imported; this parser only checks
+it).
 
 The command starts from ``flextool_assistant_entry``, which keeps stdout clean for the protocol before this module
 is imported.
@@ -18,6 +20,7 @@ import argparse
 import json
 import logging
 import sys
+import threading
 from pathlib import Path
 
 from flextool.assistant.caps import DEFAULT_PRESET, PRESETS
@@ -128,6 +131,7 @@ def main(argv: list[str] | None = None, *, proto_in: int | None = None, proto_ou
     result_cap = args.result_cap or tier or DEFAULT_PRESET
 
     from flextool.assistant.context import make_context
+    from flextool.assistant.store import purge_at_start
 
     if args.mcp:
         try:
@@ -140,6 +144,8 @@ def main(argv: list[str] | None = None, *, proto_in: int | None = None, proto_ou
             parser.error("--mcp starts from the flextool-assistant command")
         ctx = make_context(project, input_source=args.input_source, scenario=args.scenario,
                            result_cap=result_cap, front_end="agent")
+        # Old conversations are deleted while the connection starts (never in its way; stdlib only).
+        threading.Thread(target=purge_at_start, name="flextool-assistant-purge", daemon=True).start()
         mcp_server.run_stdio(ctx, proto_in, proto_out, tier=tier)
         return 0
 
@@ -148,6 +154,7 @@ def main(argv: list[str] | None = None, *, proto_in: int | None = None, proto_ou
 
     name, raw = args.call[0], (args.call[1] if len(args.call) > 1 else None)
     arguments = _call_arguments(raw, parser)
+    purge_at_start()
     ctx = make_context(project, input_source=args.input_source, scenario=args.scenario, result_cap=result_cap,
                        front_end="terminal")
     allowed = {t.name for t in registry.tools_for_tier(tier)}
