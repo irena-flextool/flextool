@@ -1,11 +1,15 @@
-"""``flextool-assistant``: the read-only FlexTool tools for AI assistants, from the command line.
+"""``flextool-assistant``: FlexTool's AI assistant in the terminal, and the read-only FlexTool tools for AI agents.
 
+* Without ``--mcp`` or ``--call``: the chat with an AI model in the terminal (an interactive chat, or one question
+  with ``-q``), and the small commands ``--list-models``, ``--set-key``, ``--forget-key`` and ``--usage``
+  (:mod:`flextool.assistant.chat_cli`, imported only for them: ``--mcp`` and ``--call`` load no AI service
+  library).
 * ``--mcp`` serves the tools to an AI agent (Claude Code and others) over stdin and stdout
   (:mod:`flextool.assistant.mcp_server`); the agent starts this command itself.
 * ``--call TOOL [JSON | @file.json]`` runs one tool and prints its result (for support and testing).
 
-Both first delete the saved chat conversations older than the expiry in the assistant settings
-(:func:`flextool.assistant.store.purge_at_start`).  Both need the project: ``--project-path`` (an absolute
+The chat, ``--mcp`` and ``--call`` first delete the saved chat conversations older than the expiry in the assistant
+settings (:func:`flextool.assistant.store.purge_at_start`).  They need the project: ``--project-path`` (an absolute
 folder) or ``--project NAME`` (``projects/NAME`` under the current folder, as the FlexTool window keeps them).
 ``--threads N`` sets FlexTool's own threads in this process; the default is 1, so the tools never compete with a
 running model (``flextool/_thread_budget.py`` reads the flag before polars is imported; this parser only checks
@@ -25,16 +29,19 @@ from pathlib import Path
 
 from flextool.assistant.caps import DEFAULT_PRESET, PRESETS
 from flextool.assistant.prompt import LEVELS
+from flextool.assistant.providers import PRESETS as PROVIDERS
 
 #: Said in ``--help`` (plain English, no policy links; D10, D11, Q5).
 DATA_NOTICE = (
-    "Data use: everything the tools return (input data, results, run logs, documentation) is sent to the AI "
-    "service that your agent uses. FlexTool cannot say how that service stores or uses it; check its policies "
-    "yourself. The tools only read; they cannot change the project."
+    "Data use: your questions and everything the tools return (input data, results, run logs, documentation) are "
+    "sent to the AI service that the chat or your agent uses. FlexTool cannot say how that service stores or uses "
+    "it; check its policies yourself. The tools only read; they cannot change the project."
 )
-
-NO_FRONT_END = ("The chat in the terminal comes in a later FlexTool release. To use these tools from an AI agent, "
-                "start with --mcp (see --help).")
+EXAMPLES = (
+    "Chat in the terminal: flextool-assistant --project-path /absolute/path/to/project. One question: add -q "
+    "\"your question\". For Claude Code: claude mcp add flextool -- flextool-assistant --mcp --project-path "
+    "/absolute/path/to/project"
+)
 MCP_MISSING = ("The connection for AI assistants could not load the package mcp: {error}. Reinstall FlexTool with "
                "Update FlexTool.")
 
@@ -51,10 +58,9 @@ def _threads(text: str) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="flextool-assistant",
-        description="Read-only FlexTool tools for AI assistants: input data, results, run logs and the "
-                    "documentation of one project.",
-        epilog=DATA_NOTICE + " Example, for Claude Code: claude mcp add flextool -- flextool-assistant --mcp "
-                             "--project-path /absolute/path/to/project",
+        description="FlexTool's AI assistant in the terminal, and read-only FlexTool tools for AI agents: input "
+                    "data, results, run logs and the documentation of one project.",
+        epilog=DATA_NOTICE + " " + EXAMPLES,
         allow_abbrev=False,
     )
     mode = parser.add_mutually_exclusive_group()
@@ -62,24 +68,49 @@ def build_parser() -> argparse.ArgumentParser:
                       help="serve the tools to an AI agent over stdin and stdout (the agent starts this command)")
     mode.add_argument("--call", nargs="+", metavar=("TOOL", "ARGUMENTS"),
                       help="run one tool and print its result; ARGUMENTS is a JSON object or @file.json")
+    mode.add_argument("--list-models", action="store_true", help="list the models of the AI service")
+    mode.add_argument("--set-key", action="store_true",
+                      help="store the key of the AI service in the system keyring (asked in the terminal)")
+    mode.add_argument("--forget-key", action="store_true", help="remove the stored key of the AI service")
+    mode.add_argument("--usage", action="store_true",
+                      help="the tokens used, by month, AI service and model, as each service reported them")
     where = parser.add_mutually_exclusive_group()
     where.add_argument("--project-path", metavar="FOLDER", help="the project folder (an absolute path)")
     where.add_argument("--project", metavar="NAME", help="the project projects/NAME under the current folder")
     parser.add_argument("--input-source", metavar="SOURCE",
                         help="the input source the tools use when a request names none (file name or number)")
     parser.add_argument("--scenario", help="the scenario the tools use when a request names none")
+    parser.add_argument("--provider", choices=list(PROVIDERS), metavar="ID",
+                        help="the AI service of the chat, for this session: " + ", ".join(PROVIDERS))
+    parser.add_argument("--model", metavar="NAME", help="the model of the chat, for this session")
+    parser.add_argument("--base-url", metavar="URL",
+                        help="the address of the AI service, for a custom endpoint or a model server on another "
+                             "port or computer")
     parser.add_argument("--result-cap", choices=list(PRESETS), default=None,
                         help=f"how much one tool result may hold (default {DEFAULT_PRESET}; small with --tier "
                              "basic, large with --tier advanced)")
     parser.add_argument("--tier", choices=list(LEVELS), default=None,
-                        help="the assistant level: basic offers only the basic tools and smaller results")
+                        help="the assistant level: basic offers only the basic tools and smaller results (the chat "
+                             "picks one from the model name when it is not given)")
+    parser.add_argument("-q", "--question", metavar="QUESTION",
+                        help="ask one question, print the answer and stop; nothing is asked in the terminal")
+    parser.add_argument("--accept-data-notice", action="store_true",
+                        help="accept the data notice of this AI service for good: it is not asked again until the "
+                             "service, its address, the proxy or the notice changes (the notice is printed on "
+                             "stderr)")
+    parser.add_argument("--continue", dest="resume", nargs="?", const="", default=None, metavar="ID",
+                        help="go on with the newest saved conversation of the project, or the one with this id")
+    parser.add_argument("--key-file", action="store_true",
+                        help="with --set-key: store the key unencrypted in a file of your user folder instead of "
+                             "the system keyring")
+    parser.add_argument("--no-color", action="store_true", help="no colours in the terminal")
     parser.add_argument("--threads", type=_threads, default=1, metavar="N",
                         help="threads for FlexTool's own processing in this process (default 1)")
     parser.add_argument("--verbose", action="store_true", help="more messages on stderr")
     return parser
 
 
-def _project_path(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Path:
+def project_path(args: argparse.Namespace, parser: argparse.ArgumentParser) -> Path:
     if args.project_path is None and args.project is None:
         parser.error("give the project with --project-path FOLDER or --project NAME")
     if args.project_path is not None:
@@ -122,11 +153,12 @@ def main(argv: list[str] | None = None, *, proto_in: int | None = None, proto_ou
     logging.basicConfig(stream=sys.stderr, level=logging.INFO if args.verbose else logging.WARNING,
                         format="%(levelname)s %(name)s: %(message)s")
     if not args.mcp and not args.call:
-        print(NO_FRONT_END, file=sys.stderr)
-        return 2
+        from flextool.assistant import chat_cli
+
+        return chat_cli.run(args, parser)
     if args.call and len(args.call) > 2:
         parser.error("--call takes a tool name and at most one JSON object")
-    project = _project_path(args, parser)
+    project = project_path(args, parser)
     tier = LEVELS[args.tier] if args.tier else None
     result_cap = args.result_cap or tier or DEFAULT_PRESET
 
