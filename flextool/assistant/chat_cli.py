@@ -73,8 +73,8 @@ WELCOME = (
     "current policies yourself. A model running on this computer keeps your data here, but it needs a powerful "
     "computer. Some models offered through programs on this computer still run elsewhere, such as Ollama's cloud "
     "models; FlexTool tells you when that happens.\n"
-    "FlexTool picks the assistant level (basic, standard or advanced) from the model name; you can choose a lower "
-    "level with --tier. Type /help for the commands."
+    "FlexTool picks the assistant level (basic, standard or advanced) from the model name and its context size; "
+    "you can choose a lower level with --tier. Type /help for the commands."
 )
 HELP = (
     "Commands:\n"
@@ -87,7 +87,7 @@ HELP = (
     "  /usage         the tokens used, by month, provider and model\n"
     "  /context       what the assistant is told about your choices, and the model's context size\n"
     "  /welcome       how the assistant works\n"
-    "  /save          keep this provider, model and level for the next start\n"
+    "  /save          keep this provider, model and level (and --free-tier) for the next start\n"
     "  /quit          leave (Ctrl-D or Ctrl-C at the prompt also leaves)\n"
     "End a line with \\ to continue the question on the next line. Ctrl-C stops an answer."
 )
@@ -131,7 +131,6 @@ TEXTS: dict[str, str] = {
     "save_question": "Type yes to use this provider and model also next time, anything else for this time only: ",
     "saved": "Saved: the chat starts with {provider} and {model} next time.",
     "save_failed": "The settings could not be saved: {reason}",
-    "no_question_yet": "not known yet (FlexTool checks it before the first question)",
     "conversation_new": "A new conversation.",
     "conversation_carry": "A new conversation; your next question starts with a short summary of the last one.",
     "conversation_continued": "Continuing the conversation of {created} ({n} questions so far).",
@@ -139,10 +138,16 @@ TEXTS: dict[str, str] = {
     "model_switched": "The next question goes to {model}.",
     "provider_switched": "The next question goes to {provider}, model {model}.",
     "give_provider": "Give the provider with --provider, one of: {ids}.",
+    "tier_not_allowed": ("The level {level} is not available for this model, so nothing was sent. {why} Levels it "
+                         "allows: {allowed}."),
 }
 #: The parts of the banner.
 BANNER = "FlexTool assistant · project {project}"
-BANNER_MODEL = "Model {model} · level {level} · {key}"
+BANNER_MODEL = "Model {model} · {key}"
+BANNER_FREE = "Free plan: on, so each question uses fewer steps."
+#: The level line of the banner; *why* is the reason the model is at its level, or :data:`LEVEL_CHOSEN`.
+LEVEL_LINE = "Level: {level} ({why})"
+LEVEL_CHOSEN = "chosen; the automatic level for this model is {automatic}"
 BANNER_SENT = "Sent with every request: {reports}."
 BANNER_END = "Type /help for the commands and /quit to leave."
 WAITING = "Waiting for the model ({seconds} s) — Ctrl-C stops"
@@ -150,7 +155,18 @@ THINKING = "thinking…"
 TOOL_WAITING = "· {name} waits for another tool call to finish"
 PRIVACY_NONE = "Sent with every request: no privacy setting (this service has none per request)."
 PRIVACY_ACCOUNT = "Set in your provider account (FlexTool cannot set these):"
-CONTEXT_MODEL = "Context of the model: {context}"
+CONTEXT_LINE = ("Context: {window} tokens ({source}); tool results up to {chars} characters; earlier results "
+                "shortened every {every}.")
+CONTEXT_NOT_YET = "Context: not known yet (FlexTool checks it before the first question)."
+#: Where the context size of :data:`CONTEXT_LINE` came from (``Budget.window_source``).
+WINDOW_SOURCES: dict[str, str] = {
+    "loaded": "as the model is loaded on its server",
+    "model": "as the provider reports it for this model",
+    "model_list": "from the provider's model list",
+    "assumed": "assumed: this service does not report it",
+}
+#: ``--free-tier`` -> the setting (``None``: automatic).
+FREE_TIER_FLAG: dict[str, bool | None] = {"on": True, "off": False, "auto": None}
 
 LEVEL_NAMES: dict[str, str] = {internal: name for name, internal in prompt.LEVELS.items()}
 ARGS_MAX = 80
@@ -399,11 +415,31 @@ class Choice:
         """The internal level name before the probe (:meth:`tier_choice`)."""
         return self.tier_choice().chosen
 
-    def level_text(self) -> str:
-        tier = self.tier_choice()
-        name = LEVEL_NAMES[tier.chosen]
-        chosen = bool(self.tier) and prompt.level_name(self.tier) == tier.chosen
-        return f"{name} (chosen)" if chosen else f"{name} (from the model name)"
+
+
+def level_lines(tier: TierChoice, *, chosen: bool) -> list[str]:
+    """The banner's level line and the sentences about the level (P3 §5): the reason in the line, then why higher
+    levels are left out, the context's ceiling, the name-only and lowered notices.  *chosen*: the user gave the
+    level (``--tier`` or the saved one) and it is in use."""
+    from flextool.assistant import tiers
+
+    if chosen:
+        why = LEVEL_CHOSEN.format(automatic=tier.automatic_name)
+    else:
+        why = tier.reason
+    lines = tier.lines()
+    if tier.source != "fallback":
+        placement = tier.placement()
+        lines = [line for line in lines if line != placement]
+        if placement.endswith(tiers.NO_HIGHER):
+            lines.insert(0, tiers.NO_HIGHER)
+    return [LEVEL_LINE.format(level=tier.level_name, why=why), *lines]
+
+
+def free_tier_setting(args: argparse.Namespace, settings: Settings) -> bool | None:
+    """The free-plan setting of this session: ``--free-tier``, else the saved one (``None``: automatic)."""
+    flag = getattr(args, "free_tier", None)
+    return settings.free_tier if flag is None else FREE_TIER_FLAG[flag]
 
 
 def _check_address(url: str) -> str:
@@ -662,6 +698,8 @@ class Chat:
         self.worker: TurnWorker | None = None
         self.seed: str | None = None
         self.accepted: set[endpoint.ConsentKey] = set()
+        self.free_tier = free_tier_setting(args, settings)
+        self.budget = None
         self.conversation = self._open_conversation()
 
     # --- conversations --------------------------------------------------------------------------------------------
@@ -786,6 +824,9 @@ class Chat:
         if not choice.model:
             self.renderer.message(TEXTS["no_model"].format(provider=choice.preset.label, preset=choice.preset.id))
             return 2
+        code = self._refuse_tier(choice.tier_choice())
+        if code is not None:
+            return code
         conn = connection_for(choice)
         if choice.preset.key_required and not conn.api_key:
             from flextool.assistant.backends._common import error_context
@@ -817,6 +858,9 @@ class Chat:
         except tiers.WindowTooSmall as exc:
             self.renderer.message(_error_text(probes.window_error(choice.preset, conn, exc)))
             return 1
+        code = self._refuse_tier(tier)
+        if code is not None:
+            return code
         for line in (tier.notice, tier.window_line()):
             if line:
                 self.renderer.note(line)
@@ -840,15 +884,27 @@ class Chat:
         self.link = link
         return None
 
+    def _refuse_tier(self, tier: TierChoice) -> int | None:
+        """2 when ``-q`` asks with ``--tier`` for a level above the ones the model allows (P3 §5), after saying
+        why; ``None`` otherwise (the interactive chat lowers the level with a notice instead)."""
+        if not (self.quiet and self.args.tier and tier.notice):
+            return None
+        why = tier.window_line() or tier.placement()
+        allowed = ", ".join(LEVEL_NAMES[level] for level in tier.allowed)
+        level = LEVEL_NAMES[prompt.level_name(self.args.tier)]
+        self.renderer.message(TEXTS["tier_not_allowed"].format(level=level, why=why, allowed=allowed))
+        return 2
+
     def _budget(self, link: Link):
         """The session's budget (P3 §4): the level fitted to the model's window, the free plan, the settings'
         compaction overrides and ``--result-cap``; the result caps go into the context."""
         from flextool.assistant import budget
 
-        free = budget.free_tier_on(link.choice.preset.id, link.conn.model, self.settings.free_tier)
+        free = budget.free_tier_on(link.choice.preset.id, link.conn.model, self.free_tier)
         b = budget.budget_for(link.tier, free_tier=free, compaction_every=self.settings.compaction_every,
                               keep_recent_turns=self.settings.keep_recent_turns, result_cap=self.args.result_cap)
         self.ctx.caps = b.result_caps
+        self.budget = b
         return b
 
     def _make_session(self, link: Link) -> None:
@@ -927,11 +983,19 @@ class Chat:
             key_text = f"key from {source}"
         else:
             key_text = "no key" if choice.preset.key_required else "no key needed"
+        from flextool.assistant.budget import free_tier_on
+
         route = endpoint.route_for(choice.preset, choice.base_url, model=choice.model)
         lines = [BANNER.format(project=self.ctx.project_name), endpoint.indicator_text(route),
-                 BANNER_MODEL.format(model=choice.model or "not chosen", level=choice.level_text(), key=key_text)]
+                 BANNER_MODEL.format(model=choice.model or "not chosen", key=key_text)]
         if note:
             lines.append(note)
+        if choice.model:
+            tier = choice.tier_choice()
+            chosen = bool(choice.tier) and tier.notice is None
+            lines += level_lines(tier, chosen=chosen)
+            if free_tier_on(choice.preset.id, choice.model, self.free_tier):
+                lines.append(BANNER_FREE)
         reports = knob_reports(choice.preset, choice.knobs)
         if reports:
             lines.append(BANNER_SENT.format(reports="; ".join(reports)))
@@ -995,6 +1059,8 @@ class Chat:
         elif name == "/welcome":
             self.term.say(WELCOME)
         elif name == "/save":
+            if self.args.free_tier is not None:
+                self.settings.free_tier = self.free_tier
             save_choice(self.term, self.settings, self.choice)
         else:
             self.term.say(TEXTS["unknown_command"].format(command=name))
@@ -1034,16 +1100,15 @@ class Chat:
     def show_context(self) -> None:
         block = prompt.context_block(self.ctx.snapshot(), self.ctx.redact)
         self.term.say(block)
-        context = self.link.facts.context if self.link is not None else None
-        if self.link is None:
-            shown = TEXTS["no_question_yet"]
-        elif context is None:
-            shown = "not known (FlexTool cannot read it from this service)"
-        else:
-            from flextool.assistant.usage import number
+        b = self.budget
+        if self.link is None or b is None:
+            self.term.say(CONTEXT_NOT_YET)
+            return
+        from flextool.assistant.usage import number
 
-            shown = f"{number(context)} tokens"
-        self.term.say(CONTEXT_MODEL.format(context=shown))
+        every = "question" if b.compaction_every == 1 else f"{b.compaction_every} questions"
+        self.term.say(CONTEXT_LINE.format(window=number(b.window), source=WINDOW_SOURCES[b.window_source],
+                                          chars=number(b.result_caps.max_chars), every=every))
 
     def close(self) -> None:
         self._finish_worker(2.0)
