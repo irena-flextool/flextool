@@ -13,7 +13,8 @@ When ``import flextool`` stops because this processor needs the compatible polar
 one tool that gives the user the fix (``run_degraded`` of ``flextool/assistant/mcp_server.py``, loaded from its
 file because the package cannot be imported).
 
-Without ``--mcp`` the command line goes straight to ``flextool.assistant.cli``.
+Without ``--mcp`` the command line goes straight to ``flextool.assistant.cli`` (the chat in the terminal, ``--call``
+and the small commands).  There a ``CompatRuntimeRequired`` stop prints its fix on stderr and exits 2.
 """
 from __future__ import annotations
 
@@ -108,8 +109,13 @@ def serve(argv: list[str], proto_in: int, proto_out: int) -> int:
 def main(argv: list[str] | None = None) -> int:
     args = sys.argv[1:] if argv is None else list(argv)
     if "--mcp" not in args:
-        from flextool.assistant import cli
-
+        try:
+            from flextool.assistant import cli
+        except ImportError as exc:
+            if type(exc).__name__ != "CompatRuntimeRequired":
+                raise
+            print(str(exc), file=sys.stderr)
+            return 2
         return cli.main(args)
     proto_in, proto_out = redirect_stdio()
     return serve(args, proto_in, proto_out)

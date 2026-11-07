@@ -35,7 +35,7 @@ def _texts() -> list[tuple[str, str]]:
     out += [(f"PROMPT_DESCRIPTIONS[{k}]", v) for k, v in prompt.PROMPT_DESCRIPTIONS.items()]
     out += [("PROMPT_LEAD", prompt.PROMPT_LEAD), ("DEGRADED_INSTRUCTIONS", mcp_server.DEGRADED_INSTRUCTIONS),
             ("DEGRADED_DESCRIPTION", mcp_server.DEGRADED_DESCRIPTION), ("cli.DATA_NOTICE", cli.DATA_NOTICE),
-            ("cli.NO_FRONT_END", cli.NO_FRONT_END), ("cli.MCP_MISSING", cli.MCP_MISSING)]
+            ("cli.EXAMPLES", cli.EXAMPLES), ("cli.MCP_MISSING", cli.MCP_MISSING)]
     return out
 
 
