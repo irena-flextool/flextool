@@ -384,6 +384,8 @@ def load_global_settings(projects_dir: Path) -> GlobalSettings:
         code_font_size_pt=data.get("code_font_size_pt", 0),
         check_updates_on_startup=data.get("check_updates_on_startup", True),
         polars_check_fingerprint=data.get("polars_check_fingerprint", ""),
+        assistant_window_geometry=_as_geometry_map(data.get("assistant_window_geometry")),
+        assistant_window_layout_cw=data.get("assistant_window_layout_cw", 0),
     )
 
 
