@@ -1,0 +1,22 @@
+{
+ "description": "The stream ends after some text without a finish reason.",
+ "synthetic": true,
+ "chunks": [
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "role": "assistant",
+      "content": "Half an ans"
+     },
+     "finish_reason": null
+    }
+   ]
+  }
+ ]
+}
