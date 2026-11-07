@@ -1111,6 +1111,29 @@ nor the chat (`tests/assistant/test_import_hygiene.py`).
 - **Prompt** (`prompt.py`): five byte-stable layers (core rules, orientation, documentation map, level text,
   front-end note) and the context block (project, input source, scenario) at the start of a user message; the
   agent connection's instructions reuse the same rules.
+- **Levels** (`tiers.py`, standard library only): `resolve_tier` places a model from `TIER_RULES` (data, first
+  match wins: small-model words, the reported or named size, family words, GPT major ≥ 5, a fallback guess by
+  route) and caps it by the context window (`WINDOW_LEVELS`; below `MIN_WINDOW` it raises `WindowTooSmall`). The
+  automatic level is the lower of the two; `allowed_levels` is it and below, or up to the window's level for an
+  unrecognised model (`ALLOW_HIGHER_WHEN_UNRECOGNISED`). There is no bypass in shipped code: a stored or `--tier`
+  level above the allowed ones is lowered with a notice (`-q` with `--tier` exits 2). Before a probe the front ends
+  use `probes.cached_facts` (user cache); the settings dialog never probes. The level changes only the prompt
+  (`prompt.ADDENDA`), the tool list (`registry.tools_for_tier`; basic = the `small_tier` tools, any other name
+  refused by the session before the registry) and the budget — never what a tool returns. Agents choose a level
+  with the connection prompts or `--mcp --tier` (not checked against their model).
+- **Budgets** (`budget.py`, standard library only): `LevelBudget` per level (`LEVEL_BUDGETS`, the free plan's
+  `FREE_TIER_BUDGETS`): rounds, tool calls per question and per round, the output limit (≤ window / 4 for a known
+  window), planned calls and the prefix budget the shipped layers and schemas must fit
+  (`tests/assistant/test_prompt_budget.py`). `resolve_budget` adds the window's class (`WINDOW_CLASSES`: result-cap
+  ceiling, `fit_caps` for windows under 32 768, and the compaction rhythm; settings `compaction_every` /
+  `keep_recent_turns` `null` = automatic). `approx_tokens` is a digit-aware estimate (`JSON_CHARS_PER_TOKEN`,
+  pinned by `tests/assistant/llm/test_token_estimate.py` against real tokenizer counts) corrected per session by the
+  reported prompt tokens (`TokenCorrection`); the session's pre-send fit compacts or, for origins with replay data,
+  asks for an answer without tools, and sends nothing when the estimate plus the answer limit stays above 95 % of
+  the window (a reported one, or the assumed local one). The free plan
+  (`free_tier_on`: the setting, else on only for an OpenRouter `:free` id) lowers rounds and calls, caps results at
+  medium and, in the FlexTool window, lets the provider gate send one request at a time; the first rate-limit reply on a route with it off
+  shows the hint once (`settings.free_tier_suggested`).
 - **Local files** (`_files.py`, `settings.py`, `store.py`, `usage.py`, `keys.py`, `endpoint.py`), in
   `platformdirs.user_config_dir("flextool")/assistant/`: settings, conversations per project (lock file per open
   conversation, purge by age at every start), the usage ledger, the key file (opt-in; the keyring first, the
@@ -1120,7 +1143,9 @@ nor the chat (`tests/assistant/test_import_hygiene.py`).
   indicator line, and the notice a remote route needs before the first question. An acceptance is kept per
   preset, normalised address, proxy host, forwarded host and notice wording.
 - **Terminal** (`chat_cli.py`): the REPL (a terminal only) and `-q` (only the answer on stdout; exit codes 0 / 1 /
-  2 / 3 / 130). The question and the probe run in daemon threads, so Ctrl-C stops them at once.
+  2 / 3 / 130). The question and the probe run in daemon threads, so Ctrl-C stops them at once. The banner gives the
+  level and why (`level_lines`); `/context` the window, the result cap and the compaction rhythm of the session's
+  budget; `--free-tier on|off|auto` overrides `settings.free_tier` for the session.
 
 ### AI assistant in the FlexTool window
 
@@ -1149,7 +1174,10 @@ worker, the provider gate, the Markdown parser, the window geometry, the strings
   `ttk.Notebook` tabs with an overflow budget (the Chats menu shows the hidden ones), restored when the window
   opens again (`store.open_chats`); one data notice at a time; the size per monitor configuration in
   `GlobalSettings.assistant_window_geometry`; a key shield on every assistant Toplevel so the main window's
-  `bind_all` shortcuts never fire from it.
+  `bind_all` shortcuts never fire from it. The settings' level rows list "Automatic" and only
+  `TierChoice.allowed` (from cached facts; ttk cannot grey single entries) with `TierChoice.lines()`, and the free
+  plan as a three-entry list (automatic / on / off → `free_tier` null / true / false); the worker's setup
+  fingerprint includes `free_tier`, so a saved change applies from the next question.
 - **What the window shows** (`gui_state.py`): `snapshot_from_main` reads the main window's checks and highlights
   and `ResultViewer.view_state()` on the Tk thread (each part on its own, about 2 ms); every Send takes its own
   snapshot (`ContextSnapshot.gui`), which the prompt renders as the context block. While a project is open,

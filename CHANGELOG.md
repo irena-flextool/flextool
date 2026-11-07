@@ -5,6 +5,18 @@
   peak memory about tripled on large models (the same LP), so 4.2.0 held polars below 2. polar-high 3.12.3 runs
   these joins in the order they are written, so FlexTool now requires polar-high 3.12.3 and accepts polars 1.40 or
   newer below 3.
+- **New: assistant levels, safety caps and the free plan.** The AI assistant now places each model at a level
+  (basic, standard or advanced) from its name and its context size; the window's settings and `--tier` offer only
+  that level or a lower one, and say why (a model FlexTool does not recognise may go higher at your own risk).
+  Each level has safety caps on the steps and tool calls for one question, and the context size sets how much a
+  tool result may hold and how often earlier results are shortened; a request that would not fit the model's
+  context is shortened first and never sent over it. The new free plan setting ("Free plan" in the settings,
+  `--free-tier on|off|auto` in the terminal) makes each question use fewer steps, to stay within a free plan's
+  request limits; it is on by itself only for OpenRouter models whose name ends `:free`, and the chat suggests it
+  after a service first limits how fast questions can be sent. In the terminal, `-q` with a `--tier` above the
+  model's levels exits with code 2 and sends nothing; the start of the chat shows the level and why, and
+  `/context` the context size and the result size. `get_entity` and `list_entities` also return the entity's
+  description. See "Assistant levels" in "The AI assistant".
 - **New: the AI assistant in the FlexTool window.** "AI assistant…" in the side menu opens a chat window for the
   open project; ⚙ beside it opens the assistant settings (service, address, key, model, level, privacy settings
   sent with each request, how many chats may wait for the service at once, how long conversations are kept). The
