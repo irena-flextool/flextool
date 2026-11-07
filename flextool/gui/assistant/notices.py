@@ -445,17 +445,18 @@ class RenameChatDialog(_AssistantDialog):
 
 
 class ConfirmDialog(_AssistantDialog):
-    """A question with one action and Cancel (close an unsaved chat, delete a chat).  The focus starts on
-    Cancel; *on_answer(True)* only from the action button."""
+    """A question with one action and Cancel (close an unsaved chat, delete a chat, the settings' questions).
+    The focus starts on Cancel (*cancel_text*, "Cancel" by default); *on_answer(True)* only from the action
+    button."""
 
     def __init__(self, parent: tk.Misc, title: str, message: str, action: str,
-                 on_answer: Callable[[bool], None]) -> None:
+                 on_answer: Callable[[bool], None], *, cancel_text: str = strings.CANCEL) -> None:
         super().__init__(parent, title)
         self._on_answer = on_answer
         self._answered = False
         self.message_label = self.paragraph(self.body, message)
         row = self.buttons()
-        self.cancel_button = ttk.Button(row, text=strings.CANCEL, command=self.cancel)
+        self.cancel_button = ttk.Button(row, text=cancel_text, command=self.cancel)
         self.cancel_button.pack(side="right")
         self.action_button = ttk.Button(row, text=action, command=lambda: self._answer(True))
         self.action_button.pack(side="right", padx=(0, self.cw))

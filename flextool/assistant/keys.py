@@ -47,7 +47,22 @@ KEYRING_FAILED = "The system keyring could not {action} the key: {reason}"
 KEY_FILE_WARNING = ("The key will be stored unencrypted at {path}. Anyone who can read your files can read it. "
                     "Store it there? [y/N]")
 
+#: The terminal's advice in the keyring texts, and the settings window's in its place.
+_WINDOW_ADVICE = (
+    ("Use --key-file if you accept an unencrypted file.",
+     "Choose a file on this computer if you accept an unencrypted file."),
+    ("or use --key-file if you accept an unencrypted file.",
+     "or choose a file on this computer if you accept an unencrypted file."),
+)
+
 T = TypeVar("T")
+
+
+def for_window(text: str) -> str:
+    """A keyring text of this module with the settings window's advice in place of the terminal option."""
+    for terminal, window in _WINDOW_ADVICE:
+        text = text.replace(terminal, window)
+    return text
 
 
 class KeySource(Enum):

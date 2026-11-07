@@ -7,6 +7,7 @@ never shown).  ``tk_helpers.pump`` runs the Tk loop until a condition holds.
 """
 from __future__ import annotations
 
+import gc
 import tkinter as tk
 from collections.abc import Iterator
 
@@ -28,6 +29,11 @@ def tk_root() -> Iterator[tk.Tk]:
         root.destroy()
     except tk.TclError:
         pass
+    # Destroyed widgets still referenced from cycles (dialogs, the closures of their threads) would otherwise be
+    # collected later on some worker thread, and the last reference to this root with them: Tcl aborts when an
+    # interpreter is deleted off its own thread.  Collect them here, on the Tk thread.
+    del root
+    gc.collect()
 
 
 @pytest.fixture
