@@ -250,6 +250,7 @@ Defined in `pyproject.toml` and re-asserted in `tests/conftest.py`:
 | `perturbation`  | Tier 6 single-multiplier perturbation tests                   |
 | `emission`      | Tier 7 MPS row-count emission tests                           |
 | `csv_reload`    | CSV reload contract tests in `tests/csv_reload/` — opt-in     |
+| `gui`           | Opens a real Tk window — opt-in with `--run-gui` (see "GUI tests" below) |
 
 The `smoke` marker is attached automatically to scenarios in
 `scenarios.yaml` that set `smoke: true`.
@@ -272,6 +273,32 @@ Run them with `pytest -m csv_reload tests/csv_reload/`.
 - **full** — push to `master` and nightly cron; full Layer-1 plus
   Layer-2 MPS parity (30-minute timeout).
 - **slow** — nightly only; `-m slow`.
+- **gui-tests** — every push and PR, a required check: the Tk tests
+  under xvfb (see "GUI tests" below).
+
+### GUI tests
+
+The tests that open a real Tk window are the modules listed in
+`_GUI_DISPLAY_MODULES` (`tests/conftest.py`) and the tests marked `gui`
+(`pytestmark = pytest.mark.gui`, e.g. every module of `tests/gui/assistant/`).
+They are skipped unless `--run-gui` is given; `--gui-only` deselects
+everything else.  Never run them on your own display — they move windows
+and the keyboard focus. Run them under xvfb, with openbox as the window
+manager as the CI job does (mapping, focus, grabs and the work area then
+behave as on a desktop):
+
+```bash
+xvfb-run -a sh -c 'openbox & sleep 1; python -m pytest tests/gui --run-gui --gui-only -n 0'
+```
+
+The `gui-tests` job of `ci.yml` runs exactly this on Linux (Python 3.14,
+`--timeout 300`). It runs serially: the focus is one per display, so tests
+in parallel processes on one display take it from each other. A test that
+checks where the focus went asks the window (`focus_lastfor()`), not the
+display (`focus_get()`). A dialog is transient to its parent, and a window
+manager never maps a transient of a withdrawn window: open dialogs over a
+mapped window. The Tk-free modules of `tests/gui/` run in the sharded
+Tests workflow. Windows and macOS Tk are checked by hand.
 
 ### Test-suite environment variables
 

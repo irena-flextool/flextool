@@ -146,7 +146,7 @@ def _walk(window, start, steps: int) -> list:
     widget = start
     for _ in range(steps):
         key(widget, "<Tab>")
-        widget = window.focus_get()
+        widget = window.focus_lastfor()
         seen.append(widget)
     return seen
 
@@ -163,7 +163,7 @@ def test_tab_walks_the_window_in_order(windows, backends):
     assert walked == [tab.close_button, tab.send_button, window.chats_button, window.settings_button,
                       window.how_button, window.notebook, tab.transcript.text, tab.input]
     key(tab.input, "<Shift-Tab>")
-    assert window.focus_get() is tab.transcript.text
+    assert window.focus_lastfor() is tab.transcript.text
     ask(window, "again", tab)                               # busy: Stop instead of Send
     assert block.started.wait(5)
     walked = _walk(window, tab.input, 3)

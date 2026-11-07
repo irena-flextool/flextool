@@ -3,6 +3,7 @@ name: CI
 # CI gate:
 #   smoke  — every push and pull_request; <1 min, blocks merge
 #   docs-check — every push and pull_request: tests/docs and a mkdocs build with the generated pages
+#   gui-tests — every push and pull_request: the Tk tests of tests/gui under xvfb with a window manager
 #   slow   — nightly only; xlsx workflow + other slow integration tests
 # The whole suite runs sharded in the Tests workflow (tests.yml) and its heaviest
 # modules in that workflow's nightly-heavy job.
@@ -80,6 +81,41 @@ jobs:
       - name: Build the web docs
         # The hook (tools/mkdocs_hooks.py) generates the formulation page and the results catalogue.
         run: mkdocs build
+
+  gui-tests:
+    # The Tk tests (the modules in tests/conftest.py _GUI_DISPLAY_MODULES and
+    # those marked 'gui', e.g. tests/gui/assistant) need a display: xvfb, with
+    # openbox as the window manager so that mapping, focus, grabs and the work
+    # area (_NET_WORKAREA) behave as on a desktop.  --gui-only leaves the
+    # Tk-free tests/gui modules to the sharded Tests workflow.  A required
+    # check, so it lives here without a path filter (a Markdown-only PR still
+    # gets it).  Serial (-n 0): the tests move the keyboard focus, which is
+    # one per display.  Windows / macOS Tk stay manual.
+    name: GUI tests (Linux, xvfb)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name != 'schedule'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install the display and the window manager
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb openbox
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install pytest pytest-xdist pytest-timeout pyyaml matplotlib
+
+      - name: Run the Tk tests
+        run: >-
+          xvfb-run -a sh -c 'openbox & sleep 1;
+          python -m pytest tests/gui --run-gui --gui-only -v --tb=short -n 0 --timeout 300'
 
   slow:
     name: Slow (nightly only)

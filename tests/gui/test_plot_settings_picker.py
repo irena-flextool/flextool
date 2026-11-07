@@ -23,6 +23,7 @@ All Tk widgets are constructed under a withdrawn root; run headless via
 
 from __future__ import annotations
 
+import time
 import tkinter as tk
 import types
 from pathlib import Path
@@ -296,17 +297,20 @@ class TestPickerTwoPaneLayout:
         assert picker._category_frames["unit"].winfo_manager() == "grid"
 
     def test_default_height_is_about_80pct_screen(self, tk_root, tmp_path):
-        """The dialog defaults to ~80% of the screen height.  Skipped
-        gracefully if the WM ignores the requested geometry under Xvfb."""
+        """The dialog defaults to ~80% of the screen height."""
         picker, _ = _make_picker(tk_root, tmp_path)
+        # The picker is transient to its parent, and a window manager never
+        # maps a transient of a withdrawn window: show the parent, as the
+        # main window is when the picker opens.  Mapping is asynchronous.
+        tk_root.deiconify()
         picker.deiconify()
-        picker.update()
-        if not picker.winfo_ismapped():
-            pytest.skip("WM did not map the window under Xvfb")
+        deadline = time.monotonic() + 3.0
+        while not picker.winfo_ismapped() and time.monotonic() < deadline:
+            picker.update()
+            time.sleep(0.01)
+        assert picker.winfo_ismapped()
         expected = int(picker.winfo_screenheight() * 0.8)
         actual = picker.winfo_height()
-        if abs(actual - expected) > 10:
-            pytest.skip("WM ignored the requested geometry under Xvfb")
         assert abs(actual - expected) <= 10
 
 

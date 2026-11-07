@@ -157,7 +157,7 @@ def test_right_on_the_tab_row_moves_and_keeps_the_focus(windows, backends):
     key(window.notebook, "<Right>")
     pump(window, timeout=0.05)
     assert window.current_tab() is tabs[2]
-    assert window.focus_get() is window.notebook
+    assert window.focus_lastfor() is window.notebook
 
 
 def test_ctrl_t_and_ctrl_w(windows, backends):
@@ -168,7 +168,7 @@ def test_ctrl_t_and_ctrl_w(windows, backends):
     key(tabs[0].input, "<Control-t>")
     assert window.current_tab() is window.new_tab
     pump(window, timeout=0.05)
-    assert window.focus_get() is window.new_tab.input
+    assert window.focus_lastfor() is window.new_tab.input
     window.select(tabs[1])
     key(tabs[1].transcript.text, "<Control-w>")
     pump(window, timeout=0.05)
