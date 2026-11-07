@@ -15,7 +15,7 @@ import sys
 
 import pytest
 
-from flextool.assistant import endpoint, llm_errors, net, probes, prompt, session
+from flextool.assistant import chat_cli, cli, endpoint, llm_errors, net, probes, prompt, session
 from flextool.assistant.context import ContextSnapshot
 from flextool.assistant.providers import PRESETS
 
@@ -24,8 +24,10 @@ ABBREVIATIONS = ("LLM", "ZDR", "DB", "LP", "MCP", "API")
 PROMISES = (r"\bnot used for training", r"\bprivate\b", r"\bsafe\b", r"\bguarantee")
 #: The one place an abbreviation may appear: the literal field a knob report quotes.
 LITERAL_FIELDS = re.compile(r"`[^`]*`")
-#: The one place the promises are named: the rule that forbids them (layer 1, critique M6).
+#: The one place the promises are named: the rule that forbids them (layer 1, critique M6); the data notice says
+#: what FlexTool cannot guarantee.
 FORBIDDING_RULE = "Never say the data is private or not used for training."
+CANNOT_GUARANTEE = "FlexTool cannot guarantee"
 URL = re.compile(r"https?://[\w.\[\]:-]+[^\s)'\",]*")
 
 
@@ -44,6 +46,12 @@ def _texts() -> list[tuple[str, str]]:
     out += [(f"SESSION_MESSAGES[{k}]", v) for k, v in session.SESSION_MESSAGES.items()]
     out += [(f"probes {name}", getattr(probes, name)) for name in ("PARTLY_ON_CPU", "LMSTUDIO_NO_TOOL_USE")]
     out += [(f"endpoint {name}", getattr(endpoint, name)) for name in dir(endpoint) if name.startswith("INDICATOR_")]
+    out += [(f"endpoint {name}", getattr(endpoint, name)) for name in ("NOTICE", "NOTICE_PROXY", "NOTICE_HEADERS")]
+    out += [("chat WELCOME", chat_cli.WELCOME), ("chat HELP", chat_cli.HELP)]
+    out += [(f"chat TEXTS[{k}]", v) for k, v in chat_cli.TEXTS.items()]
+    out += [(f"chat {name}", getattr(chat_cli, name)) for name in dir(chat_cli)
+            if name.startswith(("BANNER", "PRIVACY_", "CONTEXT_")) or name in ("WAITING", "THINKING", "TOOL_WAITING")]
+    out.append(("cli DATA_NOTICE", cli.DATA_NOTICE))     # cli.EXAMPLES names the --mcp flag: test_tool_wording
     for preset in PRESETS.values():
         out.append((f"{preset.id} label", preset.label))
         out += [(f"{preset.id} account setting", t) for t in preset.account_knobs]
@@ -61,7 +69,8 @@ def test_plain_english(where, text):
     for word in ABBREVIATIONS:
         assert not re.search(rf"\b{word}\b", prose, re.IGNORECASE), f"{where}: {word}"
     for promise in PROMISES:
-        assert not re.search(promise, text.replace(FORBIDDING_RULE, ""), re.IGNORECASE), f"{where}: {promise}"
+        allowed = text.replace(FORBIDDING_RULE, "").replace(CANNOT_GUARANTEE, "")
+        assert not re.search(promise, allowed, re.IGNORECASE), f"{where}: {promise}"
     base_urls = {p.base_url for p in PRESETS.values() if p.base_url}
     for url in URL.findall(text):
         assert url in base_urls or url.startswith("http://localhost"), f"{where}: link {url}"
