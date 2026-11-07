@@ -820,22 +820,9 @@ class ExecutionWindow(tk.Toplevel):
 
     @staticmethod
     def _blend(base16: tuple[int, int, int], target_hex: str, frac: float) -> str:
-        """Blend a 16-bit ``(r, g, b)`` base colour ``frac`` of the way toward
-        ``target_hex`` (``#rrggbb``) and return an ``#rrggbb`` string.
-
-        ``base16`` comes from ``winfo_rgb`` (each channel 0–65535), so the
-        result tracks the widget's *actual* theme background/foreground:
-        blending a near-black dark-mode base toward grey lightens it, while
-        blending a near-white light-mode base toward grey darkens it — the
-        same call gives the right "touch" of tint in either theme.
-        """
-        tr = int(target_hex[1:3], 16) * 257
-        tg = int(target_hex[3:5], 16) * 257
-        tb = int(target_hex[5:7], 16) * 257
-        r = int(base16[0] + (tr - base16[0]) * frac)
-        g = int(base16[1] + (tg - base16[1]) * frac)
-        b = int(base16[2] + (tb - base16[2]) * frac)
-        return f"#{r // 256:02x}{g // 256:02x}{b // 256:02x}"
+        """Blend a theme colour toward ``target_hex`` (:func:`ui_metrics.blend_rgb`)."""
+        from flextool.gui.ui_metrics import blend_rgb
+        return blend_rgb(base16, target_hex, frac)
 
     def _configure_log_tags(self) -> None:
         """Configure the colour tags for the log, derived from the widget's
