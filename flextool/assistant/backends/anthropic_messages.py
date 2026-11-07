@@ -217,6 +217,16 @@ class AnthropicMessagesBackend:
         self._inflight.abort()
         self._http.abort_connections()
 
+    def context_window(self) -> int | None:
+        """The model's input limit in tokens (``models.retrieve(model).max_input_tokens``), ``None`` when the
+        answer has none."""
+        try:
+            info = self._client.models.retrieve(self.conn.model)
+        except Exception as exc:
+            raise classify_anthropic(exc, self.ctx) from exc
+        value = getattr(info, "max_input_tokens", None)
+        return value if isinstance(value, int) and not isinstance(value, bool) else None
+
     def list_models(self) -> list[ModelEntry]:
         try:
             items = [m.to_dict() for m in self._client.models.list()]
