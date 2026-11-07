@@ -2,7 +2,7 @@
 side by side for several runs.
 
 Results are read only from a run whose latest run succeeded (``_runs.resolve_run``, O1).  Tables are read with
-the wide-first query of ``results._query``; units are worded by ``unit_wording`` as the default convention (O2).
+the wide-first query of ``results._query``; every unit is worded by ``unit_wording`` (O2).
 A comparison of the runs of the comparison files reads those files only while they were built from the current
 successful runs (``_runs.comparison_state``, and the file itself: its scenario level is the member set and it is
 not older than the comparison); otherwise every member's own folder (P0 §5.6).

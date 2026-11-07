@@ -5,7 +5,7 @@ name: Make Bundle for Toolbox and FlexTool
 # (`_internal/Python/python.exe`), so FlexTool and its dependencies are
 # installed into that interpreter, not into the runner's Python (which only
 # builds the frozen Toolbox). Smoke steps at the end run the bundled
-# interpreter and spinetoolbox.exe.
+# interpreter (FlexTool, its connection for AI agents) and spinetoolbox.exe.
 
 on:
   workflow_dispatch:
@@ -417,6 +417,22 @@ jobs:
           } finally {
             Move-Item -LiteralPath $moved $root
           }
+      - name: "Smoke: the connection for AI agents in the bundled Python"
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $true
+          $root = (Resolve-Path "dist/Spine Toolbox").Path
+          $py = Join-Path $root "_internal/Python/python.exe"
+          # An agent starts `python.exe -m flextool_assistant_entry --mcp` (the
+          # console script's launcher keeps the build-time path of python.exe,
+          # which is wrong once the bundle is unzipped elsewhere). The project
+          # is a temporary copy with one input source; the check sends
+          # initialize, tools/list and one tool call, and fails on anything but
+          # protocol messages on stdout.
+          $project = Join-Path $Env:RUNNER_TEMP "assistant project"
+          New-Item -ItemType Directory -Force (Join-Path $project "input_sources") | Out-Null
+          Copy-Item (Join-Path $root "flextool/templates/examples.sqlite") (Join-Path $project "input_sources")
+          cd $Env:RUNNER_TEMP
+          & $py (Join-Path $root "flextool/.github/scripts/mcp_smoke.py") --tools 18 --call list_sources --expect "examples.sqlite" -- $py -m flextool_assistant_entry --mcp --project-path $project
       - name: "Smoke: a Jupyter kernel in the bundled Python"
         run: |
           $PSNativeCommandUseErrorActionPreference = $true

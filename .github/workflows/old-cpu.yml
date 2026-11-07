@@ -5,10 +5,11 @@ name: Old-CPU emulation
 # AVX2/FMA/BMI2/MOVBE). polars' default runtime needs x86-64-v3 + MOVBE and
 # crashes there; polars-runtime-compat needs x86-64-v2. The script
 # .github/scripts/old_cpu_emulation.sh proves the default runtime crashes,
-# that FlexTool refuses it with the fix (env_check, import), that
-# `update_flextool.py` installs the compatible runtime, that the `base`
-# example then solves, and that an AVX2 host still selects the default
-# runtime. Not gating while it settles (continue-on-error).
+# that FlexTool refuses it with the fix (env_check, import), that the
+# connection for AI agents (`flextool-assistant --mcp`) still starts and
+# gives the fix, that `update_flextool.py` installs the compatible runtime,
+# that the `base` example then solves, and that an AVX2 host still selects
+# the default runtime. Not gating while it settles (continue-on-error).
 
 on:
   schedule:

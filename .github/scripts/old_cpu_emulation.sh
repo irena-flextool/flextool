@@ -15,7 +15,11 @@
 #   2. `python -m flextool.env_check` names the missing features and the fix;
 #   3. `import flextool` without a terminal stops with the pip command and
 #      installs nothing; so does `flextool-run --help` (the supervisor asks
-#      before it starts the engine, without importing polars);
+#      before it starts the engine, without importing polars); the
+#      connection for AI agents (`flextool-assistant --mcp`) still starts and
+#      its one tool, flextool_setup_problem, gives the pip command, with
+#      nothing but protocol messages on stdout (.github/scripts/mcp_smoke.py,
+#      run natively, drives it);
 #   4. `update_flextool.py --skip-git` (a copy of <flextool-source> in
 #      <work-dir>) installs polars-runtime-compat of the polars version;
 #   5. env_check passes and polars loads the compatible runtime;
@@ -91,6 +95,12 @@ run "$emu" "$venv/bin/flextool-run" --help
 grep -q 'polars\[rtcompat\]==' <<<"$out" || fail "flextool-run did not print the pip command"
 grep -q "usage:" <<<"$out" && fail "flextool-run started the engine on a processor that needs the compatible build"
 has_compat && fail "flextool-run installed the compatible runtime without a yes"
+mkdir -p "$work/assistant-project"
+run "$venv/bin/python" "$src/.github/scripts/mcp_smoke.py" --tools 1 --call flextool_setup_problem \
+    --expect 'polars[rtcompat]==' -- "$emu" "$venv/bin/flextool-assistant" --mcp \
+    --project-path "$work/assistant-project"
+[ "$rc" -eq 0 ] || fail "flextool-assistant --mcp did not answer with the fix on a processor that needs the compatible build"
+has_compat && fail "flextool-assistant installed the compatible runtime"
 
 step "4. update_flextool.py --skip-git installs the compatible runtime"
 rm -rf "$work/flextool"

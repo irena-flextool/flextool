@@ -1,7 +1,10 @@
 """The thread budget of one FlexTool run, applied to polars before polars is imported.
 
 One number *B* limits a run: FlexTool's own data processing (polars) and the solver (HiGHS, Benders region
-solves).  It comes from ``--threads N`` > ``FLEXTOOL_THREADS`` > the available cores.
+solves).  It comes from ``--threads N`` > ``FLEXTOOL_THREADS`` > the available cores.  The assistant
+(``flextool-assistant``) is the exception: it reads files while a model may be running and must not compete
+with it, so its budget is 1 unless its own ``--threads N`` raises it (``FLEXTOOL_THREADS``, the budget of a run,
+does not apply to it).
 
 polars reads ``POLARS_MAX_THREADS`` once, when it is imported, and ``import flextool`` imports polars.  So the
 package ``__init__`` calls :func:`apply_before_polars` before its first polars import: when the process is a
@@ -31,20 +34,27 @@ THREAD_CAP_POLARS = 8
 
 _POLARS_ENV = "POLARS_MAX_THREADS"
 
+#: The assistant's command (``python -m`` module and script basenames): one thread unless its ``--threads`` says
+#: otherwise (:func:`command_default_threads`).
+_SINGLE_THREAD_MODULES = frozenset({"flextool_assistant_entry"})
+_SINGLE_THREAD_SCRIPTS = frozenset({
+    "flextool-assistant", "flextool-assistant.exe", "flextool-assistant-script.py", "flextool_assistant_entry.py",
+})
+
 #: ``python -m <module>`` entry points that accept ``--threads``.
 _CLI_MODULES = frozenset({
     "flextool.cli.cmd_run_flextool",
     "flextool.cli.cmd_solve_mps",
     "flextool.cli.cmd_execute_flextool_workflow",
     "flextool.calibrate",
-})
+}) | _SINGLE_THREAD_MODULES
 
 #: Script basenames (console scripts on every platform, and the files Spine Toolbox runs) that accept ``--threads``.
 _CLI_SCRIPTS = frozenset({
     "flextool-run", "flextool-run.exe", "flextool-run-script.py",
     "flextool-execute-workflow", "flextool-execute-workflow.exe", "flextool-execute-workflow-script.py",
     "cmd_run_flextool.py", "cmd_solve_mps.py", "cmd_execute_flextool_workflow.py",
-})
+}) | _SINGLE_THREAD_SCRIPTS
 
 BudgetSource = Literal["cli", "env", "auto"]
 PolarsSource = Literal["budget", "cap", "env", "already_loaded"]
@@ -91,16 +101,30 @@ def available_cores() -> int:
         return max(1, os.cpu_count() or 1)
 
 
-def _is_flextool_cli(argv: Sequence[str], orig_argv: Sequence[str]) -> bool:
+def _is_command(argv: Sequence[str], orig_argv: Sequence[str], modules: frozenset[str],
+                scripts: frozenset[str]) -> bool:
     # Under ``python -m pkg.mod`` the package ``__init__`` runs while ``sys.argv[0]`` is still ``"-m"``; the
     # module name is only in ``sys.orig_argv``.
     for i, arg in enumerate(orig_argv[:-1]):
         if arg == "-m":
-            return orig_argv[i + 1] in _CLI_MODULES
+            return orig_argv[i + 1] in modules
     if not argv:
         return False
     # Either separator: a Windows path is split the same on every platform.  Windows names are case-insensitive.
-    return argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower() in _CLI_SCRIPTS
+    return argv[0].replace("\\", "/").rsplit("/", 1)[-1].lower() in scripts
+
+
+def _is_flextool_cli(argv: Sequence[str], orig_argv: Sequence[str]) -> bool:
+    return _is_command(argv, orig_argv, _CLI_MODULES, _CLI_SCRIPTS)
+
+
+def command_default_threads(argv: Sequence[str], orig_argv: Sequence[str]) -> int | None:
+    """The budget of a command line that gives no ``--threads``, when the command has its own: 1 for the
+    assistant (it must not compete with a running model), else ``None`` (``FLEXTOOL_THREADS``, then the cores).
+
+    The default counts as the command's own flag (source ``cli``), so ``FLEXTOOL_THREADS`` does not raise it.
+    """
+    return 1 if _is_command(argv, orig_argv, _SINGLE_THREAD_MODULES, _SINGLE_THREAD_SCRIPTS) else None
 
 
 def cli_threads_from_argv(argv: Sequence[str], orig_argv: Sequence[str]) -> int | None:
@@ -164,7 +188,10 @@ def apply_before_polars(
     _applied_argv = tuple(argv)
     orig_argv = getattr(sys, "orig_argv", []) if orig_argv is None else orig_argv
     previous = env.get(_POLARS_ENV)
-    budget, source = resolve_budget(cli_threads_from_argv(argv, orig_argv), env)
+    cli = cli_threads_from_argv(argv, orig_argv)
+    if cli is None:
+        cli = command_default_threads(argv, orig_argv)
+    budget, source = resolve_budget(cli, env)
     if "polars" in sys.modules:
         _applied = ThreadBudget(budget, source, _loaded_pool_size(), "already_loaded")
         return previous
