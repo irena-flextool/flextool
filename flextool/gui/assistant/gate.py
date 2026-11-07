@@ -131,6 +131,10 @@ class ProviderGate:
             return p.active, p.cool_until, p.long_until
 
 
+#: The one gate of this process: every chat tab of every chat window uses it.
+PROCESS_GATE = ProviderGate()
+
+
 def _long_wait(label: str, seconds: float) -> GateLongWait:
     provider = label or "The AI service"
     minutes = max(1, math.ceil(seconds / 60))
