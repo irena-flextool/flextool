@@ -181,6 +181,12 @@ def context_block(snapshot: ContextSnapshot, redact: Callable[[str], str] | None
     ))
 
 
+def strip_context_block(text: str) -> str:
+    """*text* without a context block at its start."""
+    found = _CONTEXT_BLOCK.match(text.lstrip())
+    return text.lstrip()[found.end():].lstrip() if found else text
+
+
 def last_context_block(texts: list[str]) -> str | None:
     """The last context block in *texts* (user messages, oldest first), or ``None``."""
     for text in reversed(texts):
