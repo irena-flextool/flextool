@@ -216,7 +216,9 @@ def test_a_tool_outside_the_level_is_never_run(rig, tools):
     assert r.ask().ok
     assert [t.name for t in r.backend.requests[0].tools] == ["echo", "hook"]
     result = r.backend.requests[1].messages[-1]
-    assert result.is_error and result.text == "There is no tool named 'deep'. The tools are: echo, hook."
+    # P3 §4.2: a tool of another level is refused with the level's tools, before the registry.
+    assert result.is_error and result.text == ("The tool deep is not available at this assistant level. "
+                                               "Available tools: echo, hook.")
     assert tools.ran == []
 
 

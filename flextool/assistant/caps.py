@@ -1,7 +1,9 @@
 """Result caps: how much one tool result may hold, and fitting a payload into them.
 
 The caps are per-call arguments (``max_rows``, ``max_chars``, ``max_results``, ``max_items``); a ``--result-cap``
-preset gives their defaults and :data:`CEILINGS` the most any call may ask for.  ``call_tool`` clamps the
+preset gives their defaults and :data:`CEILINGS` the most any call may ask for.  In the chat the caps also carry
+``ceilings`` — the most a call may ask for with this model's context (P3 §4.3) — and a call is clamped to the
+smaller of the two.  ``call_tool`` clamps the
 arguments before it validates them, so the tool schemas carry no ranges (the tool descriptions state them).
 
 :func:`fit_json` turns a payload into the compact JSON text that is sent: every string redacted
@@ -21,6 +23,7 @@ class Caps:
     max_chars: int       # characters of one result's JSON text
     max_results: int     # search hits
     max_items: int       # entries of a listing (entities, runs, scenarios)
+    ceilings: Caps | None = None    # the most a call may ask for with this model's context (chat); None: CEILINGS
 
 
 PRESETS: dict[str, Caps] = {
@@ -56,12 +59,15 @@ class CapArg:
     maximum: int | None = None
     default: int | None = None
 
-    def limit(self) -> int:
+    def limit(self, caps: Caps | None = None) -> int:
+        """The most a call may ask for: the global ceiling, the tool's maximum and the context's ceiling."""
         ceiling = getattr(CEILINGS, self.field)
+        if caps is not None and caps.ceilings is not None:
+            ceiling = min(ceiling, getattr(caps.ceilings, self.field))
         return ceiling if self.maximum is None else min(self.maximum, ceiling)
 
     def resolve(self, value: Any, caps: Caps) -> int:
-        top = self.limit()
+        top = self.limit(caps)
         if value is None or isinstance(value, bool) or not isinstance(value, (int, float)):
             base = self.default if self.default is not None else getattr(caps, self.field)
             return max(1, min(int(base), top))

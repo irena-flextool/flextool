@@ -54,10 +54,13 @@ def _ollama(server: FakeServer, model: str = "qwen3:14b", *, capabilities: list[
 
 
 def test_needed_tokens():
-    # '{"system": ["' (13) + 400 + '"], "tools": []}' (16) = 429 characters; 429 // 4 + 4000.
-    assert probes.needed_tokens(("x" * 400,), ()) == 4107
+    # Never below the smallest window the assistant works with (P3 §3.3).
+    assert probes.needed_tokens(("x" * 400,), ()) == 12_288
+    # 40 000 letters of text: ceil(40 000 / 3.2) + 4 = 12 504; the empty tool list "[]" is ceil(2 / 2.5) + 4 = 5;
+    # with the basic answer (4 096) that is 16 605 tokens, which must stay within 95 % of the context.
+    assert probes.needed_tokens(("x" * 40_000,), ()) == 17_479          # ceil(16 605 / 0.95)
     tool = ToolSpec("t", "d", {"type": "object"})
-    assert probes.needed_tokens((), (tool,)) > probes.needed_tokens((), ())
+    assert probes.needed_tokens(("x" * 40_000,), (tool,)) > probes.needed_tokens(("x" * 40_000,), ())
 
 
 def test_ollama_small_loaded_context_sends_nothing(server):

@@ -111,7 +111,8 @@ def test_ids_and_times_are_utc(st, project):
 
 def test_settings_defaults_round_trip_and_notes(root):
     s = settings.load_settings(root)
-    assert (s.conversation_expiry_days, s.compaction_every, s.keep_recent_turns, s.parallel_requests) == (30, 6, 2, 1)
+    assert (s.conversation_expiry_days, s.compaction_every, s.keep_recent_turns, s.parallel_requests) == (
+        30, None, None, 1)         # compaction from the model's context (P3 §4.5)
     assert s.provider.knobs == {"openrouter.data_collection": "deny", "openrouter.zdr": False}
     assert s.provider.key_storage == "keyring"
     path = root / "settings.json"
