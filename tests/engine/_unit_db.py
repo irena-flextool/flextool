@@ -47,17 +47,14 @@ def time_map(values: dict[str, float], default: float) -> list:
                "map")
 
 
-def make_db(tmp_path_factory: pytest.TempPathFactory, *, alt: str,
-            values: list, base_chain: list[str],
-            entities: list | None = None,
-            fixture_json: Path = BASE_FIXTURE_JSON) -> tuple[str, str]:
-    """``fixture_json`` (default ``tests.json``) + override alternative
-    ``alt`` appended to ``base_chain``; returns ``(url, scenario)``.  New
-    ``node`` / ``unit`` / ``connection`` entities are activated in ``alt``."""
-    from flextool.update_flextool.db_migration import migrate_database
-    from tests.db_utils import json_to_db
-
-    data = json.loads(Path(fixture_json).read_text())
+def add_override_alternative(data: dict, alt: str, values: list, base_chain: list[str],
+                             entities: list | None = None) -> str:
+    """Append the override alternative ``alt`` to the Spine import data
+    ``data`` (changed in place; no files): the alternative, ``entities``
+    (new ``node`` / ``unit`` / ``connection`` entities active in ``alt``),
+    the parameter ``values`` ``[class, entity, parameter, packed value]`` in
+    ``alt``, and the scenario ``<alt>_test`` = ``base_chain`` + ``alt``.
+    Returns the scenario name."""
     data["alternatives"].append([alt, ""])
     for ent in entities or []:
         data["entities"].append(ent)
@@ -70,6 +67,21 @@ def make_db(tmp_path_factory: pytest.TempPathFactory, *, alt: str,
     data["scenarios"].append([scenario, False, ""])
     for a, before in zip(chain, chain[1:] + [None]):
         data["scenario_alternatives"].append([scenario, a, before])
+    return scenario
+
+
+def make_db(tmp_path_factory: pytest.TempPathFactory, *, alt: str,
+            values: list, base_chain: list[str],
+            entities: list | None = None,
+            fixture_json: Path = BASE_FIXTURE_JSON) -> tuple[str, str]:
+    """``fixture_json`` (default ``tests.json``) + override alternative
+    ``alt`` appended to ``base_chain`` (:func:`add_override_alternative`);
+    returns ``(url, scenario)``."""
+    from flextool.update_flextool.db_migration import migrate_database
+    from tests.db_utils import json_to_db
+
+    data = json.loads(Path(fixture_json).read_text())
+    scenario = add_override_alternative(data, alt, values, base_chain, entities)
     work = tmp_path_factory.mktemp(f"{alt}_db")
     json_path = work / f"{alt}.json"
     json_path.write_text(json.dumps(data))
