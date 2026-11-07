@@ -330,6 +330,47 @@ test so scenarios that share solve names cannot cross-contaminate.
   belong in the per-commit gate; mark anything that builds and solves
   an LP with `solver`; mark anything over ~30 s with `slow`.
 
+## Recorded provider replies
+
+The AI assistant's backend tests run on synthetic payloads (`tests/assistant/llm/payloads/`). The real answers of
+each AI service are kept as recordings under `tests/assistant/llm/recorded/<preset>/<case>.json`, made by hand with
+`tools/record_llm_replies.py` and checked in CI by `tests/assistant/llm/test_recorded_replies.py` (skipped while
+there are none). A recording is made **only** against the synthetic test project that the tool builds itself
+(`tests/fixtures/tests.json` with the runs of the assistant tests), never against a user's project.
+
+To record one service:
+
+1. Make its key findable as the chat finds it: the preset's environment variable (`GEMINI_API_KEY`, …) or
+   `flextool-assistant --set-key --provider <preset>`. The key is never given on the command line. For a local
+   server, start it with the model loaded the way users run it (for Ollama, `OLLAMA_CONTEXT_LENGTH=16384`).
+2. Run, from the repository root:
+   ```bash
+   python tools/record_llm_replies.py --preset gemini --model <a model from flextool-assistant --list-models>
+   python tools/record_llm_replies.py --preset ollama --model qwen3:14b
+   python tools/record_llm_replies.py --preset openai_compatible --base-url http://localhost:8000/v1 --model <name>
+   ```
+   The tool asks two fixed questions (one about input data, one about a result) through the real session, so the
+   service is billed for a few requests. It writes the file only when both questions were answered, the model made
+   at least two rounds of tool calls, the scrubbed recording passes the scrub check and it replays to the same
+   answers; otherwise it says why and writes nothing (exit 1).
+3. Look through the file before committing it, then run
+   `pytest tests/assistant/llm/test_recorded_replies.py`.
+
+What the scrub does before writing: no request header is recorded; message, call, response and request ids
+(`chatcmpl-…`, `msg_…`, `toolu_…`, `gen-…`, `call_…`, `req_…`) become placeholders of the same format, the same
+everywhere in the file; organisation and project ids, run ids, e-mail addresses and the key are replaced; the
+FlexTool redaction removes the project folder, the home folder, user and host names and other absolute paths; the
+address of a custom endpoint becomes `https://endpoint.example.test/v1`; a model list keeps only the recorded
+model. Signatures and thinking text stay, because the replay needs them. Response headers are kept only from an
+allow-list (`content-type`, `retry-after`, `retry-after-ms`, `x-ratelimit-*`, `anthropic-ratelimit-*`).
+
+What the scrub check (in the tool and in CI) refuses: a key-like text (`sk-`, `sk-ant-`, `sk-or-`, `AIza…`), a run
+of 32 or more letters and digits outside a signature field, an absolute path, an e-mail address, a request header,
+`x-stainless-*`, `openai-organization` or `openai-project` anywhere, and a project name other than the fixture's.
+
+When a recording settles a point the design marked unverified (for example the shape of Ollama's `remote_host`
+or of LM Studio's model list), correct the code and its tests in the same change.
+
 ## Related pages
 
 - [`architecture.md`](architecture.md) — pipeline end-to-end,
