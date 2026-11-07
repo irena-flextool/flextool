@@ -15,7 +15,7 @@ import sys
 
 import pytest
 
-from flextool.assistant import endpoint, llm_errors, net, probes, prompt
+from flextool.assistant import endpoint, llm_errors, net, probes, prompt, session
 from flextool.assistant.context import ContextSnapshot
 from flextool.assistant.providers import PRESETS
 
@@ -41,6 +41,7 @@ def _texts() -> list[tuple[str, str]]:
                     for i, t in enumerate(prompt.system_layers(front_end, tier))]
     out.append(("instructions", prompt.instructions("project")))
     out.append(("context block", prompt.context_block(ContextSnapshot("project"))))
+    out += [(f"SESSION_MESSAGES[{k}]", v) for k, v in session.SESSION_MESSAGES.items()]
     out += [(f"probes {name}", getattr(probes, name)) for name in ("PARTLY_ON_CPU", "LMSTUDIO_NO_TOOL_USE")]
     out += [(f"endpoint {name}", getattr(endpoint, name)) for name in dir(endpoint) if name.startswith("INDICATOR_")]
     for preset in PRESETS.values():
