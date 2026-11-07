@@ -63,6 +63,7 @@ nav:
     - 'Spine database editor': spine_database.md
     - 'Excel as input/output': excel_interface.md
     - 'Terminal / CLI': terminal_workflow.md
+    - 'AI agents': ai_assistant.md
     - 'Environment variables': env_vars.md
   - Solvers:
     - 'Solver selection': solvers/index.md
