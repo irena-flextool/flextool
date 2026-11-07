@@ -81,6 +81,10 @@ packages. Every CLI command also has an installed entry point in
 | `cmd_update_flextool` | `flextool-update` | `git pull` + project-side migration in one step. |
 | `cmd_gui` (via `flextool.gui.__main__`) | `flextool-gui` | Launch the Tkinter desktop application. |
 
+Two entry points are top-level modules outside `flextool/cli/` (`[tool.setuptools] py-modules`), because they
+must act before `import flextool`: `flextool_run_supervisor` (`flextool-run`, see "Run record") and
+`flextool_assistant_entry` (`flextool-assistant`, see "AI assistant tools").
+
 ### Runtime options
 
 `flextool/run_options.py` holds the one resolver for every operator option that has more than one form, and
@@ -166,6 +170,11 @@ flextool/                          The installed Python package
 ├── model_builder/                 Synthetic / mock-up scenario generator.
 ├── representative_periods/        Greedy convex-hull representative-period
 │                                    clustering.
+├── assistant/                     Read-only tools for AI assistants (registry,
+│                                    input / result / diagnostics tools, docs
+│                                    index, the connection server for agents).
+├── docs_build/                    Generated docs pages (formulation, results
+│                                    catalogue) and the assistant's docs index.
 ├── gui/                           Tkinter desktop application (main_window,
 │                                    result_viewer, plot_canvas,
 │                                    network_graph, check_tree, dialogs/...).
@@ -182,6 +191,10 @@ flextool/                          The installed Python package
 │                                    migration snapshots.
 └── lean_parquet.py                Tiny parquet loader used by the GUI
                                      ResultViewer.
+
+Top-level modules that run before `import flextool` (py-modules):
+  flextool_run_supervisor.py (flextool-run), flextool_assistant_entry.py
+  (flextool-assistant); build-time only: _flextool_build.py.
 
 Root wrapper scripts (kept for Spine Toolbox workflow compatibility):
   run_flextool.py, write_outputs.py, scenario_results.py,
@@ -938,7 +951,9 @@ order: the thread budget (`apply_before_polars`: when the process is a FlexTool 
 `cmd_execute_flextool_workflow` / `flextool.calibrate` (`-m flextool.cli.cmd_run_flextool` is also the engine
 that `flextool-run` supervises), or `sys.argv[0]` is a `flextool-run[.exe]` installed before the supervisor (which
 ran the engine in-process) or the `cmd_run_flextool.py` file Spine Toolbox runs — the flag is read from the
-command line, full name only; then
+command line, full name only; the assistant (`flextool-assistant`, `-m flextool_assistant_entry`) reads its
+`--threads` the same way, and without it its budget is 1 (`command_default_threads`: it reads files while a model
+may be running and must not compete with it; `FLEXTOOL_THREADS` does not raise it); then
 `POLARS_MAX_THREADS = min(B, the user's POLARS_MAX_THREADS, else 8)`), the allocator config, `import polars`,
 the rest of the package, and finally `restore_env`, which puts `POLARS_MAX_THREADS` back exactly as it was.
 The environment therefore never carries B: a child gets `--threads` on its command line (workflow, calibrator,
@@ -1003,6 +1018,62 @@ The supervisor is a top-level module that never imports `flextool` (that imports
   leaves out folders whose latest job failed). A new reader of run folders calls it too.
 
 `ExecutionManager` also starts at most one job per output folder at a time (`_pick_next_pending`).
+
+## AI assistant tools
+
+`flextool/assistant/` holds read-only tools that let an AI assistant answer questions about one project: input data
+by scenario, results, run logs and slack, and the documentation. User page: [Connecting an AI agent](../ai_assistant.md).
+`flextool/assistant/__init__.py` imports nothing; every module imports what it needs when first used.
+
+- **Registry** (`registry.py`). Each tool module (`tools/orientation`, `discovery`, `inputs`, `results`,
+  `diagnostics`) lists its `Tool`s in `TOOLS` (name, title, description ending with the data-not-instructions
+  sentence, a closed JSON schema without ranges, handler, area, `small_tier`). `call_tool(ctx, name, args)` is the
+  only way to run one and never raises: it clamps the caps arguments (`caps.py`: `--result-cap` presets and hard
+  ceilings), validates against the schema with `jsonschema` (mcp does not validate on stdio), runs the handler and
+  fits the payload with `fit_json` (compact JSON, whole trailing rows dropped with a `truncated` note). A
+  `ToolError` carries a message key of `errors.MESSAGES`, the one table of user-facing texts; any other exception
+  becomes the fault message, with the traceback on stderr only. `tools_for_tier("small")` is the basic set.
+- **Redaction** (`redact.py`) runs once, in `fit_json`, on every string of every payload and every message: the
+  project folder → `<project>`, home → `~`, host and user names, other absolute paths → their last part.
+- **Inputs** (`inputs/_db.py`). One read-only, percent-encoded SQLite URI open per file (`mode=ro` counts only
+  with `uri=true`; a raw `#` or `%` makes SQLite create another file), `sqlite_timeout=5`; a fixed list of item
+  types is fetched and the mapping closed, so no file handle stays open. The scenario view (rank order,
+  `entity_alternative`, `is_enabled`) is computed in our code; spinedb-api's scenario filter is only the oracle of
+  its test. Input sources and their numbers come from `gui.input_sources` / `gui.settings_io` (Tk-free), read
+  only; a spreadsheet is read through its conversion `intermediate/<stem>.sqlite`.
+- **Results** (`results/`). A run folder is offered only when `run_record.results_usable` says so (see "Run
+  record"); the message comes from `unusable_code`. Tables are read and aggregated wide (`flextool/lean_parquet.py`
+  footer layout); only a reduced frame is unpivoted. `check_aggregation` refuses sums with no meaning (power over
+  time, annual values over periods, levels, ratios). Units are worded only by `unit_wording.py`, as the default
+  convention (units are not enforced by FlexTool). Comparison files are used while their `_metadata.json` members
+  match the current successful runs, else the member folders.
+- **Docs** (`docs_store.py`, `flextool/docs_build/`). The build step `_flextool_build.BuildPy` copies the curated
+  Markdown (`docs_build/scope.CURATED_DOCS`) into `flextool/assistant/_docs/md/`; an editable install reads the
+  clone's `docs/`. On first use the formulation page, the results catalogue and the BM25 index are generated by the
+  installed FlexTool into the user cache folder, keyed by FlexTool version + source hash. The web docs generate the
+  same two pages with the same generator (`tools/mkdocs_hooks.py`).
+
+**The connection server for agents** (`flextool-assistant --mcp`, `mcp_server.py`, mcp 2.x low-level `Server`,
+telemetry middleware removed). The protocol uses stdin and stdout, so `flextool_assistant_entry.py`, a
+standard-library-only top-level module, keeps private duplicates of fd 0 and fd 1 for the protocol, then points
+fd 1 and `sys.stdout` at stderr and fd 0 at the null device (on Windows also the Win32 standard handles, and
+binary mode on the duplicates) **before** `import flextool`, whose dependencies and start-up checks may print.
+The server's streams are explicit `anyio` wrappers over those duplicates (UTF-8, `\n`), so mcp's own stdio claim
+is skipped. Tool calls run in a worker thread that takes the context's lock, so `ping` and `tools/list` answer
+during a slow call. The server sends the instructions of `prompt.instructions` (data use, units convention,
+vocabulary), lists the tools with read-only annotations, serves the docs pages as `flextool-docs:///<page>`
+resources and the level texts (`prompt.ADDENDA`) as the prompts `basic`, `standard`, `advanced`. `--tier basic`
+lists and runs only the basic set and defaults to the small result cap.
+
+When `import flextool` stops with `CompatRuntimeRequired` (env_check: this processor needs the compatible polars
+build), the entry module loads `mcp_server.py` by path (it imports only the standard library at module level) and
+serves one tool, `flextool_setup_problem`, that returns the fix. The assistant options have no environment-variable
+twins.
+
+`--call TOOL [JSON | @file.json]` runs one tool through the same `call_tool` and prints its text (support and
+testing). Tests: `tests/assistant/` (`test_server_stdio.py` drives the installed command over real stdio and fails
+on any non-protocol byte on stdout); CI smoke: `.github/scripts/mcp_smoke.py` (wheel check in `publish.yml`, the
+Toolbox bundle, the old-CPU emulation's degraded server).
 
 ## Solve-to-solve handoff
 

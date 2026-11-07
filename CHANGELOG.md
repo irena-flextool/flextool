@@ -5,6 +5,17 @@
   peak memory about tripled on large models (the same LP), so 4.2.0 held polars below 2. polar-high 3.12.3 runs
   these joins in the order they are written, so FlexTool now requires polar-high 3.12.3 and accepts polars 1.40 or
   newer below 3.
+- **New: connect an AI agent to a FlexTool project.** `flextool-assistant --mcp --project-path <project folder>`
+  starts read-only tools that an AI agent such as Claude Code uses to answer questions about the project: input
+  data by scenario, results (filtered, summed or averaged where that is meaningful, and compared between
+  scenarios), run logs and slack, and the FlexTool documentation with the model's equations. For Claude Code:
+  `claude mcp add flextool -- flextool-assistant --mcp --project-path /path/to/project`. The tools cannot change
+  anything, read results only from a scenario whose latest run succeeded, and run on one thread by default
+  (`--threads N`). Everything they return is sent to the AI service the agent uses; check its policies yourself.
+  Three prompts set the assistant level (basic, standard, advanced); `--tier basic` offers only the basic tools.
+  `flextool-assistant --call TOOL '{...}'` runs one tool in the terminal. See "Connecting an AI agent to FlexTool"
+  in the documentation. New requirements: `mcp` (2.3 or later 2.x), `platformdirs`, `jsonschema`; run "Update
+  FlexTool" (or `pip install -e .`) to get them and the new command.
 - **Changed: every parameter description starts with its unit**, in the default convention (MW, MWh, CUR,
   tCO2): `[MW]`, `[CUR/MWh]`, `[hours]`; `[-]` for a share or ratio, followed by an example (`[-] e.g. 0.9 means
   90%`); words where the unit depends on the use (`[unit of the constraint per MW]`); `[choice]`, `[yes/no]`,
