@@ -2,17 +2,23 @@
 redaction, and what the session has already been told; and the snapshot of what the user has chosen, which the chat
 puts in its context block.
 
+The FlexTool window's snapshot (:class:`GuiState`, taken on the Tk thread at each Send and every second for the
+runtime context file) becomes one payload with :func:`snapshot_payload`: the same dictionary goes into the runtime
+file, answers ``get_gui_context`` and is what the context block shows (P2-D4).  Standard library only.
+
 :data:`TOOL_LOCK` is the one lock every context of this process uses by default, so tools never run at once
 (the input-data cache is shared by the whole process; several chats, and a closing chat's worker, may call tools).
 """
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from flextool.assistant.caps import DEFAULT_PRESET, Caps, preset
+from flextool.assistant.caps import DEFAULT_PRESET, NAME_MAX, Caps, cap_text, preset
 from flextool.assistant.redact import Redactor
 
 FrontEnd = Literal["agent", "terminal", "gui"]
@@ -77,6 +83,106 @@ class ContextSnapshot:
     front_end: FrontEnd = "terminal"
     gui: GuiState | None = None
     taken_at: str = ""
+
+
+#: Entries of one list in :func:`snapshot_payload`; the rest is counted in ``<list>_more``.
+PAYLOAD_LIST_MAX = 20
+
+
+def primary_source(gui: GuiState) -> str | None:
+    """The input source the tools use by default: the highlighted source row, else the only checked one."""
+    if gui.source_selected:
+        return gui.source_selected
+    return gui.sources_checked[0][0] if len(gui.sources_checked) == 1 else None
+
+
+def primary_scenario(gui: GuiState) -> str | None:
+    """The scenario the tools use by default: the highlighted available-scenario row, else the only checked one."""
+    if gui.scenario_selected is not None:
+        return gui.scenario_selected[1]
+    return gui.scenarios_checked[0][1] if len(gui.scenarios_checked) == 1 else None
+
+
+def gui_snapshot(project: str, gui: GuiState | None, *, taken_at: str | None = None) -> ContextSnapshot:
+    """The snapshot of a question sent from the FlexTool window: its selections and the defaults they give."""
+    when = taken_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    if gui is None:
+        return ContextSnapshot(project=project, front_end="gui", taken_at=when)
+    return ContextSnapshot(project=project, input_source=primary_source(gui), scenario=primary_scenario(gui),
+                           front_end="gui", gui=gui, taken_at=when)
+
+
+def _payload_text(value: object, redact: Callable[[str], str] | None) -> str | None:
+    if value is None:
+        return None
+    text = str(value)
+    if redact is not None:
+        text = redact(text)
+    return cap_text(text, NAME_MAX)
+
+
+def _payload_list(out: dict[str, Any], key: str, items: Iterable[Any], render: Callable[[Any], Any]) -> None:
+    items = list(items)
+    out[key] = [render(item) for item in items[:PAYLOAD_LIST_MAX]]
+    if len(items) > PAYLOAD_LIST_MAX:
+        out[f"{key}_more"] = len(items) - PAYLOAD_LIST_MAX
+
+
+def _result_payload(ref: ResultRef, redact: Callable[[str], str] | None) -> dict[str, Any]:
+    return {"folder": _payload_text(ref.folder, redact), "source_number": ref.source_number,
+            "scenario": _payload_text(ref.scenario, redact), "state": ref.state,
+            "results_usable": ref.results_usable, "unusable_code": ref.unusable_code,
+            "reason": _payload_text(ref.reason, redact)}
+
+
+def _viewer_payload(v: ViewerState, redact: Callable[[str], str] | None) -> dict[str, Any]:
+    def text(value: object) -> str | None:
+        return _payload_text(value, redact)
+
+    out: dict[str, Any] = {"mode": text(v.mode)}
+    _payload_list(out, "scenarios", v.scenarios, text)
+    out.update({"plot_entry": text(v.plot_entry), "plot_name": text(v.plot_name), "variant": text(v.variant),
+                "result_key": text(v.result_key), "sub_config": text(v.sub_config), "time_start": v.time_start,
+                "time_steps": v.time_steps, "time_start_label": text(v.time_start_label),
+                "dispatch_item": text(v.dispatch_item)})
+    _payload_list(out, "comparison_checked", v.comparison_checked, text)
+    return out
+
+
+def snapshot_payload(s: ContextSnapshot | None, *, gui_running: str,
+                     redact: Callable[[str], str] | None = None) -> dict[str, Any]:
+    """The snapshot as plain data (JSON-ready): names and selections only, no paths and no data values.
+
+    *gui_running* is ``"running"`` or ``"not running"``.  Every string is redacted (*redact*) and cut to
+    :data:`~flextool.assistant.caps.NAME_MAX` characters; each list keeps :data:`PAYLOAD_LIST_MAX` entries and
+    counts the rest in ``<list>_more``.  The result rows carry what their run record says (``results_usable``,
+    ``unusable_code``, ``reason``), never a rule of their own (D5).
+    """
+    out: dict[str, Any] = {"gui": gui_running}
+    if s is None:
+        out.update({"front_end": None, "project": None, "input_source": None, "scenario": None})
+        return out
+
+    def text(value: object) -> str | None:
+        return _payload_text(value, redact)
+
+    out.update({"front_end": s.front_end, "project": text(s.project), "input_source": text(s.input_source),
+                "scenario": text(s.scenario), "taken_at": s.taken_at or None})
+    gui = s.gui
+    if gui is None:
+        return out
+    _payload_list(out, "sources_checked", gui.sources_checked,
+                  lambda item: {"name": text(item[0]), "number": item[1]})
+    out["source_selected"] = text(gui.source_selected)
+    _payload_list(out, "scenarios_checked", gui.scenarios_checked,
+                  lambda item: {"source": text(item[0]), "scenario": text(item[1])})
+    selected = gui.scenario_selected
+    out["scenario_selected"] = None if selected is None else {"source": text(selected[0]),
+                                                              "scenario": text(selected[1])}
+    _payload_list(out, "results_checked", gui.results_checked, lambda ref: _result_payload(ref, redact))
+    _payload_list(out, "results_selected", gui.results_selected, lambda ref: _result_payload(ref, redact))
+    out["viewer"] = None if gui.viewer is None else _viewer_payload(gui.viewer, redact)
+    return out
 
 
 @dataclass
