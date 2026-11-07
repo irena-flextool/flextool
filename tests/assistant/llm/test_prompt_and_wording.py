@@ -15,7 +15,7 @@ import sys
 
 import pytest
 
-from flextool.assistant import chat_cli, cli, endpoint, llm_errors, net, probes, prompt, session
+from flextool.assistant import chat_cli, cli, endpoint, llm_errors, net, probes, prompt, session, tiers
 from flextool.assistant.context import ContextSnapshot, GuiState, ResultRef, ViewerState, gui_snapshot
 from flextool.assistant.tools import orientation
 from flextool.assistant.providers import PRESETS
@@ -62,6 +62,8 @@ def _texts() -> list[tuple[str, str]]:
             for name in ("NOT_SHARED", "WINDOW_CLOSED", "FROM_WINDOW")]
     out += [(f"SESSION_MESSAGES[{k}]", v) for k, v in session.SESSION_MESSAGES.items()]
     out += [(f"probes {name}", getattr(probes, name)) for name in ("PARTLY_ON_CPU", "LMSTUDIO_NO_TOOL_USE")]
+    out += [(f"tiers {name}", getattr(tiers, name)) for name in dir(tiers)
+            if name.isupper() and isinstance(getattr(tiers, name), str)]
     out += [(f"endpoint {name}", getattr(endpoint, name)) for name in dir(endpoint) if name.startswith("INDICATOR_")]
     out += [(f"endpoint {name}", getattr(endpoint, name)) for name in ("NOTICE", "NOTICE_PROXY", "NOTICE_HEADERS")]
     out += [("chat WELCOME", chat_cli.WELCOME), ("chat HELP", chat_cli.HELP)]

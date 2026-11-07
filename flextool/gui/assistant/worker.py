@@ -561,12 +561,12 @@ class AssistantWorker:
 
     def _setup(self, job: TurnJob) -> _Setup:
         """Step 2: what the settings give, without asking any server."""
-        from flextool.assistant import endpoint, keys, prompt
+        from flextool.assistant import endpoint, keys
         from flextool.assistant.backends._common import error_context
         from flextool.assistant.llm_adapter import Connection
         from flextool.assistant.llm_errors import NoKey, make_error, message_for
         from flextool.assistant.net import BaseUrlRefused, check_base_url, proxy_for
-        from flextool.assistant.providers import PRESETS, tier_from_model
+        from flextool.assistant.providers import PRESETS
         from flextool.assistant.settings import load_settings
 
         settings = load_settings(self.config_root)
@@ -597,10 +597,7 @@ class AssistantWorker:
             err = make_error(NoKey, "no_key", error_context(preset, conn))
             message = message_for(err, "gui")
             raise self._problem(job, f"{message} {note}" if note else message)
-        if provider.tier:
-            level, level_source = prompt.level_name(provider.tier), "chosen"
-        else:
-            level, level_source = tier_from_model(preset.id, provider.model), "from the model name"
+        level, level_source = _level_before_probe(preset, base_url, provider.model, provider.tier, route)
         fingerprint = (preset.id, base_url, provider.model, provider.tier, tuple(sorted(
             (k, repr(v)) for k, v in provider.knobs.items())), conn.key_source,
             hashlib.sha256((key or "").encode("utf-8")).hexdigest()[:16], proxy_for(base_url),
@@ -659,16 +656,29 @@ class AssistantWorker:
                 raise _Refused from None
             raise self._problem(job, message_for(err, "gui"), err.code in SETTINGS_ERRORS) from None
         self._check(job)
+        from flextool.assistant import tiers
         from flextool.assistant.llm_adapter import Notice
 
         for note in facts.notes:
             self._emit(job.job_id, Notice(note))
         route = endpoint.route_for(setup.preset, setup.base_url, facts=facts)
+        try:
+            tier = tiers.resolve_tier(setup.preset, conn.model, facts, setup.settings.provider.tier, route)
+        except tiers.WindowTooSmall as exc:
+            raise self._problem(job, message_for(probes.window_error(setup.preset, conn, exc), "gui")) from None
+        level_changed = tier.chosen != setup.level
+        setup.level = tier.chosen
+        setup.level_source = _level_source(tier, setup.settings.provider.tier)
+        for line in (tier.notice, tier.window_line()):
+            if line:
+                self._emit(job.job_id, Notice(line))
         if route != conn.route:
             conn = dataclasses.replace(conn, route=route)
             self._emit(job.job_id, self._prepared_event(setup, route))
             yield from self._consent(job, setup, route)
             self._check(job)
+        elif level_changed:
+            self._emit(job.job_id, self._prepared_event(setup, route))
         try:
             backend = self._backend_factory(setup.preset, conn)
         except LLMError as err:
@@ -709,6 +719,29 @@ class AssistantWorker:
     def session(self) -> Session | None:
         with self._session_lock:
             return self._session
+
+
+def _level_source(tier, stored: str | None) -> str:
+    """How the window names where the level comes from: "chosen" when the stored level is in use."""
+    from flextool.assistant import tiers
+
+    if stored and tiers.internal_level(stored) == tier.chosen:
+        return "chosen"
+    return "from the model name"
+
+
+def _level_before_probe(preset: Preset, base_url: str, model: str, stored: str | None,
+                        route: Route) -> tuple[str, str]:
+    """The level before the probe (P3 §3.3): from the facts FlexTool last found for the model, else the name; a
+    stored level above the allowed ones is lowered (the probe's facts decide again)."""
+    from flextool.assistant import probes, tiers
+
+    facts = probes.cached_facts(preset.id, base_url, model)
+    try:
+        tier = tiers.resolve_tier(preset, model, facts, stored, route)
+    except tiers.WindowTooSmall:
+        tier = tiers.resolve_tier(preset, model, None, stored, route)
+    return tier.chosen, _level_source(tier, stored)
 
 
 def _abort_quietly(session: Session) -> None:

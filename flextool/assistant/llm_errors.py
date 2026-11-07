@@ -71,6 +71,8 @@ MESSAGES: dict[str, str] = {
                              "Modelfile) and restart Ollama."),
     "small_context_lmstudio": ("LM Studio loaded this model with a {n}-token context. Load it again with a larger "
                                "context length (about {needed} or more) in LM Studio's model settings."),
+    "small_context": ("This model has a {n}-token context, too small for the assistant's instructions and tools "
+                      "(about {needed}). Choose a model with a larger context."),
     "probe_unreadable": ("{provider} at {host}:{port} gave an answer FlexTool could not read ({what}), so nothing "
                          "was sent to the model."),
 }
