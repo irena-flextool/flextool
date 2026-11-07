@@ -66,6 +66,13 @@ MESSAGES: dict[str, str] = {
     "cancelled": "Stopped.",
     "unknown_stop": "The provider ended the answer for a reason FlexTool does not know ({reason}).",
     "model_list": "The model list could not be fetched: {reason}. Type the model name instead.",
+    "small_context_ollama": ("This model runs with a {n}-token context, too small for the assistant's instructions "
+                             "and tools (about {needed}). Set OLLAMA_CONTEXT_LENGTH=16384 (or num_ctx in a "
+                             "Modelfile) and restart Ollama."),
+    "small_context_lmstudio": ("LM Studio loaded this model with a {n}-token context. Load it again with a larger "
+                               "context length (about {needed} or more) in LM Studio's model settings."),
+    "probe_unreadable": ("{provider} at {host}:{port} gave an answer FlexTool could not read ({what}), so nothing "
+                         "was sent to the model."),
 }
 
 #: The FlexTool window's wording of the messages that name terminal commands (P2 §9.5), by message key.
@@ -214,6 +221,13 @@ class TimedOut(LLMError):
     code = "timeout"
 
 
+class ContextTooSmall(LLMError):
+    """A model on this computer runs with a context too small for the instructions and tools: no request is sent
+    (the server would silently drop the start of the prompt)."""
+
+    code = "small_context"
+
+
 class Refused(LLMError):
     code = "refused"
 
@@ -236,8 +250,8 @@ class ProviderError(LLMError):
 
 ERROR_CLASSES: tuple[type[LLMError], ...] = (
     RateLimited, ServerBusy, QuotaExhausted, NoCredit, AuthFailed, NotPermitted, ContextTooLong, HistoryRejected,
-    NoMatchingEndpoint, ToolsUnsupported, ModelNotFound, Unreachable, TimedOut, Refused, Truncated, NoKey, Cancelled,
-    ProviderError)
+    NoMatchingEndpoint, ToolsUnsupported, ModelNotFound, Unreachable, TimedOut, ContextTooSmall, Refused, Truncated,
+    NoKey, Cancelled, ProviderError)
 
 
 def make_error(cls: type[LLMError], key: str, ctx: ErrorContext, **kwargs: Any) -> LLMError:
