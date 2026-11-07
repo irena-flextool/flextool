@@ -1,0 +1,40 @@
+{
+ "description": "A text answer with usage on the last chunk.",
+ "synthetic": true,
+ "chunks": [
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "role": "assistant",
+      "content": "West has 2 units."
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {},
+     "finish_reason": "stop"
+    }
+   ],
+   "usage": {
+    "prompt_tokens": 1300,
+    "completion_tokens": 9,
+    "total_tokens": 1309
+   }
+  }
+ ]
+}

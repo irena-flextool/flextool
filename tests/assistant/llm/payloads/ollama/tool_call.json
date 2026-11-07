@@ -1,0 +1,58 @@
+{
+ "description": "A tool call from a local model.",
+ "synthetic": true,
+ "chunks": [
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "role": "assistant",
+      "content": "",
+      "tool_calls": [
+       {
+        "index": 0,
+        "id": "call_ollama1",
+        "type": "function",
+        "function": {
+         "name": "get_entity",
+         "arguments": "{\"name\":\"west\"}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {},
+     "finish_reason": "tool_calls"
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [],
+   "usage": {
+    "prompt_tokens": 900,
+    "completion_tokens": 15,
+    "total_tokens": 915
+   }
+  }
+ ]
+}

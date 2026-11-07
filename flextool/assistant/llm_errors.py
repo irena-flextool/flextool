@@ -62,6 +62,7 @@ MESSAGES: dict[str, str] = {
     "redirect": ("The endpoint redirected to {host}. FlexTool does not follow redirects, so nothing was sent "
                  "there."),
     "cancelled": "Stopped.",
+    "unknown_stop": "The provider ended the answer for a reason FlexTool does not know ({reason}).",
     "model_list": "The model list could not be fetched: {reason}. Type the model name instead.",
 }
 
