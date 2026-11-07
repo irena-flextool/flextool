@@ -48,5 +48,28 @@ read (for example `FLEXTOOL_HIGHS_THREADS=many`) is ignored with one warning tha
 | `POLARS_FORCE_PKG` | `64` / `32` / `compat` | polars' own: load only this build. Also skips FlexTool's processor check. |
 | `POLARS_MAX_THREADS` | integer | polars' own: size of polars' thread pool. FlexTool uses it in place of its limit of 8, but never above the run's `--threads` / `FLEXTOOL_THREADS`. Set it before FlexTool starts; the run header prints the count polars uses. |
 
+## AI assistant
+
+The assistant has no variables of its own: its choices are flags of `flextool-assistant` and its settings. It
+reads only the key of the AI service you chose, from that service's variable. A key in the variable wins over a
+key stored in the system keyring or in the key file, and the chat says where its key came from.
+
+| Variable | Set to | What it does |
+|---|---|---|
+| `OPENAI_API_KEY` | key | The key of OpenAI for the assistant chat. It wins over a key stored in the system keyring or the key file. |
+| `ANTHROPIC_API_KEY` | key | The key of Anthropic for the assistant chat. It wins over a key stored in the system keyring or the key file. |
+| `MISTRAL_API_KEY` | key | The key of Mistral for the assistant chat. It wins over a key stored in the system keyring or the key file. |
+| `OPENROUTER_API_KEY` | key | The key of OpenRouter for the assistant chat. It wins over a key stored in the system keyring or the key file. |
+| `GEMINI_API_KEY` | key | The key of Google Gemini for the assistant chat. It wins over a key stored in the system keyring or the key file. |
+| `OLLAMA_CONTEXT_LENGTH` | tokens, e.g. `16384` | Ollama's own: the context length Ollama loads models with. The assistant needs about 16384; set it where the Ollama server starts and restart Ollama. |
+| `PYTHON_KEYRING_BACKEND` | backend class | keyring's own: which keyring backend stores the keys. FlexTool does not use a backend that stores keys unencrypted. |
+
+The provider libraries the assistant uses read more variables of their own: `OPENAI_BASE_URL`, `OPENAI_ORG_ID`,
+`OPENAI_PROJECT_ID`, `OPENAI_CUSTOM_HEADERS`, `OPENAI_LOG`, `ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`,
+`ANTHROPIC_CUSTOM_HEADERS` and `ANTHROPIC_LOG`. FlexTool ignores them: it gives each library the address and the
+key itself and sends only the request headers it needs, so these variables change nothing. Proxy variables
+(`HTTPS_PROXY`, `NO_PROXY`, ...) and the system proxy settings apply only to services on the internet, never to
+a model on this computer or your local network; the chat names the proxy it uses.
+
 FlexTool also reads developer variables (diagnostics, profiling, Benders experiments, test switches). They are
 described in the developer guide, are not meant for production runs and can change between releases.
