@@ -15,6 +15,7 @@ from flextool.assistant.providers import PRESETS
 from tests.assistant.llm.wire import (
     KEY,
     Recorder,
+    anthropic_sse,
     connection,
     json_response,
     openai_sse,
@@ -51,26 +52,32 @@ def proxy_environment(monkeypatch):
         monkeypatch.setenv(name, PROXY)
 
 
-def _answer() -> httpx2.Response:
+def _answer(backend: str = "openai") -> httpx2.Response:
+    if backend == "anthropic":
+        return sse_response(anthropic_sse(payload("anthropic", "text_end")["events"]))
     return sse_response(openai_sse(payload("openai", "text_usage")["chunks"]))
 
 
 def _send(preset_id: str, key: str | None = KEY):
-    recorder = Recorder([_answer()])
+    recorder = Recorder([_answer(PRESETS[preset_id].backend)])
     backend = make_backend(PRESETS[preset_id], connection(preset_id, key=key), transport=recorder.transport)
     backend.stream(request([Message("user", "hello")]), lambda e: None, threading.Event())
     return recorder.last
 
 
-@pytest.mark.parametrize("preset_id", sorted(p.id for p in PRESETS.values() if p.backend == "openai"))
+@pytest.mark.parametrize("preset_id", sorted(PRESETS))
 def test_only_allow_listed_headers_and_our_key_and_address(preset_id, sdk_environment):
+    backend = PRESETS[preset_id].backend
     sent = _send(preset_id)
-    assert set(sent.headers) <= net.ALLOWED_HEADERS | net.BACKEND_HEADERS["openai"]
+    assert set(sent.headers) <= net.ALLOWED_HEADERS | net.BACKEND_HEADERS[backend]
     assert sent.headers["authorization"] == f"Bearer {KEY}"
     assert sent.headers["user-agent"] == "FlexTool-assistant"
     assert not any(h.startswith("x-") for h in sent.headers)
     base = connection(preset_id).base_url.rstrip("/")
-    assert sent.url == f"{base}/chat/completions"
+    path = "/v1/messages" if backend == "anthropic" else "/chat/completions"
+    assert sent.url == f"{base}{path}"
+    if backend == "anthropic":
+        assert sent.headers["anthropic-version"]
     assert "leaked" not in str(sent.headers.values())
 
 

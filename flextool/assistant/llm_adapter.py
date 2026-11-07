@@ -328,6 +328,12 @@ def make_backend(preset: Preset, conn: Connection, *, transport=None, verbose: b
         from flextool.assistant.backends.openai_chat import OpenAIChatBackend
 
         backend: Backend = OpenAIChatBackend(preset, conn, transport=transport)
+    elif preset.backend == "anthropic":
+        from flextool.assistant.backends.anthropic_messages import (
+            AnthropicMessagesBackend,
+        )
+
+        backend = AnthropicMessagesBackend(preset, conn, transport=transport)
     else:
         raise ValueError(f"unknown backend {preset.backend!r}")
     quiet_sdk_loggers(verbose=verbose)
