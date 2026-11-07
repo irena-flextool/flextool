@@ -1,0 +1,617 @@
+# The answer key of the grounding questions (P3 §6.4), derived by hand by an independent oracle from the inputs
+# and the model's equations; nothing here was read from a run, a log or an output file.
+#
+# Rules of the derivation:
+# - inputs: tests/fixtures/tests.json (scenario coal = alternatives init, west, coal; coal_co2_price adds
+#   co2_price; the override scenarios of tests/assistant/grounding_projects.py add their alternative after the
+#   base chain);
+# - timeline: solve y2020_2day_dispatch, period p2020, timeset 2day = t0001..t0048 (48 steps of 1 h), no
+#   timestep weights, years_represented 1 (default), inflation_rate 0 (default);
+# - _d_ energy tables are annualised: sample total / period_share_of_year, period_share = 48 / 8760, so
+#   x 182.5 (_output_meta ENERGY_ANNUAL, docs/advanced_concepts.md); _dt_ tables are MW per step; costs_dt_p is
+#   CUR per step (not annualised); annualized_costs_d_p is M CUR/a;
+# - units are the default convention (docs/reference.md "Units of measure"); [CUR/kW] inputs are x 1000;
+# - LP optima from the balance and the costs: coal_plant (500 MW, efficiency 0.4, coal 20 CUR/MWh) costs
+#   50 CUR/MWh of electricity, far below penalty_up 900 CUR/MWh at west, so it runs at
+#   min(demand, 500) and the upward slack is max(0, demand - 500) in every hour.
+format: 1
+set_version: 3
+key_version: 1
+derived_by: "independent oracle agent (hand derivation, no runs), 2026-11-07"
+sources:
+  - tests/fixtures/tests.json
+  - tests/assistant/grounding_projects.py (GROUNDING_OVERRIDES, DEMAND_UPDATE_REWRITE)
+  - tests/engine/_unit_db.py (add_override_alternative: how an override alternative and scenario are added)
+  - docs/reference.md
+  - docs/results.md
+  - docs/advanced_concepts.md
+  - docs/ai_assistant.md
+  - docs/dev/slack_convention.md
+  - docs/dev/architecture.md
+  - flextool/schemas/spinedb_schema.json
+  - flextool/process_outputs/_output_meta.py (table names, units)
+  - flextool/process_outputs/out_costs.py (cost column labels only)
+  - flextool/input_derivation/_validators.py (validate_node_inflow_not_period message text)
+  - flextool/engine/model/core.py (EQ./OBJ. headers nodeBalance_eq, balance_slack_penalty, commodity and CO2 cost,
+    invest_cost_p, existing_fixed_cost, invest period and total caps)
+  - flextool/engine/preprocess/params/_npv.py, _derived.py (annuity formula, which invest_method values get
+    a per-period cap)
+questions:
+  G01:
+    facts:
+      - id: capacity
+        kind: number
+        value: 500
+        tolerance: {rel: 0.001}
+        unit: "MW"
+        scale_units: ["MW", "GW", "kW"]
+        critical: true
+        derivation: "tests.json: unit coal_plant existing = 500 in alternative coal (scenario coal = init, west, coal);
+          no virtual_unitsize, so 500 is the capacity in MW (default convention), not a count"
+      - id: efficiency
+        kind: number
+        value: 0.4
+        tolerance: {rel: 0.001}
+        critical: true
+        derivation: "tests.json: unit coal_plant efficiency = 0.4 in alternative coal (a factor, output / input)"
+      - id: alternative
+        kind: token
+        value: coal
+        critical: false
+        derivation: "both values are stored in alternative coal"
+      - id: capacity_not_count
+        kind: statement
+        critical: false
+        criterion: "Presents 500 as a capacity in MW (default convention), not as a number of units."
+        derivation: "reference.md: existing is a count only with virtual_unitsize; coal_plant has none in scenario coal"
+    allowed_derived:
+      - {value: 40, note: "efficiency written as 40 %"}
+    tools_any: [[get_entity, get_parameter]]
+    manual: [facts_vs_assumptions]
+
+  G02:
+    facts:
+      - id: storage
+        kind: number
+        value: 2000
+        tolerance: {rel: 0.001}
+        unit: "kg"
+        scale_units: ["kg"]
+        units_hedge: true
+        critical: true
+        derivation: "grounding_projects.py H2_LOOKUP: node h2_tank existing = 2000.0, node_type storage, in alternative
+          h2_lookup (scenario h2_lookup_test = init, west, coal, h2_lookup); the entity description says 'Quantities
+          in kg, flows in kg/h', so 2000 kg in the model's own units (MWh only as the default label)"
+      - id: node
+        kind: entity
+        value: h2_tank
+        critical: false
+        derivation: "the entity asked about"
+      - id: alternative
+        kind: token
+        value: h2_lookup
+        critical: false
+        derivation: "existing and node_type of h2_tank are stored in alternative h2_lookup"
+    forbidden:
+      - pattern: '(?i)\b2[ ,  ]?000(?:\.0+)?\s*MWh\b(?!\s*\(?\s*(?:in )?(?:the )?default convention)'
+        note: "a bare MWh claim for the kg tank"
+        critical: true
+    tools_any: [[get_entity, get_parameter]]
+    manual: [facts_vs_assumptions]
+
+  G03:
+    facts:
+      - id: not_active
+        kind: statement
+        critical: true
+        criterion: "Says coal_chp is not part of (not active in) scenario coal, so it has no capacity there."
+        derivation: "tests.json entity_alternatives: coal_chp is active only in alternative coal_chp; the unit class is
+          not active by default; scenario coal = init, west, coal does not contain coal_chp"
+      - id: stored_value
+        kind: number
+        value: 1200
+        tolerance: {rel: 0.001}
+        unit: "MW"
+        scale_units: ["MW", "GW"]
+        critical: false
+        derivation: "tests.json: unit coal_chp existing = 1200 stored in alternative coal (in the chain, but the entity
+          is inactive, so the value is not used)"
+      - id: activating_alternative
+        kind: token
+        value: coal_chp
+        critical: false
+        derivation: "the alternative that activates coal_chp (entity_alternative coal_chp = true)"
+    tools_any: [[get_entity, get_parameter]]
+    manual: [facts_vs_assumptions]
+
+  G04:
+    facts:
+      - id: slack_per_year
+        kind: number
+        table: node_slack_up_d_e
+        value: 1033497.5
+        tolerance: {rel: 0.001}
+        unit: "MWh/a"
+        scale_units: ["MWh/a", "GWh/a", "TWh/a"]
+        critical: true
+        derivation: "slack[t] = max(0, -inflow[west,t] - 500) MW x 1 h over t0001..t0048 (west inflow of alternative
+          west); 36 hours have slack, sample total 5663 MWh (t0001 89, t0002 37, t0003 6, t0010-t0023 18+38+58+72+
+          64+53+41+34+67+189+196+170+127+50, t0030-t0048 7+49+94+182+230+274+302+307+293+280+268+255+267+372+365+308+
+          235+169+97); annualised 5663 x 8760 / 48 = 1033497.5 MWh/a"
+      - id: node
+        kind: entity
+        value: west
+        critical: true
+        derivation: "the node asked about"
+      - id: folder
+        kind: token
+        value: coal_1
+        critical: false
+        derivation: "the result folder of scenario coal from source number 1 (grounding_projects.py: <scenario>_<n>)"
+    allowed_derived:
+      - {value: 5663, note: "48-hour sample total in MWh, stated as a calculation"}
+      - {value: 182.5, note: "8760 / 48, the annualisation factor"}
+      - {value: 48, note: "hours of the sample"}
+    forbidden:
+      - {pattern: '(?i)\bbinding\b.*\bprov', note: "binding asserted as proven", critical: true}
+    tools_any: [[list_runs], [find_result_tables, search_docs], [query_result]]
+    manual: [facts_vs_assumptions]
+
+  G05:
+    facts:
+      - id: cost
+        kind: number
+        table: costs_dt_p
+        column: commodity_cost
+        value: 25000
+        tolerance: {rel: 0.001}
+        unit: "CUR"
+        scale_units: ["CUR", "kCUR", "MCUR"]
+        critical: true
+        derivation: "t0001: west demand 589 MW > 500, so coal_plant runs at 500 MW; fuel 500 / 0.4 x 1 h = 1250 MWh;
+          x coal price 20 CUR/MWh = 25000 CUR (costs_dt_p is per step, step duration and weight 1 applied, not
+          annualised); no CO2 price in scenario coal (group co2_price has co2_method none)"
+      - id: hour
+        kind: token
+        value: t0001
+        critical: false
+        derivation: "the first time step of period p2020"
+    allowed_derived:
+      - {value: 25000, note: "500 / 0.4 x 20, stated as a calculation"}
+      - {value: 1250, note: "fuel use in t0001, MWh"}
+      - {value: 0.025, note: "25000 CUR in M CUR"}
+    tools_any: [[list_runs], [find_result_tables, search_docs], [query_result]]
+    manual: [facts_vs_assumptions]
+
+  G07:
+    facts:
+      - id: failed
+        kind: statement
+        critical: true
+        criterion: "Says the latest run of demand_update_test failed (stopped in the input checks before a solve) and
+          gives no energy-not-served numbers from the folder as its results."
+        derivation: "grounding_projects.py RUN_ORDER: demand_update_test build 1 solved, then the source was rewritten
+          (DEMAND_UPDATE_REWRITE) and build 2 of the same scenario failed; the folder demand_update_test_1 holds build
+          1's files, which do not belong to the current input"
+      - id: reason
+        kind: statement
+        critical: true
+        criterion: "Gives the reason: node west's inflow (alternative demand_update) is keyed by period, which FlexTool
+          refuses."
+        derivation: "_validators.validate_node_inflow_not_period: \"node 'west' inflow (alternative 'demand_update') is
+          keyed by period (index_name 'period'; first-level keys: p2020)\"; DEMAND_UPDATE_REWRITE stores the inflow
+          as a map with index_name period, data [[p2020, -500.0]]"
+      - id: fix
+        kind: statement
+        critical: false
+        criterion: "Says how to fix it: give inflow as a constant or a time series, or use annual_flow with a scaling
+          inflow_method to vary demand by period; then run again."
+        derivation: "validator message: 'inflow is a constant or a time series and cannot be period-based; to vary
+          demand by period use annual_flow (constant or period) with an inflow_method that scales to it'"
+      - id: alternative
+        kind: token
+        value: demand_update
+        critical: false
+        derivation: "the alternative holding the period-keyed inflow"
+      - id: run_log
+        kind: statement
+        critical: false
+        criterion: "Points to the run's log or status for the details."
+        derivation: "P3 §6.3 G07 expectation"
+    successful_run_first:
+      folder: demand_update_test_1
+      reason_any: [["period"], ["inflow"]]
+      result_units: ["MWh", "MWh/a", "GWh/a", "TWh/a"]
+    tools_any: [[list_runs]]
+    manual: [facts_vs_assumptions]
+
+  G10:
+    facts:
+      - id: only_period
+        kind: token
+        value: p2020
+        critical: true
+        derivation: "solve y2020_2day_dispatch: period_timeset {p2020: 2day}, realized_periods [p2020]; scenario coal has
+          no other period, so there is no 2030 result"
+      - id: what_to_change
+        kind: statement
+        critical: false
+        criterion: "Says what would be needed: a 2030 period (e.g. p2030) in the solve's period_timeset and
+          realized_periods, with its data, and a new run."
+        derivation: "reference.md solve parameters period_timeset / realized_periods"
+    expect_unknown: true
+    unknown_units: ["CUR/MWh"]
+    tools_any: [[list_runs, find_result_tables, query_result, get_parameter]]
+    manual: [facts_vs_assumptions]
+
+  G11:
+    facts:
+      - id: penalty
+        kind: number
+        value: 900
+        tolerance: {rel: 0.001}
+        unit: "CUR/MWh"
+        scale_units: ["CUR/MWh"]
+        units_hedge: true
+        critical: true
+        derivation: "tests.json: node west penalty_up = 900 in alternative west"
+      - id: alternative
+        kind: statement
+        critical: false
+        criterion: "Names the alternative west as where the value is stored."
+        derivation: "tests.json parameter_values: [node, west, penalty_up, 900, west]"
+      - id: reason_not_in_data
+        kind: statement
+        critical: true
+        criterion: "Says the data does not record why 900 was chosen; any reason offered is marked as an assumption."
+        derivation: "the entity and the alternative have no description giving a reason (tests.json)"
+    allowed_derived:
+      - {value: 10000, note: "the schema default penalty_up, CUR/MWh"}
+    tools_any: [[get_parameter, get_entity]]
+    manual: [facts_vs_assumptions]
+
+  G06:
+    facts:
+      - id: difference
+        kind: statement
+        critical: true
+        criterion: "Names the only input difference: alternative co2_price sets group co2_price co2_method = price and
+          co2_price = 50 CUR/t; the group holds node coal_market."
+        derivation: "tests.json: coal_co2_price = init, west, coal, co2_price; alternative co2_price holds only
+          group co2_price co2_method price and co2_price 50; group__node co2_price-coal_market"
+      - id: same_dispatch
+        kind: statement
+        critical: true
+        criterion: "Says dispatch and unserved energy are the same in both scenarios (the CO2 cost adds cost but no
+          other unit or option exists)."
+        derivation: "coal_plant is the only source; its cost rises from 50 to 50 + 0.34 x 50 / 0.4 = 92.5 CUR/MWh,
+          still below penalty_up 900, so it still runs at min(demand, 500) MW"
+      - id: co2_cost_first_hour
+        kind: number
+        table: costs_dt_p
+        column: co2
+        value: 21250
+        tolerance: {rel: 0.001}
+        unit: "CUR"
+        scale_units: ["CUR", "kCUR", "MCUR"]
+        critical: true
+        derivation: "coal_co2_price t0001: fuel 1250 MWh x co2_content 0.34 t/MWh = 425 t x 50 CUR/t = 21250 CUR
+          (zero in coal); commodity cost of t0001 stays 25000 CUR in both"
+      - id: co2_cost_per_year
+        kind: number
+        table: annualized_costs_d_p
+        column: co2
+        value: 181.8065
+        tolerance: {rel: 0.001}
+        unit: "M CUR/a"
+        scale_units: ["M CUR/a"]
+        critical: false
+        derivation: "coal generation over the 48 h = demand 29103 MWh - slack 5663 MWh = 23440 MWh; fuel 23440 / 0.4 =
+          58600 MWh; CO2 58600 x 0.34 = 19924 t; x 50 = 996200 CUR; x 8760 / 48 = 181806500 CUR/a = 181.8065 M CUR/a"
+      - id: folders
+        kind: token
+        value: coal_co2_price_1
+        critical: false
+        derivation: "the result folder of coal_co2_price (source number 1); coal is in coal_1"
+    allowed_derived:
+      - {value: 25000, note: "commodity cost of t0001, CUR, both scenarios"}
+      - {value: 425, note: "CO2 of t0001, t"}
+      - {value: 17, note: "CO2 cost per MWh of fuel, 0.34 x 50"}
+      - {value: 42.5, note: "CO2 cost per MWh of electricity, 17 / 0.4"}
+      - {value: 92.5, note: "cost per MWh of electricity with CO2, 50 + 42.5"}
+      - {value: 181806500, note: "annual CO2 cost in CUR/a"}
+      - {value: 996200, note: "CO2 cost of the 48 h sample, CUR"}
+      - {value: 19924, note: "CO2 of the 48 h sample, t"}
+      - {value: 3636130, note: "annual CO2 emissions, t/a (19924 x 182.5)"}
+      - {value: 213.89, note: "annual commodity cost, M CUR/a (58600 x 20 x 182.5 / 1e6), both scenarios"}
+      - {value: 930.14775, note: "annual upward slack penalty, M CUR/a (5663 x 900 x 182.5 / 1e6), both scenarios"}
+      - {value: 1144.03775, note: "annual total cost of coal, M CUR/a"}
+      - {value: 1325.84425, note: "annual total cost of coal_co2_price, M CUR/a"}
+      - {value: 181.8065, note: "annual CO2 cost difference, M CUR/a"}
+    forbidden:
+      - pattern: '(?i)co2 price[^.]{0,60}\b(?:reduc|lower|decreas)\w*[^.]{0,40}\b(?:coal|generation|dispatch|output)'
+        note: "claims the CO2 price changes dispatch (no other source exists)"
+        critical: false
+    tools_any: [[get_parameter, get_entity], [query_result]]
+    manual: [facts_vs_assumptions]
+
+  G09:
+    facts:
+      - id: balance
+        kind: statement
+        critical: true
+        criterion: "States that the upward slack (vq_state_up) enters each node balance (nodeBalance_eq) on the supply
+          side, + (vq_state_up - vq_state_down) x step duration, so it covers demand the flows cannot meet, per node
+          and time step, as a non-negative variable."
+        derivation: "core.py EQ. nodeBalance_eq: ... + (vq_state_up[n,d,t] - vq_state_down[n,d,t]) * dt ... =
+          -inflow[n,d,t]; slack_convention.md: single non-negative variable"
+      - id: objective
+        kind: statement
+        critical: true
+        criterion: "States the objective term: vq_state_up x penalty_up (CUR/MWh) x step duration x timestep weight x
+          inflation factor / period share of year (x branch weight), i.e. the penalty per MWh scaled to a year and
+          to the price base."
+        derivation: "core.py OBJ. balance_slack_penalty: Σ vq_state_up * penalty_up * w_op, with w_op[d,t] =
+          step_duration * timestep_weight * inflation_op / period_share * branch_weight"
+      - id: penalty_parameter
+        kind: token
+        value: penalty_up
+        critical: false
+        derivation: "the node parameter of the upward slack price (default 10000 CUR/MWh)"
+      - id: cites_formulation
+        kind: statement
+        critical: false
+        criterion: "Cites the formulation documentation or the equation by name."
+        derivation: "P3 §6.3 G09 expectation"
+    allowed_derived:
+      - {value: 10000, note: "default penalty_up / penalty_down, CUR/MWh"}
+    tools_any: [[search_docs, read_doc]]
+    manual: [facts_vs_assumptions]
+
+  G08:
+    facts:
+      - id: slack_per_year
+        kind: number
+        table: node_slack_up_d_e
+        value: 1033497.5
+        tolerance: {rel: 0.001}
+        unit: "MWh/a"
+        scale_units: ["MWh/a", "GWh/a", "TWh/a"]
+        critical: true
+        derivation: "as G04: 5663 MWh over t0001..t0048 x 8760 / 48 = 1033497.5 MWh/a"
+      - id: largest_hour
+        kind: number
+        table: node_slack_up_dt_e
+        value: 372
+        tolerance: {rel: 0.001}
+        unit: "MW"
+        scale_units: ["MW", "GW"]
+        critical: false
+        derivation: "largest demand of t0001..t0048 is 872 MW at t0043; 872 - 500 = 372 MW"
+      - id: largest_hour_time
+        kind: token
+        value: t0043
+        critical: false
+        derivation: "inflow[west, t0043] = -872, the most negative of the 48 steps"
+      - id: only_unit
+        kind: entity
+        value: coal_plant
+        critical: true
+        derivation: "in scenario coal the only active unit is coal_plant (entity_alternative in coal); coal_chp,
+          wind_plant and all connections are inactive (classes not active by default)"
+      - id: capacity
+        kind: number
+        value: 500
+        tolerance: {rel: 0.001}
+        unit: "MW"
+        scale_units: ["MW", "GW"]
+        critical: true
+        derivation: "coal_plant existing = 500 MW, no investment allowed in scenario coal; demand exceeds 500 MW in
+          36 of the 48 hours"
+      - id: penalty
+        kind: number
+        value: 900
+        tolerance: {rel: 0.001}
+        unit: "CUR/MWh"
+        scale_units: ["CUR/MWh"]
+        critical: false
+        derivation: "node west penalty_up = 900 (alternative west); far above coal's 50 CUR/MWh, so slack is used only
+          where coal is at its limit"
+      - id: chain
+        kind: statement
+        critical: true
+        criterion: "Gives the chain: demand at west exceeds the only feeding capacity (coal_plant, 500 MW existing),
+          the node balance closes with upward slack priced at penalty_up 900, and the slack hours are those where
+          demand > 500 MW; the limit is stated as consistent with the data, not as proven binding."
+        derivation: "nodeBalance_eq at west: coal flow <= 500 MW (capacity), inflow up to -872, so vq_state_up =
+          demand - 500 in those hours; LP prefers coal (50) to slack (900)"
+      - id: fixes
+        kind: statement
+        critical: false
+        criterion: "Suggests real fixes: more capacity feeding west (allow investment, e.g. the coal_invest
+          parameters, or activate other units / connections), or lower demand; notes that changing the penalty only
+          reprices the shortfall."
+        derivation: "the slack disappears only when supply capacity at west reaches 872 MW or demand falls"
+    allowed_derived:
+      - {value: 5663, note: "48-hour sample total in MWh"}
+      - {value: 36, note: "hours with slack in the sample"}
+      - {value: 872, note: "peak demand at west, MW (t0043)"}
+      - {value: 182.5, note: "8760 / 48"}
+      - {value: 930.14775, note: "annual upward slack penalty, M CUR/a (5663 x 900 x 182.5 / 1e6)"}
+      - {value: 930147750, note: "annual upward slack penalty, CUR/a"}
+      - {value: 50, note: "coal_plant cost per MWh of electricity, 20 / 0.4"}
+    forbidden:
+      - {pattern: '(?i)\bbinding\b.*\bprov', note: "binding asserted as proven", critical: true}
+    tools_any: [[list_runs], [query_result, get_slack_summary], [get_entity, get_parameter]]
+    manual: [facts_vs_assumptions]
+
+  G12:
+    facts:
+      - id: invested
+        kind: number
+        table: unit_capacity_ed_p
+        column: invested
+        value: 372
+        tolerance: {rel: 0.001}
+        unit: "MW"
+        scale_units: ["MW", "GW"]
+        critical: true
+        derivation: "invest_2day_test = init, west, coal, coal_invest, invest_2day (invest_periods [p2020]).
+          Cost of 1 MW built in p2020: annuity 400 CUR/kW x 1000 x 0.05 / (1 - 1.05^-30) = 26020.57 CUR/MW/a plus
+          fixed_cost 100 CUR/kW/a x 1000 = 100000 CUR/MW/a, total 126020.57 CUR/MW for the one-year horizon.
+          Value of 1 MW in a sample hour with slack above it: (penalty 900 - fuel 20 / 0.4 = 50) = 850 CUR/MWh x
+          8760 / 48 = 155125 CUR/a > 126020.57, so every MW up to the peak slack is worth building (break-even 0.81
+          sample hours). Peak slack 372 MW at t0043 (872 - 500); invest_method invest_total applies only
+          invest_max_total 700 (not binding); invest_max_period (250 in p2020) is not applied under invest_total.
+          Built 372 MW, total 872 MW."
+      - id: slack_before
+        kind: number
+        table: node_slack_up_d_e
+        value: 1033497.5
+        tolerance: {rel: 0.001}
+        unit: "MWh/a"
+        scale_units: ["MWh/a", "GWh/a", "TWh/a"]
+        critical: false
+        derivation: "scenario coal, as G04: 5663 MWh x 8760 / 48"
+      - id: input_differences
+        kind: statement
+        critical: true
+        criterion: "Lists the input differences: invest_periods [p2020] on the solve, and coal_plant's invest_method
+          invest_total, invest_cost 400 CUR/kW, lifetime 30, discount_rate 0.05, fixed_cost 100 CUR/kW/a,
+          invest_max_total 700, invest_max_period map; and notes that fixed_cost also applies to the existing 500 MW
+          (a constant cost of 50 M CUR/a that does not change the decision)."
+        derivation: "tests.json alternative coal_invest + grounding_projects.py INVEST_2DAY; existing_fixed_cost OBJ:
+          500 MW x 100000 CUR/MW/a = 50000000 CUR/a"
+      - id: why_amount
+        kind: statement
+        critical: true
+        criterion: "Explains the amount by comparing the yearly cost per MW (annuity + fixed cost, about 126000 CUR/MW/a)
+          with the avoided penalty net of fuel per MW per year (850 CUR/MWh x 182.5 h/a per sample hour), so building
+          stops at the peak slack of 372 MW and the slack after is 0."
+        derivation: "LP marginal argument above; after investing 372 MW the capacity 872 MW covers every hour"
+      - id: limit
+        kind: statement
+        critical: false
+        criterion: "Says no investment limit binds (invest_max_total 700 > 372), and does not claim invest_max_period
+          250 caps the build (it is not used with invest_method invest_total)."
+        derivation: "core.py maxInvest_entity_period applies to ed_invest_period_set (invest_method with 'period');
+          maxInvest_entity_total applies to invest_total: 372 <= 700"
+      - id: slack_after
+        kind: statement
+        critical: false
+        criterion: "Says the upward slack at west in invest_2day_test is 0 (all hours covered)."
+        derivation: "872 MW >= peak demand 872 MW"
+    allowed_derived:
+      - {value: 26020.57, note: "annuity per MW, CUR/MW/a", tolerance: {rel: 0.001}}
+      - {value: 26.02057, note: "annuity per kW, CUR/kW/a", tolerance: {rel: 0.001}}
+      - {value: 0.0650514, note: "annuity factor 0.05 / (1 - 1.05^-30)", tolerance: {rel: 0.001}}
+      - {value: 100000, note: "fixed cost per MW, CUR/MW/a"}
+      - {value: 126020.57, note: "yearly cost per MW, CUR/MW/a", tolerance: {rel: 0.001}}
+      - {value: 126.02, note: "yearly cost per kW, CUR/kW/a", tolerance: {rel: 0.001}}
+      - {value: 155125, note: "avoided net penalty per MW per sample hour, CUR/a (850 x 182.5)"}
+      - {value: 164250, note: "avoided penalty per MW per sample hour before fuel, CUR/a (900 x 182.5)"}
+      - {value: 850, note: "penalty 900 minus fuel 50, CUR/MWh"}
+      - {value: 50, note: "coal_plant fuel cost per MWh of electricity"}
+      - {value: 872, note: "peak demand and the capacity after investing, MW"}
+      - {value: 5663, note: "48-hour sample slack total of coal, MWh"}
+      - {value: 182.5, note: "8760 / 48"}
+      - {value: 0.81, note: "break-even sample hours", tolerance: {rel: 0.01}}
+      - {value: 50000000, note: "fixed cost of the existing 500 MW, CUR/a"}
+      - {value: 9.6797, note: "annualised investment of 372 MW, M CUR/a", tolerance: {rel: 0.001}}
+      - {value: 37.2, note: "fixed cost of 372 MW, M CUR/a"}
+      - {value: 400000, note: "invest_cost per MW, CUR/MW"}
+    tools_any: [[get_parameter, get_entity], [query_result]]
+    manual: [facts_vs_assumptions]
+
+  S01:
+    facts:
+      - id: turn1_capacity
+        kind: number
+        value: 500
+        tolerance: {rel: 0.001}
+        unit: "MW"
+        scale_units: ["MW", "GW"]
+        turn: 1
+        critical: true
+        derivation: "coal_plant existing = 500 (alternative coal)"
+      - id: turn2_efficiency
+        kind: number
+        value: 0.4
+        tolerance: {rel: 0.001}
+        turn: 2
+        critical: true
+        derivation: "coal_plant efficiency = 0.4 (alternative coal)"
+      - id: turn3_wind_plant
+        kind: statement
+        turn: 3
+        critical: true
+        criterion: "Says wind_plant is not part of (not active in) scenario coal."
+        derivation: "tests.json: wind_plant is active only in alternatives wind, wind_growth_cap_pre_built,
+          wind_no_investment_10yr; none is in init, west, coal"
+      - id: turn3_entity
+        kind: entity
+        value: wind_plant
+        turn: 3
+        critical: false
+        derivation: "the entity asked about"
+      - id: turn4_node
+        kind: entity
+        value: west
+        turn: 4
+        critical: true
+        derivation: "unit__outputNode coal_plant-west (its input is coal_market)"
+      - id: turn5_penalty
+        kind: number
+        value: 900
+        tolerance: {rel: 0.001}
+        unit: "CUR/MWh"
+        scale_units: ["CUR/MWh"]
+        units_hedge: true
+        turn: 5
+        critical: true
+        derivation: "node west penalty_up = 900 (alternative west)"
+      - id: turn6_slack_per_year
+        kind: number
+        table: node_slack_up_d_e
+        value: 1033497.5
+        tolerance: {rel: 0.001}
+        unit: "MWh/a"
+        scale_units: ["MWh/a", "GWh/a", "TWh/a"]
+        turn: 6
+        critical: true
+        derivation: "as G04: 5663 MWh x 8760 / 48 = 1033497.5 MWh/a"
+      - id: turn7_largest
+        kind: number
+        table: node_slack_up_dt_e
+        value: 372
+        tolerance: {rel: 0.001}
+        unit: "MW"
+        scale_units: ["MW", "GW"]
+        turn: 7
+        critical: true
+        derivation: "max over t0001..t0048 of (demand - 500) = 872 - 500 = 372 MW"
+      - id: turn7_hour
+        kind: token
+        value: t0043
+        turn: 7
+        critical: true
+        derivation: "inflow[west, t0043] = -872, the largest demand of the 48 steps"
+      - id: turn8_price
+        kind: number
+        value: 20
+        tolerance: {rel: 0.001}
+        unit: "CUR/MWh"
+        scale_units: ["CUR/MWh"]
+        units_hedge: true
+        turn: 8
+        critical: true
+        derivation: "commodity coal price = 20 (alternative coal)"
+    allowed_derived:
+      - {value: 5663, note: "48-hour sample slack total, MWh"}
+      - {value: 182.5, note: "8760 / 48"}
+      - {value: 872, note: "peak demand at west, MW"}
+      - {value: 40, note: "efficiency written as 40 %"}
+    forbidden:
+      - {pattern: '(?i)still too long', note: "the conversation stopped as too long", critical: true}
+    tools_any: [[get_entity, get_parameter], [query_result]]
+    manual: [facts_vs_assumptions]
