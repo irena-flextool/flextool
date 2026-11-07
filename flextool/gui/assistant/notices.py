@@ -9,6 +9,7 @@ modal dialog of the assistant shares.
   on Cancel, Return does not accept, and the accept button ignores activation for the first 500 ms after the
   dialog is mapped, so a key still being typed in the chat cannot accept it.
 * :class:`RenameChatDialog` — one entry for the chat's name (§4.3); empty goes back to the number.
+* :class:`ConfirmDialog` — one question with an action and Cancel (closing an unsaved chat, deleting a chat).
 
 The dialogs are callback-based (never ``wait_window``), centred on their parent, closed by Escape and the window
 button as Cancel, and modal through :class:`ModalGrab`, which takes the grab once the dialog is mapped (retrying for
@@ -441,3 +442,40 @@ class RenameChatDialog(_AssistantDialog):
         self._done = True
         self.close()
         self._on_done(name)
+
+
+class ConfirmDialog(_AssistantDialog):
+    """A question with one action and Cancel (close an unsaved chat, delete a chat).  The focus starts on
+    Cancel; *on_answer(True)* only from the action button."""
+
+    def __init__(self, parent: tk.Misc, title: str, message: str, action: str,
+                 on_answer: Callable[[bool], None]) -> None:
+        super().__init__(parent, title)
+        self._on_answer = on_answer
+        self._answered = False
+        self.message_label = self.paragraph(self.body, message)
+        row = self.buttons()
+        self.cancel_button = ttk.Button(row, text=strings.CANCEL, command=self.cancel)
+        self.cancel_button.pack(side="right")
+        self.action_button = ttk.Button(row, text=action, command=lambda: self._answer(True))
+        self.action_button.pack(side="right", padx=(0, self.cw))
+        self.bind("<Destroy>", self._on_destroy, add="+")
+        self.show()
+
+    def initial_focus(self) -> tk.Misc | None:
+        return self.cancel_button
+
+    def cancel(self) -> None:
+        self._answer(False)
+
+    def _answer(self, accepted: bool) -> None:
+        if self._answered:
+            return
+        self._answered = True
+        self.close()
+        self._on_answer(accepted)
+
+    def _on_destroy(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        if event.widget is self and not self._answered:
+            self._answered = True
+            self._on_answer(False)
