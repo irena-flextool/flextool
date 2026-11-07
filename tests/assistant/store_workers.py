@@ -101,3 +101,19 @@ def ledger_loop(root: str, requests: int, go) -> None:
     go.wait(30)
     for _ in range(requests):
         ledger.record("gemini", "Google Gemini", "model-a", Usage(10, 0, 0, 1))
+
+
+def record_consents(root: str, tag: str, count: int, ready, go, out) -> None:
+    """Accept the data notice for *count* endpoints of its own (``https://{tag}-{i}.example.test/v1``) as fast as
+    it can, as two FlexTool windows or a window and a terminal would at the same moment."""
+    from flextool.assistant import endpoint
+    from flextool.assistant.providers import PRESETS
+
+    preset = PRESETS["openai_compatible"]
+    ready.set()
+    go.wait(30)
+    for i in range(count):
+        base_url = f"https://{tag}-{i}.example.test/v1"
+        route = endpoint.route_for(preset, base_url)
+        endpoint.record_consent(endpoint.consent_key(preset.id, base_url, route), Path(root))
+    out.put(count)
