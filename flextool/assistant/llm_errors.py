@@ -4,7 +4,9 @@ Every backend turns the provider library's exception into one :class:`LLMError` 
 :func:`classify_openai` or :func:`classify_anthropic`.  The classifier reads the error type in the body first (walked
 recursively: a Gemini body may be a list), then the HTTP status, then the headers; an error inside a stream (no
 status) is classified from its body alone.  :data:`MESSAGES` holds every text the user sees, in plain English with
-no abbreviations; ``{provider}`` is the label of the route (for example "Ollama cloud").
+no abbreviations; ``{provider}`` is the label of the route (for example "Ollama cloud").  The messages name the
+terminal's commands; :func:`message_for` gives the FlexTool window's wording (:data:`GUI_MESSAGES`) where it
+differs.
 """
 from __future__ import annotations
 
@@ -64,6 +66,19 @@ MESSAGES: dict[str, str] = {
     "cancelled": "Stopped.",
     "unknown_stop": "The provider ended the answer for a reason FlexTool does not know ({reason}).",
     "model_list": "The model list could not be fetched: {reason}. Type the model name instead.",
+}
+
+#: The FlexTool window's wording of the messages that name terminal commands (P2 §9.5), by message key.
+GUI_MESSAGES: dict[str, str] = {
+    "auth": ("{provider} did not accept the key (from {key_source}). Check or replace the key in the assistant "
+             "settings."),
+    "no_key": ("No key found for {provider}. Paste a key in the assistant settings, or set the environment "
+               "variable {env_name}."),
+    "model": "{provider} has no model named {model}. Pick one from the list in the assistant settings.",
+    "context": ("The conversation is still too long for {model}. Start a new chat; \u201cNew chat with summary\u201d "
+                "keeps a short summary of this one."),
+    "internal": ("The assistant stopped because of an internal fault ({type}). Please report it; the details are "
+                 "in the FlexTool log."),
 }
 
 #: Refusal categories in plain English; any other category is "the provider's usage rules".
@@ -136,6 +151,12 @@ class LLMError(Exception):
         self.local = local
         self.partial_text = partial_text
         self.fields = dict(fields or {})
+        self.message_key: str | None = None     # the MESSAGES key the user message was made from
+
+    @property
+    def params(self) -> dict[str, str]:
+        """The values the message names (``provider``, ``model``, ``key_source``, ``env_name``, …) as text."""
+        return {key: str(value) for key, value in self.fields.items()}
 
     def __str__(self) -> str:
         return self.user_message
@@ -223,7 +244,23 @@ def make_error(cls: type[LLMError], key: str, ctx: ErrorContext, **kwargs: Any) 
     """An error of *cls* with the message *key* for *ctx*; *kwargs* go to :class:`LLMError`."""
     extra = kwargs.pop("message_fields", {})
     fields = {**ctx.fields(), **extra}
-    return cls(MESSAGES[key].format(**fields), provider=ctx.provider, local=ctx.local, fields=fields, **kwargs)
+    err = cls(MESSAGES[key].format(**fields), provider=ctx.provider, local=ctx.local, fields=fields, **kwargs)
+    err.message_key = key
+    return err
+
+
+def message_for(err: LLMError, front_end: str) -> str:
+    """The message of *err* for *front_end*: the FlexTool window's wording (``"gui"``) where it differs, else the
+    terminal's (:attr:`LLMError.user_message`)."""
+    if front_end == "gui" and err.message_key in GUI_MESSAGES and err.user_message == MESSAGES[err.message_key] \
+            .format(**err.fields):
+        return GUI_MESSAGES[err.message_key].format(**err.fields)
+    return err.user_message
+
+
+def internal_fault_message(type_name: str) -> str:
+    """The FlexTool window's message for an unexpected fault of the assistant itself."""
+    return GUI_MESSAGES["internal"].format(type=type_name)
 
 
 def cancelled(ctx: ErrorContext | None = None, **kwargs: Any) -> Cancelled:
