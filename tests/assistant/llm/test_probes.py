@@ -80,6 +80,9 @@ def test_ollama_local_model_facts_and_route(server):
         40960, 16384, 16384, True, None)
     assert facts.partly_on_cpu and facts.notes == (
         "This model doesn't fit fully in graphics memory and will be slower.",)
+    # The settings show the hint from the last probe (they never probe themselves, P1-O10).
+    assert probes.recent_facts("ollama", conn.base_url + "/", conn.model) == facts
+    assert probes.recent_facts("ollama", conn.base_url, "another-model") is None
     route = endpoint.route_for(preset, conn.base_url, facts=facts)
     assert (route.kind, route.label, route.forwarded_to, route.proxy_host) == ("loopback", "Ollama", None, None)
     assert endpoint.indicator_text(route) == (

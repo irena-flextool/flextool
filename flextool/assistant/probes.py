@@ -428,14 +428,43 @@ def probe(preset: Preset, conn: Connection, cancel: threading.Event, *, needed: 
 
     ctx = error_context(preset, conn)
     if preset.context_probe == "ollama":
-        return _probe_ollama(conn, ctx, cancel, on_event, needed)
-    if preset.context_probe == "lmstudio":
-        return _probe_lmstudio(conn, ctx, cancel, on_event, needed)
-    if preset.context_probe == "openrouter":
-        return _probe_openrouter(conn, ctx, cancel, clock)
-    if preset.context_probe == "anthropic":
-        return _probe_anthropic(preset, conn, cancel, backend)
-    return ModelFacts()
+        facts = _probe_ollama(conn, ctx, cancel, on_event, needed)
+    elif preset.context_probe == "lmstudio":
+        facts = _probe_lmstudio(conn, ctx, cancel, on_event, needed)
+    elif preset.context_probe == "openrouter":
+        facts = _probe_openrouter(conn, ctx, cancel, clock)
+    elif preset.context_probe == "anthropic":
+        facts = _probe_anthropic(preset, conn, cancel, backend)
+    else:
+        facts = ModelFacts()
+    remember_facts(preset.id, conn.base_url, conn.model, facts)
+    return facts
+
+
+# --- the facts of the last probes, for the settings (which never probe) -------------------------------------------
+_RECENT: dict[tuple[str, str, str], ModelFacts] = {}
+_RECENT_LOCK = threading.Lock()
+
+
+def _recent_key(preset_id: str, base_url: str, model: str) -> tuple[str, str, str]:
+    return preset_id, net.normalise_endpoint(base_url), model
+
+
+def remember_facts(preset_id: str, base_url: str, model: str, facts: ModelFacts) -> None:
+    """Keep *facts* as the last probe's of *model* at *base_url* (in this process only)."""
+    with _RECENT_LOCK:
+        _RECENT[_recent_key(preset_id, base_url, model)] = facts
+
+
+def recent_facts(preset_id: str, base_url: str, model: str) -> ModelFacts | None:
+    """The facts the last probe in this process found for *model* at *base_url*, ``None`` when none ran.  The
+    settings show its hints (a model partly on the processor, P1-O10) without asking any server."""
+    try:
+        key = _recent_key(preset_id, base_url, model)
+    except ValueError:
+        return None
+    with _RECENT_LOCK:
+        return _RECENT.get(key)
 
 
 def _probe_anthropic(preset: Preset, conn: Connection, cancel: threading.Event, backend: Any) -> ModelFacts:

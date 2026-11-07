@@ -29,8 +29,14 @@ def widgets(widget: tk.Misc) -> Iterator[tk.Misc]:
 
 def key(widget: tk.Misc, sequence: str) -> None:
     """Send the key event *sequence* to *widget*: Tk delivers key events to the window that has the focus, so the
-    focus is moved there first."""
-    widget.focus_force()
-    widget.update()
+    focus is moved there first — again until it is there, because the windows of tests running in other processes
+    on the same display take the focus too."""
+    deadline = time.monotonic() + 2.0
+    while True:
+        widget.focus_force()
+        widget.update()
+        if widget.focus_get() is widget or time.monotonic() >= deadline:
+            break
+        time.sleep(0.01)
     widget.event_generate(sequence)
     widget.update()
