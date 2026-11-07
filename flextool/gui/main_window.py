@@ -29,6 +29,8 @@ from flextool.gui.settings_io import (
     save_project_settings,
     solver_defaults_notice,
 )
+from flextool.gui.assistant.entry import AssistantEntry
+from flextool.gui.assistant.strings import PROJECT_STILL_FINISHING as ASSISTANT_STILL_FINISHING
 from flextool.gui.check_tree import CheckTreeController
 from flextool.gui.data_models import GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.input_sources import InputSourceManager
@@ -314,6 +316,8 @@ class MainWindow(tk.Tk):
         self._pending_execution_scenarios: list[ScenarioInfo] = []
         self._lock_check_timer_id: str | None = None
         self.db_editor_mgr = DbEditorManager()
+        # The AI assistant: side-menu entry, chat window and runtime context file (flextool/gui/assistant/entry.py).
+        self._assistant = AssistantEntry(self)
 
         # Pre-conversion state for xlsx→sqlite before execution
         self._xlsx_converting_sources: set[str] = set()
@@ -708,10 +712,10 @@ class MainWindow(tk.Tk):
         self.auto_comp_excel_var.trace_add("write", self._on_auto_gen_toggled)
 
         # --- Side menu column (col 2): two vertical groups -------------
-        # Top:    Debug · themes · Png settings
-        # Bottom: Execution jobs · Results viewer (anchored to the
-        #         bottom of the section, touching the divider)
-        # A weighted-1 spacer row in the middle absorbs the slack so the
+        # Top:    Save memory · Solver options · Debug · Png settings (rows 0-3)
+        # Bottom: AI assistant · Execution jobs · Results viewer (rows 5-7,
+        #         anchored to the bottom of the section, touching the divider)
+        # The weighted-1 spacer row 4 in the middle absorbs the slack so the
         # two groups separate cleanly.
         from flextool.gui.hover_tooltip import attach_tooltip as _attach_tip
         side_menu = ttk.Frame(outer)
@@ -807,7 +811,9 @@ class MainWindow(tk.Tk):
         )
         self.plot_menu_btn.grid(row=3, column=0, sticky="w", pady=(0, 2))
 
-        # Row 5 is the stretch spacer; bottom group lives in rows 6-7.
+        # Row 4 is the stretch spacer; the bottom group lives in rows 5-7:
+        # the AI assistant entry (row 5, built below), Execution jobs and
+        # Results viewer.
         self.execution_menu_btn = ttk.Button(
             side_menu, text="Execution jobs…", width=22,
             command=self._on_execution_menu,
@@ -821,6 +827,10 @@ class MainWindow(tk.Tk):
             command=self._on_view_results,
         )
         self.view_results_btn.grid(row=7, column=0, sticky="sw", pady=(2, 0))
+
+        # "AI assistant…" with its settings button, as wide as the width-22
+        # buttons below it (the Debug row makes the column itself wider).
+        self._assistant.build(side_menu, row=5, align_with=self.execution_menu_btn)
 
         # ── Separator ────────────────────────────────────────────────
         sep = ttk.Separator(outer, orient="horizontal")
@@ -1174,6 +1184,10 @@ class MainWindow(tk.Tk):
         # mid-solve).
         self.after(2200, self._check_polars_async)
 
+        # Delete expired AI assistant conversations and the runtime context
+        # files of FlexTool windows that are gone (daemon thread).
+        self.after(3000, self._assistant.startup_purge)
+
     def _check_update_async(self) -> None:
         """Probe for a newer version off the UI thread, then update the button.
 
@@ -1402,6 +1416,13 @@ class MainWindow(tk.Tk):
             return
         new_name = new_name.strip()
 
+        # The AI assistant's chat window closes first and its workers get a
+        # moment to finish; one still running a tool call refuses the rename.
+        if not self._assistant.before_project_change(self.current_project):
+            messagebox.showinfo(
+                "Rename project", ASSISTANT_STILL_FINISHING, parent=self,
+            )
+            return
         try:
             rename_project(self.current_project, new_name)
         except FileExistsError:
@@ -1409,6 +1430,7 @@ class MainWindow(tk.Tk):
                 "Already exists",
                 f"A project named '{new_name}' already exists.",
             )
+            self._assistant.ensure_open(self.current_project)
             return
         except FileNotFoundError:
             messagebox.showerror(
@@ -1418,6 +1440,7 @@ class MainWindow(tk.Tk):
             return
         except OSError as exc:
             messagebox.showerror("Error", str(exc))
+            self._assistant.ensure_open(self.current_project)
             return
 
         # Update global settings if the renamed project was the recent one
@@ -1695,24 +1718,42 @@ class MainWindow(tk.Tk):
         # Import here to avoid circular imports at module level
         from flextool.gui.dialogs.project_dialog import ProjectDialog
 
-        dlg = ProjectDialog(self, current_project=self.current_project)
+        dlg = ProjectDialog(
+            self, current_project=self.current_project,
+            before_project_change=self._assistant.before_project_change,
+        )
+
+        # The open project under the name the dialog left it with (it may
+        # have been renamed there).
+        current = dlg.renamed_current or self.current_project
 
         # Handle deletion of the currently-open project before any
         # potential switch — _switch_project below would otherwise
         # overwrite current_project and mask the deletion.
-        if self.current_project and self.current_project in dlg.deleted_names:
+        deleted = bool(current) and current in dlg.deleted_names
+        if deleted:
             self._reset_to_no_project()
 
         if dlg.result:
             self._switch_project(dlg.result)
+        elif dlg.renamed_current and not deleted:
+            # The open project was renamed: open it under its new name.
+            if self.global_settings.recent_project == self.current_project:
+                self.global_settings.recent_project = dlg.renamed_current
+            self._switch_project(dlg.renamed_current)
         else:
             # No project opened — refresh the combo so any deletions
             # are reflected even if the user cancelled afterwards.
             self._refresh_project_combo()
+            # A rename or deletion of the open project that was refused or
+            # failed left it open: keep its AI assistant runtime file.
+            if self.current_project and not deleted:
+                self._assistant.ensure_open(self.current_project)
 
     def _reset_to_no_project(self) -> None:
         """Tear down per-project state after the open project is deleted."""
         # Close child windows tied to the deleted project.
+        self._assistant.close_for_project()
         if self.execution_mgr is not None:
             try:
                 self.execution_mgr.kill_all()
@@ -1761,21 +1802,26 @@ class MainWindow(tk.Tk):
           * ExecutionWindow exec_jobs_sash, exec_jobs_layout_cw and the saved
             per-configuration geometry.
           * The main window's saved per-configuration geometry.
+          * The AI assistant window's saved per-configuration geometry.
 
-        Any currently open ResultViewer / ExecutionWindow is closed; the
-        next time it opens it uses computed defaults. The main-window default
-        applies on next launch.
+        Any currently open ResultViewer / ExecutionWindow / AI assistant
+        window is closed; the next time it opens it uses computed defaults.
+        The main-window default applies on next launch.
         """
         confirm = messagebox.askyesno(
             "Reset window layout",
             "Discard saved window sizes and sash positions for the result "
-            "viewer and execution window?\n\nOpen result viewer and "
-            "execution window will be closed; their defaults will apply "
-            "the next time you open them.",
+            "viewer, execution window and AI assistant window?\n\nOpen "
+            "result viewer, execution window and AI assistant window will be "
+            "closed; their defaults will apply the next time you open them.",
             parent=self,
         )
         if not confirm:
             return
+
+        # The AI assistant window writes its size at close, so it closes
+        # before the saved sizes are cleared.
+        self._assistant.close_window()
 
         # Project-scoped settings (viewer) — only if a project is loaded
         if self.current_project:
@@ -1800,6 +1846,8 @@ class MainWindow(tk.Tk):
         self.global_settings.exec_jobs_geometry = {}
         self.global_settings.main_window_geometry = {}
         self.global_settings.main_window_layout_cw = 0
+        self.global_settings.assistant_window_geometry = {}
+        self.global_settings.assistant_window_layout_cw = 0
         try:
             save_global_settings(get_projects_dir(), self.global_settings)
         except Exception:
@@ -1820,7 +1868,7 @@ class MainWindow(tk.Tk):
         messagebox.showinfo(
             "Reset window layout",
             "Saved window layout cleared. Defaults will apply next time the "
-            "result viewer or execution window opens.",
+            "result viewer, execution window or AI assistant window opens.",
             parent=self,
         )
 
@@ -1851,6 +1899,8 @@ class MainWindow(tk.Tk):
                 return
             self.execution_mgr.kill_all()
 
+        # The AI assistant's chat window belongs to the previous project.
+        self._assistant.close_for_project()
         if self.execution_window is not None and self.execution_window.winfo_exists():
             self.execution_window.destroy()
         self.execution_window = None
@@ -1931,6 +1981,9 @@ class MainWindow(tk.Tk):
         # Start periodic lock file checking
         self._start_lock_check_timer()
 
+        # Keep the AI assistant's runtime context file of this project.
+        self._assistant.project_opened(name)
+
     def _clear_all_lists(self) -> None:
         """Clear all treeview widgets."""
         for item in self.input_sources_tree.get_children():
@@ -1954,6 +2007,15 @@ class MainWindow(tk.Tk):
             )
             if not result:
                 return
+
+        # The AI assistant: windows withdrawn, answers stopped without asking
+        # (what was received is saved, a running tool call is recorded as not
+        # run), runtime file deleted, expired chats purged — within 3 s.  Before
+        # the settings are saved below: the chat window's size goes into them.
+        try:
+            self._assistant.on_flextool_close()
+        except Exception:
+            logger.exception("Error closing the AI assistant")
 
         # Kill all running subprocesses (cleanup is idempotent)
         try:
