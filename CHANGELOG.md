@@ -5,6 +5,18 @@
   peak memory about tripled on large models (the same LP), so 4.2.0 held polars below 2. polar-high 3.12.3 runs
   these joins in the order they are written, so FlexTool now requires polar-high 3.12.3 and accepts polars 1.40 or
   newer below 3.
+- **New: the AI assistant in the FlexTool window.** "AI assistant…" in the side menu opens a chat window for the
+  open project; ⚙ beside it opens the assistant settings (service, address, key, model, level, privacy settings
+  sent with each request, how many chats may wait for the service at once, how long conversations are kept). The
+  first use explains how the assistant works; nothing is sent until you send a question, and before the first
+  question goes to a service on the internet (or an Ollama cloud model) the data notice asks you to accept. The
+  window says where the data goes. Each question also tells the assistant what is selected in the FlexTool window
+  and the result viewer. Chats are numbered tabs: several can answer at once, they can be renamed, closed,
+  reopened and deleted from the Chats menu, and the open ones come back when the window opens again. Closing
+  FlexTool stops the answers and keeps what was received. Renaming a project moves its saved chats, deleting it
+  deletes them. The window and the terminal chat share settings, keys, accepted notices and conversations. An
+  agent connected with `flextool-assistant --mcp` sees the window's selections through `get_gui_context` while the
+  project is open in the window. See "The AI assistant" in the documentation.
 - **New: chat with an AI model about a FlexTool project in the terminal.** `flextool-assistant --project-path
   <project folder>` asks your questions to the AI service you choose — OpenAI, Anthropic, Mistral, OpenRouter,
   Google Gemini, a model on this computer with Ollama or LM Studio, or any service with the OpenAI request format —

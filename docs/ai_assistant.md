@@ -15,11 +15,15 @@ The tools give the assistant:
   results;
 - the FlexTool documentation, including the model's equations and the list of result tables.
 
-There are two ways to use it:
+There are three ways to use it:
 
-- **Chat in the terminal**: `flextool-assistant` talks to an AI model of the service you choose (a service on the
-  internet with your key, or a model running on this computer) and gives it the tools.
+- **Chat in the FlexTool window**: "AI assistant…" in the side menu opens a chat window for the open project. It
+  talks to an AI model of the service you choose (a service on the internet with your key, or a model running on
+  this computer), gives it the tools, and tells it what you have selected in the window.
+- **Chat in the terminal**: `flextool-assistant` does the same in a terminal.
 - **Connect an AI agent** such as Claude Code: the agent starts the tools itself and uses its own model.
+
+The window and the terminal share the settings, the keys, the accepted data notices and the saved conversations.
 
 ## Where your data goes
 
@@ -35,6 +39,87 @@ The only reliable way to keep the data on this computer is a model that runs on 
 needs a powerful computer. Some models offered through such programs still run elsewhere: Ollama's cloud models
 are sent to Ollama's servers. The chat finds out before it sends anything and treats them as a service on the
 internet.
+
+## Chat in the FlexTool window
+
+### Open the chat
+
+"AI assistant…" is in the side menu above "Execution jobs…"; the ⚙ button beside it opens the assistant settings.
+The first time either is used, a short text explains how the assistant works ("How this works" in the chat window
+shows it again); "Open settings" there goes straight to the settings. Opening FlexTool or the chat window sends
+nothing: your data leaves this computer only when you send a question.
+
+The chat window belongs to the open project. It closes when you switch to another project, rename the project or
+delete it, and it is as tall as the screen it opens on. A size and place you give it are remembered for that screen
+layout ("Reset window layout" in "UI settings…" forgets them).
+
+### Settings
+
+| Setting | What it does |
+|---|---|
+| Provider, Address | The AI service (see [Services](#services)); the address can be changed for a model on this computer or a custom endpoint. |
+| Key | "Store key" keeps the pasted key in the system keyring, or, after a warning, unencrypted in a file. A key in the service's environment variable is used instead of a stored one, and the dialog says so. The key is never shown again. |
+| Model | The service's own model list ("Refresh list"), or type a model name. |
+| Level | Automatic (from the model name), or a level you choose up to the model's own (see [Levels](#levels)); for a model FlexTool does not recognise, higher levels are offered at your own risk. |
+| Questions answered at the same time | 1 to 4 (default 1): how many chats may wait for the service at once; more chats wait their turn, so several chats on a free plan do not multiply its "too many requests" answers. |
+| Data use | Where the data goes, the privacy settings sent with every request (OpenRouter's data-collection setting can be turned off, after a question), and the settings only your account can change. |
+| Keep conversations for | Days (default 30). Older conversations are deleted when FlexTool closes; `0` saves no conversations. |
+
+Saved settings apply to each chat from its next question.
+
+### Ask
+
+Type in the box at the bottom and press Enter to send; Ctrl+Enter starts a new line. The question shows at once,
+and you can type the next one while the answer comes; Send is available again when the answer is done. Stop (or
+Escape) stops the answer; what arrived stays in the chat.
+
+Each question also tells the assistant what you have selected in the FlexTool window: the input sources and
+scenarios checked and highlighted, the results checked and highlighted (with whether their latest run succeeded),
+and what the result viewer shows (mode, scenarios, plot and time range). The assistant uses the highlighted input
+source and scenario when your question names none.
+
+Each tool call is one line in the chat; click it (or press Enter on it) to see the arguments and the first 4 000
+characters of what was sent to the service. After each answer a line gives the tokens used, the chat's totals are
+at the bottom, and the window's last line gives this month's tokens of the service. An error that a setting fixes
+comes with an "Open settings" button; a conversation that got too long for the model offers "New chat" and "New chat
+with summary".
+
+### Data notice and where the data goes
+
+The top line of the window says where the data of the current chat goes, in the same words as the terminal (see
+[Start a chat](#start-a-chat)), and a second line says when a privacy setting is turned off. Before the first
+question goes to a service on the internet or to an Ollama cloud model, the window shows the data notice of
+[The data notice](#the-data-notice) with "Send to …" and "Cancel"; Cancel sends nothing. "Send to …" cannot be
+pressed in the first half second, so a key pressed while you were still typing does not accept it. Accepting it
+in the window or in the terminal is the same acceptance.
+
+### Chats
+
+Each chat is a tab, named by a number ("1", "2", …) that a chat of the project keeps for good. The last tab is
+always an empty "New chat": sending a question there makes it a chat, and a new "New chat" appears. Several chats
+can answer at the same time (see "Questions answered at the same time"). A sign before the number says what a chat
+is doing: "…" working, "‖" waiting for its turn, "?" its data notice is open, "!" its last question ended with an
+error, "•" an answer arrived while you were in another chat.
+
+- **Chats menu**: the open chats (also those that do not fit in the tab row, counted on the button as "Chats (3
+  more)"), New chat, "Reopen a saved chat", "Delete a saved chat" and "Delete all closed chats…", Rename chat… and
+  Close chat. A saved chat is listed with its number, its name, its date and the first words of its first
+  question.
+- **Rename**: "Rename chat…" in the Chats menu or the tab's right-click menu, or a double click on the tab. An empty
+  name shows the number again.
+- **Close**: "Close chat", Ctrl+W or a middle click. The answer stops, what was received is saved, and the chat is
+  under "Reopen a saved chat". When conversations are not saved (`0` days), closing a chat that has questions asks
+  first.
+- **Keys**: Ctrl+Tab and Ctrl+Shift+Tab (or Ctrl+Page Down and Ctrl+Page Up) go to the next and the previous chat,
+  Ctrl+T to "New chat". On macOS Command+T and Command+W work too.
+
+The chats that were open come back when you open the chat window again, also after FlexTool restarts. An answer
+that was in progress is not restarted; ask again if you need it.
+
+Closing FlexTool stops every answer without asking and saves what was received; a tool call that was running is
+recorded as not run, so the chat can go on after a restart. Renaming a project moves its saved chats with it, and
+deleting a project deletes them. While a chat is still finishing a tool call, a rename or deletion of its project
+is refused for a moment: "The AI assistant is still finishing a tool call. Try again in a moment."
 
 ## Chat in the terminal
 
@@ -260,6 +345,13 @@ Then start Claude Code and ask, for example, "What is the existing capacity of c
 "Did the latest run of scenario base succeed, and if not, why?". Claude Code starts the tools itself when it needs
 them; you do not start anything by hand. `claude mcp list` shows whether the connection works.
 
+While the project is open in the FlexTool window, the agent's `get_gui_context` tool returns what is selected there
+(the input sources, scenarios and results checked and highlighted, and what the result viewer shows), so you can
+ask about "the selected run". The window keeps these names and selections in a small file in the assistant folder
+(no paths, no data values, nothing from your chats) and deletes it when the project closes; the agent's service
+gets them only when the agent calls the tool. Without the window, the tool says so and gives the options the tools
+were started with.
+
 To connect another project, add it under another name (`claude mcp add flextool-other -- …`), or remove the first
 one (`claude mcp remove flextool`).
 
@@ -330,7 +422,7 @@ flextool-assistant --project-path /home/me/flextool/projects/MyProject --call ge
 ```
 
 The arguments are a JSON object, or `@file.json` to read them from a file. `flextool-assistant --help` lists the
-options. The chat in the FlexTool window will come in a later release.
+options.
 
 ## When something goes wrong
 
