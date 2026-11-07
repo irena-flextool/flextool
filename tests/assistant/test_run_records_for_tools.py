@@ -220,11 +220,16 @@ def test_no_local_path_host_or_user_name_reaches_a_result(tmp_path: Path, tests_
     record_run(project, "coal_1", "coal", succeed)
     record_run(project, "coal_chp_1", "coal_chp", succeed)
     record_run(project, "coal_chp_1", "coal_chp", fail_with(f"cannot read {project}/work/x on {host} ({user})"))
+    with open(project / "output_parquet" / "coal_chp_1" / run_record.RUN_LOG_FILE, "a", encoding="utf-8") as log:
+        log.write(f"Reading {project}/input_sources/tests.sqlite as {user} on {host} from {home}/.cache\n")
     ctx = make_context(project)
     calls = [("get_gui_context", {}), ("list_sources", {}), ("list_runs", {}),
              ("get_entity", {"name": ["coal_plant"], "scenario": "coal"}),
              ("list_entities", {"entity_class": "unit"}),
-             ("get_parameter", {"entity_class": "unit", "parameter": "existing", "scenario": "coal"})]
+             ("get_parameter", {"entity_class": "unit", "parameter": "existing", "scenario": "coal"}),
+             ("get_run_log", {"run": "coal_chp_1"}), ("get_run_log", {"run": "coal_chp_1", "grep": "reading"}),
+             ("query_result", {"run": "coal_1", "table": "node_d_ee"}), ("get_slack_summary", {"run": "coal_1"}),
+             ("list_result_tables", {"run": "coal_1"})]
     texts = []
     for tool, args in calls:
         out = call_tool(ctx, tool, args)
@@ -258,3 +263,243 @@ def test_a_spreadsheet_source_without_its_conversion(tmp_path: Path) -> None:
     assert (source["name"], source["number"], source["kind"]) == ("model.xlsx", 2, "xlsx")
     assert source["conversion"] == {"state": "missing", "converted_at": None}
     assert source["problem"] == message("not_converted") and source["version_status"] is None
+
+
+# ---------------------------------------------------------------------------------------------------------
+# get_run_log
+
+
+def _two_solves_one_rejected(rec) -> None:
+    rec.solve_started("y2020", "y2020", 0, "Solve start: y2020, 1/2")
+    rec.solve_classified(model_status="kOptimal", acceptance="optimal", message="", objective=3.0, warm_used=False)
+    rec.solve_finished(0)
+    rec.solve_started("y2025", "y2025", 1, "Solve start: y2025, 2/2")
+    rec.solve_classified(model_status="kInfeasible", acceptance="rejected", message="solve y2025 is infeasible",
+                         objective=None, warm_used=False)
+    rec.solve_finished(1)
+    rec.finish("failed", exit_code=1, error={"type": "FlexToolSolveError", "message": "Error: 1"})
+
+
+LOG_LINES = [                       # lines 2.. of _run.log (line 1 is the run record's header)
+    "Reading the input data",
+    "Solve start: y2020, 1/2",
+    "Model status: Optimal",
+    run_record.MARKER + "a marker line the tools leave out",
+    "Solve start: y2025, 2/2",
+    "Presolve finds the model infeasible",
+    "Model status: Infeasible",
+    "Error: solve y2025 is infeasible",
+    "Writing nothing",
+]
+
+
+def test_get_run_log_anchor_grep_tail_and_options(tmp_path: Path, tests_db: Path) -> None:
+    project = make_project(tmp_path, tests_db)
+    record_run(project, "coal_1", "coal", _two_solves_one_rejected)
+    folder = project / "output_parquet" / "coal_1"
+    with open(folder / run_record.RUN_LOG_FILE, "a", encoding="utf-8") as log:
+        log.write("\n".join(LOG_LINES) + "\n")
+    status = read_status_file(folder)
+    status["options_resolved"] = {
+        "scaling": {"value": "basic", "source": "env", "env": "FLEXTOOL_SCALING"},
+        "solver_mip_gap": {"value": 0.01, "source": "db", "env": "FLEXTOOL_HIGHS_MIP_GAP"},
+        "threads": {"value": 4, "source": "cli", "env": "FLEXTOOL_THREADS"},
+        "presolve": {"value": None, "source": "default", "env": "FLEXTOOL_HIGHS_PRESOLVE"},
+    }
+    write_status_atomic(folder, status)
+    ctx = make_context(project)
+
+    out = _call(ctx, "get_run_log", run="coal_1", solve="y2025")
+    # The failed run is readable here; its rejected solve comes first.
+    st = out["status"]
+    assert (st["state"], st["verdict"]) == ("failed", "infeasible")
+    assert [s["name"] for s in st["solves"]] == ["y2025", "y2020"]
+    assert st["solves"][0]["message"] == "solve y2025 is infeasible"
+    assert set(st["threads"]) == {"budget", "source", "polars", "polars_source", "highs"}
+    # Wording of where each option came from (run_options.OPTIONS: flag --threads, database solve.solver_mip_gap).
+    assert st["options"] == [
+        {"option": "scaling", "value": "basic", "set_by": "set by the environment variable FLEXTOOL_SCALING"},
+        {"option": "solver_mip_gap", "value": 0.01, "set_by": "from the database parameter solve.solver_mip_gap"},
+        {"option": "threads", "value": 4, "set_by": "set by the run flag --threads"},
+        {"option": "presolve", "value": None, "set_by": "default"},
+    ]
+    # The y2025 anchor is line 6 (header, then LOG_LINES[0..4]); the marker line (5) is left out.
+    assert out["log"]["from_line"] == 6 and out["log"]["total_lines"] == 9
+    assert out["log"]["lines"] == ["6: Solve start: y2025, 2/2", "7: Presolve finds the model infeasible",
+                                   "8: Model status: Infeasible", "9: Error: solve y2025 is infeasible",
+                                   "10: Writing nothing"]
+    # grep: any case, two lines around each match (lines 7, 8 and 9 contain "infeasible").
+    out = _call(ctx, "get_run_log", run="coal_1", grep="INFEASIBLE")
+    assert [line.split(":", 1)[0] for line in out["log"]["lines"]] == ["4", "6", "7", "8", "9", "10"]
+    # The tail: the last two lines.
+    out = _call(ctx, "get_run_log", run="coal_1", tail_lines=2)
+    assert out["log"]["lines"] == ["9: Error: solve y2025 is infeasible", "10: Writing nothing"]
+    message_text = call_tool(ctx, "get_run_log", {"run": "coal_1", "solve": "y2030"}).message
+    assert message_text == "The run coal_1 has no solve named 'y2030'. Its solves include: y2020, y2025."
+
+
+def test_get_run_log_without_a_run_record(ctx) -> None:
+    out = call_tool(ctx, "get_run_log", {"run": "base_1"})
+    assert not out.ok and out.message == message("no_run_record")
+
+
+# ---------------------------------------------------------------------------------------------------------
+# get_slack_summary
+
+
+def _slack_tables(folder: Path) -> None:
+    import pandas as pd
+
+    from tests.assistant.results_tables import PERIODS, write_result
+
+    periods = pd.Index(PERIODS, name="period")
+    # node_slack_up_d_e [MWh/a]: west 12.5 in p2020; east below min_value.
+    slack = pd.DataFrame({"west": [12.5, 0.0], "east": [1e-9, 0.0]}, index=periods)
+    slack.columns.name = "node"
+    write_result(folder, "node_slack_up_d_e", slack, "coal")
+    costs = pd.DataFrame({"investment": [3.0, 0.0], "upward slack penalty": [0.125, 0.0]}, index=periods)
+    costs.columns.name = "category"
+    write_result(folder, "annualized_costs_d_p", costs, "coal")
+
+
+def test_get_slack_summary_with_feeding_entities(tmp_path: Path, tests_db: Path) -> None:
+    from tests.assistant.results_tables import succeed_writing
+
+    project = make_project(tmp_path, tests_db)
+    record_run(project, "coal_1", "coal", succeed_writing(_slack_tables))
+    record_run(project, "clean_1", "coal", succeed)
+    ctx = make_context(project)
+    out = _call(ctx, "get_slack_summary", run="coal_1")
+    (slack,) = out["slacks"]
+    assert (slack["slack"], slack["table"], slack["unit"]) == ("vq_state_up", "node_slack_up_d_e",
+                                                                "MWh/a (default convention)")
+    assert slack["entries"] == [{"entity": ["west"], "period": "p2020", "value": 12.5}]
+    assert slack["total"] == {"p2020": 12.5}
+    assert "node.penalty_up" in slack["related_inputs"]
+    # tests.json, scenario coal = alternatives init, west, coal: unit and connection entities are inactive by
+    # default and only coal_plant is made active (alternative coal); unit__outputNode is active by default, so
+    # the one active unit or connection with west as a dimension is unit__outputNode (coal_plant, west).
+    assert slack["feeding_entities"] == {"west": [{"entity_class": "unit__outputNode",
+                                                   "entity": ["coal_plant", "west"]}]}
+    assert out["penalty_costs"]["entries"] == [{"category": "upward slack penalty", "period": "p2020",
+                                                "value": 0.125}]
+    assert out["penalty_costs"]["unit"] == "M CUR/a (default convention)" and out["none_found"] is False
+    assert _call(ctx, "get_slack_summary", run="clean_1")["none_found"] is True
+
+
+def test_get_slack_summary_needs_a_successful_run(ctx) -> None:
+    out = call_tool(ctx, "get_slack_summary", {"run": "coal_chp_1"})
+    assert not out.ok and out.message.startswith("The latest run of coal_chp_1 failed")
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Comparison files that record their runs
+
+
+def _comparison_project(tmp_path: Path, tests_db: Path) -> tuple[Path, dict[str, str]]:
+    import pandas as pd
+
+    from tests.assistant.results_tables import PERIODS, succeed_writing, write_result
+
+    def tables(values: list[float], scenario: str):
+        def write(folder: Path) -> None:
+            frame = pd.DataFrame({("coal_plant", "west"): values}, index=pd.Index(PERIODS, name="period"))
+            frame.columns = pd.MultiIndex.from_tuples(frame.columns, names=["unit", "node"])
+            write_result(folder, "unit_outputNode_d_ee", frame, scenario)
+        return write
+
+    project = make_project(tmp_path, tests_db)
+    ids = {"base_1": record_run(project, "base_1", "base", succeed_writing(tables([1000.0, 2000.0], "base"))),
+           "high_1": record_run(project, "high_1", "high", succeed_writing(tables([1500.0, 2000.0], "high")))}
+    return project, ids
+
+
+def _compare(ctx) -> dict:
+    return _call(ctx, "compare_runs", table="unit_outputNode_d_ee", runs=["comparison"])
+
+
+def test_comparison_files_record_their_runs_and_are_used_while_fresh(tmp_path: Path, tests_db: Path) -> None:
+    from flextool.scenario_comparison.db_reader import combine_scenario_parquets
+
+    project, ids = _comparison_project(tmp_path, tests_db)
+    combine_scenario_parquets(project, ["base_1", "high_1"])
+    text = (project / "output_parquet_comparison" / "_metadata.json").read_text(encoding="utf-8")
+    # The scenario list is written as before; the member runs and the time follow it.
+    assert text.startswith('{"scenarios": ["base_1", "high_1"], "members": [')
+    meta = json.loads(text)
+    assert [(m["folder"], m["run_id"]) for m in meta["members"]] == [("base_1", ids["base_1"]),
+                                                                      ("high_1", ids["high_1"])]
+    ctx = make_context(project)
+    out = _compare(ctx)
+    assert out["source"] == "comparison_files"
+    assert [(b["folder"], b["run_id"]) for b in out["built_from"]] == [("base_1", ids["base_1"]),
+                                                                        ("high_1", ids["high_1"])]
+    # high_1 − base_1: p2020 1500 − 1000 = 500, p2025 0.
+    assert [tuple(r) for r in out["rows"]] == [("p2020", "coal_plant", "west", 1000.0, 1500.0, 500.0),
+                                               ("p2025", "coal_plant", "west", 2000.0, 2000.0, 0.0)]
+
+
+def test_comparison_falls_back_to_member_folders(tmp_path: Path, tests_db: Path) -> None:
+    from types import SimpleNamespace
+
+    from flextool.gui.result_viewer import ResultViewer
+    from flextool.scenario_comparison.db_reader import combine_scenario_parquets
+    from tests.assistant.results_tables import succeed_writing, write_result
+
+    project, _ = _comparison_project(tmp_path, tests_db)
+    combine_scenario_parquets(project, ["base_1", "high_1"])
+    meta_path = project / "output_parquet_comparison" / "_metadata.json"
+    fresh = meta_path.read_text(encoding="utf-8")
+    ctx = make_context(project)
+
+    # A comparison table older than the comparison: the member folders.
+    meta = json.loads(fresh)
+    meta["written_at"] = (datetime.now().astimezone() + timedelta(hours=1)).isoformat(timespec="seconds")
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    out = _compare(ctx)
+    assert out["source"] == "run_folders" and out["notes"][0].startswith("The comparison files do not match")
+
+    # The window's metadata-only writer records the scenarios only: the member folders.
+    ResultViewer._write_comparison_metadata(SimpleNamespace(_project_path=project), ["base_1", "high_1"])
+    assert json.loads(meta_path.read_text(encoding="utf-8")) == {"scenarios": ["base_1", "high_1"]}
+    out = _compare(ctx)
+    assert out["source"] == "run_folders" and "do not record the runs" in out["notes"][0]
+
+    # A member ran again (other values): the comparison files no longer stand for it.
+    meta_path.write_text(fresh, encoding="utf-8")
+    assert _compare(ctx)["source"] == "comparison_files"
+    import pandas as pd
+
+    def rerun(folder: Path) -> None:
+        frame = pd.DataFrame({("coal_plant", "west"): [900.0, 2000.0]}, index=pd.Index(["p2020", "p2025"],
+                                                                                       name="period"))
+        frame.columns = pd.MultiIndex.from_tuples(frame.columns, names=["unit", "node"])
+        write_result(folder, "unit_outputNode_d_ee", frame, "high")
+    record_run(project, "high_1", "high", succeed_writing(rerun))
+    _runs.clear_cache()
+    out = _compare(ctx)
+    assert out["source"] == "run_folders" and out["built_from"] is None
+    # The values are high_1's new run: 900 − 1000 = −100.
+    assert [tuple(r) for r in out["rows"]][0] == ("p2020", "coal_plant", "west", 1000.0, 900.0, -100.0)
+
+
+def test_the_comparison_orchestrator_records_its_runs(tmp_path: Path, tests_db: Path) -> None:
+    from unittest.mock import patch
+
+    from flextool.scenario_comparison.orchestrator import run
+
+    project, ids = _comparison_project(tmp_path, tests_db)
+    config = tmp_path / "plots.yaml"
+    config.write_text("plots: {}\n", encoding="utf-8")
+    comparison = project / "output_parquet_comparison"
+    with patch("flextool.scenario_comparison.orchestrator.plot_dict_of_dataframes"):
+        run(db_url=None, parquet_subdir="", plot_dir=str(tmp_path / "plots"), output_config_path=str(config),
+            active_configs=["default"], plot_rows=[0, 167], write_to_xlsx=False, write_dispatch_xlsx=False,
+            write_to_ods=False, show_plots=False, dispatch_plots=False,
+            scenario_folders={"base_1": str(project / "output_parquet"), "high_1": str(project / "output_parquet")},
+            comparison_parquet_dir=str(comparison))
+    meta = json.loads((comparison / "_metadata.json").read_text(encoding="utf-8"))
+    assert meta["scenarios"] == ["base_1", "high_1"]
+    assert [(m["folder"], m["run_id"]) for m in meta["members"]] == [("base_1", ids["base_1"]),
+                                                                      ("high_1", ids["high_1"])]
+    assert _compare(make_context(project))["source"] == "comparison_files"
