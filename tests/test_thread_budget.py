@@ -45,10 +45,28 @@ from flextool.run_options import OPTIONS, RunOptions
         (["flextool-run", "--threads", "many"], [], None),
         (["flextool-run", "--threads"], [], None),
         (["flextool-run", "db.sqlite"], [], None),
+        # The assistant accepts the flag too.
+        (["/venv/bin/flextool-assistant", "--mcp", "--threads", "2"], [], 2),
+        (["-m", "--threads", "3"], ["python", "-m", "flextool_assistant_entry", "--threads", "3"], 3),
     ],
 )
 def test_cli_threads_from_argv(argv, orig_argv, expected):
     assert tb.cli_threads_from_argv(argv, orig_argv) == expected
+
+
+@pytest.mark.parametrize(
+    ("argv", "orig_argv", "expected"),
+    [
+        (["/venv/bin/flextool-assistant", "--mcp"], [], 1),
+        (["C:\\venv\\Scripts\\flextool-assistant.exe", "--call", "list_runs"], [], 1),
+        (["/repo/flextool_assistant_entry.py", "--mcp"], ["python", "-m", "flextool_assistant_entry", "--mcp"], 1),
+        (["flextool-run", "db.sqlite"], [], None),
+        (["pytest"], [], None),
+    ],
+)
+def test_the_assistant_is_single_threaded_by_default(argv, orig_argv, expected):
+    """P1-O10: the assistant never competes with a running model; ``--threads N`` raises its budget."""
+    assert tb.command_default_threads(argv, orig_argv) == expected
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +172,12 @@ def test_env_budget_is_capped_for_polars():
     # An explicit budget is taken as given (not reduced to the machine's cores), so FLEXTOOL_THREADS=16 gives
     # polars the cap on any runner.
     assert _probe(["flextool-run"], FLEXTOOL_THREADS="16") == (min(16, tb.THREAD_CAP_POLARS), "None")
+
+
+def test_assistant_runs_polars_on_one_thread_unless_its_flag_says_otherwise():
+    # FLEXTOOL_THREADS is the budget of a run; it does not raise the assistant's.
+    assert _probe(["flextool-assistant", "--mcp"], FLEXTOOL_THREADS="4") == (1, "None")
+    assert _probe(["flextool-assistant", "--mcp", "--threads", "2"]) == (2, "None")
 
 
 def test_non_flextool_command_line_is_ignored():

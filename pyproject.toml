@@ -135,6 +135,11 @@ dependencies = [
     # The assistant tools validate each call's arguments against the tool's JSON schema
     # (flextool.assistant.registry); the connection server for AI agents does not.
     "jsonschema>=4.18",
+    # The connection server for AI agents (``flextool-assistant --mcp``) speaks the Model
+    # Context Protocol over stdin/stdout.  2.x: the low-level server takes its handlers in
+    # the constructor (flextool.assistant.mcp_server); the next major is capped.  Loaded
+    # only by ``--mcp`` and ``--call``.
+    "mcp>=2.3,<3",
 ]
 
 [project.urls]
@@ -197,6 +202,10 @@ flextool-read-self-describing-tabular-input = "flextool.cli.cmd_read_self_descri
 flextool-read-old = "flextool.cli.cmd_read_old_flextool:main"
 flextool-import-sensitivities = "flextool.cli.cmd_import_sensitivities:main"
 flextool-read-matpower = "flextool.cli.cmd_read_matpower:main"
+# The read-only tools for AI assistants: ``--mcp`` serves them to an AI agent over
+# stdin/stdout, ``--call`` runs one.  A top-level stdlib module, so it can keep the
+# protocol's stdout clean before ``import flextool`` (never a gui-script: it needs stdio).
+flextool-assistant = "flextool_assistant_entry:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -243,9 +252,10 @@ timeout_method = "thread"
 
 [tool.setuptools]
 # Top-level modules outside the ``flextool`` package.  ``flextool_run_supervisor``
-# must load without ``import flextool`` (which imports polars); an editable
+# must load without ``import flextool`` (which imports polars), and
+# ``flextool_assistant_entry`` redirects stdout before it imports it; an editable
 # install learns a new top-level name only when it is reinstalled.
-py-modules = ["flextool_run_supervisor"]
+py-modules = ["flextool_run_supervisor", "flextool_assistant_entry"]
 
 [tool.setuptools.cmdclass]
 # Copies the curated documentation Markdown (flextool/docs_build/scope.py) into
