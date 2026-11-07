@@ -26,7 +26,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal
 
 if TYPE_CHECKING:
-    from flextool.assistant.context import ContextSnapshot
+    from flextool.assistant.context import ContextSnapshot, GuiState, ResultRef, ViewerState
 
 #: The user-facing level names and their internal names, lowest first.
 LEVELS: dict[str, str] = {"basic": "small", "standard": "medium", "advanced": "large"}
@@ -167,18 +167,81 @@ def _name(value: str | None, redact: Callable[[str], str] | None) -> str:
     return cap_text(text, NAME_MAX)
 
 
+NONE = "none"
+#: Names shown in one list of the block; the rest is "and {n} more".
+BLOCK_LIST_MAX = 10
+
+
+def _names(values: list[str], redact: Callable[[str], str] | None) -> str:
+    """Up to :data:`BLOCK_LIST_MAX` names, "and {n} more" for the rest; "none" for none."""
+    if not values:
+        return NONE
+    shown = ", ".join(_name(v, redact) for v in values[:BLOCK_LIST_MAX])
+    rest = len(values) - BLOCK_LIST_MAX
+    return f"{shown} and {rest} more" if rest > 0 else shown
+
+
+def _result_line(ref: ResultRef, redact: Callable[[str], str] | None) -> str:
+    """A selected result folder with what its run record says (D5: the record's own reason, no rule here)."""
+    head = f"Result selected: {_name(ref.folder, redact)}"
+    if not ref.results_usable:
+        if ref.reason:
+            return f"{head} — its results are not used ({_name(ref.reason, redact)}). See the run log."
+        state = f"latest run {_name(ref.state, redact)}; " if ref.state else ""
+        return f"{head} — {state}its results are not used. See the run log."
+    if ref.state:
+        return f"{head} — latest run {_name(ref.state, redact)}."
+    return f"{head}."
+
+
+def _viewer_lines(v: ViewerState, redact: Callable[[str], str] | None) -> list[str]:
+    line = f"Result viewer: {_name(v.mode, redact)} of {_names(list(v.scenarios), redact)}"
+    if v.plot_name:
+        detail = [x for x in (_name(v.result_key, redact) if v.result_key else None,
+                              f"variant {_name(v.variant, redact)}" if v.variant else None) if x]
+        line += f'; plot "{_name(v.plot_name, redact)}"' + (f" ({', '.join(detail)})" if detail else "")
+    else:
+        line += "; no plot chosen"
+    if v.dispatch_item:
+        line += f"; dispatch shown for {_name(v.dispatch_item, redact)}"
+    steps = f" ({v.time_steps} steps)" if v.time_steps is not None else ""
+    if v.time_start_label:
+        return [line + ";", f"  shown from time step {_name(v.time_start_label, redact)}{steps}"]
+    if v.time_start is not None:
+        return [line + ";", f"  shown from position {v.time_start} of the plotted series{steps}"]
+    return [line]
+
+
+def _gui_lines(gui: GuiState, redact: Callable[[str], str] | None) -> list[str]:
+    sources = {source for source, _scenario in gui.scenarios_checked}
+    checked = [f"{scenario} ({source})" if len(sources) > 1 else scenario
+               for source, scenario in gui.scenarios_checked]
+    lines = [f"Scenarios checked for running: {_names(checked, redact)}",
+             f"Results checked: {_names([r.folder for r in gui.results_checked], redact)}"]
+    selected = list(gui.results_selected)
+    lines += [_result_line(ref, redact) for ref in selected[:BLOCK_LIST_MAX]]
+    if len(selected) > BLOCK_LIST_MAX:
+        lines.append(f"Results selected: and {len(selected) - BLOCK_LIST_MAX} more")
+    if gui.viewer is not None:
+        lines += _viewer_lines(gui.viewer, redact)
+    return lines
+
+
 def context_block(snapshot: ContextSnapshot, redact: Callable[[str], str] | None = None) -> str:
     """The context block put at the start of a user message: the project, the input source and scenario the
-    tools use by default, and the front end.  Names are on one line, length-capped and redacted (*redact*);
-    non-ASCII is kept."""
-    return "\n".join((
+    tools use by default, in the FlexTool window also its selections and the result viewer (P2 §7), and the front
+    end.  Names are on one line, length-capped and redacted (*redact*); non-ASCII is kept.  The snapshot's time
+    is never in it, so the block changes only when what it shows changes."""
+    lines = [
         CONTEXT_START,
         f"Project: {_name(snapshot.project, redact)}",
         f"Input source: {_name(snapshot.input_source, redact)}",
         f"Scenario: {_name(snapshot.scenario, redact)}",
-        f"Front end: {FRONT_END_LABELS[snapshot.front_end]}",
-        CONTEXT_END,
-    ))
+    ]
+    if snapshot.gui is not None:
+        lines += _gui_lines(snapshot.gui, redact)
+    lines += [f"Front end: {FRONT_END_LABELS[snapshot.front_end]}", CONTEXT_END]
+    return "\n".join(lines)
 
 
 def strip_context_block(text: str) -> str:

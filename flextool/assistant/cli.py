@@ -188,7 +188,7 @@ def main(argv: list[str] | None = None, *, proto_in: int | None = None, proto_ou
     arguments = _call_arguments(raw, parser)
     purge_at_start()
     ctx = make_context(project, input_source=args.input_source, scenario=args.scenario, result_cap=result_cap,
-                       front_end="terminal")
+                       front_end="agent")
     allowed = {t.name for t in registry.tools_for_tier(tier)}
     if name in registry.all_tools() and name not in allowed:
         outcome = registry.ToolOutcome(False, None, message("not_in_level", name=name))
