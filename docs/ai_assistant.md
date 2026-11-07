@@ -60,7 +60,8 @@ layout ("Reset window layout" in "UI settings…" forgets them).
 | Provider, Address | The AI service (see [Services](#services)); the address can be changed for a model on this computer or a custom endpoint. |
 | Key | "Store key" keeps the pasted key in the system keyring, or, after a warning, unencrypted in a file. A key in the service's environment variable is used instead of a stored one, and the dialog says so. The key is never shown again. |
 | Model | The service's own model list ("Refresh list"), or type a model name. |
-| Level | Automatic (from the model name), or a level you choose up to the model's own (see [Levels](#levels)); for a model FlexTool does not recognise, higher levels are offered at your own risk. |
+| Level | Automatic (from the model name and its context size), or a lower level you choose; the list offers only the levels the model allows, and the lines below it say why (see [Assistant levels](#assistant-levels)). For a model FlexTool does not recognise, higher levels are offered at your own risk. |
+| Free plan | Fewer steps for each question, to stay within the request limits of a free plan: Automatic (on only for an OpenRouter model whose name ends `:free`), On or Off (see [The free plan](#the-free-plan)). |
 | Questions answered at the same time | 1 to 4 (default 1): how many chats may wait for the service at once; more chats wait their turn, so several chats on a free plan do not multiply its "too many requests" answers. |
 | Data use | Where the data goes, the privacy settings sent with every request (OpenRouter's data-collection setting can be turned off, after a question), and the settings only your account can change. |
 | Keep conversations for | Days (default 30). Older conversations are deleted when FlexTool closes; `0` saves no conversations. |
@@ -183,7 +184,7 @@ notice on the standard error). The exit code says what happened:
 |---|---|
 | 0 | answered |
 | 1 | the AI service gave an error (the message says which) |
-| 2 | something is not set up: no service, no model, no key, or a chat without a terminal |
+| 2 | something is not set up: no service, no model, no key, a chat without a terminal, or a `--tier` above the levels the model allows |
 | 3 | the data notice for this service has not been accepted; nothing was sent |
 | 130 | stopped with Ctrl-C |
 
@@ -201,9 +202,9 @@ ever read from piped text.
 | `/provider` | Choose another service. |
 | `/privacy` | Where the data goes, the privacy settings sent with each request, and the settings only your account can change. |
 | `/usage` | The tokens used, by month, service and model. |
-| `/context` | What the assistant is told about your choices (project, input source, scenario), and the model's context size. |
+| `/context` | What the assistant is told about your choices (project, input source, scenario); after the first question also the model's context size, how much one tool result may hold and how often earlier results are shortened. |
 | `/welcome` | The text on how the assistant works. |
-| `/save` | Keep this service, model and level for the next start. |
+| `/save` | Keep this service, model and level for the next start, and the free plan when `--free-tier` was given. |
 | `/quit` | Leave the chat. |
 
 ### Services
@@ -262,9 +263,11 @@ A model on this computer may take minutes to load or to read a long question; th
 
 ### Levels
 
-The assistant level (basic, standard or advanced) is picked from the model name: small models get the basic level
-(fewer tools, smaller results, simpler tasks such as finding and explaining values), the providers' largest models
-the advanced one. `--tier basic` (or `standard`, `advanced`) chooses it yourself; `/save` keeps the choice.
+The start of the chat shows the level and why, for example "Level: basic (a model of about 14 billion
+parameters)", followed by "Higher levels are not available for it." when the model allows no higher level. `--tier
+basic` (or `standard`) chooses a lower level yourself; `/save` keeps the choice. A level above the ones the model
+allows is lowered to the automatic level with a notice; with `-q` the chat stops instead (exit code 2) and sends
+nothing. `--free-tier on` switches the free plan on for the session. See [Assistant levels](#assistant-levels).
 
 ### Conversations and settings
 
@@ -276,10 +279,11 @@ macOS.
   `--continue ID` with another one. A conversation open in another terminal or FlexTool window is not opened twice:
   the chat starts a new one. Conversations older than 30 days are deleted when the assistant starts.
 - **Settings** (`settings.json`): the service, address, model and level that `/save` keeps, the privacy settings,
-  `conversation_expiry_days` (default 30; `0` saves no conversations), `compaction_every` (default 6: every sixth
-  question, older tool results are replaced by a short note so the conversation stays short) and
-  `keep_recent_turns` (default 2: the tool results of the last two questions are kept). Flags override the settings
-  for one session.
+  `conversation_expiry_days` (default 30; `0` saves no conversations), `compaction_every` (how often older tool
+  results are replaced by a short note so the conversation stays short) and `keep_recent_turns` (how many recent
+  questions keep their tool results) — both automatic by default, from the model's context size (see
+  [Budgets](#budgets)); a number overrides it — and `free_tier` (`null` automatic, `true` on, `false` off). Flags
+  override the settings for one session.
 - **Usage** (`usage.json`): the tokens of each month, service and model, as each service reported them; FlexTool
   does not estimate what a service did not report, and shows a cost only when the service reports one.
   `flextool-assistant --usage` prints it. It contains no questions or answers and is kept when conversations are
@@ -294,7 +298,8 @@ macOS.
 | `--provider ID` | The service for this session (table above). |
 | `--model NAME` | The model for this session. `flextool-assistant --list-models --provider ID` lists the models of a service. |
 | `--base-url URL` | The address of the service: a custom endpoint, or a model server on another port or computer. |
-| `--tier basic\|standard\|advanced` | The assistant level. |
+| `--tier basic\|standard\|advanced` | The assistant level: the automatic one or lower (see [Assistant levels](#assistant-levels)). |
+| `--free-tier on\|off\|auto` | The free plan for this session (see [The free plan](#the-free-plan)); default: the saved setting, else automatic. |
 | `--input-source SOURCE`, `--scenario NAME` | The input source and scenario the assistant uses when a question names none. |
 | `--result-cap small\|medium\|large` | How much one tool result may hold (default: by level). |
 | `-q QUESTION` | One question, then stop (see above). |
@@ -383,7 +388,7 @@ itself; there is no network port.
 | `--input-source SOURCE` | The input source the tools use when a question names none: its file name or its number in the FlexTool window. Without it, the agent names a source when the project has several. |
 | `--scenario NAME` | The scenario the tools use when a question names none. |
 | `--result-cap small\|medium\|large` | How much one tool result may hold (rows, characters). Default: `medium`. A smaller cap saves the agent's context; the agent can still ask for more in one call, up to a fixed limit. |
-| `--tier basic\|standard\|advanced` | The assistant level (see below). `basic` offers only seven tools and starts with the small result cap; `advanced` starts with the large one. |
+| `--tier basic\|standard\|advanced` | The assistant level (see below). `basic` offers only the seven basic tools and starts with the small result cap; `standard` starts with the medium one and `advanced` with the large one. |
 | `--threads N` | Threads for FlexTool's own processing in the tools. Default: 1, so the tools never slow down a model that is running. |
 | `--verbose` | More messages on the standard error stream (the agent usually shows them in its log). |
 | `--call TOOL [ARGUMENTS]` | Run one tool from the terminal and print its result (see below). |
@@ -400,7 +405,102 @@ level for the rest of the conversation:
 
 In Claude Code they are `/mcp__flextool__basic`, `/mcp__flextool__standard` and `/mcp__flextool__advanced`, and you
 can add your question after the name. Without a prompt the agent works with the general instructions the tools
-send when they connect. `--tier basic` limits the tools to the basic set, for agents that run a small model.
+send when they connect. `--tier basic` limits the tools to the basic set, for agents that run a small model: any
+other tool answers "The tool … is not part of the basic level. Restart the FlexTool connection without --tier basic
+to use it." `--tier standard` and `--tier advanced` keep every tool and change only the default result cap. The
+tools do not know which model the agent uses, so they do not check the level against it: choose the level that suits
+the agent's model (see [Assistant levels](#assistant-levels)).
+
+## Assistant levels
+
+The assistant works at one of three levels. The level changes what the model is asked to do, which tools it gets and
+how many steps it may take; it never changes what a tool returns.
+
+- **Basic** — look things up and explain them: one parameter, one result table or one documentation topic at a time,
+  with seven tools (`search_docs`, `read_doc`, `get_entity`, `get_parameter`, `list_runs`, `find_result_tables`,
+  `query_result`) and at most three tool calls for each question. A question that needs more, such as why there is
+  slack or why two scenarios differ, gets what was found so far and the advice to use a higher level or a more
+  capable model.
+- **Standard** — interpret results and compare scenarios, linking a result to the inputs that drive it; every tool.
+- **Advanced** — diagnose problems in several steps: trace slack and penalty costs to a limit and back to the inputs
+  behind it, read the model's equations, and explain investment differences between scenarios; every tool.
+
+### How the level is chosen
+
+FlexTool places each model from its name and, once it has checked the model, its context size (how much text the
+model can read at once, counted in tokens, the pieces of text a service counts). The name rules are tried in order,
+and the first that matches decides:
+
+1. A small-model word in the name (`mini`, `nano`, `micro`, `tiny`, `lite`, `small`, `haiku`, `ministral`) → basic.
+2. The size: the number of parameters a model server on this computer reports, else a size in the name such as
+   `14b` or `8x7b`. Up to 34 billion → basic, up to 200 billion → standard, more → advanced. A count of only the
+   active parameters (`a3b`) is not a size.
+3. A fast or mid-range variant of a large family (`fast`, `maverick`, `scout`, `nova`, `sonar`, `deepseek-coder`)
+   → standard.
+4. The providers' largest families (`opus`, `sonnet`, `claude`, `large`, `max`, `grok`, `kimi`, `o3`, Gemini and GPT
+   `pro`, DeepSeek `r1` and `v3`, and others) → advanced.
+5. GPT with a major version of 5 or more → advanced.
+6. Another known family (`flash`, `medium`, `gpt`, `gemini`, `mistral`, `codestral`, `command`, `glm`, and others)
+   → standard.
+7. A name FlexTool does not recognise: basic for a model on this computer or your local network, standard for a
+   service on the internet. This is a guess.
+
+The context size then sets the highest level:
+
+| Context size (tokens) | Highest level |
+|---|---|
+| below 12 288 | none: no question is sent, and the message says how to give the model a larger context |
+| 12 288 to 32 767 | basic |
+| 32 768 to 65 535 | standard |
+| 65 536 or more | advanced |
+
+The automatic level is the lower of the two. You can choose a lower level, but not a higher one; for a model FlexTool
+does not recognise, the higher levels are offered too, at your own risk, up to what the context size allows. A level
+chosen before that is above the model's levels is lowered to the automatic level, with a notice. Until FlexTool has
+checked the model (before its first question), the level comes from the name alone, and the settings say that it
+may be lowered when FlexTool sees the model's context size.
+
+The name rules are reviewed when a FlexTool version is prepared. If a model is placed at a level that does not suit
+it, please report it.
+
+### Budgets
+
+Each level has safety caps on the work for one question. They keep a question from running on and keep the
+requests within the model's context; they are not usage limits.
+
+| | Basic | Standard | Advanced |
+|---|---|---|---|
+| Steps for each question (one request to the service each) | 3 | 8 | 12 |
+| Tool calls for each question | 3 | 16 | 30 |
+| Longest answer (tokens; at most a quarter of the context size) | 4 096 | 8 000 | 16 000 |
+| Steps / tool calls with the free plan | 3 / 3 | 4 / 8 | 6 / 12 |
+
+When a question reaches its limit, the model is asked to answer with what it has and to say what is still unknown.
+The context size also sets how much one tool result may hold and how often the tool results of earlier questions are
+replaced by a short note:
+
+| Context size (tokens) | One tool result holds at most | Earlier results shortened |
+|---|---|---|
+| 12 288 to 32 767 | what fits the context (a few thousand characters) | at every question |
+| 32 768 to 65 535 | the small result cap | every 4 questions, keeping the last 2 |
+| 65 536 to 199 999 | the level's result cap, at most the medium one | every 6 questions, keeping the last 2 |
+| 200 000 or more | the level's result cap (basic small, standard medium, advanced large) | every 6 questions, keeping the last 2 |
+
+Before each request FlexTool estimates its size. A request that would not fit the context is first shortened (older
+tool results are replaced by a note, and the chat says so); a request that still does not fit is not sent. A model on
+this computer would otherwise silently drop the start of an over-long request.
+
+### The free plan
+
+Free plans limit how many requests you can send per minute and per day, and each step of a question is one request.
+With the free plan on, each question uses fewer steps (see [Budgets](#budgets)), a tool result holds at most the
+medium result cap, and the FlexTool window sends one question at a time. The first question says so: "Free plan:
+the assistant uses at most 4 steps for each question to stay within the provider's request limits."
+
+Automatically the free plan is on only for an OpenRouter model whose name ends `:free`. For any other service it is
+off until you switch it on: in the window under Settings, "Free plan"; in the terminal with `--free-tier on` (`/save`
+keeps it). The first time a service limits how fast questions can be sent while the free plan is off, the chat
+suggests switching it on; nothing changes by itself.
 
 ## Units
 
@@ -440,7 +540,10 @@ options.
   `flextool-assistant --set-key --provider ID`.
 - **"… is limiting how often requests can be sent"** or **"Your … quota is used up for now"** (chat). Free plans
   limit the requests per minute and per day. The chat waits and tries again a few times by itself; after that, wait,
-  or switch service or model with `/provider` or `/model`. `/usage` shows what was used.
+  or switch service or model with `/provider` or `/model`. `/usage` shows what was used. On a free plan, switch on
+  the [free plan](#the-free-plan) so each question uses fewer requests.
+- **"The level … is not available for this model, so nothing was sent."** (`-q`). The `--tier` asked for is above the
+  levels the model allows; the message says why and which levels it allows.
 - **"Nothing answers at localhost:11434. Start Ollama and try again."** Start the model server, then ask again.
 - **"This model runs with a 2048-token context, too small …"** Restart Ollama with `OLLAMA_CONTEXT_LENGTH=16384`, or
   load the model in LM Studio with a larger context length.
