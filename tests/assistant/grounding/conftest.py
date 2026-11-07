@@ -26,3 +26,8 @@ def scoring() -> ModuleType:
 @pytest.fixture(scope="session")
 def evaluator() -> ModuleType:
     return _tool("assistant_eval")
+
+
+@pytest.fixture(scope="session")
+def analysis() -> ModuleType:
+    return _tool("assistant_eval_analysis")
