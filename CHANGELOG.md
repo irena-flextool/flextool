@@ -1,5 +1,18 @@
 ## Unreleased
 
+- **New: chat with an AI model about a FlexTool project in the terminal.** `flextool-assistant --project-path
+  <project folder>` asks your questions to the AI service you choose — OpenAI, Anthropic, Mistral, OpenRouter,
+  Google Gemini, a model on this computer with Ollama or LM Studio, or any service with the OpenAI request format —
+  and gives the model the same read-only tools as the agent connection. The first start explains how it works and
+  sets up the service, key and model; keys come from the service's environment variable, the system keyring
+  (`--set-key`) or, by choice, a key file. Before the first question goes to a service on the internet (or to an
+  Ollama cloud model) the chat shows what is sent and that FlexTool cannot guarantee how it is used, and asks
+  you to accept; the acceptance is asked again when the service, its address or the proxy changes. A model on this
+  computer needs no acceptance. `-q "question"` answers one question for scripts (only the answer on stdout;
+  `--accept-data-notice` accepts the notice for good). Conversations are kept per project for 30 days
+  (`--continue`), the tokens used are counted as each service reports them (`--usage`), and Ctrl-C stops an
+  answer at once. New requirements: `anthropic`, `openai`, `keyring`; run "Update FlexTool" (or
+  `pip install -e .`). See "The AI assistant" in the documentation.
 - **New: connect an AI agent to a FlexTool project.** `flextool-assistant --mcp --project-path <project folder>`
   starts read-only tools that an AI agent such as Claude Code uses to answer questions about the project: input
   data by scenario, results (filtered, summed or averaged where that is meaningful, and compared between
@@ -8,8 +21,8 @@
   anything, read results only from a scenario whose latest run succeeded, and run on one thread by default
   (`--threads N`). Everything they return is sent to the AI service the agent uses; check its policies yourself.
   Three prompts set the assistant level (basic, standard, advanced); `--tier basic` offers only the basic tools.
-  `flextool-assistant --call TOOL '{...}'` runs one tool in the terminal. See "Connecting an AI agent to FlexTool"
-  in the documentation. New requirements: `mcp` (2.3 or later 2.x), `platformdirs`, `jsonschema`; run "Update
+  `flextool-assistant --call TOOL '{...}'` runs one tool in the terminal. See "The AI assistant" in the
+  documentation. New requirements: `mcp` (2.3 or later 2.x), `platformdirs`, `jsonschema`; run "Update
   FlexTool" (or `pip install -e .`) to get them and the new command.
 - **Changed: every parameter description starts with its unit**, in the default convention (MW, MWh, CUR,
   tCO2): `[MW]`, `[CUR/MWh]`, `[hours]`; `[-]` for a share or ratio, followed by an example (`[-] e.g. 0.9 means
