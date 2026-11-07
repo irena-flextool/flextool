@@ -6,11 +6,14 @@ Functions:
 - combine_parquet_files  : concat per-scenario parquets into combined DataFrames
 - get_scenario_results   : top-level convenience (returns TimeSeriesResults)
 - combine_scenario_parquets : combine per-scenario parquets from disk (for GUI)
+- comparison_members / write_comparison_metadata : the ``_metadata.json`` of the comparison files
 """
 
 from __future__ import annotations
 
 import json
+import os
+import tempfile
 from pathlib import Path
 
 import pandas as pd
@@ -18,6 +21,49 @@ from flextool.update_flextool.db_handle import open_database_mapping
 
 from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
 from flextool.scenario_comparison.data_models import TimeSeriesResults
+
+
+def comparison_members(member_dirs: dict[str, Path]) -> list[dict]:
+    """The run each member folder holds, from its run record: ``[{folder, run_id, started_at, finished_at}]``
+    (``None`` fields for a folder without a run record)."""
+    from flextool.run_record import read_status_file
+
+    members = []
+    for name, folder in member_dirs.items():
+        status = read_status_file(folder) or {}
+        members.append({"folder": name, "run_id": status.get("run_id"), "started_at": status.get("started_at"),
+                        "finished_at": status.get("finished_at")})
+    return members
+
+
+def settled_members(before: list[dict] | None, member_dirs: dict[str, Path]) -> list[dict]:
+    """The members as their run records say now; a member whose run changed since *before* (a run started while
+    the comparison read its files) gets no ``run_id``, so the comparison files are not taken as its results."""
+    now = comparison_members(member_dirs)
+    if before is None:
+        return now
+    then = {m["folder"]: m["run_id"] for m in before}
+    for member in now:
+        if then.get(member["folder"]) != member["run_id"]:
+            member["run_id"] = None
+    return now
+
+
+def write_comparison_metadata(output_dir: Path | str, scenarios: list[str], members: list[dict],
+                              written_at: str) -> None:
+    """Write ``_metadata.json`` of the comparison files: the scenario folders, the run each was built from
+    (``members``) and when the writing started (``written_at``; every comparison table written then is not older),
+    as UTF-8 through a temporary file."""
+    output_dir = Path(output_dir)
+    meta = {"scenarios": list(scenarios), "members": members, "written_at": written_at}
+    fd, tmp = tempfile.mkstemp(dir=str(output_dir), prefix="_metadata_", suffix=".tmp")
+    try:
+        with open(fd, "w", encoding="utf-8") as f:
+            json.dump(meta, f)
+        os.replace(tmp, output_dir / "_metadata.json")
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def read_scenario_folders(db_url: str) -> dict[str, str]:
@@ -278,7 +324,7 @@ def combine_scenario_parquets(
     ``project_path/output_parquet_comparison/``).
 
     Also writes:
-    - ``_metadata.json`` with the scenario list
+    - ``_metadata.json`` with the scenario list, the run each folder held and when the writing started
     - ``timeline_breaks.parquet`` (merged from all scenarios)
 
     Parameters
@@ -310,6 +356,9 @@ def combine_scenario_parquets(
             f"No scenario directories found under {parquet_base} "
             f"for scenarios: {scenario_names}"
         )
+    # The runs the members hold, before their files are read (see settled_members).
+    member_dirs = {name: parquet_base / name for name in scenario_folders}
+    members_before = comparison_members(member_dirs)
 
     # 2. Collect all parquet files grouped by filename
     files_by_name = collect_parquet_files(scenario_folders, output_subdir="")
@@ -324,6 +373,8 @@ def combine_scenario_parquets(
     #    names after axis=1 concat and are handled separately via dispatch
     #    mappings.  Only write time-series DataFrames (MultiIndex columns).
     output_dir.mkdir(parents=True, exist_ok=True)
+    from flextool.run_record import now_iso
+    written_at = now_iso()
     for name, df in combined_dfs.items():
         if df.empty:
             continue
@@ -331,10 +382,9 @@ def combine_scenario_parquets(
             continue
         write_lean_parquet(df, output_dir / f"{name}.parquet")
 
-    # 5. Write metadata
-    meta = {"scenarios": list(scenario_folders.keys())}
-    with open(output_dir / "_metadata.json", "w") as f:
-        json.dump(meta, f)
+    # 5. Write metadata: the scenario folders and the runs they held
+    write_comparison_metadata(output_dir, list(scenario_folders.keys()),
+                              settled_members(members_before, member_dirs), written_at)
 
     # 6. Merge timeline breaks from all scenarios
     # (a break of one scenario also cuts the others' lines: the scenarios share one time axis)

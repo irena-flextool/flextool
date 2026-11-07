@@ -31,6 +31,7 @@ TOOL_MODULES = (
     "flextool.assistant.tools.discovery",
     "flextool.assistant.tools.inputs",
     "flextool.assistant.tools.results",
+    "flextool.assistant.tools.diagnostics",
 )
 
 
