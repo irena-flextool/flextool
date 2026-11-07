@@ -1,0 +1,86 @@
+# The assistant's grounding questions (P3 §6.3): questions with known answers on the synthetic grounding project
+# (tests/assistant/grounding_projects.py), run by hand with tools/assistant_eval.py and graded against the answer
+# key (answer_key.yaml, written by an independent oracle).  Never collected by pytest, never run in CI.
+#
+# class: lookup (one value or fact, units, traps, failed runs, "the data does not answer"), interpret (across
+# tables or scenarios, or an equation), diagnose (a causal chain over several steps).
+# context.scenario is the scenario the chat's context block names; context.scenarios lists every scenario the
+# question is about.  turns are the user's messages, one conversation per question.
+format: 1
+set_version: 3
+project: {builder: "tests.assistant.grounding_projects:build_grounding_project", input_source: grounding}
+questions:
+  - id: G01
+    class: lookup
+    category: parameter_lookup
+    context: {scenario: coal, scenarios: [coal]}
+    turns: ["What capacity and efficiency does coal_plant have in scenario coal?"]
+  - id: G02
+    class: lookup
+    category: units
+    context: {scenario: h2_lookup_test, scenarios: [h2_lookup_test]}
+    turns: ["How large is the storage of h2_tank?"]
+  - id: G03
+    class: lookup
+    category: inactive_entity
+    context: {scenario: coal, scenarios: [coal]}
+    turns: ["How much capacity does coal_chp have in scenario coal?"]
+  - id: G04
+    class: lookup
+    category: result_lookup
+    context: {scenario: coal, scenarios: [coal]}
+    turns: ["How much energy was not served at node west in scenario coal, per year as FlexTool reports it?"]
+  - id: G05
+    class: lookup
+    category: result_lookup
+    context: {scenario: coal, scenarios: [coal]}
+    turns: ["What did fuel cost in the first hour of scenario coal?"]
+  - id: G07
+    class: lookup
+    category: failed_run
+    context: {scenario: demand_update_test, scenarios: [demand_update_test]}
+    turns: ["How much energy was not served in scenario demand_update_test?"]
+  - id: G10
+    class: lookup
+    category: data_does_not_answer
+    context: {scenario: coal, scenarios: [coal]}
+    turns: ["What was the electricity price at west in 2030 in scenario coal?"]
+  - id: G11
+    class: lookup
+    category: data_does_not_answer
+    context: {scenario: coal, scenarios: [coal]}
+    turns: ["Why was the upward penalty at west set to 900?"]
+  - id: G06
+    class: interpret
+    category: scenario_comparison
+    context: {scenario: coal, scenarios: [coal, coal_co2_price]}
+    turns: ["What is different between scenarios coal and coal_co2_price, and how does it change the costs?"]
+  - id: G09
+    class: interpret
+    category: formulation
+    context: {}
+    turns: ["How does unserved energy enter the node balance, and how is it priced in the objective?"]
+  - id: G08
+    class: diagnose
+    category: slack_diagnosis
+    context: {scenario: coal, scenarios: [coal]}
+    turns: ["Why is there unserved energy at west in scenario coal, and what could fix it?"]
+  - id: G12
+    class: diagnose
+    category: investment_diagnosis
+    context: {scenario: coal, scenarios: [coal, invest_2day_test]}
+    turns: ["Scenario invest_2day_test builds new capacity and coal does not. How much is built, and why that amount?"]
+  - id: S01
+    class: lookup
+    category: compaction
+    context: {scenario: coal, scenarios: [coal]}
+    automatic_level_only: true
+    turns:
+      - "What is the existing capacity of coal_plant in scenario coal?"
+      - "And what is its efficiency?"
+      - "Is wind_plant part of scenario coal?"
+      - "Which node does coal_plant feed?"
+      - "What is the upward penalty at node west in scenario coal?"
+      - "How much energy was not served at west in scenario coal, per year as FlexTool reports it?"
+      - "What was the largest upward slack at west in one hour of scenario coal, and in which hour?"
+      - "What price does the commodity coal have in scenario coal?"
