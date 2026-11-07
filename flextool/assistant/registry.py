@@ -99,6 +99,15 @@ def all_tools() -> dict[str, Tool]:
     return _tools
 
 
+def tools_for_tier(tier: str | None) -> tuple[Tool, ...]:
+    """The tools of a level (internal name): the basic set (``small_tier``), sorted by name, for ``small``; every
+    tool in listing order otherwise (P3 §2.2)."""
+    tools = all_tools().values()
+    if tier == "small":
+        return tuple(sorted((t for t in tools if t.small_tier), key=lambda t: t.name))
+    return tuple(tools)
+
+
 def _validate(tool: Tool, args: dict) -> str | None:
     """The first schema problem of *args*, or ``None``."""
     import jsonschema

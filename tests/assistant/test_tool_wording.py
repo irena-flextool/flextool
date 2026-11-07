@@ -1,13 +1,14 @@
 """The words the tools use: every description ends with the data sentence, and no text the user or the AI service
 sees uses an abbreviation (LLM, ZDR, DB, LP), the word MCP (except the flag --mcp and the package mcp) or a
-schema version number."""
+schema version number.  The same holds for the connection's instructions, the level texts and the command's own
+messages."""
 from __future__ import annotations
 
 import re
 
 import pytest
 
-from flextool.assistant import unit_wording
+from flextool.assistant import cli, mcp_server, prompt, unit_wording
 from flextool.assistant.errors import MESSAGES
 from flextool.assistant.inputs import _values
 from flextool.assistant.inputs._notes import traps
@@ -28,6 +29,13 @@ def _texts() -> list[tuple[str, str]]:
     out += [(f"session note {k}", v) for k, v in unit_wording.SESSION_NOTES.items()]
     out += [(f"trap {k}", t.text) for k, ts in traps().items() for t in ts]
     out.append(("RUN_TIME_NOTE", _values.RUN_TIME_NOTE))
+    # What the connection server and the command say.
+    out.append(("instructions", prompt.instructions("project")))
+    out += [(f"ADDENDA[{k}]", v) for k, v in prompt.ADDENDA.items()]
+    out += [(f"PROMPT_DESCRIPTIONS[{k}]", v) for k, v in prompt.PROMPT_DESCRIPTIONS.items()]
+    out += [("PROMPT_LEAD", prompt.PROMPT_LEAD), ("DEGRADED_INSTRUCTIONS", mcp_server.DEGRADED_INSTRUCTIONS),
+            ("DEGRADED_DESCRIPTION", mcp_server.DEGRADED_DESCRIPTION), ("cli.DATA_NOTICE", cli.DATA_NOTICE),
+            ("cli.NO_FRONT_END", cli.NO_FRONT_END), ("cli.MCP_MISSING", cli.MCP_MISSING)]
     return out
 
 

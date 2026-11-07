@@ -4,7 +4,7 @@ The registry is :data:`flextool.run_options.OPTIONS` (variables that are the twi
 :data:`flextool.run_options.ENV_KNOBS` (process-level, developer and test variables).  The checks:
 
 * every variable name in ``flextool/`` and the top-level modules (``[tool.setuptools] py-modules``, such as the
-  ``flextool-run`` supervisor) -- a string literal ``FLEXTOOL_*`` / ``POLARS_*`` / ``POLAR_HIGH_*`` /
+  ``flextool-run`` supervisor and the ``flextool-assistant`` entry) -- a string literal ``FLEXTOOL_*`` / ``POLARS_*`` / ``POLAR_HIGH_*`` /
   ``MALLOC_*`` / ``_RJEM_*`` (a direct read or a ``*_ENV = "..."`` constant), or any literal passed to
   ``os.environ[...]`` / ``.get`` / ``.setdefault`` / ``.pop`` / ``os.getenv`` / ``in os.environ`` -- is
   registered, except a few system variables FlexTool reads but does not define;
@@ -115,6 +115,7 @@ def package_names() -> dict[str, list[str]]:
 
 def test_top_level_modules_are_scanned():
     assert REPO / "flextool_run_supervisor.py" in TOP_LEVEL_MODULES
+    assert REPO / "flextool_assistant_entry.py" in TOP_LEVEL_MODULES
     assert all(_python_files(module) == [module] for module in TOP_LEVEL_MODULES)
 
 

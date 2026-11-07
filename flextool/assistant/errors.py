@@ -10,6 +10,8 @@ MESSAGES: dict[str, str] = {
     # The registry
     "unknown_tool": "There is no tool named '{name}'. The tools are: {names}.",
     "bad_arguments": "The arguments of {name} are not valid: {problem}.",
+    "not_in_level": ("The tool {name} is not part of the basic level. Restart the FlexTool connection without "
+                     "--tier basic to use it."),
     "fault": ("FlexTool could not answer this request ({type}). This is a fault in the assistant tools; please "
               "report it."),
     # Documentation
