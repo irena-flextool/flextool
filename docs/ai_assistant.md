@@ -1,11 +1,11 @@
-# Connecting an AI agent to FlexTool
+# The AI assistant
 
-An AI agent, such as Claude Code, can answer questions about a FlexTool project: what a parameter is set to in a
-scenario, what a result table shows, why a run failed, where slack appeared, how two scenarios differ. It does this
-through a set of FlexTool tools that FlexTool starts for the agent. The tools only read. They cannot change input
-data, settings or results, and they cannot start a run.
+The FlexTool AI assistant answers questions about a FlexTool project: what a parameter is set to in a scenario,
+what a result table shows, why a run failed, where slack appeared, how two scenarios differ. It reads what it needs
+with a set of read-only FlexTool tools. The tools cannot change input data, settings or results, and they cannot
+start a run.
 
-The tools give the agent:
+The tools give the assistant:
 
 - the input data of the project's input sources, scenario by scenario, as FlexTool would use it (the winning value
   of each parameter after the alternatives are ranked);
@@ -15,15 +15,216 @@ The tools give the agent:
   results;
 - the FlexTool documentation, including the model's equations and the list of result tables.
 
+There are two ways to use it:
+
+- **Chat in the terminal**: `flextool-assistant` talks to an AI model of the service you choose (a service on the
+  internet with your key, or a model running on this computer) and gives it the tools.
+- **Connect an AI agent** such as Claude Code: the agent starts the tools itself and uses its own model.
+
 ## Where your data goes
 
-Everything the tools return — input data, results, run logs and documentation — is sent to the AI service that your
-agent uses. FlexTool cannot say how that service stores or uses it; check its policies yourself before you connect
-a project with data you may not share. FlexTool takes local folder paths, your user name and the computer's name out
-of what the tools return, but it does not remove anything else: names of units, nodes and scenarios, and all
-values, are sent as they are.
+Your questions and everything the tools return — input data, results, run logs and documentation, and the names of
+your project and scenarios — are sent to the AI service that answers. FlexTool cannot say how that service stores
+or uses the data: it may be kept, reviewed or used for training, depending on the service, your account and your
+plan. Free plans often let the provider use your data for training. Check the provider's current policies yourself
+before you use a project with data you may not share. FlexTool takes local folder paths, your user name and the
+computer's name out of what the tools return, but it does not remove anything else: names of units, nodes and
+scenarios, and all values, are sent as they are.
 
-## What you need
+The only reliable way to keep the data on this computer is a model that runs on it (Ollama or LM Studio), which
+needs a powerful computer. Some models offered through such programs still run elsewhere: Ollama's cloud models
+are sent to Ollama's servers. The chat finds out before it sends anything and treats them as a service on the
+internet.
+
+## Chat in the terminal
+
+### What you need
+
+- FlexTool installed (see [Install with FlexTool GUI](install_gui.md) or [Install with Spine Toolbox](install_toolbox.md)).
+  After an update, run "Update FlexTool" (or `pip install -e .` in a source checkout) so that the
+  `flextool-assistant` command exists.
+- An account with an AI service and its key, or a model running on this computer (see
+  [Models on this computer](#models-on-this-computer)). The model must support tool calls: the assistant reads
+  your data with them.
+- A FlexTool project folder: the folder of a project of the FlexTool window (`projects/<project name>/`), or any
+  folder with an `input_sources/` folder and the result folders FlexTool writes.
+
+### Start a chat
+
+```bash
+flextool-assistant --project-path /home/me/flextool/projects/MyProject
+```
+
+The first time, the chat prints a short text on how the assistant works. Then, if no AI service is set up yet, it
+asks for one: the service, its address (for a model on this computer or a custom endpoint), the key (typed without
+being shown, then stored in the system keyring) and a model from the service's own list. It offers to keep these
+for the next start. Starting the chat sends none of your data; only the service's model list is fetched while you
+choose.
+
+Then type a question after `you>`. The answer appears as it arrives. Each tool call the assistant makes is one dim
+line, for example `· search_docs query="penalty_up" → 5 results (0.1 s)`, and after each answer a line gives the
+tokens used. End a line with `\` to go on with the question on the next line. Ctrl-C stops an answer at once;
+Ctrl-C or Ctrl-D at the prompt leaves the chat.
+
+The start of the chat shows where the data goes:
+
+- "Data goes to: Google Gemini (generativelanguage.googleapis.com)." for a service on the internet, with " It is
+  sent through the proxy {proxy}." when your proxy settings send it through a proxy;
+- "Endpoint on this computer (localhost:11434). FlexTool sends data only there; if that server forwards requests,
+  data leaves this computer." for a model server on this computer;
+- "Endpoint on your local network (192.168.1.20)." for a server on your local network;
+- "Data goes to: Ollama cloud (ollama.com), forwarded by Ollama on this computer." for an Ollama cloud model.
+
+### The data notice
+
+Before the first question goes to a service on the internet (or to Ollama's cloud), the chat shows the data notice:
+what is sent, to which service and address, that FlexTool cannot guarantee how it is stored or used, and, when a
+proxy applies, that the proxy can also see it. Type `yes` to send; anything else sends nothing. The answer is kept,
+so the notice is shown again only when the service, its address, the proxy or the notice itself changes. A model on
+this computer or your local network needs no notice.
+
+### One question from a script
+
+```bash
+flextool-assistant --project-path /home/me/flextool/projects/MyProject -q "Which runs failed, and why?"
+```
+
+With `-q` the chat asks nothing: only the answer goes to the standard output; tool lines, notices, the token line
+and errors go to the standard error. It needs a service set up before (run the chat once without `-q`, or give
+`--provider` and `--model`) and an accepted data notice: `--accept-data-notice` accepts it for good (it prints the
+notice on the standard error). The exit code says what happened:
+
+| Exit code | Meaning |
+|---|---|
+| 0 | answered |
+| 1 | the AI service gave an error (the message says which) |
+| 2 | something is not set up: no service, no model, no key, or a chat without a terminal |
+| 3 | the data notice for this service has not been accepted; nothing was sent |
+| 130 | stopped with Ctrl-C |
+
+The chat without `-q` needs a terminal: with piped input it stops (exit 2), so neither the data notice nor a key is
+ever read from piped text.
+
+### Commands
+
+| Command | What it does |
+|---|---|
+| `/help` | The list of commands. |
+| `/new` | Start a new conversation. |
+| `/new carry` | Start a new conversation whose first question carries a short summary of this one. |
+| `/model NAME` | Go on with another model of the same service; `/model` alone lists the models. |
+| `/provider` | Choose another service. |
+| `/privacy` | Where the data goes, the privacy settings sent with each request, and the settings only your account can change. |
+| `/usage` | The tokens used, by month, service and model. |
+| `/context` | What the assistant is told about your choices (project, input source, scenario), and the model's context size. |
+| `/welcome` | The text on how the assistant works. |
+| `/save` | Keep this service, model and level for the next start. |
+| `/quit` | Leave the chat. |
+
+### Services
+
+| `--provider` | Service | Key variable | Sent with every request | Set in your account |
+|---|---|---|---|---|
+| `openai` | OpenAI | `OPENAI_API_KEY` | `store: false` (the requests are not kept for later viewing in your account) | data sharing and training settings of your organisation; zero data retention needs approval from OpenAI |
+| `anthropic` | Anthropic | `ANTHROPIC_API_KEY` | — | data retention arrangements and training terms of your account |
+| `mistral` | Mistral | `MISTRAL_API_KEY` | — | whether your plan allows training on your data, and the opt-out |
+| `openrouter` | OpenRouter | `OPENROUTER_API_KEY` | `provider.data_collection: deny` (only providers that do not collect your requests); optionally `provider.zdr: true` | your OpenRouter privacy settings, which apply on top |
+| `gemini` | Google Gemini | `GEMINI_API_KEY` | — | free tier: Google may use prompts and answers to improve its products; paid tier terms differ |
+| `ollama` | Ollama on this computer (`http://localhost:11434/v1`) | none | — | Ollama cloud models: check Ollama's terms yourself |
+| `lmstudio` | LM Studio on this computer (`http://localhost:1234/v1`) | none | — | — |
+| `openai_compatible` | any other service with the same request format as OpenAI (give `--base-url`) | none | — | check how the service handles data yourself |
+
+The OpenRouter settings are in the settings file (see [Conversations and settings](#conversations-and-settings)):
+`"openrouter.data_collection": "allow"` relaxes the first (the chat then says so), `"openrouter.zdr": true` uses
+only providers that keep no copy of your requests, which narrows the list of models you can use, free models
+especially.
+
+FlexTool gives each service only the request headers it needs; the version, operating system and other
+identification headers that the service libraries would add are not sent.
+
+### Keys
+
+The chat looks for the key of the service in this order and says where it found it:
+
+1. the service's environment variable (table above, and [Environment variables](env_vars.md#ai-assistant));
+2. the system keyring (Windows Credential Manager, macOS Keychain, the Secret Service on Linux);
+3. the key file, only if you chose it.
+
+`flextool-assistant --set-key --provider gemini` asks for the key without showing it and stores it in the system
+keyring. Where there is no usable keyring, `--set-key --key-file` stores it unencrypted in `keys.json` in the
+assistant's folder (on Linux and macOS readable by you only), after a warning. `flextool-assistant --forget-key --provider gemini`
+removes a stored key. A key is never written to a project folder or a conversation, and never shown in a message.
+
+### Models on this computer
+
+**Ollama**: install Ollama and pull a model that supports tools (the model's page in the Ollama library lists
+"tools"). Ollama loads models with a short context by default, too short for the assistant's instructions and
+tools; start the Ollama server with `OLLAMA_CONTEXT_LENGTH=16384` (or more). Before the first question the chat
+loads the model and checks the context it runs with, and stops with that advice when it is too small. When the
+model does not fit in the graphics card's memory, the chat says that it will be slower. FlexTool sends no limits of
+threads or graphics memory: the Ollama server uses the computer as it is set up to. Ollama cloud models (names
+ending in `:cloud` or `-cloud`, or models Ollama forwards to another host) run on Ollama's servers: the chat shows
+them as such and asks for the data notice.
+
+**LM Studio**: load a model in LM Studio with a context length of about 16 000 tokens or more and start its server.
+When the model is loaded, the chat checks its context before the first question.
+
+Another server with the OpenAI request format: `--provider openai_compatible --base-url http://localhost:8000/v1`.
+A server on this computer or your local network never goes through a proxy.
+
+A model on this computer may take minutes to load or to read a long question; the chat shows "Waiting for the model
+(45 s) — Ctrl-C stops" meanwhile.
+
+### Levels
+
+The assistant level (basic, standard or advanced) is picked from the model name: small models get the basic level
+(fewer tools, smaller results, simpler tasks such as finding and explaining values), the providers' largest models
+the advanced one. `--tier basic` (or `standard`, `advanced`) chooses it yourself; `/save` keeps the choice.
+
+### Conversations and settings
+
+The chat keeps its files in the assistant folder of your user configuration: `~/.config/flextool/assistant/` on
+Linux, `%LOCALAPPDATA%\flextool\assistant\` on Windows, `~/Library/Application Support/flextool/assistant/` on
+macOS.
+
+- **Conversations** are saved per project. `--continue` goes on with the newest conversation of the project,
+  `--continue ID` with another one. A conversation open in another terminal or FlexTool window is not opened twice:
+  the chat starts a new one. Conversations older than 30 days are deleted when the assistant starts.
+- **Settings** (`settings.json`): the service, address, model and level that `/save` keeps, the privacy settings,
+  `conversation_expiry_days` (default 30; `0` saves no conversations), `compaction_every` (default 6: every sixth
+  question, older tool results are replaced by a short note so the conversation stays short) and
+  `keep_recent_turns` (default 2: the tool results of the last two questions are kept). Flags override the settings
+  for one session.
+- **Usage** (`usage.json`): the tokens of each month, service and model, as each service reported them; FlexTool
+  does not estimate what a service did not report, and shows a cost only when the service reports one.
+  `flextool-assistant --usage` prints it. It contains no questions or answers and is kept when conversations are
+  deleted.
+- **Acknowledgements** (`acknowledgements.json`): the data notices you accepted.
+
+### Chat options
+
+| Option | What it does |
+|---|---|
+| `--project-path FOLDER` / `--project NAME` | The project (as for the agent connection below). |
+| `--provider ID` | The service for this session (table above). |
+| `--model NAME` | The model for this session. `flextool-assistant --list-models --provider ID` lists the models of a service. |
+| `--base-url URL` | The address of the service: a custom endpoint, or a model server on another port or computer. |
+| `--tier basic\|standard\|advanced` | The assistant level. |
+| `--input-source SOURCE`, `--scenario NAME` | The input source and scenario the assistant uses when a question names none. |
+| `--result-cap small\|medium\|large` | How much one tool result may hold (default: by level). |
+| `-q QUESTION` | One question, then stop (see above). |
+| `--accept-data-notice` | Accept the data notice of this service for good. |
+| `--continue [ID]` | Go on with a saved conversation. |
+| `--no-color` | No colours. |
+| `--threads N` | Threads for FlexTool's own processing (default 1, so the assistant never slows down a running model). |
+| `--verbose` | More messages on the standard error. |
+
+## Connect an AI agent
+
+An AI agent such as Claude Code can use the same tools with its own model. FlexTool starts them for the agent; the
+agent's service gets everything the tools return (see [Where your data goes](#where-your-data-goes)).
+
+### What an agent needs
 
 - FlexTool installed (see [Install with FlexTool GUI](install_gui.md) or [Install with Spine Toolbox](install_toolbox.md)).
   The tools come with FlexTool; after an update, run "Update FlexTool" (or `pip install -e .` in a source checkout)
@@ -33,7 +234,7 @@ values, are sent as they are.
 - A FlexTool project folder: the folder of a project of the FlexTool window (`projects/<project name>/`), or any
   folder with an `input_sources/` folder and the result folders FlexTool writes.
 
-## Connect Claude Code
+### Connect Claude Code
 
 Give Claude Code the command that starts the tools for one project. Use the absolute path of the project folder:
 
@@ -62,7 +263,7 @@ them; you do not start anything by hand. `claude mcp list` shows whether the con
 To connect another project, add it under another name (`claude mcp add flextool-other -- …`), or remove the first
 one (`claude mcp remove flextool`).
 
-## Connect another agent
+### Connect another agent
 
 Agents that read a configuration file usually take the command and its arguments separately:
 
@@ -80,7 +281,7 @@ Agents that read a configuration file usually take the command and its arguments
 The tools talk to the agent through the command's standard input and output, so the agent must start the command
 itself; there is no network port.
 
-## Options
+### Options
 
 | Option | What it does |
 |---|---|
@@ -95,7 +296,7 @@ itself; there is no network port.
 | `--verbose` | More messages on the standard error stream (the agent usually shows them in its log). |
 | `--call TOOL [ARGUMENTS]` | Run one tool from the terminal and print its result (see below). |
 
-## Levels
+### Levels for agents
 
 The tools offer three prompts, one per assistant level. A prompt gives the agent instructions for working at that
 level for the rest of the conversation:
@@ -129,8 +330,7 @@ flextool-assistant --project-path /home/me/flextool/projects/MyProject --call ge
 ```
 
 The arguments are a JSON object, or `@file.json` to read them from a file. `flextool-assistant --help` lists the
-options. A chat with an AI model directly in the terminal and in the FlexTool window will come in a later
-release.
+options. The chat in the FlexTool window will come in a later release.
 
 ## When something goes wrong
 
@@ -144,3 +344,13 @@ release.
   the scenario to run.
 - **A spreadsheet input source is "not converted".** The tools read a spreadsheet through the database FlexTool
   makes from it when one of its scenarios runs. Run (or convert) a scenario of it first.
+- **"No key found for …"** (chat). Set the service's environment variable, or store the key with
+  `flextool-assistant --set-key --provider ID`.
+- **"… is limiting how often requests can be sent"** or **"Your … quota is used up for now"** (chat). Free plans
+  limit the requests per minute and per day. The chat waits and tries again a few times by itself; after that, wait,
+  or switch service or model with `/provider` or `/model`. `/usage` shows what was used.
+- **"Nothing answers at localhost:11434. Start Ollama and try again."** Start the model server, then ask again.
+- **"This model runs with a 2048-token context, too small …"** Restart Ollama with `OLLAMA_CONTEXT_LENGTH=16384`, or
+  load the model in LM Studio with a larger context length.
+- **"The model … does not support tool calls"**. Pick a model that supports tools; without them the assistant cannot
+  read your data.

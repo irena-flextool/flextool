@@ -170,9 +170,11 @@ flextool/                          The installed Python package
 ├── model_builder/                 Synthetic / mock-up scenario generator.
 ├── representative_periods/        Greedy convex-hull representative-period
 │                                    clustering.
-├── assistant/                     Read-only tools for AI assistants (registry,
+├── assistant/                     The AI assistant: read-only tools (registry,
 │                                    input / result / diagnostics tools, docs
-│                                    index, the connection server for agents).
+│                                    index), the connection server for agents,
+│                                    and the chat (service backends, session,
+│                                    store, terminal front end).
 ├── docs_build/                    Generated docs pages (formulation, results
 │                                    catalogue) and the assistant's docs index.
 ├── gui/                           Tkinter desktop application (main_window,
@@ -1022,7 +1024,9 @@ The supervisor is a top-level module that never imports `flextool` (that imports
 ## AI assistant tools
 
 `flextool/assistant/` holds read-only tools that let an AI assistant answer questions about one project: input data
-by scenario, results, run logs and slack, and the documentation. User page: [Connecting an AI agent](../ai_assistant.md).
+by scenario, results, run logs and slack, and the documentation; the connection server that gives them to an AI
+agent; and FlexTool's own chat with an AI service ("AI assistant chat" below). User page:
+[The AI assistant](../ai_assistant.md).
 `flextool/assistant/__init__.py` imports nothing; every module imports what it needs when first used.
 
 - **Registry** (`registry.py`). Each tool module (`tools/orientation`, `discovery`, `inputs`, `results`,
@@ -1074,6 +1078,53 @@ twins.
 testing). Tests: `tests/assistant/` (`test_server_stdio.py` drives the installed command over real stdio and fails
 on any non-protocol byte on stdout); CI smoke: `.github/scripts/mcp_smoke.py` (wheel check in `publish.yml`, the
 Toolbox bundle, the old-CPU emulation's degraded server).
+
+### AI assistant chat
+
+`flextool-assistant` without `--mcp` / `--call` is the chat (`chat_cli.py`); the same layers will serve the
+FlexTool window. `--mcp` and `--call` import none of the service libraries (`anthropic`, `openai`, `keyring`)
+nor the chat (`tests/assistant/test_import_hygiene.py`).
+
+- **Neutral model** (`llm_adapter.py`): `Message`, `ToolCall`, `Request`, `Reply`, `Usage`, the events a front
+  end shows (`TextDelta`, `ToolDone`, `Waiting`, `RetryWait`, …) and the `Backend` protocol. Data only one provider
+  understands (Anthropic thinking blocks, Gemini thought signatures, OpenRouter reasoning details) travels in
+  `provider_extra`, stamped with its origin (preset, base URL, model), and is replayed only to that origin; on a
+  switch it is dropped and tool-call ids are re-mapped.
+- **Backends** (`backends/`): Anthropic Messages and OpenAI Chat Completions (also Mistral, OpenRouter, Gemini,
+  Ollama, LM Studio and any compatible endpoint). The provider libraries are imported only in `make_backend`.
+  `net.py` builds each library's HTTP client: headers rebuilt from an allow-list (the libraries' identification
+  headers and the variables they read add nothing), our own proxy decision (a local endpoint is never proxied), no
+  redirects, cancel by shutting the open sockets. Presets (`providers.py`) name no models; they say which request
+  fields a service accepts and which privacy fields are sent (`store: false`, OpenRouter
+  `provider.data_collection`).
+- **Errors and retries** (`llm_errors.py`, `llm_retry.py`): every library error becomes one `LLMError` subclass
+  with a plain-English message; our own retry loop (no library retries), never after the first streamed output.
+- **Probes** (`probes.py`): before the first question, the model's context and tool support (Ollama `/api/show`,
+  load, `/api/ps`; LM Studio; the OpenRouter model list; Anthropic limits), standard library only and proxy-less
+  for local servers. A model Ollama forwards to another host (its cloud) gives a remote route.
+- **Session** (`session.py`): the agent loop — rounds of tool calls per question capped by level, tool calls under
+  the process-wide tool lock, the history kept valid for every provider after a cut-off, refusal, stop or error;
+  compaction points (every `compaction_every` questions, a context overflow, a rejected signature, a resume with
+  changed instructions) drop all provider data. `TurnWorker` runs turns in a daemon thread; a stop returns at once.
+- **Prompt** (`prompt.py`): five byte-stable layers (core rules, orientation, documentation map, level text,
+  front-end note) and the context block (project, input source, scenario) at the start of a user message; the
+  agent connection's instructions reuse the same rules.
+- **Local files** (`_files.py`, `settings.py`, `store.py`, `usage.py`, `keys.py`, `endpoint.py`), in
+  `platformdirs.user_config_dir("flextool")/assistant/`: settings, conversations per project (lock file per open
+  conversation, purge by age at every start), the usage ledger, the key file (opt-in; the keyring first, the
+  preset's environment variable before both) and `acknowledgements.json`. Every read-modify-write runs under a
+  lock file; every time is UTC.
+- **Data notice** (`endpoint.py`): the route (loopback, local network, remote; the proxy; the forwarded host), the
+  indicator line, and the notice a remote route needs before the first question. An acceptance is kept per
+  preset, normalised address, proxy host, forwarded host and notice wording.
+- **Terminal** (`chat_cli.py`): the REPL (a terminal only) and `-q` (only the answer on stdout; exit codes 0 / 1 /
+  2 / 3 / 130). The question and the probe run in daemon threads, so Ctrl-C stops them at once.
+
+Tests: `tests/assistant/llm/` — no network (a socket guard refuses anything but loopback), synthetic provider
+payloads through `httpx2.MockTransport`, a scripted `FakeBackend` for the session and the chat, loopback servers
+for the probes and the cancel. Real provider replies are recorded by hand with `tools/record_llm_replies.py` on
+the synthetic test project only, scrubbed, checked and replayed in CI ([Testing](testing.md), "Recorded provider
+replies").
 
 ## Solve-to-solve handoff
 
