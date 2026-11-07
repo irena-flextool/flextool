@@ -64,7 +64,7 @@ def test_inactive_entity_in_scenario(ctx) -> None:
                for n in rec["notes"])
     listing = _call(ctx, "list_entities", entity_class="unit", scenario="coal")
     # Of the ten units, only coal_plant has an entity_alternative in an alternative of coal (coal).
-    assert listing["entities"] == [["coal_plant"]]
+    assert listing["entities"] == [{"entity": ["coal_plant"], "description": None}]
     assert ["coal_chp"] in listing["inactive_in_scenario"]
 
 

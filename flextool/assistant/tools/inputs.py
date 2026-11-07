@@ -51,6 +51,12 @@ def _names(byname: tuple[str, ...]) -> list[str]:
     return [cap_text(n, NAME_MAX) for n in byname]
 
 
+def _description(text: str | None) -> str | None:
+    """An entity's description for a result (a user string, cut to :data:`DESCRIPTION_MAX`); ``None`` when it has
+    none (P3 §2.4).  The payload is redacted when it is sent."""
+    return cap_text(text, DESCRIPTION_MAX) if text and text.strip() else None
+
+
 def _entity_text(byname: tuple[str, ...]) -> str:
     return "'" + "', '".join(byname) + "'" if len(byname) > 1 else f"'{byname[0]}'"
 
@@ -199,7 +205,7 @@ def list_entities(ctx: AssistantContext, args: dict) -> Fit:
     contains = (args.get("name_contains") or "").lower()
     member = args.get("member")
     view = db.view(scenario) if scenario is not None else None
-    active_names: list[list[str]] = []
+    active_names: list[dict[str, Any]] = []
     inactive: list[list[str]] = []
     for e in sorted(db.entities.get(entity_class, {}).values(), key=lambda e: e.byname):
         if contains and not any(contains in n.lower() for n in [*e.byname, e.name]):
@@ -209,7 +215,7 @@ def list_entities(ctx: AssistantContext, args: dict) -> Fit:
         if view is not None and not view.active(entity_class, e.byname)[0]:
             inactive.append(_names(e.byname))
         else:
-            active_names.append(_names(e.byname))
+            active_names.append({"entity": _names(e.byname), "description": _description(e.description)})
     limit = args["max_results"]
     payload = {
         "source": source.name,
@@ -271,7 +277,7 @@ def get_entity(ctx: AssistantContext, args: dict) -> Fit:
         match: dict[str, Any] = {
             "entity_class": e.entity_class,
             "entity": _names(e.byname),
-            "description": cap_text(e.description, DESCRIPTION_MAX) if e.description else None,
+            "description": _description(e.description),
             "active": active,
             "inactive_reason": reason,
             "parameters": parameters[:max_rows],
@@ -458,8 +464,8 @@ _SOURCE_TEXT = ("source is the input source (file name or number; default: the c
 TOOLS = [
     make_tool(
         name="list_entities", title="Entities of a class",
-        description=("The entities of an entity class (for example unit, node, unit__outputNode). With a scenario, "
-                     "the active ones, and the inactive ones apart. name_contains filters by part of a name in any "
+        description=("The entities of an entity class (for example unit, node, unit__outputNode), each with its "
+                     "description. With a scenario, the active ones, and the inactive ones apart. name_contains filters by part of a name in any "
                      "dimension (any case); member keeps entities that have that exact name in some dimension. "
                      "max_results is up to 500 (default 100). " + _SOURCE_TEXT),
         properties={"entity_class": {"type": "string"}, "scenario": _SCENARIO, "source": _SOURCE,
