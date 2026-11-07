@@ -159,6 +159,24 @@ def test_accept_data_notice_is_lasting(project, fake_backends, echo_tool, user_c
     assert NOTICE_START not in second.stderr.getvalue()
 
 
+def test_an_acceptance_in_the_flextool_window_covers_the_terminal(project, fake_backends, echo_tool,
+                                                                   user_config_in_tmp):
+    """The window accepts the notice under the same key from its saved settings (P2 §8.3)."""
+    from flextool.assistant.settings import ProviderSettings, Settings
+
+    saved = Settings(provider=ProviderSettings(preset="openai_compatible", base_url=REMOTE, model="example-model"))
+    route = endpoint.route_from_settings(saved)
+    key = endpoint.consent_key("openai_compatible", REMOTE, route)
+    assert endpoint.needs_consent(key)
+    endpoint.record_consent(key)
+    models = Models([say("Answer.")], fake_backends)
+    term = terminal()
+    assert chat_cli.main(remote(project, "-q", "Q?"), backend_factory=models, terminal=term) == 0
+    assert term.stdout.getvalue() == "Answer.\n"
+    assert NOTICE_START not in term.stderr.getvalue()
+    assert len(acks(user_config_in_tmp)) == 1
+
+
 def test_another_endpoint_or_a_proxy_asks_again(project, fake_backends, echo_tool, monkeypatch):
     models = Models([say("ok")], fake_backends)
     assert chat_cli.main(remote(project, "-q", "Q", "--accept-data-notice"), backend_factory=models,

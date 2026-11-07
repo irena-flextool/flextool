@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 from flextool.assistant.caps import CapArg, clamp_caps, fit_json
+from flextool.assistant.context import TOOL_LOCK as TOOL_LOCK  # the one tool lock of this process (P2 §5.5)
 from flextool.assistant.context import AssistantContext
 from flextool.assistant.errors import ToolError, message
 

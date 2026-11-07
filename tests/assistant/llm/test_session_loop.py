@@ -167,6 +167,22 @@ def test_multi_round_with_parallel_calls(rig, tools):
     assert [t.name for t in r.backend.requests[0].tools] == ["deep", "echo", "hook"]
 
 
+def test_the_window_tool_line_gets_redacted_capped_arguments_and_what_was_sent(rig, tools, tmp_path):
+    """``ToolDone.arguments``: redacted, at most 2 000 characters; ``result_preview``: the first 4 000 characters
+    of the result as appended for the provider (P2 §4.5, §12)."""
+    long_text = f"{tmp_path / 'project'}/data.csv " + "x" * 5000
+    r = rig([calls(call(text=long_text)), say("Done.")])
+    assert r.ask().ok
+    [done] = [e for e in r.events if isinstance(e, ToolDone)]
+    assert len(done.arguments) == 2000 and done.arguments.endswith("…")
+    assert done.arguments.startswith('{"text": "<project>/data.csv xxx')
+    assert str(tmp_path) not in done.arguments
+    [result] = [m for m in r.session.messages if m.role == "tool"]
+    assert len(result.text) > 4000
+    assert done.result_preview == result.text[:4000]
+    assert r.backend.requests[1].messages[2].text == result.text
+
+
 def test_round_cap_then_an_answer_without_tools(rig, tools):
     r = rig([calls(call()), calls(call()), say("What I have.")], caps=TurnCaps(max_rounds=2))
     result = r.ask()
