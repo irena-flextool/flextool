@@ -140,6 +140,16 @@ dependencies = [
     # the constructor (flextool.assistant.mcp_server); the next major is capped.  Loaded
     # only by ``--mcp`` and ``--call``.
     "mcp>=2.3,<3",
+    # The assistant's chat talks to AI services through their own libraries, imported only
+    # when a chat backend is built (flextool.assistant.llm_adapter.make_backend), never by
+    # ``--mcp`` / ``--call``.  FlexTool passes its own HTTP client (header allow-list, proxy
+    # decision, no redirects) and does its own retries.  anthropic 2.6: the httpx2 line and
+    # the ``open_telemetry`` switch; the next major is capped.
+    "anthropic>=2.6,<3",
+    # Every OpenAI-compatible service (OpenAI, Mistral, OpenRouter, Gemini, Ollama, LM Studio,
+    # any other base URL).  3.46: chunks keep unknown fields in ``model_extra`` and
+    # ``extra_body`` reaches the request body; the next major is capped.
+    "openai>=3.46,<4",
 ]
 
 [project.urls]
