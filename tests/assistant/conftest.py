@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -32,6 +33,24 @@ def user_cache_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
     docs_store.reset()
     yield cache
     docs_store.reset()
+
+
+@pytest.fixture(autouse=True)
+def user_config_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """The user config folder (assistant settings, conversations, usage, key file) is in ``tmp_path``, in this
+    process through ``platformdirs`` and in the processes a test starts through the variables ``platformdirs``
+    reads: no test reads or writes the real one."""
+    import platformdirs
+
+    config = tmp_path / "user_config"
+    config.mkdir()
+    monkeypatch.setattr(platformdirs, "user_config_dir", lambda *args, **kwargs: str(config / "flextool"))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
+    monkeypatch.setenv("WIN_PD_OVERRIDE_APPDATA", str(config))
+    monkeypatch.setenv("WIN_PD_OVERRIDE_LOCAL_APPDATA", str(config))
+    if sys.platform == "darwin":
+        monkeypatch.setenv("HOME", str(config))     # ~/Library/Application Support in a started process
+    return config / "flextool" / "assistant"
 
 
 @pytest.fixture(autouse=True)
