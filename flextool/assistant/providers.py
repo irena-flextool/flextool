@@ -225,17 +225,60 @@ _SIZE_TAG = re.compile(r"(?<![a-z0-9.])(?:\d+x)?(\d+(?:\.\d+)?)b(?![a-z0-9])")
 SMALL_SIZE_LIMIT = 32.0         # billion parameters
 
 
-def tier_from_model(preset_id: str, model: str) -> Tier:
+#: The order of the levels, lowest first.
+TIER_ORDER: tuple[Tier, ...] = ("small", "medium", "large")
+#: A model whose name is not recognised may be used at a higher level than its guessed one, at the user's risk
+#: (P3-O12).  A recognised model is usable only at its level or lower (P3-O7).
+ALLOW_HIGHER_WHEN_UNRECOGNISED = True
+
+REASON_SIZE = "a model of about {n} billion parameters"
+REASON_SMALL_FAMILY = "a small model of its family ({token})"
+REASON_LARGE_FAMILY = "a large model family ({token})"
+
+
+@dataclass(frozen=True)
+class ModelLevel:
+    """The level a model name suggests and why; *reason* is ``None`` when the name is not recognised (the level
+    is then a guess)."""
+
+    tier: Tier
+    reason: str | None
+
+    @property
+    def recognised(self) -> bool:
+        return self.reason is not None
+
+
+def model_level(preset_id: str, model: str) -> ModelLevel:
     """The level a model name suggests: small for size tags up to about 30 billion parameters and small-model
-    words, large for the providers' top families, else medium.  The user's choice always wins over this."""
+    words, large for the providers' top families, a larger size tag alone medium, anything else medium as a
+    guess."""
     name = model.lower()
     sizes = [float(m.group(1)) for m in _SIZE_TAG.finditer(name)]
     if sizes and max(sizes) <= SMALL_SIZE_LIMIT:
-        return "small"
+        return ModelLevel("small", REASON_SIZE.format(n=f"{max(sizes):g}"))
     for pattern, tier in TIER_PATTERNS:
-        if re.search(pattern, name):
-            return tier
-    return "medium"
+        match = re.search(pattern, name)
+        if match:
+            reason = REASON_SMALL_FAMILY if tier == "small" else REASON_LARGE_FAMILY
+            return ModelLevel(tier, reason.format(token=match.group(0)))
+    if sizes:
+        return ModelLevel("medium", REASON_SIZE.format(n=f"{max(sizes):g}"))
+    return ModelLevel("medium", None)
+
+
+def tier_from_model(preset_id: str, model: str) -> Tier:
+    """The level a model name suggests (:func:`model_level`).  The user's choice wins over this, within
+    :func:`allowed_tiers`."""
+    return model_level(preset_id, model).tier
+
+
+def allowed_tiers(level: ModelLevel) -> tuple[Tier, ...]:
+    """The levels a model of *level* may be used at: its own and the lower ones; every level when its name is not
+    recognised (:data:`ALLOW_HIGHER_WHEN_UNRECOGNISED`)."""
+    if not level.recognised and ALLOW_HIGHER_WHEN_UNRECOGNISED:
+        return TIER_ORDER
+    return TIER_ORDER[:TIER_ORDER.index(level.tier) + 1]
 
 
 # --- the live model list ------------------------------------------------------------------------------------------

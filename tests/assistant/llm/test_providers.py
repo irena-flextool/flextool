@@ -7,9 +7,11 @@ import pytest
 
 from flextool.assistant.providers import (
     PRESETS,
+    allowed_tiers,
     knob_on,
     knob_reports,
     relaxed_knobs,
+    model_level,
     request_fields,
     tier_from_model,
 )
@@ -85,3 +87,17 @@ def test_openai_sends_store_false_by_default():
 ])
 def test_tier_from_model(model, tier):
     assert tier_from_model("any", model) == tier
+
+
+@pytest.mark.parametrize(("model", "tier", "reason", "allowed"), [
+    ("example:14b", "small", "a model of about 14 billion parameters", ("small",)),
+    ("gpt-5-mini", "small", "a small model of its family (mini)", ("small",)),
+    ("example-70b-chat", "medium", "a model of about 70 billion parameters", ("small", "medium")),
+    ("claude-opus-9", "large", "a large model family (opus)", ("small", "medium", "large")),
+    ("example-chat", "medium", None, ("small", "medium", "large")),      # not recognised: higher levels offered
+])
+def test_model_level_and_the_allowed_levels(model, tier, reason, allowed):
+    """P3-O7: a recognised model only at its level or lower; P3-O12: an unrecognised one also higher."""
+    level = model_level("any", model)
+    assert (level.tier, level.reason, level.recognised) == (tier, reason, reason is not None)
+    assert allowed_tiers(level) == allowed
