@@ -4,12 +4,15 @@ import logging
 import shutil
 import tkinter as tk
 import tkinter.font as tkfont
+from collections.abc import Callable
 from tkinter import ttk, messagebox
 
+from flextool.gui.assistant import strings as assistant_strings
 from flextool.gui.project_utils import (
     create_project,
     get_projects_dir,
     list_projects,
+    notify_assistant_project_deleted,
     rename_project,
 )
 
@@ -25,14 +28,27 @@ class ProjectDialog(tk.Toplevel):
       * ``self.deleted_names`` lists projects that were deleted while the
         dialog was open.  The caller can use it to check whether the
         currently-open project was removed.
+      * ``self.renamed_current`` is the new name of the currently-open
+        project when it was renamed here (``None`` otherwise).
+
+    *before_project_change(name)* is asked before a project is renamed or
+    deleted (the AI assistant closes its chat window of that project and lets
+    its workers finish); ``False`` refuses the change.
     """
 
-    def __init__(self, parent: tk.Misc, current_project: str | None = None) -> None:
+    def __init__(
+        self,
+        parent: tk.Misc,
+        current_project: str | None = None,
+        before_project_change: Callable[[str], bool] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.title("Project menu")
         self.result: str | None = None
         self.deleted_names: list[str] = []
+        self.renamed_current: str | None = None
         self._current_project = current_project
+        self._before_project_change = before_project_change
 
         # ── Modal behaviour ─────────────────────────────────────────
         self.transient(parent)
@@ -160,6 +176,13 @@ class ProjectDialog(tk.Toplevel):
             return None
         return self._project_listbox.get(sel[0])
 
+    def _project_change_allowed(self, name: str, title: str) -> bool:
+        """Ask the AI assistant whether *name* may be renamed or deleted now; a refusal is said."""
+        if self._before_project_change is None or self._before_project_change(name):
+            return True
+        messagebox.showinfo(title, assistant_strings.PROJECT_STILL_FINISHING, parent=self)
+        return False
+
     # ── Event handlers ──────────────────────────────────────────────
 
     def _on_create(self) -> None:
@@ -225,8 +248,11 @@ class ProjectDialog(tk.Toplevel):
             return
         if not self._confirm_delete(name):
             return
+        if not self._project_change_allowed(name, "Delete project"):
+            return
 
         project_path = get_projects_dir() / name
+        resolved = project_path.resolve()
         try:
             shutil.rmtree(project_path)
         except OSError as exc:
@@ -237,6 +263,7 @@ class ProjectDialog(tk.Toplevel):
                 parent=self,
             )
             return
+        notify_assistant_project_deleted(resolved)
 
         self.deleted_names.append(name)
         self._populate_projects()
@@ -290,6 +317,13 @@ class ProjectDialog(tk.Toplevel):
             wraplength=wrap_px,
             justify="left",
         ).pack(anchor="w")
+
+        ttk.Label(
+            body,
+            text=assistant_strings.PROJECT_DELETE_NOTE,
+            wraplength=wrap_px,
+            justify="left",
+        ).pack(anchor="w", pady=(lh // 2, 0))
 
         ttk.Label(
             body,
@@ -388,6 +422,8 @@ class ProjectDialog(tk.Toplevel):
 
         if not new_name or new_name == old_name:
             return
+        if not self._project_change_allowed(old_name, "Rename project"):
+            return
 
         try:
             rename_project(old_name, new_name)
@@ -409,6 +445,9 @@ class ProjectDialog(tk.Toplevel):
             messagebox.showerror("Error", str(exc), parent=self)
             return
 
+        if old_name == self._current_project:
+            self._current_project = new_name
+            self.renamed_current = new_name
         self._populate_projects()
         # Re-select the renamed project
         items = self._project_listbox.get(0, "end")

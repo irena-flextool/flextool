@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import importlib.util
+import logging
 import shutil
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # Subdirectories created inside every new project
 PROJECT_SUBDIRS = [
@@ -96,5 +100,43 @@ def rename_project(old_name: str, new_name: str) -> Path:
     if new_path.exists():
         raise FileExistsError(f"Project '{new_name}' already exists.")
 
+    old_resolved = old_path.resolve()
     old_path.rename(new_path)
+    _assistant_project_renamed(old_resolved, new_path.resolve())
     return new_path
+
+
+def _assistant_store():  # noqa: ANN202 — a flextool.assistant.store.Store, or None
+    """The AI assistant's conversation store, ``None`` when the assistant is not installed."""
+    try:
+        if importlib.util.find_spec("flextool.assistant") is None:
+            return None
+    except (ImportError, ValueError):
+        return None
+    from flextool.assistant.store import open_store
+
+    return open_store()
+
+
+def _assistant_project_renamed(old: Path, new: Path) -> None:
+    """Move the renamed project's saved AI assistant chats to its new name.  A failure is logged: the rename
+    stands, and the chats left under the old name expire there."""
+    try:
+        store = _assistant_store()
+        if store is not None:
+            store.rename_project(old, new)
+    except Exception:  # noqa: BLE001 — never undo or fail a rename for the chats
+        logger.warning("The AI assistant chats of project %s were not moved to %s", old.name, new.name,
+                       exc_info=True)
+
+
+def notify_assistant_project_deleted(project_path: Path) -> None:
+    """A project folder was deleted: delete its saved AI assistant chats (those open in another FlexTool window
+    or terminal are skipped and expire).  A failure is logged; the deletion is never undone."""
+    try:
+        store = _assistant_store()
+        if store is not None:
+            store.forget_project(Path(project_path).absolute())
+    except Exception:  # noqa: BLE001
+        logger.warning("The AI assistant chats of deleted project %s were not deleted", Path(project_path).name,
+                       exc_info=True)

@@ -277,6 +277,11 @@ class GlobalSettings:
     # at startup (so a fresh install or a swapped polars build is verified
     # exactly once).  See flextool.env_check.
     polars_check_fingerprint: str = ""
+    # Saved AI assistant chat-window placement, same per-configuration scheme
+    # as exec_jobs_geometry ({signature -> "WxH+X+Y"}), and the cw it was
+    # saved at (0 = unknown).  Written by the chat window when it closes.
+    assistant_window_geometry: dict[str, str] = field(default_factory=dict)
+    assistant_window_layout_cw: int = 0
 
 
 @dataclass
