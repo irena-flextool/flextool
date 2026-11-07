@@ -309,6 +309,30 @@ def resolve_saved_geometry(
     return clamp_geometry(geom, screen_w, screen_h, min_w=min_w, min_h=min_h)
 
 
+def blend_rgb(base16: tuple[int, int, int], target_hex: str, frac: float) -> str:
+    """Blend a 16-bit ``(r, g, b)`` base colour ``frac`` of the way toward
+    ``target_hex`` (``#rrggbb``) and return an ``#rrggbb`` string.
+
+    ``base16`` comes from ``winfo_rgb`` (each channel 0–65535), so the
+    result tracks the widget's *actual* theme background/foreground:
+    blending a near-black dark-mode base toward grey lightens it, while
+    blending a near-white light-mode base toward grey darkens it — the
+    same call gives the right "touch" of tint in either theme.
+    """
+    tr = int(target_hex[1:3], 16) * 257
+    tg = int(target_hex[3:5], 16) * 257
+    tb = int(target_hex[5:7], 16) * 257
+    r = int(base16[0] + (tr - base16[0]) * frac)
+    g = int(base16[1] + (tg - base16[1]) * frac)
+    b = int(base16[2] + (tb - base16[2]) * frac)
+    return f"#{r // 256:02x}{g // 256:02x}{b // 256:02x}"
+
+
+def rgb_hex(base16: tuple[int, int, int]) -> str:
+    """A 16-bit ``(r, g, b)`` from ``winfo_rgb`` as ``#rrggbb`` (the target of :func:`blend_rgb`)."""
+    return f"#{base16[0] // 256:02x}{base16[1] // 256:02x}{base16[2] // 256:02x}"
+
+
 @dataclass(frozen=True)
 class FontMetrics:
     """Snapshot of derived font metrics. Cheap to recompute, immutable."""
