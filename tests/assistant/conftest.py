@@ -23,16 +23,19 @@ PROJECT_DIR_NAME = "G #2 ä%25x project"
 
 @pytest.fixture(autouse=True)
 def user_cache_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """``platformdirs.user_cache_dir`` points into ``tmp_path``: no test writes the real user cache."""
+    """``platformdirs.user_cache_dir`` points into ``tmp_path``: no test writes the real user cache.  The model
+    facts the probes keep in this process are forgotten too (they stand for the same cache)."""
     import platformdirs
 
-    from flextool.assistant import docs_store
+    from flextool.assistant import docs_store, probes
 
     cache = tmp_path / "user_cache"
     monkeypatch.setattr(platformdirs, "user_cache_dir", lambda *args, **kwargs: str(cache))
     docs_store.reset()
+    probes._RECENT.clear()
     yield cache
     docs_store.reset()
+    probes._RECENT.clear()
 
 
 @pytest.fixture(autouse=True)

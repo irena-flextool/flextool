@@ -47,7 +47,7 @@ from flextool.assistant.llm_adapter import (
     ToolWaiting,
     Waiting,
 )
-from flextool.assistant.providers import PRESETS, Preset, knob_reports, relaxed_knobs, tier_from_model
+from flextool.assistant.providers import PRESETS, Preset, knob_reports, relaxed_knobs
 
 if TYPE_CHECKING:
     from flextool.assistant.context import AssistantContext
@@ -55,6 +55,7 @@ if TYPE_CHECKING:
     from flextool.assistant.session import Session, TurnResult, TurnWorker
     from flextool.assistant.settings import Settings
     from flextool.assistant.store import Conversation, Store
+    from flextool.assistant.tiers import TierChoice
     from flextool.assistant.usage import Ledger
 
 BackendFactory = Callable[[Preset, Connection], Backend]
@@ -376,16 +377,33 @@ class Choice:
     knobs: dict[str, object]
     session_key: str | None = field(default=None, repr=False)      # typed in, kept for this session only
 
+    def tier_choice(self, facts: ModelFacts | None = None) -> TierChoice:
+        """The level of this model (P3 §3): with the probe's *facts*, else with the facts FlexTool last found for
+        it (the name alone when there are none).  Raises :class:`~flextool.assistant.tiers.WindowTooSmall` only
+        for the probe's facts."""
+        from flextool.assistant import probes, tiers
+
+        model = self.model or ""
+        if facts is not None:
+            route = endpoint.route_for(self.preset, self.base_url, facts=facts)
+            return tiers.resolve_tier(self.preset, model, facts, self.tier, route)
+        route = endpoint.route_for(self.preset, self.base_url, model=model)
+        cached = probes.cached_facts(self.preset.id, self.base_url, model) if model else None
+        try:
+            return tiers.resolve_tier(self.preset, model, cached, self.tier, route)
+        except tiers.WindowTooSmall:
+            return tiers.resolve_tier(self.preset, model, None, self.tier, route)
+
     @property
     def level(self) -> str:
-        """The internal level name."""
-        if self.tier:
-            return prompt.level_name(self.tier)
-        return tier_from_model(self.preset.id, self.model or "")
+        """The internal level name before the probe (:meth:`tier_choice`)."""
+        return self.tier_choice().chosen
 
     def level_text(self) -> str:
-        name = LEVEL_NAMES[self.level]
-        return f"{name} (chosen)" if self.tier else f"{name} (from the model name)"
+        tier = self.tier_choice()
+        name = LEVEL_NAMES[tier.chosen]
+        chosen = bool(self.tier) and prompt.level_name(self.tier) == tier.chosen
+        return f"{name} (chosen)" if chosen else f"{name} (from the model name)"
 
 
 def _check_address(url: str) -> str:
@@ -618,6 +636,12 @@ class Link:
     conn: Connection
     facts: ModelFacts
     backend: Backend
+    tier: TierChoice
+
+    @property
+    def level(self) -> str:
+        """The internal level in use: the probe's facts decided it."""
+        return self.tier.chosen
 
 
 class Chat:
@@ -752,7 +776,7 @@ class Chat:
     def prepare(self) -> int | None:
         """Make the connection ready for a question: the data notice, the probe, the notice for the probed route,
         the backend and the session.  ``None`` when ready, else the exit code."""
-        from flextool.assistant import probes
+        from flextool.assistant import probes, tiers
         from flextool.assistant.llm_errors import LLMError, NoKey
         from flextool.assistant.session import tool_specs
 
@@ -789,6 +813,14 @@ class Chat:
             return 2 if isinstance(error, NoKey) else 1
         for note in facts.notes:
             self.renderer.note(note)
+        try:
+            tier = choice.tier_choice(facts)
+        except tiers.WindowTooSmall as exc:
+            self.renderer.message(_error_text(probes.window_error(choice.preset, conn, exc)))
+            return 1
+        for line in (tier.notice, tier.window_line()):
+            if line:
+                self.renderer.note(line)
         route = endpoint.route_for(choice.preset, choice.base_url, facts=facts)
         if route != conn.route:
             conn = dataclasses.replace(conn, route=route)
@@ -801,7 +833,7 @@ class Chat:
         except LLMError as exc:
             self.renderer.message(_error_text(exc))
             return 2 if isinstance(exc, NoKey) else 1
-        link = Link(choice=choice, conn=conn, facts=facts, backend=backend)
+        link = Link(choice=choice, conn=conn, facts=facts, backend=backend, tier=tier)
         if self.session is None:
             self._make_session(link)
         else:
@@ -812,15 +844,15 @@ class Chat:
     def _caps(self, link: Link):
         from flextool.assistant.session import TurnCaps, result_caps_for
 
-        self.ctx.caps = result_caps_for(link.choice.level, link.facts, override=self.args.result_cap)
-        return TurnCaps.for_tier(link.choice.level)
+        self.ctx.caps = result_caps_for(link.level, link.facts, override=self.args.result_cap)
+        return TurnCaps.for_tier(link.level)
 
     def _make_session(self, link: Link) -> None:
         from flextool.assistant.session import Session, TurnWorker
 
         caps = self._caps(link)
         self.session = Session(self.ctx, link.backend, link.choice.preset, conversation=self.conversation, caps=caps,
-                               tier=link.choice.level, store=self.store, ledger=self.ledger, facts=link.facts,
+                               tier=link.level, store=self.store, ledger=self.ledger, facts=link.facts,
                                compaction_every=self.settings.compaction_every,
                                keep_recent_turns=self.settings.keep_recent_turns, route=link.conn.route)
         self.worker = TurnWorker(self.session)
@@ -829,7 +861,7 @@ class Chat:
         assert self.session is not None
         self._finish_worker()
         caps = self._caps(link)
-        self.session.switch(link.backend, link.choice.preset, tier=link.choice.level, facts=link.facts,
+        self.session.switch(link.backend, link.choice.preset, tier=link.level, facts=link.facts,
                             route=link.conn.route, caps=caps)
 
     def drop_link(self) -> None:
