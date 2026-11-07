@@ -36,7 +36,7 @@ except Exception:  # noqa: BLE001 — not installed
 pytestmark = pytest.mark.skipif(_MCP_MAJOR < 2, reason="needs mcp 2.x (reinstall FlexTool: pip install -e .)")
 
 DATA_NOTICE = "Everything these tools return is sent to the AI service that your assistant uses."
-UNITS_NOTICE = "Units are a convention, not checked by FlexTool"
+UNITS_NOTICE = "Units of measure are a convention; FlexTool does not check them."
 
 
 def _script() -> Path:
