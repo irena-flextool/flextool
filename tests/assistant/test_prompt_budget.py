@@ -1,5 +1,7 @@
 """The level texts and tool sets (P3 §8 test 1; §2).
 
+* the instructions and tool schemas of each level and front end fit the level's prefix budget (digit-aware
+  estimate, P3 §4.1);
 * basic sends exactly the seven tools of P3-O15, standard and advanced all eighteen;
 * no layer sent at a level — the chat's five layers for each front end, and the connection's instructions —
   names a tool outside that level's set (critique M1);
@@ -17,6 +19,7 @@ import re
 import pytest
 
 from flextool.assistant import prompt, registry
+from flextool.assistant.budget import LEVEL_BUDGETS, approx_tokens, schema_tokens
 from flextool.assistant.session import tool_specs
 
 BASIC_TOOLS = ("find_result_tables", "get_entity", "get_parameter", "list_runs", "query_result", "read_doc",
@@ -38,6 +41,14 @@ ADDENDA_SHA256 = {
 def _named_tools(text: str) -> set[str]:
     names = registry.all_tools()
     return {name for name in names if re.search(rf"(?<![\w]){re.escape(name)}(?![\w])", text)}
+
+
+@pytest.mark.parametrize("front_end", FRONT_ENDS)
+@pytest.mark.parametrize("level", LEVELS)
+def test_the_prefix_fits_the_level_budget(front_end, level):
+    layers = prompt.system_layers(front_end, level)
+    prefix = sum(approx_tokens(layer, "text") for layer in layers) + schema_tokens(tool_specs(level))
+    assert prefix <= LEVEL_BUDGETS[level].prefix_tokens, f"{level} {front_end}: {prefix} tokens"
 
 
 def test_basic_is_the_seven_tools():

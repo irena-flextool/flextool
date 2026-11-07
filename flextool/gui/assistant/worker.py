@@ -48,6 +48,7 @@ from flextool.gui.assistant.gate import GateWait as GateWait  # re-exported: the
 if TYPE_CHECKING:
     from flextool.assistant.endpoint import ConsentKey
     from flextool.assistant.llm_adapter import Backend, Connection, Message, Route
+    from flextool.assistant.budget import Budget
     from flextool.assistant.probes import ModelFacts
     from flextool.assistant.providers import Preset
     from flextool.assistant.session import Session, TurnResult
@@ -266,6 +267,7 @@ class _Link:
     facts: ModelFacts
     backend: GatedBackend
     level: str
+    budget: Budget
 
 
 @dataclass
@@ -586,6 +588,10 @@ class AssistantWorker:
             raise self._problem(job, str(exc)) from None
         if not provider.model:
             raise self._problem(job, strings.CHOOSE_MODEL.format(provider=preset.label))
+        from flextool.assistant.budget import free_tier_on
+
+        if free_tier_on(preset.id, provider.model, settings.free_tier):
+            self.gate.set_parallel(1)           # the free plan sends one request at a time (P3 §4.6)
         self._check(job)
         key, source, note = keys.resolve_key(preset, base_url, config_root=self.config_root)
         self._check(job)
@@ -601,7 +607,7 @@ class AssistantWorker:
         fingerprint = (preset.id, base_url, provider.model, provider.tier, tuple(sorted(
             (k, repr(v)) for k, v in provider.knobs.items())), conn.key_source,
             hashlib.sha256((key or "").encode("utf-8")).hexdigest()[:16], proxy_for(base_url),
-            settings.parallel_requests)
+            settings.parallel_requests, settings.free_tier, settings.compaction_every, settings.keep_recent_turns)
         return _Setup(settings, preset, base_url, conn, level, level_source, fingerprint)
 
     def _prepared_event(self, setup: _Setup, route: Route) -> Prepared:
@@ -645,7 +651,7 @@ class AssistantWorker:
         self._emit(job.job_id, self._prepared_event(setup, conn.route))
         yield from self._consent(job, setup, conn.route)
         self._check(job)
-        needed = probes.needed_tokens(prompt.system_layers("gui", setup.level), tool_specs(setup.level))
+        needed = probes.needed_tokens(prompt.system_layers("gui", "small"), tool_specs("small"))
         probe = self._probe or probes.probe
         try:
             facts = probe(setup.preset, conn, job.cancel, needed=needed,
@@ -685,31 +691,38 @@ class AssistantWorker:
             raise self._problem(job, message_for(err, "gui"), err.code in SETTINGS_ERRORS) from None
         gated = GatedBackend(backend, self.gate, ledger_key(setup.preset.id, setup.base_url,
                                                              forwarded_to=route.forwarded_to), label=route.label)
-        link = _Link(setup.fingerprint, setup.preset, setup.base_url, conn, facts, gated, setup.level)
+        from flextool.assistant import budget
+
+        free = budget.free_tier_on(setup.preset.id, conn.model, setup.settings.free_tier)
+        b = budget.budget_for(tier, free_tier=free, compaction_every=setup.settings.compaction_every,
+                              keep_recent_turns=setup.settings.keep_recent_turns)
+        link = _Link(setup.fingerprint, setup.preset, setup.base_url, conn, facts, gated, setup.level, b)
         self._attach(link, setup)
         return link
 
     def _attach(self, link: _Link, setup: _Setup) -> None:
         """Step 5: a new session, or the existing one going on with *link*."""
-        from flextool.assistant.session import Session, TurnCaps, result_caps_for
+        from flextool.assistant.session import Session, TurnCaps
+        from flextool.assistant.settings import mark_free_tier_suggested
         from flextool.assistant.usage import Ledger
 
         ctx = self._context()
-        ctx.caps = result_caps_for(link.level, link.facts)
-        caps = TurnCaps.for_tier(link.level)
+        b = link.budget
+        ctx.caps = b.result_caps
+        caps = TurnCaps.from_budget(b)
         old = self._link
         if self._session is None:
             store = self._store_open()
+            config_root = self.config_root
             session = Session(ctx, link.backend, link.preset, conversation=self._ensure_conversation(), caps=caps,
                               tier=link.level, store=None if store.expiry_days() == 0 else store,
-                              ledger=Ledger(self.config_root), facts=link.facts,
-                              compaction_every=setup.settings.compaction_every,
-                              keep_recent_turns=setup.settings.keep_recent_turns, route=link.conn.route)
+                              ledger=Ledger(self.config_root), facts=link.facts, route=link.conn.route, budget=b,
+                              free_tier_hint=lambda key: mark_free_tier_suggested(key, config_root))
             with self._session_lock:
                 self._session = session
         else:
             self._session.switch(link.backend, link.preset, tier=link.level, facts=link.facts,
-                                 route=link.conn.route, caps=caps)
+                                 route=link.conn.route, caps=caps, budget=b)
         self._link = link
         if old is not None and old.backend is not link.backend:
             old.backend.close()

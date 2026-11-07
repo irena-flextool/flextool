@@ -796,8 +796,7 @@ class Chat:
         code = self.consent(conn.route)
         if code is not None:
             return code
-        level = choice.level
-        needed = probes.needed_tokens(prompt.system_layers("terminal", level), tool_specs(level))
+        needed = probes.needed_tokens(prompt.system_layers("terminal", "small"), tool_specs("small"))
         cancel = threading.Event()
         stopped, facts, error = self._run(
             lambda: probes.probe(choice.preset, conn, cancel, needed=needed, on_event=self.renderer.event), cancel)
@@ -841,28 +840,36 @@ class Chat:
         self.link = link
         return None
 
-    def _caps(self, link: Link):
-        from flextool.assistant.session import TurnCaps, result_caps_for
+    def _budget(self, link: Link):
+        """The session's budget (P3 §4): the level fitted to the model's window, the free plan, the settings'
+        compaction overrides and ``--result-cap``; the result caps go into the context."""
+        from flextool.assistant import budget
 
-        self.ctx.caps = result_caps_for(link.level, link.facts, override=self.args.result_cap)
-        return TurnCaps.for_tier(link.level)
+        free = budget.free_tier_on(link.choice.preset.id, link.conn.model, self.settings.free_tier)
+        b = budget.budget_for(link.tier, free_tier=free, compaction_every=self.settings.compaction_every,
+                              keep_recent_turns=self.settings.keep_recent_turns, result_cap=self.args.result_cap)
+        self.ctx.caps = b.result_caps
+        return b
 
     def _make_session(self, link: Link) -> None:
-        from flextool.assistant.session import Session, TurnWorker
+        from flextool.assistant.session import Session, TurnCaps, TurnWorker
+        from flextool.assistant.settings import mark_free_tier_suggested
 
-        caps = self._caps(link)
-        self.session = Session(self.ctx, link.backend, link.choice.preset, conversation=self.conversation, caps=caps,
-                               tier=link.level, store=self.store, ledger=self.ledger, facts=link.facts,
-                               compaction_every=self.settings.compaction_every,
-                               keep_recent_turns=self.settings.keep_recent_turns, route=link.conn.route)
+        b = self._budget(link)
+        self.session = Session(self.ctx, link.backend, link.choice.preset, conversation=self.conversation,
+                               caps=TurnCaps.from_budget(b), tier=link.level, store=self.store, ledger=self.ledger,
+                               facts=link.facts, route=link.conn.route, budget=b,
+                               free_tier_hint=mark_free_tier_suggested)
         self.worker = TurnWorker(self.session)
 
     def _switch_session(self, link: Link) -> None:
+        from flextool.assistant.session import TurnCaps
+
         assert self.session is not None
         self._finish_worker()
-        caps = self._caps(link)
+        b = self._budget(link)
         self.session.switch(link.backend, link.choice.preset, tier=link.level, facts=link.facts,
-                            route=link.conn.route, caps=caps)
+                            route=link.conn.route, caps=TurnCaps.from_budget(b), budget=b)
 
     def drop_link(self) -> None:
         """Forget the prepared connection (another model or provider): the next question prepares again."""

@@ -75,8 +75,6 @@ REMOTE_TIMEOUT = net.CONNECT_TIMEOUT
 KEEP_ALIVE = "10m"
 #: Seconds between two :class:`Waiting` events while a model loads.
 WAIT_INTERVAL = 5.0
-#: Tokens kept free for the answer on top of the instructions and tools.
-ANSWER_MARGIN = 4_000
 #: The OpenRouter model list is fetched again after this many seconds.
 MODEL_LIST_MAX_AGE = 24 * 3600.0
 MODEL_LIST_CACHE = "openrouter_models.json"
@@ -110,12 +108,12 @@ class ModelFacts:
 
 
 def needed_tokens(system: tuple[str, ...], tools: tuple[ToolSpec, ...]) -> int:
-    """About how many tokens the instructions and tools take, plus room for the answer: a quarter of their JSON
-    length + :data:`ANSWER_MARGIN`."""
-    payload = json.dumps({"system": list(system),
-                          "tools": [{"name": t.name, "description": t.description, "parameters": t.input_schema}
-                                    for t in tools]}, ensure_ascii=False)
-    return len(payload) // 4 + ANSWER_MARGIN
+    """The context the instructions *system* and *tools* (the basic level's: the level is lowered to fit the
+    window afterwards) and one basic answer need, estimated digit-aware (:func:`flextool.assistant.budget.
+    needed_tokens`); never below the smallest window the assistant works with, 12 288 tokens."""
+    from flextool.assistant import budget
+
+    return budget.needed_tokens(system, tools, budget.LEVEL_BUDGETS["small"].max_output_tokens)
 
 
 # --- asking a server ----------------------------------------------------------------------------------------------
