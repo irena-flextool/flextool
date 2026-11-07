@@ -1,3 +1,11 @@
+## Unreleased
+
+- **polars 2 is supported again, with the memory of polars 1.** polars 2.x reorders chains of joins by its own
+  size estimate, and on the LP hand-off to HiGHS it picked an order that built a far larger intermediate table:
+  peak memory about tripled on large models (the same LP), so 4.2.0 held polars below 2. polar-high 3.12.3 runs
+  these joins in the order they are written, so FlexTool now requires polar-high 3.12.3 and accepts polars 1.40 or
+  newer below 3.
+
 ## Release 4.2.0 (7.11.2026) — coarse time steps for units and connections, stochastic realization redesign, multi-solve cost & retirement fixes, run thread budget (schema v77)
 
 A large release: units and connections can decide on coarse time steps, stochastic solves are rebuilt around
