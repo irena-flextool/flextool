@@ -462,3 +462,94 @@ def test_the_installed_command_answers_one_question(project):
     assert result.returncode == 0, result.stderr
     assert result.stdout == "Forty-two.\n"
     assert "tokens not reported by Custom endpoint" in result.stderr
+
+
+# --- levels and the free plan (P3 §5) -----------------------------------------------------------------------------
+NAME_ONLY = "The level comes from the model name; it may be lowered when FlexTool sees the model's context size."
+LOWERED = "The level chosen before (advanced) is above this model's level, so the automatic level is used."
+
+
+def _model(project: Path, model: str, *extra: str) -> list[str]:
+    argv = remote(project, *extra)
+    argv[argv.index("example-model")] = model
+    return argv
+
+
+def test_the_banner_gives_the_level_and_why(project, fake_backends, user_config_in_tmp):
+    term = terminal(["/quit"])
+    endpoint.mark_welcome_seen()
+    assert chat_cli.main(_model(project, "qwen2.5-14b"), backend_factory=Models([], fake_backends),
+                         terminal=term) == 0
+    lines = term.stdout.getvalue().splitlines()
+    at = lines.index("Level: basic (a model of about 14 billion parameters)")
+    assert lines[at + 1:at + 3] == ["Higher levels are not available for it.", NAME_ONLY]
+    assert not any(line.startswith("Free plan") for line in lines)
+
+
+def test_q_with_a_level_above_the_model_exits_2_and_sends_nothing(project, fake_backends, echo_tool,
+                                                                  user_config_in_tmp):
+    models = Models([say("never")], fake_backends)
+    term = terminal()
+    argv = _model(project, "gpt-5-mini", "-q", "Q", "--tier", "advanced", "--accept-data-notice")
+    assert chat_cli.main(argv, backend_factory=models, terminal=term) == 2
+    assert term.stdout.getvalue() == ""
+    assert term.stderr.getvalue().strip() == (
+        "The level advanced is not available for this model, so nothing was sent. This model is placed at the basic "
+        "level from its name (a small model of its family (mini)). Higher levels are not available for it. Levels "
+        "it allows: basic.")
+    assert models.made == [] and acks(user_config_in_tmp) == []
+
+
+def test_q_with_an_allowed_lower_level_is_answered(project, fake_backends, echo_tool):
+    models = Models([say("Answer.")], fake_backends)
+    term = terminal()
+    argv = remote(project, "-q", "Q", "--tier", "basic", "--accept-data-notice")
+    assert chat_cli.main(argv, backend_factory=models, terminal=term) == 0
+    assert term.stdout.getvalue() == "Answer.\n"
+    assert any(layer.startswith("Your level: basic.") for layer in models.requests[0].system)
+
+
+def test_the_interactive_chat_lowers_a_level_above_the_model_with_a_notice(project, fake_backends,
+                                                                           user_config_in_tmp):
+    term = terminal(["/quit"])
+    endpoint.mark_welcome_seen()
+    assert chat_cli.main(_model(project, "gpt-5-mini", "--tier", "advanced"),
+                         backend_factory=Models([], fake_backends), terminal=term) == 0
+    lines = term.stdout.getvalue().splitlines()
+    at = lines.index("Level: basic (a small model of its family (mini))")
+    assert lines[at + 1:at + 4] == ["Higher levels are not available for it.", NAME_ONLY, LOWERED]
+
+
+def test_free_tier_flag_saved_and_automatic(project, fake_backends, echo_tool, user_config_in_tmp):
+    free_notice = ("Free plan: the assistant uses at most 4 steps for each question to stay within the provider's "
+                   "request limits.")
+    models = Models([say("One."), say("Two."), say("Three.")], fake_backends)
+    term = terminal(["/save", "/quit"])
+    endpoint.mark_welcome_seen()
+    assert chat_cli.main(remote(project, "--free-tier", "on"), backend_factory=models, terminal=term) == 0
+    assert "Free plan: on, so each question uses fewer steps." in term.stdout.getvalue()
+    assert load_settings().free_tier is True
+    saved = terminal()
+    assert chat_cli.main(remote(project, "-q", "Q", "--accept-data-notice"), backend_factory=models,
+                         terminal=saved) == 0
+    assert free_notice in saved.stderr.getvalue()
+    auto = terminal()
+    assert chat_cli.main(remote(project, "-q", "Q", "--free-tier", "auto"), backend_factory=models,
+                         terminal=auto) == 0
+    assert "Free plan" not in auto.stderr.getvalue()
+    off = terminal()
+    assert chat_cli.main(remote(project, "-q", "Q", "--free-tier", "off"), backend_factory=models,
+                         terminal=off) == 0
+    assert "Free plan" not in off.stderr.getvalue()
+    assert load_settings().free_tier is True          # only /save keeps the flag
+
+
+def test_context_command_gives_the_window_caps_and_rhythm(project, fake_backends, echo_tool, user_config_in_tmp):
+    models = Models([say("Answer.")], fake_backends)
+    term = terminal(["/context", "Q", "yes", "/context", "/quit"])
+    endpoint.mark_welcome_seen()
+    assert chat_cli.main(remote(project), backend_factory=models, terminal=term) == 0
+    out = term.stdout.getvalue()
+    assert "Context: not known yet (FlexTool checks it before the first question)." in out
+    assert ("Context: 128 000 tokens (assumed: this service does not report it); tool results up to 20 000 "
+            "characters; earlier results shortened every 6 questions.") in out

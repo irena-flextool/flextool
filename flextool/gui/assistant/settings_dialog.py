@@ -7,6 +7,7 @@ Key      Using the key from the environment variable GEMINI_API_KEY. …   [•�
          Store in: (o) system keyring ( ) a file on this computer (not encrypted)
 Model    [gemini-… ▾] [Refresh list] 34 models
 Level    [Automatic (standard for this model) ▾]   the reason
+         Free plan: fewer steps for each question, … [Automatic (off for this model) ▾]
 Questions answered at the same time [1] (more chats wait their turn)
 ── Data use ──  Data goes to: … · Sent with every request: [x] {knob} {note} · Set in your provider console: • …
 ── Conversations ──  Keep conversations for [30] days. 0 means conversations are not saved.
@@ -23,6 +24,8 @@ or the provider or address changed since (critique m16).  The saved settings fil
   level (:func:`~flextool.assistant.tiers.resolve_tier`: its name or size, and the context FlexTool last saw it
   run with); for a model FlexTool does not recognise, the higher levels too, marked "(at your own risk)".  The
   lines below say why, and that the level may be lowered when no context is known yet.
+* **Free plan** (P3 §4.6), in the level's rows: "Automatic (on / off for this model)" — on only for an OpenRouter
+  model whose name ends ``:free`` — then On and Off.  Saved with the rest (``free_tier``: null, true or false).
 * **Data use**: one check box per privacy setting the requests carry (unchecking one that is on by default asks
   first; "Keep on" checks it again), the settings only the account can change as a list (no links).
 * **Save** writes P1's ``settings.json`` (keeping keys this FlexTool does not know), then calls *on_saved()* —
@@ -114,6 +117,7 @@ class AssistantSettingsDialog(_AssistantDialog):
             self._addresses[provider.preset] = provider.base_url
         self._level_choice: str | None = provider.tier
         self._level_values: list[str | None] = [None]
+        self._free_choice: bool | None = self._settings.free_tier
         self._has_key: bool | None = None
         self._preset: Preset | None = None
         self._knob_frame_children: list[tk.Misc] = []
@@ -214,8 +218,16 @@ class AssistantSettingsDialog(_AssistantDialog):
         self.level_box.bind("<<ComboboxSelected>>", self._on_level_selected)
         self.level_reason = ttk.Label(level, text="", wraplength=self.wrap, justify="left")
         self.level_reason.pack(anchor="w", fill="x")
-        #: The level rows end here; rows added below the reason belong to the level (the free plan, P3 §5).
+        #: The level rows: the list, the reason and the free plan (P3 §5).
         self.level_frame = level
+        free = ttk.Frame(level)
+        free.pack(anchor="w", fill="x", pady=(lh // 3, 0))
+        self.free_label = ttk.Label(free, text=strings.SET_FREE_PLAN, wraplength=self.wrap, justify="left")
+        self.free_label.pack(anchor="w", fill="x")
+        self.free_var = tk.StringVar(self)
+        self.free_box = ttk.Combobox(free, textvariable=self.free_var, state="readonly", width=36)
+        self.free_box.pack(anchor="w")
+        self.free_box.bind("<<ComboboxSelected>>", self._on_free_selected)
 
         parallel = ttk.Frame(form)
         parallel.grid(row=4, column=0, columnspan=2, sticky="ew", pady=(lh // 3, 0))
@@ -704,6 +716,7 @@ class AssistantSettingsDialog(_AssistantDialog):
 
     def _model_changed(self) -> None:
         self._update_level()
+        self._update_free_plan()
         self._update_route()
         self._update_hint()
 
@@ -774,6 +787,36 @@ class AssistantSettingsDialog(_AssistantDialog):
         except (ValueError, IndexError):
             return None
 
+    #: The free plan's list after its first entry: the saved values.
+    _FREE_VALUES: tuple[bool | None, ...] = (None, True, False)
+
+    def _update_free_plan(self) -> None:
+        """The free plan's list: "Automatic (…)" says what automatic gives for the model shown (P3-O2)."""
+        from flextool.assistant.budget import free_tier_on
+
+        preset = self._preset
+        model = self.model_var.get().strip()
+        if preset is None or not model:
+            automatic = strings.FREE_PLAN_AUTOMATIC_NO_MODEL
+        else:
+            on = free_tier_on(preset.id, model, None)
+            automatic = strings.FREE_PLAN_AUTOMATIC.format(
+                state=strings.FREE_PLAN_STATE_ON if on else strings.FREE_PLAN_STATE_OFF)
+        labels = [automatic, strings.FREE_PLAN_ON, strings.FREE_PLAN_OFF]
+        self.free_box["values"] = labels
+        self.free_var.set(labels[self._FREE_VALUES.index(self._free_choice)])
+
+    def _on_free_selected(self, _event: object = None) -> None:
+        self._free_choice = self.chosen_free_tier()
+
+    def chosen_free_tier(self) -> bool | None:
+        """The free plan the list shows: ``None`` for automatic, else on (``True``) or off (``False``)."""
+        labels = list(self.free_box["values"])
+        try:
+            return self._FREE_VALUES[labels.index(self.free_var.get())]
+        except (ValueError, IndexError):
+            return None
+
     # --- save and cancel ------------------------------------------------------------------------------------
     def _error(self, text: str) -> None:
         self.error_label.configure(text=text)
@@ -830,6 +873,7 @@ class AssistantSettingsDialog(_AssistantDialog):
         provider.knobs = dict(self._knobs)
         provider.key_storage = "file" if self.storage_var.get() == "file" else "keyring"
         new.parallel_requests = parallel
+        new.free_tier = self.chosen_free_tier()
         new.conversation_expiry_days = days
         if days < self._settings.conversation_expiry_days:
             text = strings.RETENTION_CONFIRM_ZERO if days == 0 else strings.RETENTION_CONFIRM.format(n=days)

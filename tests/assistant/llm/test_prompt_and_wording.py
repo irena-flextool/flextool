@@ -68,6 +68,8 @@ def _texts() -> list[tuple[str, str]]:
     out += [(f"endpoint {name}", getattr(endpoint, name)) for name in ("NOTICE", "NOTICE_PROXY", "NOTICE_HEADERS")]
     out += [("chat WELCOME", chat_cli.WELCOME), ("chat HELP", chat_cli.HELP)]
     out += [(f"chat TEXTS[{k}]", v) for k, v in chat_cli.TEXTS.items()]
+    out += [(f"chat WINDOW_SOURCES[{k}]", v) for k, v in chat_cli.WINDOW_SOURCES.items()]
+    out += [(f"chat {name}", getattr(chat_cli, name)) for name in ("LEVEL_LINE", "LEVEL_CHOSEN")]
     out += [(f"chat {name}", getattr(chat_cli, name)) for name in dir(chat_cli)
             if name.startswith(("BANNER", "PRIVACY_", "CONTEXT_")) or name in ("WAITING", "THINKING", "TOOL_WAITING")]
     out += [(f"window {name}", getattr(gui_strings, name)) for name in dir(gui_strings)
