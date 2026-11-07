@@ -1,0 +1,64 @@
+{
+ "description": "One tool call whose arguments come whole, usage on the last chunk.",
+ "synthetic": true,
+ "chunks": [
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "role": "assistant",
+      "content": ""
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "id": "Ab3dE6gH9",
+        "function": {
+         "name": "get_entity",
+         "arguments": "{\"name\": \"west\"}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {},
+     "finish_reason": "tool_calls"
+    }
+   ],
+   "usage": {
+    "prompt_tokens": 700,
+    "completion_tokens": 20,
+    "total_tokens": 720
+   }
+  }
+ ]
+}

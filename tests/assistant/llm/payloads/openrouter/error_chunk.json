@@ -1,0 +1,41 @@
+{
+ "description": "Some text, then an error chunk from the upstream provider.",
+ "synthetic": true,
+ "chunks": [
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "role": "assistant",
+      "content": "Partial "
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "content": ""
+     },
+     "finish_reason": "error"
+    }
+   ],
+   "error": {
+    "code": 502,
+    "message": "Provider returned error"
+   }
+  }
+ ]
+}

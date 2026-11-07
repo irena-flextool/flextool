@@ -22,7 +22,10 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
+
+if TYPE_CHECKING:
+    from flextool.assistant.providers import Preset
 
 #: (preset id, base URL, model): who produced a message's provider data.
 Origin = tuple[str, str, str]
@@ -318,3 +321,14 @@ def quiet_sdk_loggers(*, verbose: bool = False) -> None:
     for name in SDK_LOGGERS:
         logging.getLogger(name).setLevel(level)
 
+
+def make_backend(preset: Preset, conn: Connection, *, transport=None, verbose: bool = False) -> Backend:
+    """The backend of *preset* for *conn*.  *transport* (an ``httpx2`` transport) replaces the network in tests."""
+    if preset.backend == "openai":
+        from flextool.assistant.backends.openai_chat import OpenAIChatBackend
+
+        backend: Backend = OpenAIChatBackend(preset, conn, transport=transport)
+    else:
+        raise ValueError(f"unknown backend {preset.backend!r}")
+    quiet_sdk_loggers(verbose=verbose)
+    return backend

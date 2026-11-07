@@ -1,0 +1,35 @@
+{
+ "description": "A text answer without any usage.",
+ "synthetic": true,
+ "chunks": [
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "role": "assistant",
+      "content": "Hello from the custom endpoint."
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {},
+     "finish_reason": "stop"
+    }
+   ]
+  }
+ ]
+}

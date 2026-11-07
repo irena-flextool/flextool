@@ -1,0 +1,80 @@
+{
+ "description": "A two-part text answer, then a usage chunk with cached tokens.",
+ "synthetic": true,
+ "chunks": [
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "role": "assistant",
+      "content": ""
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "content": "The west node "
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "content": "has 2 units."
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {},
+     "finish_reason": "stop"
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [],
+   "usage": {
+    "prompt_tokens": 3210,
+    "completion_tokens": 412,
+    "total_tokens": 3622,
+    "prompt_tokens_details": {
+     "cached_tokens": 2900
+    }
+   }
+  }
+ ]
+}
