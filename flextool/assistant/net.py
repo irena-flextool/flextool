@@ -119,6 +119,20 @@ def check_base_url(url: str) -> str:
     return url.strip()
 
 
+def normalise_endpoint(url: str) -> str:
+    """*url* in one spelling for keys and acknowledgements: scheme and host in lower case, the port only when it is
+    not the scheme's default, no trailing slash (``HTTP://LocalHost:11434/v1/`` -> ``http://localhost:11434/v1``)."""
+    parts = urlsplit(url.strip())
+    scheme = parts.scheme.lower()
+    host = (parts.hostname or "").lower()
+    if ":" in host:
+        host = f"[{host}]"
+    port = parts.port
+    default = {"http": 80, "https": 443}.get(scheme)
+    netloc = host if port is None or port == default else f"{host}:{port}"
+    return f"{scheme}://{netloc}{parts.path.rstrip('/')}"
+
+
 def _host_port(url: str) -> str:
     parts = urlsplit(url)
     host = parts.hostname or ""

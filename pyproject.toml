@@ -150,6 +150,10 @@ dependencies = [
     # any other base URL).  3.46: chunks keep unknown fields in ``model_extra`` and
     # ``extra_body`` reaches the request body; the next major is capped.
     "openai>=3.46,<4",
+    # The assistant chat keeps the AI services' keys in the system keyring (Windows Credential
+    # Manager, macOS Keychain, Secret Service on Linux; flextool.assistant.keys).  Never
+    # keyrings.alt: FlexTool refuses backends that store keys unencrypted.
+    "keyring>=25",
 ]
 
 [project.urls]

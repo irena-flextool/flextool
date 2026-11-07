@@ -54,6 +54,20 @@ def user_config_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def fake_keyring(monkeypatch: pytest.MonkeyPatch) -> Iterator[object]:
+    """An in-memory keyring in place of the system keyring; a blocked one is released when the test ends."""
+    import keyring.core
+
+    from tests.assistant.fake_keyring import FakeKeyring
+
+    fake = FakeKeyring()
+    monkeypatch.setattr(keyring.core, "_keyring_backend", fake)
+    yield fake
+    if fake.block is not None:
+        fake.block.set()
+
+
+@pytest.fixture(autouse=True)
 def fresh_input_cache() -> Iterator[None]:
     """Each test loads its databases itself (a cached load would hide what the test checks)."""
     from flextool.assistant.inputs import _db

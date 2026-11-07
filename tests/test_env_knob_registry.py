@@ -1,7 +1,9 @@
 """Every environment variable FlexTool reads is registered and documented, and no page lists a dead one.
 
 The registry is :data:`flextool.run_options.OPTIONS` (variables that are the twin of a flag) plus
-:data:`flextool.run_options.ENV_KNOBS` (process-level, developer and test variables).  The checks:
+:data:`flextool.run_options.ENV_KNOBS` (process-level, developer and test variables) plus
+:data:`flextool.assistant.env_knobs.ASSISTANT_ENV_KNOBS` (the AI services' key variables, which the assistant reads
+by a name taken from its presets, and two variables other programs read).  The checks:
 
 * every variable name in ``flextool/`` and the top-level modules (``[tool.setuptools] py-modules``, such as the
   ``flextool-run`` supervisor and the ``flextool-assistant`` entry) -- a string literal ``FLEXTOOL_*`` / ``POLARS_*`` / ``POLAR_HIGH_*`` /
@@ -12,7 +14,9 @@ The registry is :data:`flextool.run_options.OPTIONS` (variables that are the twi
 * every registered variable that FlexTool reads is still read somewhere;
 * every registered variable is on the page of its audience, and the variable tables of the three pages list
   only variables registered to that page;
-* no documentation page mentions a ``FLEXTOOL_*`` name that is not registered.
+* no documentation page mentions a ``FLEXTOOL_*`` name that is not registered;
+* the assistant's key variables are exactly the presets' ``key_env`` names, and no file under
+  ``flextool/assistant/`` touches the environment except ``keys.read_key_env``, which is never given a literal name.
 
 Add a new variable to the registry and to its page, and this test passes again.
 """
@@ -26,6 +30,8 @@ from pathlib import Path
 
 import pytest
 
+from flextool.assistant.env_knobs import ASSISTANT_ENV_KNOBS
+from flextool.assistant.providers import PRESETS
 from flextool.run_options import AUDIENCE_PAGES, ENV_KNOBS, OPTIONS
 
 REPO = Path(__file__).resolve().parents[1]
@@ -57,6 +63,7 @@ def _option_env_pages() -> dict[str, str]:
 def _registered_pages() -> dict[str, str]:
     pages = _option_env_pages()
     pages.update({name: knob.page for name, knob in ENV_KNOBS.items()})
+    pages.update({name: knob.page for name, knob in ASSISTANT_ENV_KNOBS.items()})
     return pages
 
 
@@ -161,9 +168,11 @@ def test_every_registered_knob_is_still_read(package_names, test_suite_names):
 def test_audiences_have_pages():
     for spec in OPTIONS.values():
         assert spec.audience in AUDIENCE_PAGES, spec.key
-    for knob in ENV_KNOBS.values():
+    for knob in (*ENV_KNOBS.values(), *ASSISTANT_ENV_KNOBS.values()):
         assert knob.page == AUDIENCE_PAGES[knob.audience], knob.name
     assert not set(_option_env_pages()) & set(ENV_KNOBS), "a variable is both a flag twin and a knob"
+    assert not (set(_option_env_pages()) | set(ENV_KNOBS)) & set(ASSISTANT_ENV_KNOBS), \
+        "an assistant variable is also in FlexTool's own registry"
 
 
 @pytest.mark.parametrize("page", sorted(set(AUDIENCE_PAGES.values())))
@@ -205,3 +214,60 @@ def test_documentation_mentions_only_registered_flextool_variables():
             if name not in registered and name not in _NOT_ENV:
                 stale.setdefault(name, str(path.relative_to(REPO)))
     assert not stale, f"documentation names FLEXTOOL_* variables that FlexTool no longer reads: {stale}"
+
+
+# --- the AI assistant ---------------------------------------------------------------------------------------------
+ASSISTANT = PACKAGE / "assistant"
+_ENV_FUNCTIONS = frozenset({"getenv", "putenv", "unsetenv", "getenvb", "environb", "environ"})
+
+
+def test_assistant_key_variables_are_the_presets_key_variables():
+    """The registry lists every preset's key variable and nothing else that FlexTool reads."""
+    keys = {preset.key_env for preset in PRESETS.values() if preset.key_env}
+    read_by_flextool = {name for name, knob in ASSISTANT_ENV_KNOBS.items() if knob.read_by == "flextool"}
+    assert keys == read_by_flextool
+    assert {knob.read_by for knob in ASSISTANT_ENV_KNOBS.values()} == {"flextool", "ollama", "keyring"}
+
+
+def _environment_uses(path: Path) -> list[tuple[str, int]]:
+    """Where *path* touches the environment, with the enclosing function (``""`` at module level)."""
+    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+    found: list[tuple[str, int]] = []
+
+    def visit(node: ast.AST, function: str) -> None:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            function = node.name
+        if isinstance(node, ast.Attribute) and node.attr in _ENV_FUNCTIONS:
+            found.append((function, node.lineno))
+        elif isinstance(node, ast.Name) and node.id in _ENV_FUNCTIONS:
+            found.append((function, node.lineno))
+        elif isinstance(node, ast.ImportFrom) and node.module == "os" and any(
+                alias.name in _ENV_FUNCTIONS for alias in node.names):
+            found.append((function, node.lineno))
+        for child in ast.iter_child_nodes(node):
+            visit(child, function)
+
+    visit(tree, "")
+    return found
+
+
+def test_only_read_key_env_reads_the_environment_in_the_assistant():
+    wrong = []
+    for path in _python_files(ASSISTANT):
+        for function, line in _environment_uses(path):
+            if not (path.name == "keys.py" and function == "read_key_env"):
+                wrong.append(f"{path.relative_to(REPO)}:{line} ({function or 'module level'})")
+    assert not wrong, f"the assistant reads the environment outside keys.read_key_env: {wrong}"
+    keys_uses = _environment_uses(ASSISTANT / "keys.py")
+    assert keys_uses and {function for function, _line in keys_uses} == {"read_key_env"}
+
+
+def test_read_key_env_is_never_given_a_literal_name():
+    literal = []
+    for path in _python_files(PACKAGE):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if (isinstance(node, ast.Call) and ast.unparse(node.func).endswith("read_key_env") and node.args
+                    and isinstance(node.args[0], ast.Constant)):
+                literal.append(f"{path.relative_to(REPO)}:{node.lineno}")
+    assert not literal, f"read_key_env called with a literal variable name: {literal}"
