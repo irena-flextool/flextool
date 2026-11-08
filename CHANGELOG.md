@@ -1,4 +1,4 @@
-## Unreleased
+## Release 4.2.1 (8.11.2026) — polars 2 supported again
 
 - **polars 2 is supported again, with the memory of polars 1.** polars 2.x reorders chains of joins by its own
   size estimate, and on the LP hand-off to HiGHS it picked an order that built a far larger intermediate table:
