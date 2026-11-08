@@ -332,9 +332,9 @@ def test_expiry_zero_writes_no_conversation(project, tools, rigs):
     assert not folder.exists() or not [p for p in folder.iterdir() if p.suffix == ".json"]
 
 
-def test_settings_changed_applies_to_the_next_question(project, tools, rigs):
+def test_settings_changed_applies_to_the_next_question_but_keeps_the_chats_model(project, tools, rigs):
     _settings(LOCAL)
-    rig = Rig(project, [FakeBackend([say("One.")]), FakeBackend([say("Two.")])])
+    rig = Rig(project, [FakeBackend([say("One."), say("Two."), say("Three.")]), FakeBackend([say("Four.")])])
     rigs.append(rig)
     rig.job()
     rig.wait_for(Idle)
@@ -342,15 +342,24 @@ def test_settings_changed_applies_to_the_next_question(project, tools, rigs):
     rig.job()
     rig.wait_for(Idle, count=2)
     assert len(rig.made) == 1                     # nothing the settings give changed: no new connection
-    _settings(ProviderSettings(preset="openai_compatible", base_url="http://127.0.0.1:9/v1", model="other-model"))
+    # Another model in the settings: the chat a model answered in goes on with its own (a new chat takes it).
+    other = ProviderSettings(preset="openai_compatible", base_url="http://127.0.0.1:9/v1", model="other-model")
+    _settings(other)
     rig.worker.submit(SettingsChanged())
-    rig.backends.append(FakeBackend([say("Three.")]))
     rig.job()
     rig.wait_for(Idle, count=3)
-    assert [b.origin[2] for b in rig.made] == ["fake-model", "other-model"]
+    assert [b.origin[2] for b in rig.made] == ["fake-model"]
+    # The other settings still apply at the next question (here the parallel requests: a new connection).
+    _settings(other, parallel=2)
+    rig.worker.submit(SettingsChanged())
+    rig.job()
+    rig.wait_for(Idle, count=4)
+    assert [b.origin[2] for b in rig.made] == ["fake-model", "fake-model"]
     assert rig.made[0].closed
+    finished = [ev.result.text for _jid, ev in rig.events if isinstance(ev, TurnFinished)]
+    assert finished == ["One.", "Two.", "Three.", "Four."]
     prepared = [ev for _jid, ev in rig.events if isinstance(ev, Prepared)]
-    assert [p.model for p in prepared] == ["fake-model", "other-model"]
+    assert {p.model for p in prepared} == {"fake-model"}
     for req in rig.requests():
         history_check.validate(req)
 
@@ -361,3 +370,123 @@ def test_shutdown_while_idle_ends_at_once(project, tools, rigs):
     rig.worker.submit(Shutdown())
     assert rig.worker.exited.wait(3)
     rig.wait_for(Exited)
+
+
+# --- the model of a chat (owner GUI feedback 2026-11-08 (2)) -------------------------------------------------------
+OPUS = ProviderSettings(preset="anthropic", model="claude-opus-5-5")
+FLASH_LITE = ProviderSettings(preset="gemini", model="gemini-3.5-flash-lite")
+OPUS_FACTS = ModelFacts(context_window=1_000_000, source="anthropic")
+
+
+def _answer_notices(rig: Rig, job) -> None:
+    """Say yes to every data notice of *job* until it finishes."""
+    while True:
+        rig.read()
+        kinds = [type(ev) for _jid, ev in rig.events]
+        asked = sum(1 for k in kinds if k is ConsentNeeded)
+        if asked > getattr(rig, "_answered", 0):
+            rig._answered = asked
+            rig.worker.submit(ConsentAnswer(job.job_id, True))
+        if any(isinstance(ev, TurnFinished) and jid == job.job_id for jid, ev in rig.events):
+            return
+        time.sleep(0.01)
+
+
+def _two_model_rig(project: Path, backends: list[FakeBackend]) -> Rig:
+    def probe(_preset, conn, cancel, **_kwargs) -> ModelFacts:
+        return OPUS_FACTS if conn.model == "claude-opus-5-5" else ModelFacts(source="none")
+
+    return Rig(project, backends, probe=probe)
+
+
+def test_a_chat_keeps_its_model_and_level_after_the_settings_change(project, tools, rigs, monkeypatch):
+    """The owner's case: a chat with Opus went on with the model saved later (a basic one) at its next question."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    _settings(OPUS)
+    rig = _two_model_rig(project, [FakeBackend([say("One.")]), FakeBackend([say("never")])])
+    rigs.append(rig)
+    _answer_notices(rig, rig.job())
+    rig.wait_for(Idle)
+    _settings(FLASH_LITE)
+    rig.worker.submit(SettingsChanged())
+    rig.made[0].script.append(say("Two."))
+    _answer_notices(rig, rig.job())
+    rig.wait_for(Idle, count=2)
+    assert [b.origin[2] for b in rig.made] == ["claude-opus-5-5"]
+    assert len(rig.made[0].requests) == 2
+    prepared = [ev for _jid, ev in rig.events if isinstance(ev, Prepared)]
+    assert {(p.model, p.level) for p in prepared} == {("claude-opus-5-5", "advanced")}
+    assert rig.worker.session is not None and rig.worker.session.tier == "large"
+    data = json.loads(_conversation_file(project, rig.worker.conversation_id).read_text(encoding="utf-8"))
+    assert data["origin"][2] == "claude-opus-5-5"
+    assert "tier" not in data and data.get("level") is None
+    # A new chat takes the settings of now.
+    rig2 = _two_model_rig(project, [FakeBackend([say("Lite.")])])
+    rigs.append(rig2)
+    _answer_notices(rig2, rig2.job())
+    assert [b.origin[2] for b in rig2.made] == ["gemini-3.5-flash-lite"]
+    assert [p.level for _jid, p in rig2.events if isinstance(p, Prepared)][-1] == "basic"
+
+
+def test_a_reopened_chat_goes_on_with_its_own_model(project, tools, rigs, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    _settings(OPUS)
+    rig = _two_model_rig(project, [FakeBackend([say("One.")])])
+    rigs.append(rig)
+    _answer_notices(rig, rig.job())
+    rig.wait_for(Idle)
+    conversation_id = rig.worker.conversation_id
+    rig.close()
+    rigs.remove(rig)
+    _settings(FLASH_LITE)
+    again = _two_model_rig(project, [FakeBackend([say("Two.")])])
+    rigs.append(again)
+    again.worker.submit(OpenConversation(conversation_id))
+    again.wait_for(ConversationLoaded)
+    shown = again.wait_for(Prepared)                    # the tab shows the chat's own model before a question
+    assert (shown.model, shown.level, shown.provider) == ("claude-opus-5-5", "advanced", "Anthropic")
+    _answer_notices(again, again.job())
+    assert [b.origin[2] for b in again.made] == ["claude-opus-5-5"]
+    assert again.worker.session is not None and again.worker.session.tier == "large"
+
+
+def test_an_old_conversation_with_a_stored_low_level_is_not_held_at_it(project, tools, rigs, monkeypatch):
+    """Files written before 2026-11-08 (2) keep the level resolved at their last question as "tier"; it was never
+    the user's choice, so it reads as automatic."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    _settings(OPUS)
+    rig = _two_model_rig(project, [FakeBackend([say("One.")])])
+    rigs.append(rig)
+    _answer_notices(rig, rig.job())
+    rig.wait_for(Idle)
+    conversation_id = rig.worker.conversation_id
+    rig.close()
+    rigs.remove(rig)
+    path = _conversation_file(project, conversation_id)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("level", None)
+    data["tier"] = "small"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    again = _two_model_rig(project, [FakeBackend([say("Two.")])])
+    rigs.append(again)
+    again.worker.submit(OpenConversation(conversation_id))
+    again.wait_for(ConversationLoaded)
+    _answer_notices(again, again.job())
+    assert again.worker.session is not None and again.worker.session.tier == "large"
+    assert "tier" not in json.loads(path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("facts", [ModelFacts(source="none"), OPUS_FACTS], ids=["unknown context", "1M context"])
+def test_an_advanced_model_is_advanced_before_and_after_the_probe_in_the_window(project, tools, rigs, monkeypatch,
+                                                                                facts):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    _settings(OPUS)
+    rig = Rig(project, [FakeBackend([say("One.")])], probe=lambda *_a, **_k: facts)
+    rigs.append(rig)
+    _answer_notices(rig, rig.job())
+    levels = [ev.level for _jid, ev in rig.events if isinstance(ev, Prepared)]
+    assert levels and set(levels) == {"advanced"}           # the first one is from before the probe
+    assert rig.worker.session is not None and rig.worker.session.tier == "large"
+    assert any(layer.startswith("Your level: advanced.") for layer in rig.requests()[0].system)

@@ -680,3 +680,20 @@ def test_a_changed_key_in_the_environment_ends_the_marks(project, fake_backends,
     assert listing() == "gemini-2.5-pro\ngemini-3.8-flash\n"      # another key: not marked
     monkeypatch.setenv("GEMINI_API_KEY", key)
     assert listing() == "gemini-3.8-flash\n"                       # back to the key of the test
+
+
+def test_q_with_an_advanced_model_runs_at_advanced(project, fake_backends, echo_tool):
+    """Owner GUI feedback 2026-11-08 (2): an advanced model is never held at basic; the conversation keeps only
+    the user's level (none here), not the resolved one."""
+    from flextool.assistant import _files
+    from flextool.assistant.store import open_store
+
+    models = Models([say("Answer.")], fake_backends)
+    term = terminal()
+    argv = _model(project, "claude-opus-5-5", "-q", "Q", "--accept-data-notice")
+    assert chat_cli.main(argv, backend_factory=models, terminal=term) == 0
+    assert any(layer.startswith("Your level: advanced.") for layer in models.requests[0].system)
+    folder = open_store().project_dir(_files.project_key(project.resolve()))
+    saved = [json.loads(p.read_text(encoding="utf-8")) for p in folder.glob("*.json")
+             if not p.name.endswith(".title.json")]
+    assert saved and all("tier" not in data and data["level"] is None for data in saved)

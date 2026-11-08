@@ -121,8 +121,8 @@ class Conversation:
     project_path: Path
     created: str
     updated: str
-    origin: Origin | None
-    tier: str | None
+    origin: Origin | None               # the provider, address and model the conversation is held with
+    level: str | None                   # the user's level for it (basic / standard / advanced); None: automatic
     system_hash: str = ""
     tools_hash: str = ""
     messages: list[Message] = field(default_factory=list)
@@ -142,7 +142,7 @@ class Conversation:
             "format": _files.FORMAT, "id": self.id, "number": self.number,
             "project": {"key": self.project_key, "name": self.project_name},
             "created": self.created, "updated": self.updated,
-            "origin": list(self.origin) if self.origin else None, "tier": self.tier,
+            "origin": list(self.origin) if self.origin else None, "level": self.level,
             "system_hash": self.system_hash, "tools_hash": self.tools_hash,
             "messages": [message_to_json(m) for m in self.messages],
             "usage": dict(self.usage),
@@ -153,6 +153,27 @@ def _origin(value: object) -> Origin | None:
     if isinstance(value, (list, tuple)) and len(value) == 3 and all(isinstance(v, str) for v in value):
         return (value[0], value[1], value[2])
     return None
+
+
+def _level(value: object) -> str | None:
+    """A stored level as the name users see; anything else is the automatic level (``None``)."""
+    from flextool.assistant.tiers import LEVEL_NAMES
+
+    if isinstance(value, str):
+        if value in LEVEL_NAMES.values():
+            return value
+        if value in LEVEL_NAMES:
+            return LEVEL_NAMES[value]
+    return None
+
+
+def bound_origin(conv: Conversation) -> Origin | None:
+    """The provider, address and model *conv* is held with once a model has answered in it; ``None`` before
+    (a chat that has no answer yet takes the settings of its next question)."""
+    answered = [m.origin for m in conv.messages if m.role == "assistant" and m.origin is not None]
+    if not answered:
+        return None
+    return conv.origin or answered[-1]
 
 
 def message_to_json(m: Message) -> dict[str, Any]:
@@ -323,11 +344,12 @@ class Store:
         return path, name, _files.project_key(path)
 
     # --- conversations ------------------------------------------------------------------------------------------
-    def new_conversation(self, project: Any, origin: Origin | None, tier: str | None, *, system_hash: str = "",
+    def new_conversation(self, project: Any, origin: Origin | None, level: str | None, *, system_hash: str = "",
                          tools_hash: str = "", number: int | None = None, notice: str | None = None
                          ) -> Conversation:
         """A new, empty conversation of *project* (a path or an ``AssistantContext``), open in this process.
-        Nothing is written until the first :meth:`save`, except the lock (and the project's row)."""
+        Nothing is written until the first :meth:`save`, except the lock (and the project's row).  *level* is the
+        user's level for it (either name), ``None`` for the automatic one."""
         path, name, key = self._project(project)
         now = _files.iso(_files.utc_now())
         saving = self.expiry_days() > 0
@@ -338,7 +360,7 @@ class Store:
                 if lock is None or lock.try_acquire():
                     break
         conv = Conversation(id=conversation_id, project_key=key, project_name=name, project_path=path, created=now,
-                            updated=now, origin=origin, tier=tier, system_hash=system_hash, tools_hash=tools_hash,
+                            updated=now, origin=origin, level=_level(level), system_hash=system_hash, tools_hash=tools_hash,
                             number=number, notice=notice, _lock=lock)
         self._register(conv)
         if saving:
@@ -432,7 +454,7 @@ class Store:
                     raise ConversationLocked(held)
                 data = self._peek(file)
                 return self.new_conversation(project_path, _origin((data or {}).get("origin")),
-                                             (data or {}).get("tier"), notice=LOCKED_NEW)
+                                             (data or {}).get("level"), notice=LOCKED_NEW)
             try:
                 data = _files.read_json(file)
             except (OSError, _files.UnreadableFile) as exc:
@@ -483,7 +505,9 @@ class Store:
         return Conversation(
             id=conversation_id, project_key=key, project_name=name, project_path=path,
             created=str(data.get("created", "")), updated=str(data.get("updated", "")),
-            origin=_origin(data.get("origin")), tier=data.get("tier"),
+            # "level" is the user's choice; the "tier" of files written before 2026-11-08 was the level resolved
+            # at their last question, never a choice, so it is not read (those chats are at the automatic level).
+            origin=_origin(data.get("origin")), level=_level(data.get("level")),
             system_hash=str(data.get("system_hash", "")), tools_hash=str(data.get("tools_hash", "")),
             messages=[message_from_json(m) for m in data.get("messages") or []], usage=usage,
             number=number if isinstance(number, int) and not isinstance(number, bool) else None,

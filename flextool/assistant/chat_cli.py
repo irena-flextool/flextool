@@ -750,7 +750,7 @@ class Chat:
                     questions = len({m.turn for m in conv.messages if m.role == "user"})
                     self.renderer.note(TEXTS["conversation_continued"].format(created=conv.created, n=questions))
                 return conv
-        return self.store.new_conversation(self.ctx, self._origin(), self.choice.level)
+        return self.store.new_conversation(self.ctx, self._origin(), self.choice.tier)
 
     def new_conversation(self, *, carry: bool) -> None:
         from flextool.assistant.session import carry_summary
@@ -759,7 +759,7 @@ class Chat:
         old = self.conversation
         self.seed = carry_summary(old.messages) if carry and old.messages else None
         self.store.close(old)
-        self.conversation = self.store.new_conversation(self.ctx, self._origin(), self.choice.level)
+        self.conversation = self.store.new_conversation(self.ctx, self._origin(), self.choice.tier)
         self.session = None
         self.worker = None
         if self.link is not None:
@@ -904,6 +904,7 @@ class Chat:
         from flextool.assistant.settings import mark_free_tier_suggested
 
         b = self._budget(link)
+        self.conversation.level = link.choice.tier          # the user's level, never the resolved one
         self.session = Session(self.ctx, link.backend, link.choice.preset, conversation=self.conversation,
                                caps=TurnCaps.from_budget(b), tier=link.level, store=self.store, ledger=self.ledger,
                                facts=link.facts, route=link.conn.route, budget=b,
@@ -916,6 +917,7 @@ class Chat:
         assert self.session is not None
         self._finish_worker()
         b = self._budget(link)
+        self.conversation.level = link.choice.tier
         self.session.switch(link.backend, link.choice.preset, tier=link.level, facts=link.facts,
                             route=link.conn.route, caps=TurnCaps.from_budget(b), budget=b)
 

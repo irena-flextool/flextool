@@ -344,7 +344,7 @@ def run_cell(project: Path, qset: scoring.QuestionSet, question: scoring.Questio
     now = iso(utc_now())
     conversation = Conversation(id=new_id(), project_key="calibration", project_name=ctx.project_name,
                                 project_path=ctx.project_path, created=now, updated=now, origin=backend.origin,
-                                tier=setting.level)
+                                level=setting.level)
     session = Session(ctx, backend, preset, conversation=conversation, caps=TurnCaps.from_budget(setting.budget),
                       tier=setting.level, store=None, ledger=ledger, facts=setting.facts, route=setting.route,
                       budget=setting.budget)

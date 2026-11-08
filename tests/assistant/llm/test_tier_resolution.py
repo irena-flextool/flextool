@@ -291,3 +291,42 @@ def test_a_custom_endpoint_lists_the_context():
     choice = tiers.resolve_tier(preset, "served-model", facts, None, conn.route)
     assert (choice.window, choice.window_source, choice.window_ceiling) == (32_768, "model_list", "medium")
     assert missing.listed_context is None
+
+
+# --- advanced models before and after the probe (owner GUI feedback 2026-11-08 (2)) -------------------------------
+#: Ids the design places at advanced (P3 §3.2 rule 4 and 5), on the provider they run at.
+ADVANCED_IDS = [("anthropic", "claude-opus-5-5"), ("anthropic", "claude-sonnet-5"), ("anthropic", "claude-fable-5-1"),
+                ("openai", "gpt-5"), ("openai", "o3"), ("gemini", "gemini-2.5-pro"),
+                ("openrouter", "anthropic/claude-opus-5-5")]
+#: (facts, why): no probe yet; a probe that found no context (a remote service: assumed 128 000); the model's
+#: own context; the context the model list gives.
+ADVANCED_FACTS = [(None, "before the probe"), (ModelFacts(source="none"), "unknown remote context"),
+                  (ModelFacts(context_window=1_000_000, source="anthropic"), "1M context"),
+                  (ModelFacts(listed_context=200_000), "listed context")]
+
+
+@pytest.mark.parametrize(("preset_id", "model"), ADVANCED_IDS)
+@pytest.mark.parametrize(("facts", "why"), ADVANCED_FACTS)
+def test_an_advanced_model_is_advanced_before_and_after_the_probe(preset_id, model, facts, why):
+    preset = PRESETS[preset_id]
+    route = endpoint.route_for(preset, preset.base_url, model=model, facts=facts)
+    choice = tiers.resolve_tier(preset, model, facts, None, route)
+    assert (choice.automatic, choice.chosen, choice.window_line()) == ("large", "large", None), why
+
+
+@pytest.mark.parametrize(("preset_id", "model"), ADVANCED_IDS)
+def test_the_gui_and_the_terminal_give_an_advanced_model_advanced_before_the_probe(preset_id, model):
+    from flextool.assistant.chat_cli import Choice
+    from flextool.gui.assistant.worker import _level_before_probe
+
+    preset = PRESETS[preset_id]
+    route = endpoint.route_for(preset, preset.base_url, model=model)
+    choice = Choice(preset=preset, base_url=preset.base_url, model=model, tier=None, knobs={})
+    assert _level_before_probe(preset, preset.base_url, model, None, route)[0] == "large"
+    assert choice.level == "large"
+    # With the facts a probe found (kept in the user cache), and after the probe itself.
+    probes.remember_facts(preset_id, preset.base_url, model, ModelFacts(context_window=1_000_000, source="x"))
+    assert _level_before_probe(preset, preset.base_url, model, None, route)[0] == "large"
+    assert choice.level == "large"
+    assert choice.tier_choice(ModelFacts(source="none")).chosen == "large"
+    assert choice.tier_choice(ModelFacts(context_window=1_000_000)).chosen == "large"

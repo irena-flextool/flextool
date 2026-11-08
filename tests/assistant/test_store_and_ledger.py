@@ -158,6 +158,33 @@ def test_continue_opens_the_newest_or_the_given_conversation(st, project):
         Store(st.root).open(project.parent)          # a project with no conversations
 
 
+def test_a_conversation_keeps_only_the_users_level(st, project):
+    """Owner GUI feedback 2026-11-08 (2): "level" is the user's choice; the "tier" older files kept was the level
+    resolved at their last question, so it reads as the automatic level and is not written again."""
+    chosen = st.new_conversation(project, ORIGIN, "standard")
+    chosen.messages.append(Message("user", "q", turn=1))
+    st.save(chosen)
+    st.close(chosen)
+    data = json.loads((st.project_dir(key_of(project)) / f"{chosen.id}.json").read_text(encoding="utf-8"))
+    assert data["level"] == "standard" and "tier" not in data
+    reopened = st.open(project, chosen.id)
+    assert reopened.level == "standard"
+    st.close(reopened)
+    old = saved(st, project, "old")
+    st.close(old)
+    path = st.project_dir(key_of(project)) / f"{old.id}.json"
+    data = json.loads(path.read_text(encoding="utf-8"))
+    data.pop("level")
+    data["tier"] = "small"
+    path.write_text(json.dumps(data), encoding="utf-8")
+    reopened = st.open(project, old.id)
+    assert reopened.level is None
+    st.save(reopened)
+    st.close(reopened)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["level"] is None and "tier" not in data
+
+
 def test_a_second_opener_in_this_process_gets_a_new_conversation_or_the_error(st, project):
     conv = saved(st, project)
     other = st.open(project, conv.id)

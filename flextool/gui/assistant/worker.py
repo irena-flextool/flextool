@@ -21,7 +21,11 @@ stopped job ends with ``TurnRefused(job_id, "Stopped.")``:
    events go straight to the queue), :class:`TurnFinished`.
 
 Steps 2–5 run again only after :class:`SettingsChanged` and only when what the settings give changed, so a change
-during an answer applies to the chat's next question.  :class:`Idle` follows every question (also a refused or
+during an answer applies to the chat's next question.  A chat a model has answered in keeps that provider, address
+and model (and its level, unless the settings change the level of that same model); a new chat, or one without an
+answer yet, takes the settings' ones.  The level is resolved again from the chat's model at each prepare, before
+the probe from the facts last found for it and then from the probe's; the conversation stores only the user's
+level.  :class:`Idle` follows every question (also a refused or
 failed one); ``busy`` is set from :meth:`AssistantWorker.submit` until then.
 
 :meth:`AssistantWorker.shutdown` stops the answer and ends the thread without waiting: the history is repaired,
@@ -279,6 +283,7 @@ class _Setup:
     level: str
     level_source: str
     fingerprint: tuple
+    override: str | None = None         # the user's level for this chat (basic / standard / advanced), or None
 
 
 class _Refused(Exception):
@@ -509,6 +514,9 @@ class AssistantWorker:
             conv.number = store.allocate_chat_number(self.project_path)
         self._conversation = conv
         self.conversation_id = conv.id
+        shown = self._bound_event()
+        if shown is not None:
+            self._emit(None, shown)
         self._emit(None, ConversationLoaded(conv.id, conv.number, conv.title, tuple(conv.messages), conv.notice,
                                             dict(conv.usage)))
 
@@ -562,7 +570,10 @@ class AssistantWorker:
         return _Refused()
 
     def _setup(self, job: TurnJob) -> _Setup:
-        """Step 2: what the settings give, without asking any server."""
+        """Step 2: what the settings give, without asking any server.  A chat a model has answered in is held with
+        that provider, address and model (:func:`~flextool.assistant.store.bound_origin`), whatever the settings
+        name now; a chat without an answer takes the settings' ones.  The level is the user's level for the chat
+        (the settings' one when they name the chat's model) and else automatic, resolved again for the model."""
         from flextool.assistant import endpoint, keys
         from flextool.assistant.backends._common import error_context
         from flextool.assistant.llm_adapter import Connection
@@ -574,41 +585,90 @@ class AssistantWorker:
         settings = load_settings(self.config_root)
         self.gate.set_parallel(settings.parallel_requests)
         provider = settings.provider
-        if not provider.preset:
+        bound = self._bound()
+        if bound is not None:
+            preset_id, raw_url, model = bound
+            override = self._conversation.level if self._conversation is not None else None
+        else:
+            preset_id, raw_url, model = provider.preset or "", "", provider.model or ""
+            override = provider.tier
+        if not preset_id:
             raise self._problem(job, strings.CHOOSE_PROVIDER)
-        preset = PRESETS.get(provider.preset)
+        preset = PRESETS.get(preset_id)
         if preset is None:
-            raise self._problem(job, strings.UNKNOWN_PROVIDER.format(preset=provider.preset))
-        raw_url = provider.base_url or preset.base_url
+            raise self._problem(job, strings.UNKNOWN_PROVIDER.format(preset=preset_id))
+        if bound is None:
+            raw_url = provider.base_url or preset.base_url or ""
         if not raw_url:
             raise self._problem(job, strings.NEEDS_ADDRESS.format(provider=preset.label))
         try:
             base_url = check_base_url(raw_url)
         except BaseUrlRefused as exc:
             raise self._problem(job, str(exc)) from None
-        if not provider.model:
+        if not model:
             raise self._problem(job, strings.CHOOSE_MODEL.format(provider=preset.label))
+        if bound is not None and _settings_name(provider, preset, model, base_url):
+            override = provider.tier            # the settings name this chat's model: their level holds
         from flextool.assistant.budget import free_tier_on
 
-        if free_tier_on(preset.id, provider.model, settings.free_tier):
+        if free_tier_on(preset.id, model, settings.free_tier):
             self.gate.set_parallel(1)           # the free plan sends one request at a time (P3 §4.6)
         self._check(job)
         key, source, note = keys.resolve_key(preset, base_url, config_root=self.config_root)
         self._check(job)
-        route = endpoint.route_for(preset, base_url, model=provider.model)
-        conn = Connection(base_url=base_url, model=model_id(preset.id, provider.model), api_key=key or "",
+        route = endpoint.route_for(preset, base_url, model=model)
+        conn = Connection(base_url=base_url, model=model_id(preset.id, model), api_key=key or "",
                           key_source=source.describe(preset) if key else "", knobs=dict(provider.knobs),
                           route=route)
         if preset.key_required and not key:
             err = make_error(NoKey, "no_key", error_context(preset, conn))
             message = message_for(err, "gui")
             raise self._problem(job, f"{message} {note}" if note else message)
-        level, level_source = _level_before_probe(preset, base_url, provider.model, provider.tier, route)
-        fingerprint = (preset.id, base_url, provider.model, provider.tier, tuple(sorted(
+        level, level_source = _level_before_probe(preset, base_url, model, override, route)
+        fingerprint = (preset.id, base_url, model, override, tuple(sorted(
             (k, repr(v)) for k, v in provider.knobs.items())), conn.key_source,
             hashlib.sha256((key or "").encode("utf-8")).hexdigest()[:16], proxy_for(base_url),
             settings.parallel_requests, settings.free_tier, settings.compaction_every, settings.keep_recent_turns)
-        return _Setup(settings, preset, base_url, conn, level, level_source, fingerprint)
+        return _Setup(settings, preset, base_url, conn, level, level_source, fingerprint, override)
+
+    def _bound(self) -> tuple[str, str, str] | None:
+        from flextool.assistant.store import bound_origin
+
+        conv = self._conversation
+        return bound_origin(conv) if conv is not None else None
+
+    def _bound_event(self) -> Prepared | None:
+        """What the tab shows for a reopened chat before its next question: its own provider, model, level and
+        route (no key, no probe; the question prepares again).  ``None`` for a chat without an answer."""
+        from flextool.assistant import endpoint
+        from flextool.assistant.net import check_base_url
+        from flextool.assistant.providers import PRESETS, relaxed_knobs
+        from flextool.assistant.settings import load_settings
+
+        bound = self._bound()
+        if bound is None:
+            return None
+        preset_id, raw_url, model = bound
+        preset = PRESETS.get(preset_id)
+        if preset is None or not model:
+            return None
+        try:
+            base_url = check_base_url(raw_url)
+            settings = load_settings(self.config_root)
+        except Exception:  # noqa: BLE001 — the question says what is wrong; the tab shows the settings then
+            logger.debug("The chat's own model could not be described", exc_info=True)
+            return None
+        override = self._conversation.level if self._conversation is not None else None
+        if _settings_name(settings.provider, preset, model, base_url):
+            override = settings.provider.tier
+        route = endpoint.route_for(preset, base_url, model=model)
+        level, level_source = _level_before_probe(preset, base_url, model, override, route)
+        from flextool.assistant import prompt
+
+        names = {internal: name for name, internal in prompt.LEVELS.items()}
+        return Prepared(route=route, indicator=endpoint.indicator_text(route), provider=route.label, model=model,
+                        level=names.get(level, level), level_source=level_source, key_source="",
+                        relaxed=tuple(relaxed_knobs(preset, settings.provider.knobs)))
 
     def _prepared_event(self, setup: _Setup, route: Route) -> Prepared:
         from flextool.assistant import endpoint, prompt
@@ -669,12 +729,12 @@ class AssistantWorker:
             self._emit(job.job_id, Notice(note))
         route = endpoint.route_for(setup.preset, setup.base_url, facts=facts)
         try:
-            tier = tiers.resolve_tier(setup.preset, conn.model, facts, setup.settings.provider.tier, route)
+            tier = tiers.resolve_tier(setup.preset, conn.model, facts, setup.override, route)
         except tiers.WindowTooSmall as exc:
             raise self._problem(job, message_for(probes.window_error(setup.preset, conn, exc), "gui")) from None
         level_changed = tier.chosen != setup.level
         setup.level = tier.chosen
-        setup.level_source = _level_source(tier, setup.settings.provider.tier)
+        setup.level_source = _level_source(tier, setup.override)
         for line in (tier.notice, tier.window_line()):
             if line:
                 self._emit(job.job_id, Notice(line))
@@ -709,6 +769,7 @@ class AssistantWorker:
         ctx = self._context()
         b = link.budget
         ctx.caps = b.result_caps
+        self._ensure_conversation().level = setup.override     # the user's level, never the resolved one
         caps = TurnCaps.from_budget(b)
         old = self._link
         if self._session is None:
@@ -732,6 +793,19 @@ class AssistantWorker:
     def session(self) -> Session | None:
         with self._session_lock:
             return self._session
+
+
+def _settings_name(provider, preset: Preset, model: str, base_url: str) -> bool:
+    """Whether the saved *provider* settings name *preset*, *base_url* and *model* (a chat's own)."""
+    from flextool.assistant.net import BaseUrlRefused, check_base_url
+    from flextool.assistant.providers import model_id
+
+    if provider.preset != preset.id or not provider.model or model_id(preset.id, provider.model) != model:
+        return False
+    try:
+        return check_base_url(provider.base_url or preset.base_url or "") == base_url
+    except BaseUrlRefused:
+        return False
 
 
 def _level_source(tier, stored: str | None) -> str:

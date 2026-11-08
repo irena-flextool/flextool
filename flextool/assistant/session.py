@@ -508,7 +508,6 @@ class Session:
             elif conv.system_hash != self.system_hash or conv.tools_hash != self.tools_hash:
                 conv.messages = drop_provider_extra(conv.messages)
         conv.origin = self.backend.origin
-        conv.tier = self.tier
         conv.system_hash = self.system_hash
         conv.tools_hash = self.tools_hash
 
