@@ -553,8 +553,7 @@ def _parameter_table(ctx: AssistantContext, args: dict) -> Fit:
         rows.append(row)
 
     payload: dict[str, Any] = {"source": source.name, "scenario": scenario, "entity_class": entity_class,
-                               "alternatives_in_rank_order": view.ranked, "units": units, "columns": columns,
-                               "rows": rows, "total": len(rows)}
+                               "units": units, "columns": columns, "rows": rows, "total": len(rows)}
     if shared_notes:
         payload["notes_by_parameter"] = shared_notes
     if inactive:
@@ -568,7 +567,34 @@ def _parameter_table(ctx: AssistantContext, args: dict) -> Fit:
     payload["notes"] = notes
     any_convention = any(u and is_convention_unit(u) for u in units.values())
     payload = _session_notes(ctx, payload, units=any_convention, stored=True)
-    return Fit(payload, rows_key="rows", what="cells", hint=CELLS_HINT)
+    return Fit(_shorten_notes(payload, ctx.caps.max_chars), rows_key="rows", what="cells", hint=CELLS_HINT)
+
+
+#: Note lengths tried, longest first, when a table does not fit its result cap with its notes in full.
+NOTE_LENGTHS = (160, 80)
+NOTES_LEFT_OUT = ("The notes of each parameter were left out so that the rows fit; get_parameter with one parameter "
+                  "and one entity gives them.")
+
+
+def _shorten_notes(payload: dict, max_chars: int) -> dict:
+    """*payload* with its parameter and row notes shortened, then left out, until it fits *max_chars*: the rows
+    are the answer, so they go last (``fit_json`` drops trailing rows only when the rows alone do not fit)."""
+    from flextool.assistant.caps import dumps
+
+    if len(dumps(payload)) <= max_chars:
+        return payload
+    for limit in NOTE_LENGTHS:
+        trial = dict(payload)
+        if "notes_by_parameter" in payload:
+            trial["notes_by_parameter"] = {p: [cap_text(n, limit) for n in ns]
+                                           for p, ns in payload["notes_by_parameter"].items()}
+        trial["rows"] = [[*row[:-1], [cap_text(n, limit) for n in row[-1]]] for row in payload["rows"]]
+        if len(dumps(trial)) <= max_chars:
+            return trial
+    trial = {k: v for k, v in payload.items() if k != "notes_by_parameter"}
+    trial["rows"] = [[*row[:-1], []] for row in payload["rows"]]
+    trial["notes"] = [*payload["notes"], NOTES_LEFT_OUT]
+    return trial
 
 
 def describe_parameter(ctx: AssistantContext, args: dict) -> Fit | dict:

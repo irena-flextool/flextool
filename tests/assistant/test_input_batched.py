@@ -75,7 +75,6 @@ def test_three_parameters_of_two_entities_in_one_table(ctx) -> None:
     assert "a ratio or a share" in out["notes_by_parameter"]["availability"]
     # Both units are active in all; nothing unknown.
     assert "inactive_in_scenario" not in out and "unknown_parameters" not in out and "unknown_entities" not in out
-    assert out["alternatives_in_rank_order"][:3] == ["init", "west", "coal"]
 
 
 def test_the_single_form_is_unchanged(ctx) -> None:
@@ -135,3 +134,27 @@ def test_the_size_cap(ctx) -> None:
     out = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameters": ["existing"] * 3,
                                            "entities": entities[:MAX_ENTITIES], "scenario": "all"})
     assert out.ok
+
+
+def test_at_a_small_result_cap_the_notes_give_way_to_the_rows(ctx) -> None:
+    """At the result cap of a 16 384-token window (2 000 characters) the six cells all fit: the notes are cut to 160
+    or 80 characters first.  At 1 200 characters the notes are left out (and say so); the rows stay whole."""
+    from flextool.assistant.caps import Caps
+    from flextool.assistant.tools.inputs import NOTES_LEFT_OUT
+
+    ctx.caps = Caps(17, 2_000, 3, 33)
+    out = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameters": ["existing", "invest_cost",
+                                                                                   "availability"],
+                                           "entities": [["coal_plant"], ["coal_chp"]], "scenario": "all"})
+    assert out.ok and len(out.text) <= 2_000
+    table = json.loads(out.text)
+    assert len(table["rows"]) == 6 and "truncated" not in table
+    assert all(len(n) <= 160 for ns in table["notes_by_parameter"].values() for n in ns)
+    assert table["notes_by_parameter"]["invest_cost"][0].startswith("Entered per kW (or kWh): FlexTool multiplies")
+    ctx.caps = Caps(17, 1_200, 3, 33)
+    out = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameters": ["existing", "invest_cost",
+                                                                                   "availability"],
+                                           "entities": [["coal_plant"], ["coal_chp"]], "scenario": "coal"})
+    table = json.loads(out.text)
+    assert len(table["rows"]) == 6 and "notes_by_parameter" not in table
+    assert NOTES_LEFT_OUT in table["notes"] and all(row[-1] == [] for row in table["rows"])
