@@ -281,7 +281,12 @@ class ChatTab(ttk.Frame):
         self._set_state(NOTICE, strings.STATUS_NOTICE_OPEN)
 
     def settings_changed(self) -> None:
+        """A chat without an answer takes the new settings at its next question, so it shows them now; one with
+        an answer keeps its own model and goes on showing it."""
         from flextool.gui.assistant.worker import SettingsChanged
+
+        if not self.answered:
+            self.prepared = None
 
         if self.worker is not None:
             self.worker.submit(SettingsChanged())

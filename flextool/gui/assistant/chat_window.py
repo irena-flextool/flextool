@@ -76,6 +76,29 @@ TOOLTIP_DELAY_MS = 400
 Rect = tuple[int, int, int, int]
 
 
+def _model_line(settings: Any, route: Any) -> str:
+    """The header's model line for a new chat: the settings' provider, model and level (before a probe: from
+    the facts last found for the model, else its name)."""
+    from flextool.assistant.net import check_base_url
+    from flextool.assistant.providers import PRESETS
+    from flextool.assistant.tiers import LEVEL_NAMES
+    from flextool.gui.assistant.worker import _level_before_probe
+
+    provider = settings.provider
+    preset = PRESETS.get(provider.preset or "")
+    if preset is None or route is None:
+        return ""
+    if not provider.model:
+        return strings.MODEL_LINE_NO_MODEL.format(provider=route.label)
+    try:
+        base_url = check_base_url(provider.base_url or preset.base_url or "")
+        level, _source = _level_before_probe(preset, base_url, provider.model, provider.tier, route)
+    except Exception:  # noqa: BLE001 — an address the settings refuse: the question says why
+        logger.debug("The level of the settings' model could not be found", exc_info=True)
+        return f"{route.label} · {provider.model}"
+    return strings.MODEL_LINE.format(provider=route.label, model=provider.model, level=LEVEL_NAMES[level])
+
+
 def menu_entry(number: int | None, name: str | None, created: str, first_words: str) -> str:
     """"{number} · {name, if renamed} · {6 Nov 14:02} · {first words of the first question}" (P2-O17)."""
     parts = [str(number) if number is not None else "–"]
@@ -258,6 +281,7 @@ class ChatWindow(tk.Toplevel):
         self._settings_route = endpoint.route_from_settings(settings)
         preset = PRESETS.get(settings.provider.preset or "")
         self._settings_relaxed = tuple(relaxed_knobs(preset, settings.provider.knobs)) if preset else ()
+        self._settings_model = _model_line(settings, self._settings_route)
 
     def settings_changed(self) -> None:
         """The settings were saved: every chat prepares again at its next question, the header follows."""
@@ -282,6 +306,8 @@ class ChatWindow(tk.Toplevel):
         self._cw, self._lh = metrics.cw, metrics.lh
         outer = ttk.Frame(self, padding=(metrics.cw, metrics.lh // 2))
         outer.pack(fill="both", expand=True)
+        self.model_label = ttk.Label(outer, text="", anchor="w", justify="left")
+        self.model_label.pack(fill="x")
         self.route_label = ttk.Label(outer, text="", anchor="w", justify="left")
         self.route_label.pack(fill="x")
         row = ttk.Frame(outer)
@@ -324,7 +350,7 @@ class ChatWindow(tk.Toplevel):
                 nb.bind(sequence, lambda _e: (self._post_tab_menu(self.current_tab(), None), "break")[1])
             except tk.TclError:
                 pass
-        for widget in (self.route_label, self.relaxed_label, self.note_label):
+        for widget in (self.model_label, self.route_label, self.relaxed_label, self.note_label):
             outer.bind("<Configure>", lambda e, w=widget: w.configure(wraplength=max(100, e.width - 8)), add="+")
         self._refresh_header()
 
@@ -497,18 +523,26 @@ class ChatWindow(tk.Toplevel):
 
     # --- the header and the footer ---------------------------------------------------------------------------
     def _refresh_header(self) -> None:
+        """The selected chat's provider, model and level, and where its data goes: the chat's own once it has
+        them (prepared, or reopened), else what the settings give a new chat."""
         from flextool.assistant import endpoint
 
         tab = self.current_tab()
         if tab.prepared is not None:
-            route_text = tab.prepared.indicator
-            relaxed = tab.prepared.relaxed
+            prepared = tab.prepared
+            model_text = strings.MODEL_LINE.format(provider=prepared.provider, model=prepared.model,
+                                                   level=prepared.level)
+            route_text = prepared.indicator
+            relaxed = prepared.relaxed
         elif self._settings_route is not None:
+            model_text = self._settings_model
             route_text = endpoint.indicator_text(self._settings_route)
             relaxed = self._settings_relaxed
         else:
+            model_text = ""
             route_text = strings.CHOOSE_PROVIDER
             relaxed = ()
+        self.model_label.configure(text=model_text)
         self.route_label.configure(text=route_text)
         self.relaxed_label.configure(text=" ".join(strings.RELAXED.format(report=r.rstrip(".")) for r in relaxed))
 

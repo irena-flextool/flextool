@@ -444,3 +444,37 @@ def test_the_work_area_on_x11_is_cut_to_the_monitor(tk_root, monkeypatch):
     monkeypatch.setattr(ui_metrics, "_x11_cardinals", lambda name: None)
     lh = ui_metrics.get_metrics(tk_root).lh
     assert ui_metrics.monitor_work_area(tk_root) == (1920, 0, 1920, 1080 - 4 * lh)
+
+
+# --- the selected chat's model in the header (owner GUI feedback 2026-11-08 (2)) ----------------------------------
+def test_the_header_shows_the_model_of_the_selected_chat(windows, backends):
+    from flextool.assistant.settings import ProviderSettings
+
+    from flextool.assistant.probes import ModelFacts
+
+    save_provider(LOCAL)
+    backends.add([say("One.")])
+    window = windows.open(probe=lambda *_a, **_k: ModelFacts(context_window=131_072, source="test"))
+    assert str(window.model_label.cget("text")) == "Custom endpoint · fake-model · basic"
+    first = ask(window, "First question")
+    wait_idle(window, first)
+    assert str(window.model_label.cget("text")) == "Custom endpoint · fake-model · basic"
+    assert str(window.route_label.cget("text")).startswith("Endpoint on this computer (127.0.0.1:9)")
+    # Another model in the settings: the answered chat keeps its own, a new chat shows (and uses) the new one.
+    save_provider(ProviderSettings(preset="openai_compatible", base_url="http://127.0.0.2:9/v1",
+                                   model="gpt-5", tier="standard"))
+    window.settings_changed()
+    assert str(window.model_label.cget("text")) == "Custom endpoint · fake-model · basic"
+    window.go_to_new_chat()
+    pump(window, lambda: window.current_tab() is window.new_tab)
+    assert str(window.model_label.cget("text")) == "Custom endpoint · gpt-5 · standard"
+    assert str(window.route_label.cget("text")).startswith("Endpoint on this computer (127.0.0.2:9)")
+    backends.add([say("Two.")])
+    second = ask(window, "Second question")
+    wait_idle(window, second)
+    assert backends.made[-1].origin[2] == "gpt-5"
+    assert str(window.model_label.cget("text")) == "Custom endpoint · gpt-5 · standard"
+    window.select(first)
+    pump(window, lambda: window.current_tab() is first)
+    assert str(window.model_label.cget("text")) == "Custom endpoint · fake-model · basic"
+    assert str(window.route_label.cget("text")).startswith("Endpoint on this computer (127.0.0.1:9)")

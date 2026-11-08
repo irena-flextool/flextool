@@ -114,6 +114,10 @@ STATUS_NOTICE_OPEN = "Waiting for your answer to the data notice."
 STATUS_NOTICE_QUEUED = "Waiting: the data notice of another chat is open."
 STATUS_TOOL_WAITING = "Waiting: another chat is running a tool."
 
+# --- the chat's model (the window's header follows the selected chat) -----------------------------------------------
+MODEL_LINE = "{provider} · {model} · {level}"
+MODEL_LINE_NO_MODEL = "{provider} · no model chosen"
+
 # --- the totals and the footer ------------------------------------------------------------------------------------
 TOTALS = "This chat: {input} in · {output} out"
 FOOTER = "{provider} this month: {input} in · {output} out"
