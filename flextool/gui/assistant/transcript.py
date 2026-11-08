@@ -8,7 +8,9 @@ insert per batch.  The view follows the end only while it is at the end.
 
 The widget takes no typing: keys that change text are dropped (copy, select all and moving around stay), Tab and
 Shift+Tab move the focus on, Escape stops the answer, Enter or space on a tool line opens or closes it, and a click
-on a tool line does the same.  Its tags take their colours from the widget's own theme colours.
+on a tool line does the same.  It draws no insertion cursor (only the input box has one): while it has the focus,
+the tool or context line the keyboard is on is shaded instead, so Enter and space still show what they open.  Its
+tags take their colours from the widget's own theme colours.
 """
 from __future__ import annotations
 
@@ -28,6 +30,8 @@ if TYPE_CHECKING:
 #: Keys that move or select without changing the text (``execution_window.py``'s read-only filter).
 NAV_KEYSYMS = frozenset({"Left", "Right", "Up", "Down", "Home", "End", "Prior", "Next", "Shift_L", "Shift_R",
                          "Control_L", "Control_R", "Alt_L", "Alt_R", "Meta_L", "Meta_R", "Super_L", "Super_R"})
+#: The tag shading the tool or context line the keyboard is on (the transcript draws no insertion cursor).
+KEYBOARD_LINE = "keyboard_line"
 TOOL_OPEN = "▾"
 TOOL_CLOSED = "▸"
 DETAIL_INDENT = "    "
@@ -40,8 +44,11 @@ class Transcript(ttk.Frame):
     def __init__(self, parent: tk.Misc, *, on_escape: Callable[[], None] | None = None,
                  bind_commands: Callable[[tk.Misc], None] | None = None) -> None:
         super().__init__(parent)
+        # No insertion cursor: zero width, and no blink timer (insertofftime 0).  The insert mark still moves
+        # with the arrow keys, for selecting with Shift and for Enter / space on a tool line.
         self.text = tk.Text(self, wrap="word", height=10, undo=False, borderwidth=0, highlightthickness=1,
-                            padx=6, pady=4, cursor="arrow")
+                            padx=6, pady=4, cursor="arrow", insertwidth=0, insertofftime=0,
+                            insertborderwidth=0)
         self.scrollbar = ttk.Scrollbar(self, orient="vertical", command=self.text.yview, takefocus=0)
         self.text.configure(yscrollcommand=self.scrollbar.set)
         self.text.grid(row=0, column=0, sticky="nsew")
@@ -91,6 +98,7 @@ class Transcript(ttk.Frame):
         txt.tag_configure("md_h2", font=("TkHeadingFont", 12, "bold"), spacing1=4)
         txt.tag_configure("md_h3", font=bold, spacing1=2)
         txt.tag_configure("md_list", lmargin1=8, lmargin2=20)
+        txt.tag_configure(KEYBOARD_LINE, background=blend_rgb(bg, "#4aa3ff", 0.16))
         txt.tag_raise("sel")
 
     # --- keys -----------------------------------------------------------------------------------------------
@@ -109,6 +117,9 @@ class Transcript(ttk.Frame):
         txt.bind("<space>", self._toggle_at_insert)
         txt.bind("<Control-a>", self._select_all)
         txt.bind("<Control-A>", self._select_all)
+        # After the class bindings have moved the insert mark (KeyRelease, ButtonRelease) and on focus changes.
+        for sequence in ("<KeyRelease>", "<ButtonRelease-1>", "<FocusIn>", "<FocusOut>"):
+            txt.bind(sequence, lambda _e: self.mark_keyboard_line(), add="+")
         for virtual in ("<<Paste>>", "<<Cut>>", "<<Clear>>", "<<PasteSelection>>", "<<Undo>>", "<<Redo>>"):
             txt.bind(virtual, lambda _e: "break")
         if txt.tk.call("tk", "windowingsystem") != "aqua":
@@ -139,11 +150,26 @@ class Transcript(ttk.Frame):
         return "break"
 
     def _toggle_at_insert(self, _event: tk.Event) -> str:  # type: ignore[type-arg]
+        tag = self._line_tag_at_insert()
+        if tag is not None:
+            self.toggle(tag)
+        return "break"
+
+    def _line_tag_at_insert(self) -> str | None:
         for tag in self.text.tag_names("insert"):
             if tag.startswith("tool_") or tag.startswith("context_"):
-                self.toggle(tag)
-                break
-        return "break"
+                return tag
+        return None
+
+    def mark_keyboard_line(self) -> None:
+        """Shade the tool or context line holding the insert mark while the transcript has the focus."""
+        txt = self.text
+        try:
+            txt.tag_remove(KEYBOARD_LINE, "1.0", "end")
+            if txt.focus_get() is txt and self._line_tag_at_insert() is not None:
+                txt.tag_add(KEYBOARD_LINE, "insert linestart", "insert lineend")
+        except (tk.TclError, KeyError):
+            pass
 
     # --- writing --------------------------------------------------------------------------------------------
     def _at_end(self) -> bool:

@@ -200,6 +200,37 @@ def test_enter_on_a_tool_line_opens_it_and_it_says_what_was_sent(windows, backen
     assert text.get(*text.tag_ranges("tool_1")[:2]) == header
 
 
+def test_the_transcript_draws_no_cursor_but_copies_and_shows_the_keyboard_line(windows, backends):
+    """Only the input box shows an insertion cursor; the transcript stays selectable, copyable, reachable by Tab,
+    and shades the tool line the keyboard is on instead."""
+    save_provider(LOCAL)
+    backends.add([tool_call("echo", "north"), say("The north node.")])
+    window = windows.open()
+    tab = ask(window, "question")
+    wait_idle(window, tab)
+    text = tab.transcript.text
+    assert int(text.cget("insertwidth")) == 0 and int(text.cget("insertofftime")) == 0
+    assert int(tab.input.cget("insertwidth")) > 0 and int(tab.input.cget("insertofftime")) > 0
+    assert str(text.cget("takefocus")) != "0"
+    # Mouse-style selection and Ctrl+C copy.
+    start = text.search("The north node.", "1.0")
+    text.tag_add("sel", start, f"{start} + 9 chars")
+    text.focus_force()
+    pump(window, lambda: window.focus_get() is text)
+    window.clipboard_clear()
+    key(text, "<Control-c>")
+    assert window.clipboard_get() == "The north"
+    # The keyboard on a tool line: the line is shaded while the transcript has the focus.
+    (line_start, line_end) = text.tag_ranges("tool_1")[:2]
+    text.mark_set("insert", f"{line_start} + 2 chars")
+    key(text, "<KeyRelease-Right>")
+    shaded = text.tag_ranges("keyboard_line")
+    assert shaded and text.compare(shaded[0], "==", f"{line_start} linestart")
+    text.mark_set("insert", start)
+    key(text, "<KeyRelease-Down>")
+    assert not text.tag_ranges("keyboard_line")
+
+
 def test_the_streamed_markdown_is_tagged(windows, backends):
     save_provider(LOCAL)
     backends.add([say("# Head\nSome **bold** and `code`.\n- item")])
