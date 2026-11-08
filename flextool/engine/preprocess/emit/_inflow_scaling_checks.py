@@ -28,8 +28,10 @@ of the solve in one message) for a result that is not what the method promises:
 
 Warnings (printed once per node and run) where the result is well defined but likely unintended:
 
-* ``annual_flow`` above ``|peak_inflow| · 8760``: no profile with that peak reaches the annual flow, so the scaled
-  inflow exceeds ``peak_inflow`` at its off-peak steps;
+* ``annual_flow`` above ``|peak_inflow|`` times the time steps of a year (``8760 · S / H``: ``S`` the time steps of
+  the period's complete solve, weighted, counted per original step on a solve with ``new_stepduration``; ``H`` their
+  hours): no profile with that peak reaches the annual flow, so the scaled inflow exceeds ``peak_inflow`` at its
+  off-peak steps;
 * the scaled inflow changes direction (demand to supply or back) at steps where the original profile did not.
 
 An explicit ``annual_flow`` of 0 is accepted (the inflow is 0 in that period).  A node whose inflow comes from
@@ -45,6 +47,11 @@ from flextool.engine._behaviour_changes import warn_once
 from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess._provider_io import _provider_key
+from flextool.engine.preprocess.emit._base_steps import (
+    base_steps_of_solve_steps,
+    complete_steps_by_period,
+    read_new_step_base_steps,
+)
 from flextool.engine.preprocess.emit._pdt_lookup import PdLookup
 
 _ANNUAL = "scale_to_annual_flow"
@@ -125,11 +132,10 @@ def check_inflow_scaling_inputs(input_dir: Path, solve_data_dir: Path, *, provid
     pti = (_keyed_float(frames.get("ptNode_inflow.csv"), 2, ["node", "time"])
            .filter(pl.col("node").is_in(scaled_nodes)))
     weights = _keyed_float(_frame(provider, solve_data_dir / "timestep_weight.csv"), 2, ["period", "time"])
-    dt_complete = _keyed_float(None, 2, ["period", "time"]).drop("value")
-    dtc = _frame(provider, solve_data_dir / "steps_complete_solve.csv")
-    if dtc is not None:
-        dt_complete = dtc.select([pl.col(dtc.columns[0]).cast(pl.Utf8).alias("period"),
-                                  pl.col(dtc.columns[1]).cast(pl.Utf8).alias("time")])
+    # A stochastic branch period's complete steps are its parent's (the mapping complete_hours_in_period uses).
+    dtc_pairs = complete_steps_by_period(solve_data_dir, periods, provider=provider)
+    dt_complete = pl.DataFrame({"period": [d for d, _t in dtc_pairs], "time": [t for _d, t in dtc_pairs]},
+                               schema={"period": pl.Utf8, "time": pl.Utf8})
 
     def _weighted(steps: pl.DataFrame) -> pl.DataFrame:
         """Σ_t inflow[n, t] · w[d, t] over the (period, time) ``steps`` (the sums the methods divide by)."""
@@ -142,17 +148,34 @@ def check_inflow_scaling_inputs(input_dir: Path, solve_data_dir: Path, *, provid
     times_frame = pl.DataFrame({"time": times}, schema={"time": pl.Utf8})
     complete_sum = {(r[0], r[1]): r[2] for r in _weighted(dt_complete).iter_rows()}
     time_sum = {(r[0], r[1]): r[2] for r in _weighted(period_frame.join(times_frame, how="cross")).iter_rows()}
-    series = {n: pti.filter(pl.col("node") == n).get_column("value").to_list() for n in scaled_nodes}
+    # Original time steps per solve step (new_stepduration); empty → 1.  The peak is per original step and per
+    # period: the extreme over the original steps behind the period's complete steps; a coarsened solve reads it from
+    # the original series (input/pt_node_inflow, else the p_node constant).
+    n_of, _absorbed = read_new_step_base_steps(solve_data_dir, provider=provider)
+    base_steps = base_steps_of_solve_steps(solve_data_dir, provider=provider)
+    const = {r[0]: r[2] for r in _keyed_float(_frame(provider, input_dir / "p_node.csv"), 2, ["node", "param"])
+             .filter(pl.col("param") == "inflow").iter_rows()}
+    peak_value = {(r[0], r[1]): r[2] for r in pti.iter_rows()}
+    if n_of:
+        base = _keyed_float(_frame(provider, input_dir / "pt_node_inflow.csv"), 2, ["node", "time"])
+        explicit_nodes = set(base.get_column("node").to_list())
+        peak_value = {(r[0], r[1]): r[2] for r in base.iter_rows()}
+    hours = {r[0]: r[1] for r in _keyed_float(
+        _frame(provider, solve_data_dir / "complete_hours_in_period.csv"), 1, ["period"]).iter_rows()}
+    share = {r[0]: r[1] for r in _keyed_float(
+        _frame(provider, solve_data_dir / "complete_period_share_of_year_calc.csv"), 1, ["period"]).iter_rows()}
+    w_of = {(r[0], r[1]): r[2] for r in weights.iter_rows()}
 
-    def _old_peak(n: str) -> tuple[float, float]:
-        """``(sign, peak)`` of the inflow profile as the peak scaling reads them."""
-        vals = series.get(n) or [0.0]
+    def _old_peak(n: str, d: str) -> tuple[float, float]:
+        """``(sign, peak)`` of the inflow profile in period *d* as the peak scaling reads them."""
         if n in explicit_nodes:
+            vals = [peak_value.get((n, tb), const.get(n, 0.0))
+                    for t in steps_of.get(d, ()) for tb in base_steps.get(t, (t,))] or [0.0]
             hi, lo = max(vals), min(vals)
             sign = 1.0 if abs(hi) >= abs(lo) else -1.0
         else:
-            hi = lo = vals[0]
-            sign = 1.0 if vals[0] >= 0 else -1.0
+            hi = lo = const.get(n, 0.0)
+            sign = 1.0 if hi >= 0 else -1.0
         return sign, hi if sign >= 0 else lo
 
     slope = {(r[0], r[1]): r[2] for r in _keyed_float(frames.get("new_old_slope.csv"), 2, ["n", "d"]).iter_rows()}
@@ -161,6 +184,12 @@ def check_inflow_scaling_inputs(input_dir: Path, solve_data_dir: Path, *, provid
     for d, t in dt_complete.iter_rows():
         steps_of.setdefault(d, []).append(t)
     pti_of = {(r[0], r[1]): r[2] for r in pti.iter_rows()}
+
+    def _steps_a_year(d: str) -> float:
+        """``8760 · S_d / H_d``: time steps a year as the peak scaling counts them (8760 on 1 h steps)."""
+        s_d = sum(n_of.get(t, 1.0) * w_of.get((d, t), 1.0) for t in steps_of.get(d, ()))
+        h_d = hours.get(d, share.get(d, 0.0) * HOURS_PER_YEAR)
+        return HOURS_PER_YEAR * (s_d / h_d if h_d != 0 else 1.0)
 
     no_inflow_fix = ("give the node an inflow profile (negative values for a demand, positive for a supply), or "
                      "set inflow_method to no_inflow")
@@ -197,7 +226,7 @@ def check_inflow_scaling_inputs(input_dir: Path, solve_data_dir: Path, *, provid
                     errors.append(f"{where}: the inflow sums to 0 over the solve's timesteps (no inflow profile?), "
                                   f"so it cannot be scaled in proportion to annual_flow {_fmt(af)}; {no_inflow_fix}")
             else:
-                sign, old_peak = _old_peak(n)
+                sign, old_peak = _old_peak(n, d)
                 if old_peak == 0:
                     errors.append(f"{where}: the node has no inflow profile (all inflow is 0), so there is no shape "
                                   f"to scale to peak_inflow {_fmt(peak)} and annual_flow {_fmt(af)}; "
@@ -210,7 +239,8 @@ def check_inflow_scaling_inputs(input_dir: Path, solve_data_dir: Path, *, provid
                                   "with the sign of the inflow (negative for a demand)")
                     continue
                 _warn_peak(n, d, af, peak, slope.get((n, d)), section.get((n, d)),
-                           [pti_of.get((n, t), 0.0) for t in steps_of.get(d, ())])
+                           [(pti_of.get((n, t), 0.0), n_of.get(t, 1.0)) for t in steps_of.get(d, ())],
+                           _steps_a_year(d))
     if errors:
         raise FlexToolConfigError(
             "Inflow scaling cannot be applied:\n  - " + "\n  - ".join(errors)
@@ -218,19 +248,23 @@ def check_inflow_scaling_inputs(input_dir: Path, solve_data_dir: Path, *, provid
 
 
 def _warn_peak(n: str, d: str, af: float, peak: float, slope: float | None, section: float | None,
-               old: list[float]) -> None:
-    """Warnings of ``scale_to_annual_and_peak_flow`` for a well-defined but likely unintended result."""
-    reach = abs(peak) * HOURS_PER_YEAR
+               old: list[tuple[float, float]], steps_a_year: float) -> None:
+    """Warnings of ``scale_to_annual_and_peak_flow`` for a well-defined but likely unintended result.
+
+    ``old`` holds ``(inflow, original steps)`` of each solve step; ``steps_a_year`` is ``8760 · S / H``.
+    """
+    reach = abs(peak) * steps_a_year
     if af > reach:
         warn_once(("inflow_scaling_peak_reach", n),
                   f"Warning: node '{n}' (scale_to_annual_and_peak_flow, period '{d}'): annual_flow {_fmt(af)} is "
-                  f"above |peak_inflow| x 8760 = {_fmt(reach)}; no profile with peak {_fmt(peak)} reaches it, so the "
-                  "scaled inflow exceeds peak_inflow at its off-peak steps. Raise peak_inflow or lower annual_flow.")
+                  f"above |peak_inflow| x {_fmt(steps_a_year)} time steps a year = {_fmt(reach)}; no profile with "
+                  f"peak {_fmt(peak)} reaches it, so the scaled inflow exceeds peak_inflow at its off-peak steps. "
+                  "Raise peak_inflow or lower annual_flow.")
     if slope is None or section is None:
         return
     s = 1.0 if peak > 0 else -1.0
     tol = 1e-9 * abs(peak)
-    flipped = [slope * v - section for v in old if s * v >= 0 and s * (slope * v - section) < -tol]
+    flipped = [slope * v - section * k for v, k in old if s * v >= 0 and s * (slope * v - section * k) < -tol]
     if flipped:
         worst = min(flipped, key=lambda x: s * x)
         warn_once(("inflow_scaling_peak_flip", n),

@@ -1,3 +1,30 @@
+## Release 4.2.2 (8.11.2026) — time steps other than 1 h: new_stepduration and inflow scaling fixes
+
+These bugs affect models whose time steps are not 1 h, solves with `new_stepduration`, nested solves where a solve
+with `new_stepduration` runs before one without it, and `scale_to_annual_and_peak_flow`. Other models give the same
+results as in 4.2.1.
+
+- **`new_stepduration` on time steps other than 1 h.** A solve's `new_stepduration` now combines the right time steps
+  for any step length (0.5 h, 2 h, mixed): `inflow` is summed, other time series are averaged (weighted by duration
+  when the combined steps differ in length), and a constant `inflow` counts once per combined time step. Before, it
+  read one row per hour of the new step, so on 2 h steps a constant inflow doubled and time series were misplaced,
+  and on 0.5 h steps half of the energy was lost.
+- **`new_stepduration` must fit the time steps.** A `new_stepduration` that is not a whole multiple of the time steps
+  (also 1.5 on 1 h steps, which silently made 2 h steps before), or a new step that would end inside a time step,
+  now stops the run with a message naming the solve and the timeline. Only solves the model runs are checked.
+- **`scale_to_annual_and_peak_flow`** now meets `annual_flow` on time steps other than 1 h, with periods on different
+  timesets and with representative periods of unequal length (it assumed 8760 steps a year; on 2 h steps the annual
+  energy was 36 % short). Each period now reaches its own `peak_inflow` (the peak was taken over the whole timeline,
+  so periods missed their peak). With `new_stepduration`, `peak_inflow` is matched per original time step. The input
+  check's reach warning counts the time steps in a year.
+- **Stochastic solves:** `scale_to_annual_flow` and `scale_to_annual_and_peak_flow` work in branch periods (they
+  stopped with an error).
+- **`scale_in_proportion` with `new_stepduration`:** a constant `inflow` is scaled as it is without
+  `new_stepduration` (it came out about 2/3 of that on 2 h new steps).
+- **Nested solves:** a solve without `new_stepduration` that runs after one with it scales `scale_to_annual_flow`
+  over its own time steps (it used the earlier solve's total). Results of such nested models can change.
+- **`max_flow_for_unconstrained_variables`** below 1,000,000 is now used as given (it was raised to 1,000,000).
+
 ## Release 4.2.1 (8.11.2026) — polars 2 supported again
 
 - **polars 2 is supported again, with the memory of polars 1.** polars 2.x reorders chains of joins by its own

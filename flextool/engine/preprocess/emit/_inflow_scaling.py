@@ -61,6 +61,11 @@ from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
 )
+from flextool.engine.preprocess.emit._base_steps import (
+    base_steps_of_solve_steps,
+    complete_steps_by_period,
+    read_new_step_base_steps,
+)
 from flextool.engine.preprocess.emit._inflow_scaling_checks import check_inflow_scaling_inputs
 from flextool.engine.preprocess.emit._vectorize import _render_value_column
 
@@ -319,25 +324,30 @@ def _compute_inflow_scaling_frames(
     for d, tl in period_timeline:
         timelines_for_d.setdefault(d, []).append(tl)
 
-    # complete_time_in_use (Python output, _set suffix).
-    complete_time_in_use = _read_singles(
-        solve_data_dir / "complete_time_in_use_set.csv",
-        provider=provider,
-    )
-
     # dt_complete from steps_complete_solve.csv — (period, step) pairs.
-    dt_complete_pairs = _read_pairs(
-        solve_data_dir / "steps_complete_solve.csv",
-        provider=provider,
+    # A stochastic branch period's complete steps are its parent's (the
+    # mapping complete_hours_in_period uses).
+    dt_complete_pairs = complete_steps_by_period(
+        solve_data_dir, period_in_use, provider=provider,
     )
     dt_complete_for_d: dict[str, list[str]] = {}
     for d, t in dt_complete_pairs:
         dt_complete_for_d.setdefault(d, []).append(t)
 
+    # Hours of the period's complete solve (the hours cpsoy is made of).
+    hours_d = _read_keyed_float(
+        solve_data_dir / "complete_hours_in_period.csv", provider=provider,
+    )
+    # Original time steps per solve step (``new_stepduration``); empty → 1.
+    # ``absorbed``: original steps combined into another solve step.
+    n_of, absorbed = read_new_step_base_steps(solve_data_dir, provider=provider)
+
     # ── ptNode_inflow{n in node, t in time} ───────────────────────────
     # Per legacy mod L1237: pass-through pt_node_inflow when (n, t) is
     # in the explicit set, else the per-node scalar default from
-    # p_node[(n, "inflow")] (typically 0).
+    # p_node[(n, "inflow")] (typically 0).  On a coarsened solve an
+    # absorbed original step gets 0: its energy (the constant included) is
+    # in the solve step that combines it.
     p_node_inflow_default = {
         n: p_node.get((n, "inflow"), 0.0) for n in nodes
     }
@@ -347,6 +357,8 @@ def _compute_inflow_scaling_frames(
         for t in time_set:
             if (n, t) in node_time_inflow:
                 pti[(n, t)] = pt_node_inflow.get((n, t), 0.0)
+            elif t in absorbed:
+                pti[(n, t)] = 0.0
             else:
                 pti[(n, t)] = default
 
@@ -382,12 +394,10 @@ def _compute_inflow_scaling_frames(
                 or _has_method(n, "scale_to_annual_and_peak_flow"))
 
     # ── orig_flow_sum ─────────────────────────────────────────────────
-    # value = sum_{t in complete_time_in_use} ptNode_inflow[n, t] · w[d, t]
-    #         (A3 — annual-energy ingredient, weighted by the representative
-    #         weight per period).  Because w is period-specific the sum can
-    #         no longer be cached period-independently; compute per (n, d).
-    #         With w ≡ 1.0 this reduces byte-for-byte to the former
-    #         period-independent t-sum.
+    # value = sum_{t in dt_complete[d]} ptNode_inflow[n, t] · w[d, t]
+    #         (annual-energy ingredient over the period's own complete
+    #         steps, weighted by the representative weight per period —
+    #         the steps cpsoy[d] is made of).
     # Domain: (n, d) where annual_eligible AND pdNode annual_flow != 0.
     rows_orig: list[tuple[str, str, float]] = []
     for n in nodes:
@@ -398,7 +408,7 @@ def _compute_inflow_scaling_frames(
                 continue
             s = sum(
                 pti[(n, t)] * w_dt.get((d, t), 1.0)
-                for t in complete_time_in_use
+                for t in dt_complete_for_d.get(d, ())
             )
             rows_orig.append((n, d, s))
     out["orig_flow_sum.csv"] = _rows_to_frame(
@@ -484,33 +494,58 @@ def _compute_inflow_scaling_frames(
     # ── Peak-flow family (annual_and_peak_flow) ────────────────────────
     # Domain: (n, d) where scale_to_annual_and_peak_flow AND pdNode
     # annual_flow != 0 AND pdNode peak_inflow != 0.
+    # The peak is per original time step: on a coarsened solve (n_of
+    # non-empty) it is read from the original series (input/pt_node_inflow,
+    # the constant from p_node), the series the solve without
+    # new_stepduration reads.
+    peak_nti = node_time_inflow
+    peak_pti = pti
+    if n_of:
+        base_inflow = _read_keyed2_float(
+            input_dir / "pt_node_inflow.csv", provider=provider,
+        )
+        peak_nti = frozenset(base_inflow)
+        peak_pti = {
+            (n, t): (base_inflow.get((n, t), 0.0) if (n, t) in peak_nti
+                     else p_node_inflow_default[n])
+            for n in nodes for t in time_set
+        }
     # Per-node availability of explicit (n, t) inflow rows — this drives
     # the op_max / op_min "use scalar default" fallback path.
     has_node_time_inflow: dict[str, bool] = {
-        n: any(nn == n for (nn, _t) in node_time_inflow) for n in nodes
+        n: any(nn == n for (nn, _t) in peak_nti) for n in nodes
     }
-    # Per-node max/min across t (independent of d).
-    op_max_by_n: dict[str, float] = {}
-    op_min_by_n: dict[str, float] = {}
-    op_sign_by_n: dict[str, float] = {}
-    old_peak_by_n: dict[str, float] = {}
+    # Per-(node, period) max/min over the period's own original steps: the
+    # original steps behind dt_complete[d] (the steps orig_flow_sum sums),
+    # so each period's peak reaches its own peak_inflow.
+    base_of = base_steps_of_solve_steps(solve_data_dir, provider=provider)
+    original_steps_of_d = {
+        d: [tb for t in dt_complete_for_d.get(d, ()) for tb in base_of.get(t, (t,))]
+        for d in period_in_use
+    }
+    op_max_by_nd: dict[tuple[str, str], float] = {}
+    op_min_by_nd: dict[tuple[str, str], float] = {}
+    op_sign_by_nd: dict[tuple[str, str], float] = {}
+    old_peak_by_nd: dict[tuple[str, str], float] = {}
     for n in nodes:
-        if has_node_time_inflow[n]:
-            inflow_vals = [pti[(n, t)] for t in time_set]
-            op_max = max(inflow_vals) if inflow_vals else 0.0
-            op_min = min(inflow_vals) if inflow_vals else 0.0
-        else:
-            scalar = p_node_inflow_default[n]
-            op_max = scalar
-            op_min = scalar
-        op_max_by_n[n] = op_max
-        op_min_by_n[n] = op_min
-        if has_node_time_inflow[n]:
-            op_sign = 1.0 if abs(op_max) >= abs(op_min) else -1.0
-        else:
-            op_sign = 1.0 if p_node_inflow_default[n] >= 0 else -1.0
-        op_sign_by_n[n] = op_sign
-        old_peak_by_n[n] = op_max if op_sign >= 0 else op_min
+        for d in period_in_use:
+            if has_node_time_inflow[n]:
+                inflow_vals = [peak_pti.get((n, t), p_node_inflow_default[n])
+                               for t in original_steps_of_d[d]]
+                op_max = max(inflow_vals) if inflow_vals else 0.0
+                op_min = min(inflow_vals) if inflow_vals else 0.0
+            else:
+                scalar = p_node_inflow_default[n]
+                op_max = scalar
+                op_min = scalar
+            op_max_by_nd[(n, d)] = op_max
+            op_min_by_nd[(n, d)] = op_min
+            if has_node_time_inflow[n]:
+                op_sign = 1.0 if abs(op_max) >= abs(op_min) else -1.0
+            else:
+                op_sign = 1.0 if p_node_inflow_default[n] >= 0 else -1.0
+            op_sign_by_nd[(n, d)] = op_sign
+            old_peak_by_nd[(n, d)] = op_max if op_sign >= 0 else op_min
 
     rows_nps: list[tuple[str, str, float]] = []
     rows_opmax: list[tuple[str, str, float]] = []
@@ -532,10 +567,10 @@ def _compute_inflow_scaling_frames(
                 continue
             peak = pdNode.get((n, "peak_inflow", d), 0.0)
             rows_nps.append((n, d, 1.0 if peak >= 0 else -1.0))
-            rows_opmax.append((n, d, op_max_by_n[n]))
-            rows_opmin.append((n, d, op_min_by_n[n]))
-            rows_ops.append((n, d, op_sign_by_n[n]))
-            old_peak_val = old_peak_by_n[n]
+            rows_opmax.append((n, d, op_max_by_nd[(n, d)]))
+            rows_opmin.append((n, d, op_min_by_nd[(n, d)]))
+            rows_ops.append((n, d, op_sign_by_nd[(n, d)]))
+            old_peak_val = old_peak_by_nd[(n, d)]
             if old_peak_val == 0.0:
                 # Legacy skips downstream rows when old_peak is 0 (avoids
                 # division by zero) — npop / npopinflow remain absent.
@@ -566,8 +601,18 @@ def _compute_inflow_scaling_frames(
 
     # ── new_peak_inflow_sum, new_old_multiplier/slope/section ─────────
     # Same domain as rows_nps; values derived from peak / npop / npopis.
+    # npis = annual sum of a constant peak = peak · S_d / cps_d
+    #      = (peak · 8760) · S_d / H_d, with S_d the (weighted) original
+    #      steps of the period's complete steps and H_d their hours.
+    def _step_ratio(d: str) -> float:
+        steps_d = sum(n_of.get(t, 1.0) * w_dt.get((d, t), 1.0)
+                      for t in dt_complete_for_d.get(d, ()))
+        h = hours_d.get(d, cpsoy.get(d, 0.0) * HOURS_PER_YEAR)
+        return steps_d / h if h != 0.0 else 1.0
+
     npis_dict = {
-        (n, d): pdNode.get((n, "peak_inflow", d), 0.0) * HOURS_PER_YEAR
+        (n, d): (pdNode.get((n, "peak_inflow", d), 0.0) * HOURS_PER_YEAR)
+        * _step_ratio(d)
         for n, d, _ in rows_nps
     }
     rows_npis = [(n, d, npis_dict.get((n, d), 0.0)) for n, d, _ in rows_nps]
@@ -735,18 +780,16 @@ def _compute_inflow_scaling_frames_vectorized(
     for d, tl in period_timeline:
         timelines_for_d.setdefault(d, []).append(tl)
 
-    complete_time_in_use = _read_singles(
-        solve_data_dir / "complete_time_in_use_set.csv",
-        provider=provider,
+    # A stochastic branch period's complete steps are its parent's (the
+    # mapping complete_hours_in_period uses).
+    dt_complete_pairs = complete_steps_by_period(
+        solve_data_dir, period_in_use, provider=provider,
     )
 
-    dt_complete_pairs = _read_pairs(
-        solve_data_dir / "steps_complete_solve.csv",
-        provider=provider,
+    hours_d = _read_keyed_float(
+        solve_data_dir / "complete_hours_in_period.csv", provider=provider,
     )
-    dt_complete_for_d: dict[str, list[str]] = {}
-    for d, t in dt_complete_pairs:
-        dt_complete_for_d.setdefault(d, []).append(t)
+    n_of, absorbed = read_new_step_base_steps(solve_data_dir, provider=provider)
 
     # ── Shared order frames (node list order, period order, time order) ─
     node_eo = pl.DataFrame(
@@ -770,40 +813,62 @@ def _compute_inflow_scaling_frames_vectorized(
         n: p_node.get((n, "inflow"), 0.0) for n in nodes
     }
     nt_grid = node_eo.join(time_to, how="cross")
-    # pt_node_inflow lookup frame (value present when (n, t) explicit).
-    pti_lk = pl.DataFrame(
-        {"node": [k[0] for k in pt_node_inflow],
-         "time": [k[1] for k in pt_node_inflow],
-         "v_pti": list(pt_node_inflow.values())},
-        schema={"node": pl.Utf8, "time": pl.Utf8, "v_pti": pl.Float64},
-    )
-    # explicit-set membership frame (presence in node_time_inflow).
-    nti_lk = pl.DataFrame(
-        {"node": [k[0] for k in node_time_inflow],
-         "time": [k[1] for k in node_time_inflow],
-         "__nti": [True] * len(node_time_inflow)},
-        schema={"node": pl.Utf8, "time": pl.Utf8, "__nti": pl.Boolean},
-    )
     # per-node scalar default frame.
     dflt_lk = pl.DataFrame(
         {"node": list(nodes),
          "v_dflt": [p_node_inflow_default[n] for n in nodes]},
         schema={"node": pl.Utf8, "v_dflt": pl.Float64},
     )
-    pti_df = (
-        nt_grid
-        .join(nti_lk, on=["node", "time"], how="left")
-        .join(pti_lk, on=["node", "time"], how="left")
-        .join(dflt_lk, on="node", how="left")
-        .with_columns(
+
+    # Original steps absorbed into another solve step (coarsened solve).
+    absorbed_lk = pl.DataFrame(
+        {"time": sorted(absorbed), "__abs": [True] * len(absorbed)},
+        schema={"time": pl.Utf8, "__abs": pl.Boolean},
+    )
+
+    def _dense_inflow(explicit: dict[tuple[str, str], float],
+                      explicit_set: frozenset,
+                      zero_absorbed: bool = False) -> pl.DataFrame:
+        """The (node × time) grid: the explicit value where (n, t) is set,
+        else the node's scalar default (``value_f``); with
+        ``zero_absorbed`` an absorbed original step that is not set gets 0
+        (its energy is in the solve step that combines it)."""
+        default = pl.col("v_dflt").fill_null(0.0)
+        if zero_absorbed and absorbed:
+            default = (pl.when(pl.col("__abs").fill_null(False))  # noqa: FBT003
+                       .then(pl.lit(0.0)).otherwise(default))
+        # pt_node_inflow lookup frame (value present when (n, t) explicit).
+        pti_lk = pl.DataFrame(
+            {"node": [k[0] for k in explicit],
+             "time": [k[1] for k in explicit],
+             "v_pti": list(explicit.values())},
+            schema={"node": pl.Utf8, "time": pl.Utf8, "v_pti": pl.Float64},
+        )
+        # explicit-set membership frame (presence in node_time_inflow).
+        nti_lk = pl.DataFrame(
+            {"node": [k[0] for k in explicit_set],
+             "time": [k[1] for k in explicit_set],
+             "__nti": [True] * len(explicit_set)},
+            schema={"node": pl.Utf8, "time": pl.Utf8, "__nti": pl.Boolean},
+        )
+        grid = (
+            nt_grid
+            .join(nti_lk, on=["node", "time"], how="left")
+            .join(pti_lk, on=["node", "time"], how="left")
+            .join(dflt_lk, on="node", how="left")
+        )
+        if zero_absorbed and absorbed:
+            grid = grid.join(absorbed_lk, on="time", how="left")
+        return grid.with_columns(
             pl.when(pl.col("__nti").fill_null(False))  # noqa: FBT003
             # explicit: pt_node_inflow.get((n,t), 0.0)
             .then(pl.col("v_pti").fill_null(0.0))
-            # else: per-node scalar default
-            .otherwise(pl.col("v_dflt").fill_null(0.0))
+            # else: per-node scalar default (0 on an absorbed step)
+            .otherwise(default)
             .alias("value_f"),
         )
-    )
+
+    pti_df = _dense_inflow(pt_node_inflow, node_time_inflow, zero_absorbed=True)
     out["ptNode_inflow.csv"] = _ordered_value_frame(
         pti_df, ("node", "time", "value"), ["__eo", "__to"],
     )
@@ -887,54 +952,9 @@ def _compute_inflow_scaling_frames_vectorized(
         schema={"period": pl.Utf8, "time": pl.Utf8, "v_w": pl.Float64},
     )
 
-    cti_lk = pl.DataFrame(
-        {"time": list(complete_time_in_use)},
-        schema={"time": pl.Utf8},
-    )
     # pti as a (node, time, v_pti) frame restricted to the per-node series.
     pti_series = pti_df.select(["node", "time", "value_f"]).rename(
         {"value_f": "v_pti"})
-    # Per-(node, period) complete-timeline WEIGHTED sum (A3): the legacy
-    # ``sum(pti[(n,t)] · w[d,t] for t in complete_time_in_use)``.  Build the
-    # dense (node, period, time) grid over the complete timeline, multiply
-    # pti by the period weight (fill 1.0), then group-sum per (node, period).
-    # With w ≡ 1.0 every weight factor is 1.0 → byte-identical to the former
-    # period-independent per-node sum.
-    complete_sum_df = (
-        annual_eligible_eo.select("node")
-        .join(cti_lk, how="cross")
-        .join(period_po.select("period"), how="cross")
-        .join(pti_series, on=["node", "time"], how="left")
-        .join(w_lk, on=["period", "time"], how="left")
-        .with_columns(
-            (pl.col("v_pti").fill_null(0.0)
-             * pl.col("v_w").fill_null(1.0)).alias("v_term"),
-        )
-        .group_by(["node", "period"])
-        .agg(pl.col("v_term").sum().alias("v_complete"))
-    )
-
-    # ── Stage 3: orig_flow_sum (in-memory only — feeds npopis) ─────────
-    # Domain: annual_eligible AND pdNode annual_flow != 0 (DROP on 0/miss).
-    # value = per-(node, period) complete-timeline WEIGHTED sum (A3).  NOT
-    # emitted (no external consumer); only the dict below is used (by the
-    # fused912 npopis).  Because the CSV is no longer written there is no
-    # byte-parity contract.
-    orig_df = (
-        annual_eligible_eo
-        .join(period_po, how="cross")
-        .join(af_lk, on=["node", "period"], how="left")
-        .filter(pl.col("v_af").fill_null(0.0) != 0.0)
-        .join(complete_sum_df, on=["node", "period"], how="left")
-        # A (node, period) with NO complete-timeline rows contributes 0:
-        # the legacy ``sum(())`` over an empty complete_time_in_use is 0.
-        .with_columns(pl.col("v_complete").fill_null(0.0).alias("value_f"))
-    )
-    # Reconstruct orig_flow_sum dict (float values) for downstream stages.
-    orig_flow_sum = {
-        (r[0], r[1]): r[2]
-        for r in orig_df.select(["node", "period", "value_f"]).iter_rows()
-    }
 
     # ── Stage 4: period_share_of_annual_flow (Tier B) ──────────────────
     # Domain: annual_eligible AND af != 0 (DROP on 0/miss).
@@ -976,6 +996,27 @@ def _compute_inflow_scaling_frames_vectorized(
     psaf = {
         (r[0], r[1]): r[2]
         for r in psaf_df.select(["node", "period", "value_f"]).iter_rows()
+    }
+
+    # ── Stage 3: orig_flow_sum (in-memory only — feeds npopis) ─────────
+    # Domain: annual_eligible AND pdNode annual_flow != 0 (DROP on 0/miss).
+    # value = the signed WEIGHTED sum over the period's own complete steps
+    # dt_complete[d] (the stage-4 sum before abs; the steps cpsoy[d] is
+    # made of).  NOT emitted (no external consumer); only the dict below is
+    # used (by the fused912 npopis).
+    orig_df = (
+        annual_eligible_eo
+        .join(period_po, how="cross")
+        .join(af_lk, on=["node", "period"], how="left")
+        .filter(pl.col("v_af").fill_null(0.0) != 0.0)
+        .join(dtc_sum_df, on=["node", "period"], how="left")
+        # A (node, period) with NO complete steps contributes 0: the legacy
+        # ``sum(())`` over an empty dt_complete[d] is 0.
+        .with_columns(pl.col("v_dtc").fill_null(0.0).alias("value_f"))
+    )
+    orig_flow_sum = {
+        (r[0], r[1]): r[2]
+        for r in orig_df.select(["node", "period", "value_f"]).iter_rows()
     }
 
     # ── Stage 6: period_flow_proportional_multiplier (Tier B) ──────────
@@ -1091,25 +1132,46 @@ def _compute_inflow_scaling_frames_vectorized(
         pfam_df, ("node", "period", "value"), ["__eo", "__po"],
     )
 
-    # ── Stage 7: per-node peak precompute (Tier A: max/min/sign) ───────
+    # ── Stage 7: per-(node, period) peak precompute (Tier A) ───────────
     # has_node_time_inflow[n] = node has ANY explicit (n, t) inflow row.
     peak_eo = _ordered_node_frame(
         lambda n: _has_method(n, "scale_to_annual_and_peak_flow"))
-    hnti_nodes = {nn for (nn, _t) in node_time_inflow}
-    # Per-node max/min over the WHOLE time series (dense grid).  When
-    # time_set is empty the group has no rows → null → fill 0.0 (matches
-    # the legacy ``max(inflow_vals) if inflow_vals else 0.0``).
+    # The peak is per original time step: on a coarsened solve (n_of
+    # non-empty) it is read from the original series (input/pt_node_inflow,
+    # the constant from p_node) — the series the solve without
+    # new_stepduration reads.
+    peak_pti_df = pti_df
+    peak_nti = node_time_inflow
+    if n_of:
+        base_inflow = _read_keyed2_float(
+            input_dir / "pt_node_inflow.csv", provider=provider,
+        )
+        peak_nti = frozenset(base_inflow)
+        peak_pti_df = _dense_inflow(base_inflow, peak_nti)
+    hnti_nodes = {nn for (nn, _t) in peak_nti}
+    # Per-(node, period) max/min over the period's own original steps (the
+    # original steps behind dt_complete[d], the steps orig_flow_sum sums),
+    # so each period's peak reaches its own peak_inflow.  A period without
+    # steps has no rows → null → fill 0.0 (the legacy empty-list 0.0).
+    base_of = base_steps_of_solve_steps(solve_data_dir, provider=provider)
+    orig_pairs = [(d, tb) for d, t in dt_complete_pairs for tb in base_of.get(t, (t,))]
+    orig_steps_df = pl.DataFrame(
+        {"period": [d for d, _t in orig_pairs], "time": [t for _d, t in orig_pairs]},
+        schema={"period": pl.Utf8, "time": pl.Utf8},
+    )
     minmax_df = (
-        pti_df.group_by("node")
+        peak_pti_df.join(orig_steps_df, on="time", how="inner")
+        .group_by(["node", "period"])
         .agg(
             pl.col("value_f").max().alias("v_tmax"),
             pl.col("value_f").min().alias("v_tmin"),
         )
     )
-    # Per-node precompute over ALL nodes (the legacy loop iterates nodes).
+    # Precompute over ALL (node, period) (the legacy loop iterates both).
     precomp = (
         node_eo
-        .join(minmax_df, on="node", how="left")
+        .join(period_po, how="cross")
+        .join(minmax_df, on=["node", "period"], how="left")
         .with_columns(
             pl.col("node").is_in(list(hnti_nodes)).alias("__hnti"),
             pl.col("node").replace_strict(
@@ -1146,7 +1208,7 @@ def _compute_inflow_scaling_frames_vectorized(
         )
         # op_max / op_min were only needed to DERIVE op_sign / old_peak
         # above; nothing downstream reads them, so drop them here.
-        .select(["node", "op_sign", "old_peak"])
+        .select(["node", "period", "op_sign", "old_peak"])
     )
 
     # ── Stage 8: peak-domain family ────────────────────────────────────
@@ -1165,7 +1227,7 @@ def _compute_inflow_scaling_frames_vectorized(
         .filter(pl.col("v_af").fill_null(0.0) != 0.0)
         .join(peak_lk, on=["node", "period"], how="left")
         .filter(pl.col("v_peak").fill_null(0.0) != 0.0)
-        .join(precomp, on="node", how="left")
+        .join(precomp, on=["node", "period"], how="left")
         .sort(["__eo", "__po"])
     )
     # The per-cell peak ingredients new_peak_sign / old_peak_max /
@@ -1195,6 +1257,28 @@ def _compute_inflow_scaling_frames_vectorized(
          "v_ofs": list(orig_flow_sum.values())},
         schema={"node": pl.Utf8, "period": pl.Utf8, "v_ofs": pl.Float64},
     )
+    # Step ratio per period: S_d / H_d, S_d = Σ_{t ∈ dt_complete[d]}
+    # n(t) · w[d, t] (original steps behind the period's complete steps,
+    # weighted), H_d = complete_hours_in_period[d] (fallback cpsoy · 8760);
+    # 1.0 when H_d is 0.
+    n_lk = pl.DataFrame(
+        {"time": list(n_of.keys()), "v_n": list(n_of.values())},
+        schema={"time": pl.Utf8, "v_n": pl.Float64},
+    )
+    hours_lk = pl.DataFrame(
+        {"period": list(hours_d.keys()), "v_hours": list(hours_d.values())},
+        schema={"period": pl.Utf8, "v_hours": pl.Float64},
+    )
+    steps_df = (
+        dtc_pairs
+        .join(w_lk, on=["period", "time"], how="left")
+        .join(n_lk, on="time", how="left")
+        .with_columns(
+            (pl.col("v_n").fill_null(1.0)
+             * pl.col("v_w").fill_null(1.0)).alias("v_term"))
+        .group_by("period")
+        .agg(pl.col("v_term").sum().alias("v_steps"))
+    )
     fused912 = (
         peak_domain_df
         # Per-cell ingredients: orig_flow_sum (.get(k, 0.0)) + cpsoy
@@ -1202,13 +1286,25 @@ def _compute_inflow_scaling_frames_vectorized(
         # defaults the legacy stages read.
         .join(ofs_lk, on=["node", "period"], how="left")
         .join(cpsoy_lk, on="period", how="left")
+        .join(steps_df, on="period", how="left")
+        .join(hours_lk, on="period", how="left")
         .with_columns(
             pl.col("v_ofs").fill_null(0.0).alias("v_ofs"),
             pl.col("v_cpsoy").fill_null(0.0).alias("v_cpsoy"),
+            pl.col("v_steps").fill_null(0.0).alias("v_steps"),
         )
         .with_columns(
-            # npis = peak * 8760.0 (constraint 3).
-            (pl.col("v_peak") * HOURS_PER_YEAR).alias("v_npis"),
+            pl.col("v_hours").fill_null(pl.col("v_cpsoy") * HOURS_PER_YEAR)
+            .alias("v_hours"))
+        .with_columns(
+            pl.when(pl.col("v_hours") != 0.0)
+            .then(pl.col("v_steps") / pl.col("v_hours"))
+            .otherwise(pl.lit(1.0)).alias("v_ratio"))
+        .with_columns(
+            # npis = (peak * 8760.0) * S_d / H_d: the annual sum of a
+            # constant peak per original step (constraint 3 order kept).
+            ((pl.col("v_peak") * HOURS_PER_YEAR) * pl.col("v_ratio"))
+            .alias("v_npis"),
             # npop = 0.0 if old_peak == 0.0 else peak / old_peak.  FILL,
             # not drop (constraint 1); exact ``== 0.0`` guard (constraint 4).
             pl.when(pl.col("old_peak") == 0.0)
@@ -1251,7 +1347,7 @@ def _compute_inflow_scaling_frames_vectorized(
         )
     )
 
-    # Stage 9 — new_peak_inflow_sum (npis = peak * 8760) and Stage 10 —
+    # Stage 9 — new_peak_inflow_sum (npis = peak * 8760 * S/H) and Stage 10 —
     # new_old_multiplier (nom) are NOT emitted (no external consumer); both
     # remain inline on ``fused912`` (v_npis / v_nom) feeding slope/section.
     # Stage 11 — new_old_slope = npop * (1 + nom).
@@ -1343,9 +1439,10 @@ def _compute_inflow_scaling_diagnostics(
     )
 
     # dt_complete from steps_complete_solve.csv — (period, step) pairs.
-    dt_complete_pairs = _read_pairs(
-        solve_data_dir / "steps_complete_solve.csv",
-        provider=provider,
+    # A stochastic branch period's complete steps are its parent's (the
+    # mapping complete_hours_in_period uses).
+    dt_complete_pairs = complete_steps_by_period(
+        solve_data_dir, period_in_use, provider=provider,
     )
     dt_complete_for_d: dict[str, list[str]] = {}
     for d, t in dt_complete_pairs:

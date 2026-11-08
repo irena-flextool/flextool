@@ -77,9 +77,12 @@ _LAG_COLS = ["d", "t", "t_previous", "t_previous_within_timeset", "d_previous", 
 
 
 def _config(blocks: dict[str, list], solves: dict[str, list], steps: dict[str, float | None],
-            n_steps: int = 72) -> tuple[TimelineConfig, SimpleNamespace]:
+            n_steps: int = 72, durations: list[float] | None = None) -> tuple[TimelineConfig, SimpleNamespace]:
+    """Timeline ``T`` of ``n_steps`` 1 h steps, or of the steps in ``durations``."""
+    base = [(f"t{i:04d}", "1") for i in range(1, n_steps + 1)] if durations is None else [
+        (f"t{i:04d}", str(d)) for i, d in enumerate(durations, start=1)]
     tl = TimelineConfig(
-        timelines=defaultdict(list, {"T": [(f"t{i:04d}", "1") for i in range(1, n_steps + 1)]}),
+        timelines=defaultdict(list, {"T": base}),
         timesets=list(blocks), timesets__timeline=defaultdict(str, {ts: "T" for ts in blocks}),
         timeset_durations=defaultdict(list, blocks), new_step_durations=steps)
     sc = SimpleNamespace(timesets_used_by_solves=solves, model_solve={"m": list(solves)}, contains_solves={})
@@ -203,7 +206,7 @@ def test_rp_base_start_guard(monkeypatch) -> None:
 
     orig = T._aggregate_timeline_pieces
     monkeypatch.setattr(T, "_aggregate_timeline_pieces",
-                        lambda steps, blocks, sd, log, extra_cuts=None: orig(steps, blocks, sd, log))
+                        lambda steps, blocks, sd, log, extra_cuts=None, **kw: orig(steps, blocks, sd, log, **kw))
     tl, sc = _config({"rp": [("t0001", 24), ("t0073", 24)]}, {"s": [("p", "rp")]}, {"s": 5.0}, n_steps=96)
     tl.rp_weights = {"rp": {b: {"t0001": 0.5, "t0073": 0.5} for b in ("t0001", "t0025", "t0049", "t0073")}}
     with pytest.raises(FlexToolConfigError, match="t0049"):
@@ -399,3 +402,332 @@ def test_realized_dispatch_sibling_inherits_step(tmp_path_factory) -> None:
         ("p2035", "t0001", 2.0), ("p2035", "t0003", 1.0)]
     assert sorted(utf8(fd.p_inflow.frame).select("t", "value").rows()) == [("t0001", -200.0), ("t0003", -100.0)]
     assert sib.solution.obj == pytest.approx(hourly.solution.obj, rel=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# base step length: new_stepduration aggregates by the timeline's time steps, whatever their length (#200)
+
+
+def _steps_of(tl: TimelineConfig, ts: str) -> list[tuple[str, str]]:
+    return [(s, d) for s, d in tl.timelines[tl.timesets__timeline[ts]]]
+
+
+@pytest.mark.parametrize(("durations", "step", "expected"), [
+    ([2.0] * 72, 4.0, [(f"t{i:04d}", "4.0") for i in range(1, 73, 2)]),
+    ([0.5] * 72, 1.0, [(f"t{i:04d}", "1.0") for i in range(1, 73, 2)]),
+    ([1.0] * 24 + [2.0] * 24, 2.0,
+     [(f"t{i:04d}", "2.0") for i in range(1, 25, 2)] + [(f"t{i:04d}", "2.0") for i in range(25, 49)]),
+    ([1.0, 2.0] * 24, 3.0, [(f"t{i:04d}", "3.0") for i in range(1, 49, 2)]),
+    ([0.5] * 35040, 8760.0, [("t0001", "8760.0"), ("t17521", "8760.0")]),
+    ([1.0] * 35040, 17520.0, [("t0001", "17520.0"), ("t17521", "17520.0")]),
+], ids=["2h-by-4", "0.5h-by-1", "1h-then-2h-by-2", "1h2h-by-3", "0.5h-by-8760", "1h-by-17520"])
+def test_chunks_of_any_base_step(durations, step, expected) -> None:
+    """The new time steps hold exactly new_stepduration hours of the timeline's steps, for 2 h, 0.5 h and mixed base
+    steps (a chunk closes when it reaches the new step, it never adds one more base step), also for a year-long new
+    step on half-hour steps and a two-year one on hourly steps (the tolerance stays below half a base step)."""
+    n = len(durations)
+    tl, sc = _config({"all": [("t0001", n)]}, {"s": [("p2020", "all")]}, {"s": step}, durations=durations)
+    tl.create_timeline_from_timestep_duration(sc)
+    assert _steps_of(tl, "all") == expected
+    assert tl.timeset_durations["all"] == [("t0001", len(expected))]
+
+
+def test_rounded_fractional_steps_fit(caplog) -> None:
+    """20-minute steps entered as 0.333333 h with new_stepduration 2: two new steps of six base steps each (their
+    sums fall 2e-6 h short of 2 h), no error and no short-step warning."""
+    tl, sc = _config({"all": [("t0001", 12)]}, {"s": [("p2020", "all")]}, {"s": 2.0}, durations=[0.333333] * 12)
+    with caplog.at_level(logging.WARNING):
+        tl.create_timeline_from_timestep_duration(sc)
+    steps = _steps_of(tl, "all")
+    assert [s for s, _d in steps] == ["t0001", "t0007"]
+    assert [float(d) for _s, d in steps] == [pytest.approx(6 * 0.333333, rel=1e-12)] * 2
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+def test_unused_solve_not_fitting_does_not_stop_the_run() -> None:
+    """A solve with new_stepduration 1.5 on 1 h steps that the model does not run does not stop the run; the same
+    solve in the model does."""
+    tl, sc = _config({"all": [("t0001", 12)]}, {"s": [("p2020", "all")]}, {"s": 1.5})
+    sc.model_solve = {"m": []}
+    tl.create_timeline_from_timestep_duration(sc)
+    tl, sc = _config({"all": [("t0001", 12)]}, {"s": [("p2020", "all")]}, {"s": 1.5})
+    with pytest.raises(FlexToolConfigError, match="Solve 's': new_stepduration 1.5 h is not a whole multiple"):
+        tl.create_timeline_from_timestep_duration(sc)
+
+
+def test_new_step_off_the_original_timeline_raises(caplog) -> None:
+    """Internal guard: an aggregated step that is not a step of the original timeline is logged and raised, naming
+    the solve and the timeline."""
+    from flextool.engine.input._timeline import _base_steps_of_new_steps
+
+    log = logging.getLogger(__name__)
+    match = r"Solve 's': time steps \['t0009'\] of the aggregated timeline 'T_s'"
+    with caplog.at_level(logging.ERROR), pytest.raises(FlexToolConfigError, match=match):
+        _base_steps_of_new_steps([("t0001", "1"), ("t0002", "1")], [("t0001", "2.0"), ("t0009", "1.0")], log,
+                                 solve_name="s", timeline_name="T_s")
+    assert any("t0009" in r.message for r in caplog.records if r.levelno == logging.ERROR)
+
+
+def test_long_gap_step_is_its_own_chunk() -> None:
+    """A 24 h filler step in the gap between two blocks of 1 h steps, new_stepduration 2: the gap step is one new
+    step of 24 h (never active, so not an error); the blocks get 2 h steps."""
+    durations = [1.0] * 4 + [24.0] + [1.0] * 4
+    tl, sc = _config({"w": [("t0001", 4), ("t0006", 4)]}, {"s": [("p2020", "w")]}, {"s": 2.0}, durations=durations)
+    tl.create_timeline_from_timestep_duration(sc)
+    assert _steps_of(tl, "w") == [("t0001", "2.0"), ("t0003", "2.0"), ("t0005", "24.0"), ("t0006", "2.0"),
+                                  ("t0008", "2.0")]
+    assert tl.timeset_durations["w"] == [("t0001", 2), ("t0006", 2)]
+
+
+@pytest.mark.parametrize(("durations", "step", "match"), [
+    ([2.0] * 12, 3.0, r"new_stepduration 3 h is not a whole multiple of the 2 h time steps of timeline 'T'"),
+    ([2.0] * 12, 1.0, r"new_stepduration 1 h is not a whole multiple of the 2 h time steps"),
+    ([1.0] * 12, 1.5, r"new_stepduration 1.5 h is not a whole multiple of the 1 h time steps"),
+    ([1.0, 2.0] * 6, 2.0, r"new_stepduration 2 h does not fit the time steps of timeline 'T': the new time step "
+                            r"starting at 't0001' would end inside base time step 't0002' \(3 h in total\)"
+                            r".*must end where"),
+], ids=["2h-by-3", "2h-by-1", "1h-by-1.5", "1h2h-by-2"])
+def test_step_not_fitting_the_base_steps_raises(durations, step, match) -> None:
+    """A new_stepduration that is not a whole multiple of the timeline's steps, or (mixed step lengths) that would
+    end inside a base step, stops with a configuration error naming the solve.  Before: longer new steps were made
+    silently (2 h base by 3 → 4 h steps)."""
+    tl, sc = _config({"all": [("t0001", len(durations))]}, {"s": [("p2020", "all")]}, {"s": step},
+                     durations=durations)
+    with pytest.raises(FlexToolConfigError, match=r"Solve 's': " + match):
+        tl.create_timeline_from_timestep_duration(sc)
+
+
+# ---------------------------------------------------------------------------
+# base step length: the time series follow the base steps
+
+
+WEST6 = [-589.0, -537.0, -506.0, -482.0, -472.0, -454.0]
+WIND6 = [0.38, 0.40, 0.43, 0.46, 0.45, 0.49]
+CONST = -500.0
+LABELS = ["t0001", "t0003", "t0005"]
+
+
+def _frame(header: list[str], rows: list[list]) -> pl.DataFrame:
+    return pl.DataFrame([[str(v) for v in r] for r in rows], schema=header, orient="row")
+
+
+def _inputs() -> dict[str, pl.DataFrame]:
+    t = [f"t{i:04d}" for i in range(1, 7)]
+    br = [b for b in ("b1", "b2") for _ in t]
+    return {
+        "pt_node_inflow": _frame(["node", "time", "pt_node_inflow"], [["west", s, v] for s, v in zip(t, WEST6)]),
+        "pbt_node_inflow": _frame(["node", "branch", "time_start", "time", "pbt_node_inflow"],
+                                  [["west", b, "t0001", s, v * (1.0 if b == "b1" else 1.5)]
+                                   for b, s, v in zip(br, t * 2, WEST6 * 2)]),
+        "pt_profile": _frame(["profile", "time", "pt_profile"], [["wind", s, v] for s, v in zip(t, WIND6)]),
+        "pdt_process": _frame(["process", "processParam", "period", "time", "pdt_process"],
+                              [["coal", "availability", d, s, round(0.5 + 0.07 * i + k, 6)]
+                               for k, d in enumerate(("p2020", "p2025")) for i, s in enumerate(t)]),
+        "pt_node": _frame(["node", "nodeParam", "time", "pt_node"],
+                          [["west", "availability", s, v + 1.0] for s, v in zip(t, WIND6)]
+                          + [["battery", "storage_state_reference_value", "t0003", 0.5],
+                             ["battery2", "storage_state_reference_value", "t0004", 0.7]]),
+        "p_node": _frame(["node", "nodeParam", "p_node"], [["east", "inflow", CONST], ["east", "penalty_up", 900]]),
+    }
+
+
+def _averaged(durations: list[float], step: float, tmp_path: Path) -> tuple[dict[str, pl.DataFrame], dict]:
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+
+    tl, sc = _config({"all": [("t0001", 6)]}, {"s": [("p2020", "all")]}, {"s": step}, durations=durations)
+    tl.create_timeline_from_timestep_duration(sc)
+    provider = FlexDataProvider()
+    inputs = _inputs()
+    for name, frame in inputs.items():
+        provider.put(f"input/{name}", frame)
+    tl.create_averaged_timeseries("s", sc, logging.getLogger(__name__), provider=provider, work_folder=tmp_path)
+    names = list(inputs) + ["node_full_timeline_flow"]
+    return {n: provider.get(f"solve_data/{n}") for n in names if provider.has(f"solve_data/{n}")}, inputs
+
+
+def _groups(frame: pl.DataFrame) -> dict[tuple, list[tuple[str, float]]]:
+    """``{key columns before time: [(time, value), ...]}`` in row order."""
+    ti = frame.columns.index("time")
+    out: dict[tuple, list[tuple[str, float]]] = defaultdict(list)
+    for r in frame.iter_rows():
+        out[tuple(r[:ti])].append((r[ti], float(r[ti + 1])))
+    return out
+
+
+BASES = [([1.0] * 6, 2.0), ([2.0] * 6, 4.0), ([0.5] * 6, 1.0), ([1.0, 2.0] * 3, 3.0)]
+BASE_IDS = ["1h-by-2", "2h-by-4", "0.5h-by-1", "1h2h-by-3"]
+
+
+@pytest.mark.parametrize(("durations", "step"), BASES, ids=BASE_IDS)
+def test_series_follow_the_base_steps(durations, step, tmp_path) -> None:
+    """Each new step (t0001, t0003, t0005) combines two base steps: inflow is their sum, the other series their
+    duration-weighted mean, a constant inflow counts once per base step, a storage reference value at a new step
+    passes through and one at another base step moves to the new step that contains it.  Before (other than 1 h
+    bases): the new step's hours were taken as the number of rows to read."""
+    out, inputs = _averaged(durations, step, tmp_path)
+    ds = [durations[0:2], durations[2:4], durations[4:6]]
+    for name in ("pt_node_inflow", "pbt_node_inflow"):
+        got, src = _groups(out[name]), _groups(inputs[name])
+        assert set(got) == set(src) | ({("east",)} if name == "pt_node_inflow" else set())
+        for key, rows in src.items():
+            values = [v for _t, v in rows]
+            assert [t for t, _v in got[key]] == LABELS
+            assert [v for _t, v in got[key]] == [values[0] + values[1], values[2] + values[3], values[4] + values[5]]
+            assert sum(v for _t, v in got[key]) == pytest.approx(sum(values), rel=1e-12)
+    east = _groups(out["pt_node_inflow"])[("east",)]
+    assert east == [(t, CONST * 2) for t in LABELS]
+    assert sum(v for _t, v in east) == CONST * 6
+    for name in ("pt_profile", "pdt_process", "pt_node"):
+        got, src = _groups(out[name]), _groups(inputs[name])
+        for key, rows in src.items():
+            if "storage_state_reference_value" in key:
+                continue
+            values = [v for _t, v in rows]
+            expected = [sum(v * d for v, d in zip(values[2 * k:2 * k + 2], ds[k])) / sum(ds[k]) for k in range(3)]
+            assert [t for t, _v in got[key]] == LABELS
+            assert [v for _t, v in got[key]] == pytest.approx(expected, abs=1e-6)
+    ref = _groups(out["pt_node"])
+    assert ref[("battery", "storage_state_reference_value")] == [("t0003", 0.5)]
+    assert ref[("battery2", "storage_state_reference_value")] == [("t0003", 0.7)]
+    flow = {n: float(v) for n, v in out["node_full_timeline_flow"].iter_rows()}
+    years = sum(durations) / 8760.0
+    assert flow["east"] == pytest.approx(CONST * 6 / years, rel=1e-12)
+    assert flow["west"] == pytest.approx(sum(WEST6) / years, rel=1e-12)
+
+
+def test_mixed_steps_weight_the_average(tmp_path) -> None:
+    """Base [1 h, 2 h] by 3: the profile of new step t0001 is (0.38·1 + 0.40·2)/3 = 0.393333, not the plain mean
+    0.39."""
+    out, _inputs_ = _averaged([1.0, 2.0] * 3, 3.0, tmp_path)
+    assert _groups(out["pt_profile"])[("wind",)][0] == ("t0001", 0.393333)
+
+
+# ---------------------------------------------------------------------------
+# base step length: solves
+
+
+TIMESTEPS72 = [f"t{i:04d}" for i in range(1, 73)]
+
+
+def _tmap(pairs: list, index_name: str = "time") -> list:
+    return b64({"index_type": "str", "index_name": index_name, "rank": 1, "data": [list(p) for p in pairs]}, "map")
+
+
+def _base_series() -> dict[str, list[float]]:
+    """The fixture's west inflow and wind profile over the 72 steps (from tests.json)."""
+    import base64 as _b64
+    import json as _json
+
+    data = _json.loads((FLEXTOOL_ROOT / "tests" / "fixtures" / "tests.json").read_text())
+    out = {}
+    for cls, ent, param, val, alt in data["parameter_values"]:
+        if (cls, ent, param, alt) in (("node", "west", "inflow", "west"),
+                                      ("profile", "wind_profile", "profile", "wind")):
+            m = _json.loads(_b64.b64decode(val[0]))
+            assert [t for t, _v in m["data"]] == TIMESTEPS72
+            out[param] = [float(v) for _t, v in m["data"]]
+    return out
+
+
+def _timeline(base: float) -> list:
+    return ["timeline", "y2020", "timestep_duration", _tmap([(t, base) for t in TIMESTEPS72], "timestep")]
+
+
+def _assert_same_lp(steps_a: list, steps_b: list) -> None:
+    """Every sub-solve's LP is the same: rows, columns, coefficients, bounds and costs (the same floats)."""
+    assert len(steps_a) == len(steps_b) > 0
+    for a, b in zip(steps_a, steps_b):
+        ma, mb = build(a.flex_data).canonicalise(), build(b.flex_data).canonicalise()
+        assert list(ma.row_names) == list(mb.row_names), a.solve_name
+        assert list(ma.col_names) == list(mb.col_names), a.solve_name
+        assert list(ma.col_ptr) == list(mb.col_ptr) and list(ma.row_idx) == list(mb.row_idx), a.solve_name
+        assert list(ma.val) == list(mb.val), a.solve_name
+        assert list(ma.row_lb) == list(mb.row_lb) and list(ma.row_ub) == list(mb.row_ub), a.solve_name
+        assert list(ma.col_lb) == list(mb.col_lb) and list(ma.col_ub) == list(mb.col_ub), a.solve_name
+        assert list(ma.col_obj) == list(mb.col_obj), a.solve_name
+
+
+def _inflow_dt(step) -> list[tuple[str, float]]:
+    fd = step.flex_data
+    dt = set(_dt(fd))
+    rows = utf8(fd.p_inflow.frame).filter(pl.col("n") == "west").select("d", "t", "value").rows()
+    return sorted((t, v) for d, t, v in rows if (d, t) in dt)
+
+
+@pytest.mark.parametrize("base", [2.0, 0.5], ids=["2h-by-4", "0.5h-by-1"])
+def test_coarse_solve_equals_native_twin(tmp_path_factory, base) -> None:
+    """2day on a timeline of 2 h (0.5 h) steps with new_stepduration 4 (1) builds the same LP as the twin timeline
+    that has the 4 h (1 h) steps natively (t0001, t0003, ...; inflow summed and profile averaged pairwise), and the
+    west inflow sums to the 48 base steps' −29 103 (t0001: −589 − 537 = −1126).  Before: 2 h by 4 read four
+    steps per new step (Σ doubled), 0.5 h by 1 read one (Σ −14 607)."""
+    series = _base_series()
+    infl, prof = series["inflow"], series["profile"]
+    twin_steps = TIMESTEPS72[0::2]
+    twin = [
+        ["timeline", "y2020", "timestep_duration", _tmap([(t, 2 * base) for t in twin_steps], "timestep")],
+        ["timeset", "2day", "timeset_duration", _tmap([("t0001", 24.0)], "time")],
+        ["node", "west", "inflow", _tmap([(t, infl[2 * k] + infl[2 * k + 1]) for k, t in enumerate(twin_steps)])],
+        ["profile", "wind_profile", "profile",
+         _tmap([(t, round((prof[2 * k] + prof[2 * k + 1]) / 2, 6)) for k, t in enumerate(twin_steps)])],
+    ]
+    coarse = [_timeline(base), ["solve", "y2020_2day_dispatch", "new_stepduration", b64(2 * base, "float")]]
+    tag = str(base).replace(".", "p")
+    a = list(_run(tmp_path_factory, f"bsl_coarse_{tag}", coarse, BATTERY).values())
+    b = list(_run(tmp_path_factory, f"bsl_twin_{tag}", twin, BATTERY).values())
+    _assert_same_lp(a, b)
+    rows = _inflow_dt(a[-1])
+    assert len(rows) == 24
+    assert rows[0] == ("t0001", -1126.0)
+    assert sum(v for _t, v in rows) == pytest.approx(-29103.0, rel=1e-12)
+    assert sum(infl[:48]) == -29103.0
+
+
+def test_constant_inflow_counts_per_base_step(tmp_path_factory) -> None:
+    """Constant west inflow −500 (MWh per step) on 2 h steps with new_stepduration 4: every new step gets −1000 and
+    the 2day total equals the total without new_stepduration (−500 × 48).  Before: −2000 per step (×4 h)."""
+    const = [_timeline(2.0), ["node", "west", "inflow", b64(-500.0, "float")]]
+    coarse = _inflow_dt(_last(_run(tmp_path_factory, "bsl_const_4", const + [
+        ["solve", "y2020_2day_dispatch", "new_stepduration", b64(4.0, "float")]], BATTERY)))
+    fine = _inflow_dt(_last(_run(tmp_path_factory, "bsl_const_2", const, BATTERY)))
+    assert len(coarse) == 24 and {v for _t, v in coarse} == {-1000.0}
+    assert len(fine) == 48
+    assert sum(v for _t, v in coarse) == sum(v for _t, v in fine) == -500.0 * 48
+
+
+def test_scale_to_annual_flow_constant_on_coarse_steps(tmp_path_factory) -> None:
+    """fullYear (72 steps of 2 h = 144 h) with a constant west inflow −500 scaled to annual_flow 1e6: the scaled
+    inflow sums to −1e6 × 144/8760 with and without new_stepduration 4 (the full-timeline denominator counts the
+    constant once per base step, like the coarse inflow)."""
+    vals = [_timeline(2.0), ["node", "west", "inflow", b64(-500.0, "float")],
+            ["node", "west", "inflow_method", b64("scale_to_annual_flow", "str")],
+            ["node", "west", "annual_flow", b64(1.0e6, "float")]]
+    chain = ["init", "west", "wind", "fullYear"]
+    coarse = _inflow_dt(_last(_run(tmp_path_factory, "bsl_ftf_4", vals + [
+        ["solve", "y2020_fullYear_dispatch", "new_stepduration", b64(4.0, "float")]], chain)))
+    fine = _inflow_dt(_last(_run(tmp_path_factory, "bsl_ftf_2", vals, chain)))
+    assert len(coarse) == 36 and len(fine) == 72
+    expected = -1.0e6 * 144.0 / 8760.0
+    assert sum(v for _t, v in coarse) == pytest.approx(expected, rel=1e-9)
+    assert sum(v for _t, v in fine) == pytest.approx(expected, rel=1e-9)
+
+
+def test_constant_inflow_in_proportion_on_coarse_steps(tmp_path_factory) -> None:
+    """Constant west inflow −500 scaled with scale_in_proportion to annual_flow 5e6 on the 2day solve: the
+    multiplier divides by the inflow of the whole 72-step timeline, −500 × 72 = −36 000 over 72/8760 years, so it
+    is 5e6 × (72/8760) / 36 000 = 1.141552511 with and without new_stepduration 2, and the 48 steps sum to
+    −1.141552511 × 500 × 48 = −27 397.26 in both.  Before: with new_stepduration the original steps combined into
+    a new step counted the constant again (Σ −54 000, multiplier 0.7610)."""
+    vals = [["node", "west", "inflow", b64(-500.0, "float")],
+            ["node", "west", "inflow_method", b64("scale_in_proportion", "str")],
+            ["node", "west", "annual_flow", b64(5.0e6, "float")]]
+    expected_mult = 5.0e6 * (72.0 / 8760.0) / 36000.0
+    for alt, extra, n_steps in (("cip_1h", [], 48),
+                                ("cip_2h", [["solve", "y2020_2day_dispatch", "new_stepduration", b64(2.0, "float")]],
+                                 24)):
+        step = _last(_run(tmp_path_factory, alt, vals + extra, BATTERY))
+        df = utf8(step.flex_data_provider.get("solve_data/period_flow_proportional_multiplier"))
+        mult = {r[0]: float(r[-1]) for r in df.rows()}
+        assert mult["west"] == pytest.approx(expected_mult, rel=1e-12), alt
+        rows = _inflow_dt(step)
+        assert len(rows) == n_steps
+        assert sum(v for _t, v in rows) == pytest.approx(-expected_mult * 500.0 * 48, rel=1e-9), alt

@@ -383,6 +383,11 @@ def _synthetic_provider():
     # (cpsoy==0).  Author a second period for the cpsoy==0 probe.
     put("solve_data", "complete_period_share_of_year_calc", pl.DataFrame({
         "period": ["d1"], "value": [0.5]}))
+    # Consistent with the share of year 0.5: the period's complete steps
+    # t1, t2 hold 4380 h (2190 h each), so S/H = 2/4380 and the annual sum
+    # of a constant peak is npis = peak · S / cpsoy = 4 · peak.
+    put("solve_data", "complete_hours_in_period", pl.DataFrame({
+        "period": ["d1"], "value": [4380.0]}))
     put("solve_data", "p_timeline_duration_in_years", pl.DataFrame({
         "timeline": ["tlA"], "value": [1.0]}))
     # period__timeline: d1 → tlA (tdy_sum 1.0 for propN); propTdy0 shares d1
@@ -456,25 +461,27 @@ def test_inflow_scaling_synthetic_coverage(tmp_path):
     # excluded old_peak==0 rows; the live fused path FILLS npop=0 for them,
     # so the (node, period) row SURVIVES into slope/section.  Observable
     # consequence: peakOld0 EXISTS in new_old_slope with slope == 0.0, and
-    # new_old_section == -op_sign*af/8760 (the oracle's value for that cell,
-    # which is the faithful hand-derived reference). ---
+    # new_old_section == -op_sign*af*cpsoy/S (hand-derived below). ---
     assert ("peakOld0", "d1") in v_slope, (
         "old_peak==0 row must SURVIVE (fill-0) into new_old_slope")
     nos_peakOld0 = cell(vec["new_old_slope.csv"], "peakOld0", "d1")
-    assert nos_peakOld0 == repr(0.0), (
-        f"peakOld0 slope must be 0.0 (npop filled 0 on old_peak==0); "
+    # slope = npop * (1 + nom) = 0 * (1 - 80/36): a zero (signed -0.0, as
+    # 1 + nom < 0 here; pdtNodeInflow normalises the sign of zero).
+    assert float(nos_peakOld0) == 0.0, (
+        f"peakOld0 slope must be 0 (npop filled 0 on old_peak==0); "
         f"got {nos_peakOld0}")
     # new_old_section == peak * nom; with npop=0 → npopis=0 → denom=npis
-    # → nom = op_sign*(0 - af)/npis = -op_sign*af/(peak*8760).  Section =
-    # peak * nom = -op_sign*af/8760.  Hand-derive from the fixture:
+    # → nom = op_sign*(0 - af)/npis.  npis = peak * S / cpsoy with S = 2
+    # complete steps, cpsoy = 0.5: npis = 9 * 2 / 0.5 = 36.  Section =
+    # peak * nom = -op_sign*af*cpsoy/S.  Hand-derive from the fixture:
     # peakOld0 inflow all 0 → op_max=op_min=0 → op_sign=+1 (|0|>=|0|);
-    # af=80, peak=9 → section = -(1)*80/8760.
-    expected_sec = -1.0 * 80.0 / 8760.0
+    # af=80 → section = -(1)*80*0.5/2 = -20.
+    expected_sec = -20.0
     sec_peakOld0_legacy = cell(
         legacy["new_old_section.csv"], "peakOld0", "d1")
     sec_peakOld0_vec = cell(vec["new_old_section.csv"], "peakOld0", "d1")
     assert sec_peakOld0_legacy == repr(expected_sec), (
-        f"oracle section for peakOld0 must be -op_sign*af/8760="
+        f"oracle section for peakOld0 must be -op_sign*af*cpsoy/S="
         f"{expected_sec!r}; got {sec_peakOld0_legacy}")
     # vec is Tier-B (rtol 1e-12) vs oracle — compare as floats.
     assert abs(float(sec_peakOld0_vec) - expected_sec) <= 1e-12, (
@@ -501,14 +508,17 @@ def test_inflow_scaling_synthetic_coverage(tmp_path):
     # were to drift.  The SLOPE is the negative-bearing quantity here:
     #   npop = peak/old_peak = 9/-4 = -2.25 < 0, and slope = npop*(1+nom),
     # so new_old_slope is negative for this fixture (op_sign=-1, old_peak=-4,
-    # peak=9).  (The SECTION, by contrast, is positive here, ≈ +0.0132 — it
-    # is NOT the negative quantity.)  Pin the vectorized slope sign directly:
+    # peak=9).  (The SECTION, by contrast, is 0 here — see below — it is
+    # NOT the negative quantity.)  Pin the vectorized slope sign directly:
     assert float(slope_neg_vec) < 0.0, (
         f"peakScalarNeg vectorized slope must be negative "
         f"(npop=9/-4<0), got {slope_neg_vec}")
-    assert sec_neg_legacy is not None and float(sec_neg_legacy) != 0.0, (
-        "peakScalarNeg section must be non-zero (negative-sign path "
-        "exercised)")
+    # By hand: the constant −4 is flat over t1, t2, so ofs = −8 and
+    # npopis = npop * ofs / cpsoy = −2.25 * −8 / 0.5 = 36 = npis = 9 * 2 / 0.5:
+    # denom 0 → nom 0, slope = npop = −2.25, section = 0 (the constant is
+    # scaled to the constant peak 9 · (−4)/(−4)).
+    assert float(slope_neg_vec) == pytest.approx(-2.25, rel=1e-12)
+    assert sec_neg_legacy is not None and float(sec_neg_legacy) == 0.0
 
     print(f"\n[inflow-scaling parity] synthetic coverage tiers: {tiers}")
 
@@ -636,17 +646,19 @@ def test_inflow_scaling_synthetic_cpsoy0_and_tdy0_and_int0(tmp_path):
     print(f"\n[inflow-scaling parity] synthetic int-0 tiers: {tiers2}")
 
     # --- stage-10 denom==0 (npis - npopis == 0 → new_old_multiplier 0) --
-    # Construct a peak node where npis == npopis so denom == 0.  With
-    # inflow series (5, 6): old_peak = 6, peak chosen = 1.0 → npop = 1/6,
-    # complete-timeline sum ofs = 11, cpsoy = c.  npopis = npop*ofs/c =
-    # (11/6)/c; npis = peak*8760 = 8760.  denom==0 ⇒ c = (11/6)/8760.
+    # Construct a peak node where npis == npopis so denom == 0.  Two 1 h
+    # steps: H = 2 h, cpsoy = c = 2/8760, S = 2.  npis = peak * S / c and
+    # npopis = npop * ofs / c with npop = peak / old_peak, so denom == 0 ⇔
+    # S * old_peak == ofs: the profile's peak equals its mean, a FLAT
+    # profile.  Inflow (6, 6): old_peak = 6, ofs = 12, peak = 1.0 → npop =
+    # 1/6; npis = 1 * 2 / c = 8760 = (1/6) * 12 / c = npopis.
     provider3 = FlexDataProvider()
 
     def put3(parent, stem, df):
         provider3.put(f"{parent}/{stem}", df)
         provider3.put(stem, df)
 
-    c = (11.0 / 6.0) / 8760.0
+    c = 2.0 / 8760.0
     put3("input", "node", pl.DataFrame({"node": ["peakD0"]}))
     put3("solve_data", "period_in_use_set", pl.DataFrame({"period": ["d1"]}))
     put3("solve_data", "time", pl.DataFrame({"time": ["t1", "t2"]}))
@@ -655,7 +667,7 @@ def test_inflow_scaling_synthetic_cpsoy0_and_tdy0_and_int0(tmp_path):
         schema={"node": pl.Utf8, "param": pl.Utf8, "value": pl.Float64}))
     put3("solve_data", "pt_node_inflow", pl.DataFrame({
         "node": ["peakD0", "peakD0"], "time": ["t1", "t2"],
-        "value": [5.0, 6.0]}))
+        "value": [6.0, 6.0]}))
     put3("solve_data", "node__inflow_method", pl.DataFrame({
         "node": ["peakD0"], "method": ["scale_to_annual_and_peak_flow"]}))
     put3("solve_data", "pdNode", pl.DataFrame({
@@ -664,6 +676,9 @@ def test_inflow_scaling_synthetic_cpsoy0_and_tdy0_and_int0(tmp_path):
         "period": ["d1", "d1"], "value": [80.0, 1.0]}))
     put3("solve_data", "complete_period_share_of_year_calc", pl.DataFrame({
         "period": ["d1"], "value": [c]}))
+    # 1 h steps t1, t2: H = 2 = c · 8760.
+    put3("solve_data", "complete_hours_in_period", pl.DataFrame({
+        "period": ["d1"], "value": [2.0]}))
     put3("solve_data", "p_timeline_duration_in_years", pl.DataFrame(
         {"timeline": [], "value": []},
         schema={"timeline": pl.Utf8, "value": pl.Float64}))
@@ -699,3 +714,223 @@ def test_inflow_scaling_synthetic_cpsoy0_and_tdy0_and_int0(tmp_path):
         f"denom==0 → new_old_slope must be npop=1/6 (vectorized); "
         f"got {slope3}")
     print(f"\n[inflow-scaling parity] synthetic denom0 tiers: {tiers3}")
+
+
+def _base_steps_provider(*, coarse: bool):
+    """Two peak nodes on four original 2 h steps t1..t4 of period d1: ``peakN`` with the profile (5, 6, 7, 4)
+    and ``peakC`` with the constant inflow −3.  ``coarse``: a solve with ``new_stepduration`` 4 h, whose steps
+    t1, t3 combine (t1, t2) and (t3, t4) — its ``pt_node_inflow`` holds the sums (11, 11) and the constant ×2,
+    and ``new_step_base_steps`` lists the original steps.  Else the same model without new_stepduration."""
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+
+    provider = FlexDataProvider()
+
+    def put(parent: str, stem: str, df: pl.DataFrame) -> None:
+        provider.put(f"{parent}/{stem}", df)
+        provider.put(stem, df)
+
+    steps = ["t1", "t3"] if coarse else ["t1", "t2", "t3", "t4"]
+    put("input", "node", pl.DataFrame({"node": ["peakN", "peakC"]}))
+    put("solve_data", "period_in_use_set", pl.DataFrame({"period": ["d1"]}))
+    put("solve_data", "time", pl.DataFrame({"time": ["t1", "t2", "t3", "t4"]}))
+    put("input", "p_node", pl.DataFrame({"node": ["peakC"], "param": ["inflow"], "value": [-3.0]}))
+    base = pl.DataFrame({"node": ["peakN"] * 4, "time": ["t1", "t2", "t3", "t4"], "value": [5.0, 6.0, 7.0, 4.0]})
+    put("input", "pt_node_inflow", base)
+    put("solve_data", "pt_node_inflow", pl.DataFrame({
+        "node": ["peakN", "peakN", "peakC", "peakC"], "time": ["t1", "t3", "t1", "t3"],
+        "value": [11.0, 11.0, -6.0, -6.0]}) if coarse else base)
+    put("solve_data", "node__inflow_method", pl.DataFrame({
+        "node": ["peakN", "peakC"], "method": ["scale_to_annual_and_peak_flow"] * 2}))
+    put("solve_data", "pdNode", pl.DataFrame({
+        "node": ["peakN", "peakN", "peakC", "peakC"],
+        "param": ["annual_flow", "peak_inflow", "annual_flow", "peak_inflow"],
+        "period": ["d1"] * 4, "value": [80.0, 12.0, 80.0, -9.0]}))
+    put("solve_data", "complete_period_share_of_year_calc", pl.DataFrame({
+        "period": ["d1"], "value": [8.0 / 8760.0]}))
+    put("solve_data", "complete_hours_in_period", pl.DataFrame({"period": ["d1"], "value": [8.0]}))
+    put("solve_data", "p_timeline_duration_in_years", pl.DataFrame(
+        {"timeline": [], "value": []}, schema={"timeline": pl.Utf8, "value": pl.Float64}))
+    put("solve_data", "period__timeline_set", pl.DataFrame(
+        {"period": [], "timeline": []}, schema={"period": pl.Utf8, "timeline": pl.Utf8}))
+    put("solve_data", "complete_time_in_use_set", pl.DataFrame({"time": steps}))
+    put("solve_data", "steps_complete_solve", pl.DataFrame({"period": ["d1"] * len(steps), "time": steps}))
+    if coarse:
+        put("solve_data", "new_step_base_steps", pl.DataFrame({
+            "time": ["t1", "t2", "t3", "t4"], "new_step": ["t1", "t1", "t3", "t3"], "value": [2.0] * 4}))
+    return provider
+
+
+def test_inflow_scaling_synthetic_new_step_base_steps():
+    """A solve with ``new_stepduration``: the twins agree, and the peak is read per original step.
+
+    By hand: peakN's peak_old is the largest original step 7 (not the combined 11), peakC's the constant −3 (not
+    −6).  The constant peak sums to npis = (peak · 8760) · S / H with S = 2 + 2 = 4 original steps and H = 8 h:
+    12 · 4380 = 52 560 and −9 · 4380 = −39 420.  slope and section equal the solve without new_stepduration
+    (same peak_old, same Σ inflow 22, same S and H), so each combined step is the sum of its original steps."""
+    inp, sdd = Path("input"), Path("solve_data")
+    coarse = _base_steps_provider(coarse=True)
+    legacy = _compute_inflow_scaling_frames(inp, sdd, provider=coarse)
+    vec = _compute_inflow_scaling_frames_vectorized(inp, sdd, provider=coarse)
+    _gate_dicts(legacy, vec, "synthetic-base-steps")
+
+    def cells(frame):
+        return {(r[0], r[1]): float(r[2]) for r in frame.iter_rows()}
+
+    assert cells(legacy["old_peak_max.csv"])[("peakN", "d1")] == 7.0
+    assert cells(legacy["old_peak_min.csv"])[("peakC", "d1")] == -3.0
+    npis = cells(legacy["new_peak_inflow_sum.csv"])
+    assert npis[("peakN", "d1")] == pytest.approx(52560.0, rel=1e-12)
+    assert npis[("peakC", "d1")] == pytest.approx(-39420.0, rel=1e-12)
+
+    fine = _compute_inflow_scaling_frames(inp, sdd, provider=_base_steps_provider(coarse=False))
+    for k in ("new_old_slope.csv", "new_old_section.csv"):
+        got, want = cells(vec[k]), cells(fine[k])
+        assert got.keys() == want.keys()
+        for key, v in want.items():
+            assert got[key] == pytest.approx(v, rel=1e-12), (k, key)
+
+
+def test_inflow_scaling_synthetic_absorbed_steps_get_no_constant():
+    """On a solve with ``new_stepduration`` the constant inflow −3 of ``propC`` is in the combined steps t1, t3
+    (−6 each); the original steps t2, t4 they absorb get 0, and u1 — a step of another timeline, not combined —
+    keeps the constant.  By hand: Σ_t = −6 + 0 − 6 + 0 − 3 = −15, so the scale_in_proportion multiplier is
+    annual_flow / (|Σ| / timeline years) = 50 / (15 / 1) = 3.333…  Before: t2 and t4 counted −3 again (Σ −21).
+    Twins agree."""
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+
+    provider = FlexDataProvider()
+
+    def put(parent: str, stem: str, df: pl.DataFrame) -> None:
+        provider.put(f"{parent}/{stem}", df)
+        provider.put(stem, df)
+
+    put("input", "node", pl.DataFrame({"node": ["propC"]}))
+    put("solve_data", "period_in_use_set", pl.DataFrame({"period": ["d1"]}))
+    put("solve_data", "time", pl.DataFrame({"time": ["t1", "t2", "t3", "t4", "u1"]}))
+    put("input", "p_node", pl.DataFrame({"node": ["propC"], "param": ["inflow"], "value": [-3.0]}))
+    put("solve_data", "pt_node_inflow", pl.DataFrame({
+        "node": ["propC", "propC"], "time": ["t1", "t3"], "value": [-6.0, -6.0]}))
+    put("solve_data", "node__inflow_method", pl.DataFrame({"node": ["propC"], "method": ["scale_in_proportion"]}))
+    put("solve_data", "pdNode", pl.DataFrame({
+        "node": ["propC"], "param": ["annual_flow"], "period": ["d1"], "value": [50.0]}))
+    put("solve_data", "complete_period_share_of_year_calc", pl.DataFrame({"period": ["d1"], "value": [0.5]}))
+    put("solve_data", "p_timeline_duration_in_years", pl.DataFrame({"timeline": ["tlA"], "value": [1.0]}))
+    put("solve_data", "period__timeline_set", pl.DataFrame({"period": ["d1"], "timeline": ["tlA"]}))
+    put("solve_data", "complete_time_in_use_set", pl.DataFrame({"time": ["t1", "t3"]}))
+    put("solve_data", "steps_complete_solve", pl.DataFrame({"period": ["d1", "d1"], "time": ["t1", "t3"]}))
+    put("solve_data", "new_step_base_steps", pl.DataFrame({
+        "time": ["t1", "t2", "t3", "t4"], "new_step": ["t1", "t1", "t3", "t3"], "value": [2.0] * 4}))
+
+    inp, sdd = Path("input"), Path("solve_data")
+    legacy = _compute_inflow_scaling_frames(inp, sdd, provider=provider)
+    vec = _compute_inflow_scaling_frames_vectorized(inp, sdd, provider=provider)
+    _gate_dicts(legacy, vec, "synthetic-absorbed")
+    pti = {r[1]: float(r[2]) for r in vec["ptNode_inflow.csv"].iter_rows()}
+    assert pti == {"t1": -6.0, "t2": 0.0, "t3": -6.0, "t4": 0.0, "u1": -3.0}
+    mult = {(r[0], r[1]): float(r[2]) for r in vec["period_flow_proportional_multiplier.csv"].iter_rows()}
+    assert mult[("propC", "d1")] == pytest.approx(50.0 / 15.0, rel=1e-12)
+
+
+def test_inflow_scaling_synthetic_peak_per_period():
+    """Two periods on their own steps (d1 = t1, t2; d2 = t3, t4; 1 h each, share 2/8760) of the profile (5, 6, 7, 4):
+    peak_old is the extreme of each period's own steps, 6 in d1 and 7 in d2 (not 7 for both), so npop = 12/6 = 2
+    and 12/7.  Twins agree."""
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+
+    provider = FlexDataProvider()
+
+    def put(parent: str, stem: str, df: pl.DataFrame) -> None:
+        provider.put(f"{parent}/{stem}", df)
+        provider.put(stem, df)
+
+    put("input", "node", pl.DataFrame({"node": ["peakN"]}))
+    put("solve_data", "period_in_use_set", pl.DataFrame({"period": ["d1", "d2"]}))
+    put("solve_data", "time", pl.DataFrame({"time": ["t1", "t2", "t3", "t4"]}))
+    put("input", "p_node", pl.DataFrame(
+        {"node": [], "param": [], "value": []}, schema={"node": pl.Utf8, "param": pl.Utf8, "value": pl.Float64}))
+    put("solve_data", "pt_node_inflow", pl.DataFrame({
+        "node": ["peakN"] * 4, "time": ["t1", "t2", "t3", "t4"], "value": [5.0, 6.0, 7.0, 4.0]}))
+    put("solve_data", "node__inflow_method", pl.DataFrame({
+        "node": ["peakN"], "method": ["scale_to_annual_and_peak_flow"]}))
+    put("solve_data", "pdNode", pl.DataFrame({
+        "node": ["peakN"] * 4, "param": ["annual_flow", "peak_inflow"] * 2,
+        "period": ["d1", "d1", "d2", "d2"], "value": [80.0, 12.0, 80.0, 12.0]}))
+    put("solve_data", "complete_period_share_of_year_calc", pl.DataFrame({
+        "period": ["d1", "d2"], "value": [2.0 / 8760.0] * 2}))
+    put("solve_data", "complete_hours_in_period", pl.DataFrame({"period": ["d1", "d2"], "value": [2.0, 2.0]}))
+    put("solve_data", "p_timeline_duration_in_years", pl.DataFrame(
+        {"timeline": [], "value": []}, schema={"timeline": pl.Utf8, "value": pl.Float64}))
+    put("solve_data", "period__timeline_set", pl.DataFrame(
+        {"period": [], "timeline": []}, schema={"period": pl.Utf8, "timeline": pl.Utf8}))
+    put("solve_data", "complete_time_in_use_set", pl.DataFrame({"time": ["t1", "t2", "t3", "t4"]}))
+    put("solve_data", "steps_complete_solve", pl.DataFrame({
+        "period": ["d1", "d1", "d2", "d2"], "time": ["t1", "t2", "t3", "t4"]}))
+
+    inp, sdd = Path("input"), Path("solve_data")
+    legacy = _compute_inflow_scaling_frames(inp, sdd, provider=provider)
+    vec = _compute_inflow_scaling_frames_vectorized(inp, sdd, provider=provider)
+    _gate_dicts(legacy, vec, "synthetic-peak-per-period")
+    old_peak = {(r[0], r[1]): float(r[2]) for r in legacy["old_peak_max.csv"].iter_rows()}
+    assert old_peak == {("peakN", "d1"): 6.0, ("peakN", "d2"): 7.0}
+    npop = {(r[0], r[1]): float(r[2]) for r in legacy["new_peak_divided_by_old_peak.csv"].iter_rows()}
+    assert npop[("peakN", "d1")] == 2.0
+    assert npop[("peakN", "d2")] == pytest.approx(12.0 / 7.0, rel=1e-15)
+
+
+def test_inflow_scaling_synthetic_branch_period_uses_parent_steps():
+    """A stochastic branch period ``d1_b`` (``period__branch`` (d1, d1_b); no rows of its own in
+    ``steps_complete_solve``) scales over its parent's complete steps t1, t2: for ``annN`` (profile 2, 6, share
+    2/8760, af 80) the annual multiplier is share / (|Σ| / af) = (2/8760) / (8/80) = 1/438 in both periods, and the
+    peak node ``peakN`` (profile 5, 6, peak 12) gets the same slope and section in d1_b as in d1.  Twins agree.
+    Before: d1_b had no steps (annual multiplier dropped, peak_old 0)."""
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+
+    provider = FlexDataProvider()
+
+    def put(parent: str, stem: str, df: pl.DataFrame) -> None:
+        provider.put(f"{parent}/{stem}", df)
+        provider.put(stem, df)
+
+    periods = ["d1", "d1_b"]
+    put("input", "node", pl.DataFrame({"node": ["annN", "peakN"]}))
+    put("solve_data", "period_in_use_set", pl.DataFrame({"period": periods}))
+    put("solve_data", "time", pl.DataFrame({"time": ["t1", "t2"]}))
+    put("input", "p_node", pl.DataFrame(
+        {"node": [], "param": [], "value": []}, schema={"node": pl.Utf8, "param": pl.Utf8, "value": pl.Float64}))
+    put("solve_data", "pt_node_inflow", pl.DataFrame({
+        "node": ["annN", "annN", "peakN", "peakN"], "time": ["t1", "t2"] * 2, "value": [2.0, 6.0, 5.0, 6.0]}))
+    put("solve_data", "node__inflow_method", pl.DataFrame({
+        "node": ["annN", "peakN"], "method": ["scale_to_annual_flow", "scale_to_annual_and_peak_flow"]}))
+    put("solve_data", "pdNode", pl.DataFrame({
+        "node": ["annN", "annN", "peakN", "peakN", "peakN", "peakN"],
+        "param": ["annual_flow", "annual_flow", "annual_flow", "peak_inflow", "annual_flow", "peak_inflow"],
+        "period": ["d1", "d1_b", "d1", "d1", "d1_b", "d1_b"], "value": [80.0, 80.0, 80.0, 12.0, 80.0, 12.0]}))
+    put("solve_data", "complete_period_share_of_year_calc", pl.DataFrame({
+        "period": periods, "value": [2.0 / 8760.0] * 2}))
+    put("solve_data", "complete_hours_in_period", pl.DataFrame({"period": periods, "value": [2.0, 2.0]}))
+    put("solve_data", "p_timeline_duration_in_years", pl.DataFrame(
+        {"timeline": [], "value": []}, schema={"timeline": pl.Utf8, "value": pl.Float64}))
+    put("solve_data", "period__timeline_set", pl.DataFrame(
+        {"period": [], "timeline": []}, schema={"period": pl.Utf8, "timeline": pl.Utf8}))
+    put("solve_data", "complete_time_in_use_set", pl.DataFrame({"time": ["t1", "t2"]}))
+    put("solve_data", "steps_complete_solve", pl.DataFrame({"period": ["d1", "d1"], "time": ["t1", "t2"]}))
+    put("solve_data", "period__branch", pl.DataFrame({"period": ["d1", "d1"], "branch": ["d1", "d1_b"]}))
+
+    inp, sdd = Path("input"), Path("solve_data")
+    legacy = _compute_inflow_scaling_frames(inp, sdd, provider=provider)
+    vec = _compute_inflow_scaling_frames_vectorized(inp, sdd, provider=provider)
+    _gate_dicts(legacy, vec, "synthetic-branch-period")
+
+    def cells(frame):
+        return {(r[0], r[1]): float(r[2]) for r in frame.iter_rows()}
+
+    pfam = cells(vec["period_flow_annual_multiplier.csv"])
+    assert pfam[("annN", "d1")] == pytest.approx(1.0 / 438.0, rel=1e-12)
+    assert pfam[("annN", "d1_b")] == pfam[("annN", "d1")]
+    for k in ("new_old_slope.csv", "new_old_section.csv"):
+        got = cells(vec[k])
+        assert got[("peakN", "d1_b")] == got[("peakN", "d1")], k
+    # Hand values of the parent d1: peak_old 6, npop 2, npopis 2·11/(2/8760) = 96 360, npis 12·2/(2/8760) = 105 120,
+    # nom = (96 360 − 80)/(105 120 − 96 360) = 10.99087, slope 2·(1 + nom) = 23.98174, section 12·nom = 131.8904.
+    assert cells(vec["new_old_slope.csv"])[("peakN", "d1")] == pytest.approx(23.98174, rel=1e-6)
+    assert cells(vec["new_old_section.csv"])[("peakN", "d1")] == pytest.approx(131.8904, rel=1e-6)
