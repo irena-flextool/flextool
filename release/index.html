@@ -10,7 +10,7 @@
 <link href="../dev/inject_between_solves/" rel="prev"/>
 <link href="../archived/browser_interface/" rel="next"/>
 <link href="../img/irena_flextool_favicon.png" rel="icon"/>
-<meta content="mkdocs-1.6.1, mkdocs-material-9.8.0" name="generator"/>
+<meta content="mkdocs-1.6.1, mkdocs-material-9.8.1" name="generator"/>
 <title>Changelog - IRENA FlexTool</title>
 <link href="../assets/stylesheets/main.57a0d79d.min.css" rel="stylesheet"/>
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
@@ -640,10 +640,28 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
-<a class="md-nav__link" href="#unreleased">
+<a class="md-nav__link" href="#release-422-8112026-time-steps-other-than-1-h-new_stepduration-and-inflow-scaling-fixes">
 <span class="md-ellipsis">
       
-        Unreleased
+        Release 4.2.2 (8.11.2026) — time steps other than 1 h: new_stepduration and inflow scaling fixes
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#release-421-8112026-polars-2-supported-again">
+<span class="md-ellipsis">
+      
+        Release 4.2.1 (8.11.2026) — polars 2 supported again
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#release-420-7112026-coarse-time-steps-for-units-and-connections-stochastic-realization-redesign-multi-solve-cost-retirement-fixes-run-thread-budget-schema-v77">
+<span class="md-ellipsis">
+      
+        Release 4.2.0 (7.11.2026) — coarse time steps for units and connections, stochastic realization redesign, multi-solve cost &amp; retirement fixes, run thread budget (schema v77)
       
     </span>
 </a>
@@ -2427,10 +2445,28 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
-<a class="md-nav__link" href="#unreleased">
+<a class="md-nav__link" href="#release-422-8112026-time-steps-other-than-1-h-new_stepduration-and-inflow-scaling-fixes">
 <span class="md-ellipsis">
       
-        Unreleased
+        Release 4.2.2 (8.11.2026) — time steps other than 1 h: new_stepduration and inflow scaling fixes
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#release-421-8112026-polars-2-supported-again">
+<span class="md-ellipsis">
+      
+        Release 4.2.1 (8.11.2026) — polars 2 supported again
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#release-420-7112026-coarse-time-steps-for-units-and-connections-stochastic-realization-redesign-multi-solve-cost-retirement-fixes-run-thread-budget-schema-v77">
+<span class="md-ellipsis">
+      
+        Release 4.2.0 (7.11.2026) — coarse time steps for units and connections, stochastic realization redesign, multi-solve cost &amp; retirement fixes, run thread budget (schema v77)
       
     </span>
 </a>
@@ -4154,15 +4190,83 @@
 <div class="md-content" data-md-component="content">
 <article class="md-content__inner md-typeset">
 <h1 id="release-notes">Release notes</h1>
-<h2 id="unreleased">Unreleased</h2>
+<h2 id="release-422-8112026-time-steps-other-than-1-h-new_stepduration-and-inflow-scaling-fixes">Release 4.2.2 (8.11.2026) — time steps other than 1 h: new_stepduration and inflow scaling fixes</h2>
+<p>These bugs affect models whose time steps are not 1 h, solves with <code>new_stepduration</code>, nested solves where a solve
+with <code>new_stepduration</code> runs before one without it, and <code>scale_to_annual_and_peak_flow</code>. Other models give the same
+results as in 4.2.1.</p>
 <ul>
-<li><strong>New: <code>--threads N</code> (<code>FLEXTOOL_THREADS</code>), one thread count per FlexTool run, for FlexTool's data processing and
+<li><strong><code>new_stepduration</code> on time steps other than 1 h.</strong> A solve's <code>new_stepduration</code> now combines the right time steps
+  for any step length (0.5 h, 2 h, mixed): <code>inflow</code> is summed, other time series are averaged (weighted by duration
+  when the combined steps differ in length), and a constant <code>inflow</code> counts once per combined time step. Before, it
+  read one row per hour of the new step, so on 2 h steps a constant inflow doubled and time series were misplaced,
+  and on 0.5 h steps half of the energy was lost.</li>
+<li><strong><code>new_stepduration</code> must fit the time steps.</strong> A <code>new_stepduration</code> that is not a whole multiple of the time steps
+  (also 1.5 on 1 h steps, which silently made 2 h steps before), or a new step that would end inside a time step,
+  now stops the run with a message naming the solve and the timeline. Only solves the model runs are checked.</li>
+<li><strong><code>scale_to_annual_and_peak_flow</code></strong> now meets <code>annual_flow</code> on time steps other than 1 h, with periods on different
+  timesets and with representative periods of unequal length (it assumed 8760 steps a year; on 2 h steps the annual
+  energy was 36 % short). Each period now reaches its own <code>peak_inflow</code> (the peak was taken over the whole timeline,
+  so periods missed their peak). With <code>new_stepduration</code>, <code>peak_inflow</code> is matched per original time step. The input
+  check's reach warning counts the time steps in a year.</li>
+<li><strong>Stochastic solves:</strong> <code>scale_to_annual_flow</code> and <code>scale_to_annual_and_peak_flow</code> work in branch periods (they
+  stopped with an error).</li>
+<li><strong><code>scale_in_proportion</code> with <code>new_stepduration</code>:</strong> a constant <code>inflow</code> is scaled as it is without
+  <code>new_stepduration</code> (it came out about 2/3 of that on 2 h new steps).</li>
+<li><strong>Nested solves:</strong> a solve without <code>new_stepduration</code> that runs after one with it scales <code>scale_to_annual_flow</code>
+  over its own time steps (it used the earlier solve's total). Results of such nested models can change.</li>
+<li><strong><code>max_flow_for_unconstrained_variables</code></strong> below 1,000,000 is now used as given (it was raised to 1,000,000).</li>
+</ul>
+<h2 id="release-421-8112026-polars-2-supported-again">Release 4.2.1 (8.11.2026) — polars 2 supported again</h2>
+<ul>
+<li><strong>polars 2 is supported again, with the memory of polars 1.</strong> polars 2.x reorders chains of joins by its own
+  size estimate, and on the LP hand-off to HiGHS it picked an order that built a far larger intermediate table:
+  peak memory about tripled on large models (the same LP), so 4.2.0 held polars below 2. polar-high 3.12.3 runs
+  these joins in the order they are written, so FlexTool now requires polar-high 3.12.3 and accepts polars 1.40 or
+  newer below 3.</li>
+</ul>
+<h2 id="release-420-7112026-coarse-time-steps-for-units-and-connections-stochastic-realization-redesign-multi-solve-cost-retirement-fixes-run-thread-budget-schema-v77">Release 4.2.0 (7.11.2026) — coarse time steps for units and connections, stochastic realization redesign, multi-solve cost &amp; retirement fixes, run thread budget (schema v77)</h2>
+<p>A large release: units and connections can decide on coarse time steps, stochastic solves are rebuilt around
+forecasts and a separate realization dispatch, and many result fixes change what existing models report. Highlights
+(the detailed entries follow):</p>
+<ul>
+<li><strong>Upgrade:</strong> opening a database migrates it to database version 77 automatically (value types match what FlexTool
+  reads, group <code>invest_method</code> <code>not_allowed</code> becomes <code>not_active</code>, dropped parameters are listed). Runs on an upgraded
+  database print a behaviour-change notice naming the affected entities; delete its metadata marker to silence it.</li>
+<li><strong>Coarse time steps for processes:</strong> units and connections whose nodes are all in <code>new_stepduration</code> groups decide
+  once per coarse step: flows, online variables, reserves, <code>exact</code> connections and DC power flow. Coarse nodes now
+  balance the sum of their flows (hourly-to-daily conversion no longer gets free energy).</li>
+<li><strong>Run thread budget:</strong> <code>--threads N</code> / <code>FLEXTOOL_THREADS</code> for FlexTool's processing, HiGHS and Benders; the GUI's
+  "Cores per job" is now "Threads per run"; terminal and Toolbox runs process data on at most 8 threads.</li>
+<li><strong>Stochastics:</strong> a fan holds forecasts only; a <code>realized: yes</code> branch adds a realization dispatch; normal outputs
+  hold realized results only (forecast rows in the <code>output_horizon</code> raw dump); per-path CO2, ladder and flow caps.</li>
+<li><strong>Construction lead time:</strong> <code>invested</code> is the capacity coming online; new <code>in_construction</code> column and
+  <code>constraint_in_construction_capacity_coeff</code>.</li>
+<li><strong>Costs and retirement:</strong> a run of several solves reports costs from the start of the run, each once; annualized
+  investment and fixed costs are yearly amounts; retirement counts until the end of life; new user-constraint
+  <code>constraint_capacity_coeff</code> / <code>constraint_retired_capacity_coeff</code>.</li>
+<li><strong>Storage:</strong> default <code>storage_start_end_method</code> is <code>fix_nothing</code>; <code>fix_end</code> / <code>fix_start_end</code> pin the end;
+  self-discharge is exact for any step length; <code>bind_within_period</code> and <code>bind_intraperiod_blocks</code> fixed.</li>
+<li><strong>Other important fixes:</strong> node and reserve prices in currency per MWh; reserve provision in MW; one N-1 constraint
+  per failing unit; ramp limits scale with the step length; exact start-ups; unit commitment no longer links across
+  gaps; CO2 limits in rolling and chained solves; inflow scaling stops with an error instead of dropping demand.</li>
+<li><strong>Removed / changed options:</strong> <code>--precision-digits</code> and <code>--matrix-file-format</code> (and their environment variables)
+  removed; the GUI's MIP-gap setting removed and GUI solver settings now match terminal runs; new <code>--benders-workers</code>
+  and <code>--basis-cache-dir</code>.</li>
+<li><strong>Dependencies:</strong> polar-high ≥ 3.12.2, highspy ≥ 1.15.1, polars held below 2 (2.x triples peak memory); Python
+  3.11+, CI on 3.13 and 3.14.</li>
+<li>
+<p><strong>Platform:</strong> the Windows Toolbox bundle runs Python 3.14 with FlexTool installed, needs no Visual C++ runtime and
+  is smaller; processors without AVX2 are supported through <code>flextool[compat]</code>.</p>
+</li>
+<li>
+<p><strong>New: <code>--threads N</code> (<code>FLEXTOOL_THREADS</code>), one thread count per FlexTool run, for FlexTool's data processing and
   the solver.</strong> FlexTool's own processing (polars) uses at most N threads and at most 8 (<code>POLARS_MAX_THREADS</code> can
   set a lower limit), HiGHS gets <code>threads=N</code> (its parallel simplex stays off) and a Benders solve runs at most N
   region solves at once. Default: the available cores, with HiGHS and Benders as before. Give each run about
   cores / runs when several run at once (a script or an AI agent driving the terminal, Spine Toolbox running
   scenarios in parallel: add <code>--threads N</code> to the FlexTool Tool's arguments). The run header prints the threads
-  in use. The workflow runner and the calibrator take <code>--threads</code> too and pass it on. Requires polar-high 3.12.2.</li>
+  in use. The workflow runner and the calibrator take <code>--threads</code> too and pass it on. Requires polar-high 3.12.2.</p>
+</li>
 <li><strong>Changed: the GUI's "Cores per job" is now "Threads per run" and also sets FlexTool's own data processing.</strong>
   GUI runs used one thread for FlexTool's processing by accident, about 30-45 % slower before the solver; a GUI
   run now sends its "Threads per run" as <code>--threads</code> (default 1, as before). It no longer turns on HiGHS' parallel
@@ -4961,8 +5065,8 @@
 <p><strong>The per-period CO2 price in a stochastic solve no longer comes out multiplied by the branch's
   probability.</strong> The per-period CO2 cap isn't weighted by the branch probability the way the
   objective's CO2 price term is, so the raw shadow price was the path's true price times its own
-  branch weight — each path now reports its own price, the same fix item #120 flags for the node
-  price fixed in an earlier cycle. A deterministic solve is unaffected.</p>
+  branch weight — each path now reports its own price, as node prices now do (see "Prices are in
+  currency per MWh" below). A deterministic solve is unaffected.</p>
 </li>
 <li>
 <p><strong>The model-wide and per-group CO2 totals in a stochastic solve now report each scenario path
@@ -5486,7 +5590,7 @@
 <p><strong><code>fix_start_end</code> fixes the start state.</strong> A storage node with
   <code>storage_start_end_method</code> <em>fix_start_end</em> got no start condition at all
   (it could start with free energy); its start is now fixed like
-  <em>fix_start</em>. Its end condition is not implemented yet.</p>
+  <em>fix_start</em>. Its end is fixed too (see "<code>fix_end</code> / <code>fix_start_end</code> fix the end of the storage" above).</p>
 </li>
 <li>
 <p><strong><code>fix_start</code> of a <em>bind_within_solve</em> storage in a solve with several
@@ -5587,11 +5691,9 @@
   model): the two regions at the ends of a pipe could be solved with
   different flows on it. Both ends now always get the same flow, and the
   upper bound is the cost of that one point, and the investments handed to
-  a following dispatch solve are the plan that bound priced. Needs
-  polar-high 3.10.0; this costs one extra master solve per iteration
-  (iteration counts are unchanged on the test models). With an older
-  polar-high a run with in-out weight &gt; 0 prints a warning that its upper
-  bound may be invalid.</p>
+  a following dispatch solve are the plan that bound priced. This costs
+  one extra master solve per iteration (iteration counts are unchanged on
+  the test models).</p>
 </li>
 <li>
 <p><strong>Solver options reach every solve.</strong> <code>solver_mip_gap</code> was ignored on the
@@ -5601,10 +5703,9 @@
   (<code>--highs-threads</code>, <code>--solver-time-limit</code>, …), the determinism defaults and
   the automatic scaling options; every HiGHS solve now gets the same layered
   set. Benders decomposition now uses these options too (master and region
-  subproblems; see the solver docs for the details); with a thread count
-  (<code>--highs-threads</code>, or <code>threads</code> in <code>highs.opt</code>) and parallel regions this
-  needs polar-high 3.10.0, otherwise the thread count is not used for
-  Benders.</p>
+  subproblems; see the solver docs for the details), including a thread
+  count (<code>--highs-threads</code>, or <code>threads</code> in <code>highs.opt</code>) with parallel
+  regions.</p>
 </li>
 <li>
 <p><strong>Stochastic storage tie counts every flow into the node.</strong> The tie that
@@ -5650,8 +5751,10 @@
 <p><strong>Nodes in a <code>new_stepduration</code> group sum their flows over each coarse
   step.</strong> A node of a group whose <code>new_stepduration</code> is longer than the
   solve's time step is now balanced once per coarse step by summing all its
-  flows of the solve's time steps; flows, online status and reserves of every
-  unit and connection stay at the solve's time step. Before, a flow between an
+  flows of the solve's time steps; flows, online status and reserves of a
+  unit or connection with a node at the solve's step stay at the solve's time
+  step (those whose nodes are all coarse now use the coarse step, see "Units
+  and connections between coarse nodes use the coarse step" above). Before, a flow between an
   hourly and a daily node (e.g. an electrolyser from hourly electricity to
   daily hydrogen) entered the daily balance only in the first hour of each
   day, multiplied by 24, so the other hours produced hydrogen from free
@@ -5673,7 +5776,6 @@
   of their coarse-step balance) with the same sign convention as every other
   node, and <code>bind_intraperiod_blocks</code> storage nodes now also use that
   convention (before, their sign was the opposite of the other nodes').
-  Outputs no longer copy a coarse step's value to its other time steps.
   Listing a unit
   or connection in a coarse group has no effect on time resolution (a
   warning names those that touch a node outside the group). Benders
@@ -5829,8 +5931,8 @@
   period limit get a tighter limit and higher costs. A roll limits its whole
   window, look-ahead included, so the realized emissions of a period can
   still differ somewhat from the limit. In a rolling solve the reported CO2
-  price of a period is the shadow price of the last roll that covers the
-  period.</p>
+  price of a period averages the rolls that realize it (see the per-period
+  CO2 price entry above).</p>
 </li>
 <li>
 <p><strong>Warm-started rolling solves across period boundaries.</strong> When two
@@ -5974,9 +6076,8 @@
   existing capacity), and the model fell back to slack or other
   technologies. This also
   holds for the sub-solves of a nested multi-period investment and for
-  rolling solves. The parameter definitions in the database still list the
-  <code>*_period</code> limits as period maps only, so Toolbox may flag a single value
-  until the schema is updated.</p>
+  rolling solves. Since database version 77 the parameter definitions accept
+  a constant for these limits too.</p>
 </li>
 <li>
 <p><strong>Forecast branches use their period's per-period input values.</strong> In a
@@ -6024,10 +6125,9 @@
   model-wide <code>CO2</code> output. Before, each period counted as one year, so with
   multi-year periods the limit was <code>years_represented</code> times too loose.
   Models that use a <code>co2_method</code> with <code>total</code> and <code>years_represented</code>
-  above 1 get a tighter limit. In a chain of solves each solve still gets
-  the full limit over only its own periods, and in a rolling solve each roll
-  compares only its own window's emissions with the full limit, so there the
-  limit binds much more loosely than intended.</p>
+  above 1 get a tighter limit. Chains of solves and rolling solves now also
+  subtract the emissions realized before them (see the <code>co2_max_total</code> and
+  remaining-budget entries above).</p>
 </li>
 <li>
 <p><strong>Years represented in rolling solves and stochastic branches.</strong> The
@@ -10916,7 +11016,7 @@ test_24h fixture (the canonical large-fixture diagnostic).</p>
 <div class="md-dialog__inner md-typeset"></div>
 </div>
 <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
-<script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+<script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
 <script src="../assets/mathjaxhelper.js"></script>
 </body>

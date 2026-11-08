@@ -23,7 +23,7 @@
       
       
       <link rel="icon" href="../img/irena_flextool_favicon.png">
-      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
     
     
       
@@ -2717,7 +2717,7 @@
 <li><em>inflation_offset_investment</em>: [years] Offset from the period (often year) start to the first payment of the investment cost annuity.</li>
 <li><em>inflation_offset_operations</em>: [years] Offset from the period (often year) start to the payment of operational costs.</li>
 <li><em>periods_available</em>: (Optional) Array of periods available for the model. Use this for periods that are in the data, but are not in period_timeset.</li>
-<li><em>max_flow_for_unconstrained_variables</em>: [MW] Upper bound assigned to LP variables that have no other cap (e.g. flows on edges with <code>invest_method = no_limit</code> and no <code>existing</code> capacity). Acts as a numerical safety net to keep the LP bounded. Default is large; lower it when scaling problems appear (see <a href="../dev/scaling/">dev/scaling.md</a>).</li>
+<li><em>max_flow_for_unconstrained_variables</em>: [MW] Upper bound for capacities and flows that have no other limit: how much capacity an entity with <code>invest_method</code> <code>invest_no_limit</code> or <code>invest_retire_no_limit</code> (or <code>cumulative_limits</code> without <code>cumulative_max_capacity</code>) can add on top of its <code>existing</code> capacity, and the flow on a unit's input or output whose <code>conversion_flow_coeff</code> is 0. The value is used as given; with several model entities the largest value is used. Keep it large enough not to limit the real solution and small enough to avoid numerical problems (see <a href="../dev/scaling/">dev/scaling.md</a>). Default 1,000,000.</li>
 <li><em>debug</em>: Instruction set for performing model debugging and testing.</li>
 <li>
 <p><em>version</em>: Database schema version. Written by the migration chain — do not edit manually.</p>
@@ -2728,7 +2728,7 @@
 <li>
 <p><em>period_timeset</em>: map of periods with associated timesets that will be included in the solve. Index: period name, value: timeset name.</p>
 </li>
-<li><em>new_stepduration</em>: Hours. Creates a new <code>timeline</code> from the old for this <code>solve</code> with this timestep duration. The new timeline will sum or average the other timeseries data like <code>profile</code> and <code>inflow</code> for the new timesteps. All timesets used by the solve must resolve to the same underlying timeline. Steps are aggregated from the start of each <code>timeset_duration</code> block (a block that is not a multiple of the step ends with a shorter step); a gap between blocks stays a gap, and when several timesets share the timeline each period keeps its own timesteps. A timeset used by this solve cannot be used by a solve without <code>new_stepduration</code> or with a different one. See also the group-level <code>new_stepduration</code> for flex-temporal decomposition.</li>
+<li><em>new_stepduration</em>: Hours. Creates a new <code>timeline</code> from the old for this <code>solve</code> with this timestep duration. The new timeline sums <code>inflow</code> over the time steps that form each new time step (a constant <code>inflow</code> counts once per time step it combines) and averages the other timeseries data like <code>profile</code> over them, weighted by their durations. The <code>new_stepduration</code> must be a whole multiple of the timeline's time steps (on a timeline with time steps of different lengths, every new time step must end where a time step of the timeline ends); FlexTool stops with an error otherwise. All timesets used by the solve must resolve to the same underlying timeline. Steps are aggregated from the start of each <code>timeset_duration</code> block (a block that is not a multiple of the step ends with a shorter step); a gap between blocks stays a gap, and when several timesets share the timeline each period keeps its own timesteps. A timeset used by this solve cannot be used by a solve without <code>new_stepduration</code> or with a different one. See also the group-level <code>new_stepduration</code> for flex-temporal decomposition.</li>
 <li><em>realized_periods</em>: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve</li>
 <li><em>realized_invest_periods</em> Array of the periods that will realize the investment decisions. If this is not defined when the invest_periods exist, the realized_periods are used to realize the invests as well</li>
 <li><em>invest_periods</em>: array of periods in which investments can be decided in this solve (applies only to entities that can be invested in). With a construction lead time, the capacity comes online later.</li>
@@ -3562,7 +3562,7 @@ travel with the database: copies, the Spine Toolbox editor and the Excel export 
       <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
     
     
-      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
       
         <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
       
