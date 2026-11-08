@@ -6,6 +6,8 @@ internal names, and a next step where there is one (``tests/assistant/test_tool_
 """
 from __future__ import annotations
 
+import re
+
 MESSAGES: dict[str, str] = {
     # The registry
     "unknown_tool": "There is no tool named '{name}'. The tools are: {names}.",
@@ -130,6 +132,41 @@ def close_names(word: str, candidates: list[str], n: int = 3) -> list[str]:
         lower = word.lower()
         close = [c for c in candidates if lower in c.lower()][:n]
     return close
+
+
+def _name_parts(name: str) -> set[str]:
+    return {p for p in re.split(r"[_\W]+", name.lower()) if p}
+
+
+def closest_names(word: str, candidates: list[str], n: int = 3) -> list[str]:
+    """Up to *n* names of *candidates* closest to *word*, closest first: the spelling's similarity plus the share
+    of name parts in common, so ``existing_capacity`` finds ``existing`` first.  A name equal to *word* but for
+    case is the only answer."""
+    import difflib
+
+    lower = word.lower()
+    parts = _name_parts(word)
+    scored: list[tuple[float, str]] = []
+    for c in candidates:
+        if c.lower() == lower:
+            return [c]
+        ratio = difflib.SequenceMatcher(None, lower, c.lower()).ratio()
+        theirs = _name_parts(c)
+        shared = len(parts & theirs) / len(parts | theirs) if parts | theirs else 0.0
+        if ratio >= 0.6 or shared > 0:
+            scored.append((ratio + shared, c))
+    scored.sort(key=lambda sc: (-sc[0], sc[1]))
+    return [c for _, c in scored[:n]]
+
+
+def did_you_mean(word: str, candidates: list[str]) -> str:
+    """`` Did you mean: existing? Other close names: a, b.`` for the closest names of *word*, else an empty
+    string."""
+    close = closest_names(word, candidates)
+    if not close:
+        return ""
+    text = f" Did you mean: {close[0]}?"
+    return text + (f" Other close names: {', '.join(close[1:])}." if len(close) > 1 else "")
 
 
 def similar_text(word: str, candidates: list[str], *, label: str = "Similar names") -> str:

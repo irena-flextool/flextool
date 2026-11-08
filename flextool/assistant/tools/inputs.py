@@ -8,7 +8,7 @@ from typing import Any
 from flextool.assistant import project
 from flextool.assistant.caps import DESCRIPTION_MAX, NAME_MAX, CapArg, cap_text
 from flextool.assistant.context import AssistantContext
-from flextool.assistant.errors import ToolError, message, name_list, similar_text
+from flextool.assistant.errors import ToolError, did_you_mean, message, name_list, similar_text
 from flextool.assistant.inputs import _db, _values
 from flextool.assistant.inputs._notes import notes_for
 from flextool.assistant.inputs._schema import ranks_in_words, shipped_schema
@@ -23,6 +23,8 @@ from flextool.assistant.unit_wording import (
 )
 
 LIST_HINT = "use name_contains or member to narrow the list"
+#: get_entity shows a map of at most this many rows as its table, a longer one as a summary (P3 §4.7).
+ENTITY_TABLE_ROWS = 6
 VALUE_HINT = "name an entity, or narrow with entity_class"
 
 
@@ -79,6 +81,14 @@ def _byname(db: _db.InputDB, source: project.Source, entity_class: str, entity: 
     return byname
 
 
+def _entity_value(value: Any) -> Any:
+    """A value as get_entity lists it: a constant itself, a map of at most :data:`ENTITY_TABLE_ROWS` rows with its
+    table, a longer one as its summary (kind, index names, rows, minimum, mean, maximum)."""
+    if _values.is_indexed(value) and len(_values.rows_of(value)) <= ENTITY_TABLE_ROWS:
+        return _values.summarize(value, max_rows=ENTITY_TABLE_ROWS)
+    return _values.compact(value)
+
+
 def _value_of(view: _db.ScenarioView, entity_class: str, byname: tuple[str, ...]):
     """The entity's parsed value of a parameter in the scenario (``None`` when no alternative sets it)."""
     def value_of(parameter: str) -> Any:
@@ -128,7 +138,7 @@ def _check_parameter(db: _db.InputDB, entity_class: str, parameter: str) -> None
     names = sorted(set(db.class_parameters(entity_class)) | {p.name for p in
                                                              shipped_schema().class_parameters(entity_class)})
     raise ToolError("unknown_parameter", entity_class=entity_class, parameter=parameter,
-                    similar=similar_text(parameter, names))
+                    similar=did_you_mean(parameter, names))
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -267,7 +277,7 @@ def get_entity(ctx: AssistantContext, args: dict) -> Fit:
                 continue
             unit, _ = _unit(view, cls, param, byname)
             any_convention = any_convention or (bool(unit) and is_convention_unit(unit))
-            parameters.append({"parameter": param, "summary": _values.compact(item.parsed()), "unit": unit,
+            parameters.append({"parameter": param, "value": _entity_value(item.parsed()), "unit": unit,
                                "from_alternative": item.alternative})
         relationships = []
         if len(e.byname) == 1:
@@ -281,6 +291,7 @@ def get_entity(ctx: AssistantContext, args: dict) -> Fit:
             "active": active,
             "inactive_reason": reason,
             "parameters": parameters[:max_rows],
+            "parameters_total": len(parameters),
             "relationships": relationships[:max_rows],
         }
         cut = [k for k, rows in (("parameters", parameters), ("relationships", relationships)) if len(rows) > max_rows]
@@ -359,7 +370,7 @@ def describe_parameter(ctx: AssistantContext, args: dict) -> Fit | dict:
     definition = schema.parameters.get((entity_class, parameter))
     if definition is None:
         raise ToolError("unknown_parameter", entity_class=entity_class, parameter=parameter,
-                        similar=similar_text(parameter, [p.name for p in schema.class_parameters(entity_class)]))
+                        similar=did_you_mean(parameter, [p.name for p in schema.class_parameters(entity_class)]))
     allowed = PARAM_ALLOWED_SHAPES.get((entity_class, parameter))
     shapes = (allowed_shapes_in_words(allowed) if allowed is not None
               else ranks_in_words(schema.value_types.get((entity_class, parameter), ())))
@@ -476,8 +487,9 @@ TOOLS = [
     make_tool(
         name="get_entity", title="An entity and its data",
         description=("Everything about one entity in a scenario: every class it appears in, whether it is active, "
-                     "its description, the values its alternatives set (with units and the alternative each comes "
-                     "from) and the multi-dimensional entities that name it (for example the unit__outputNode of a "
+                     "its description, the value of each parameter the scenario sets (a constant itself, a short "
+                     "map as its table, a longer one summarised; with units and the alternative each comes from) "
+                     "and the multi-dimensional entities that name it (for example the unit__outputNode of a "
                      "unit). name lists the entity's names, one per dimension, for example [\"coal_plant\"] or "
                      "[\"coal_plant\", \"west\"]. "
                      + _SOURCE_TEXT),

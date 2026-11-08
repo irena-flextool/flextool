@@ -127,7 +127,7 @@ def test_get_entity_across_classes(ctx) -> None:
     assert set(by_class) == {"node", "group"}
     node = by_class["node"]
     assert node["active"] is True
-    assert {p["parameter"]: p["summary"] for p in node["parameters"]} == {
+    assert {p["parameter"]: p["value"] for p in node["parameters"]} == {
         "inflow": -300.0, "node_type": "balance", "penalty_down": 50.0, "penalty_up": 100.0}
     assert {p["from_alternative"] for p in node["parameters"]} == {"heat"}
     assert [(r["entity_class"], r["entity"]) for r in node["relationships"]] == [
@@ -177,3 +177,47 @@ def test_unknown_names_answer_with_similar_ones(ctx) -> None:
                                            "entity": ["coal_plant"]})
     # tests.json has 69 scenarios.
     assert not out.ok and out.message.startswith("The input source 'tests.sqlite' has 69 scenarios")
+
+
+def test_get_entity_gives_each_value_the_scenario_sets(ctx) -> None:
+    """P3 §4.7: one call answers a lookup.  Fixture facts (tests.json): in scenario coal (init, west, coal) only
+    alternative coal sets values of unit coal_plant: efficiency 0.4 and existing 500.  In scenario all,
+    invest_max_period comes from coal_invest, a period map p2020 250, p2025 350, p2030 400, p2035 0, and
+    existing from retire, 2000.  availability (alternative availability, in scenario test_a_lot) is a map over
+    t0001..t0072."""
+    def unit(scenario: str) -> dict:
+        out = _call(ctx, "get_entity", name=["coal_plant"], scenario=scenario)
+        return {m["entity_class"]: m for m in out["matches"]}["unit"]
+
+    coal = unit("coal")
+    assert {p["parameter"]: (p["value"], p["from_alternative"]) for p in coal["parameters"]} == {
+        "efficiency": (0.4, "coal"), "existing": (500.0, "coal")}
+    assert coal["parameters_total"] == 2
+    every = {p["parameter"]: p for p in unit("all")["parameters"]}
+    assert every["existing"]["value"] == 2000.0 and every["existing"]["from_alternative"] == "retire"
+    period = every["invest_max_period"]["value"]
+    assert period["table"] == [["p2020", 250.0], ["p2025", 350.0], ["p2030", 400.0], ["p2035", 0.0]]
+    assert period["n"] == 4 and every["invest_max_period"]["from_alternative"] == "coal_invest"
+    availability = {p["parameter"]: p for p in unit("test_a_lot")["parameters"]}["availability"]["value"]
+    assert availability["n"] == 72 and "table" not in availability
+    assert {"min", "mean", "max"} <= set(availability)
+
+
+def test_an_unknown_parameter_name_gets_the_closest_valid_names(ctx) -> None:
+    start = "The entity class 'unit' has no parameter 'existing_capacity'. Did you mean: existing?"
+    out = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameter": "existing_capacity",
+                                           "entity": ["coal_plant"], "scenario": "coal"})
+    assert not out.ok and out.message.startswith(start)
+    out = call_tool(ctx, "describe_parameter", {"entity_class": "unit", "parameter": "existing_capacity"})
+    assert not out.ok and out.message.startswith(start)
+
+
+def test_closest_names() -> None:
+    from flextool.assistant.errors import closest_names, did_you_mean
+
+    names = ["constraint_capacity_coeff", "cumulative_min_capacity", "efficiency", "existing", "virtual_unitsize"]
+    assert closest_names("existing_capacity", names)[0] == "existing"
+    assert closest_names("Existing", names) == ["existing"]
+    assert closest_names("zzz", names) == []
+    assert did_you_mean("existng", ["existing", "efficiency"]) == " Did you mean: existing?"
+    assert did_you_mean("zzz", names) == ""
