@@ -383,10 +383,11 @@ def _synthetic_provider():
     # (cpsoy==0).  Author a second period for the cpsoy==0 probe.
     put("solve_data", "complete_period_share_of_year_calc", pl.DataFrame({
         "period": ["d1"], "value": [0.5]}))
-    # The period's complete steps t1, t2 are 1 h steps (2 h): the peak's
-    # step ratio S/H = 2/2 = 1, npis = peak · 8760.
+    # Consistent with the share of year 0.5: the period's complete steps
+    # t1, t2 hold 4380 h (2190 h each), so S/H = 2/4380 and the annual sum
+    # of a constant peak is npis = peak · S / cpsoy = 4 · peak.
     put("solve_data", "complete_hours_in_period", pl.DataFrame({
-        "period": ["d1"], "value": [2.0]}))
+        "period": ["d1"], "value": [4380.0]}))
     put("solve_data", "p_timeline_duration_in_years", pl.DataFrame({
         "timeline": ["tlA"], "value": [1.0]}))
     # period__timeline: d1 → tlA (tdy_sum 1.0 for propN); propTdy0 shares d1
@@ -460,25 +461,27 @@ def test_inflow_scaling_synthetic_coverage(tmp_path):
     # excluded old_peak==0 rows; the live fused path FILLS npop=0 for them,
     # so the (node, period) row SURVIVES into slope/section.  Observable
     # consequence: peakOld0 EXISTS in new_old_slope with slope == 0.0, and
-    # new_old_section == -op_sign*af/8760 (the oracle's value for that cell,
-    # which is the faithful hand-derived reference). ---
+    # new_old_section == -op_sign*af*cpsoy/S (hand-derived below). ---
     assert ("peakOld0", "d1") in v_slope, (
         "old_peak==0 row must SURVIVE (fill-0) into new_old_slope")
     nos_peakOld0 = cell(vec["new_old_slope.csv"], "peakOld0", "d1")
-    assert nos_peakOld0 == repr(0.0), (
-        f"peakOld0 slope must be 0.0 (npop filled 0 on old_peak==0); "
+    # slope = npop * (1 + nom) = 0 * (1 - 80/36): a zero (signed -0.0, as
+    # 1 + nom < 0 here; pdtNodeInflow normalises the sign of zero).
+    assert float(nos_peakOld0) == 0.0, (
+        f"peakOld0 slope must be 0 (npop filled 0 on old_peak==0); "
         f"got {nos_peakOld0}")
     # new_old_section == peak * nom; with npop=0 → npopis=0 → denom=npis
-    # → nom = op_sign*(0 - af)/npis = -op_sign*af/(peak*8760).  Section =
-    # peak * nom = -op_sign*af/8760.  Hand-derive from the fixture:
+    # → nom = op_sign*(0 - af)/npis.  npis = peak * S / cpsoy with S = 2
+    # complete steps, cpsoy = 0.5: npis = 9 * 2 / 0.5 = 36.  Section =
+    # peak * nom = -op_sign*af*cpsoy/S.  Hand-derive from the fixture:
     # peakOld0 inflow all 0 → op_max=op_min=0 → op_sign=+1 (|0|>=|0|);
-    # af=80, peak=9 → section = -(1)*80/8760.
-    expected_sec = -1.0 * 80.0 / 8760.0
+    # af=80 → section = -(1)*80*0.5/2 = -20.
+    expected_sec = -20.0
     sec_peakOld0_legacy = cell(
         legacy["new_old_section.csv"], "peakOld0", "d1")
     sec_peakOld0_vec = cell(vec["new_old_section.csv"], "peakOld0", "d1")
     assert sec_peakOld0_legacy == repr(expected_sec), (
-        f"oracle section for peakOld0 must be -op_sign*af/8760="
+        f"oracle section for peakOld0 must be -op_sign*af*cpsoy/S="
         f"{expected_sec!r}; got {sec_peakOld0_legacy}")
     # vec is Tier-B (rtol 1e-12) vs oracle — compare as floats.
     assert abs(float(sec_peakOld0_vec) - expected_sec) <= 1e-12, (
@@ -505,14 +508,17 @@ def test_inflow_scaling_synthetic_coverage(tmp_path):
     # were to drift.  The SLOPE is the negative-bearing quantity here:
     #   npop = peak/old_peak = 9/-4 = -2.25 < 0, and slope = npop*(1+nom),
     # so new_old_slope is negative for this fixture (op_sign=-1, old_peak=-4,
-    # peak=9).  (The SECTION, by contrast, is positive here, ≈ +0.0132 — it
-    # is NOT the negative quantity.)  Pin the vectorized slope sign directly:
+    # peak=9).  (The SECTION, by contrast, is 0 here — see below — it is
+    # NOT the negative quantity.)  Pin the vectorized slope sign directly:
     assert float(slope_neg_vec) < 0.0, (
         f"peakScalarNeg vectorized slope must be negative "
         f"(npop=9/-4<0), got {slope_neg_vec}")
-    assert sec_neg_legacy is not None and float(sec_neg_legacy) != 0.0, (
-        "peakScalarNeg section must be non-zero (negative-sign path "
-        "exercised)")
+    # By hand: the constant −4 is flat over t1, t2, so ofs = −8 and
+    # npopis = npop * ofs / cpsoy = −2.25 * −8 / 0.5 = 36 = npis = 9 * 2 / 0.5:
+    # denom 0 → nom 0, slope = npop = −2.25, section = 0 (the constant is
+    # scaled to the constant peak 9 · (−4)/(−4)).
+    assert float(slope_neg_vec) == pytest.approx(-2.25, rel=1e-12)
+    assert sec_neg_legacy is not None and float(sec_neg_legacy) == 0.0
 
     print(f"\n[inflow-scaling parity] synthetic coverage tiers: {tiers}")
 
@@ -640,17 +646,19 @@ def test_inflow_scaling_synthetic_cpsoy0_and_tdy0_and_int0(tmp_path):
     print(f"\n[inflow-scaling parity] synthetic int-0 tiers: {tiers2}")
 
     # --- stage-10 denom==0 (npis - npopis == 0 → new_old_multiplier 0) --
-    # Construct a peak node where npis == npopis so denom == 0.  With
-    # inflow series (5, 6): old_peak = 6, peak chosen = 1.0 → npop = 1/6,
-    # complete-timeline sum ofs = 11, cpsoy = c.  npopis = npop*ofs/c =
-    # (11/6)/c; npis = peak*8760 = 8760.  denom==0 ⇒ c = (11/6)/8760.
+    # Construct a peak node where npis == npopis so denom == 0.  Two 1 h
+    # steps: H = 2 h, cpsoy = c = 2/8760, S = 2.  npis = peak * S / c and
+    # npopis = npop * ofs / c with npop = peak / old_peak, so denom == 0 ⇔
+    # S * old_peak == ofs: the profile's peak equals its mean, a FLAT
+    # profile.  Inflow (6, 6): old_peak = 6, ofs = 12, peak = 1.0 → npop =
+    # 1/6; npis = 1 * 2 / c = 8760 = (1/6) * 12 / c = npopis.
     provider3 = FlexDataProvider()
 
     def put3(parent, stem, df):
         provider3.put(f"{parent}/{stem}", df)
         provider3.put(stem, df)
 
-    c = (11.0 / 6.0) / 8760.0
+    c = 2.0 / 8760.0
     put3("input", "node", pl.DataFrame({"node": ["peakD0"]}))
     put3("solve_data", "period_in_use_set", pl.DataFrame({"period": ["d1"]}))
     put3("solve_data", "time", pl.DataFrame({"time": ["t1", "t2"]}))
@@ -659,7 +667,7 @@ def test_inflow_scaling_synthetic_cpsoy0_and_tdy0_and_int0(tmp_path):
         schema={"node": pl.Utf8, "param": pl.Utf8, "value": pl.Float64}))
     put3("solve_data", "pt_node_inflow", pl.DataFrame({
         "node": ["peakD0", "peakD0"], "time": ["t1", "t2"],
-        "value": [5.0, 6.0]}))
+        "value": [6.0, 6.0]}))
     put3("solve_data", "node__inflow_method", pl.DataFrame({
         "node": ["peakD0"], "method": ["scale_to_annual_and_peak_flow"]}))
     put3("solve_data", "pdNode", pl.DataFrame({
@@ -668,7 +676,7 @@ def test_inflow_scaling_synthetic_cpsoy0_and_tdy0_and_int0(tmp_path):
         "period": ["d1", "d1"], "value": [80.0, 1.0]}))
     put3("solve_data", "complete_period_share_of_year_calc", pl.DataFrame({
         "period": ["d1"], "value": [c]}))
-    # 1 h steps t1, t2: step ratio S/H = 2/2 = 1, npis = peak · 8760.
+    # 1 h steps t1, t2: H = 2 = c · 8760.
     put3("solve_data", "complete_hours_in_period", pl.DataFrame({
         "period": ["d1"], "value": [2.0]}))
     put3("solve_data", "p_timeline_duration_in_years", pl.DataFrame(
