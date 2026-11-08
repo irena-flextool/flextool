@@ -21,7 +21,7 @@ import psutil
 from flextool.gui.cli_format import format_cmd_for_log, terminal_command
 from flextool.gui.data_models import GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.scenario_key import choose_output_subdir_for_write
-from flextool.run_record import RUN_LOG_OWNER_ENV, RunLogOwner
+from flextool.run_record import RUN_LOG_OWNER_ENV, RunLogOwner, read_status_settled, results_usable
 
 logger = logging.getLogger(__name__)
 
@@ -1409,8 +1409,26 @@ class ExecutionManager:
         if not do_comp_plots and not do_comp_excel:
             return
 
+        # A job that ended well can still leave a folder whose latest results are not usable (a run that
+        # succeeded without writing parquet keeps an earlier run's files): such folders are left out, as the
+        # output actions' comparison does; they stay in _comparison_scenarios, so a later batch checks them again.
+        # A folder without a run record (an older FlexTool) stays in.  Read outside the lock.
+        from flextool.gui.scenario_lists import describe_unusable  # lazy: scenario_lists loads tkinter
+
+        left_out: list[tuple[str, str]] = []
+        usable: list[str] = []
+        for subdir in all_scenarios:
+            status = read_status_settled(self.project_path / "output_parquet" / subdir)
+            if results_usable(status):
+                usable.append(subdir)
+            else:
+                left_out.append((subdir, describe_unusable(status) or "its results are not usable"))
+        all_scenarios = usable
+        for subdir, reason in left_out:
+            logger.info("Comparison leaves out %s: %s", subdir, reason)
+
         if len(all_scenarios) < 1:
-            logger.info("No successful scenarios; skipping comparison")
+            logger.info("No successful scenarios with usable results; skipping comparison")
             return
 
         cmd = [
@@ -1476,6 +1494,8 @@ class ExecutionManager:
             "output:auto_comparison",
         )
         cmd_str = format_cmd_for_log(cmd)
+        for subdir, reason in left_out:
+            self.append_stdout(job.job_id, f"Left out {subdir}: {reason}")
         self.append_stdout(job.job_id, cmd_str)
         self.append_stdout(job.job_id, "")
 

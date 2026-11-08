@@ -233,6 +233,37 @@ def test_the_post_batch_comparison_drops_a_folder_whose_latest_job_failed(manage
     assert manager._comparison_scenarios == ["c", "b"]
 
 
+def test_the_post_batch_comparison_leaves_out_a_success_without_new_parquet(manager, monkeypatch):
+    # a exited 0 but wrote no parquet (its folder keeps an earlier run's files); b wrote its own; c has no run
+    # record (an older FlexTool) and stays in.
+    _run_folder(manager.project_path, "a", state="succeeded", parquet_state="skipped")
+    _run_folder(manager.project_path, "b", state="succeeded")
+    _run_folder(manager.project_path, "c", state=None)
+    manager.settings.auto_generate_comp_plots = True
+    manager.settings.auto_generate_comp_excel = False
+    manager._jobs = [_job(s, JobStatus.SUCCESS, i) for i, s in enumerate("abc", start=10)]
+    commands: list[list[str]] = []
+
+    class FakePopen:
+        def __init__(self, cmd, **kwargs):
+            commands.append(list(cmd))
+            self.stdout = iter(())
+            self.pid = 0
+
+        def wait(self):
+            return 0
+
+    monkeypatch.setattr(em.subprocess, "Popen", FakePopen)
+    manager._run_post_execution()
+
+    (cmd,) = commands
+    assert cmd[cmd.index("--alternatives") + 1:cmd.index("--plot-dir")] == ["b", "c"]
+    # Told in the Auto-comparison job's output; a stays among the folders a later batch checks again.
+    (aux,) = [j for j in manager._jobs if j.job_type is JobType.OUTPUT_ACTION]
+    assert aux.stdout_lines[0] == "Left out a: the run wrote no parquet"
+    assert manager._comparison_scenarios == ["a", "b", "c"]
+
+
 @pytest.fixture
 def tk_root():
     try:
