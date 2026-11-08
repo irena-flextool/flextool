@@ -43,6 +43,7 @@ from flextool.run_record._owner import (
     STATUS_SCHEMA_VERSION,
     STATUS_TMP_PREFIX,
     STATUS_TMP_SUFFIX,
+    carried_outputs,
     now_iso,
     parse_iso,
     read_status_file,
@@ -216,41 +217,6 @@ def options_resolved_record(run_options: "RunOptions") -> dict[str, dict[str, An
     return out
 
 
-def _previous_outputs(folder: Path, old: Mapping[str, Any] | None) -> dict[str, Any]:
-    """The ``outputs`` a new run starts with, carried from the folder's previous status (D2).
-
-    ``written`` -> ``previous_run`` pointing at that run; ``previous_run`` -> the same ``previous`` (so a series of
-    failures points at the run that wrote the files); ``partial`` stays ``partial``.  Without a usable old record
-    the folder decides: parquet files present -> ``previous_run`` of an unknown run (``finished_at`` = the
-    newest parquet's time), none -> ``none``.
-    """
-    outputs: dict[str, Any] = {"parquet_state": "none", "written_at": None, "by": "run", "previous": None,
-                               "reason": None}
-    old_outputs = (old or {}).get("outputs") or {}
-    old_state = old_outputs.get("parquet_state")
-    if old is not None and old_state == "written":
-        outputs["parquet_state"] = "previous_run"
-        outputs["previous"] = {"run_id": old.get("run_id"), "finished_at": old.get("finished_at")}
-        return outputs
-    if old is not None and old_state == "previous_run":
-        outputs["parquet_state"] = "previous_run"
-        outputs["previous"] = old_outputs.get("previous")
-        return outputs
-    if old is not None and old_state == "partial":
-        outputs["parquet_state"] = "partial"
-        outputs["previous"] = old_outputs.get("previous")
-        return outputs
-    parquet = [p for p in folder.glob("*.parquet") if p.is_file()]
-    if parquet:
-        newest = max(p.stat().st_mtime for p in parquet)
-        outputs["parquet_state"] = "previous_run"
-        outputs["previous"] = {
-            "run_id": None,
-            "finished_at": datetime.fromtimestamp(newest).astimezone().isoformat(timespec="seconds"),
-        }
-    return outputs
-
-
 class _WarningHandler(logging.Handler):
     """Collects WARNING and worse records into the active recorder's ``warnings`` list.
 
@@ -360,7 +326,7 @@ class RunRecorder:
         folder.mkdir(parents=True, exist_ok=True)
         rec.folder = folder
         old = read_status_file(folder)
-        outputs = _previous_outputs(folder, old)
+        outputs = carried_outputs(folder, old)
         for stale in glob.glob(str(folder / (glob.escape(STATUS_TMP_PREFIX) + "*" + STATUS_TMP_SUFFIX))):
             try:
                 os.remove(stale)

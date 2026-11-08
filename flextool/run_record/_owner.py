@@ -24,10 +24,14 @@ import importlib.util
 import json
 import logging
 import os
+import re
 import signal
+import socket
 import sys
 import threading
 import time
+import uuid
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from types import ModuleType
@@ -481,12 +485,15 @@ class RunLogOwner:
         killed: bool = False,
         kill_reason: str | None = None,
         outcome: tuple[str, str] | None = None,
+        expected: "ExpectedRun | None" = None,
     ) -> Path | None:
         """Finish the relay when the engine has ended; return the run folder (``None`` when no marker came).
 
         Idempotent.  A status the engine left ``running`` is finalised from *returncode* (see
         :func:`finalize_unfinished`); *killed* marks a run the owner stopped on purpose, *outcome* a
         ``(state, reason)`` the owner knows better than the exit code (an interrupted run it had to kill).
+        When no marker came and *expected* names the run's folder, :func:`record_run_without_marker` records
+        the run that ended before it started its record.  :attr:`record_changed` tells whether the status changed.
         """
         with self._lock:
             if self._closed:
@@ -514,6 +521,11 @@ class RunLogOwner:
                         )
                     except OSError:
                         pass
+            elif self.folder is None and expected is not None:
+                self.record_changed = record_run_without_marker(
+                    expected, returncode, killed=killed, kill_reason=kill_reason, log_lines=list(self._buffer),
+                    dropped=self._dropped_bytes, launcher=self.launcher,
+                )
             if writer is not None:
                 writer.close()
             return self.folder
@@ -823,6 +835,271 @@ def finalize_unfinished(
 
 
 # ---------------------------------------------------------------------------
+# A run that ended before it started its record
+# ---------------------------------------------------------------------------
+
+
+def carried_outputs(folder: Path, old: Mapping[str, Any] | None) -> dict[str, Any]:
+    """The ``outputs`` a new run starts with, carried from the folder's previous status (D2).
+
+    ``written`` -> ``previous_run`` pointing at that run; ``previous_run`` -> the same ``previous`` (so a series of
+    failures points at the run that wrote the files); ``partial`` stays ``partial``.  Without a usable old record
+    the folder decides: parquet files present -> ``previous_run`` of an unknown run (``finished_at`` = the
+    newest parquet's time), none -> ``none``.
+    """
+    outputs: dict[str, Any] = {"parquet_state": "none", "written_at": None, "by": "run", "previous": None,
+                               "reason": None}
+    old_outputs = (old or {}).get("outputs") or {}
+    old_state = old_outputs.get("parquet_state")
+    if old is not None and old_state == "written":
+        outputs["parquet_state"] = "previous_run"
+        outputs["previous"] = {"run_id": old.get("run_id"), "finished_at": old.get("finished_at")}
+        return outputs
+    if old is not None and old_state == "previous_run":
+        outputs["parquet_state"] = "previous_run"
+        outputs["previous"] = old_outputs.get("previous")
+        return outputs
+    if old is not None and old_state == "partial":
+        outputs["parquet_state"] = "partial"
+        outputs["previous"] = old_outputs.get("previous")
+        return outputs
+    parquet = [p for p in folder.glob("*.parquet") if p.is_file()]
+    if parquet:
+        newest = max(p.stat().st_mtime for p in parquet)
+        outputs["parquet_state"] = "previous_run"
+        outputs["previous"] = {
+            "run_id": None,
+            "finished_at": datetime.fromtimestamp(newest).astimezone().isoformat(timespec="seconds"),
+        }
+    return outputs
+
+
+@dataclass(frozen=True)
+class ExpectedRun:
+    """What a pipe owner knows of the engine run it started, before the engine has started its run record.
+
+    *folder* is the run's ``output_parquet/<subdir>/``; *pid* the engine's process id; *launched_at* the time
+    (:func:`now_iso`) taken just before the engine was started; *argv*, *input* (``db_url``, ``scenario``) and
+    *output* (``location``, ``subdir``, ``parquet_dir``) go into the record as they are.
+    """
+
+    folder: Path
+    pid: int
+    launched_at: str
+    argv: list[str] = field(default_factory=list)
+    input: dict[str, Any] = field(default_factory=dict)
+    output: dict[str, Any] = field(default_factory=dict)
+
+
+_HEAD_RUN_ID_TEXT = re.compile(rb'"run_id":\s*"([^"\\]*)"')
+#: The text of a run that ended before it started its record (status message and ``_run.log`` line).
+_NO_RECORD_TEXT = "the run ended before it started its run record"
+
+
+def _status_run_id(folder: Path) -> tuple[bool, Any]:
+    """``(exists, run_id)`` of the status in *folder*, from its first bytes when they show it (else the whole
+    file; ``None`` when it does not read)."""
+    try:
+        with open(folder / RUN_STATUS_FILE, "rb") as fh:
+            head = fh.read(512)
+    except FileNotFoundError:
+        return False, None
+    except OSError:
+        head = b""
+    match = _HEAD_RUN_ID_TEXT.search(head)
+    if match is not None:
+        return True, match.group(1).decode("utf-8", errors="replace")
+    status = read_status_file(folder)
+    return True, status.get("run_id") if status is not None else None
+
+
+def _not_before(text: Any, reference: Any) -> bool:
+    """Whether the ISO time *text* is at or after *reference* (``False`` when either does not parse or they
+    cannot be compared).  :func:`now_iso` is to the second, so the same second counts as at."""
+    first, second = parse_iso(text), parse_iso(reference)
+    if first is None or second is None:
+        return False
+    try:
+        return first >= second
+    except TypeError:  # one with a UTC offset and one without
+        return False
+
+
+def _pid_alive(pid: Any) -> bool:
+    """Whether a process *pid* exists on this host; ``True`` when that cannot be told (``psutil`` missing)."""
+    if not isinstance(pid, int):
+        return False
+    try:
+        import psutil
+    except ImportError:
+        return True
+    try:
+        return psutil.pid_exists(pid)
+    except (OSError, psutil.Error):
+        return True
+
+
+def _started_by(status: Mapping[str, Any], expected: ExpectedRun) -> bool:
+    """Whether the ``running`` *status* is the engine run *expected* describes: its process on this host, or a
+    run that started after the launch whose process is gone (a wrapper with a pid of its own)."""
+    process = status.get("process") or {}
+    if (process.get("host"), process.get("platform")) != (socket.gethostname(), sys.platform):
+        return False
+    if process.get("pid") == expected.pid:
+        return True
+    return _not_before(status.get("started_at"), expected.launched_at) and not _pid_alive(process.get("pid"))
+
+
+def record_run_without_marker(
+    expected: ExpectedRun,
+    returncode: int | None,
+    *,
+    killed: bool = False,
+    kill_reason: str | None = None,
+    log_lines: Iterable[str] = (),
+    dropped: int = 0,
+    launcher: str = "gui",
+) -> bool:
+    """Record an engine run that ended (failed, or was killed) before it printed its marker; return whether the
+    folder's status changed.  Never raises (a failure is logged).
+
+    The folder would otherwise keep the previous run's ``succeeded`` record, and its results would still be
+    offered although the latest run did not succeed.  Rules, on the status read with :func:`read_status_settled`:
+
+    1. no folder: nothing is written (nothing is offered from it; no folder is created);
+    2. a status that cannot be read now or is damaged: nothing is written (a warning);
+    3. ``running`` and started by this launch (:func:`_started_by`): finished like :func:`finalize_unfinished`
+       (the engine was stopped between starting its record and printing the marker); another ``running`` run
+       owns the folder: nothing is written;
+    4. a finished run that started at or after the launch (this engine with a lost marker, or another run):
+       its own record stands;
+    5. no status and no ``*.parquet``: nothing is written (nothing to withdraw);
+    6. otherwise a ``failed`` / ``killed`` status (``killed`` with *kill_reason* when the launcher stopped the
+       run, else :func:`classify_exit`) whose ``outputs`` carry the previous ones (:func:`carried_outputs`),
+       written through a temp file after the run id on disk is checked once more, then ``_run.log``: the header,
+       the dropped-bytes line, *log_lines* (the engine's early output) and one line saying what happened --
+       written only when the status on disk is still this one.
+    """
+    try:
+        return _record_run_without_marker(expected, returncode, killed=killed, kill_reason=kill_reason,
+                                          log_lines=log_lines, dropped=dropped, launcher=launcher)
+    except Exception:  # noqa: BLE001 - a record of a run that never started one must not break the launcher
+        _logger.warning("Cannot record the run that ended before its run record in %s.", expected.folder,
+                        exc_info=True)
+        return False
+
+
+def _record_run_without_marker(
+    expected: ExpectedRun,
+    returncode: int | None,
+    *,
+    killed: bool,
+    kill_reason: str | None,
+    log_lines: Iterable[str],
+    dropped: int,
+    launcher: str,
+) -> bool:
+    folder = Path(expected.folder)
+    if not folder.is_dir():
+        return False
+    old = read_status_settled(folder)
+    if old is not None and not well_formed(old):
+        _logger.warning("The run record in %s cannot be read (%s); the run that ended before its record is not "
+                        "recorded.", folder, old.get("state"))
+        return False
+    if old is not None and old.get("state") == "running":
+        run_id = old.get("run_id")
+        if isinstance(run_id, str) and run_id and _started_by(old, expected):
+            return finalize_unfinished(folder, run_id, returncode, killed=killed, kill_reason=kill_reason)
+        return False
+    if old is not None and _not_before(old.get("started_at"), expected.launched_at):
+        return False
+    if old is None and not any(p.is_file() for p in folder.glob("*.parquet")):
+        return False
+
+    if killed:
+        state, reason = "killed", kill_reason or "stopped by the user"
+    else:
+        state, reason = classify_exit(returncode)
+        if state == "failed":
+            reason = f"{_NO_RECORD_TEXT} (exit code {returncode})"
+    now = now_iso()
+    run_id = uuid.uuid4().hex
+    started, finished = parse_iso(expected.launched_at), parse_iso(now)
+    wall = None
+    if started is not None and finished is not None:
+        wall = round((finished - started).total_seconds(), 3)
+    status = {
+        "schema": STATUS_SCHEMA,
+        "schema_version": STATUS_SCHEMA_VERSION,
+        "run_id": run_id,
+        "state": state,
+        "verdict": None,
+        "exit_code": returncode,
+        "error": {"type": _ERROR_TYPES[state], "message": reason[:2000]},
+        "started_at": expected.launched_at,
+        "updated_at": now,
+        "heartbeat_at": now,
+        "finished_at": now,
+        "wall_time_s": wall,
+        "process": {"pid": expected.pid, "host": socket.gethostname(), "platform": sys.platform},
+        "launcher": launcher,
+        "log_capture": "parent",
+        "argv": list(expected.argv),
+        "input": dict(expected.input),
+        "output": dict(expected.output),
+        "outputs": carried_outputs(folder, old),
+        "progress": None,
+        "solves": [],
+        "solves_omitted": 0,
+        "warnings": [],
+        "warnings_omitted": 0,
+    }
+    text = json.dumps(status, ensure_ascii=False, indent=1, allow_nan=False)
+    path = folder / RUN_STATUS_FILE
+    tmp = folder / f"{RUN_STATUS_FILE}.{os.getpid()}-{uuid.uuid4().hex[:8]}{STATUS_TMP_SUFFIX}"
+    with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+    # The last look before the replace: a run that started meanwhile owns the folder.
+    seen = (old is not None, old.get("run_id") if old is not None else None)
+    if _status_run_id(folder) != seen:
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        return False
+    try:
+        _replace(tmp, path, final=True)
+    except PermissionError:
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+
+    # The log after the status, and only while the status is still this run's: a run that started meanwhile
+    # has truncated the log to its own header.
+    if _status_run_id(folder) == (True, run_id):
+        line = f"# {launcher}: {_NO_RECORD_TEXT} (exit code {returncode}): {state}"
+        if state != "failed":
+            line += f", {reason}"
+        try:
+            write_log_header(folder / RUN_LOG_FILE, run_id, expected.launched_at)
+            writer = RunLogWriter(folder / RUN_LOG_FILE)
+            try:
+                writer.write_omission(dropped)
+                for entry in log_lines:
+                    writer.write_line(entry)
+                writer.write_line(line)
+            finally:
+                writer.close()
+        except OSError as exc:
+            _logger.warning("Cannot write the run log in %s: %s", folder, exc)
+    return True
+
+
+# ---------------------------------------------------------------------------
 # Whether a folder's results may be offered
 # ---------------------------------------------------------------------------
 
@@ -916,6 +1193,7 @@ def unusable_code(status: Mapping[str, Any] | None, effective: str | None = None
 
 
 __all__ = [
+    "ExpectedRun",
     "LOG_HEAD_BYTES",
     "LOG_TAIL_BYTES_DEFAULT",
     "MALFORMED_STATE",
@@ -933,6 +1211,7 @@ __all__ = [
     "VERDICT_ORDER",
     "RunLogOwner",
     "RunLogWriter",
+    "carried_outputs",
     "classify_exit",
     "finalize_unfinished",
     "format_marker",
@@ -944,6 +1223,7 @@ __all__ = [
     "read_status_file",
     "read_status_settled",
     "read_stop_reason",
+    "record_run_without_marker",
     "results_usable",
     "solve_verdict",
     "UNUSABLE_CODES",

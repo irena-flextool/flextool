@@ -615,3 +615,47 @@ def test_a_settled_read_waits_out_a_status_that_cannot_be_read_now(tmp_path, mon
     # Still unreadable when the time is up: that answer stands.
     monkeypatch.setattr(_owner, "read_status_file", lambda folder, strict=False: {"state": "unreadable"})
     assert _owner.read_status_settled(tmp_path, seconds=0.0) == {"state": "unreadable"}
+
+
+# ---------------------------------------------------------------------------
+# A run that ended before it started its record: the launcher's minimal record
+# ---------------------------------------------------------------------------
+
+
+def _expected(folder: Path) -> "_owner.ExpectedRun":
+    return _owner.ExpectedRun(folder=folder, pid=999_999_999, launched_at=_owner.now_iso(), argv=["engine"],
+                              input={"db_url": "sqlite:///in.sqlite", "scenario": "base"},
+                              output={"subdir": folder.name})
+
+
+def test_a_minimal_record_gives_way_to_a_run_that_starts_while_it_is_written(tmp_path, monkeypatch):
+    old = {"run_id": "a" * 32, "state": "succeeded", "started_at": "2026-11-01T10:00:00+02:00",
+           "finished_at": "2026-11-01T10:05:00+02:00", "outputs": {"parquet_state": "written"}}
+    quiet, raced = tmp_path / "quiet", tmp_path / "raced"
+    for folder in (quiet, raced):
+        folder.mkdir()
+        write_status_atomic(folder, old)
+        (folder / RUN_LOG_FILE).write_text("# FlexTool run old\n", encoding="utf-8")
+
+    # Without a race: written, the earlier run's parquet carried, then the log.
+    assert _owner.record_run_without_marker(_expected(quiet), 1, log_lines=["early error"]) is True
+    record = read_status_file(quiet)
+    assert record["state"] == "failed" and record["outputs"]["previous"]["run_id"] == "a" * 32
+    assert (quiet / RUN_LOG_FILE).read_text(encoding="utf-8").splitlines()[1:] == [
+        "early error", "# gui: the run ended before it started its run record (exit code 1): failed"]
+
+    # An engine starts in the folder after the launcher read the old record and before it replaces it: the new
+    # run's record and log stay.
+    real_carried = _owner.carried_outputs
+
+    def engine_starts_meanwhile(folder, previous):
+        outputs = real_carried(folder, previous)
+        write_status_atomic(folder, {**old, "run_id": "b" * 32, "state": "running", "started_at": _owner.now_iso()})
+        (folder / RUN_LOG_FILE).write_text("# FlexTool run new\n", encoding="utf-8")
+        return outputs
+
+    monkeypatch.setattr(_owner, "carried_outputs", engine_starts_meanwhile)
+    assert _owner.record_run_without_marker(_expected(raced), 1, log_lines=["early error"]) is False
+    assert read_status_file(raced)["run_id"] == "b" * 32
+    assert (raced / RUN_LOG_FILE).read_text(encoding="utf-8") == "# FlexTool run new\n"
+    assert not [p for p in raced.iterdir() if p.name.endswith(".tmp")]

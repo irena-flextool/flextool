@@ -1016,6 +1016,14 @@ Every engine run (`cmd_run_flextool.main`, once its scenario and output folder a
   The stop thread is the file's only owner and removes its folder at the end. A job's worker finishes the record
   before the job's output folder is free for the next job, and closing FlexTool waits (at most 15 s) for those
   records.
+- A GUI job whose engine ends before it starts its record (an early error, a kill in its first seconds) would leave
+  the folder's previous `succeeded` record, and its results would still be offered. The GUI then writes a minimal
+  `failed` / `killed` record (`record_run_without_marker`, `_owner.py`) whose `outputs` carry the previous ones
+  (`carried_outputs`, the same rule the engine uses), with the engine's early output in `_run.log`. It writes only
+  over an older finished record or a legacy folder with parquet; never into a missing folder, over a record that
+  cannot be read, over another run's `running` record, or over a run that started at or after the launch. The run
+  id on disk is read again just before the replace, and the log is written after the status, only while the status
+  is still the GUI's.
 
 The supervisor is a top-level module that never imports `flextool` (that imports polars): it loads `_owner.py` and
 `env_check.py` by path, so `_owner.py` stays stdlib-only with no relative imports.

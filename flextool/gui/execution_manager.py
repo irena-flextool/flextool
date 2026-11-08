@@ -23,7 +23,9 @@ from flextool.gui.data_models import GlobalSettings, ProjectSettings, ScenarioIn
 from flextool.gui.scenario_key import choose_output_subdir_for_write
 from flextool.run_record import (
     RUN_LOG_OWNER_ENV,
+    ExpectedRun,
     RunLogOwner,
+    now_iso,
     read_status_settled,
     results_usable,
     write_stop_request,
@@ -1207,6 +1209,7 @@ class ExecutionManager:
             self._live_waits.add(job.worker_done)
         owner: RunLogOwner | None = None
         proc: subprocess.Popen | None = None
+        launch: tuple[str, list[str]] | None = None  # (launched_at, command) of the engine
         try:
             try:
                 with self._lock:
@@ -1270,6 +1273,9 @@ class ExecutionManager:
                     cwd=str(flextool_root), env=env,
                 )
                 popen_kwargs.update(popen_extras)
+                # Taken just before the start: a record in the folder that started at or after it is this
+                # run's own (or a later run's), never one to replace (``record_run_without_marker``).
+                launch = (now_iso(), list(cmd))
                 proc = subprocess.Popen(wrapped_cmd, **popen_kwargs)
                 cap_handle = post_spawn(proc) if post_spawn is not None else None
                 killed = False
@@ -1370,7 +1376,7 @@ class ExecutionManager:
                         job.finish_timestamp = job.end_time.strftime("%d.%m.%y %H:%M")
                 self._notify_status_change(job)
             finally:
-                self._finish_run_record(job, proc, owner)
+                self._finish_run_record(job, proc, owner, launch)
         finally:
             # Last: the folder is free for the next job only once its record is finished.
             with self._lock:
@@ -1381,9 +1387,18 @@ class ExecutionManager:
             job.worker_done.set()
 
     def _finish_run_record(
-        self, job: ExecutionJob, proc: subprocess.Popen | None, owner: RunLogOwner | None,
+        self,
+        job: ExecutionJob,
+        proc: subprocess.Popen | None,
+        owner: RunLogOwner | None,
+        launch: tuple[str, list[str]] | None = None,
     ) -> None:
-        """Stop an engine still running, finish its run record and call ``on_run_record_closed``; never raises."""
+        """Stop an engine still running, finish its run record and call ``on_run_record_closed``; never raises.
+
+        An engine that ended before it started its record (an early error, a kill in its first seconds) gets a
+        minimal ``failed`` / ``killed`` record in the job's folder (``record_run_without_marker``), so the
+        folder's earlier results are no longer offered as the latest run's.
+        """
         try:
             if proc is not None and proc.poll() is None:
                 # The job failed here while its engine still runs: stop it, so no second run starts in its
@@ -1398,10 +1413,20 @@ class ExecutionManager:
             with self._lock:
                 killed = job.status is JobStatus.KILLED or job.killed_for_memory
                 kill_reason = job.kill_reason or KILL_REASON_WINDOW
+            expected = None
+            if proc is not None and launch is not None and job.output_subdir:
+                folder = self.project_path / "output_parquet" / job.output_subdir
+                expected = ExpectedRun(
+                    folder=folder, pid=proc.pid, launched_at=launch[0], argv=launch[1],
+                    input={"db_url": job.input_db_url, "scenario": job.scenario_name},
+                    output={"location": str(self.project_path), "subdir": job.output_subdir,
+                            "parquet_dir": str(folder)},
+                )
             owner.close(
                 proc.returncode if proc is not None else None,
                 killed=killed,
                 kill_reason=kill_reason if killed else None,
+                expected=expected,
             )
         except Exception:
             logger.exception("Could not finish the run record of job %d (%s)", job.job_id, job.scenario_name)

@@ -10,6 +10,8 @@
 """
 from __future__ import annotations
 
+import os
+import socket
 import sys
 import threading
 import time
@@ -31,7 +33,7 @@ from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobSt
 from flextool.gui.output_actions import OutputActionManager
 from flextool.gui.result_viewer import ResultViewer
 from flextool.gui.scenario_lists import ExecutedScenarioManager
-from flextool.run_record import MARKER, RUN_LOG_FILE, read_status_file, write_status_atomic
+from flextool.run_record import MARKER, RUN_LOG_FILE, read_status_file, results_usable, write_status_atomic
 
 STUB = Path(__file__).resolve().parents[1] / "run_record" / "_stub_engine.py"
 
@@ -48,7 +50,7 @@ def _job(subdir: str, status: JobStatus = JobStatus.RUNNING, job_id: int = 0) ->
 
 
 def _stub_job(manager: ExecutionManager, folder: Path, mode: str) -> ExecutionJob:
-    job = _job("scen")
+    job = _job(folder.name)  # the job's output folder is output_parquet/<folder name>
     manager._jobs = [job]
     manager._running_count = 1
     manager._build_run_command = lambda job, work_folder: [sys.executable, str(STUB), str(folder), mode]
@@ -278,6 +280,90 @@ def test_a_job_stopped_between_its_pick_and_its_start_never_starts(manager, monk
     assert job.status is JobStatus.KILLED
     assert job.kill_reason == "stopped from the FlexTool window"
     assert manager._running_count == 0 and job.worker_done.is_set()
+
+
+# ---------------------------------------------------------------------------
+# A run that ends before the engine starts its record
+# ---------------------------------------------------------------------------
+
+
+def test_a_job_failing_before_its_record_withdraws_the_old_results(manager, tmp_path):
+    folder = _run_folder(tmp_path, "scen", state="succeeded")  # run "run-scen" wrote its parquet
+    job = _stub_job(manager, folder, "norecord-exit1")
+
+    manager._run_job(job)
+
+    assert job.status is JobStatus.FAILED
+    record = read_status_file(folder)
+    assert record["state"] == "failed"
+    assert record["error"] == {"type": "ProcessEnded",
+                               "message": "the run ended before it started its run record (exit code 1)"}
+    assert not results_usable(record)
+    assert record["outputs"]["parquet_state"] == "previous_run"
+    assert record["outputs"]["previous"]["run_id"] == "run-scen"
+    lines = (folder / RUN_LOG_FILE).read_text(encoding="utf-8").splitlines()
+    assert lines[0] == f"# FlexTool run {record['run_id']} started {record['started_at']}"
+    assert "early error" in lines
+    assert lines[-1] == "# gui: the run ended before it started its run record (exit code 1): failed"
+
+
+def test_a_job_killed_before_its_record_withdraws_the_old_results(manager, tmp_path):
+    folder = _run_folder(tmp_path, "scen", state="succeeded")
+    job = _stub_job(manager, folder, "norecord-sleep")
+    worker = threading.Thread(target=manager._run_job, args=(job,), daemon=True)
+    worker.start()
+    _wait_for(lambda: "waiting" in manager.get_stdout(job.job_id), "the stub engine did not start")
+
+    manager.kill_job(job.job_id)
+    worker.join(60)
+
+    record = read_status_file(folder)
+    assert (record["state"], record["error"]["message"]) == ("killed", "stopped from the FlexTool window")
+    assert record["outputs"]["previous"]["run_id"] == "run-scen"
+
+
+def test_a_run_stopped_before_its_marker_is_finished_as_killed(manager, tmp_path):
+    folder = tmp_path / "output_parquet" / "scen"
+    job = _stub_job(manager, folder, "nomarker-sleep")
+    worker = threading.Thread(target=manager._run_job, args=(job,), daemon=True)
+    worker.start()
+    _wait_for(lambda: "sleeping" in manager.get_stdout(job.job_id), "the stub engine did not start")
+    run_id = read_status_file(folder)["run_id"]
+
+    manager.kill_job(job.job_id)
+    worker.join(60)
+
+    record = read_status_file(folder)
+    assert (record["run_id"], record["state"]) == (run_id, "killed")
+    assert [s["state"] for s in record["solves"]] == ["error"]
+
+
+def test_a_minimal_record_replaces_only_an_older_finished_record(manager, tmp_path):
+    # A folder without a record but with parquet files (an older FlexTool): withdrawn, the parquet's run unknown.
+    legacy = _run_folder(tmp_path, "legacy", state=None)
+    manager._run_job(_stub_job(manager, legacy, "norecord-exit1"))
+    record = read_status_file(legacy)
+    assert record["state"] == "failed"
+    assert (record["outputs"]["parquet_state"], record["outputs"]["previous"]["run_id"]) == ("previous_run", None)
+
+    # (a) A run that started after the launch and finished its own record (here: a stub with a lost marker).
+    folder = _run_folder(tmp_path, "scen", state="succeeded")
+    manager._run_job(_stub_job(manager, folder, "foreign-done"))
+    record = read_status_file(folder)
+    assert record["state"] == "succeeded" and record["run_id"] != "run-scen"
+
+    # (b) Another run, still running, owns the folder.
+    live = _run_folder(tmp_path, "live", state="running")
+    write_status_atomic(live, {**read_status_file(live), "process": {"pid": os.getpid(), "host": socket.gethostname(),
+                                                                      "platform": sys.platform}})
+    before = (live / "_run_status.json").read_bytes()
+    manager._run_job(_stub_job(manager, live, "norecord-exit1"))
+    assert (live / "_run_status.json").read_bytes() == before
+
+    # (c) No folder: none is created.
+    missing = tmp_path / "output_parquet" / "missing"
+    manager._run_job(_stub_job(manager, missing, "norecord-exit1"))
+    assert not missing.exists()
 
 
 def test_the_gui_command_names_its_launcher_and_the_spreadsheet(manager, tmp_path):
