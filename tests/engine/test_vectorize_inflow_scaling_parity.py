@@ -930,3 +930,7 @@ def test_inflow_scaling_synthetic_branch_period_uses_parent_steps():
     for k in ("new_old_slope.csv", "new_old_section.csv"):
         got = cells(vec[k])
         assert got[("peakN", "d1_b")] == got[("peakN", "d1")], k
+    # Hand values of the parent d1: peak_old 6, npop 2, npopis 2·11/(2/8760) = 96 360, npis 12·2/(2/8760) = 105 120,
+    # nom = (96 360 − 80)/(105 120 − 96 360) = 10.99087, slope 2·(1 + nom) = 23.98174, section 12·nom = 131.8904.
+    assert cells(vec["new_old_slope.csv"])[("peakN", "d1")] == pytest.approx(23.98174, rel=1e-6)
+    assert cells(vec["new_old_section.csv"])[("peakN", "d1")] == pytest.approx(131.8904, rel=1e-6)

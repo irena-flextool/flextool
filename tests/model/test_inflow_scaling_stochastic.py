@@ -77,4 +77,5 @@ def test_peak_and_annual_flow_in_branch_periods(tmp_path_factory, chain) -> None
         assert sum(by_t.values()) == pytest.approx(-ANNUAL * 3 / 8760.0, rel=1e-12), d
         assert by_t["t0002" if d.startswith("p2035") else "t0006"] == pytest.approx(PEAK, rel=1e-12), d
         assert max(by_t.values()) < 0.0, d
+    # Identical by construction: the fixture's stochastic data is on the wind profile, not on elec's inflow.
     assert inflow["p2040_high"] == inflow["p2040_low"]
