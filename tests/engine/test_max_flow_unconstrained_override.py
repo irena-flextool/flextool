@@ -180,8 +180,7 @@ def test_invest_no_limit_ceiling_uses_a_small_value(small_source: SpineDbReader)
     )
     assert pmu is not None
     ceiling = {(e, d): v for e, d, v in pmu.frame.iter_rows()}
-    assert ceiling[("wind_plant", INVEST_PERIOD)] == pytest.approx((WIND_EXISTING + SMALL_VALUE) / UNITSIZE)
-    assert (WIND_EXISTING + SMALL_VALUE) / UNITSIZE == 6.0
+    assert ceiling[("wind_plant", INVEST_PERIOD)] == pytest.approx(6.0, rel=1e-12)
 
 
 @pytest.mark.solver
