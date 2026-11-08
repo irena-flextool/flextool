@@ -403,6 +403,39 @@ def test_the_model_list_is_kept_per_provider_and_address(open_dialog, host, monk
     assert list(again.model_box["values"]) == ["model-a", "model-b"]
 
 
+def test_the_list_shows_the_latest_versions_and_keeps_the_chosen_older_one(open_dialog, host, monkeypatch,
+                                                                           fake_backends, user_config_in_tmp,
+                                                                           user_cache_in_tmp):
+    """A remote service's list shows the latest version of each model; the chosen model, when older, stays in the
+    list marked "(older version)" and is not replaced; "Show all models" shows the whole list, which is what is
+    saved.  A server on this computer lists all its models (the box is off)."""
+    from flextool.assistant.settings import ProviderSettings, Settings, save_settings
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    backend = FakeBackend([], models=[ModelEntry("gemini-2.5-flash"), ModelEntry("gemini-2.5-pro"),
+                                      ModelEntry("gemini-3-flash")])
+    fake_backends.append(backend)
+    save_settings(Settings(provider=ProviderSettings(preset="gemini", model="gemini-2.5-flash")), user_config_in_tmp)
+    dialog = open_dialog(backend_factory=lambda preset, conn: backend)
+    assert dialog.show_all_button.cget("text") == "Show all models"
+    assert not dialog.show_all_var.get() and "disabled" not in dialog.show_all_button.state()
+    dialog.refresh_models()
+    pump(host, lambda: dialog.models_label.cget("text") == "2 models")
+    assert list(dialog.model_box["values"]) == ["gemini-2.5-flash (older version)", "gemini-2.5-pro",
+                                                "gemini-3-flash"]
+    assert dialog.model_box.get() == "gemini-2.5-flash"
+    dialog.model_box.current(0)                                  # picking the marked entry gives the bare name
+    assert dialog.model_var.get() == "gemini-2.5-flash"
+    data = json.loads((user_cache_in_tmp / "assistant" / "model_lists.json").read_text(encoding="utf-8"))
+    assert data["lists"]["gemini|https://generativelanguage.googleapis.com/v1beta/openai"]["ids"] == [
+        "gemini-2.5-flash", "gemini-2.5-pro", "gemini-3-flash"]
+    dialog.show_all_button.invoke()
+    assert list(dialog.model_box["values"]) == ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3-flash"]
+    assert dialog.models_label.cget("text") == "3 models"
+    dialog.select_preset("ollama")
+    assert "disabled" in dialog.show_all_button.state()
+
+
 def test_partly_on_the_processor_hint(open_dialog, host):
     probes.remember_facts("ollama", "http://localhost:11434/v1", "big-model:70b",
                           ModelFacts(loaded_context=32768, partly_on_cpu=True))

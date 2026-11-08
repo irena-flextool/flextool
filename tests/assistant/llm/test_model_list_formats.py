@@ -153,3 +153,98 @@ def test_saved_lists_are_kept_per_preset_and_address(tmp_path):
     assert cache.load_all(tmp_path) == {}
     cache.remember("ollama", "http://localhost:11434/v1", ["c:latest"], now=300.0, root=tmp_path)
     assert list(cache.load_all(tmp_path)) == ["ollama|http://localhost:11434/v1"]
+
+
+# --- the latest version of each model -------------------------------------------------------------------------------
+# Synthetic ids in each service's id format; the expected survivors are worked out by hand from the rules in
+# flextool/assistant/model_versions.py, not from its output.
+FAMILY_LISTS: dict[str, tuple[list[str], list[str]]] = {
+    "gemini": ([
+        "models/gemini-2.0-flash-001", "models/gemini-2.0-flash-exp", "models/gemini-2.5-flash",
+        "models/gemini-2.5-flash-lite", "models/gemini-2.5-flash-preview-09-2025", "models/gemini-2.5-pro",
+        "models/gemini-2.5-pro-preview-05-06", "models/gemini-3-flash", "models/gemini-3-flash-lite",
+        "models/gemini-3-pro-preview", "models/gemini-3.1-flash-preview", "models/gemini-3.1-pro-preview",
+        "models/gemini-exp-1206", "models/gemini-flash-latest", "models/gemma-3-27b-it"],
+        # flash: 3 is the newest release, 3.1 a newer preview, -latest a moving alias; the 2.5 preview is
+        # outranked by the 2.5 release.  pro: 2.5 release + 3.1 preview.  flash-lite: 3.
+        ["gemini-2.5-pro", "gemini-3-flash", "gemini-3-flash-lite", "gemini-3.1-flash-preview",
+         "gemini-3.1-pro-preview", "gemini-exp-1206", "gemini-flash-latest", "gemma-3-27b-it"]),
+    "anthropic": ([
+        "claude-3-5-haiku-20241022", "claude-3-5-sonnet-latest", "claude-3-7-sonnet-20250219", "claude-haiku-4-5", "claude-haiku-4-5-20251001",
+        "claude-opus-4-1", "claude-opus-4-1-20250805", "claude-opus-4-5", "claude-opus-4-5-20251101",
+        "claude-opus-5-20260201", "claude-opus-5-20260301", "claude-sonnet-4-20250514", "claude-sonnet-4-5",
+        "claude-sonnet-4-5-20250929", "claude-sonnet-5-20260115"],
+        # haiku 4-5: the undated alias before its snapshot; opus 5: the newer of two snapshots.
+        ["claude-haiku-4-5", "claude-opus-5-20260301", "claude-sonnet-5-20260115"]),
+    "openai": ([
+        "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-mini", "gpt-5",
+        "gpt-5-2025-08-07", "gpt-5-mini", "gpt-5-nano", "gpt-5.1", "gpt-5.1-2025-11-13", "gpt-5.1-codex", "o3",
+        "o4-mini"],
+        # gpt 4.1 < 5 < 5.1 (the alias before its snapshot); mini and nano are their own families; "4o" is a
+        # name, not a version: gpt-4o keeps its alias over its snapshot.
+        ["gpt-4o", "gpt-4o-mini", "gpt-5-mini", "gpt-5-nano", "gpt-5.1", "gpt-5.1-codex", "o3", "o4-mini"]),
+    "mistral": ([
+        "codestral-2501", "codestral-2508", "magistral-medium-2509", "ministral-8b-2410", "ministral-8b-latest",
+        "mistral-large-2407", "mistral-large-2411", "mistral-large-latest", "mistral-small-2503",
+        "mistral-small-latest"],
+        # -latest stands for the dated snapshots of a family without a version number.
+        ["codestral-2508", "magistral-medium-2509", "ministral-8b-latest", "mistral-large-latest",
+         "mistral-small-latest"]),
+    "openrouter": ([
+        "anthropic/claude-opus-4.1", "anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4.5",
+        "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3.1:free", "google/gemini-2.0-flash-exp:free",
+        "google/gemini-2.5-flash", "google/gemini-3-flash-preview", "meta-llama/llama-3.1-70b-instruct",
+        "meta-llama/llama-3.3-70b-instruct", "meta-llama/llama-3.3-70b-instruct:free", "openai/gpt-oss-120b",
+        "openai/gpt-oss-120b:free", "qwen/qwen3-coder"],
+        # The vendor path and :free are part of the family.
+        ["anthropic/claude-opus-4.1", "anthropic/claude-sonnet-4.5", "deepseek/deepseek-chat-v3.1:free",
+         "google/gemini-2.0-flash-exp:free", "google/gemini-2.5-flash", "google/gemini-3-flash-preview",
+         "meta-llama/llama-3.3-70b-instruct", "meta-llama/llama-3.3-70b-instruct:free", "openai/gpt-oss-120b",
+         "openai/gpt-oss-120b:free", "qwen/qwen3-coder"]),
+}
+
+
+@pytest.mark.parametrize("preset_id", sorted(FAMILY_LISTS))
+def test_the_list_shows_the_latest_version_of_each_model(preset_id):
+    from flextool.assistant.providers import model_entries, shown_models
+
+    ids, expected = FAMILY_LISTS[preset_id]
+    items = [{"id": i, "supported_parameters": ["tools"]} for i in ids]
+    listed = [e.id for e in model_entries(preset_id, items)]
+    assert len(listed) == len(ids)                              # the whole list is what is saved
+    preset = PRESETS[preset_id]
+    assert shown_models(preset, listed) == expected
+    assert shown_models(preset, listed, show_all=True) == listed
+
+
+def test_family_and_version_of_an_id():
+    from flextool.assistant.model_versions import model_key
+
+    key = model_key("models/gemini-2.5-flash-preview-09-2025")
+    assert (key.family, key.version, key.snapshot, key.preview) == ("gemini-flash", (2, 5), (20250900,), True)
+    key = model_key("claude-opus-4-5-20251101")
+    assert (key.family, key.version, key.snapshot, key.preview) == ("claude-opus", (4, 5), (20251101,), False)
+    key = model_key("gpt-5-2025-08-07")
+    assert (key.family, key.version, key.snapshot) == ("gpt", (5,), (20250807,))
+    assert model_key("gemini-3-flash-lite").family == "gemini-flash-lite"
+    assert model_key("meta-llama/llama-3.3-70b-instruct:free").family == "meta-llama/llama-70b-instruct:free"
+    assert model_key("gpt-oss:120b-cloud").family == "gpt-oss:120b-cloud"
+    assert model_key("mistral-large-latest").alias
+
+
+def test_an_id_without_a_version_is_its_own_family():
+    from flextool.assistant.model_versions import latest_ids, model_key
+
+    assert model_key("assistant-model").family == "assistant-model"
+    assert model_key("assistant-model").version == ()
+    assert latest_ids(["assistant-model", "assistant-model-2", "assistant-model-3"]) == [
+        "assistant-model", "assistant-model-3"]
+
+
+def test_servers_on_this_computer_show_every_model():
+    from flextool.assistant.providers import shown_models
+
+    ids = ["qwen-2.5-7b", "qwen-3-7b"]
+    assert shown_models(PRESETS["ollama"], ids) == ids
+    assert shown_models(PRESETS["lmstudio"], ids) == ids
+    assert shown_models(PRESETS["openai_compatible"], ids) == ["qwen-3-7b"]

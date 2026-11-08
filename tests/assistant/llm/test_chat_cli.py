@@ -567,3 +567,19 @@ def test_a_continuation_is_one_line_in_the_terminal(project, fake_backends, echo
     assert term.stderr.getvalue().count("Continuing with a fresh context (part 2 of 3)…") == 1
     assert "A note." not in term.stderr.getvalue()
     assert len(models.requests) == 5
+
+
+# --- the model list -----------------------------------------------------------------------------------------------
+def test_list_models_shows_the_latest_versions_and_all_with_all(fake_backends, monkeypatch):
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    listed = [ModelEntry("gemini-2.5-flash"), ModelEntry("gemini-3-flash", "a note")]
+    models = Models([], fake_backends, models=listed)
+    term = terminal(tty=False)
+    assert chat_cli.main(["--provider", "gemini", "--list-models"], backend_factory=models, terminal=term) == 0
+    assert term.stdout.getvalue() == "gemini-3-flash  a note\n"
+    assert term.stderr.getvalue() == "1 older model version is not shown; add --all to list it.\n"
+    every = terminal(tty=False)
+    assert chat_cli.main(["--provider", "gemini", "--list-models", "--all"], backend_factory=models,
+                         terminal=every) == 0
+    assert every.stdout.getvalue().splitlines() == ["gemini-2.5-flash", "gemini-3-flash  a note"]
+    assert every.stderr.getvalue() == ""

@@ -126,6 +126,9 @@ TEXTS: dict[str, str] = {
     "key_file_only_with_set": "--key-file goes with --set-key.",
     "key_not_needed": "{provider} needs no key.",
     "models_head": "Models of {provider}:",
+    "older_hidden": "{n} older model versions are not shown; add --all to list them.",
+    "older_hidden_one": "1 older model version is not shown; add --all to list it.",
+    "all_only_with_list": "--all goes with --list-models.",
     "model_choice": "Model (number or name; Enter to stop): ",
     "model_name": "Model name (Enter to stop): ",
     "no_models": "{provider} lists no models.",
@@ -594,6 +597,10 @@ def _choose_model(term: Terminal, choice: Choice, factory: BackendFactory) -> st
         term.say(render("model_list", reason=_error_text(exc).rstrip(".")))
         models = None
     if models:
+        from flextool.assistant.providers import shown_models
+
+        shown = set(shown_models(choice.preset, [e.id for e in models]))
+        models = [e for e in models if e.id in shown]
         term.say(TEXTS["models_head"].format(provider=choice.preset.label))
         for i, entry in enumerate(models, 1):
             term.say(f"  {i}. {entry.id}" + (f"  ({entry.note})" if entry.note else ""))
@@ -1144,6 +1151,11 @@ def cmd_list_models(args: argparse.Namespace, term: Terminal, factory: BackendFa
     if not models:
         term.say(TEXTS["no_models"].format(provider=choice.preset.label), err=True)
         return 0
+    from flextool.assistant.providers import shown_models
+
+    shown = set(shown_models(choice.preset, [e.id for e in models], show_all=args.all_models))
+    hidden = len(models) - len(shown)
+    models = [e for e in models if e.id in shown]
     for entry in models:
         parts = [entry.id]
         if entry.context_window:
@@ -1153,6 +1165,8 @@ def cmd_list_models(args: argparse.Namespace, term: Terminal, factory: BackendFa
         if entry.note:
             parts.append(entry.note)
         term.say("  ".join(parts))
+    if hidden:
+        term.say(TEXTS["older_hidden_one"] if hidden == 1 else TEXTS["older_hidden"].format(n=hidden), err=True)
     return 0
 
 
@@ -1208,6 +1222,8 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser, *, backend_fa
     factory = backend_factory or default_backend_factory(args.verbose)
     if args.key_file and not args.set_key:
         parser.error(TEXTS["key_file_only_with_set"])
+    if args.all_models and not args.list_models:
+        parser.error(TEXTS["all_only_with_list"])
     try:
         if args.usage:
             return cmd_usage(term)

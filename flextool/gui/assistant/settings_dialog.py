@@ -121,6 +121,10 @@ class AssistantSettingsDialog(_AssistantDialog):
 
         #: The model lists of earlier fetches, by preset and address (one small file, read once).
         self._saved_lists = model_list_cache.load_all()
+        #: The whole model list shown in the model box (the fetched or saved one); the box shows the latest
+        #: version of each model unless "Show all models" is on.  ``_list_date``: the date of a saved list.
+        self._list_ids: list[str] = []
+        self._list_date: float | None = None
         self._level_values: list[str | None] = [None]
         self._free_choice: bool | None = self._settings.free_tier
         self._has_key: bool | None = None
@@ -210,6 +214,10 @@ class AssistantSettingsDialog(_AssistantDialog):
         self.refresh_button.pack(side="left", padx=(cw, 0))
         self.models_label = ttk.Label(model_row, text="", wraplength=cw * 36, justify="left")
         self.models_label.pack(side="left", padx=(cw, 0))
+        self.show_all_var = tk.BooleanVar(self, value=False)
+        self.show_all_button = ttk.Checkbutton(model, text=strings.SET_SHOW_ALL_MODELS, variable=self.show_all_var,
+                                               command=self._show_list)
+        self.show_all_button.pack(anchor="w")
         self.cpu_hint = ttk.Label(model, text="", wraplength=self.wrap, justify="left")
         self.cpu_hint.pack(anchor="w", fill="x")
         self.model_var.trace_add("write", lambda *_a: self._model_changed())
@@ -352,8 +360,11 @@ class AssistantSettingsDialog(_AssistantDialog):
             widget.state(enabled)
         if preset is not None:
             self.level_box.state(["readonly"])
-        self.model_box["values"] = ()
-        self.models_label.configure(text="")
+        from flextool.assistant.providers import lists_latest_only
+
+        self.show_all_button.state(["!disabled"] if preset is not None and lists_latest_only(preset)
+                                   else ["disabled"])
+        self._clear_list()
         self.model_var.set(self._models.get(preset.id, "") if preset is not None else "")
         self._show_saved_list()
         self._build_knobs()
@@ -392,8 +403,7 @@ class AssistantSettingsDialog(_AssistantDialog):
             return
         self._addresses[preset.id] = self._address()
         self.generation += 1
-        self.model_box["values"] = ()
-        self.models_label.configure(text="")
+        self._clear_list()
         self._show_saved_list()
         self._check_key()
         self._model_changed()
@@ -717,14 +727,15 @@ class AssistantSettingsDialog(_AssistantDialog):
                      saved: Any = None) -> None:
         from flextool.assistant import model_list_cache
 
-        preset = self._preset
         if preset_id is not None and base_url is not None and saved is not None:
             self._saved_lists[model_list_cache.key(preset_id, base_url)] = saved
-        self.model_box["values"] = ids
+        self._list_ids, self._list_date = list(ids), None
         if not ids:
+            preset = self._preset
+            self.model_box["values"] = ()
             self.models_label.configure(text=strings.MODELS_NONE.format(provider=preset.label if preset else ""))
-        else:
-            self.models_label.configure(text=_count_text(len(ids)))
+            return
+        self._show_list()
 
     def _show_saved_list(self) -> None:
         """The list of the last fetch for the shown provider and address, marked with its date; the saved model
@@ -736,17 +747,45 @@ class AssistantSettingsDialog(_AssistantDialog):
             if preset is not None else None
         if saved is None or not saved.ids:
             return
-        self.model_box["values"] = list(saved.ids)
+        self._list_ids, self._list_date = list(saved.ids), saved.fetched
+        self._show_list(select=True)
+
+    def _clear_list(self) -> None:
+        self._list_ids, self._list_date = [], None
+        self.model_box["values"] = ()
+        self.models_label.configure(text="")
+
+    def _show_list(self, *, select: bool = False) -> None:
+        """The model box from the whole list: the latest version of each model (all of them with "Show all
+        models", or for a server on this computer).  The chosen model stays in the box when it is not the latest
+        version, marked "(older version)"; it is never replaced.  *select*: the chosen model is the selected
+        entry."""
+        from flextool.assistant.providers import shown_models
+
+        preset = self._preset
+        if preset is None:
+            return
+        ids = self._list_ids
+        if not ids:
+            return
+        shown = set(shown_models(preset, ids, show_all=self.show_all_var.get()))
         model = self.model_var.get().strip()
-        if model in saved.ids:
-            self.model_box.current(saved.ids.index(model))
-        self.models_label.configure(text=strings.MODELS_SAVED.format(count=_count_text(len(saved.ids)),
-                                                                     date=_date_text(saved.fetched)))
+        values = [i if i in shown else i + strings.MODEL_OLDER_MARK for i in ids if i in shown or i == model]
+        self.model_box["values"] = values
+        if select and model in ids:
+            self.model_box.current([v.removesuffix(strings.MODEL_OLDER_MARK) for v in values].index(model))
+        count = _count_text(len(shown))
+        self.models_label.configure(text=count if self._list_date is None else strings.MODELS_SAVED.format(
+            count=count, date=_date_text(self._list_date)))
 
     def _show_models_text(self, text: str) -> None:
         self.models_label.configure(text=text)
 
     def _model_changed(self) -> None:
+        value = self.model_var.get()
+        if value.endswith(strings.MODEL_OLDER_MARK):        # picked from the box: the mark is not the name
+            self.model_var.set(value.removesuffix(strings.MODEL_OLDER_MARK))
+            return
         self._update_level()
         self._update_free_plan()
         self._update_route()
