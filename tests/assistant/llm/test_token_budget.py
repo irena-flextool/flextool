@@ -28,17 +28,35 @@ def _plain(c: caps.Caps) -> tuple[int, int, int, int]:
 
 
 def test_the_small_window_caps_worked_check():
-    """P3 §4.3 with the shipped basic budget (prefix 4 700, output 4 096, three planned calls) at 16 384 tokens,
-    keep 0: 16 384 − 4 700 − 4 096 − 1 638.4 − min(4 000, 2 457.6) = 3 492; per call 3 492 / 1 / 3 = 1 164.0
-    tokens; × 1.5 = 1 746 characters, raised to the 2 000 floor; rows max(10, round(50 × 2 000 / 6 000 = 16.7))
-    = 17; results max(3, round(1.67)) = 3; items max(3, round(33.3)) = 33."""
+    """P3 §4.3 with the shipped basic budget (prefix 4 850, output 4 096, six planned results: a part's calls) at
+    16 384 tokens, keep 0: 16 384 − 4 850 − 4 096 − 1 638.4 − min(4 000, 2 457.6) = 3 342; per call 3 342 / 1 / 6
+    = 557.0 tokens; × 1.5 = 835.5 characters, raised to the 2 000 floor; rows max(10, round(50 × 2 000 / 6 000 =
+    16.7)) = 17; results max(3, round(1.67)) = 3; items max(3, round(33.3)) = 33."""
     assert _plain(fit_caps(16_384, LEVEL_BUDGETS["small"], 4_096, 0)) == (17, 2_000, 3, 33)
-    # 30 000 tokens: 30 000 − 4 700 − 4 096 − 3 000 − 4 000 = 14 204; / 3 = 4 734.7; × 1.5 = 7 102 → the small
-    # preset's 6 000 characters; everything at the small preset.
-    assert _plain(fit_caps(30_000, LEVEL_BUDGETS["small"], 4_096, 0)) == (50, 6_000, 5, 100)
-    # 24 000 tokens, keep 0: 24 000 − 4 700 − 4 096 − 2 400 − 3 600 = 9 204; / 3 = 3 068; × 1.5 = 4 602;
-    # rows round(50 × 0.767) = 38; results round(3.835) = 4; items round(76.7) = 77.
-    assert _plain(fit_caps(24_000, LEVEL_BUDGETS["small"], 4_096, 0)) == (38, 4_602, 4, 77)
+    # 30 000 tokens: 30 000 − 4 850 − 4 096 − 3 000 − 4 000 = 14 054; / 6 = 2 342.3; × 1.5 = 3 513.5 → 3 513
+    # characters; rows round(50 × 0.5855) = 29; results max(3, round(2.93)) = 3; items round(58.55) = 59.
+    assert _plain(fit_caps(30_000, LEVEL_BUDGETS["small"], 4_096, 0)) == (29, 3_513, 3, 59)
+    # 24 000 tokens, keep 0: 24 000 − 4 850 − 4 096 − 2 400 − 3 600 = 9 054; / 6 = 1 509; × 1.5 = 2 263.5 → 2 263;
+    # rows round(50 × 0.377) = 19; results max(3, round(1.89)) = 3; items round(37.7) = 38.
+    assert _plain(fit_caps(24_000, LEVEL_BUDGETS["small"], 4_096, 0)) == (19, 2_263, 3, 38)
+
+
+def test_the_calls_a_part_that_fit_a_small_window():
+    """Batching 2026-11-08: below 32 768 tokens a part's calls are the results at the cap that fit 95 % of the
+    window with the prefix budget, the answer and the text history, each result as dense as result JSON gets
+    (1.5 characters a token) — at least a step's 3 calls, at most the level's 6.
+    16 384: 0.95 × 16 384 = 15 564.8 − 4 850 − 4 096 − 2 457.6 = 4 161.2; / (2 000 / 1.5 = 1 333.3) = 3.12 → 3.
+    12 288 (output 3 072): 11 673.6 − 4 850 − 3 072 − 1 843.2 = 1 908.4; / 1 333.3 = 1.43 → 1, raised to 3.
+    20 000: 19 000 − 4 850 − 4 096 − 3 000 = 7 054; / 1 333.3 = 5.29 → 5.
+    24 000 (caps 2 263 characters): 22 800 − 4 850 − 4 096 − 3 600 = 10 254; / 1 508.7 = 6.80 → 6.
+    40 000: no fitting (small caps), the level's 6."""
+    got = {w: resolve_budget("small", w, "loaded", local=True).level.max_calls_per_turn
+           for w in (12_288, 16_384, 20_000, 24_000, 40_000)}
+    assert got == {12_288: 3, 16_384: 3, 20_000: 5, 24_000: 6, 40_000: 6}
+    assert resolve_budget("small", 16_384, "loaded", local=True).level.max_calls_per_round == 3
+    # The free plan keeps its steps and fits its calls alike.
+    free = resolve_budget("small", 16_384, "loaded", local=True, free_tier=True).level
+    assert (free.max_rounds, free.max_calls_per_turn, free.max_calls_per_round) == (3, 3, 3)
 
 
 def _float_rows(n: int, seed: int) -> dict:
@@ -49,17 +67,20 @@ def _float_rows(n: int, seed: int) -> dict:
             "unit": {"value": "MW"}, "total_rows": len(rows), "notes": []}
 
 
-def test_a_turn_at_the_caps_fits_a_16k_window():
-    """A basic turn at 16 384 tokens: the prefix budget, three results cut to the caps (float-heavy rows, as
-    query_result sends them), the answer and the text history stay within 95 % of the window."""
-    b = resolve_budget("small", 16_384, "loaded", local=True)
+@pytest.mark.parametrize("window", [16_384, 24_000])
+def test_a_part_at_the_caps_fits_a_small_window(window):
+    """A basic part at 16 384 and 24 000 tokens: the prefix budget, as many results as the part has calls (3 and 6)
+    cut to the caps (float-heavy rows, as query_result sends them), the answer and the text history stay within
+    95 % of the window."""
+    b = resolve_budget("small", window, "loaded", local=True)
+    n = b.level.max_calls_per_turn
     results = [caps.fit_json(_float_rows(400, seed), b.result_caps.max_chars, lambda s: s, rows_key="rows")
-               for seed in (1, 2, 3)]
-    assert all(len(r) <= 2_000 for r in results)
-    history = min(4_000, 0.15 * 16_384)
+               for seed in range(1, n + 1)]
+    assert all(len(r) <= b.result_caps.max_chars for r in results)
+    history = min(4_000, 0.15 * window)
     total = LEVEL_BUDGETS["small"].prefix_tokens + sum(approx_tokens(r, "json") for r in results) + \
         b.max_output_tokens + history
-    assert total <= 0.95 * 16_384
+    assert total <= 0.95 * window
 
 
 @pytest.mark.parametrize(("tier", "window", "caps_expected", "every", "keep"), [
@@ -136,9 +157,9 @@ def test_free_plan():
     assert not budget.free_tier_on("gemini", "gemini-2.5-flash", None)
     assert not budget.free_tier_on("openrouter", "x:free", False)
     assert budget.free_tier_on("gemini", "gemini-2.5-flash", True)
-    # Its numbers (§4.1 brackets): rounds 3 / 4 / 6, calls per question 3 / 8 / 12, per step 3 / 4 / 6; result caps
-    # at most medium.
-    for tier, numbers in (("small", (3, 3, 3)), ("medium", (4, 8, 4)), ("large", (6, 12, 6))):
+    # Its numbers (§4.1 brackets, batching 2026-11-08): rounds 3 / 4 / 6 as before; per step the level's 3 / 8 / 8;
+    # calls a part the level's 6 / 16 / 30, at most rounds × per step (9 / 32 / 48); result caps at most medium.
+    for tier, numbers in (("small", (3, 6, 3)), ("medium", (4, 16, 8)), ("large", (6, 30, 8))):
         b = resolve_budget(tier, 400_000, "model", local=False, free_tier=True)
         assert (b.level.max_rounds, b.level.max_calls_per_turn, b.level.max_calls_per_round) == numbers
         assert b.free_tier
@@ -147,11 +168,12 @@ def test_free_plan():
 
 
 def test_level_numbers():
-    """P3 §4.1: rounds 3 / 8 / 12, calls per question 3 / 16 / 30, per step 3 / 8 / 8, output 4 096 / 8 000 /
-    16 000, planned calls 3 / 6 / 8, smallest window 12 288 / 32 768 / 65 536."""
+    """P3 §4.1 (basic's calls a part 3 → 6, batching 2026-11-08): rounds 3 / 8 / 12, calls per question part
+    6 / 16 / 30, per step 3 / 8 / 8, output 4 096 / 8 000 / 16 000, planned results 6 / 6 / 8, smallest window
+    12 288 / 32 768 / 65 536."""
     got = {t: (b.max_rounds, b.max_calls_per_turn, b.max_calls_per_round, b.max_output_tokens, b.planned_calls,
                b.min_window) for t, b in LEVEL_BUDGETS.items()}
-    assert got == {"small": (3, 3, 3, 4_096, 3, 12_288), "medium": (8, 16, 8, 8_000, 6, 32_768),
+    assert got == {"small": (3, 6, 3, 4_096, 6, 12_288), "medium": (8, 16, 8, 8_000, 6, 32_768),
                    "large": (12, 30, 8, 16_000, 8, 65_536)}
 
 

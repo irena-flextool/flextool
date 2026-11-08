@@ -60,6 +60,8 @@ ADDED_RULES: tuple[str, ...] = (
     "account and the plan, and the user should check the provider's current policies. Never say the data is "
     "private or not used for training.",
     "Do not give web links; name FlexTool documents by file name.",
+    "Ask only for what the question needs. When several lookups do not depend on each other, request them together "
+    "in one step: one call with lists, or several calls in the same step.",
 )
 
 RULES = "Rules:\n" + "\n".join(f"- {rule}" for rule in GROUNDING_RULES + ADDED_RULES)

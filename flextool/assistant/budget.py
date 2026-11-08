@@ -29,8 +29,16 @@ call limit is reached goes on with a fresh context at most ``max_continuations``
 
 | | basic | standard | advanced |
 |---|---|---|---|
+| steps / calls a part / calls a step | 3 / 6 / 3 | 8 / 16 / 8 | 12 / 30 / 8 |
+| the same with the free plan | 3 / 6 / 3 | 4 / 16 / 8 | 6 / 30 / 8 |
 | history | the last 2 answers | every answer | full |
 | continuations (free plan) | 2 (1) | 1 (0) | 0 (0) |
+
+Every part of a question has the level's steps and calls again.  One request carries at most a part's calls'
+results (the last step's request, or the note request of a continuation), so :func:`fit_caps` plans for that many
+(``planned_calls``: 6 / 6 / 8).  Below 32 768 tokens a part's calls are also limited to the results at the cap that
+fit 95 % of the window (:func:`fitting_calls`; never fewer than a step's calls): at 16 384 tokens basic has three
+calls a part with 2 000-character results, from about 22 000 tokens six.
 """
 from __future__ import annotations
 
@@ -153,7 +161,7 @@ class LevelBudget:
     max_calls_per_turn: int
     max_calls_per_round: int
     max_output_tokens: int      # per request, clamped to a quarter of a known window
-    planned_calls: int          # the tool results one question is planned to need (fit_caps)
+    planned_calls: int          # the tool results one request may carry: the calls of a part (fit_caps)
     min_window: int
     max_continuations: int = 0  # fresh-context continuations of one question (P3 §4.7)
     history: str = "full"       # "answers" or "full": what a request carries of the earlier questions
@@ -161,20 +169,25 @@ class LevelBudget:
 
 
 #: Starting values that the calibration informs (P3 §4.1, §7.6).  The prefix budgets are above the estimate of
-#: the shipped instructions and tool schemas (about 4 520 / 8 300 / 8 390 tokens; P3 §4.1 drafted 3 500 / 7 500 /
-#: 8 500 before the schemas were final; basic rose from 4 500 to 4 700 when list_sources joined its tools).
-#: The history and the continuations are the owner's of 2026-11-08 (P3 §4.7).
+#: the shipped instructions and tool schemas (about 4 730 / 8 550 / 8 640 tokens; P3 §4.1 drafted 3 500 / 7 500 /
+#: 8 500 before the schemas were final; basic rose from 4 500 to 4 700 when list_sources joined its tools, and to
+#: 4 850 with get_parameter's lists and the rule on asking together, standard to 8 700).
+#: The history and the continuations are the owner's of 2026-11-08 (P3 §4.7).  Budgets count steps and calls:
+#: basic 3 steps, 6 calls a part, 3 calls a step (batching 2026-11-08; was 3 calls a part).
 LEVEL_BUDGETS: dict[str, LevelBudget] = {
-    "small": LevelBudget(4_700, 3, 3, 3, 4_096, 3, 12_288, max_continuations=2, history="answers", history_turns=2),
-    "medium": LevelBudget(8_500, 8, 16, 8, 8_000, 6, 32_768, max_continuations=1, history="answers"),
+    "small": LevelBudget(4_850, 3, 6, 3, 4_096, 6, 12_288, max_continuations=2, history="answers", history_turns=2),
+    "medium": LevelBudget(8_700, 8, 16, 8, 8_000, 6, 32_768, max_continuations=1, history="answers"),
     "large": LevelBudget(9_000, 12, 30, 8, 16_000, 8, 65_536, max_continuations=0, history="full"),
 }
-#: The free plan: fewer requests per question (P3 §4.6, §4.7).
+#: The free plan: fewer requests per question (P3 §4.6, §4.7).  Its steps are what cost requests, so it keeps
+#: fewer steps (3 / 4 / 6) and the level's calls a step; its calls a part are the level's, at most steps × calls a
+#: step.
+FREE_TIER_ROUNDS: dict[str, tuple[int, int]] = {"small": (3, 1), "medium": (4, 0), "large": (6, 0)}
 FREE_TIER_BUDGETS: dict[str, LevelBudget] = {
-    level: dataclasses.replace(b, max_rounds=rounds, max_calls_per_turn=per_turn, max_calls_per_round=per_round,
+    level: dataclasses.replace(b, max_rounds=rounds,
+                               max_calls_per_turn=min(b.max_calls_per_turn, rounds * b.max_calls_per_round),
                                max_continuations=continuations)
-    for (level, b), (rounds, per_turn, per_round, continuations) in zip(
-        LEVEL_BUDGETS.items(), ((3, 3, 3, 1), (4, 8, 4, 0), (6, 12, 6, 0)))
+    for level, b in LEVEL_BUDGETS.items() for rounds, continuations in (FREE_TIER_ROUNDS[level],)
 }
 #: The result caps preset of each level when the window allows it.
 LEVEL_CAPS: dict[str, str] = {"small": "small", "medium": "medium", "large": "large"}
@@ -226,6 +239,17 @@ def fit_caps(window: int, level: LevelBudget, max_output_tokens: int, keep_recen
                             max_items=max(3, round(small.max_items * share)))
 
 
+def fitting_calls(window: int, level: LevelBudget, max_output_tokens: int, keep_recent_turns: int,
+                  max_chars: int) -> int:
+    """The tool calls of one part whose results, each at *max_chars* and as dense as result JSON gets
+    (:data:`RESULT_CHARS_PER_TOKEN`), fit 95 % of *window* with the prefix, the answer and the text history: at least
+    a step's calls, at most the level's calls a part (batching 2026-11-08)."""
+    room = (FIT_SHARE * window - level.prefix_tokens - max_output_tokens
+            - min(HISTORY_TOKENS_MAX, HISTORY_SHARE * window))
+    n = math.floor(round(room / (keep_recent_turns + 1) / (max_chars / RESULT_CHARS_PER_TOKEN), 6))
+    return max(level.max_calls_per_round, min(level.max_calls_per_turn, n))
+
+
 def free_tier_on(preset_id: str, model: str, setting: bool | None) -> bool:
     """Whether the free plan is on: the setting when the user set it, else on only for an OpenRouter model whose
     id ends ``:free`` (P3-O2)."""
@@ -239,7 +263,7 @@ class Budget:
     """The budget of one session: a level's numbers fitted to the model's window."""
 
     tier: str
-    level: LevelBudget              # the free plan's numbers when it is on
+    level: LevelBudget              # the free plan's numbers when it is on; calls a part fitted to a small window
     free_tier: bool
     window: int                     # the window the caps and the fit use (assumed when nothing reports one)
     window_source: str
@@ -281,6 +305,9 @@ def resolve_budget(tier: str, window: int | None, window_source: str | None, *, 
         ceiling = _smaller(level_caps, caps_module.preset(rule))
     if free_tier:
         ceiling = _smaller(ceiling, caps_module.preset(FREE_TIER_CAPS_MAX))
+    if rule == "fit":
+        calls = fitting_calls(window, level, max_output, keep, ceiling.max_chars)
+        level = dataclasses.replace(level, max_calls_per_turn=calls)
     defaults = _smaller(caps_module.preset(result_cap), ceiling) if result_cap else ceiling
     result_caps = dataclasses.replace(defaults, ceilings=ceiling)
     return Budget(tier=tier, level=level, free_tier=free_tier, window=window, window_source=window_source or "assumed",

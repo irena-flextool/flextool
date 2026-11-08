@@ -150,8 +150,8 @@ def test_record_and_ledger(evaluator, grounding: Path, tmp_path: Path) -> None:
     assert small["model"]["knobs_sent"] == {"provider": {"data_collection": "allow"}}
     assert small["model"]["knobs_relaxed"] is True and small["model"]["free_tier"] is True
     assert small["purpose"] == "calibration" and small["requests_sent"] == 1
-    assert small["budget"]["caps"]["max_calls_per_turn"] == 3
-    assert large["budget"]["caps"]["max_calls_per_turn"] > 3
+    assert small["budget"]["caps"]["max_calls_per_turn"] == 6
+    assert large["budget"]["caps"]["max_calls_per_turn"] > 6
     turn = small["turns"][0]
     assert turn["answer"] == "coal_plant has 500 MW." and turn["stop"] == "end" and turn["tool_calls"] == []
     assert small["project_fingerprint"] == json.loads((grounding / gp.MARKER_FILE).read_text())["fingerprint"]

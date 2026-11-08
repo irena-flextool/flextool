@@ -125,21 +125,34 @@ def check_fit(session: Session, backend: FakeBackend, window: int) -> None:
 
 
 # --- calls per question and the level's tools -------------------------------------------------------------------
-def test_the_fourth_call_gets_the_limit_and_then_no_tools(tmp_path, tools):
-    """Basic: three calls a question (P3 §4.1).  Two rounds of two calls: the fourth is refused, and in the last
-    part (no continuation left, P3 §4.7) the next request is the tool-less one."""
+def test_the_seventh_call_gets_the_limit_and_then_no_tools(tmp_path, tools):
+    """Basic: six calls a question part, three a step (P3 §4.1, batching 2026-11-08).  Steps of two, three and two
+    calls: the seventh is refused, and in the last part (no continuation left, P3 §4.7) the next request is the
+    tool-less one."""
     caps = dataclasses.replace(TurnCaps.for_tier("small"), max_continuations=0)
+    assert (caps.max_rounds, caps.max_calls_per_turn, caps.max_calls_per_round) == (3, 6, 3)
     session, backend, events = session_for(tmp_path, [
-        calls(call(seed=1), call(seed=2)), calls(call(seed=3), call(seed=4)), say("What I found.")], caps=caps)
+        calls(call(seed=1), call(seed=2)), calls(call(seed=3), call(seed=4), call(seed=5)),
+        calls(call(seed=6), call(seed=7)), say("What I found.")], caps=caps)
     result = ask(session, events)
-    assert result.ok and result.text == "What I found." and result.calls == 3
-    assert tools.ran == ["rows"] * 3
-    third = backend.requests[2]
-    results = [m for m in third.messages if m.role == "tool"]
+    assert result.ok and result.text == "What I found." and result.calls == 6
+    assert tools.ran == ["rows"] * 6
+    last = backend.requests[3]
+    results = [m for m in last.messages if m.role == "tool"]
+    assert [m.is_error for m in results] == [False] * 6 + [True]
+    assert results[6].text == "Not run: the limit of 6 tool calls for this question is reached."
+    assert last.tool_choice == "none" and last.messages[-1].text == LIMIT
+    assert [r.tool_choice for r in backend.requests[:3]] == ["auto", "auto", "auto"]
+
+
+def test_a_step_runs_at_most_three_calls(tmp_path, tools):
+    """Basic: a fourth call in one step is not run; the three before it are."""
+    session, backend, events = session_for(tmp_path, [
+        calls(call(seed=1), call(seed=2), call(seed=3), call(seed=4)), say("Done.")])
+    result = ask(session, events)
+    assert result.ok and tools.ran == ["rows"] * 3 and result.calls == 3
+    results = [m for m in backend.requests[1].messages if m.role == "tool"]
     assert [m.is_error for m in results] == [False, False, False, True]
-    assert results[3].text == "Not run: the limit of 3 tool calls for this question is reached."
-    assert third.tool_choice == "none" and third.messages[-1].text == LIMIT
-    assert [r.tool_choice for r in backend.requests[:2]] == ["auto", "auto"]
 
 
 def test_a_tool_of_another_level_is_refused_before_the_registry(tmp_path, monkeypatch):

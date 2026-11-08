@@ -420,7 +420,8 @@ how many steps it may take; it never changes what a tool returns.
 
 - **Basic** — look things up and explain them: one parameter, one result table or one documentation topic at a time,
   with eight tools (`search_docs`, `read_doc`, `get_entity`, `get_parameter`, `list_sources`, `list_runs`,
-  `find_result_tables`, `query_result`) and at most three tool calls for each part of a question (see [Budgets](#budgets)). A question
+  `find_result_tables`, `query_result`) and at most six tool calls for each part of a question, three in one step
+  (see [Budgets](#budgets)). A question
   that needs more, such as why there is slack or why two scenarios differ, gets what was found so far and the advice
   to use a higher level or a more capable model.
 - **Standard** — interpret results and compare scenarios, linking a result to the inputs that drive it; every tool.
@@ -473,10 +474,18 @@ requests within the model's context; they are not usage limits.
 | | Basic | Standard | Advanced |
 |---|---|---|---|
 | Steps for each question (one request to the service each) | 3 | 8 | 12 |
-| Tool calls for each question | 3 | 16 | 30 |
+| Tool calls for each question | 6 | 16 | 30 |
+| Tool calls in one step | 3 | 8 | 8 |
 | Longest answer (tokens; at most a quarter of the context size) | 4 096 | 8 000 | 16 000 |
 | Continuations with a fresh context | 2 | 1 | none |
-| Steps / tool calls / continuations with the free plan | 3 / 3 / 1 | 4 / 8 / none | 6 / 12 / none |
+| Steps / tool calls / continuations with the free plan | 3 / 6 / 1 | 4 / 16 / none | 6 / 30 / none |
+
+The model is asked to request only what the question needs, and to request lookups that do not depend on each
+other together, in one step: one call with lists (for example several parameters of several entities with
+`get_parameter`), or several calls in the same step. Each step is one request to the service, so this matters most
+with the free plan, which counts steps; a step may hold the level's tool calls with the free plan too. With a
+context size below 32 768 tokens a question part has only as many tool calls as their results fit the context
+(at 16 384 tokens: three, with results of up to 2 000 characters; six from about 22 000 tokens).
 
 When a question reaches its limit of steps or tool calls and its level allows a continuation, the model writes a
 short note of what it found so far and the next step (the note is not shown), and the question goes on with a fresh

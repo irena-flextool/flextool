@@ -4,7 +4,7 @@ The set is checked always.  The key is checked in two forms: a placeholder key m
 values that only exercise the checks, never answers) and, once the independent oracle has written it,
 ``tools/assistant_eval_data/answer_key.yaml``.  Names are checked against the database ``build_inputs`` makes
 (not solved); a number fact read from a result table must carry that table's ``_output_meta`` unit (critique B1);
-a lookup question's expected tool path must fit the basic level's three calls (M3).
+a lookup question's expected tool path must fit the basic level's six calls (M3; three until 2026-11-08).
 """
 from __future__ import annotations
 
@@ -76,8 +76,9 @@ def test_placeholder_key_fits(scoring, names) -> None:
     (lambda k: k["questions"]["G04"]["facts"][2].update(value="east_village"),
      "G04.node: entity east_village is not in the grounding inputs"),
     (lambda k: k["questions"]["G01"].update(tools_any=[["list_runs"], ["get_entity"], ["get_parameter"],
-                                                       ["query_result"]]),
-     "G01: the expected path has 4 calls, the basic level allows 3"),
+                                                       ["query_result"], ["read_doc"], ["search_docs"],
+                                                       ["list_sources"]]),
+     "G01: the expected path has 7 calls, the basic level allows 6"),
     (lambda k: k["questions"]["G03"].update(tools_any=[["get_slack_summary"]]),
      "G03: no basic tool in the expected call ('get_slack_summary',)"),
     (lambda k: k["questions"]["G05"]["facts"][1].update(table="no_such_table"),

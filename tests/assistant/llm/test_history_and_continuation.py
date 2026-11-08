@@ -30,6 +30,9 @@ from tests.assistant.llm.fake_backend import Block, FakeBackend
 USAGE = Usage(100, 20, 0, 10)
 PRESET = PRESETS["openai_compatible"]
 _ids = iter(f"hist{n:05d}" for n in range(100_000))
+#: Basic as at a 16 384-token window: three steps, three calls a part (budget.fitting_calls; six from about 22 000
+#: tokens), three a step.
+BASIC_16K = dataclasses.replace(TurnCaps.for_tier("basic"), max_calls_per_turn=3)
 
 
 @pytest.fixture(autouse=True)
@@ -175,11 +178,12 @@ NOTE_REQUEST_LINES = [
 
 
 def test_a_question_at_its_limit_continues_with_the_note_and_the_kept_results(tmp_path, tools):
-    """Basic: three calls, then the fourth is refused; the note keeps result 2 and the next part starts fresh."""
+    """Basic at 16 384 tokens: three calls, then the fourth is refused; the note keeps result 2 and the next part
+    starts fresh."""
     note = "Found a and c. The parameter is called existing.\nNext: get its value.\nKeep: 2"
     script = [calls(call("a"), call("b", "fail")), calls(call("c"), call("d")), say(note),
               calls(call("e")), say("The final answer.")]
-    session, backend, ctx = make(tmp_path, script, tier="basic", caps=TurnCaps.for_tier("basic"))
+    session, backend, ctx = make(tmp_path, script, tier="basic", caps=BASIC_16K)
     events: list = []
     result = ask(session, "What is the existing capacity?", events)
     assert result.ok and result.text == "The final answer." and result.continuations == 1
@@ -239,7 +243,7 @@ def test_basic_continues_twice_then_answers_with_what_it_has(tmp_path, tools):
     """No Keep line: the newest successful results, at most one step's calls (three)."""
     script = (_limit_part(1) + [say("Note one.")] + _limit_part(2) + [say("Note two.\nKeep: none")]
               + _limit_part(3) + [say("What I have.")])
-    session, backend, _ctx = make(tmp_path, script, tier="basic", caps=TurnCaps.for_tier("basic"))
+    session, backend, _ctx = make(tmp_path, script, tier="basic", caps=BASIC_16K)
     events: list = []
     result = ask(session, "q", events)
     assert result.ok and result.text == "What I have." and result.continuations == 2
@@ -261,7 +265,7 @@ def test_each_fresh_part_lists_the_calls_that_did_not_help(tmp_path, tools):
     model does not make them again; a result kept once and dropped later joins the list."""
     script = (_limit_part(1) + [say("Note one.\nKeep: 1")] + _limit_part(2) + [say("Note two.\nKeep: none")]
               + [say("What I have.")])
-    session, backend, _ctx = make(tmp_path, script, tier="basic", caps=TurnCaps.for_tier("basic"))
+    session, backend, _ctx = make(tmp_path, script, tier="basic", caps=BASIC_16K)
     result = ask(session, "q")
     assert result.ok and result.continuations == 2 and not result.repeated
     second, third = backend.requests[3].messages[0].text, backend.requests[6].messages[0].text
@@ -279,7 +283,7 @@ def test_a_fresh_part_that_repeats_earlier_calls_stops_the_question(tmp_path, to
     """Part 2 asks again for 1b (other spacing and case): nothing is run, no third part, the model answers with
     what it has, and the chat ends with a line that says why."""
     script = (_limit_part(1) + [say("Note one.")] + [calls(call("2x"), call(" 1B "))] + [say("What I have.")])
-    session, backend, _ctx = make(tmp_path, script, tier="basic", caps=TurnCaps.for_tier("basic"))
+    session, backend, _ctx = make(tmp_path, script, tier="basic", caps=BASIC_16K)
     events: list = []
     result = ask(session, "q", events)
     assert result.ok and result.text == "What I have." and result.repeated and result.continuations == 1
@@ -299,7 +303,7 @@ def test_a_fresh_part_that_repeats_earlier_calls_stops_the_question(tmp_path, to
 def test_the_first_part_may_repeat_a_call(tmp_path, tools):
     """Asking twice within the first part is not a loop of fresh parts: it runs."""
     session, backend, _ctx = make(tmp_path, [calls(call("a")), calls(call("a")), say("Done.")], tier="basic",
-                                  caps=TurnCaps.for_tier("basic"))
+                                  caps=BASIC_16K)
     result = ask(session, "q")
     assert result.ok and not result.repeated and tools == ["a", "a"]
 
@@ -330,7 +334,7 @@ def test_advanced_has_no_continuation(tmp_path, tools):
 def test_stop_during_a_continuation(tmp_path, tools, where):
     block = Block(then=say("never"))
     script = _limit_part(1) + ([block] if where == "note" else [say("Note."), block]) + [say("Next answer.")]
-    session, backend, ctx = make(tmp_path, script, tier="basic", caps=TurnCaps.for_tier("basic"))
+    session, backend, ctx = make(tmp_path, script, tier="basic", caps=BASIC_16K)
     worker = TurnWorker(session)
     finished: list = []
     events: list = []
@@ -372,7 +376,7 @@ def test_a_stopped_note_is_kept_as_a_note_not_as_the_answer(tmp_path, tools):
             return super().stream(req, stop_at_first_piece, cancel_event)
 
     backend = StopInNote(_limit_part(1) + [say("A note that streams in pieces."), say("Next.")])
-    session, _backend, _ctx = make(tmp_path, [], tier="basic", caps=TurnCaps.for_tier("basic"), backend=backend)
+    session, _backend, _ctx = make(tmp_path, [], tier="basic", caps=BASIC_16K, backend=backend)
     result = ask(session, "q", cancel=cancel)
     assert isinstance(result.error, Cancelled) and result.text == ""
     assert session.messages[-1].kind == "note" and session.messages[-1].text == "A note "
