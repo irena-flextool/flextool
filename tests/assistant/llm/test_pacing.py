@@ -171,14 +171,35 @@ def test_the_learned_interval_is_kept_for_the_next_session(user_cache_in_tmp):
 
 
 @pytest.mark.parametrize("free_plan", [True, False])
-def test_the_free_plan_seed_paces_from_the_first_request(free_plan):
+def test_mistral_is_paced_from_the_first_request_free_or_not(free_plan):
+    """Owner decision 2026-11-08: Mistral's 1.1 s applies also to a paid account."""
+    from flextool.assistant.providers import pacing_seed
+
     clock, server, backend, pacer = rig([ok(), ok()])
     key = pace_key(backend.origin)
-    pacer.prepare(key, PRESETS["mistral"].free_plan_interval if free_plan else None)
+    pacer.prepare(key, pacing_seed(PRESETS["mistral"], free_plan))
     ask(clock, backend, pacer, free_plan=free_plan)
     ask(clock, backend, pacer, free_plan=free_plan)
-    assert server.times == ([0.0, 1.1] if free_plan else [0.0, 0.0])
-    assert PRESETS["openrouter"].free_plan_interval == 3.0 and PRESETS["gemini"].free_plan_interval is None
+    assert server.times == [0.0, 1.1]
+
+
+def test_the_seeds_of_the_presets():
+    from flextool.assistant.providers import pacing_seed
+
+    assert [pacing_seed(PRESETS["mistral"], free) for free in (True, False)] == [1.1, 1.1]
+    assert [pacing_seed(PRESETS["openrouter"], free) for free in (True, False)] == [3.0, None]
+    assert [pacing_seed(PRESETS["gemini"], free) for free in (True, False)] == [None, None]
+
+
+def test_the_learned_interval_never_goes_below_the_seed():
+    p = Pacer(clock=lambda: 0.0)
+    p.prepare("k", 3.0)
+    assert p.rate_limited("k", None) == pytest.approx(6.0)
+    for expected in (4.8, 3.84, 3.072, 3.0, 3.0):
+        p.succeeded("k")
+        assert p.interval("k") == pytest.approx(expected)
+    p.prepare("k", 5.0)                                              # a higher seed: the spacing is the seed
+    assert p.interval("k") == pytest.approx(5.0)
 
 
 def test_the_headers_pace_before_any_rate_limit():

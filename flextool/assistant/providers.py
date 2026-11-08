@@ -59,6 +59,9 @@ class Preset:
     #: (a rate hint for the pacing, P1 §5.1; not a model name), and where and when it was checked.
     free_plan_interval: float | None = None
     free_plan_interval_source: str = ""
+    #: Seconds between request starts always, free plan or not (owner decision 2026-11-08), and its source.
+    min_interval: float | None = None
+    min_interval_source: str = ""
 
     def knob(self, knob_id: str) -> Knob | None:
         return next((k for k in self.request_knobs if k.id == knob_id), None)
@@ -111,11 +114,12 @@ PRESETS: dict[str, Preset] = {p.id: p for p in (
         account_knobs=("whether your plan allows training on your data, and the opt-out in your account",),
         required_headers=frozenset(), capture_tool_call_keys=frozenset(), capture_message_keys=frozenset(),
         tool_message_name=True, cost_field=None, context_probe=None, local=False, server_name=None,
-        last_checked=_CHECKED, free_plan_interval=1.1,
-        free_plan_interval_source=("docs.mistral.ai/admin/workspaces/usage-limits, checked 2026-11-08: the free "
-                                   "mode is limited in requests per second (the number is shown only in the "
-                                   "account's limits page); 1.1 s keeps within any limit of one or more per "
-                                   "second")),
+        last_checked=_CHECKED, min_interval=1.1,
+        min_interval_source=("docs.mistral.ai/admin/workspaces/usage-limits, checked 2026-11-08: the free mode is "
+                             "limited in requests per second (the number is shown only in the account's limits "
+                             "page); 1.1 s keeps within any limit of one or more per second.  Applied also off the "
+                             "free plan (owner decision 2026-11-08): a paid account loses about a second per tool "
+                             "round")),
     Preset(
         id="openrouter", label="OpenRouter", backend="openai", base_url="https://openrouter.ai/api/v1",
         key_env="OPENROUTER_API_KEY", key_required=True, key_optional=False,
@@ -165,6 +169,14 @@ PRESETS: dict[str, Preset] = {p.id: p for p in (
         capture_message_keys=frozenset(), tool_message_name=False, cost_field=None, context_probe=None,
         local=False, server_name=None, last_checked=_CHECKED),
 )}
+
+
+def pacing_seed(preset: Preset, free_plan: bool) -> float | None:
+    """The interval the pacing starts from and never goes below (:class:`flextool.assistant.pacing.Pacer`): the
+    preset's :attr:`~Preset.min_interval`, and with the free plan on also its free-plan interval (the larger);
+    ``None`` when neither applies."""
+    seeds = [v for v in (preset.min_interval, preset.free_plan_interval if free_plan else None) if v]
+    return max(seeds) if seeds else None
 
 
 # --- knobs --------------------------------------------------------------------------------------------------------

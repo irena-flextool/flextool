@@ -546,8 +546,9 @@ requests to one service and model:
   wait again, down to 1.1 seconds. FlexTool remembers the wait for the next start. If the tries run out, the message
   says so, for example "Mistral limits how many requests per second a free plan may send. FlexTool now waits between
   requests; ask again."
-- With the free plan on, FlexTool starts with the wait a service documents for its free plan: 1.1 seconds for
-  Mistral (limited per second) and 3 seconds for OpenRouter's free models (20 requests per minute).
+- Mistral's requests are always at least 1.1 seconds apart, free plan or not (its free plan is limited per second;
+  a paid account loses about a second per round of tool calls). With the free plan on, OpenRouter's free models
+  start with 3 seconds (20 requests per minute). The learned wait never goes below these.
 - A wait the service asks for is always kept.
 
 The chat shows the wait, for example "Mistral limits how fast requests may be sent. Sending the next one in 2

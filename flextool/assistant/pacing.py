@@ -12,10 +12,12 @@ start, from these sources in this order of precedence:
 2. **learned**: after a rate-limit answer without a wait named by the provider (no ``retry-after``), the interval
    between request starts is doubled (first :data:`START` seconds, at most :data:`CAP`); after each answered
    request it shrinks by :data:`DECAY`, never below :data:`START` (a per-second limit does not go away, and 1.1
-   seconds between request starts is rarely noticed).  The learned interval is kept in the model-facts cache
+   seconds between request starts is rarely noticed) nor below the seed.  The learned interval is kept in the model-facts cache
    (:func:`flextool.assistant.probes.store_interval`), so the next session starts paced;
-3. **seed**: the preset's documented free-plan interval (:attr:`~flextool.assistant.providers.Preset.
-   free_plan_interval`), only while the free plan is on;
+3. **seed** (:func:`flextool.assistant.providers.pacing_seed`): the preset's interval for every request
+   (:attr:`~flextool.assistant.providers.Preset.min_interval`, Mistral's 1.1 s), and while the free plan is on its
+   documented free-plan interval (:attr:`~flextool.assistant.providers.Preset.free_plan_interval`, OpenRouter's
+   free models); the learned interval never goes below it;
 4. none: no wait.
 
 A wait named by the provider (``retry-after``) is honoured by the retry countdown (:mod:`flextool.assistant.
@@ -179,7 +181,7 @@ class Pacer:
     @staticmethod
     def _spacing(state: _State) -> float:
         if state.learned is not None:
-            return state.learned
+            return max(state.learned, state.seed or 0.0)
         return state.seed or 0.0
 
     def _not_before(self, state: _State, now: float) -> float:
@@ -231,8 +233,9 @@ class Pacer:
         store: float | None = None
         with self._lock:
             state = self._state(key)
-            if state.learned is not None and state.learned > START:
-                state.learned = max(START, state.learned * DECAY)
+            floor = max(START, state.seed or 0.0)
+            if state.learned is not None and state.learned > floor:
+                state.learned = max(floor, state.learned * DECAY)
                 store = state.learned
             self._observe(state, headers)
         if store is not None:

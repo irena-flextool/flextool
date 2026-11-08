@@ -114,6 +114,7 @@ from flextool.assistant.llm_errors import (
 )
 from flextool.assistant.llm_retry import Pacing, RetryPolicy, call_with_retries
 from flextool.assistant.pacing import PROCESS_PACER, Pacer, pace_key
+from flextool.assistant.providers import pacing_seed
 from flextool.assistant.usage import add_usage, ledger_key
 
 if TYPE_CHECKING:
@@ -495,7 +496,7 @@ class Session:
         self.pacer = backend.pacer if self._paced_by_backend else (self._pacer or PROCESS_PACER)
         self.pace_key = pace_key(backend.origin)
         free = budget is not None and budget.free_tier
-        self.pacer.prepare(self.pace_key, preset.free_plan_interval if free else None)
+        self.pacer.prepare(self.pace_key, pacing_seed(preset, free))
 
     def _resume(self) -> None:
         """The resume rule: provider data is dropped (and ids re-mapped for another model) when the conversation

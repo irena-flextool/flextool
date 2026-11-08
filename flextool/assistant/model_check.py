@@ -98,7 +98,9 @@ def check_model(preset: Preset, backend: Backend, cancel: threading.Event, *, la
     paced_by_backend = bool(getattr(type(backend), "paces", False))
     pacer = backend.pacer if paced_by_backend else (pacer or PROCESS_PACER)  # type: ignore[attr-defined]
     key = pace_key(backend.origin)
-    pacer.prepare(key, preset.free_plan_interval if free_plan else None)
+    from flextool.assistant.providers import pacing_seed
+
+    pacer.prepare(key, pacing_seed(preset, free_plan))
     read_headers = getattr(backend, "rate_headers", None)
     pacing = Pacing(key, pacer, here=not paced_by_backend, label=label, free_plan=free_plan,
                     headers=read_headers if callable(read_headers) else (lambda: None))
