@@ -27,6 +27,7 @@ from flextool.gui.settings_io import (
     load_project_settings,
     save_global_settings,
     save_project_settings,
+    solver_defaults_dialog_text,
     solver_defaults_notice,
 )
 from flextool.gui.assistant.entry import AssistantEntry
@@ -1945,8 +1946,9 @@ class MainWindow(tk.Tk):
             logger.warning("%s", _notice)
             print(_notice, flush=True)
             save_project_settings(project_path, self.project_settings)
+            _dialog_text = solver_defaults_dialog_text(name)
             self.after_idle(
-                lambda: messagebox.showinfo("Solver settings updated", _notice, parent=self)
+                lambda: messagebox.showinfo("Solver settings updated", _dialog_text, parent=self)
             )
 
         # Create input source manager and scenario managers

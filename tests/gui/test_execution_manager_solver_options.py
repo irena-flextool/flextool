@@ -22,6 +22,7 @@ from flextool.gui.settings_io import (
     SETTINGS_FILENAME,
     load_project_settings,
     save_project_settings,
+    solver_defaults_dialog_text,
     solver_defaults_notice,
 )
 from flextool.run_options import OPTIONS, RunOptions
@@ -184,6 +185,14 @@ def test_the_notice_names_both_changes():
     assert "presolve is on" in text
     assert "solver_mip_gap" in text and "highs.opt" in text
     assert "my_project" in text
+
+
+def test_the_dialog_shows_the_notice_items_on_their_own_lines():
+    lines = solver_defaults_dialog_text("my_project").splitlines()
+    assert lines[0].startswith("Behaviour changed in ") and "presolve is on" in lines[0]
+    assert lines[1] == "Affected projects: my_project."
+    assert lines[2].startswith("This notice is shown once.")
+    assert " ".join(lines) == solver_defaults_notice("my_project")   # the same content as the printed line
 
 
 def test_settings_io_tolerates_stale_lagrangian_workers_key(tmp_path: Path):

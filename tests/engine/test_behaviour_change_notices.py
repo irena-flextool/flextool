@@ -53,3 +53,16 @@ def test_marker_json() -> None:
                   CHANGE: "77"})
     assert bc.marker_json("storage_fix_method_rewritten")["rewrites"] == [["n", "A", "fix_start", "x"]]
     assert bc.marker_json(CHANGE) == {}
+
+
+def test_display_text_puts_each_notice_in_its_own_paragraph() -> None:
+    first = bc.notice_parts(CHANGE, "storage nodes", ["a", "b"], "Detail sentence.")
+    second = bc.notice_parts("gui_solver_defaults", "projects", ["p"])
+    change = bc.BEHAVIOUR_CHANGES[CHANGE]
+    assert first[1:] == ["Affected storage nodes: a, b.", "Detail sentence.", change.silence]
+    assert first[0].endswith(change.summary)
+    # The printed line is unchanged: the items joined by spaces.
+    assert bc.notice_text(CHANGE, "storage nodes", ["a", "b"], "Detail sentence.") == " ".join(first)
+    text = bc.display_text([first, second])
+    assert text.split("\n\n") == ["\n".join(first), "\n".join(second)]
+    assert text.count("\n\n") == 1 and "Affected projects: p." in text.split("\n\n")[1].splitlines()

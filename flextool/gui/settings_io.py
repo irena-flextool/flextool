@@ -67,10 +67,19 @@ def _upgrade_solver_settings(data: dict, settings: ProjectSettings) -> bool:
 
 
 def solver_defaults_notice(project_name: str) -> str:
-    """The one-time notice shown when :func:`load_project_settings` updated a project's old solver settings."""
+    """The one-time notice shown when :func:`load_project_settings` updated a project's old solver settings, as
+    the line printed to the terminal and the log."""
     from flextool.engine._behaviour_changes import notice_text
 
     return notice_text("gui_solver_defaults", "projects", [project_name])
+
+
+def solver_defaults_dialog_text(project_name: str) -> str:
+    """The same notice for the dialog: its items (what changed, the project, how to keep the old behaviour) on
+    their own lines (:func:`flextool.engine._behaviour_changes.display_text`)."""
+    from flextool.engine._behaviour_changes import display_text, notice_parts
+
+    return display_text([notice_parts("gui_solver_defaults", "projects", [project_name])])
 
 
 def load_project_settings(
