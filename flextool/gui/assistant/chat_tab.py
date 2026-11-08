@@ -441,6 +441,11 @@ class ChatTab(ttk.Frame):
             self._set_state(WORKING, strings.STATUS_THINKING)
         elif isinstance(event, la.Notice):
             self.transcript.notice(event.text)
+        elif isinstance(event, la.Continuing):
+            from flextool.assistant.session import continuing_text
+
+            self.transcript.notice(continuing_text(event.part, event.of))
+            self._set_state(WORKING, strings.STATUS_THINKING)
 
     def _chat_ready(self, event: Any) -> None:
         self.conversation_id = event.conversation_id

@@ -553,3 +553,17 @@ def test_context_command_gives_the_window_caps_and_rhythm(project, fake_backends
     assert "Context: not known yet (FlexTool checks it before the first question)." in out
     assert ("Context: 128 000 tokens (assumed: this service does not report it); tool results up to 20 000 "
             "characters; earlier results shortened every 6 questions.") in out
+
+
+def test_a_continuation_is_one_line_in_the_terminal(project, fake_backends, echo_tool):
+    """P3 §4.7: at basic the fourth step goes on with a fresh context; -q prints one line on stderr and only the
+    final answer on stdout (the note is not shown)."""
+    models = Models([echo_call("a"), echo_call("b"), echo_call("c"), say("A note.\nKeep: 1"), say("Answer.")],
+                    fake_backends)
+    term = terminal()
+    argv = remote(project, "-q", "Q", "--tier", "basic", "--accept-data-notice")
+    assert chat_cli.main(argv, backend_factory=models, terminal=term) == 0
+    assert term.stdout.getvalue() == "Answer.\n"
+    assert term.stderr.getvalue().count("Continuing with a fresh context (part 2 of 3)…") == 1
+    assert "A note." not in term.stderr.getvalue()
+    assert len(models.requests) == 5

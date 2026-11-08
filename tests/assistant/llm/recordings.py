@@ -7,7 +7,8 @@ every committed file.
 
 A recording::
 
-    {"format": 1, "preset", "model", "base_url", "tier", "knobs", "recorded" (UTC date), "flextool_version",
+    {"format": 1, "preset", "model", "base_url", "tier", "max_continuations" (absent: 0, recorded before
+     continuations existed), "knobs", "recorded" (UTC date), "flextool_version",
      "facts": {"context_window", "loaded_context", "tools", "remote_host"},
      "questions": [{"question", "final_text", "ok", "rounds", "tools": [names of the tools called]}],
      "probes": [{"method", "path", "request", "status", "body"}],          # the model server's own answers
@@ -21,6 +22,7 @@ and thinking text stay: they are needed for the replay, and the project is synth
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 import string
@@ -301,7 +303,9 @@ def replay(record: dict[str, Any], project: Path, config_root: Path) -> tuple[li
     ctx.caps = result_caps_for(level, facts)
     store = open_store(config_root)
     conversation = store.new_conversation(ctx, backend.origin, level)
-    session = Session(ctx, backend, preset, conversation=conversation, caps=TurnCaps.for_tier(level), tier=level,
+    # The recording's own continuations: a recording made before they existed asked for an answer at the limit.
+    caps = dataclasses.replace(TurnCaps.for_tier(level), max_continuations=int(record.get("max_continuations", 0)))
+    session = Session(ctx, backend, preset, conversation=conversation, caps=caps, tier=level,
                       store=store, ledger=None, facts=facts, route=route, sleep=lambda _seconds: False)
     texts = []
     try:

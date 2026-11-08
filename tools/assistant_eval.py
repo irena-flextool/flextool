@@ -379,7 +379,7 @@ def run_cell(project: Path, qset: scoring.QuestionSet, question: scoring.Questio
                         if local and loaded and r.reported is not None and r.reported >= TRUNCATION_SHARE * loaded)
         turns.append({
             "user": red(text), "answer": red(result.text), "tool_calls": calls, "rounds": result.rounds,
-            "calls": result.calls, "stop": "end" if result.ok else (result.error.code if result.error else "error"),
+            "calls": result.calls, "continuations": result.continuations, "stop": "end" if result.ok else (result.error.code if result.error else "error"),
             "notices": [red(n) for n in notices],
             "error": ({"code": result.error.code, "message": red(message_for(result.error, "terminal"))}
                       if result.error is not None else None),

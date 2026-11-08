@@ -174,6 +174,8 @@ def message_to_json(m: Message) -> dict[str, Any]:
     out["turn"] = m.turn
     if m.compacted:
         out["compacted"] = True
+    if m.kind:
+        out["kind"] = m.kind
     return out
 
 
@@ -188,7 +190,8 @@ def message_from_json(d: dict[str, Any]) -> Message:
     return Message(role=role, text=str(d.get("text", "")), tool_calls=calls, tool_call_id=d.get("tool_call_id"),
                    tool_name=d.get("tool_name"), is_error=bool(d.get("is_error", False)),
                    provider_extra=dict(d.get("provider_extra") or {}), origin=_origin(d.get("origin")),
-                   turn=int(d.get("turn", 0)), compacted=bool(d.get("compacted", False)))
+                   turn=int(d.get("turn", 0)), compacted=bool(d.get("compacted", False)),
+                   kind=str(d.get("kind") or ""))
 
 
 def first_question(messages: list[Message] | list[dict[str, Any]]) -> str:

@@ -7,6 +7,7 @@ is checked against the window it must fit, with the session's own estimate and c
 """
 from __future__ import annotations
 
+import dataclasses
 import json
 import random
 import threading
@@ -108,10 +109,11 @@ def check_fit(session: Session, backend: FakeBackend, window: int) -> None:
 
 # --- calls per question and the level's tools -------------------------------------------------------------------
 def test_the_fourth_call_gets_the_limit_and_then_no_tools(tmp_path, tools):
-    """Basic: three calls a question (P3 §4.1).  Two rounds of two calls: the fourth is refused, the next request
-    is the tool-less one."""
+    """Basic: three calls a question (P3 §4.1).  Two rounds of two calls: the fourth is refused, and in the last
+    part (no continuation left, P3 §4.7) the next request is the tool-less one."""
+    caps = dataclasses.replace(TurnCaps.for_tier("small"), max_continuations=0)
     session, backend, events = session_for(tmp_path, [
-        calls(call(seed=1), call(seed=2)), calls(call(seed=3), call(seed=4)), say("What I found.")])
+        calls(call(seed=1), call(seed=2)), calls(call(seed=3), call(seed=4)), say("What I found.")], caps=caps)
     result = ask(session, events)
     assert result.ok and result.text == "What I found." and result.calls == 3
     assert tools.ran == ["rows"] * 3
@@ -142,17 +144,17 @@ def test_a_tool_of_another_level_is_refused_before_the_registry(tmp_path, monkey
 
 # --- the pre-send fit -------------------------------------------------------------------------------------------
 def test_the_fit_at_16k_shortens_earlier_results_and_never_exceeds_the_window(tmp_path, tools):
-    """Basic at a 16 384-token loaded context, with the turn-boundary compaction switched off (every 100
-    questions): the fit itself shortens earlier turns' results, once with a notice, and no request exceeds 95 % of
-    the window."""
+    """Advanced (the full history, P3 §4.7) at a 16 384-token loaded context, with the turn-boundary compaction
+    switched off (every 100 questions): the fit itself shortens earlier turns' results, once with a notice, and no
+    request exceeds 95 % of the window.  (Basic sends no earlier results at all.)"""
     window = 16_384
-    b = resolve_budget("small", window, "loaded", local=True)
+    b = resolve_budget("large", window, "loaded", local=True)
     script = []
     for turn in range(4):
         script += [calls(call(seed=10 * turn + 1), call(seed=10 * turn + 2)), calls(call(seed=10 * turn + 3)),
                    say(f"Answer {turn}.")]
-    session, backend, events = session_for(tmp_path, script, b=b, facts=ModelFacts(loaded_context=window),
-                                           every=100)
+    session, backend, events = session_for(tmp_path, script, tier="large", b=b,
+                                           facts=ModelFacts(loaded_context=window), every=100)
     for turn in range(4):
         assert ask(session, events, f"question {turn}").ok
     check_fit(session, backend, window)

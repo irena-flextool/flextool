@@ -250,6 +250,11 @@ def strip_context_block(text: str) -> str:
     return text.lstrip()[found.end():].lstrip() if found else text
 
 
+def remove_context_blocks(text: str) -> str:
+    """*text* without any context block (a question merged with an unanswered one may hold two)."""
+    return "\n\n".join(part.strip() for part in _CONTEXT_BLOCK.split(text) if part.strip())
+
+
 def last_context_block(texts: list[str]) -> str | None:
     """The last context block in *texts* (user messages, oldest first), or ``None``."""
     for text in reversed(texts):

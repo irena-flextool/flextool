@@ -170,7 +170,8 @@ def record(preset_id: str, model: str, *, base_url: str | None, tier: str | None
     ctx.caps = result_caps_for(level, facts)
     store = open_store(work / "config")
     conversation = store.new_conversation(ctx, backend.origin, level)
-    session = Session(ctx, backend, preset, conversation=conversation, caps=TurnCaps.for_tier(level), tier=level,
+    caps = TurnCaps.for_tier(level)
+    session = Session(ctx, backend, preset, conversation=conversation, caps=caps, tier=level,
                       store=store, ledger=None, facts=facts, route=final_route)
     questions: list[dict[str, Any]] = []
     try:
@@ -205,6 +206,7 @@ def record(preset_id: str, model: str, *, base_url: str | None, tier: str | None
         "model": model,
         "base_url": recordings.CUSTOM_BASE_URL if preset.id == "openai_compatible" else address,
         "tier": level,
+        "max_continuations": caps.max_continuations,
         "knobs": dict(conn.knobs),
         "recorded": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "flextool_version": importlib.metadata.version("flextool"),

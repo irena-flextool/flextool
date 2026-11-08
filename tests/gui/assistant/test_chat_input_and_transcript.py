@@ -343,3 +343,27 @@ def test_a_reopened_chat_shows_context_lines_and_compacted_results(windows, back
     text.mark_set("insert", f"{text.tag_ranges('context_1')[0]} + 2 chars")
     key(text, "<Return>")
     assert tab.transcript.is_open("context_1")
+
+
+def test_a_continuation_shows_one_line_and_the_note_stays_out(windows, backends):
+    """P3 §4.7: a basic question at its three steps goes on with a fresh context; the chat shows one line for it,
+    never the note, and a reopened chat shows the same line instead of the session's own messages."""
+    save_provider(LOCAL)
+    note = "A note for the next part.\nKeep: none"
+    backends.add([tool_call(text="a"), tool_call(text="b"), tool_call(text="c"), say(note), say("Final answer.")])
+    window = windows.open()
+    tab = ask(window, "question")
+    wait_idle(window, tab)
+    line = "Continuing with a fresh context (part 2 of 3)…"
+    contents = tab.transcript.contents()
+    assert contents.count(line) == 1 and "Final answer." in contents and "A note for" not in contents
+    # The saved conversation, rendered as a reopened chat renders it.
+    from flextool.assistant.store import message_from_json
+    from tests.assistant.gui_support.worker_rig import messages_on_disk
+
+    saved = [message_from_json(m) for m in messages_on_disk(windows.project, tab.conversation_id)]
+    assert [m.kind for m in saved].count("continuation") == 1
+    tab.transcript.render_history(saved, tab.provider)
+    again = tab.transcript.contents()
+    assert again.count(line) == 1 and "Final answer." in again and "You  question" in again
+    assert "A note for" not in again and "This question continues" not in again

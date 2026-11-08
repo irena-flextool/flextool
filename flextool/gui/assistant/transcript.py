@@ -375,11 +375,18 @@ class Transcript(ttk.Frame):
         """A saved conversation: questions, answers (Markdown), tool calls closed with their stored result, the
         context blocks hidden behind one line each."""
         from flextool.assistant import prompt
-        from flextool.assistant.session import SESSION_MESSAGES
+        from flextool.assistant.session import SESSION_MESSAGES, continuation_part, continuing_text
 
         self.clear()
         results = {m.tool_call_id: m for m in messages if m.role == "tool"}
         for m in messages:
+            if m.kind == "continuation":
+                part = continuation_part(m)
+                if part is not None:
+                    self.notice(continuing_text(*part))
+                continue
+            if m.kind in ("note_request", "note"):
+                continue                # the session's own exchange; the next part shows what came of it
             if m.role == "user":
                 if m.text.startswith(SESSION_MESSAGES["limit"]):
                     continue

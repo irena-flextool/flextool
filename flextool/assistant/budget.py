@@ -21,6 +21,16 @@ limits; :func:`resolve_budget` combines a level with the window (P3 §3.3):
 In the chat the result caps are both the defaults and the most a call may ask for.  Before every request whose
 window is known (or the assumed local one) the session checks :func:`fits`: the request and the answer must stay
 within 95 % of the window.  Standard library only (and :mod:`flextool.assistant.caps`).
+
+**History and continuations** (P3 §4.7): a level's ``history`` says what each request carries of the earlier
+questions — ``"answers"``: each earlier question with its final answer as plain text (at most ``history_turns`` of
+them; ``None`` = all), ``"full"``: the whole conversation (with the compaction above).  A question whose step or tool
+call limit is reached goes on with a fresh context at most ``max_continuations`` times.
+
+| | basic | standard | advanced |
+|---|---|---|---|
+| history | the last 2 answers | every answer | full |
+| continuations (free plan) | 2 (1) | 1 (0) | 0 (0) |
 """
 from __future__ import annotations
 
@@ -88,8 +98,9 @@ class TokenCorrection:
 
 
 def _message_parts(m: Message) -> tuple[int, int]:
-    """(text tokens, JSON tokens) of one message."""
-    if m.role == "tool":
+    """(text tokens, JSON tokens) of one message.  The first message of a fresh context carries tool results, so
+    it counts as JSON (the larger estimate)."""
+    if m.role == "tool" or m.kind == "continuation":
         return 0, approx_tokens(m.text, "json")
     text = approx_tokens(m.text, "text") if m.text else 0
     calls = sum(approx_tokens(f"{c.name}{c.raw_arguments}", "json") for c in m.tool_calls)
@@ -144,20 +155,26 @@ class LevelBudget:
     max_output_tokens: int      # per request, clamped to a quarter of a known window
     planned_calls: int          # the tool results one question is planned to need (fit_caps)
     min_window: int
+    max_continuations: int = 0  # fresh-context continuations of one question (P3 §4.7)
+    history: str = "full"       # "answers" or "full": what a request carries of the earlier questions
+    history_turns: int | None = None    # "answers": how many earlier questions (None: all)
 
 
 #: Starting values that the calibration informs (P3 §4.1, §7.6).  The prefix budgets are above the estimate of
 #: the shipped instructions and tool schemas (about 4 260 / 8 300 / 8 390 tokens; P3 §4.1 drafted 3 500 / 7 500 /
 #: 8 500 before the schemas were final).
+#: The history and the continuations are the owner's of 2026-11-08 (P3 §4.7).
 LEVEL_BUDGETS: dict[str, LevelBudget] = {
-    "small": LevelBudget(4_500, 3, 3, 3, 4_096, 3, 12_288),
-    "medium": LevelBudget(8_500, 8, 16, 8, 8_000, 6, 32_768),
-    "large": LevelBudget(9_000, 12, 30, 8, 16_000, 8, 65_536),
+    "small": LevelBudget(4_500, 3, 3, 3, 4_096, 3, 12_288, max_continuations=2, history="answers", history_turns=2),
+    "medium": LevelBudget(8_500, 8, 16, 8, 8_000, 6, 32_768, max_continuations=1, history="answers"),
+    "large": LevelBudget(9_000, 12, 30, 8, 16_000, 8, 65_536, max_continuations=0, history="full"),
 }
-#: The free plan: fewer requests per question (P3 §4.6).
+#: The free plan: fewer requests per question (P3 §4.6, §4.7).
 FREE_TIER_BUDGETS: dict[str, LevelBudget] = {
-    level: dataclasses.replace(b, max_rounds=rounds, max_calls_per_turn=per_turn, max_calls_per_round=per_round)
-    for (level, b), (rounds, per_turn, per_round) in zip(LEVEL_BUDGETS.items(), ((3, 3, 3), (4, 8, 4), (6, 12, 6)))
+    level: dataclasses.replace(b, max_rounds=rounds, max_calls_per_turn=per_turn, max_calls_per_round=per_round,
+                               max_continuations=continuations)
+    for (level, b), (rounds, per_turn, per_round, continuations) in zip(
+        LEVEL_BUDGETS.items(), ((3, 3, 3, 1), (4, 8, 4, 0), (6, 12, 6, 0)))
 }
 #: The result caps preset of each level when the window allows it.
 LEVEL_CAPS: dict[str, str] = {"small": "small", "medium": "medium", "large": "large"}
@@ -175,6 +192,12 @@ WINDOW_CLASSES: tuple[tuple[int, int, int, str | None], ...] = (
 
 #: The OpenRouter model ids whose free plan is on by itself end in this (P3-O2).
 FREE_SUFFIX = ":free"
+
+
+def history_policy(tier: str) -> tuple[str, int | None]:
+    """(history, history turns) of a level (internal name): what a request carries of the earlier questions."""
+    b = LEVEL_BUDGETS[tier]
+    return b.history, b.history_turns
 
 
 def window_class(window: int) -> tuple[int, int, str | None]:

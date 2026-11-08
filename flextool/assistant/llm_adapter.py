@@ -56,6 +56,12 @@ class Message:
     origin: Origin | None = None
     turn: int = 0
     compacted: bool = False
+    kind: str = ""                  # "" or one of MESSAGE_KINDS: the session's own messages of a continuation
+
+
+#: The kinds of the session's own messages of a continuation (P3 §4.7): the request for the model's note, the note,
+#: and the first message of a fresh context.  Backends send them like any other message.
+MESSAGE_KINDS = ("note_request", "note", "continuation")
 
 
 @dataclass(frozen=True)
@@ -191,8 +197,16 @@ class Notice:
     text: str
 
 
+@dataclass(frozen=True)
+class Continuing:
+    """A question goes on with a fresh context: *part* of at most *of* (P3 §4.7)."""
+
+    part: int
+    of: int
+
+
 Event = (TextDelta | Thinking | ToolCallStarted | Waiting | RetryWait | ToolRunning | ToolDone | ToolWaiting
-         | UsageUpdate | Notice)
+         | UsageUpdate | Notice | Continuing)
 OnEvent = Callable[[Event], None]
 
 

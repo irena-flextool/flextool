@@ -436,7 +436,7 @@ def test_boundary_compaction_only_at_boundary_turns(rig, tools):
     script = []
     for turn in range(1, 6):
         script += [p.calls(call(text=f"t{turn}")), p.say(f"answer {turn}")]
-    r = rig(script, every=2, keep=1)
+    r = rig(script, every=2, keep=1, tier="advanced")           # the full history (P3 §4.7)
     for turn in range(1, 6):
         assert r.ask(f"q{turn}").ok
     reqs = r.backend.requests
@@ -464,7 +464,7 @@ def test_prefix_oracle_across_overflow_and_rejected_history(rig, tools):
     ctx = ErrorContext(provider="Custom endpoint", model="fake-model")
     r = rig([p.calls(call()), p.say("one"),
              p.calls(call()), make_error(ContextTooLong, "context", ctx), p.calls(call()), p.say("two"),
-             p.calls(call()), make_error(HistoryRejected, "history", ctx), p.say("three")])
+             p.calls(call()), make_error(HistoryRejected, "history", ctx), p.say("three")], tier="advanced")
     assert r.ask("q1").ok
     result = r.ask("q2")
     assert result.ok
@@ -491,7 +491,7 @@ def test_still_too_long_after_the_overflow_recovery(rig):
 
 def test_resume_with_changed_instructions_or_model(rig, tools):
     p = Producer([])
-    first = rig([p.calls(call()), p.say("one")])
+    first = rig([p.calls(call()), p.say("one")], tier="advanced")      # the full history (P3 §4.7)
     assert first.ask("q1").ok
     conv = first.session.conversation
     assert conv.system_hash and conv.tools_hash and any(m.provider_extra for m in conv.messages)
@@ -502,7 +502,7 @@ def test_resume_with_changed_instructions_or_model(rig, tools):
     reopened.system_hash = "changed"
     ids = [c.id for m in reopened.messages for c in m.tool_calls]
     backend = FakeBackend([p.say("two")])
-    second = rig([], conversation=reopened, backend=backend, ctx=first.ctx)
+    second = rig([], conversation=reopened, backend=backend, ctx=first.ctx, tier="advanced")
     assert second.ask("q2").ok
     req = backend.requests[0]
     assert all(not m.provider_extra for m in req.messages)
@@ -512,7 +512,7 @@ def test_resume_with_changed_instructions_or_model(rig, tools):
 
     # Another model: ids re-mapped (9 characters, call and result alike) and provider data dropped.
     other = FakeBackend([say("three")], origin=("fake", "http://127.0.0.1:9/v1", "other-model"))
-    third = rig([], conversation=second.session.conversation, backend=other, ctx=first.ctx)
+    third = rig([], conversation=second.session.conversation, backend=other, ctx=first.ctx, tier="advanced")
     assert third.ask("q3").ok
     req = other.requests[0]
     call_ids = [c.id for m in req.messages for c in m.tool_calls]

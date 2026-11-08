@@ -36,6 +36,7 @@ from flextool.assistant import endpoint, prompt
 from flextool.assistant.llm_adapter import (
     Backend,
     Connection,
+    Continuing,
     Event,
     Notice,
     RetryWait,
@@ -349,6 +350,10 @@ class Renderer:
                 self._line(f"· {ev.name} {args_text(ev.arguments)} → {outcome} ({_seconds(ev.seconds)})")
             elif isinstance(ev, Notice):
                 self._line(ev.text)
+            elif isinstance(ev, Continuing):
+                from flextool.assistant.session import continuing_text
+
+                self._line(continuing_text(ev.part, ev.of))
 
     def note(self, text: str) -> None:
         """A line of the chat itself (not of the model)."""
