@@ -780,3 +780,44 @@ def test_inflow_scaling_synthetic_new_step_base_steps():
         assert got.keys() == want.keys()
         for key, v in want.items():
             assert got[key] == pytest.approx(v, rel=1e-12), (k, key)
+
+
+def test_inflow_scaling_synthetic_absorbed_steps_get_no_constant():
+    """On a solve with ``new_stepduration`` the constant inflow −3 of ``propC`` is in the combined steps t1, t3
+    (−6 each); the original steps t2, t4 they absorb get 0, and u1 — a step of another timeline, not combined —
+    keeps the constant.  By hand: Σ_t = −6 + 0 − 6 + 0 − 3 = −15, so the scale_in_proportion multiplier is
+    annual_flow / (|Σ| / timeline years) = 50 / (15 / 1) = 3.333…  Before: t2 and t4 counted −3 again (Σ −21).
+    Twins agree."""
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+
+    provider = FlexDataProvider()
+
+    def put(parent: str, stem: str, df: pl.DataFrame) -> None:
+        provider.put(f"{parent}/{stem}", df)
+        provider.put(stem, df)
+
+    put("input", "node", pl.DataFrame({"node": ["propC"]}))
+    put("solve_data", "period_in_use_set", pl.DataFrame({"period": ["d1"]}))
+    put("solve_data", "time", pl.DataFrame({"time": ["t1", "t2", "t3", "t4", "u1"]}))
+    put("input", "p_node", pl.DataFrame({"node": ["propC"], "param": ["inflow"], "value": [-3.0]}))
+    put("solve_data", "pt_node_inflow", pl.DataFrame({
+        "node": ["propC", "propC"], "time": ["t1", "t3"], "value": [-6.0, -6.0]}))
+    put("solve_data", "node__inflow_method", pl.DataFrame({"node": ["propC"], "method": ["scale_in_proportion"]}))
+    put("solve_data", "pdNode", pl.DataFrame({
+        "node": ["propC"], "param": ["annual_flow"], "period": ["d1"], "value": [50.0]}))
+    put("solve_data", "complete_period_share_of_year_calc", pl.DataFrame({"period": ["d1"], "value": [0.5]}))
+    put("solve_data", "p_timeline_duration_in_years", pl.DataFrame({"timeline": ["tlA"], "value": [1.0]}))
+    put("solve_data", "period__timeline_set", pl.DataFrame({"period": ["d1"], "timeline": ["tlA"]}))
+    put("solve_data", "complete_time_in_use_set", pl.DataFrame({"time": ["t1", "t3"]}))
+    put("solve_data", "steps_complete_solve", pl.DataFrame({"period": ["d1", "d1"], "time": ["t1", "t3"]}))
+    put("solve_data", "new_step_base_steps", pl.DataFrame({
+        "time": ["t1", "t2", "t3", "t4"], "new_step": ["t1", "t1", "t3", "t3"], "value": [2.0] * 4}))
+
+    inp, sdd = Path("input"), Path("solve_data")
+    legacy = _compute_inflow_scaling_frames(inp, sdd, provider=provider)
+    vec = _compute_inflow_scaling_frames_vectorized(inp, sdd, provider=provider)
+    _gate_dicts(legacy, vec, "synthetic-absorbed")
+    pti = {r[1]: float(r[2]) for r in vec["ptNode_inflow.csv"].iter_rows()}
+    assert pti == {"t1": -6.0, "t2": 0.0, "t3": -6.0, "t4": 0.0, "u1": -3.0}
+    mult = {(r[0], r[1]): float(r[2]) for r in vec["period_flow_proportional_multiplier.csv"].iter_rows()}
+    assert mult[("propC", "d1")] == pytest.approx(50.0 / 15.0, rel=1e-12)

@@ -334,12 +334,15 @@ def _compute_inflow_scaling_frames(
         solve_data_dir / "complete_hours_in_period.csv", provider=provider,
     )
     # Original time steps per solve step (``new_stepduration``); empty → 1.
-    n_of, _absorbed = read_new_step_base_steps(solve_data_dir, provider=provider)
+    # ``absorbed``: original steps combined into another solve step.
+    n_of, absorbed = read_new_step_base_steps(solve_data_dir, provider=provider)
 
     # ── ptNode_inflow{n in node, t in time} ───────────────────────────
     # Per legacy mod L1237: pass-through pt_node_inflow when (n, t) is
     # in the explicit set, else the per-node scalar default from
-    # p_node[(n, "inflow")] (typically 0).
+    # p_node[(n, "inflow")] (typically 0).  On a coarsened solve an
+    # absorbed original step gets 0: its energy (the constant included) is
+    # in the solve step that combines it.
     p_node_inflow_default = {
         n: p_node.get((n, "inflow"), 0.0) for n in nodes
     }
@@ -349,6 +352,8 @@ def _compute_inflow_scaling_frames(
         for t in time_set:
             if (n, t) in node_time_inflow:
                 pti[(n, t)] = pt_node_inflow.get((n, t), 0.0)
+            elif t in absorbed:
+                pti[(n, t)] = 0.0
             else:
                 pti[(n, t)] = default
 
@@ -769,7 +774,7 @@ def _compute_inflow_scaling_frames_vectorized(
     hours_d = _read_keyed_float(
         solve_data_dir / "complete_hours_in_period.csv", provider=provider,
     )
-    n_of, _absorbed = read_new_step_base_steps(solve_data_dir, provider=provider)
+    n_of, absorbed = read_new_step_base_steps(solve_data_dir, provider=provider)
 
     # ── Shared order frames (node list order, period order, time order) ─
     node_eo = pl.DataFrame(
@@ -800,10 +805,23 @@ def _compute_inflow_scaling_frames_vectorized(
         schema={"node": pl.Utf8, "v_dflt": pl.Float64},
     )
 
+    # Original steps absorbed into another solve step (coarsened solve).
+    absorbed_lk = pl.DataFrame(
+        {"time": sorted(absorbed), "__abs": [True] * len(absorbed)},
+        schema={"time": pl.Utf8, "__abs": pl.Boolean},
+    )
+
     def _dense_inflow(explicit: dict[tuple[str, str], float],
-                      explicit_set: frozenset) -> pl.DataFrame:
+                      explicit_set: frozenset,
+                      zero_absorbed: bool = False) -> pl.DataFrame:
         """The (node × time) grid: the explicit value where (n, t) is set,
-        else the node's scalar default (``value_f``)."""
+        else the node's scalar default (``value_f``); with
+        ``zero_absorbed`` an absorbed original step that is not set gets 0
+        (its energy is in the solve step that combines it)."""
+        default = pl.col("v_dflt").fill_null(0.0)
+        if zero_absorbed and absorbed:
+            default = (pl.when(pl.col("__abs").fill_null(False))  # noqa: FBT003
+                       .then(pl.lit(0.0)).otherwise(default))
         # pt_node_inflow lookup frame (value present when (n, t) explicit).
         pti_lk = pl.DataFrame(
             {"node": [k[0] for k in explicit],
@@ -818,22 +836,24 @@ def _compute_inflow_scaling_frames_vectorized(
              "__nti": [True] * len(explicit_set)},
             schema={"node": pl.Utf8, "time": pl.Utf8, "__nti": pl.Boolean},
         )
-        return (
+        grid = (
             nt_grid
             .join(nti_lk, on=["node", "time"], how="left")
             .join(pti_lk, on=["node", "time"], how="left")
             .join(dflt_lk, on="node", how="left")
-            .with_columns(
-                pl.when(pl.col("__nti").fill_null(False))  # noqa: FBT003
-                # explicit: pt_node_inflow.get((n,t), 0.0)
-                .then(pl.col("v_pti").fill_null(0.0))
-                # else: per-node scalar default
-                .otherwise(pl.col("v_dflt").fill_null(0.0))
-                .alias("value_f"),
-            )
+        )
+        if zero_absorbed and absorbed:
+            grid = grid.join(absorbed_lk, on="time", how="left")
+        return grid.with_columns(
+            pl.when(pl.col("__nti").fill_null(False))  # noqa: FBT003
+            # explicit: pt_node_inflow.get((n,t), 0.0)
+            .then(pl.col("v_pti").fill_null(0.0))
+            # else: per-node scalar default (0 on an absorbed step)
+            .otherwise(default)
+            .alias("value_f"),
         )
 
-    pti_df = _dense_inflow(pt_node_inflow, node_time_inflow)
+    pti_df = _dense_inflow(pt_node_inflow, node_time_inflow, zero_absorbed=True)
     out["ptNode_inflow.csv"] = _ordered_value_frame(
         pti_df, ("node", "time", "value"), ["__eo", "__to"],
     )

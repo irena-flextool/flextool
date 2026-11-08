@@ -709,3 +709,25 @@ def test_scale_to_annual_flow_constant_on_coarse_steps(tmp_path_factory) -> None
     expected = -1.0e6 * 144.0 / 8760.0
     assert sum(v for _t, v in coarse) == pytest.approx(expected, rel=1e-9)
     assert sum(v for _t, v in fine) == pytest.approx(expected, rel=1e-9)
+
+
+def test_constant_inflow_in_proportion_on_coarse_steps(tmp_path_factory) -> None:
+    """Constant west inflow −500 scaled with scale_in_proportion to annual_flow 5e6 on the 2day solve: the
+    multiplier divides by the inflow of the whole 72-step timeline, −500 × 72 = −36 000 over 72/8760 years, so it
+    is 5e6 × (72/8760) / 36 000 = 1.141552511 with and without new_stepduration 2, and the 48 steps sum to
+    −1.141552511 × 500 × 48 = −27 397.26 in both.  Before: with new_stepduration the original steps combined into
+    a new step counted the constant again (Σ −54 000, multiplier 0.7610)."""
+    vals = [["node", "west", "inflow", b64(-500.0, "float")],
+            ["node", "west", "inflow_method", b64("scale_in_proportion", "str")],
+            ["node", "west", "annual_flow", b64(5.0e6, "float")]]
+    expected_mult = 5.0e6 * (72.0 / 8760.0) / 36000.0
+    for alt, extra, n_steps in (("cip_1h", [], 48),
+                                ("cip_2h", [["solve", "y2020_2day_dispatch", "new_stepduration", b64(2.0, "float")]],
+                                 24)):
+        step = _last(_run(tmp_path_factory, alt, vals + extra, BATTERY))
+        df = utf8(step.flex_data_provider.get("solve_data/period_flow_proportional_multiplier"))
+        mult = {r[0]: float(r[-1]) for r in df.rows()}
+        assert mult["west"] == pytest.approx(expected_mult, rel=1e-12), alt
+        rows = _inflow_dt(step)
+        assert len(rows) == n_steps
+        assert sum(v for _t, v in rows) == pytest.approx(-expected_mult * 500.0 * 48, rel=1e-9), alt
