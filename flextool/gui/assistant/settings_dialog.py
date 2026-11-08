@@ -832,6 +832,7 @@ class AssistantSettingsDialog(_AssistantDialog):
     def save(self) -> None:
         """[Save]: check the values, ask about fewer kept days, then write the settings in the background."""
         from flextool.assistant.net import BaseUrlRefused, check_base_url
+        from flextool.assistant.providers import model_id
 
         if self.saving:
             return
@@ -868,7 +869,7 @@ class AssistantSettingsDialog(_AssistantDialog):
         if preset is not None:
             provider.preset = preset.id
             provider.base_url = base_url
-            provider.model = self.model_var.get().strip() or None
+            provider.model = model_id(preset.id, self.model_var.get()) or None
             provider.tier = self.chosen_level()
         provider.knobs = dict(self._knobs)
         provider.key_storage = "file" if self.storage_var.get() == "file" else "keyring"

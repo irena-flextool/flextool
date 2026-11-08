@@ -225,22 +225,39 @@ def is_cloud_name(model: str) -> bool:
     return model.endswith((":cloud", "-cloud"))
 
 
+def model_id(preset_id: str, name: str) -> str:
+    """The id FlexTool stores, checks and sends for the model *name* of the preset *preset_id*: one rule for the
+    model list, the saved setting, the probe and the request.  Gemini's OpenAI-compatible list gives
+    ``models/gemini-2.5-flash`` where its chat endpoint is documented with ``gemini-2.5-flash``, so the prefix
+    is dropped; every other preset uses its list's ids as they are (spaces around them dropped)."""
+    name = name.strip()
+    if preset_id == "gemini":
+        name = name.removeprefix("models/")
+    return name
+
+
 def model_entries(preset_id: str, items: Iterable[Mapping[str, Any]]) -> list[ModelEntry]:
-    """The usable chat models of a service's model list (the raw items of its list endpoint), sorted by id."""
+    """The usable chat models of a service's model list (the raw items of its list endpoint), sorted by id.
+    Anthropic's retired models (``lifecycle``) are left out and its deprecated ones noted: they are closed to new
+    accounts."""
     out: dict[str, ModelEntry] = {}
     for item in items:
-        model_id = str(item.get("id") or item.get("name") or "")
-        if not model_id:
+        model_id_ = model_id(preset_id, str(item.get("id") or item.get("name") or ""))
+        if not model_id_:
             continue
         note = None
-        context = item.get("context_length") or item.get("max_input_tokens")
-        if preset_id == "openai" and _NOT_CHAT.search(model_id):
+        lifecycle = item.get("lifecycle")
+        if lifecycle == "retired":
+            continue
+        if lifecycle == "deprecated":
+            note = "deprecated: closed to new accounts"
+        context = next((item[k] for k in ("context_length", "max_input_tokens", "max_context_length")
+                        if isinstance(item.get(k), int) and not isinstance(item.get(k), bool) and item[k] > 0), None)
+        if preset_id == "openai" and _NOT_CHAT.search(model_id_):
             continue
         if preset_id == "openrouter" and "tools" not in (item.get("supported_parameters") or []):
             continue
-        if preset_id == "gemini":
-            model_id = model_id.removeprefix("models/")
-        if preset_id == "ollama" and is_cloud_name(model_id):
+        if preset_id == "ollama" and is_cloud_name(model_id_):
             note = "runs on Ollama cloud"
-        out[model_id] = ModelEntry(model_id, note, int(context) if isinstance(context, int) else None)
+        out[model_id_] = ModelEntry(model_id_, note, int(context) if isinstance(context, int) else None)
     return [out[k] for k in sorted(out)]

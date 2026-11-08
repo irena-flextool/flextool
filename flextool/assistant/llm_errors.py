@@ -49,7 +49,8 @@ MESSAGES: dict[str, str] = {
     "tools": ("The model {model} does not support tool calls, so the assistant cannot read your case data. Pick a "
               "model that supports tools."),
     "tools_ollama": "The model's page in the Ollama library lists 'tools' when it does.",
-    "model": "{provider} has no model named {model}. See the available ones with flextool-assistant --list-models.",
+    "model": ("{provider} did not find the model {model} (its answer: {text}). See the available ones with "
+              "flextool-assistant --list-models."),
     "connection_local": "Nothing answers at {host}:{port}. Start {server_name} and try again.",
     "connection_remote": "Could not reach {host}. Check the internet connection or proxy settings.",
     "connection_retry": "Could not reach {host}. Trying again in {seconds} seconds.",
@@ -83,7 +84,8 @@ GUI_MESSAGES: dict[str, str] = {
              "settings."),
     "no_key": ("No key found for {provider}. Paste a key in the assistant settings, or set the environment "
                "variable {env_name}."),
-    "model": "{provider} has no model named {model}. Pick one from the list in the assistant settings.",
+    "model": ("{provider} did not find the model {model} (its answer: {text}). A listed model can still be closed "
+              "to your account: pick another one from the list in the assistant settings."),
     "context": ("The conversation is still too long for {model}. Start a new chat; \u201cNew chat with summary\u201d "
                 "keeps a short summary of this one."),
     "internal": ("The assistant stopped because of an internal fault ({type}). Please report it; the details are "
@@ -100,6 +102,8 @@ REFUSAL_OTHER = "the provider's usage rules"
 
 #: Longest provider text quoted in an error message.
 MAX_PROVIDER_TEXT = 500
+#: What a message quoting the provider says when the provider gave no text.
+NO_PROVIDER_TEXT = "no reason given"
 
 
 @dataclass
@@ -259,7 +263,8 @@ ERROR_CLASSES: tuple[type[LLMError], ...] = (
 def make_error(cls: type[LLMError], key: str, ctx: ErrorContext, **kwargs: Any) -> LLMError:
     """An error of *cls* with the message *key* for *ctx*; *kwargs* go to :class:`LLMError`."""
     extra = kwargs.pop("message_fields", {})
-    fields = {**ctx.fields(), **extra}
+    # The provider's text, for the messages that quote it, when the caller has none.
+    fields = {"text": NO_PROVIDER_TEXT, **ctx.fields(), **extra}
     err = cls(MESSAGES[key].format(**fields), provider=ctx.provider, local=ctx.local, fields=fields, **kwargs)
     err.message_key = key
     return err
@@ -490,7 +495,8 @@ def classify_status(status: int | None, body: object, headers: Any, ctx: ErrorCo
         err.args = (err.user_message,)
         return err
     if effective == 404 or "not_found_error" in types or "NOT_FOUND" in info.statuses:
-        return make(ModelNotFound, "model")
+        # The provider's own words: a model in its list can still be retired or closed to new accounts.
+        return make(ModelNotFound, "model", message_fields={"text": _provider_text(ctx, info, fallback_text).rstrip(".")})
     if phrase_status and (any(p in text for p in _CONTEXT_PHRASES) or ("exceeds" in text and "context" in text)):
         return make(ContextTooLong, "context")
     if effective in (400, None) and (any(p in text for p in _TOOL_PHRASES)

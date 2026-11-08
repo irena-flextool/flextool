@@ -48,7 +48,7 @@ from flextool.assistant.llm_adapter import (
     ToolWaiting,
     Waiting,
 )
-from flextool.assistant.providers import PRESETS, Preset, knob_reports, relaxed_knobs
+from flextool.assistant.providers import PRESETS, Preset, knob_reports, model_id, relaxed_knobs
 
 if TYPE_CHECKING:
     from flextool.assistant.context import AssistantContext
@@ -493,7 +493,8 @@ def connection_for(choice: Choice, route: Route | None = None) -> Connection:
     key, source, _note = resolve_key(choice)
     if route is None:
         route = endpoint.route_for(choice.preset, choice.base_url, model=choice.model)
-    return Connection(base_url=choice.base_url, model=choice.model or "", api_key=key, key_source=source,
+    return Connection(base_url=choice.base_url, model=model_id(choice.preset.id, choice.model or ""), api_key=key,
+                      key_source=source,
                       knobs=dict(choice.knobs), route=route)
 
 

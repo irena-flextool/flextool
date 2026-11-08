@@ -199,8 +199,8 @@ def test_messages_name_the_route_model_and_key_source():
         "that supports tools. The model's page in the Ollama library lists 'tools' when it does.")
     model = classify_anthropic(anthropic_exception(_handler(
         404, {"type": "error", "error": {"type": "not_found_error", "message": "model: x"}})), ctx)
-    assert model.user_message == ("Example AI has no model named example-model. See the available ones with "
-                                  "flextool-assistant --list-models.")
+    assert model.user_message == ("Example AI did not find the model example-model (its answer: model: x). See "
+                                  "the available ones with flextool-assistant --list-models.")
 
 
 def test_redirect_names_the_target_and_other_errors_quote_the_provider():

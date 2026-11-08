@@ -568,7 +568,7 @@ class AssistantWorker:
         from flextool.assistant.llm_adapter import Connection
         from flextool.assistant.llm_errors import NoKey, make_error, message_for
         from flextool.assistant.net import BaseUrlRefused, check_base_url, proxy_for
-        from flextool.assistant.providers import PRESETS
+        from flextool.assistant.providers import PRESETS, model_id
         from flextool.assistant.settings import load_settings
 
         settings = load_settings(self.config_root)
@@ -596,7 +596,7 @@ class AssistantWorker:
         key, source, note = keys.resolve_key(preset, base_url, config_root=self.config_root)
         self._check(job)
         route = endpoint.route_for(preset, base_url, model=provider.model)
-        conn = Connection(base_url=base_url, model=provider.model, api_key=key or "",
+        conn = Connection(base_url=base_url, model=model_id(preset.id, provider.model), api_key=key or "",
                           key_source=source.describe(preset) if key else "", knobs=dict(provider.knobs),
                           route=route)
         if preset.key_required and not key:
