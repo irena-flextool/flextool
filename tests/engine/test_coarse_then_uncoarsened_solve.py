@@ -46,6 +46,9 @@ def test_uncoarsened_solve_after_a_coarsened_one_equals_the_solve_alone(tmp_path
         _solves(["y2020_fullYear_dispatch", "y2020_2day_dispatch"]),
         ["solve", "y2020_fullYear_dispatch", "new_stepduration", b64(2.0, "float")]])
     alone_inflow, alone_mult = _two_day(tmp_path_factory, "ctu_alone", SCALING + [_solves(["y2020_2day_dispatch"])])
+    # Alone: annual_flow × period share / |Σ inflow| = 1e6 · (48/8760) / 29 103 = 0.188278.
+    assert len(alone_mult) == 1 and alone_mult[0][:2] == ("west", "p2020")
+    assert float(alone_mult[0][2]) == pytest.approx(1.0e6 * 48 / (8760 * 29103.0), rel=1e-12)
     assert after_mult == alone_mult
     assert len(after_inflow) == len(alone_inflow) >= 48
     assert after_inflow == alone_inflow
