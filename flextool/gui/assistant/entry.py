@@ -159,8 +159,10 @@ class AssistantEntry:
             return False
         return True
 
-    def open_chat(self) -> None:
-        """Open the project's chat window (the welcome first when it has not been seen), or raise it."""
+    def open_chat(self, *, welcome: bool = True) -> None:
+        """Open the project's chat window (the welcome first when it has not been seen and *welcome* is true), or
+        raise it.  The welcome's [Open chat] from the settings path opens it with *welcome* false: the welcome was
+        just closed, and recording that it was seen may still be under way."""
         if not self.available or self._opening:
             return
         name = getattr(self.main, "current_project", None)
@@ -175,11 +177,15 @@ class AssistantEntry:
             return
         if not self._import_first_use():
             return
+        if not welcome:
+            self._open_window(name)
+            return
         from flextool.gui.assistant.notices import with_welcome
 
         self._opening = True
         try:
             shown = with_welcome(self.main, lambda: self._open_window(name),
+                                 open_chat=lambda: self._open_window(name),
                                  open_settings=lambda: self._open_window(name, settings=True),
                                  config_root=self.config_root)
         except Exception:
@@ -246,7 +252,8 @@ class AssistantEntry:
         from flextool.gui.assistant.notices import with_welcome
 
         owner = parent or self.main
-        with_welcome(owner, lambda: self._show_settings(owner), config_root=self.config_root)
+        with_welcome(owner, lambda: self._show_settings(owner), open_chat=lambda: self.open_chat(welcome=False),
+                     config_root=self.config_root)
 
     def _show_settings(self, parent: tk.Misc) -> None:
         from flextool.gui.assistant.settings_dialog import AssistantSettingsDialog

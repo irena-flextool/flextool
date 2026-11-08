@@ -1,10 +1,11 @@
 """The AI assistant's small dialogs (P2 §8): the welcome, the data notice and the chat rename, and what every
 modal dialog of the assistant shares.
 
-* :class:`WelcomeDialog` — the owner-approved "How the AI assistant works" (§8.2).  The first open of the chat
-  window or of the settings shows it first (:func:`with_welcome`); any close records that it was seen (on a short
-  daemon thread), then the requested window opens.  "How this works" in the chat window shows it again without
-  recording anything.
+* :class:`WelcomeDialog` — the owner-approved "How the AI assistant works" (§8.2), with [Open chat]
+  [Open settings] [Close].  The first open of the chat window or of the settings shows it first
+  (:func:`with_welcome`); any close records that it was seen (on a short daemon thread), then the chosen window
+  opens: the chat, the settings, or none for Close.  [Open chat] stays disabled until the settings have been saved
+  with a provider.  "How this works" in the chat window shows it again without recording anything.
 * :class:`ConsentDialog` — the data notice before the first question goes to a remote route (§8.3).  Focus starts
   on Cancel, Return does not accept, and the accept button ignores activation for the first 500 ms after the
   dialog is mapped, so a key still being typed in the chat cannot accept it.
@@ -241,11 +242,14 @@ class _AssistantDialog(tk.Toplevel):
 
 
 class WelcomeDialog(_AssistantDialog):
-    """"How the AI assistant works".  *on_close(action)* gets ``"settings"`` or ``"close"``; with *record* the
-    first close also records that the welcome was seen (``endpoint.mark_welcome_seen``, on a daemon thread)."""
+    """"How the AI assistant works".  *on_close(action)* gets ``"chat"``, ``"settings"`` or ``"close"``; with
+    *record* the first close also records that the welcome was seen (``endpoint.mark_welcome_seen``, on a daemon
+    thread).  [Open chat] is enabled when *chat_enabled* is true; ``None`` asks the saved settings whether they
+    name a provider (:func:`provider_configured`)."""
 
     def __init__(self, parent: tk.Misc, on_close: Callable[[str], None] | None = None, *, record: bool = True,
-                 config_root: Path | None = None, mark_seen: Callable[[], None] | None = None) -> None:
+                 config_root: Path | None = None, mark_seen: Callable[[], None] | None = None,
+                 chat_enabled: bool | None = None) -> None:
         super().__init__(parent, strings.WELCOME_TITLE)
         self._on_close = on_close
         self._record = record
@@ -253,8 +257,10 @@ class WelcomeDialog(_AssistantDialog):
         self._mark_seen = mark_seen
         self._done = False
         symbol = settings_symbol(self)
-        # Kept on the dialog: a named font is deleted when its last Python reference goes.
+        # Kept on the dialog and deleted when it is destroyed, on the Tk thread: a Font left to the garbage
+        # collector can be deleted on another thread, which Tcl does not allow (the call blocks).
         self.fonts = welcome_fonts(self)
+        self.bind("<Destroy>", self._drop_fonts, add="+")
         self.wrap = self.fonts.body.measure("0") * 60
         gap = self.fonts.body.metrics("linespace") // 2
         self.title_label = ttk.Label(self.body, text=strings.WELCOME_TITLE, font=self.fonts.title,
@@ -275,11 +281,31 @@ class WelcomeDialog(_AssistantDialog):
         self.settings_button = ttk.Button(row, text=strings.WELCOME_OPEN_SETTINGS,
                                           command=lambda: self.finish("settings"))
         self.settings_button.pack(side="right", padx=(0, self.cw))
+        self.chat_enabled = provider_configured(config_root) if chat_enabled is None else chat_enabled
+        self.chat_button = ttk.Button(row, text=strings.WELCOME_OPEN_CHAT, command=lambda: self.finish("chat"),
+                                      state="normal" if self.chat_enabled else "disabled")
+        self.chat_button.pack(side="right", padx=(0, self.cw))
+        self.chat_tooltip = None
+        if not self.chat_enabled:
+            from flextool.gui.hover_tooltip import attach_tooltip
+
+            # A disabled button still gets <Enter>: the tooltip says why it is grey.
+            self.chat_tooltip = attach_tooltip(self.chat_button, strings.WELCOME_CHAT_NEEDS_SETTINGS)
         self.bind("<Return>", lambda _e: self.finish("close"))
         self.show()
 
     def initial_focus(self) -> tk.Misc | None:
         return self.close_button
+
+    def _drop_fonts(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        if event.widget is not self:
+            return
+        for font in self.fonts:
+            font.delete_font = False        # Font.__del__ deletes nothing more
+            try:
+                self.tk.call("font", "delete", font.name)
+            except tk.TclError:
+                pass
 
     def text(self) -> str:
         """The shown text, as :func:`strings.welcome_text` builds it (for the tests)."""
@@ -292,7 +318,7 @@ class WelcomeDialog(_AssistantDialog):
         self.finish("close")
 
     def finish(self, action: str) -> None:
-        if self._done:
+        if self._done or (action == "chat" and not self.chat_enabled):
             return
         self._done = True
         if self._record:
@@ -353,21 +379,33 @@ def welcome_needed(config_root: Path | None = None) -> bool:
         return True
 
 
-def with_welcome(parent: tk.Misc, then: Callable[[], None], *, open_settings: Callable[[], None] | None = None,
-                 config_root: Path | None = None, needed: bool | None = None) -> WelcomeDialog | None:
-    """Run *then* — after the welcome when it has not been seen.  "Open settings" in the welcome runs
-    *open_settings* instead (else *then*).  Returns the dialog when one is shown."""
+def provider_configured(config_root: Path | None = None) -> bool:
+    """Whether the assistant settings have been saved with a provider (a small file read, bounded)."""
+    from flextool.assistant.settings import load_settings
+
+    try:
+        return bool(load_settings(config_root).provider.preset)
+    except Exception:  # noqa: BLE001 — unreadable settings: as if none were saved
+        return False
+
+
+def with_welcome(parent: tk.Misc, then: Callable[[], None], *, open_chat: Callable[[], None] | None = None,
+                 open_settings: Callable[[], None] | None = None, config_root: Path | None = None,
+                 needed: bool | None = None, chat_enabled: bool | None = None) -> WelcomeDialog | None:
+    """Run *then* — or, when the welcome has not been seen, show it: [Open chat] runs *open_chat*, [Open
+    settings] *open_settings* (each *then* when not given), Close, Escape and the window button run nothing.
+    Returns the dialog when one is shown."""
     if not (welcome_needed(config_root) if needed is None else needed):
         then()
         return None
 
     def closed(action: str) -> None:
-        if action == "settings" and open_settings is not None:
-            open_settings()
-        else:
-            then()
+        if action == "chat":
+            (open_chat or then)()
+        elif action == "settings":
+            (open_settings or then)()
 
-    return WelcomeDialog(parent, closed, record=True, config_root=config_root)
+    return WelcomeDialog(parent, closed, record=True, config_root=config_root, chat_enabled=chat_enabled)
 
 
 class ConsentDialog(_AssistantDialog):

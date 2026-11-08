@@ -89,8 +89,10 @@ def test_the_welcome_is_the_approved_text(host):
     try:
         assert dialog.text() == WELCOME
         assert dialog.title() == "How the AI assistant works"
-        assert [str(b.cget("text")) for b in (dialog.settings_button, dialog.close_button)] == ["Open settings",
-                                                                                               "Close"]
+        buttons = (dialog.chat_button, dialog.settings_button, dialog.close_button)
+        assert [str(b.cget("text")) for b in buttons] == ["Open chat", "Open settings", "Close"]
+        dialog.update_idletasks()
+        assert [b.winfo_x() for b in buttons] == sorted(b.winfo_x() for b in buttons)      # in this order
     finally:
         dialog.finish("close")
 
@@ -122,22 +124,23 @@ def test_the_welcome_comes_before_the_chat_and_close_records_it(host, connects):
     assert opened == []
     assert not endpoint.welcome_seen()
     dialog.close_button.invoke()
-    assert opened == ["chat"]
+    pump(host, timeout=0.2)
+    assert opened == []                             # Close opens nothing
     assert _seen_soon()
     assert connects == []
     # Seen once: the next open goes straight to the chat.
     assert with_welcome(host, lambda: opened.append("again")) is None
-    assert opened == ["chat", "again"]
+    assert opened == ["again"]
 
 
-def test_the_welcome_comes_before_the_settings_and_can_open_them(host):
+def test_escape_closes_the_welcome_and_opens_nothing(host):
     opened: list[str] = []
     dialog = with_welcome(host, lambda: opened.append("chat"), open_settings=lambda: opened.append("settings"))
     pump(host, lambda: dialog.grab.held)
     key(dialog, "<Escape>")
-    pump(host, lambda: opened)
-    assert opened == ["chat"]
     assert _seen_soon()
+    pump(host, timeout=0.2)
+    assert opened == []
 
 
 def test_open_settings_from_the_welcome(host):
@@ -146,6 +149,38 @@ def test_open_settings_from_the_welcome(host):
                           needed=True)
     dialog.settings_button.invoke()
     assert opened == ["settings"]
+
+
+def test_open_chat_waits_for_a_provider_in_the_settings(host):
+    """No provider saved (always so at the very first open): [Open chat] is grey, says why and does nothing."""
+    opened: list[str] = []
+    dialog = with_welcome(host, lambda: opened.append("then"), open_chat=lambda: opened.append("chat"),
+                          needed=True)
+    try:
+        assert dialog.chat_button.instate(["disabled"]) and not dialog.chat_enabled
+        assert dialog.chat_tooltip is not None and dialog.chat_tooltip._text == "Check the settings first."
+        dialog.finish("chat")                       # as a click that got through: still nothing
+        assert opened == [] and dialog.winfo_exists()
+        assert not dialog.settings_button.instate(["disabled"])
+    finally:
+        dialog.close_button.invoke()
+    assert opened == []
+
+
+def test_open_chat_with_a_saved_provider(host):
+    save_provider(REMOTE)
+    opened: list[str] = []
+    dialog = with_welcome(host, lambda: opened.append("then"), open_chat=lambda: opened.append("chat"),
+                          open_settings=lambda: opened.append("settings"), needed=True)
+    assert not dialog.chat_button.instate(["disabled"]) and dialog.chat_tooltip is None
+    dialog.chat_button.invoke()
+    assert opened == ["chat"]
+    # The link shows the same buttons, both enabled.
+    again = WelcomeDialog(host, record=False)
+    try:
+        assert not again.chat_button.instate(["disabled"]) and not again.settings_button.instate(["disabled"])
+    finally:
+        again.finish("close")
 
 
 def test_the_link_shows_the_welcome_without_recording(host):

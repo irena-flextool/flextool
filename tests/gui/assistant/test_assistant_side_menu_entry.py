@@ -231,3 +231,67 @@ def test_settings_from_the_chat_window_and_save_reaches_the_chats(main: FakeMain
         assert entry.window is window
     finally:
         entry.close_window()
+
+
+def _seen_soon(timeout: float = 3.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while not endpoint.welcome_seen():
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.02)
+    return True
+
+
+def _welcome_over(window: tk.Misc):
+    from flextool.gui.assistant.notices import WelcomeDialog
+
+    shown = [w for w in window.winfo_children() if isinstance(w, WelcomeDialog)]
+    assert len(shown) == 1
+    return shown[0]
+
+
+def test_the_welcome_buttons_from_each_entry_path(main: FakeMain, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The chat entry, ⚙ and "How this works" show the same [Open chat] [Open settings] [Close]: Open chat grey
+    until a provider is saved, Close opens nothing, each button opens what it names."""
+    from flextool.gui.assistant import notices
+    from flextool.gui.assistant.settings_dialog import AssistantSettingsDialog
+
+    entry = AssistantEntry(main, window_options={"backend_factory": Backends().factory, "probe": no_probe,
+                                                 "work_area": lambda _m: WORK_AREA})
+    try:
+        # The very first open, from the chat entry: no provider saved.
+        entry.open_chat()
+        welcome = _welcome_over(main)
+        assert welcome.chat_button.instate(["disabled"])
+        welcome.close_button.invoke()
+        assert entry.window is None and entry.settings_dialog is None and not entry._opening
+        assert _seen_soon()
+        # ⚙ as if the welcome were not recorded yet: the same buttons; Open settings opens the settings.
+        monkeypatch.setattr(notices, "welcome_needed", lambda _root=None: True)
+        entry.open_settings()
+        welcome = _welcome_over(main)
+        assert welcome.chat_button.instate(["disabled"])
+        welcome.settings_button.invoke()
+        assert isinstance(entry.settings_dialog, AssistantSettingsDialog) and entry.window is None
+        entry.settings_dialog.destroy()
+        # A provider is saved: ⚙'s welcome opens the chat (without a second welcome).
+        save_provider(LOCAL)
+        entry.open_settings()
+        welcome = _welcome_over(main)
+        assert not welcome.chat_button.instate(["disabled"])
+        welcome.chat_button.invoke()
+        window = entry.window
+        assert window is not None
+        monkeypatch.undo()
+        # "How this works" in the chat window: both buttons enabled, Open settings opens the settings.
+        link = window.show_welcome()
+        assert not link.chat_button.instate(["disabled"]) and not link.settings_button.instate(["disabled"])
+        link.settings_button.invoke()
+        assert isinstance(entry.settings_dialog, AssistantSettingsDialog)
+        assert entry.settings_dialog.master is window
+        entry.settings_dialog.destroy()
+        link = window.show_welcome()
+        link.chat_button.invoke()
+        assert entry.window is window and entry.settings_dialog is None
+    finally:
+        entry.close_window()

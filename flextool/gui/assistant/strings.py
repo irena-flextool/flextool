@@ -227,6 +227,9 @@ WELCOME_SECTIONS: tuple[tuple[str, str], ...] = (
      "problems in several steps, such as why a run has slack. You can choose a lower level in Settings."),
 )
 WELCOME_OPEN_SETTINGS = "Open settings"
+WELCOME_OPEN_CHAT = "Open chat"
+#: The tooltip of [Open chat] while no provider has been saved in the settings.
+WELCOME_CHAT_NEEDS_SETTINGS = "Check the settings first."
 
 
 def welcome_text(symbol: str = SETTINGS_SYMBOL) -> str:

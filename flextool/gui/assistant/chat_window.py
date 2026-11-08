@@ -969,7 +969,22 @@ class ChatWindow(tk.Toplevel):
             self._open_settings(self)
 
     def show_welcome(self) -> WelcomeDialog:
-        return WelcomeDialog(self, record=False)
+        """"How this works": the welcome again, recording nothing; [Open chat] comes back to this window's input,
+        [Open settings] opens the settings as the ⚙ button does."""
+        return WelcomeDialog(self, self._welcome_closed, record=False, config_root=self.config_root)
+
+    def _welcome_closed(self, action: str) -> None:
+        if self.closing:
+            return
+        if action == "settings":
+            self.open_settings()
+        elif action == "chat":
+            try:
+                self.deiconify()
+                self.lift()
+                self.focus_input()
+            except tk.TclError:
+                pass
 
     # --- open chats (P2-O14) -----------------------------------------------------------------------------------
     def open_chat_ids(self) -> tuple[list[str], str | None]:
