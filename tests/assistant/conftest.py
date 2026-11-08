@@ -1,4 +1,4 @@
-"""Every assistant test runs with the user cache folder in its own tmp folder and a fresh docs store.
+"""Every assistant test runs with the user config and cache folders in its own tmp folder and a fresh docs store.
 
 ``assistant_project`` is a FlexTool project in a folder whose path has a space, ``#``, ``%25`` and ``ä`` (the
 characters that break an unencoded SQLite URI): ``input_sources/tests.sqlite`` is built from
@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import shutil
-import sys
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
@@ -21,16 +20,25 @@ FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
 PROJECT_DIR_NAME = "G #2 ä%25x project"
 
 
+def _user_home_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """``FLEXTOOL_USER_HOME`` of this test: in this process and in the processes it starts.  At teardown it goes
+    back to the session's temp folder (``tests/user_dirs_guard.py``), never to the real user folders."""
+    from flextool.user_dirs import USER_HOME_ENV
+
+    home = tmp_path / "user_home"
+    monkeypatch.setenv(USER_HOME_ENV, str(home))
+    return home
+
+
 @pytest.fixture(autouse=True)
 def user_cache_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """``platformdirs.user_cache_dir`` points into ``tmp_path``: no test writes the real user cache.  The model
-    facts the probes keep in this process are forgotten too (they stand for the same cache)."""
-    import platformdirs
-
+    """FlexTool's user cache folder is in ``tmp_path``: no test writes the real user cache.  The model facts the
+    probes keep in this process are forgotten too (they stand for the same cache)."""
     from flextool.assistant import docs_store, probes
+    from flextool.user_dirs import user_cache_dir
 
-    cache = tmp_path / "user_cache"
-    monkeypatch.setattr(platformdirs, "user_cache_dir", lambda *args, **kwargs: str(cache))
+    _user_home_in_tmp(tmp_path, monkeypatch)
+    cache = user_cache_dir()
     docs_store.reset()
     probes._RECENT.clear()
     yield cache
@@ -40,20 +48,14 @@ def user_cache_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterat
 
 @pytest.fixture(autouse=True)
 def user_config_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
-    """The user config folder (assistant settings, conversations, usage, key file) is in ``tmp_path``, in this
-    process through ``platformdirs`` and in the processes a test starts through the variables ``platformdirs``
-    reads: no test reads or writes the real one."""
-    import platformdirs
+    """FlexTool's user config folder (assistant settings, conversations, usage, key file) is in ``tmp_path``, in
+    this process and in the processes a test starts: no test reads or writes the real one."""
+    from flextool.assistant import _files
 
-    config = tmp_path / "user_config"
-    config.mkdir()
-    monkeypatch.setattr(platformdirs, "user_config_dir", lambda *args, **kwargs: str(config / "flextool"))
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(config))
-    monkeypatch.setenv("WIN_PD_OVERRIDE_APPDATA", str(config))
-    monkeypatch.setenv("WIN_PD_OVERRIDE_LOCAL_APPDATA", str(config))
-    if sys.platform == "darwin":
-        monkeypatch.setenv("HOME", str(config))     # ~/Library/Application Support in a started process
-    return config / "flextool" / "assistant"
+    _user_home_in_tmp(tmp_path, monkeypatch)
+    root = _files.config_root()
+    root.parent.mkdir(parents=True, exist_ok=True)
+    return root
 
 
 @pytest.fixture(autouse=True)

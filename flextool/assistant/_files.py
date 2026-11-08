@@ -75,9 +75,9 @@ class LockTimeout(TimeoutError):
 # --- where -------------------------------------------------------------------------------------------------------
 def config_root() -> Path:
     """``<user config folder>/flextool/assistant``: the folder of every assistant file."""
-    import platformdirs
+    from flextool.user_dirs import user_config_dir
 
-    return Path(platformdirs.user_config_dir("flextool", appauthor=False)) / "assistant"
+    return user_config_dir() / "assistant"
 
 
 def project_key(path: Path | str) -> str:

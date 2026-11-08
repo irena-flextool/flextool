@@ -47,6 +47,17 @@ from pathlib import Path
 
 import pytest
 
+# No test touches the real user folders of FlexTool or the system keyring: this process (each xdist worker too)
+# keeps FlexTool's user files under its own temp folder, and so does every process a test starts (it inherits
+# the variables).  Set before any flextool import; ``tests/user_dirs_guard.py`` explains, and the session check
+# in ``pytest_sessionfinish`` fails a run that changed the real folders anyway.
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
+import user_dirs_guard  # noqa: E402
+
+_REAL_USER_DIRS = user_dirs_guard.real_user_dirs()
+_TEST_USER_HOME = user_dirs_guard.redirect()
+
 TEST_DIR = Path(__file__).parent
 FIXTURES_DIR = TEST_DIR / "fixtures"
 
@@ -128,6 +139,37 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "tests/_ci_shard.py). The N shards partition the unsharded selection."
         ),
     )
+
+
+_REAL_USER_DIRS_KEY = pytest.StashKey[user_dirs_guard.Snapshot]()
+
+
+def _runs_the_session(config: pytest.Config) -> bool:
+    """This process is the one that runs the session (not an xdist worker)."""
+    return not hasattr(config, "workerinput")
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    if _runs_the_session(session.config):
+        session.config.stash[_REAL_USER_DIRS_KEY] = user_dirs_guard.snapshot(_REAL_USER_DIRS)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """The guard of ``tests/user_dirs_guard.py``: a run that changed FlexTool's real user folders fails."""
+    before = session.config.stash.get(_REAL_USER_DIRS_KEY, None)
+    if before is None:
+        return
+    changed = user_dirs_guard.changes(before, user_dirs_guard.snapshot(_REAL_USER_DIRS))
+    if changed:
+        shown = "\n  ".join(changed[:40]) + ("\n  ..." if len(changed) > 40 else "")
+        sys.stderr.write(
+            "\nERROR: the tests changed FlexTool's real user folders (every test must keep its user files under "
+            f"FLEXTOOL_USER_HOME; a FlexTool window used during the run changes them too):\n  {shown}\n")
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    user_dirs_guard.remove(_TEST_USER_HOME)
 
 
 def pytest_configure(config: pytest.Config) -> None:

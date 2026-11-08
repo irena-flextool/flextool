@@ -267,22 +267,23 @@ def test_the_welcome_buttons_from_each_entry_path(main: FakeMain, monkeypatch: p
         assert entry.window is None and entry.settings_dialog is None and not entry._opening
         assert _seen_soon()
         # ⚙ as if the welcome were not recorded yet: the same buttons; Open settings opens the settings.
-        monkeypatch.setattr(notices, "welcome_needed", lambda _root=None: True)
-        entry.open_settings()
-        welcome = _welcome_over(main)
-        assert welcome.chat_button.instate(["disabled"])
-        welcome.settings_button.invoke()
-        assert isinstance(entry.settings_dialog, AssistantSettingsDialog) and entry.window is None
-        entry.settings_dialog.destroy()
-        # A provider is saved: ⚙'s welcome opens the chat (without a second welcome).
-        save_provider(LOCAL)
-        entry.open_settings()
-        welcome = _welcome_over(main)
-        assert not welcome.chat_button.instate(["disabled"])
-        welcome.chat_button.invoke()
-        window = entry.window
-        assert window is not None
-        monkeypatch.undo()
+        # Only this patch ends with the block; the test's own user folders stay in place.
+        with monkeypatch.context() as patched:
+            patched.setattr(notices, "welcome_needed", lambda _root=None: True)
+            entry.open_settings()
+            welcome = _welcome_over(main)
+            assert welcome.chat_button.instate(["disabled"])
+            welcome.settings_button.invoke()
+            assert isinstance(entry.settings_dialog, AssistantSettingsDialog) and entry.window is None
+            entry.settings_dialog.destroy()
+            # A provider is saved: ⚙'s welcome opens the chat (without a second welcome).
+            save_provider(LOCAL)
+            entry.open_settings()
+            welcome = _welcome_over(main)
+            assert not welcome.chat_button.instate(["disabled"])
+            welcome.chat_button.invoke()
+            window = entry.window
+            assert window is not None
         # "How this works" in the chat window: both buttons enabled, Open settings opens the settings.
         link = window.show_welcome()
         assert not link.chat_button.instate(["disabled"]) and not link.settings_button.instate(["disabled"])

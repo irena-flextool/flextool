@@ -394,9 +394,9 @@ def _probe_lmstudio(conn: Connection, ctx: ErrorContext, cancel: threading.Event
 # --- OpenRouter ---------------------------------------------------------------------------------------------------
 def cache_root() -> Path:
     """``<user cache dir of flextool>/assistant``."""
-    import platformdirs
+    from flextool.user_dirs import user_cache_dir
 
-    return Path(platformdirs.user_cache_dir("flextool")) / "assistant"
+    return user_cache_dir() / "assistant"
 
 
 def _cached_models(base_url: str, now: float) -> list[dict] | None:

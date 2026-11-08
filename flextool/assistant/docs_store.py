@@ -114,9 +114,9 @@ def cache_key(markdown_root: Path, package_dir: Path = PACKAGE_DIR, version: str
 
 def cache_root() -> Path:
     """``<user cache dir of flextool>/assistant_docs``."""
-    import platformdirs
+    from flextool.user_dirs import user_cache_dir
 
-    return Path(platformdirs.user_cache_dir("flextool")) / CACHE_SUBDIR
+    return user_cache_dir() / CACHE_SUBDIR
 
 
 # ---------------------------------------------------------------------------

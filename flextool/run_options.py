@@ -326,6 +326,9 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         # --- dev: run record ------------------------------------------------------------------------------
         _dev("FLEXTOOL_RUN_LOG_OWNER", "set by the GUI / flextool-run for the engine it starts: they write _run.log "
              "from its output pipe; the engine removes it"),
+        # --- dev: user folders ----------------------------------------------------------------------------
+        _dev("FLEXTOOL_USER_HOME", "folder in place of FlexTool's user config and cache folders (config/, cache/); "
+             "the test suite sets it for every test"),
         # --- dev: process level ---------------------------------------------------------------------------
         _dev("POLARS_ENGINE_AFFINITY", "polars engine; FlexTool sets in-memory, the only engine it verifies"),
         _dev("_RJEM_MALLOC_CONF", "jemalloc settings of polars' allocator; FlexTool sets page decay"),
