@@ -357,6 +357,52 @@ def test_model_list_from_the_backend_and_its_failures(open_dialog, host, monkeyp
     assert dialog.models_label.cget("text") == "Store a key first to see the model list."
 
 
+def test_the_model_list_is_kept_per_provider_and_address(open_dialog, host, monkeypatch, fake_backends,
+                                                         user_config_in_tmp, user_cache_in_tmp):
+    """The last fetched list shows at once in the next dialog, with its date; the saved model is the selected
+    one before any fetch; the list is fetched off the Tk thread; the saved file holds no key."""
+    import datetime
+
+    from flextool.assistant.settings import ProviderSettings, Settings, save_settings
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test-environment")
+    backend = FakeBackend([], models=[ModelEntry("model-a"), ModelEntry("model-b")])
+    fake_backends.append(backend)
+    threads: list[threading.Thread] = []
+
+    def factory(preset, conn):  # noqa: ANN001
+        threads.append(threading.current_thread())
+        return backend
+
+    dialog = open_dialog(backend_factory=factory)
+    dialog.select_preset("openai")
+    assert list(dialog.model_box["values"]) == [] and dialog.models_label.cget("text") == ""
+    dialog.refresh_models()
+    pump(host, lambda: dialog.models_label.cget("text") == "2 models")
+    assert threads and threads[0] is not threading.main_thread()
+    saved_file = user_cache_in_tmp / "assistant" / "model_lists.json"
+    raw = saved_file.read_text(encoding="utf-8")
+    assert "sk-test-environment" not in raw
+    data = json.loads(raw)
+    assert list(data["lists"]) == ["openai|https://api.openai.com/v1"]
+    assert data["lists"]["openai|https://api.openai.com/v1"]["ids"] == ["model-a", "model-b"]
+    dialog.close()
+
+    save_settings(Settings(provider=ProviderSettings(preset="openai", model="model-b")), user_config_in_tmp)
+    again = open_dialog(backend_factory=factory)
+    today = datetime.date.today()
+    assert list(again.model_box["values"]) == ["model-a", "model-b"]
+    assert again.models_label.cget("text") == (
+        f"2 models (list from {today.day}.{today.month}.{today.year}; Refresh to update)")
+    assert again.model_box.get() == "model-b" and again.model_box.current() == 1
+    assert len(threads) == 1                                   # nothing fetched to show it
+    # Another provider, or another address of the same one, has its own list (none saved here).
+    again.select_preset("ollama")
+    assert list(again.model_box["values"]) == [] and again.models_label.cget("text") == ""
+    again.select_preset("openai")
+    assert list(again.model_box["values"]) == ["model-a", "model-b"]
+
+
 def test_partly_on_the_processor_hint(open_dialog, host):
     probes.remember_facts("ollama", "http://localhost:11434/v1", "big-model:70b",
                           ModelFacts(loaded_context=32768, partly_on_cpu=True))

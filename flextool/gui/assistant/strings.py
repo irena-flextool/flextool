@@ -160,6 +160,8 @@ MODELS_LOADING = "Fetching the model list…"
 MODELS_COUNT = "{n} models"
 MODELS_ONE = "1 model"
 MODELS_NONE = "{provider} lists no models."
+#: The model list saved from an earlier fetch: "{count}" is MODELS_COUNT or MODELS_ONE, "{date}" D.M.YYYY.
+MODELS_SAVED = "{count} (list from {date}; Refresh to update)"
 MODELS_NEED_KEY = "Store a key first to see the model list."
 MODELS_FAILED_INTERNAL = "The model list could not be fetched ({type}). Type the model name instead."
 SET_LEVEL = "Level"

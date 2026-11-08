@@ -135,3 +135,21 @@ def test_a_listed_model_the_provider_does_not_serve_quotes_its_answer():
     assert gui == ("Google Gemini did not find the model gemini-2.5-flash (its answer: This model "
                    "models/gemini-2.5-flash is no longer available to new users). A listed model can still be "
                    "closed to your account: pick another one from the list in the assistant settings.")
+
+
+# --- the lists the settings keep -----------------------------------------------------------------------------------
+def test_saved_lists_are_kept_per_preset_and_address(tmp_path):
+    from flextool.assistant import model_list_cache as cache
+
+    assert cache.load_all(tmp_path) == {}
+    cache.remember("ollama", "http://LocalHost:11434/v1/", ["a:latest"], now=100.0, root=tmp_path)
+    cache.remember("ollama", "http://otherhost:11434/v1", ["b:latest"], now=200.0, root=tmp_path)
+    lists = cache.load_all(tmp_path)
+    assert cache.lookup(lists, "ollama", "http://localhost:11434/v1") == cache.SavedList(("a:latest",), 100.0)
+    assert cache.lookup(lists, "ollama", "http://otherhost:11434/v1").ids == ("b:latest",)
+    assert cache.lookup(lists, "lmstudio", "http://localhost:11434/v1") is None
+    # A damaged file loses the saved lists only, and the next fetch writes it again.
+    (tmp_path / cache.FILE).write_text("{not json", encoding="utf-8")
+    assert cache.load_all(tmp_path) == {}
+    cache.remember("ollama", "http://localhost:11434/v1", ["c:latest"], now=300.0, root=tmp_path)
+    assert list(cache.load_all(tmp_path)) == ["ollama|http://localhost:11434/v1"]

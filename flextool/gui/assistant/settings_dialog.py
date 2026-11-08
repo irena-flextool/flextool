@@ -35,6 +35,7 @@ or the provider or address changed since (critique m16).  The saved settings fil
 from __future__ import annotations
 
 import copy
+import datetime
 import logging
 import queue
 import threading
@@ -116,6 +117,10 @@ class AssistantSettingsDialog(_AssistantDialog):
         if provider.preset and provider.base_url:
             self._addresses[provider.preset] = provider.base_url
         self._level_choice: str | None = provider.tier
+        from flextool.assistant import model_list_cache
+
+        #: The model lists of earlier fetches, by preset and address (one small file, read once).
+        self._saved_lists = model_list_cache.load_all()
         self._level_values: list[str | None] = [None]
         self._free_choice: bool | None = self._settings.free_tier
         self._has_key: bool | None = None
@@ -350,6 +355,7 @@ class AssistantSettingsDialog(_AssistantDialog):
         self.model_box["values"] = ()
         self.models_label.configure(text="")
         self.model_var.set(self._models.get(preset.id, "") if preset is not None else "")
+        self._show_saved_list()
         self._build_knobs()
         self._update_route()
         self._check_key()
@@ -386,7 +392,9 @@ class AssistantSettingsDialog(_AssistantDialog):
             return
         self._addresses[preset.id] = self._address()
         self.generation += 1
+        self.model_box["values"] = ()
         self.models_label.configure(text="")
+        self._show_saved_list()
         self._check_key()
         self._model_changed()
 
@@ -680,7 +688,11 @@ class AssistantSettingsDialog(_AssistantDialog):
                 self._post(generation, self._show_models_text,
                            strings.MODELS_FAILED_INTERNAL.format(type=type(exc).__name__))
                 return
-            self._post(generation, self._show_models, [entry.id for entry in entries])
+            from flextool.assistant import model_list_cache
+
+            ids = [entry.id for entry in entries]
+            saved = model_list_cache.remember(preset.id, base_url, ids) if ids else None
+            self._post(generation, self._show_models, ids, preset.id, base_url, saved)
 
         self._run(run, "flextool-assistant-model-list")
         self._watch_refresh(generation)
@@ -701,15 +713,35 @@ class AssistantSettingsDialog(_AssistantDialog):
 
         self.after(100, again)
 
-    def _show_models(self, ids: list[str]) -> None:
+    def _show_models(self, ids: list[str], preset_id: str | None = None, base_url: str | None = None,
+                     saved: Any = None) -> None:
+        from flextool.assistant import model_list_cache
+
         preset = self._preset
+        if preset_id is not None and base_url is not None and saved is not None:
+            self._saved_lists[model_list_cache.key(preset_id, base_url)] = saved
         self.model_box["values"] = ids
         if not ids:
             self.models_label.configure(text=strings.MODELS_NONE.format(provider=preset.label if preset else ""))
-        elif len(ids) == 1:
-            self.models_label.configure(text=strings.MODELS_ONE)
         else:
-            self.models_label.configure(text=strings.MODELS_COUNT.format(n=len(ids)))
+            self.models_label.configure(text=_count_text(len(ids)))
+
+    def _show_saved_list(self) -> None:
+        """The list of the last fetch for the shown provider and address, marked with its date; the saved model
+        stays the shown (and, when listed, selected) one."""
+        from flextool.assistant import model_list_cache
+
+        preset = self._preset
+        saved = model_list_cache.lookup(self._saved_lists, preset.id, self._checked_address()) \
+            if preset is not None else None
+        if saved is None or not saved.ids:
+            return
+        self.model_box["values"] = list(saved.ids)
+        model = self.model_var.get().strip()
+        if model in saved.ids:
+            self.model_box.current(saved.ids.index(model))
+        self.models_label.configure(text=strings.MODELS_SAVED.format(count=_count_text(len(saved.ids)),
+                                                                     date=_date_text(saved.fetched)))
 
     def _show_models_text(self, text: str) -> None:
         self.models_label.configure(text=text)
@@ -939,3 +971,13 @@ class AssistantSettingsDialog(_AssistantDialog):
     def _on_destroy(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         if event.widget is self:
             self.alive = False
+
+
+def _count_text(n: int) -> str:
+    return strings.MODELS_ONE if n == 1 else strings.MODELS_COUNT.format(n=n)
+
+
+def _date_text(epoch: float) -> str:
+    """The local date of *epoch* as D.M.YYYY (FlexTool's date form, as in the release notes)."""
+    day = datetime.datetime.fromtimestamp(epoch)
+    return f"{day.day}.{day.month}.{day.year}"
