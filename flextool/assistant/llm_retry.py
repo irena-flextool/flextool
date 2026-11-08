@@ -1,10 +1,18 @@
 """FlexTool's own retries of a model request (P1 §5); the provider libraries never retry (``max_retries=0``).
 
 Retried, and only before any part of the answer was shown: a rate limit (:class:`RateLimited`) and an overloaded
-service (:class:`ServerBusy`), at most ``max_retries`` times, waiting what the provider asks (``retry_after``) or a
-doubling backoff with jitter; a remote endpoint that could not be reached (:class:`Unreachable`) once after two
+service (:class:`ServerBusy`); a remote endpoint that could not be reached (:class:`Unreachable`) once after two
 seconds.  A wait longer than ``longest_auto_wait`` is not waited for: the error is raised with the "long wait"
 message.  While waiting, :class:`RetryWait` is pushed every second and the cancel event is honoured.
+
+* **Rate limit**: at most ``max_retries`` retries (``free_plan_rate_retries`` with the free plan on), and all their
+  waits together at most ``longest_auto_wait``.  The wait is what the provider names (``retry_after``), else the
+  pacing interval, raised by the rate limit (:class:`~flextool.assistant.pacing.Pacer`).  When the provider named
+  no wait, the last message says that FlexTool now waits between requests (``rpm_paced``).
+* **Overload**: at most ``max_retries`` retries, waiting ``retry_after`` or a doubling backoff with jitter.
+
+With a :class:`Pacing`, every attempt first waits for its turn (unless the backend paces itself, the window's
+gate) and reports its outcome and the answer's request-limit headers to the pacer.
 """
 from __future__ import annotations
 
@@ -13,7 +21,7 @@ import random
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from flextool.assistant.llm_adapter import OnEvent, Reply, RetryWait
 from flextool.assistant.llm_errors import (
@@ -25,11 +33,13 @@ from flextool.assistant.llm_errors import (
     Unreachable,
     cancelled,
 )
+from flextool.assistant.pacing import PROCESS_PACER, Pacer
 
 
 @dataclass(frozen=True)
 class RetryPolicy:
     max_retries: int = 3
+    free_plan_rate_retries: int = 6
     backoff_start: float = 2.0
     backoff_cap: float = 60.0
     longest_auto_wait: float = 90.0
@@ -47,28 +57,69 @@ def _message(key: str, err: LLMError, **extra: object) -> str:
     return MESSAGES[key].format(**fields)
 
 
+@dataclass
+class Pacing:
+    """How one session paces its requests: the *pacer* and the *key* (provider and model), whether the waits
+    happen here (*here*; ``False`` when the backend waits inside the window's gate), the label the countdown names,
+    the free plan, and *headers()*, the request-limit headers of the last answer (``None`` when the backend has
+    none)."""
+
+    key: str
+    pacer: Pacer = field(default_factory=lambda: PROCESS_PACER)
+    here: bool = True
+    label: str = ""
+    free_plan: bool = False
+    headers: Callable[[], dict[str, str] | None] = lambda: None
+
+
 def call_with_retries(fn: Callable[[], Reply], policy: RetryPolicy, on_event: OnEvent, cancel: threading.Event, *,
                       sleep: Callable[[float], bool] | None = None, clock: Callable[[], float] = time.monotonic,
                       rng: random.Random | None = None,
-                      on_rejected: Callable[[LLMError], None] | None = None) -> Reply:
+                      on_rejected: Callable[[LLMError], None] | None = None,
+                      pacing: Pacing | None = None) -> Reply:
     """``fn()``, retried by *policy*.  *sleep(seconds)* waits and returns True when cancelled (default
     ``cancel.wait``); *clock* gives the time for the countdown; *on_rejected* is told of every rate-limit or
-    overload answer that came before any output (the usage ledger counts them)."""
+    overload answer that came before any output (the usage ledger counts them); *pacing* paces the attempts
+    (without it, a private pacer that starts unpaced)."""
     wait_for = cancel.wait if sleep is None else sleep
     rng = rng or random.Random()
+    pacing = pacing or Pacing(key="", pacer=Pacer())
+    rate_retries = policy.free_plan_rate_retries if pacing.free_plan else policy.max_retries
     retries = 0
+    rate_waited = 0.0
     connection_retried = False
     while True:
         if cancel.is_set():
             raise cancelled()
+        if pacing.here:
+            pacing.pacer.wait(pacing.key, cancel, on_event, label=pacing.label, sleep=sleep)
         try:
-            return fn()
+            reply = fn()
         except LLMError as err:
             if err.streamed or cancel.is_set():
                 if cancel.is_set() and not err.streamed and not isinstance(err, Cancelled):
                     raise cancelled(partial_usage=err.partial_usage) from err
                 raise
-            if isinstance(err, (RateLimited, ServerBusy)):
+            if isinstance(err, RateLimited):
+                if on_rejected is not None:
+                    on_rejected(err)
+                if err.retry_after is not None and err.retry_after > policy.longest_auto_wait:
+                    pacing.pacer.rate_limited(pacing.key, err.retry_after, pacing.headers())
+                    err.user_message = _message("rpm_long", err, minutes=max(1, math.ceil(err.retry_after / 60)))
+                    err.args = (err.user_message,)
+                    raise
+                wait = pacing.pacer.rate_limited(pacing.key, err.retry_after, pacing.headers())
+                if retries >= rate_retries or rate_waited + wait > policy.longest_auto_wait:
+                    if err.retry_after is None:
+                        err.user_message = _message("rpm_paced", err)
+                        err.args = (err.user_message,)
+                        err.message_key = "rpm_paced"
+                    raise
+                retries += 1
+                rate_waited += wait
+                key = "rpm_retry"
+                attempt, of = retries, rate_retries
+            elif isinstance(err, ServerBusy):
                 if on_rejected is not None:
                     on_rejected(err)
                 if err.retry_after is not None and err.retry_after > policy.longest_auto_wait:
@@ -79,7 +130,7 @@ def call_with_retries(fn: Callable[[], Reply], policy: RetryPolicy, on_event: On
                     raise
                 retries += 1
                 wait = err.retry_after if err.retry_after is not None else policy.backoff(retries, rng)
-                key = "rpm_retry" if isinstance(err, RateLimited) else "busy_retry"
+                key = "busy_retry"
                 attempt, of = retries, policy.max_retries
             elif isinstance(err, Unreachable) and not err.local and not connection_retried:
                 connection_retried = True
@@ -89,6 +140,9 @@ def call_with_retries(fn: Callable[[], Reply], policy: RetryPolicy, on_event: On
             else:
                 raise
             _count_down(wait, err, key, attempt, of, on_event, wait_for, clock)
+            continue
+        pacing.pacer.succeeded(pacing.key, pacing.headers())
+        return reply
 
 
 def _count_down(wait: float, err: LLMError, key: str, attempt: int, of: int, on_event: OnEvent,

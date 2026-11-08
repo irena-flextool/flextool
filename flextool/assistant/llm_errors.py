@@ -23,6 +23,9 @@ MESSAGES: dict[str, str] = {
     "rpm_retry": ("{provider} is limiting how often requests can be sent. Trying again in {seconds} seconds "
                   "(attempt {n} of {max})."),
     "rpm": "{provider} is still limiting requests. Wait a minute and ask again.",
+    "rpm_paced": ("{provider} limits how many requests per second a free plan may send. FlexTool now waits between "
+                  "requests; ask again."),
+    "pace_wait": "{provider} limits how fast requests may be sent. Sending the next one in {seconds} seconds.",
     "rpm_long": ("{provider} asks to wait about {minutes} minutes before the next request. Ask again later, or "
                  "switch provider in the settings."),
     "busy_retry": ("{provider} is overloaded at the moment. Trying again in {seconds} seconds (attempt {n} of "

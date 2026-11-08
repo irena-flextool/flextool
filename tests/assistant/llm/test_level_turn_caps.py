@@ -24,6 +24,7 @@ from flextool.assistant.probes import ModelFacts
 from flextool.assistant.providers import PRESETS
 from flextool.assistant.registry import make_tool
 from flextool.assistant.session import SESSION_MESSAGES, Session, TurnCaps
+from flextool.assistant.pacing import Pacer
 from flextool.assistant.settings import load_settings, mark_free_tier_suggested
 from flextool.assistant.store import open_store
 from flextool.assistant.usage import Ledger
@@ -85,6 +86,7 @@ def session_for(tmp_path: Path, script: list, *, tier: str = "small", preset_id:
                 b: budget.Budget | None = None, facts: ModelFacts | None = None, every: int | None = None,
                 hint=None, caps: TurnCaps | None = None) -> tuple[Session, FakeBackend, list]:
     ctx = make_context(tmp_path / "project", front_end="terminal")
+    clock = FakeClock()
     backend = FakeBackend(script)
     if b is not None:
         ctx.caps = b.result_caps
@@ -92,8 +94,23 @@ def session_for(tmp_path: Path, script: list, *, tier: str = "small", preset_id:
     session = Session(ctx, backend, PRESETS[preset_id], conversation=conv,
                       caps=caps or (TurnCaps.from_budget(b) if b is not None else TurnCaps.for_tier(tier)),
                       tier=tier, store=None, ledger=Ledger(tmp_path / "config"), facts=facts, budget=b,
-                      compaction_every=every, free_tier_hint=hint, sleep=lambda _s: False)
+                      compaction_every=every, free_tier_hint=hint, sleep=clock.sleep, clock=clock.now,
+                      pacer=Pacer(clock=clock.now))
     return session, backend, []
+
+
+class FakeClock:
+    """A clock that only the waits move: retries and pacing take no real time."""
+
+    def __init__(self) -> None:
+        self.t = 0.0
+
+    def now(self) -> float:
+        return self.t
+
+    def sleep(self, seconds: float) -> bool:
+        self.t += seconds
+        return False
 
 
 def ask(session: Session, events: list, text: str = "question"):
@@ -255,18 +272,25 @@ def test_a_prompt_that_fills_the_loaded_context_is_an_overflow(tmp_path, tools):
 
 
 # --- the free plan ----------------------------------------------------------------------------------------------
-def _rate_limited() -> RateLimited:
-    return make_error(RateLimited, "rpm", ErrorContext(preset_id="gemini", provider="Google Gemini", model="m"))
+def _rate_limited(retry_after: float | None = None) -> RateLimited:
+    return make_error(RateLimited, "rpm", ErrorContext(preset_id="gemini", provider="Google Gemini", model="m"),
+                      retry_after=retry_after)
 
 
 def test_a_rate_limit_suggests_the_free_plan_once_per_route(tmp_path, tools):
+    """The hint comes only when a limit with a named wait (requests per minute or day) ends the question; a limit
+    the retries get past, or one without a named wait (speed, which the pacing handles), shows none."""
     root = tmp_path / "config"
     hint = lambda key: mark_free_tier_suggested(key, root)       # noqa: E731
     b = resolve_budget("medium", 1_000_000, "model", local=False)
+    session, backend, events = session_for(tmp_path, [_rate_limited(0.01), say("ok")], tier="medium",
+                                           preset_id="gemini", b=b, hint=hint)
+    assert ask(session, events).ok
+    assert not [e for e in events if isinstance(e, Notice) and e.text == SESSION_MESSAGES["free_plan_hint"]]
     for expected in (1, 0):
-        session, backend, events = session_for(tmp_path, [_rate_limited(), say("ok")], tier="medium",
+        session, backend, events = session_for(tmp_path, [_rate_limited(0.01) for _ in range(4)], tier="medium",
                                                preset_id="gemini", b=b, hint=hint)
-        assert ask(session, events).ok
+        assert not ask(session, events).ok
         shown = [e for e in events if isinstance(e, Notice) and e.text == SESSION_MESSAGES["free_plan_hint"]]
         assert len(shown) == expected
     assert load_settings(root).free_tier_suggested == [session.ledger_key]

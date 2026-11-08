@@ -55,6 +55,10 @@ class Preset:
     server_name: str | None
     last_checked: str
     require_parameters_with_tools: bool = False     # OpenRouter: provider.require_parameters whenever tools go
+    #: Seconds between request starts while the free plan is on, from the provider's documented free-plan limit
+    #: (a rate hint for the pacing, P1 §5.1; not a model name), and where and when it was checked.
+    free_plan_interval: float | None = None
+    free_plan_interval_source: str = ""
 
     def knob(self, knob_id: str) -> Knob | None:
         return next((k for k in self.request_knobs if k.id == knob_id), None)
@@ -107,7 +111,11 @@ PRESETS: dict[str, Preset] = {p.id: p for p in (
         account_knobs=("whether your plan allows training on your data, and the opt-out in your account",),
         required_headers=frozenset(), capture_tool_call_keys=frozenset(), capture_message_keys=frozenset(),
         tool_message_name=True, cost_field=None, context_probe=None, local=False, server_name=None,
-        last_checked=_CHECKED),
+        last_checked=_CHECKED, free_plan_interval=1.1,
+        free_plan_interval_source=("docs.mistral.ai/admin/workspaces/usage-limits, checked 2026-11-08: the free "
+                                   "mode is limited in requests per second (the number is shown only in the "
+                                   "account's limits page); 1.1 s keeps within any limit of one or more per "
+                                   "second")),
     Preset(
         id="openrouter", label="OpenRouter", backend="openai", base_url="https://openrouter.ai/api/v1",
         key_env="OPENROUTER_API_KEY", key_required=True, key_optional=False,
@@ -118,7 +126,11 @@ PRESETS: dict[str, Preset] = {p.id: p for p in (
         required_headers=frozenset(), capture_tool_call_keys=frozenset({"extra_content"}),
         capture_message_keys=frozenset({"reasoning_details"}), tool_message_name=False, cost_field="usage.cost",
         context_probe="openrouter", local=False, server_name=None, last_checked=_CHECKED,
-        require_parameters_with_tools=True),
+        require_parameters_with_tools=True, free_plan_interval=3.0,
+        free_plan_interval_source=("openrouter.ai/docs/api/reference/limits, checked 2026-11-08: free models "
+                                   "(ids ending :free) allow 20 requests per minute")),
+    # No free-plan interval: Gemini's free-tier limits differ by model and are shown only in Google AI Studio
+    # (aistudio.google.com/docs/rate-limits, checked 2026-11-08); its rate-limit answers name the wait instead.
     Preset(
         id="gemini", label="Google Gemini", backend="openai",
         base_url="https://generativelanguage.googleapis.com/v1beta/openai/", key_env="GEMINI_API_KEY",

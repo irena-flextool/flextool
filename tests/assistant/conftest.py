@@ -33,17 +33,21 @@ def _user_home_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture(autouse=True)
 def user_cache_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """FlexTool's user cache folder is in ``tmp_path``: no test writes the real user cache.  The model facts the
-    probes keep in this process are forgotten too (they stand for the same cache)."""
+    probes keep in this process, and the pacing the process learned, are forgotten too (they stand for the same
+    cache)."""
     from flextool.assistant import docs_store, probes
+    from flextool.assistant.pacing import PROCESS_PACER
     from flextool.user_dirs import user_cache_dir
 
     _user_home_in_tmp(tmp_path, monkeypatch)
     cache = user_cache_dir()
     docs_store.reset()
     probes._RECENT.clear()
+    PROCESS_PACER.reset()
     yield cache
     docs_store.reset()
     probes._RECENT.clear()
+    PROCESS_PACER.reset()
 
 
 @pytest.fixture(autouse=True)

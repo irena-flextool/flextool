@@ -345,6 +345,10 @@ class OpenAIChatBackend:
         self._inflight.abort()
         self._http.abort_connections()
 
+    def rate_headers(self) -> dict[str, str] | None:
+        """The request-limit headers of the last response, for the pacing (P1 §5.1)."""
+        return self._http.take_rate_headers()
+
     def list_models(self) -> list[ModelEntry]:
         try:
             page = self._client.models.list()

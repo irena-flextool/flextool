@@ -11,6 +11,8 @@ FlexTool, not the library, decides what a request carries and where it goes:
   uses the proxy :func:`proxy_for` names (the system and environment settings, read the way ``httpx2`` reads them),
   so the proxy FlexTool shows is the one used.
 * **Redirects** are never followed.
+* **Response headers**: only the request-limit headers of :data:`~flextool.assistant.pacing.RATE_HEADERS` are
+  read, by a response hook, for the pacing (P1 §5.1); they are kept as counts and times, never logged.
 * **Cancel**: :meth:`HttpSession.abort_connections` shuts the open sockets down, which wakes a read that is
   waiting for the first byte (closing a socket from another thread does not).
 """
@@ -228,6 +230,22 @@ class HttpSession:
     client: httpx2.Client
     proxy: str | None
     _registry: _SocketRegistry = field(default_factory=_SocketRegistry, repr=False)
+    _rate: dict[str, str] | None = field(default=None, repr=False)
+    _rate_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+
+    def keep_rate_headers(self, response: Any) -> None:
+        """The response hook: keep the request-limit headers of the latest response."""
+        from flextool.assistant.pacing import rate_headers
+
+        found = rate_headers(response.headers)
+        with self._rate_lock:
+            self._rate = found
+
+    def take_rate_headers(self) -> dict[str, str] | None:
+        """The request-limit headers of the latest response (``None`` when none arrived since the last take)."""
+        with self._rate_lock:
+            found, self._rate = self._rate, None
+        return found
 
     def abort_connections(self) -> None:
         """Shut every open connection down at once; a request waiting on one fails immediately."""
@@ -274,6 +292,8 @@ def build_http_client(conn: Connection, *, backend: Literal["openai", "anthropic
     timeout = httpx2.Timeout(read_timeout if read_timeout is not None else read_timeout_for(conn.base_url),
                              connect=CONNECT_TIMEOUT)
     allowed = ALLOWED_HEADERS | BACKEND_HEADERS[backend] | frozenset(h.lower() for h in required_headers)
-    client = httpx2.Client(transport=transport, trust_env=not local, follow_redirects=False, timeout=timeout,
-                           event_hooks={"request": [header_hook(api_key, allowed)]})
-    return HttpSession(client=client, proxy=proxy, _registry=registry)
+    session = HttpSession(client=None, proxy=proxy, _registry=registry)  # type: ignore[arg-type]
+    session.client = httpx2.Client(transport=transport, trust_env=not local, follow_redirects=False, timeout=timeout,
+                                   event_hooks={"request": [header_hook(api_key, allowed)],
+                                                "response": [session.keep_rate_headers]})
+    return session

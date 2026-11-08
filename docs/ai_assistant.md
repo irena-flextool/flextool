@@ -514,8 +514,30 @@ the assistant uses at most 4 steps for each question to stay within the provider
 
 Automatically the free plan is on only for an OpenRouter model whose name ends `:free`. For any other service it is
 off until you switch it on: in the window under Settings, "Free plan"; in the terminal with `--free-tier on` (`/save`
-keeps it). The first time a service limits how fast questions can be sent while the free plan is off, the chat
-suggests switching it on; nothing changes by itself.
+keeps it). When a service's limit on requests per minute or per day ends a question while the free plan is off,
+the chat suggests switching it on, once for each service; nothing changes by itself.
+
+### How fast requests are sent
+
+One question may take several requests to the service: one for each round of tool calls, sent one after another.
+That is why a limit on requests per second matters even when you ask one question at a time. FlexTool spaces the
+requests to one service and model:
+
+- When the service's answers say how many requests are left until a reset (OpenAI and Anthropic send this),
+  FlexTool spreads the remaining requests over that time, and waits for the reset when none are left.
+- When the service refuses a request as too fast without saying how long to wait, FlexTool waits 1.1 seconds
+  between requests from then on, doubling the wait after each further refusal (at most 20 seconds), and tries again
+  by itself: up to 3 times, or 6 with the free plan on, all within 90 seconds. Each answered request shortens the
+  wait again, down to 1.1 seconds. FlexTool remembers the wait for the next start. If the tries run out, the message
+  says so, for example "Mistral limits how many requests per second a free plan may send. FlexTool now waits between
+  requests; ask again."
+- With the free plan on, FlexTool starts with the wait a service documents for its free plan: 1.1 seconds for
+  Mistral (limited per second) and 3 seconds for OpenRouter's free models (20 requests per minute).
+- A wait the service asks for is always kept.
+
+The chat shows the wait, for example "Mistral limits how fast requests may be sent. Sending the next one in 2
+seconds."; Stop works during it. All chats of the FlexTool window that use the same service and model share one
+wait.
 
 ## Units
 
@@ -554,8 +576,9 @@ options.
 - **"No key found for …"** (chat). Set the service's environment variable, or store the key with
   `flextool-assistant --set-key --provider ID`.
 - **"… is limiting how often requests can be sent"** or **"Your … quota is used up for now"** (chat). Free plans
-  limit the requests per minute and per day. The chat waits and tries again a few times by itself; after that, wait,
-  or switch service or model with `/provider` or `/model`. `/usage` shows what was used. On a free plan, switch on
+  limit the requests per second, per minute and per day. The chat waits and tries again a few times by itself (see
+  [How fast requests are sent](#how-fast-requests-are-sent)); after that, wait, or switch service or model with
+  `/provider` or `/model`. `/usage` shows what was used. On a free plan, switch on
   the [free plan](#the-free-plan) so each question uses fewer requests.
 - **"The level … is not available for this model, so nothing was sent."** (`-q`). The `--tier` asked for is above the
   levels the model allows; the message says why and which levels it allows.

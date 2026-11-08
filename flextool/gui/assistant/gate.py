@@ -11,7 +11,9 @@ ledger key — and shares a cool-down after a rate-limit or overload answer:
   wait" message, without being sent (and without being counted as a rejected attempt).
 
 :class:`GatedBackend` wraps a chat's backend so that each model request takes a slot; tool calls run outside the
-gate (they are serialised by the process-wide tool lock instead).  While a request waits, it pushes
+gate (they are serialised by the process-wide tool lock instead).  Holding its slot, a request then waits for its
+turn by the gate's :class:`~flextool.assistant.pacing.Pacer` (P1 §5.1; the process's for :data:`PROCESS_GATE`), so
+every chat of one provider and model shares one interval between request starts.  While a request waits, it pushes
 :class:`GateWait` about once a second; the wait honours the chat's cancel event.  Standard library only.
 """
 from __future__ import annotations
@@ -26,6 +28,7 @@ from dataclasses import dataclass, field
 from flextool.assistant.llm_adapter import Backend, ModelEntry, OnEvent, Reply, Request
 from flextool.assistant.llm_errors import MESSAGES, LLMError, RateLimited, ServerBusy, cancelled
 from flextool.assistant.llm_retry import RetryPolicy
+from flextool.assistant.pacing import PROCESS_PACER, Pacer, pace_key
 
 #: How often a waiting request looks at the gate again.
 POLL = 0.05
@@ -63,6 +66,7 @@ class ProviderGate:
     parallel: int = 1
     clock: Callable[[], float] = time.monotonic
     longest_auto_wait: float = RetryPolicy().longest_auto_wait
+    pacer: Pacer = field(default_factory=Pacer)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _providers: dict[str, _Provider] = field(default_factory=dict, repr=False)
 
@@ -132,7 +136,7 @@ class ProviderGate:
 
 
 #: The one gate of this process: every chat tab of every chat window uses it.
-PROCESS_GATE = ProviderGate()
+PROCESS_GATE = ProviderGate(pacer=PROCESS_PACER)
 
 
 def _long_wait(label: str, seconds: float) -> GateLongWait:
@@ -144,7 +148,10 @@ def _long_wait(label: str, seconds: float) -> GateLongWait:
 
 class GatedBackend:
     """A chat's backend whose model requests go through the :class:`ProviderGate` (implements P1's
-    :class:`~flextool.assistant.llm_adapter.Backend`)."""
+    :class:`~flextool.assistant.llm_adapter.Backend`).  It paces its requests itself (``paces``), inside its
+    slot, so the session leaves the waits to it."""
+
+    paces = True
 
     def __init__(self, backend: Backend, gate: ProviderGate, key: str, *, label: str = "",
                  limit: Callable[[], int] | None = None, policy: RetryPolicy | None = None,
@@ -157,6 +164,11 @@ class GatedBackend:
         self.policy = policy or RetryPolicy()
         self._rng = rng or random.Random()
         self._rejected_in_row = 0
+        self.pace_key = pace_key(backend.origin)
+
+    @property
+    def pacer(self) -> Pacer:
+        return self.gate.pacer
 
     @property
     def origin(self):  # noqa: ANN201 — the inner backend's Origin
@@ -165,6 +177,7 @@ class GatedBackend:
     def stream(self, req: Request, on_event: OnEvent, cancel: threading.Event) -> Reply:
         self.gate.acquire(self.key, self.limit, cancel, on_event, owner=self, provider_label=self.label)
         try:
+            self.gate.pacer.wait(self.pace_key, cancel, on_event, label=self.label)
             reply = self.inner.stream(req, on_event, cancel)
         except (RateLimited, ServerBusy) as err:
             if not err.streamed:
@@ -180,8 +193,10 @@ class GatedBackend:
         return reply
 
     def _hold_others(self, err: LLMError) -> None:
-        wait = err.retry_after if err.retry_after is not None else self.policy.backoff(self._rejected_in_row,
-                                                                                     self._rng)
+        wait = err.retry_after
+        if wait is None:
+            wait = self.gate.pacer.raised(self.pace_key) if isinstance(err, RateLimited) else \
+                self.policy.backoff(self._rejected_in_row, self._rng)
         until = self.gate.clock() + max(0.0, wait)
         if wait <= self.policy.longest_auto_wait:
             self.gate.cool_down(self.key, until, owner=self)

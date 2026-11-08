@@ -27,6 +27,7 @@ Ollama's ``/api/show`` also gives the model's parameter count (``general.paramet
 ``details.parameter_size``), which places a model whose name has no size tag (P3 §3.1).  The facts of every probe
 are kept in this process and in ``<user cache>/flextool/assistant/model_facts.json`` with the time they were
 found, so the settings show the level and context of a model without asking any server (:func:`cached_facts`).
+The same entry keeps the interval between requests the pacing learned (:func:`store_interval`, P1 §5.1).
 
 Local servers are asked through a proxy-less opener (a local endpoint never goes through a proxy, whatever the
 environment says), with a 2 second timeout; no redirect is followed.  Only the standard library is used, apart
@@ -35,6 +36,7 @@ from the Anthropic library for the Anthropic check.
 from __future__ import annotations
 
 import json
+import math
 import re
 import socket
 import threading
@@ -548,10 +550,54 @@ def _store_facts(key: str, facts: ModelFacts, now: float) -> None:
                 data = _files.read_json(path, check_format=False) or {}
             except _files.UnreadableFile:
                 data = {}
-            data[key] = {"found": now, **{name: getattr(facts, name) for name in _STORED_FIELDS}}
+            old = data.get(key)
+            kept = {name: old[name] for name in _PACING_FIELDS if isinstance(old, dict) and name in old}
+            data[key] = {"found": now, **{name: getattr(facts, name) for name in _STORED_FIELDS}, **kept}
             _files.write_json_atomic(path, data)
     except (OSError, _files.LockTimeout):
         return
+
+
+#: The fields of a cache entry that the pacing keeps (:mod:`flextool.assistant.pacing`); a probe keeps them.
+_PACING_FIELDS = ("request_interval", "interval_found")
+
+
+def store_interval(key: str, seconds: float, *, now: float) -> None:
+    """Keep the learned interval between request starts of *key* (``preset|endpoint|model``) in the model-facts
+    cache, beside the probe's facts (a file that cannot be written is skipped)."""
+    from flextool.assistant import _files
+
+    path = cache_root() / FACTS_CACHE
+    try:
+        with _files.locked(path):
+            try:
+                data = _files.read_json(path, check_format=False) or {}
+            except _files.UnreadableFile:
+                data = {}
+            entry = data.get(key) if isinstance(data.get(key), dict) else {}
+            data[key] = {**entry, "request_interval": round(float(seconds), 3), "interval_found": now}
+            _files.write_json_atomic(path, data)
+    except (OSError, _files.LockTimeout):
+        return
+
+
+def stored_interval(key: str, *, max_age: float, now: float) -> float | None:
+    """The learned interval of *key* in the model-facts cache, ``None`` when there is none or it is older than
+    *max_age* seconds."""
+    from flextool.assistant import _files
+
+    try:
+        data = _files.read_json(cache_root() / FACTS_CACHE, check_format=False)
+    except (OSError, _files.UnreadableFile):
+        return None
+    entry = (data or {}).get(key)
+    if not isinstance(entry, dict):
+        return None
+    seconds, found = entry.get("request_interval"), entry.get("interval_found")
+    if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or not math.isfinite(seconds) \
+            or seconds <= 0 or not isinstance(found, (int, float)) or not 0 <= now - found <= max_age:
+        return None
+    return float(seconds)
 
 
 def _stored_facts(key: str) -> ModelFacts | None:

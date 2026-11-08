@@ -109,7 +109,8 @@ from flextool.assistant.llm_errors import (
     refusal_message,
     render,
 )
-from flextool.assistant.llm_retry import RetryPolicy, call_with_retries
+from flextool.assistant.llm_retry import Pacing, RetryPolicy, call_with_retries
+from flextool.assistant.pacing import PROCESS_PACER, Pacer, pace_key
 from flextool.assistant.usage import add_usage, ledger_key
 
 if TYPE_CHECKING:
@@ -387,11 +388,13 @@ class Session:
                  route: Route | None = None, budget: budget_module.Budget | None = None,
                  free_tier_hint: Callable[[str], bool] | None = None,
                  retry_policy: RetryPolicy | None = None, sleep: Callable[[float], bool] | None = None,
-                 clock: Callable[[], float] = time.monotonic, rng: random.Random | None = None) -> None:
+                 clock: Callable[[], float] = time.monotonic, rng: random.Random | None = None,
+                 pacer: Pacer | None = None) -> None:
         """*budget* sets the compaction rhythm (unless *compaction_every* / *keep_recent_turns* are given), the
-        pre-send fit and the free plan.  *free_tier_hint(route_key)* is asked at the first rate limit with the free
-        plan off (the route's usage-ledger key); it answers whether the free-plan hint should be shown (once per
-        route, P3 §4.6)."""
+        pre-send fit and the free plan.  *free_tier_hint(route_key)* is asked when a rate limit the provider named
+        a wait for ends a question with the free plan off (the route's usage-ledger key); it answers whether the
+        free-plan hint should be shown (once per route, P3 §4.6).  *pacer* paces the requests (default the
+        process's; a backend that paces itself, the window's gate, brings its own)."""
         self.ctx = ctx
         self.conversation = conversation
         self.caps = caps
@@ -405,6 +408,7 @@ class Session:
         self._sleep = sleep
         self._clock = clock
         self._rng = rng
+        self._pacer = pacer
         self._turn_lock = threading.Lock()
         self._cancel: threading.Event | None = None
         self._turn_no = 0
@@ -442,6 +446,12 @@ class Session:
         self.prefix_key = prefix_key(self.system, self.tools)
         self.error_ctx = ErrorContext(preset_id=preset.id, provider=self.route.label, model=backend.origin[2])
         self.ledger_key = ledger_key(preset.id, backend.origin[1], forwarded_to=self.route.forwarded_to)
+        # Pacing (P1 §5.1): the window's gate paces inside its slot with its own pacer; else the session does.
+        self._paced_by_backend = bool(getattr(type(backend), "paces", False))
+        self.pacer = backend.pacer if self._paced_by_backend else (self._pacer or PROCESS_PACER)
+        self.pace_key = pace_key(backend.origin)
+        free = budget is not None and budget.free_tier
+        self.pacer.prepare(self.pace_key, preset.free_plan_interval if free else None)
 
     def _resume(self) -> None:
         """The resume rule: provider data is dropped (and ids re-mapped for another model) when the conversation
@@ -580,19 +590,20 @@ class Session:
         overflow_done = history_done = False
         state = state if state is not None else _TurnState()
 
-        def rejected(err: LLMError) -> None:
-            self._rejected(err)
-            if isinstance(err, RateLimited):
-                self._free_tier_hint(emit)
-
+        pacing = Pacing(self.pace_key, self.pacer, here=not self._paced_by_backend, label=self.route.label,
+                        free_plan=self.budget is not None and self.budget.free_tier, headers=self._rate_headers)
         while True:
             req = self._request(tool_choice)
             text_part, tool_part = budget_module.request_parts(req)
             try:
                 reply = call_with_retries(lambda: self.backend.stream(req, emit, cancel), self.retry_policy, emit,
                                           cancel, sleep=self._sleep, clock=self._clock, rng=self._rng,
-                                          on_rejected=rejected)
+                                          on_rejected=self._rejected, pacing=pacing)
             except LLMError as err:
+                if isinstance(err, RateLimited) and err.retry_after is not None:
+                    # A limit with a named wait counts requests per minute or day: fewer steps help.  A limit
+                    # without one is about speed, which the pacing now handles.
+                    self._free_tier_hint(emit)
                 if err.partial_usage is not None or err.streamed:
                     self._record(err.partial_usage, turn_usage, emit)
                 if isinstance(err, ContextTooLong) and not err.streamed and not overflow_done:
@@ -623,6 +634,11 @@ class Session:
                 continue
             return reply
 
+    def _rate_headers(self) -> dict[str, str] | None:
+        """The request-limit headers of the backend's last answer, ``None`` when it has none."""
+        read = getattr(self.backend, "rate_headers", None)
+        return read() if callable(read) else None
+
     def _truncated(self, reported: int | None) -> bool:
         """Whether a local server cut the prompt: the reported prompt fills 99 % of the loaded context (Ollama
         drops the start of an over-long prompt without an error)."""
@@ -631,7 +647,8 @@ class Session:
         return bool(local and loaded and reported is not None and reported >= TRUNCATION_SHARE * loaded)
 
     def _free_tier_hint(self, emit: OnEvent) -> None:
-        """The free-plan hint at the first rate limit with the free plan off, once per route (P3 §4.6)."""
+        """The free-plan hint when a rate limit with a named wait ends a question with the free plan off, once per
+        route (P3 §4.6)."""
         if self._hint_asked or self.free_tier_hint is None or (self.budget is not None and self.budget.free_tier):
             return
         self._hint_asked = True
