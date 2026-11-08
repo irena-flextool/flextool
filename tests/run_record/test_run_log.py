@@ -4,6 +4,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 from flextool.run_record import RunLogOwner, RunLogWriter, format_marker, parse_marker, write_status_atomic
 from flextool.run_record._owner import RUN_LOG_FILE, write_log_header
 
@@ -81,3 +83,82 @@ def test_owner_takes_only_the_first_marker(tmp_path):
     assert (second / RUN_LOG_FILE).read_text(encoding="utf-8").splitlines() == [
         "# FlexTool run r2 started 2026-11-06T10:00:00+02:00",
     ]
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Another run's writer: a takeover truncates the log; the old writer must stop instead of writing at its offset
+
+
+def test_writer_stops_after_truncation(tmp_path):
+    path = tmp_path / RUN_LOG_FILE
+    write_log_header(path, "A", "2026-11-06T10:00:00+02:00")
+    a = RunLogWriter(path, head=HEAD, tail=TAIL)
+    for i in range(3):
+        a.write_line(f"A line {i}")
+    write_log_header(path, "B", "2026-11-06T10:05:00+02:00")  # run B takes the folder over
+    b = RunLogWriter(path, head=HEAD, tail=TAIL)
+    b.write_line("B line 0")
+    b.write_line("B line 1")
+    a.write_line("A late")
+    b.close()
+    a.close()
+    data = path.read_bytes()
+    assert b"\x00" not in data
+    assert b"A late" not in data
+    assert data.decode("utf-8").splitlines() == ["# FlexTool run B started 2026-11-06T10:05:00+02:00", "B line 0",
+                                                 "B line 1"]
+    assert a.taken_over and not b.taken_over
+
+
+def test_writer_stops_when_the_other_run_grew_past_its_offset(tmp_path):
+    path = tmp_path / RUN_LOG_FILE
+    write_log_header(path, "A", "2026-11-06T10:00:00+02:00")
+    a = RunLogWriter(path, head=HEAD, tail=TAIL)
+    a.write_line("A line 0")
+    write_log_header(path, "B", "2026-11-06T10:05:00+02:00")
+    b = RunLogWriter(path, head=HEAD, tail=TAIL)
+    for i in range(10):
+        b.write_line(f"B line {i} with some more text")
+    a.write_line("A late")
+    a.write_omission(5)
+    b.close()
+    a.close()
+    lines = path.read_bytes().decode("utf-8").splitlines()
+    assert lines == ["# FlexTool run B started 2026-11-06T10:05:00+02:00"] + [
+        f"B line {i} with some more text" for i in range(10)]
+    assert a.taken_over
+
+
+def test_own_compactions_never_read_as_a_takeover(tmp_path):
+    path = tmp_path / RUN_LOG_FILE
+    write_log_header(path, "A", "2026-11-06T10:00:00+02:00")
+    writer = RunLogWriter(path, head=64, tail=64)
+    for i in range(500):
+        writer.write_line(f"line {i:04d}")
+        if i % 50 == 0:
+            writer.write_omission(3)
+    assert not writer.taken_over and not writer.closed
+    writer.close()
+    assert path.read_bytes().decode("utf-8").splitlines()[-1] == "line 0499"
+
+
+def test_a_failed_compaction_closes_without_reading_as_a_takeover(tmp_path):
+    path = tmp_path / RUN_LOG_FILE
+    write_log_header(path, "A", "2026-11-06T10:00:00+02:00")
+    writer = RunLogWriter(path, head=64, tail=64)
+
+    class FailingTruncate:
+        def __init__(self, fh):
+            self._fh = fh
+
+        def truncate(self, *args):
+            raise OSError(28, "No space left on device")
+
+        def __getattr__(self, name):
+            return getattr(self._fh, name)
+
+    writer._fh = FailingTruncate(writer._fh)
+    with pytest.raises(OSError):
+        for i in range(100):
+            writer.write_line(f"line {i:04d}")
+    assert writer.closed and not writer.taken_over

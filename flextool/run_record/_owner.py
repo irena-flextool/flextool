@@ -166,7 +166,10 @@ class RunLogWriter:
     second file: a reader on Windows can always open it.
 
     *guard*, when given, is called before each compaction; when it returns ``False`` the writer stops writing
-    (the folder was taken over by another run).  Thread-safe.
+    (the folder was taken over by another run).  The writer is its run's only writer of the file, so before each
+    write it checks the file's size against its own: any other size means another run truncated (and maybe
+    extended) the log, and the writer stops (:attr:`taken_over`) instead of writing at its stale offset.  An
+    ``OSError`` while writing closes the writer and is raised.  Thread-safe.
     """
 
     def __init__(
@@ -190,10 +193,28 @@ class RunLogWriter:
         self._body_start = 0
         self._omitted = 0
         self._closed = False
+        self._taken_over = False
 
     @property
     def closed(self) -> bool:
         return self._closed
+
+    @property
+    def taken_over(self) -> bool:
+        """Whether the writer stopped because another writer changed the file (a takeover of the folder)."""
+        return self._taken_over
+
+    def _other_writer_locked(self) -> bool:
+        """Whether the file's size is not the writer's own; closes the writer when so (caller holds the lock)."""
+        try:
+            size = os.fstat(self._fh.fileno()).st_size
+        except OSError:
+            return False
+        if size == self._size:
+            return False
+        self._taken_over = True
+        self._close_locked()
+        return True
 
     @property
     def omitted_bytes(self) -> int:
@@ -206,25 +227,34 @@ class RunLogWriter:
         if not data.endswith(b"\n"):
             data += b"\n"
         with self._lock:
-            if self._closed:
+            if self._closed or self._other_writer_locked():
                 return
-            self._fh.write(data)
-            self._fh.flush()
-            self._size += len(data)
-            if self._size > self.head + 2 * self.tail:
-                self._compact()
+            try:
+                self._fh.write(data)
+                self._fh.flush()
+                self._size += len(data)
+                if self._size > self.head + 2 * self.tail:
+                    self._compact()
+            except OSError:
+                # The file's size is no longer known: stop (not a takeover) and let the caller report it.
+                self._close_locked()
+                raise
 
     def write_omission(self, n: int) -> None:
         """Record *n* log bytes the caller dropped before writing them (counted into later omission lines)."""
         if n <= 0:
             return
         with self._lock:
-            if self._closed:
+            if self._closed or self._other_writer_locked():
                 return
             self._omitted += n
             line = _omission_line(self._omitted)
-            self._fh.write(line)
-            self._fh.flush()
+            try:
+                self._fh.write(line)
+                self._fh.flush()
+            except OSError:
+                self._close_locked()
+                raise
             self._size += len(line)
 
     def _compact(self) -> None:
