@@ -261,3 +261,84 @@ def test_servers_on_this_computer_show_every_model():
     assert shown_models(PRESETS["ollama"], ids) == ids
     assert shown_models(PRESETS["lmstudio"], ids) == ids
     assert shown_models(PRESETS["openai_compatible"], ids) == ["qwen-3-7b"]
+
+
+# --- models that are not chat models ----------------------------------------------------------------------------
+# Each service's list as (id, kept) pairs; the kept flags are worked out by hand from the word list in
+# flextool/assistant/providers.py (whole words only), not from its output.  Gemini: the ids of the real list
+# (2026-11-08) that are not chat models, and three of its chat models.
+NOT_CHAT_LISTS: dict[str, list[tuple[str, bool]]] = {
+    "gemini": [
+        ("models/aqa", False), ("models/gemini-2.5-pro", True), ("models/gemini-3-pro-image", False),
+        ("models/gemini-3.1-flash-image", False), ("models/gemini-3.1-flash-lite-image", False),
+        ("models/gemini-3.5-transcribe", False), ("models/gemini-3.5-transcribe-live", False),
+        ("models/gemini-3.8-flash", True), ("models/gemini-3.8-flash-lite", True),
+        ("models/gemini-3.8-flash-lite-tts", False), ("models/gemini-3.8-flash-tts", False),
+        ("models/gemini-3.8-live", False), ("models/gemini-3.8-live-extended-thinking", False),
+        ("models/gemini-embedding-001", False), ("models/gemini-embedding-2", False),
+        ("models/gemini-nano-banana-2.1", True),            # an image model by its name only: left in
+        ("models/lyria-3.5", False)],
+    "openai": [
+        ("babbage-002", True), ("chatgpt-4o-latest", True), ("codex-mini-latest", True),
+        ("computer-use-preview", True), ("dall-e-3", False), ("gpt-4o", True), ("gpt-4o-audio-preview", True),
+        ("gpt-4o-mini-tts", False), ("gpt-4o-transcribe", False), ("gpt-5-mini", True), ("gpt-5.1", True),
+        ("gpt-image-1", False), ("gpt-live-1", False), ("gpt-realtime", False), ("gpt-realtime-mini", False),
+        ("o3", True), ("omni-moderation-latest", False), ("sora-2", True), ("text-embedding-3-large", False),
+        ("tts-1-hd", False), ("whisper-1", False)],
+    "mistral": [
+        ("codestral-2508", True), ("codestral-embed-2505", False), ("devstral-medium-2507", True),
+        ("magistral-medium-2509", True), ("mistral-embed-2312", False), ("mistral-large-2512", True),
+        ("mistral-moderation-2411", False), ("mistral-ocr-2505", True), ("mistral-small-2506", True),
+        ("pixtral-large-2411", True), ("voxtral-mini-2507", True), ("voxtral-mini-transcribe-2507", False),
+        ("voxtral-mini-transcribe-realtime-2602", False), ("voxtral-mini-tts-3-0", False),
+        ("voxtral-small-2507", True)],
+    "openrouter": [
+        ("anthropic/claude-sonnet-4.5", True), ("deepseek/deepseek-chat-v3.1", True), ("google/gemini-2.5-flash", True),
+        ("google/gemini-2.5-flash-image", False), ("liquid/lfm-2.2-6b", True),
+        ("meta-llama/llama-3.3-70b-instruct:free", True), ("mistralai/voxtral-small-24b-2507", True),
+        ("openai/gpt-4o-audio-preview", True), ("openai/gpt-5.1", True), ("openai/gpt-oss-120b", True),
+        ("qwen/qwen3-coder", True), ("x-ai/grok-4", True)],
+    "anthropic": [
+        ("claude-haiku-4-5-20251001", True), ("claude-opus-4-5-20251101", True),
+        ("claude-sonnet-4-5-20250929", True)],
+}
+
+
+@pytest.mark.parametrize("preset_id", sorted(NOT_CHAT_LISTS))
+def test_models_that_are_not_chat_models_are_left_out(preset_id):
+    from flextool.assistant.providers import hidden_reason, is_chat_model, model_id, shown_models
+
+    pairs = [(model_id(preset_id, raw), kept) for raw, kept in NOT_CHAT_LISTS[preset_id]]
+    assert {m: is_chat_model(m) for m, _ in pairs} == dict(pairs)
+    ids = [m for m, _ in pairs]
+    preset = PRESETS[preset_id]
+    shown = shown_models(preset, ids)
+    assert not {m for m, kept in pairs if not kept} & set(shown)
+    assert all(hidden_reason(m) == "not-chat" for m, kept in pairs if not kept)
+    assert shown_models(preset, ids, show_all=True) == ids          # "Show all models" shows every one
+
+
+def test_the_real_gemini_list_shows_its_chat_models():
+    from flextool.assistant.providers import model_id, shown_models
+
+    ids = sorted(model_id("gemini", raw) for raw, _ in NOT_CHAT_LISTS["gemini"])
+    assert shown_models(PRESETS["gemini"], ids) == [
+        "gemini-2.5-pro", "gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-nano-banana-2.1"]
+
+
+def test_a_word_counts_only_whole():
+    from flextool.assistant.providers import is_chat_model
+
+    # Words that only contain a listed word are not it.
+    for model in ("olive-7b", "deliver-2", "imagery-chat", "embedder-chat", "videogame-llm", "veolia-3", "alive"):
+        assert is_chat_model(model), model
+    assert not is_chat_model("vendor/some-model:embedding")
+    assert not is_chat_model("Model_Video_2")                    # case and underscores do not hide a word
+    assert is_chat_model("dall-3") and not is_chat_model("dall-e-2")
+
+
+def test_a_server_on_this_computer_shows_its_non_chat_models():
+    from flextool.assistant.providers import shown_models
+
+    ids = ["nomic-embed-text:latest", "qwen3:8b"]
+    assert shown_models(PRESETS["ollama"], ids) == ids

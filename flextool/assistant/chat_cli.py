@@ -134,6 +134,8 @@ TEXTS: dict[str, str] = {
     "hidden_alias_one": "1 -latest alias",
     "hidden_older": "{n} older versions",
     "hidden_older_one": "1 older version",
+    "hidden_not-chat": "{n} models that are not chat models",
+    "hidden_not-chat_one": "1 model that is not a chat model",
     "all_only_with_list": "--all goes with --list-models.",
     "model_choice": "Model (number or name; Enter to stop): ",
     "model_name": "Model name (Enter to stop): ",
@@ -1157,12 +1159,10 @@ def cmd_list_models(args: argparse.Namespace, term: Terminal, factory: BackendFa
     if not models:
         term.say(TEXTS["no_models"].format(provider=choice.preset.label), err=True)
         return 0
-    from flextool.assistant.providers import shown_models
-
-    from flextool.assistant.model_versions import hidden_kind
+    from flextool.assistant.providers import hidden_reason, shown_models
 
     shown = set(shown_models(choice.preset, [e.id for e in models], show_all=args.all_models))
-    hidden = [hidden_kind(e.id) for e in models if e.id not in shown]
+    hidden = [hidden_reason(e.id) for e in models if e.id not in shown]
     models = [e for e in models if e.id in shown]
     for entry in models:
         parts = [entry.id]
@@ -1176,7 +1176,7 @@ def cmd_list_models(args: argparse.Namespace, term: Terminal, factory: BackendFa
     if hidden:
         kinds = [TEXTS[f"hidden_{kind}_one"] if hidden.count(kind) == 1 else
                  TEXTS[f"hidden_{kind}"].format(n=hidden.count(kind))
-                 for kind in ("pre-release", "alias", "older") if kind in hidden]
+                 for kind in ("pre-release", "alias", "older", "not-chat") if kind in hidden]
         term.say(TEXTS["hidden_model" if len(hidden) == 1 else "hidden_models"].format(kinds=", ".join(kinds)),
                  err=True)
     return 0

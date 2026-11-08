@@ -160,8 +160,9 @@ SET_REFRESH = "Refresh list"
 #: also pre-releases, "-latest" aliases and older versions.
 SET_SHOW_ALL_MODELS = "Show all models"
 #: After the chosen model in the list when the default list leaves it out, by the reason
-#: (:func:`flextool.assistant.model_versions.hidden_kind`).
-MODEL_HIDDEN_MARKS = {"pre-release": " (pre-release)", "alias": " (alias)", "older": " (older version)"}
+#: (:func:`flextool.assistant.providers.hidden_reason`).
+MODEL_HIDDEN_MARKS = {"pre-release": " (pre-release)", "alias": " (alias)", "older": " (older version)",
+                      "not-chat": " (not a chat model)"}
 MODELS_LOADING = "Fetching the model list…"
 MODELS_COUNT = "{n} models"
 MODELS_ONE = "1 model"

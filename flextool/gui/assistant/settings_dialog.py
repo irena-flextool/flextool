@@ -758,10 +758,9 @@ class AssistantSettingsDialog(_AssistantDialog):
     def _show_list(self, *, select: bool = False) -> None:
         """The model box from the whole list: the newest stable version of each model (all of them with "Show all
         models", or for a server on this computer).  The chosen model stays in the box when the default list leaves
-        it out, marked "(pre-release)", "(alias)" or "(older version)"; it is never replaced.  *select*: the chosen
-        model is the selected entry."""
-        from flextool.assistant.model_versions import hidden_kind
-        from flextool.assistant.providers import shown_models
+        it out, marked "(pre-release)", "(alias)", "(older version)" or "(not a chat model)"; it is never replaced.
+        *select*: the chosen model is the selected entry."""
+        from flextool.assistant.providers import hidden_reason, shown_models
 
         preset = self._preset
         if preset is None:
@@ -771,7 +770,7 @@ class AssistantSettingsDialog(_AssistantDialog):
             return
         shown = set(shown_models(preset, ids, show_all=self.show_all_var.get()))
         model = self.model_var.get().strip()
-        values = [i if i in shown else i + strings.MODEL_HIDDEN_MARKS[hidden_kind(i)]
+        values = [i if i in shown else i + strings.MODEL_HIDDEN_MARKS[hidden_reason(i)]
                   for i in ids if i in shown or i == model]
         self.model_box["values"] = values
         if select and model in ids:

@@ -592,3 +592,9 @@ def test_list_models_shows_the_newest_stable_versions_and_all_with_all(fake_back
     models = Models([], fake_backends, models=[ModelEntry("gemini-3-flash"), ModelEntry("gemini-3.1-flash-preview")])
     assert chat_cli.main(["--provider", "gemini", "--list-models"], backend_factory=models, terminal=one) == 0
     assert one.stderr.getvalue() == "Not shown: 1 pre-release; add --all to list it.\n"
+    chat = terminal(tty=False)
+    models = Models([], fake_backends, models=[ModelEntry("gemini-3-flash"), ModelEntry("gemini-3.8-flash-tts"),
+                                               ModelEntry("gemini-embedding-2")])
+    assert chat_cli.main(["--provider", "gemini", "--list-models"], backend_factory=models, terminal=chat) == 0
+    assert chat.stdout.getvalue() == "gemini-3-flash\n"
+    assert chat.stderr.getvalue() == "Not shown: 2 models that are not chat models; add --all to list them.\n"

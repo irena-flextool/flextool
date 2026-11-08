@@ -275,6 +275,30 @@ def model_entries(preset_id: str, items: Iterable[Mapping[str, Any]]) -> list[Mo
     return [out[k] for k in sorted(out)]
 
 
+#: Whole words of a model id that only a model for something other than a chat has (owner decisions 2026-11-08):
+#: speech, sound, images, video, music, embeddings, moderation and ranking — the kinds of model, not names of
+#: models (P1-O1).  A word is matched against the id's words (split at ``-``, ``_``, ``.``, ``/`` and ``:``), never
+#: as part of a word.  Only words that never name a chat model are here: a non-chat model the list keeps is better
+#: than a chat model it drops.  ``live`` and ``realtime`` are the realtime voice models (Gemini's Live API, OpenAI's
+#: Realtime API, Mistral's realtime transcription), which no chat request reaches.  ``audio`` is not a word here:
+#: OpenAI's audio models (``gpt-4o-audio-preview``) answer chat requests with tools.
+NOT_CHAT_WORDS: tuple[tuple[str, ...], ...] = tuple(tuple(w.split("-")) for w in (
+    "embedding", "embeddings", "embed", "tts", "transcribe", "transcription", "speech", "image", "images",
+    "imagen", "veo", "video", "lyria", "music", "aqa", "moderation", "rerank", "reranker", "whisper", "dall-e",
+    "live", "realtime"))
+_ID_WORDS = re.compile(r"[-_./:]+")
+
+
+def is_chat_model(model: str) -> bool:
+    """Whether the id *model* has none of :data:`NOT_CHAT_WORDS` as a whole word (or run of words)."""
+    words = [w for w in _ID_WORDS.split(model.strip().lower().removeprefix("models/")) if w]
+    for target in NOT_CHAT_WORDS:
+        n = len(target)
+        if any(tuple(words[i:i + n]) == target for i in range(len(words) - n + 1)):
+            return False
+    return True
+
+
 def lists_latest_only(preset: Preset) -> bool:
     """Whether the model list of *preset* is shown with only the newest stable version of each family by default
     (:mod:`flextool.assistant.model_versions`): the remote services.  Ollama and LM Studio list exactly the models
@@ -284,9 +308,19 @@ def lists_latest_only(preset: Preset) -> bool:
 
 def shown_models(preset: Preset, ids: Iterable[str], *, show_all: bool = False) -> list[str]:
     """The ids of a model list as shown: all of them with *show_all* or for a server on this computer, else the
-    newest stable version of each family (no pre-releases, no ``latest`` aliases).  The saved list keeps every id;
-    this runs when the list is shown."""
+    chat models (:func:`is_chat_model`) and of those the newest stable version of each family (no pre-releases, no
+    ``latest`` aliases).  The saved list keeps every id; this runs when the list is shown."""
     from flextool.assistant.model_versions import latest_ids
 
     ids = list(ids)
-    return ids if show_all or not lists_latest_only(preset) else latest_ids(ids)
+    if show_all or not lists_latest_only(preset):
+        return ids
+    return latest_ids(i for i in ids if is_chat_model(i))
+
+
+def hidden_reason(model: str) -> str:
+    """Why the default list of a remote service leaves *model* out: ``"not-chat"`` (:func:`is_chat_model`), else
+    :func:`flextool.assistant.model_versions.hidden_kind` (``"pre-release"``, ``"alias"`` or ``"older"``)."""
+    from flextool.assistant.model_versions import hidden_kind
+
+    return "not-chat" if not is_chat_model(model) else hidden_kind(model)

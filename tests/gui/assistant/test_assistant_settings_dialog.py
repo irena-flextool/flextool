@@ -461,6 +461,26 @@ def test_a_chosen_pre_release_or_alias_stays_marked(open_dialog, host, monkeypat
                                                 "gemini-flash-latest"]
 
 
+def test_models_that_are_not_chat_models_are_hidden_and_a_chosen_one_marked(open_dialog, host, monkeypatch,
+                                                                           fake_backends, user_config_in_tmp,
+                                                                           user_cache_in_tmp):
+    from flextool.assistant.settings import ProviderSettings, Settings, save_settings
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    backend = FakeBackend([], models=[ModelEntry("gemini-3.8-flash"), ModelEntry("gemini-3.8-flash-tts"),
+                                      ModelEntry("gemini-embedding-2"), ModelEntry("lyria-3.5")])
+    fake_backends.append(backend)
+    save_settings(Settings(provider=ProviderSettings(preset="gemini", model="gemini-3.8-flash-tts")),
+                  user_config_in_tmp)
+    dialog = open_dialog(backend_factory=lambda preset, conn: backend)
+    dialog.refresh_models()
+    pump(host, lambda: dialog.models_label.cget("text") == "1 model")
+    assert list(dialog.model_box["values"]) == ["gemini-3.8-flash", "gemini-3.8-flash-tts (not a chat model)"]
+    dialog.show_all_button.invoke()
+    assert list(dialog.model_box["values"]) == ["gemini-3.8-flash", "gemini-3.8-flash-tts", "gemini-embedding-2",
+                                                "lyria-3.5"]
+
+
 def test_partly_on_the_processor_hint(open_dialog, host):
     probes.remember_facts("ollama", "http://localhost:11434/v1", "big-model:70b",
                           ModelFacts(loaded_context=32768, partly_on_cpu=True))
