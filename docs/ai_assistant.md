@@ -478,7 +478,11 @@ requests within the model's context; they are not usage limits.
 
 When a question reaches its limit of steps or tool calls and its level allows a continuation, the model writes a
 short note of what it found so far and the next step (the note is not shown), and the question goes on with a fresh
-context: the question, the note and the tool results the note needs, with new steps and tool calls. The chat shows
+context: the question, the note and the tool results the note needs, with new steps and tool calls. The fresh context
+also lists the tool calls already made whose results it does not carry, each with what it returned, so the model
+does not make them again. If a continued part still asks a tool for something the question already asked, the
+assistant stops there: the model answers with what it has, and the chat ends with "The assistant kept trying the
+same steps, so it stopped. A higher assistant level or a more capable model may get further." The chat shows
 one line, for example "Continuing with a fresh context (part 2 of 3)…"; Stop works as at any other time. Every
 request is counted in the usage. When no continuation is left, the model is asked to answer with what it has and to
 say what is still unknown.
