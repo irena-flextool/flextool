@@ -1211,3 +1211,18 @@ picks another vertex of a degenerate optimum in two scenarios.  With highspy 1.1
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>`; the timestamp line of
 `summary_solve.csv` was put back.
+
+## 2026-11-08 — `multi_fullYear_battery_nested_multi_invest` (annual inflow scaling per solve)
+
+**Context.** A solve without `new_stepduration` that runs after one with it now scales `scale_to_annual_flow` over
+its own time steps.  Before, the 5-week invest solves of p2025, p2030 and p2035 (run after the 6 h storage solve)
+reused the full-year inflow sum of the earlier solve, so `west` demand was scaled by the 72-step mean (-628.19)
+instead of the 20-step mean of the 5 weeks (-567.5): 1.10695 times too small.  Now `west` inflow in each invest
+solve sums to `annual_flow` x 20/8760 per period (p2025 -18 264.84, p2030 -20 547.95, p2035 -22 831.05 MWh; checked
+from the LP right-hand sides).  The p2020 invest solve and the full-year storage and dispatch solves are unchanged.
+
+Results: with the higher invest-solve demand, wind investment in p2025/p2030/p2035 rises from 45.3/180.1/180.1 MW to
+199.4 MW each (`unit_capacity__d`); in the full-year dispatch coal output falls and the p2035 upward slack (5.85
+M CUR discounted) disappears.  Discounted costs: investment 469.65 -> 573.61, commodity 352.92 -> 233.26 M CUR.
+Battery state, `costs__dt` and the unit cost tables follow.  At the parent commit the scenario still matches the
+previous golden.  Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>`.
