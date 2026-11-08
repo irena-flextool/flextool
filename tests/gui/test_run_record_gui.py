@@ -244,21 +244,31 @@ def tk_root():
     root.destroy()
 
 
-def test_the_executed_list_unchecks_and_refuses_rows_whose_run_did_not_succeed(project, tk_root, monkeypatch):
+def _executed_list_host(tk_root, project: Path, settings: ProjectSettings):
+    """A bare Tk root with the ``MainWindow`` methods and state the executed list needs."""
     host = tk_root
     host.executed_tree = ttk.Treeview(
         tk_root, columns=("check", "source_num", "scenario_name", "view", "timestamp"), show="headings",
     )
-    settings = ProjectSettings()
-    settings.checked_executed_scenarios = ["1|bad", "1|good", "1|live"]
     host.project_settings = settings
     host.exec_scenario_mgr = ExecutedScenarioManager(project, settings)
     host._executed_sort_mode = "timestamp"
     host._executed_row_info = {}
+    host._unreadable_rescan_id = None
+    host._unreadable_rescans_left = mw.UNREADABLE_RESCANS
     host._sort_tree_items = MethodType(mw.MainWindow._sort_tree_items, host)
     host._update_output_status = lambda: None
     host._save_checked_executed_scenarios = MethodType(mw.MainWindow._collect_checked_executed_scenarios, host)
     host._executed_row_checkable = MethodType(mw.MainWindow._executed_row_checkable, host)
+    host._refresh_executed_scenarios = MethodType(mw.MainWindow._refresh_executed_scenarios, host)
+    host._rescan_unreadable_rows = MethodType(mw.MainWindow._rescan_unreadable_rows, host)
+    return host
+
+
+def test_the_executed_list_unchecks_and_refuses_rows_whose_run_did_not_succeed(project, tk_root, monkeypatch):
+    settings = ProjectSettings()
+    settings.checked_executed_scenarios = ["1|bad", "1|good", "1|live"]
+    host = _executed_list_host(tk_root, project, settings)
 
     mw.MainWindow._refresh_executed_scenarios(host)
 
@@ -289,3 +299,49 @@ def test_the_executed_list_unchecks_and_refuses_rows_whose_run_did_not_succeed(p
     text = window._text.get("1.0", "end")
     assert "latest run failed: solve for y2030 is infeasible" in text
     assert "Model status: Infeasible" in text
+
+
+# ---------------------------------------------------------------------------
+# A run record that cannot be read now, or is damaged
+# ---------------------------------------------------------------------------
+
+
+def test_scan_survives_a_malformed_or_unreadable_status(project):
+    bad_shape = _run_folder(project, "shape_1", state="succeeded")
+    write_status_atomic(bad_shape, {"run_id": "x", "state": "succeeded", "outputs": [1]})
+    cut = _run_folder(project, "cut_1", state="failed", parquet_state="previous_run")
+    (cut / "_run_status.json").write_text('{"state": "failed", "outputs": {"parq', encoding="utf-8")
+
+    rows = {info.name: info for info in ExecutedScenarioManager(project).scan_executed()}
+
+    assert set(rows) == {"good", "bad", "old", "live", "csv", "shape", "cut"}
+    assert {name for name, info in rows.items() if info.checkable} == {"good", "old"}
+    # Wrong shape: damaged (a cross).  Cut short just now: probably being written (an ellipsis).
+    assert (rows["shape"].run_state, mw.row_check_glyph(rows["shape"], False)) == ("malformed", "\u2717")
+    assert (rows["cut"].run_state, mw.row_check_glyph(rows["cut"], False)) == ("unreadable", "\u2026")
+    assert rows["cut"].unusable_reason == ("the run record could not be read (it may be being written); try again "
+                                           "in a moment")
+
+
+def test_an_unreadable_row_is_scanned_again_at_most_three_times(project, tk_root):
+    cut = _run_folder(project, "cut_1", state="failed", parquet_state="previous_run")
+    status = cut / "_run_status.json"
+    status.write_text('{"state": "failed", "outputs": {"parq', encoding="utf-8")
+    host = _executed_list_host(tk_root, project, ProjectSettings())
+    scheduled: list[tuple[int, object]] = []
+    host.after = lambda ms, fn: scheduled.append((ms, fn)) or f"after#{len(scheduled)}"
+
+    host._refresh_executed_scenarios()
+    assert [ms for ms, _ in scheduled] == [1500]
+    host._refresh_executed_scenarios()          # another refresh while one is pending: no second rescan
+    assert len(scheduled) == 1
+    for _ in range(3):
+        scheduled[-1][1]()                      # the rescan runs; the record still does not read
+    assert len(scheduled) == 3                  # three rescans, then the row is left as it is
+    # Once the record reads, the count starts again.
+    write_status_atomic(cut, {"run_id": "r", "state": "failed", "outputs": {"parquet_state": "previous_run"}})
+    host._refresh_executed_scenarios()
+    tree = host.executed_tree
+    rows = {tree.set(iid, "scenario_name"): iid for iid in tree.get_children()}
+    assert tree.set(rows["cut"], "check") == "\u2717"
+    assert host._unreadable_rescans_left == mw.UNREADABLE_RESCANS

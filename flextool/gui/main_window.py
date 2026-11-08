@@ -14,6 +14,7 @@ from tkinter import ttk, messagebox, simpledialog
 from types import SimpleNamespace
 from typing import Any
 
+from flextool import run_record
 from flextool._resources import package_data_path
 from flextool.gui.project_utils import (
     get_projects_dir,
@@ -33,7 +34,7 @@ from flextool.gui.settings_io import (
 from flextool.gui.assistant.entry import AssistantEntry
 from flextool.gui.assistant.strings import PROJECT_STILL_FINISHING as ASSISTANT_STILL_FINISHING
 from flextool.gui.check_tree import CheckTreeController
-from flextool.gui.data_models import GlobalSettings, ProjectSettings, ScenarioInfo
+from flextool.gui.data_models import ExecutedScenarioInfo, GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.input_sources import InputSourceManager
 from flextool.gui.scenario_lists import (
     AvailableScenarioManager,
@@ -140,6 +141,11 @@ _GEN_RING = "\u21bb"                  # recycle ring -- the clickable affordance
 _GEN_PENDING = f"{_GEN_RING} \u2013"  # not produced yet (ring + en-dash placeholder)
 _GEN_EXISTS = f"{_GEN_RING} \u2713"   # produced (ring + check)
 _GEN_FAILED = f"{_GEN_RING} \u2717"   # last run failed (ring + cross)
+
+#: When a row's run record could not be read, the executed list is scanned again after this many ms, at most
+#: ``UNREADABLE_RESCANS`` times in a row.
+UNREADABLE_RESCAN_MS = 1500
+UNREADABLE_RESCANS = 3
 
 
 class MainWindow(tk.Tk):
@@ -332,6 +338,10 @@ class MainWindow(tk.Tk):
         self._executed_row_info: dict[str, Any] = {}
         self._executed_state_tip: tk.Toplevel | None = None
         self._executed_refreshed_jobs: set[int] = set()
+        # A rescan of the executed list scheduled because a row's run record could not be read (see
+        # ``_rescan_unreadable_rows``), and how many more such rescans this episode may have.
+        self._unreadable_rescan_id: str | None = None
+        self._unreadable_rescans_left = UNREADABLE_RESCANS
 
         # Sort mode for each treeview: "alpha" (by name) or "number" (by # column)
         self._input_sort_mode: str = "alpha"
@@ -4902,6 +4912,27 @@ class MainWindow(tk.Tk):
             self._sort_tree_items(self.executed_tree, col_index=4, numeric=False)
 
         self._update_output_status()
+        self._rescan_unreadable_rows(executed)
+
+    def _rescan_unreadable_rows(self, executed: list[ExecutedScenarioInfo]) -> None:
+        """Scan the executed list again in 1.5 s when a row's run record could not be read (at most 3 times).
+
+        The list is refreshed when a job ends, the moment a record is most often being finished in place; nothing
+        else would refresh it, so its row would show "…" until another job ended.  The count starts again once
+        every record reads.
+        """
+        if not any(info.run_state == run_record.UNREADABLE_STATE for info in executed):
+            self._unreadable_rescans_left = UNREADABLE_RESCANS
+            return
+        if self._unreadable_rescan_id is not None or self._unreadable_rescans_left <= 0:
+            return
+        self._unreadable_rescans_left -= 1
+
+        def rescan() -> None:
+            self._unreadable_rescan_id = None
+            self._refresh_executed_scenarios()
+
+        self._unreadable_rescan_id = self.after(UNREADABLE_RESCAN_MS, rescan)
 
     def _on_executed_selection_changed(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
         """Update output status indicators when executed_tree selection changes."""

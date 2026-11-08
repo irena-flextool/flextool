@@ -66,6 +66,10 @@ MESSAGES: dict[str, str] = {
                    "run. Read the run log (get_run_log) and get the scenario to run successfully first."),
     "run_no_parquet": ("The latest run of {run} wrote no result files to read (its write methods: {methods}). Run "
                        "it with parquet output."),
+    "run_unreadable": ("The run record of {run} could not be read right now (it may be being written). Ask again in "
+                       "a moment; if it stays so, read its run log (get_run_log)."),
+    "run_malformed": ("The run record of {run} is damaged, so FlexTool cannot say whether its latest run succeeded. "
+                      "Read its run log (get_run_log) and run the scenario again."),
     # Result tables
     "unknown_table": "There is no result table '{table}' in {run}.{similar}",
     "unknown_topic": "There is no topic '{topic}' among the result tables of {run}. The topics are: {topics}.",

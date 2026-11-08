@@ -5,9 +5,20 @@ Usable: a folder without a run record (legacy; the caller still checks for parqu
 """
 from __future__ import annotations
 
+import os
+import time
+
 import pytest
 
-from flextool.run_record import results_usable, unusable_code, unusable_reason
+from flextool.run_record import (
+    RUN_STATUS_FILE,
+    UNUSABLE_CODES,
+    read_status_file,
+    results_usable,
+    unusable_code,
+    unusable_reason,
+)
+from flextool.run_record import _owner
 
 
 def _status(state: str, parquet_state: str, message: str | None = None) -> dict:
@@ -77,3 +88,77 @@ def test_unusable_code(state, parquet_state, effective, code):
 
 def test_legacy_folder_has_no_unusable_code():
     assert unusable_code(None) is None
+
+
+# ---------------------------------------------------------------------------------------------------------
+# A record that cannot be read, or has the wrong shape, is never usable (and never raises)
+
+
+@pytest.mark.parametrize("status", [
+    {"state": "succeeded", "outputs": [1]},
+    {"state": 3, "outputs": {"parquet_state": "written"}},
+    {"state": "failed", "error": "x"},
+    {"state": "succeeded", "outputs": {"parquet_state": "written"}, "solves": [1]},
+    {"state": "succeeded", "outputs": {"parquet_state": "written"}, "input": "x"},
+    {"state": "succeeded", "outputs": {"parquet_state": "written"}, "versions": [1]},
+    {"state": "succeeded", "outputs": {"parquet_state": "written"}, "warnings": ["w"]},
+], ids=["outputs_list", "state_int", "error_str", "solves_items", "input_str", "versions_list", "warnings_items"])
+def test_malformed_shapes_are_not_usable(status):
+    assert results_usable(status) is False
+    assert unusable_code(status) == "malformed"
+    assert unusable_reason(status) == "the run record is damaged; see the run log"
+
+
+def test_unreadable_record_is_not_usable_also_as_a_copy():
+    import copy
+    import json
+
+    unreadable = {"state": "unreadable"}
+    for s in (unreadable, dict(unreadable), copy.deepcopy(unreadable), json.loads(json.dumps(unreadable))):
+        assert results_usable(s) is False
+        assert unusable_code(s) == "unreadable"
+        assert unusable_reason(s) == ("the run record could not be read (it may be being written); try again in "
+                                      "a moment")
+    assert {"unreadable", "malformed"} <= set(UNUSABLE_CODES)
+
+
+def _old(path):
+    then = time.time() - 60
+    os.utime(path, (then, then))
+
+
+def test_strict_read_classifies(tmp_path):
+    folder = tmp_path / "base"
+    folder.mkdir()
+    path = folder / RUN_STATUS_FILE
+    assert read_status_file(folder) is None and read_status_file(folder, strict=True) is None
+    cases = [
+        ('{"format": 1, "state": "failed", "outputs": {"parq', False, "unreadable"),   # being written
+        ('{"format": 1, "state": "failed", "outputs": {"parq', True, "malformed"),     # cut short long ago
+        ("[1]", False, "malformed"),
+        ('{"state": "succeeded", "outputs": [1]}', False, "malformed"),
+    ]
+    for text, old, state in cases:
+        path.write_text(text, encoding="utf-8")
+        if old:
+            _old(path)
+        assert read_status_file(folder, strict=True) == {"state": state}, text
+    path.write_bytes(b'{"state": "succ\xff\xfe"}')
+    assert read_status_file(folder, strict=True) == {"state": "unreadable"}
+    _old(path)
+    assert read_status_file(folder, strict=True) == {"state": "malformed"}
+    # The lenient read keeps its old answers (None for anything it cannot use as a dict).
+    path.write_text("[1]", encoding="utf-8")
+    assert read_status_file(folder) is None
+
+
+def test_strict_read_of_a_locked_file_is_unreadable(tmp_path, monkeypatch):
+    folder = tmp_path / "base"
+    folder.mkdir()
+    (folder / RUN_STATUS_FILE).write_text('{"state": "succeeded"}', encoding="utf-8")
+    def locked(*args, **kwargs):
+        raise PermissionError(13, "The process cannot access the file because it is being used")
+
+    monkeypatch.setattr(_owner, "open", locked, raising=False)
+    assert read_status_file(folder, strict=True) == {"state": "unreadable"}
+    assert read_status_file(folder) is None

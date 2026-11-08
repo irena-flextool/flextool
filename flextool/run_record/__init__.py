@@ -7,6 +7,7 @@
 """
 from flextool.run_record._owner import (
     LOG_HEAD_BYTES,
+    MALFORMED_STATE,
     MARKER,
     RUN_LOG_FILE,
     RUN_LOG_MAX_BYTES_ENV,
@@ -15,6 +16,7 @@ from flextool.run_record._owner import (
     RUN_STATUS_FILE,
     STATUS_TMP_PREFIX,
     STATUS_TMP_SUFFIX,
+    UNREADABLE_STATE,
     UNUSABLE_CODES,
     RunLogOwner,
     RunLogWriter,
@@ -29,6 +31,7 @@ from flextool.run_record._owner import (
     results_usable,
     unusable_code,
     unusable_reason,
+    well_formed,
     worst_verdict,
     write_status_atomic,
 )
@@ -43,6 +46,7 @@ from flextool.run_record._tee import TeeStream, install_tee
 
 __all__ = [
     "LOG_HEAD_BYTES",
+    "MALFORMED_STATE",
     "MARKER",
     "NULL_RECORDER",
     "RUN_LOG_FILE",
@@ -52,6 +56,7 @@ __all__ = [
     "RUN_STATUS_FILE",
     "STATUS_TMP_PREFIX",
     "STATUS_TMP_SUFFIX",
+    "UNREADABLE_STATE",
     "UNUSABLE_CODES",
     "RunLogOwner",
     "RunLogWriter",
@@ -72,6 +77,7 @@ __all__ = [
     "set_active",
     "unusable_code",
     "unusable_reason",
+    "well_formed",
     "worst_verdict",
     "write_status_atomic",
 ]

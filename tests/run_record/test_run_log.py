@@ -1,12 +1,24 @@
 """``_run.log``: the tail cap, the marker and the pipe owner's choice of marker."""
 from __future__ import annotations
 
+import os
 import re
+import sys
+import time
 from pathlib import Path
 
 import pytest
 
-from flextool.run_record import RunLogOwner, RunLogWriter, format_marker, parse_marker, write_status_atomic
+from flextool.run_record import (
+    RunLogOwner,
+    RunLogWriter,
+    finalize_unfinished,
+    format_marker,
+    parse_marker,
+    read_status_file,
+    write_status_atomic,
+)
+from flextool.run_record import _owner
 from flextool.run_record._owner import RUN_LOG_FILE, write_log_header
 
 HEAD = 1000
@@ -162,3 +174,88 @@ def test_a_failed_compaction_closes_without_reading_as_a_takeover(tmp_path):
         for i in range(100):
             writer.write_line(f"line {i:04d}")
     assert writer.closed and not writer.taken_over
+
+
+# ---------------------------------------------------------------------------------------------------------
+# The pipe owner reads the status strictly: a status locked for a moment does not lose the run's log or its end
+
+needs_unix_permissions = pytest.mark.skipif(
+    sys.platform.startswith("win") or (hasattr(os, "geteuid") and os.geteuid() == 0),
+    reason="a mode-000 file is readable on Windows and for root")
+
+
+@needs_unix_permissions
+def test_owner_attaches_while_the_status_is_locked(tmp_path):
+    folder = tmp_path / "f"
+    folder.mkdir()
+    write_status_atomic(folder, {"run_id": "r1", "state": "running"})
+    write_log_header(folder / RUN_LOG_FILE, "r1", "2026-11-06T10:00:00+02:00")
+    status = folder / "_run_status.json"
+    owner = RunLogOwner(launcher="test")
+    status.chmod(0)  # a reader holds the file the engine has just written
+    try:
+        owner.feed(format_marker(folder, "r1") + "\n")
+    finally:
+        status.chmod(0o644)
+    owner.feed("after the marker\n")
+    assert owner.attached
+    owner.close(0)
+    lines = (folder / RUN_LOG_FILE).read_text(encoding="utf-8").splitlines()
+    assert lines[1] == "after the marker"
+
+
+class _FakeTime:
+    """``_owner.time`` with a clock that :meth:`sleep` advances, and a hook run at the *at*-th sleep."""
+
+    def __init__(self, hook=None, at: int = 1):
+        self.now = 1000.0
+        self._hook = hook
+        self._at = at
+        self.sleeps = 0
+
+    def monotonic(self):
+        return self.now
+
+    def time(self):
+        return time.time()
+
+    def sleep(self, seconds):
+        self.sleeps += 1
+        if self._hook is not None and self.sleeps == self._at:
+            self._hook()
+        self.now += seconds
+
+
+@needs_unix_permissions
+def test_finalize_reads_a_locked_status_again(tmp_path, monkeypatch):
+    folder = tmp_path / "f"
+    folder.mkdir()
+    write_status_atomic(folder, {"run_id": "r1", "state": "running", "started_at": "2026-11-06T10:00:00+02:00"})
+    status = folder / "_run_status.json"
+    status.chmod(0)
+    # Locked for longer than one read's 3 retries (the 4th sleep is the owner's wait before reading again).
+    monkeypatch.setattr(_owner, "time", _FakeTime(lambda: status.chmod(0o644), at=4))
+    try:
+        assert finalize_unfinished(folder, "r1", -9) is True
+    finally:
+        status.chmod(0o644)
+    assert read_status_file(folder)["state"] == "killed"
+
+
+@needs_unix_permissions
+def test_finalize_gives_up_on_a_status_locked_for_2_s(tmp_path, monkeypatch, caplog):
+    folder = tmp_path / "f"
+    folder.mkdir()
+    original = {"run_id": "r1", "state": "running"}
+    write_status_atomic(folder, original)
+    status = folder / "_run_status.json"
+    fake = _FakeTime()
+    monkeypatch.setattr(_owner, "time", fake)
+    status.chmod(0)
+    try:
+        assert finalize_unfinished(folder, "r1", -9) is False
+    finally:
+        status.chmod(0o644)
+    assert 1002.0 <= fake.now <= 1003.0
+    assert read_status_file(folder) == original
+    assert any("Cannot read the run record" in r.getMessage() for r in caplog.records)

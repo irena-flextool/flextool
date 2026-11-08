@@ -10,7 +10,8 @@ file's ``(mtime_ns, size)``.
 
 :func:`resolve_run` is how a result tool gets a folder: only a folder that :func:`run_folders` lists, refused with
 the message of its ``unusable_code`` when its results are not usable, with notes on a changed input, another
-FlexTool version or a missing run record.  :func:`comparison_state` says whether the comparison files are built
+FlexTool version or a missing run record.  A record that exists but cannot be read now (``unreadable``) or is
+damaged (``malformed``) is never usable and is not cached as a missing one.  :func:`comparison_state` says whether the comparison files are built
 from the current successful runs (P0 §5.6).
 """
 from __future__ import annotations
@@ -39,18 +40,24 @@ _status_lock = threading.Lock()
 
 
 def read_status(folder: Path) -> dict | None:
-    """The run record status of *folder* (``None`` without one), read again only when the file changed."""
+    """The run record status of *folder*, read strictly (``None`` without one; ``{"state": "unreadable"}`` /
+    ``{"state": "malformed"}`` for one that cannot be read now / is damaged), read again only when the file
+    changed.  An unreadable answer is never cached: the next call reads again."""
     path = folder / run_record.RUN_STATUS_FILE
     try:
         st = path.stat()
-    except OSError:
+    except FileNotFoundError:
         return None
+    except OSError:
+        return {"state": run_record.UNREADABLE_STATE}
     stamp = (st.st_mtime_ns, st.st_size)
     with _status_lock:
         hit = _status_cache.get(str(path))
         if hit is not None and hit[0] == stamp:
             return hit[1]
-    status = run_record.read_status_file(folder)
+    status = run_record.read_status_file(folder, strict=True)
+    if status is not None and status.get("state") == run_record.UNREADABLE_STATE:
+        return status
     with _status_lock:
         _status_cache[str(path)] = (stamp, status)
     return status
@@ -164,9 +171,18 @@ def run_folders(ctx: AssistantContext) -> list[Path]:
     for entry in sorted(base.iterdir(), key=lambda p: p.name):
         if not entry.is_dir() or entry.name.startswith("_"):
             continue
-        if (entry / run_record.RUN_STATUS_FILE).is_file() or any(entry.glob("*.parquet")):
+        if _has_record(entry) or any(entry.glob("*.parquet")):
             out.append(entry)
     return out
+
+
+def _has_record(folder: Path) -> bool:
+    """Whether *folder* has a run record file; one that cannot even be looked at (a file pending deletion on
+    Windows) counts, so that :func:`read_status` reports it as unreadable."""
+    try:
+        return (folder / run_record.RUN_STATUS_FILE).is_file()
+    except OSError:
+        return True
 
 
 def _source_of(ctx: AssistantContext, folder: str, settings, sources: list[project.Source]
@@ -305,6 +321,10 @@ def resolve_run(ctx: AssistantContext, run: str) -> ResolvedRun:
             raise ToolError("run_running", run=run)
         if code == "abandoned":
             raise ToolError("run_abandoned", run=run)
+        if code == "unreadable":
+            raise ToolError("run_unreadable", run=run)
+        if code == "malformed":
+            raise ToolError("run_malformed", run=run)
         if code == "no_parquet":
             methods = ((status or {}).get("output") or {}).get("write_methods") or []
             raise ToolError("run_no_parquet", run=run, methods=", ".join(methods) or "none")

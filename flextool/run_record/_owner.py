@@ -11,7 +11,9 @@ its file without importing ``flextool`` (which imports polars).  It holds:
 
 * the file names, the marker the engine prints for its pipe owner and the environment variable names;
 * :class:`RunLogWriter`, the tail-capped ``_run.log`` writer, and :class:`RunLogOwner`, the pipe owner's relay;
-* :func:`read_status_file` / :func:`write_status_atomic` and the owner's :func:`finalize_unfinished`;
+* :func:`read_status_file` / :func:`write_status_atomic` and the owner's :func:`finalize_unfinished`; a strict
+  read tells a file that is absent (``None``) from one that cannot be read now (``{"state": "unreadable"}``) and
+  one that is damaged or has the wrong shape (``{"state": "malformed"}``);
 * :func:`results_usable` / :func:`unusable_reason` / :func:`unusable_code`, the one rule the GUI and the
   assistant share for whether a folder's results may be offered.
 """
@@ -76,6 +78,16 @@ _ERROR_STATUSES = frozenset({
 _INFEASIBLE_STATUSES = frozenset({"kInfeasible", "kUnboundedOrInfeasible"})
 
 _WINDOWS_CTRL_C_EXIT = 0xC000013A
+
+#: The ``state`` of the status a strict :func:`read_status_file` returns for a file that exists but cannot be
+#: read now (locked, or cut short while it is being written): ask again in a moment.
+UNREADABLE_STATE = "unreadable"
+#: The ``state`` of the status a strict read returns for a file that is damaged or has the wrong shape.
+MALFORMED_STATE = "malformed"
+#: A status that does not parse is taken as being written while it is younger than this, else as damaged.
+_WRITE_IN_PROGRESS_SECONDS = 10.0
+#: How long the owner keeps trying to read a status it must finish.
+_FINALIZE_READ_SECONDS = 2.0
 
 
 def now_iso() -> str:
@@ -359,14 +371,23 @@ class RunLogOwner:
             self._dropped_bytes += old_size
 
     def _still_ours(self) -> bool:
+        """Whether the folder's status is still this run's; a status that cannot be read now counts as ours (a
+        reader holding the file on Windows must not stop the log for good)."""
         if self.folder is None:
             return False
-        status = read_status_file(self.folder)
-        return status is not None and status.get("run_id") == self.run_id
+        status = read_status_file(self.folder, strict=True)
+        if status is None:
+            return False
+        if status.get("state") in (UNREADABLE_STATE, MALFORMED_STATE):
+            return True
+        return status.get("run_id") == self.run_id
 
     def _attach(self, folder: Path, run_id: str) -> None:
-        status = read_status_file(folder)
-        if status is None or status.get("run_id") != run_id:
+        status = read_status_file(folder, strict=True)
+        # Unreadable right now (a reader holds the file the engine has just written): attach on the marker's word;
+        # ``_still_ours`` checks the run id again later.
+        unreadable = status is not None and status.get("state") == UNREADABLE_STATE
+        if not unreadable and (status is None or status.get("run_id") != run_id):
             _logger.warning("Run record marker for %s does not match its status file; not writing its log.", folder)
             return
         try:
@@ -463,26 +484,77 @@ class RunLogOwner:
 # ---------------------------------------------------------------------------
 
 
-def read_status_file(folder: Path | str) -> dict | None:
-    """The status in *folder*, or ``None`` when it is absent or unreadable.
+def _is_dict_or_none(value: Any) -> bool:
+    return value is None or isinstance(value, dict)
+
+
+def _is_list_of_dicts(value: Any) -> bool:
+    return value is None or (isinstance(value, list) and all(isinstance(item, dict) for item in value))
+
+
+def well_formed(status: Any) -> bool:
+    """Whether *status* has the shape the readers of a status rely on (and is not a strict read's
+    ``unreadable`` / ``malformed`` answer).
+
+    ``state`` a text; ``input`` / ``output`` / ``versions`` / ``process`` / ``outputs`` / ``options_resolved`` /
+    ``error`` objects (or absent / null); ``solves`` / ``warnings`` lists of objects (or absent).
+    """
+    if not isinstance(status, Mapping):
+        return False
+    state = status.get("state")
+    if not isinstance(state, str) or state in (UNREADABLE_STATE, MALFORMED_STATE):
+        return False
+    if not all(_is_dict_or_none(status.get(key))
+               for key in ("input", "output", "versions", "process", "outputs", "options_resolved", "error")):
+        return False
+    return _is_list_of_dicts(status.get("solves")) and _is_list_of_dicts(status.get("warnings"))
+
+
+def _undecodable(path: Path) -> dict:
+    """The strict answer for a status that does not parse: being written when it is new, else damaged."""
+    try:
+        age = time.time() - path.stat().st_mtime
+    except OSError:
+        return {"state": UNREADABLE_STATE}
+    return {"state": MALFORMED_STATE if age > _WRITE_IN_PROGRESS_SECONDS else UNREADABLE_STATE}
+
+
+def read_status_file(folder: Path | str, *, strict: bool = False) -> dict | None:
+    """The status in *folder*; ``None`` when it is absent.
 
     A file being replaced (``JSONDecodeError`` / ``PermissionError`` on Windows) is read again up to 3 times.
+    The lenient read (the default) also gives ``None`` for a file it cannot read or that is not a JSON object.
+    With *strict*, such a file gives ``{"state": "unreadable"}`` (locked, or not parsing and younger than 10 s:
+    probably being written; ask again) or ``{"state": "malformed"}`` (not parsing for longer, not an object, or
+    an object of the wrong shape, see :func:`well_formed`).  Callers that decide whether results are usable, or
+    which run a folder belongs to, read strictly.
     """
     path = Path(folder) / RUN_STATUS_FILE
     for attempt in range(4):
+        last = attempt == 3
         try:
             with open(path, "r", encoding="utf-8") as fh:
-                data = json.load(fh)
+                text = fh.read()
+            data = json.loads(text)
         except FileNotFoundError:
             return None
-        except (json.JSONDecodeError, PermissionError):
-            if attempt == 3:
-                return None
+        except PermissionError:
+            if last:
+                return {"state": UNREADABLE_STATE} if strict else None
             time.sleep(0.05)
             continue
-        except (OSError, ValueError):
-            return None
-        return data if isinstance(data, dict) else None
+        except ValueError:  # JSONDecodeError, or bytes that are not UTF-8: cut short while it is written
+            if last:
+                return _undecodable(path) if strict else None
+            time.sleep(0.05)
+            continue
+        except OSError:
+            return {"state": UNREADABLE_STATE} if strict else None
+        if not isinstance(data, dict):
+            return {"state": MALFORMED_STATE} if strict else None
+        if strict and not well_formed(data):
+            return {"state": MALFORMED_STATE}
+        return data
     return None
 
 
@@ -658,13 +730,23 @@ def finalize_unfinished(
 ) -> bool:
     """Finish a status the engine left ``running``; return whether it was changed.
 
-    Only a status that still says ``running`` with *run_id* is touched.  *killed* (the owner stopped the run) gives
+    Only a status that still says ``running`` with *run_id* is touched; one that cannot be read is read again for
+    up to 2 s.  *killed* (the owner stopped the run) gives
     ``killed`` with *kill_reason*; *outcome* gives that ``(state, reason)`` (the supervisor killing a run that a
     signal had already asked to stop: ``interrupted``); otherwise :func:`classify_exit` decides.  A solve still
     running becomes ``error``.
     """
     folder = Path(folder)
-    status = read_status_file(folder)
+    deadline = time.monotonic() + _FINALIZE_READ_SECONDS
+    while True:
+        status = read_status_file(folder, strict=True)
+        if status is None or status.get("state") != UNREADABLE_STATE:
+            break
+        if time.monotonic() >= deadline:
+            _logger.warning("Cannot read the run record in %s to finish it; it keeps the state the engine left.",
+                            folder)
+            return False
+        time.sleep(0.1)
     if status is None or status.get("state") != "running" or status.get("run_id") != run_id:
         return False
     if killed:
@@ -703,10 +785,13 @@ def results_usable(status: Mapping[str, Any] | None) -> bool:
     ``None`` (a folder from before run records) counts as usable; the caller still checks for ``*.parquet``.
     Otherwise only a ``succeeded`` run that wrote its parquet (``outputs.parquet_state == "written"``) is usable.
     Any other state -- running, failed, interrupted, killed, crashed -- is not, whatever parquet of an earlier run
-    the folder still holds; nor is a succeeded run that wrote no parquet.  Pure: no I/O.
+    the folder still holds; nor is a succeeded run that wrote no parquet, nor a record that could not be read or
+    has the wrong shape (:func:`well_formed`).  Pure: no I/O.
     """
     if status is None:
         return True
+    if not well_formed(status):
+        return False
     outputs = status.get("outputs") or {}
     return status.get("state") == "succeeded" and outputs.get("parquet_state") == "written"
 
@@ -719,6 +804,10 @@ def unusable_reason(status: Mapping[str, Any] | None) -> str | None:
     if results_usable(status):
         return None
     assert status is not None
+    if not well_formed(status):
+        if isinstance(status, Mapping) and status.get("state") == UNREADABLE_STATE:
+            return "the run record could not be read (it may be being written); try again in a moment"
+        return "the run record is damaged; see the run log"
     state = status.get("state")
     error = status.get("error") or {}
     message = error.get("message") if isinstance(error, dict) else None
@@ -746,7 +835,8 @@ def unusable_reason(status: Mapping[str, Any] | None) -> str | None:
 
 
 #: The values of :func:`unusable_code`.
-UNUSABLE_CODES = ("failed", "running", "abandoned", "no_parquet", "previous_run", "partial")
+UNUSABLE_CODES = ("failed", "running", "abandoned", "no_parquet", "previous_run", "partial", "unreadable",
+                  "malformed")
 
 
 def unusable_code(status: Mapping[str, Any] | None, effective: str | None = None) -> str | None:
@@ -755,11 +845,17 @@ def unusable_code(status: Mapping[str, Any] | None, effective: str | None = None
     ``running`` -- the latest run has not finished; ``abandoned`` -- the same, when *effective* (the caller's
     ``effective_state`` of the status) says the recording process is gone; ``failed`` -- the latest run failed,
     was interrupted, killed or crashed; for a run that succeeded: ``previous_run`` -- the parquet files are an
-    earlier run's, ``partial`` -- its parquet output is incomplete, ``no_parquet`` -- it wrote none.  Pure: no I/O.
+    earlier run's, ``partial`` -- its parquet output is incomplete, ``no_parquet`` -- it wrote none;
+    ``unreadable`` -- the record could not be read now (ask again), ``malformed`` -- it is damaged or has the wrong
+    shape.  Pure: no I/O.
     """
     if results_usable(status):
         return None
     assert status is not None
+    if not well_formed(status):
+        if isinstance(status, Mapping) and status.get("state") == UNREADABLE_STATE:
+            return "unreadable"
+        return "malformed"
     state = status.get("state")
     if state == "running":
         return "abandoned" if effective == "abandoned" else "running"
@@ -774,6 +870,7 @@ def unusable_code(status: Mapping[str, Any] | None, effective: str | None = None
 __all__ = [
     "LOG_HEAD_BYTES",
     "LOG_TAIL_BYTES_DEFAULT",
+    "MALFORMED_STATE",
     "MARKER",
     "PRE_MARKER_BUFFER_BYTES",
     "RUN_LOG_FILE",
@@ -783,6 +880,7 @@ __all__ = [
     "RUN_STATUS_FILE",
     "STATUS_SCHEMA",
     "STATUS_SCHEMA_VERSION",
+    "UNREADABLE_STATE",
     "VERDICT_ORDER",
     "RunLogOwner",
     "RunLogWriter",
@@ -800,6 +898,7 @@ __all__ = [
     "UNUSABLE_CODES",
     "unusable_code",
     "unusable_reason",
+    "well_formed",
     "worst_verdict",
     "write_log_header",
     "write_status_atomic",

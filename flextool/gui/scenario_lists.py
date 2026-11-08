@@ -35,7 +35,7 @@ def row_checkable(info: ExecutedScenarioInfo) -> bool:
 
 def folder_results_usable(folder: Path) -> bool:
     """Whether the results in a run folder may be offered: :func:`row_checkable` read from the folder itself."""
-    return run_record.results_usable(run_record.read_status_file(folder))
+    return run_record.results_usable(run_record.read_status_file(folder, strict=True))
 
 
 def describe_unusable(status: dict | None, state: str | None = None) -> str | None:
@@ -57,7 +57,8 @@ def describe_unusable(status: dict | None, state: str | None = None) -> str | No
 
 #: The check-column glyph of a row that cannot be checked, by its latest run's state: a run that did not
 #: succeed (and an abandoned record) shows a cross, a run in progress (or one whose process cannot be found
-#: here) an ellipsis, a succeeded run without parquet of its own a dash.
+#: here) an ellipsis, a succeeded run without parquet of its own a dash.  A record that could not be read now
+#: (most often one being written) shows the ellipsis, one that is damaged the cross.
 STATE_GLYPHS = {
     "failed": "\u2717",       # ✗
     "interrupted": "\u2717",
@@ -66,6 +67,8 @@ STATE_GLYPHS = {
     "abandoned": "\u2717",
     "running": "\u2026",      # …
     "unknown": "\u2026",
+    "unreadable": "\u2026",
+    "malformed": "\u2717",
     "succeeded": "\u2013",    # –
 }
 #: The executed-tree row tag of a row that cannot be checked (its style), by the same states.
@@ -77,6 +80,8 @@ STATE_TAGS = {
     "abandoned": "run_failed",
     "running": "run_running",
     "unknown": "run_running",
+    "unreadable": "run_running",
+    "malformed": "run_failed",
     "succeeded": "run_no_results",
 }
 
@@ -221,7 +226,7 @@ class ExecutedScenarioManager:
             if entry.name.startswith("_"):
                 # Skip manifest files/directories (e.g. _axis_bounds.json).
                 continue
-            status = run_record.read_status_file(entry)
+            status = run_record.read_status_file(entry, strict=True)
             ts = _folder_timestamp(entry, status)
             run_state = None
             parquet_state = None

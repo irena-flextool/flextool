@@ -503,3 +503,62 @@ def test_the_comparison_orchestrator_records_its_runs(tmp_path: Path, tests_db: 
     assert [(m["folder"], m["run_id"]) for m in meta["members"]] == [("base_1", ids["base_1"]),
                                                                       ("high_1", ids["high_1"])]
     assert _compare(make_context(project))["source"] == "comparison_files"
+
+
+# ---------------------------------------------------------------------------------------------------------
+# A run record that cannot be read now, or is damaged: never served, never taken for a missing one
+
+
+def test_unreadable_record_not_served_and_not_cached(tmp_path: Path, tests_db: Path) -> None:
+    project = make_project(tmp_path, tests_db)
+    folder = project / "output_parquet" / "coal_1"
+    write_parquet(folder)
+    (folder / run_record.RUN_STATUS_FILE).write_text('{"format": 1, "state": "failed", "outputs": {"parq',
+                                                     encoding="utf-8")
+    ctx = make_context(project)
+    _runs.clear_cache()
+    (entry,) = _call(ctx, "list_runs")["runs"]
+    assert (entry["results_usable"], entry["unusable_code"], entry["state"]) == (False, "unreadable", "unreadable")
+    assert "note" not in entry
+    assert _resolve_message(ctx, "coal_1") == message("run_unreadable", run="coal_1")
+    assert str(folder / run_record.RUN_STATUS_FILE) not in _runs._status_cache
+    # Cut short long ago: damaged, not "being written".
+    then = time.time() - 60
+    os.utime(folder / run_record.RUN_STATUS_FILE, (then, then))
+    (entry,) = _call(ctx, "list_runs")["runs"]
+    assert (entry["results_usable"], entry["unusable_code"]) == (False, "malformed")
+    assert _resolve_message(ctx, "coal_1") == message("run_malformed", run="coal_1")
+
+
+def test_a_status_that_cannot_be_stat_ed_is_unreadable(tmp_path: Path, tests_db: Path, monkeypatch) -> None:
+    project = _project_with(tmp_path, tests_db, ("coal_1", succeed))
+    ctx = make_context(project)
+    _runs.clear_cache()
+    status_path = project / "output_parquet" / "coal_1" / run_record.RUN_STATUS_FILE
+    real_stat = Path.stat
+
+    def stat(self, *args, **kwargs):
+        if self == status_path:
+            raise PermissionError(13, "delete pending")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "stat", stat)
+    (entry,) = _call(ctx, "list_runs")["runs"]
+    assert (entry["results_usable"], entry["unusable_code"]) == (False, "unreadable")
+    assert "note" not in entry
+    assert str(status_path) not in _runs._status_cache
+
+
+def test_list_runs_and_get_run_log_survive_a_status_of_the_wrong_shape(tmp_path: Path, tests_db: Path) -> None:
+    project = _project_with(tmp_path, tests_db, ("coal_1", succeed))
+    folder = project / "output_parquet" / "coal_1"
+    status = read_status_file(folder)
+    status["solves"] = [1]
+    status["input"] = "x"
+    write_status_atomic(folder, status)
+    ctx = make_context(project)
+    _runs.clear_cache()
+    (entry,) = _call(ctx, "list_runs")["runs"]
+    assert (entry["results_usable"], entry["unusable_code"], entry["state"]) == (False, "malformed", "malformed")
+    out = _call(ctx, "get_run_log", run="coal_1")
+    assert out["status"]["state"] == "malformed" and out["status"]["solves"] == []
