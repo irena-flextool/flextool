@@ -326,6 +326,9 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         # --- dev: run record ------------------------------------------------------------------------------
         _dev("FLEXTOOL_RUN_LOG_OWNER", "set by the GUI / flextool-run for the engine it starts: they write _run.log "
              "from its output pipe; the engine removes it"),
+        _dev("FLEXTOOL_RUN_STOP_FILE", "set by the GUI for a calibration / representative-period job and inherited "
+             "by its flextool-run supervisors: the file whose appearance stops their engine runs (recorded as "
+             "killed); the supervisor leaves it out of the engine's environment"),
         # --- dev: user folders ----------------------------------------------------------------------------
         _dev("FLEXTOOL_USER_HOME", "folder in place of FlexTool's user config and cache folders (config/, cache/); "
              "the test suite sets it for every test"),

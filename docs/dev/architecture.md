@@ -116,7 +116,10 @@ The contract:
    **direct** child. They describe the pipe, not a run choice. The engine reads and removes
    `FLEXTOOL_RUN_LOG_OWNER`, so no process it starts inherits it; the owner's own `os.environ` is not changed.
    The calibrator, the representative-period iteration and the workflow runner start the supervisor with
-   `env=None`.
+   `env=None`. **A second exception:** `FLEXTOOL_RUN_STOP_FILE` is set only by the GUI, in the `env=` of an
+   auxiliary job's process (a calibration, a representative-period iteration), passed on by inheritance and read
+   only by the `flextool-run` supervisor, which drops it from the engine's `env=`. It is the job's stop channel
+   (see "Run record"), never a run choice.
 5. Process-level variables (`MALLOC_ARENA_MAX`, `_RJEM_MALLOC_CONF`, `POLARS_*`) keep `setdefault` semantics: a
    value already in the environment wins.  The exception is `POLARS_MAX_THREADS` while `flextool/__init__.py`
    imports polars: see "Thread budget" below.
@@ -996,14 +999,23 @@ Every engine run (`cmd_run_flextool.main`, once its scenario and output folder a
 - **`_run.log`** — written by the **pipe owner**, the process that reads the engine's stdout + stderr pipe and so
   also sees native solver output and crash dumps: the GUI job thread (`ExecutionManager._run_job`) or the
   `flextool-run` supervisor (`flextool_run_supervisor.py`, also used by the workflow runner, the calibrator and the
-  representative-period iteration). The owner sets `FLEXTOOL_RUN_LOG_OWNER=1` in its child's `env=` (the one
-  exception in "Runtime options" item 4); the engine then prints one marker line with the folder and `run_id`, and
+  representative-period iteration). The owner sets `FLEXTOOL_RUN_LOG_OWNER=1` in its child's `env=` (the first
+  exception in "Runtime options" item 4; `FLEXTOOL_RUN_STOP_FILE` below is the second); the engine then prints one marker line with the folder and `run_id`, and
   the owner (`RunLogOwner`, `_owner.py`) writes the log from there, hiding the marker. Without an owner (Spine
   Toolbox, `python -m flextool.cli.cmd_run_flextool`, a Python console) the engine copies its own Python streams
   (`_tee.py`, `log_capture: "python"`). The log keeps its first 64 KiB and last `FLEXTOOL_RUN_LOG_MAX_BYTES`.
 - When the engine dies without finishing its status (a crash, a kill, a signal), the owner finishes it from the
   exit code (`classify_exit`: `killed`, `interrupted`, `crashed`). Without an owner a reader derives `abandoned` from
   a stale `running` (`effective_state`).
+- A run the GUI stops is `killed` with the reason (`ExecutionManager._stop_job_locked`: the job is KILLED with its
+  `kill_reason` before its process is killed). A calibration or representative-period job runs its engines under
+  `flextool-run` supervisors, which own those records, so the GUI does not kill them with the rest: it gives the
+  job's process `FLEXTOOL_RUN_STOP_FILE` (a file in a private temp folder, inherited by each supervisor), writes
+  the reason into that file, kills the job's process and everything not under a supervisor, gives the
+  supervisors 10 s to kill their engines and record `killed`, then kills what is left (`stop_aux_tree`).
+  The stop thread is the file's only owner and removes its folder at the end. A job's worker finishes the record
+  before the job's output folder is free for the next job, and closing FlexTool waits (at most 15 s) for those
+  records.
 
 The supervisor is a top-level module that never imports `flextool` (that imports polars): it loads `_owner.py` and
 `env_check.py` by path, so `_owner.py` stays stdlib-only with no relative imports.

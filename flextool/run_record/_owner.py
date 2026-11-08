@@ -53,6 +53,15 @@ MARKER = "##flextool-run-record## "
 RUN_LOG_OWNER_ENV = "FLEXTOOL_RUN_LOG_OWNER"
 #: The number of bytes ``_run.log`` keeps from the end of a long log.
 RUN_LOG_MAX_BYTES_ENV = "FLEXTOOL_RUN_LOG_MAX_BYTES"
+#: Set by the GUI for an auxiliary job's process (a calibration, a representative-period iteration) and inherited
+#: by every ``flextool-run`` supervisor that process starts: the path of a file whose appearance asks the
+#: supervisor to stop its engine and record the run as ``killed`` (the file holds the reason).  The supervisor
+#: drops it from its engine's environment.
+RUN_STOP_FILE_ENV = "FLEXTOOL_RUN_STOP_FILE"
+#: The longest stop reason read from the stop file.
+STOP_REASON_MAX_CHARS = 500
+#: The reason recorded when the stop file cannot be read.
+STOP_REASON_UNREADABLE = "stopped by its launcher"
 
 #: ``_run.log`` keeps its first ``LOG_HEAD_BYTES`` and its last ``FLEXTOOL_RUN_LOG_MAX_BYTES`` bytes.
 LOG_HEAD_BYTES = 64 * 1024
@@ -146,6 +155,34 @@ def parse_marker(line: str) -> tuple[Path, str] | None:
     if not isinstance(folder, str) or not folder or not isinstance(run_id, str) or not run_id:
         return None
     return Path(folder), run_id
+
+
+# ---------------------------------------------------------------------------
+# The stop file of an auxiliary job
+# ---------------------------------------------------------------------------
+
+
+def write_stop_request(path: Path | str, reason: str) -> None:
+    """Write *reason* into the stop file at *path* at once (a temp file beside it, then ``os.replace``), so a
+    supervisor never reads half of it.  The folder is the launcher's own private one."""
+    path = Path(path)
+    tmp = path.with_name(path.name + STATUS_TMP_SUFFIX)
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(reason)
+    os.replace(tmp, path)
+
+
+def read_stop_reason(path: Path | str) -> str | None:
+    """The reason in the stop file at *path* (at most :data:`STOP_REASON_MAX_CHARS` characters), ``None`` when
+    there is no such file; :data:`STOP_REASON_UNREADABLE` when it is there but cannot be read."""
+    try:
+        with open(path, "r", encoding="utf-8", errors="replace") as fh:
+            text = fh.read(STOP_REASON_MAX_CHARS)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return STOP_REASON_UNREADABLE
+    return text.strip() or STOP_REASON_UNREADABLE
 
 
 # ---------------------------------------------------------------------------
@@ -889,6 +926,7 @@ __all__ = [
     "RUN_LOG_OWNER_ENV",
     "RUN_RECORD_FILES",
     "RUN_STATUS_FILE",
+    "RUN_STOP_FILE_ENV",
     "STATUS_SCHEMA",
     "STATUS_SCHEMA_VERSION",
     "UNREADABLE_STATE",
@@ -905,6 +943,7 @@ __all__ = [
     "parse_marker",
     "read_status_file",
     "read_status_settled",
+    "read_stop_reason",
     "results_usable",
     "solve_verdict",
     "UNUSABLE_CODES",
@@ -914,4 +953,5 @@ __all__ = [
     "worst_verdict",
     "write_log_header",
     "write_status_atomic",
+    "write_stop_request",
 ]

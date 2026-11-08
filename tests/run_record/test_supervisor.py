@@ -125,6 +125,49 @@ def test_the_child_environment_adds_the_pipe_variables_and_leaves_os_environ_alo
     assert "FLEXTOOL_RUN_LOG_OWNER" not in os.environ
 
 
+def test_the_engine_does_not_get_the_stop_file_variable():
+    env = supervisor.child_environment({"FLEXTOOL_RUN_STOP_FILE": "/somewhere/stop", "HOME": "/h"})
+    assert "FLEXTOOL_RUN_STOP_FILE" not in env and env["HOME"] == "/h"
+
+
+_SUPERVISOR_CODE = (
+    "import sys, flextool_run_supervisor as s; "
+    f"s.main(sys.argv[1:], child_cmd=[sys.executable, {str(STUB)!r}])"
+)
+
+
+def test_a_stop_file_kills_the_engine_and_records_the_run_as_killed(tmp_path):
+    folder = tmp_path / "out"
+    stop_file = tmp_path / "stop"
+    env = {**os.environ, "FLEXTOOL_RUN_STOP_FILE": str(stop_file)}
+    proc = subprocess.Popen(
+        [sys.executable, "-c", _SUPERVISOR_CODE, str(folder), "sleep"], cwd=str(REPO), env=env,
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    )
+    try:
+        assert proc.stdout.readline().strip() == b"sleeping"
+        stop_file.write_text("stopped from the FlexTool window", encoding="utf-8")
+        assert proc.wait(timeout=60) == 1
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+        proc.stdout.close()
+    record = read_status_file(folder)
+    assert record["state"] == "killed"
+    assert record["error"] == {"type": "Killed", "message": "stopped from the FlexTool window"}
+    assert [s["state"] for s in record["solves"]] == ["error"]
+
+
+def test_a_stop_file_present_at_start_runs_nothing(tmp_path, monkeypatch):
+    folder = tmp_path / "out"
+    stop_file = tmp_path / "stop"
+    stop_file.write_text("FlexTool was closed", encoding="utf-8")
+    monkeypatch.setenv("FLEXTOOL_RUN_STOP_FILE", str(stop_file))
+
+    assert supervisor.run_supervised([str(folder), "exit0"], child_cmd=_stub_cmd()) == 1
+    assert not folder.exists()
+
+
 @pytest.mark.parametrize(
     ("returncode", "plat", "state", "reason_part"),
     [

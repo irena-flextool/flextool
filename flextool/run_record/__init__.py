@@ -14,6 +14,7 @@ from flextool.run_record._owner import (
     RUN_LOG_OWNER_ENV,
     RUN_RECORD_FILES,
     RUN_STATUS_FILE,
+    RUN_STOP_FILE_ENV,
     STATUS_TMP_PREFIX,
     STATUS_TMP_SUFFIX,
     UNREADABLE_STATE,
@@ -35,6 +36,7 @@ from flextool.run_record._owner import (
     well_formed,
     worst_verdict,
     write_status_atomic,
+    write_stop_request,
 )
 from flextool.run_record._status import (
     NULL_RECORDER,
@@ -55,6 +57,7 @@ __all__ = [
     "RUN_LOG_OWNER_ENV",
     "RUN_RECORD_FILES",
     "RUN_STATUS_FILE",
+    "RUN_STOP_FILE_ENV",
     "STATUS_TMP_PREFIX",
     "STATUS_TMP_SUFFIX",
     "UNREADABLE_STATE",
@@ -82,4 +85,5 @@ __all__ = [
     "well_formed",
     "worst_verdict",
     "write_status_atomic",
+    "write_stop_request",
 ]

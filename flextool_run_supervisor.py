@@ -16,7 +16,13 @@ the process that has the terminal, before the child starts).
 The engine's command line passes through unchanged (``--threads`` too: the child reads it from its own command
 line), plus ``--run-launcher flextool-run`` when it names no launcher.  The child's environment is this
 process's, plus three variables that describe the pipe (``FLEXTOOL_RUN_LOG_OWNER=1``, ``PYTHONIOENCODING=utf-8``,
-``PYTHONUNBUFFERED=1``); ``os.environ`` itself is not changed for them.
+``PYTHONUNBUFFERED=1``); ``os.environ`` itself is not changed for them.  ``FLEXTOOL_RUN_STOP_FILE`` is left out
+of it.
+
+Stop file.  When ``FLEXTOOL_RUN_STOP_FILE`` names a file (the GUI sets it for an auxiliary job's process, and this
+process inherits it), its appearance asks for a stop: before the child starts, nothing starts (exit 1, no run
+record); while it runs, the child is killed (its process group on POSIX) and the run is recorded as ``killed`` with
+the file's text as the reason (exit 1).  The file is looked for every 0.25 s.
 
 Signals.  POSIX: the child runs in its own session, so a Ctrl-C at the terminal reaches only this process, which
 forwards SIGINT / SIGTERM / SIGHUP to the child once.  A second SIGINT, or 10 s after SIGTERM / SIGHUP without
@@ -46,6 +52,8 @@ LAUNCHER = "flextool-run"
 TERMINATE_GRACE_S = 10.0
 #: After the child has ended, its output pipe is read for at most this long (a process it started may hold it).
 DRAIN_TIMEOUT_S = 5.0
+#: The stop file is looked for every this many 0.05 s ticks of the main loop.
+STOP_FILE_CHECK_TICKS = 5
 
 _PRIVATE_NAME = "flextool_run_supervisor"
 _WINDOWS_CTRL_C_EXIT = 0xC000013A
@@ -111,9 +119,11 @@ def with_launcher(argv: Sequence[str], launcher: str = LAUNCHER) -> list[str]:
 
 
 def child_environment(environ: Mapping[str, str] | None = None) -> dict[str, str]:
-    """A copy of *environ* (default ``os.environ``) plus the pipe owner's three variables."""
+    """A copy of *environ* (default ``os.environ``) plus the pipe owner's three variables, without the stop file's
+    variable (it is this process's, not the engine's)."""
     owner = load_owner()
     env = dict(os.environ if environ is None else environ)
+    env.pop(owner.RUN_STOP_FILE_ENV, None)
     env[owner.RUN_LOG_OWNER_ENV] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
     env["PYTHONUNBUFFERED"] = "1"
@@ -192,6 +202,8 @@ class _Stopper:
         self._deadline: float | None = None
         #: ``(state, reason)`` for the record when this process had to kill the child.
         self.outcome: tuple[str, str] | None = None
+        #: Whether the child was stopped through the stop file (this process then exits 1).
+        self.stopped_by_launcher = False
 
     def attach(self, proc: subprocess.Popen) -> None:
         self._proc = proc
@@ -225,8 +237,15 @@ class _Stopper:
         except OSError:
             pass
 
-    def _kill(self, reason: str) -> None:
-        self.outcome = ("interrupted", reason)
+    def stop(self, reason: str) -> None:
+        """The launcher's stop file appeared: kill the child and record the run as ``killed`` with *reason*."""
+        if self.outcome is not None:
+            return
+        self.stopped_by_launcher = True
+        self._kill(reason, state="killed")
+
+    def _kill(self, reason: str, state: str = "interrupted") -> None:
+        self.outcome = (state, reason)
         proc = self._proc
         if proc is None or proc.poll() is not None:
             return
@@ -245,6 +264,8 @@ class _Stopper:
         """The status this process ends with: the child's, or the stop signal when this process killed the child."""
         if self.outcome is None:
             return 1 if returncode is None else returncode
+        if self.stopped_by_launcher:
+            return 1
         if self._windows:
             return _WINDOWS_CTRL_C_EXIT - 2**32
         return -(self.first or signal.SIGINT)
@@ -298,6 +319,10 @@ def run_supervised(
     """
     owner_mod = load_owner()
     windows = os.name == "nt"
+    stop_file = os.environ.get(owner_mod.RUN_STOP_FILE_ENV) or None
+    if stop_file is not None and owner_mod.read_stop_reason(stop_file) is not None:
+        print(f"{LAUNCHER}: stopped before the engine started", file=sys.stderr, flush=True)
+        return 1
     cmd = [*(child_cmd if child_cmd is not None else [sys.executable, "-m", ENGINE_MODULE]), *with_launcher(argv)]
     owner = owner_mod.RunLogOwner(launcher=LAUNCHER, preamble=[f"# {LAUNCHER}: {_command_text(cmd)}"])
     popen_kwargs: dict = {"stdout": subprocess.PIPE, "stderr": subprocess.STDOUT, "env": child_environment()}
@@ -319,11 +344,23 @@ def run_supervised(
             target=_relay, args=(proc.stdout, owner, echo), name="flextool-run relay", daemon=True,
         )
         relay.start()
+        ticks = 0
         while proc.poll() is None:
             # A short sleep, not a blocking wait: the signal handlers run between sleeps (also on Windows).
             time.sleep(0.05)
             stopper.tick()
+            ticks += 1
+            if stop_file is not None and ticks % STOP_FILE_CHECK_TICKS == 0:
+                reason = owner_mod.read_stop_reason(stop_file)
+                if reason is not None:
+                    stopper.stop(reason)
         returncode = proc.wait()
+        if stop_file is not None and stopper.outcome is None:
+            # The launcher's fallback may have killed the engine before this process saw the file.
+            reason = owner_mod.read_stop_reason(stop_file)
+            if reason is not None:
+                stopper.stopped_by_launcher = True
+                stopper.outcome = ("killed", reason)
         relay.join(DRAIN_TIMEOUT_S)
         if relay.is_alive() and not windows:
             # A process the engine started (a --save-memory solve) outlived it and holds the pipe.

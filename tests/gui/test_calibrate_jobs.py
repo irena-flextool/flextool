@@ -312,3 +312,62 @@ def test_exempt_calibration_job_is_not_killed(tmp_path: Path, monkeypatch) -> No
     assert normal.killed_for_memory is True
     assert calib.killed_for_memory is False
     assert calib.peak_rss_mb > 0
+
+
+# --------------------------------------------------------------------------- #
+# Stopping a calibration: its flextool-run supervisor records the engine run
+# --------------------------------------------------------------------------- #
+
+_REPO = Path(__file__).resolve().parents[2]
+_STUB_ENGINE = _REPO / "tests" / "run_record" / "_stub_engine.py"
+
+
+def test_stopping_a_calibration_job_records_the_engine_run_as_killed(tmp_path: Path, monkeypatch) -> None:
+    import threading
+    import time
+
+    import psutil
+
+    from flextool.run_record import RUN_LOG_FILE, read_status_file
+
+    folder = tmp_path / "output_parquet" / "base"
+    # The calibrator runs the supervisor as a capturing subprocess (as calibrate/_solve.run_solve does), and the
+    # supervisor runs the stub engine, which writes a running record and sleeps.
+    supervisor = (
+        "import sys, flextool_run_supervisor as s; "
+        f"s.main(sys.argv[1:], child_cmd=[sys.executable, {str(_STUB_ENGINE)!r}])"
+    )
+    calibrator = (
+        "import subprocess, sys; "
+        f"subprocess.run([sys.executable, '-c', {supervisor!r}, {str(folder)!r}, 'sleep'], "
+        "stdout=subprocess.PIPE, stderr=subprocess.STDOUT); "
+        "print('calibrator went on', flush=True)"
+    )
+    monkeypatch.setattr(cj, "build_calibrate_command", lambda *a, **k: _fake_argv(calibrator))
+    mgr = _make_manager(tmp_path)
+    runner = _SerialRunner("test")
+
+    launch_calibration_jobs(mgr, python_exe=sys.executable, project_path=tmp_path,
+                            jobs=[_calib_spec("base")], runner=runner)
+    deadline = time.monotonic() + 60
+    log = folder / RUN_LOG_FILE
+    while not (log.exists() and "sleeping" in log.read_text(encoding="utf-8")):
+        assert time.monotonic() < deadline, "the stub engine did not start"
+        time.sleep(0.05)
+    job = _find_job(mgr, "calibrate:base")
+    tree = psutil.Process(job.process.pid).children(recursive=True)
+    assert len(tree) == 2  # the supervisor and its engine
+    stop_file = getattr(job, "stop_file", None)
+
+    mgr.kill_job(job.job_id)
+    for stopper in [w for w in mgr._live_waits if isinstance(w, threading.Thread)]:
+        stopper.join(60)
+    runner.wait(timeout=60)
+
+    record = read_status_file(folder)
+    assert record["state"] == "killed"
+    assert record["error"]["message"] == "stopped from the FlexTool window"
+    assert job.status == JobStatus.KILLED
+    assert "calibrator went on" not in job.stdout_lines  # the calibrator itself was stopped first
+    assert not any(p.is_running() and p.status() != psutil.STATUS_ZOMBIE for p in tree)
+    assert stop_file is not None and not stop_file.parent.exists()

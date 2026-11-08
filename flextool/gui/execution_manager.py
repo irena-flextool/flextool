@@ -21,7 +21,13 @@ import psutil
 from flextool.gui.cli_format import format_cmd_for_log, terminal_command
 from flextool.gui.data_models import GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.scenario_key import choose_output_subdir_for_write
-from flextool.run_record import RUN_LOG_OWNER_ENV, RunLogOwner, read_status_settled, results_usable
+from flextool.run_record import (
+    RUN_LOG_OWNER_ENV,
+    RunLogOwner,
+    read_status_settled,
+    results_usable,
+    write_stop_request,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +44,9 @@ KILL_REASON_PROJECT_SWITCHED = "the project was switched"
 
 #: How long :meth:`ExecutionManager.cleanup` waits for the stopped jobs to finish their run records.
 CLEANUP_WAIT_S = 15.0
+#: How long the ``flextool-run`` supervisors of a stopped auxiliary job get to stop their engines and record the
+#: runs as killed, before what is left of the job's processes is killed.
+AUX_STOP_GRACE_S = 10.0
 
 
 def kill_process_tree(proc: subprocess.Popen) -> None:
@@ -59,6 +68,90 @@ def kill_process_tree(proc: subprocess.Popen) -> None:
             child.kill()
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
+
+
+def _is_run_supervisor(process: psutil.Process) -> bool:
+    """Whether *process* is a ``flextool-run`` supervisor (``python -m flextool_run_supervisor``, the console
+    script ``flextool-run``)."""
+    try:
+        cmdline = process.cmdline()
+    except (psutil.Error, OSError):
+        return False
+    if not cmdline:
+        return False
+    if any("flextool_run_supervisor" in part for part in cmdline):
+        return True
+    return os.path.basename(cmdline[0]).lower() in ("flextool-run", "flextool-run.exe")
+
+
+def _kill_quietly(process: psutil.Process) -> None:
+    try:
+        process.kill()
+    except (psutil.Error, OSError):
+        pass
+
+
+def stop_aux_tree(
+    proc: subprocess.Popen, stop_file: Path, reason: str, *, grace_s: float = AUX_STOP_GRACE_S,
+) -> None:
+    """Stop an auxiliary job (a calibration, a representative-period iteration) so that each engine run under it
+    is recorded as ``killed`` with *reason*.
+
+    Its ``flextool-run`` supervisors own the engines' run records, so they are not killed with the rest: *reason*
+    goes into *stop_file* first (a supervisor started meanwhile then starts nothing), the job's process tree is
+    listed, the job's own process and everything that is neither a supervisor nor under one is killed (also the
+    processes an engine started, so its pipe closes at once), each supervisor gets *grace_s* to kill its engine
+    and finish the record, and then whatever is left is killed.  The folder of *stop_file* (the job's own,
+    from ``tempfile.mkdtemp``) is removed at the end.  Blocking: run it in its own thread.
+    """
+    try:
+        write_stop_request(stop_file, reason)
+    except OSError as exc:
+        logger.warning("Cannot write the stop file %s (%s); killing the job's processes.", stop_file, exc)
+        kill_process_tree(proc)
+        shutil.rmtree(stop_file.parent, ignore_errors=True)
+        return
+    try:
+        snapshot = psutil.Process(proc.pid).children(recursive=True)
+    except (psutil.Error, OSError):
+        snapshot = []
+    parents: dict[int, int] = {}
+    for process in snapshot:
+        try:
+            parents[process.pid] = process.ppid()
+        except (psutil.Error, OSError):
+            pass
+    supervisors = [process for process in snapshot if _is_run_supervisor(process)]
+    supervisor_pids = {process.pid for process in supervisors}
+
+    def under_supervisor(pid: int) -> int:
+        """How many levels below a supervisor *pid* is (0: not under one)."""
+        depth, current = 0, pid
+        while current in parents:
+            current = parents[current]
+            depth += 1
+            if current in supervisor_pids:
+                return depth
+        return 0
+
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    for process in snapshot:
+        if process.pid in supervisor_pids:
+            continue
+        # Not under a supervisor, or below a supervisor's engine (the engine's own children): killed now.
+        if under_supervisor(process.pid) != 1:
+            _kill_quietly(process)
+    if supervisors:
+        _gone, alive = psutil.wait_procs(supervisors, timeout=grace_s)
+        if alive:
+            logger.warning("%d flextool-run supervisor(s) did not stop within %.0f s; their run records stay as "
+                           "they are.", len(alive), grace_s)
+    for process in snapshot:
+        _kill_quietly(process)
+    shutil.rmtree(stop_file.parent, ignore_errors=True)
 
 
 def _wait_done(wait: threading.Event | threading.Thread) -> bool:
@@ -438,6 +531,10 @@ class ExecutionJob:
     # Set by the job's worker thread as its very last step, after the run record is finished and the job's
     # output folder is free again.  ``cleanup`` waits for it.
     worker_done: threading.Event = field(default_factory=threading.Event)
+    # An auxiliary job whose process starts ``flextool-run`` supervisors: the file that asks them to stop
+    # (``FLEXTOOL_RUN_STOP_FILE``), and whether a stop through it has started (its stop thread then owns the file).
+    stop_file: Path | None = None
+    stop_started: bool = False
     # Opaque per-platform handle returned by `_wrap_for_memory_cap` post_spawn
     # (e.g. Windows Job Object). Must outlive the Popen, else the cap is
     # released when the last handle closes. None on platforms that don't need it.
@@ -1664,9 +1761,30 @@ class ExecutionManager:
         job.kill_reason = job.kill_reason or reason
         job.end_time = datetime.now()
         job.finish_timestamp = job.end_time.strftime("%d.%m.%y %H:%M")
-        if job.process is not None:
-            kill_process_tree(job.process)
+        if job.process is None:
+            return None
+        if job.stop_file is not None:
+            job.stop_started = True
+            thread = threading.Thread(
+                target=self._stop_aux_job, args=(job.process, job.stop_file, job.kill_reason),
+                name=f"flextool-stop-job-{job.job_id}", daemon=True,
+            )
+            self._live_waits.add(thread)
+            thread.start()
+            return thread
+        kill_process_tree(job.process)
         return None
+
+    def _stop_aux_job(self, proc: subprocess.Popen, stop_file: Path, reason: str) -> None:
+        """The stop thread of an auxiliary job (see :func:`stop_aux_tree`)."""
+        try:
+            stop_aux_tree(proc, stop_file, reason)
+        except Exception:
+            logger.exception("Could not stop an auxiliary job's processes")
+            kill_process_tree(proc)
+        finally:
+            with self._lock:
+                self._live_waits.discard(threading.current_thread())
 
     def kill_all(self, reason: str = KILL_REASON_WINDOW) -> None:
         """Kill all running jobs and cancel pending ones; the run records give *reason*."""
