@@ -61,7 +61,11 @@ from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
 )
-from flextool.engine.preprocess.emit._base_steps import base_steps_of_solve_steps, read_new_step_base_steps
+from flextool.engine.preprocess.emit._base_steps import (
+    base_steps_of_solve_steps,
+    complete_steps_by_period,
+    read_new_step_base_steps,
+)
 from flextool.engine.preprocess.emit._inflow_scaling_checks import check_inflow_scaling_inputs
 from flextool.engine.preprocess.emit._vectorize import _render_value_column
 
@@ -321,9 +325,10 @@ def _compute_inflow_scaling_frames(
         timelines_for_d.setdefault(d, []).append(tl)
 
     # dt_complete from steps_complete_solve.csv — (period, step) pairs.
-    dt_complete_pairs = _read_pairs(
-        solve_data_dir / "steps_complete_solve.csv",
-        provider=provider,
+    # A stochastic branch period's complete steps are its parent's (the
+    # mapping complete_hours_in_period uses).
+    dt_complete_pairs = complete_steps_by_period(
+        solve_data_dir, period_in_use, provider=provider,
     )
     dt_complete_for_d: dict[str, list[str]] = {}
     for d, t in dt_complete_pairs:
@@ -775,9 +780,10 @@ def _compute_inflow_scaling_frames_vectorized(
     for d, tl in period_timeline:
         timelines_for_d.setdefault(d, []).append(tl)
 
-    dt_complete_pairs = _read_pairs(
-        solve_data_dir / "steps_complete_solve.csv",
-        provider=provider,
+    # A stochastic branch period's complete steps are its parent's (the
+    # mapping complete_hours_in_period uses).
+    dt_complete_pairs = complete_steps_by_period(
+        solve_data_dir, period_in_use, provider=provider,
     )
 
     hours_d = _read_keyed_float(
@@ -1433,9 +1439,10 @@ def _compute_inflow_scaling_diagnostics(
     )
 
     # dt_complete from steps_complete_solve.csv — (period, step) pairs.
-    dt_complete_pairs = _read_pairs(
-        solve_data_dir / "steps_complete_solve.csv",
-        provider=provider,
+    # A stochastic branch period's complete steps are its parent's (the
+    # mapping complete_hours_in_period uses).
+    dt_complete_pairs = complete_steps_by_period(
+        solve_data_dir, period_in_use, provider=provider,
     )
     dt_complete_for_d: dict[str, list[str]] = {}
     for d, t in dt_complete_pairs:

@@ -875,3 +875,58 @@ def test_inflow_scaling_synthetic_peak_per_period():
     npop = {(r[0], r[1]): float(r[2]) for r in legacy["new_peak_divided_by_old_peak.csv"].iter_rows()}
     assert npop[("peakN", "d1")] == 2.0
     assert npop[("peakN", "d2")] == pytest.approx(12.0 / 7.0, rel=1e-15)
+
+
+def test_inflow_scaling_synthetic_branch_period_uses_parent_steps():
+    """A stochastic branch period ``d1_b`` (``period__branch`` (d1, d1_b); no rows of its own in
+    ``steps_complete_solve``) scales over its parent's complete steps t1, t2: for ``annN`` (profile 2, 6, share
+    2/8760, af 80) the annual multiplier is share / (|Σ| / af) = (2/8760) / (8/80) = 1/438 in both periods, and the
+    peak node ``peakN`` (profile 5, 6, peak 12) gets the same slope and section in d1_b as in d1.  Twins agree.
+    Before: d1_b had no steps (annual multiplier dropped, peak_old 0)."""
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+
+    provider = FlexDataProvider()
+
+    def put(parent: str, stem: str, df: pl.DataFrame) -> None:
+        provider.put(f"{parent}/{stem}", df)
+        provider.put(stem, df)
+
+    periods = ["d1", "d1_b"]
+    put("input", "node", pl.DataFrame({"node": ["annN", "peakN"]}))
+    put("solve_data", "period_in_use_set", pl.DataFrame({"period": periods}))
+    put("solve_data", "time", pl.DataFrame({"time": ["t1", "t2"]}))
+    put("input", "p_node", pl.DataFrame(
+        {"node": [], "param": [], "value": []}, schema={"node": pl.Utf8, "param": pl.Utf8, "value": pl.Float64}))
+    put("solve_data", "pt_node_inflow", pl.DataFrame({
+        "node": ["annN", "annN", "peakN", "peakN"], "time": ["t1", "t2"] * 2, "value": [2.0, 6.0, 5.0, 6.0]}))
+    put("solve_data", "node__inflow_method", pl.DataFrame({
+        "node": ["annN", "peakN"], "method": ["scale_to_annual_flow", "scale_to_annual_and_peak_flow"]}))
+    put("solve_data", "pdNode", pl.DataFrame({
+        "node": ["annN", "annN", "peakN", "peakN", "peakN", "peakN"],
+        "param": ["annual_flow", "annual_flow", "annual_flow", "peak_inflow", "annual_flow", "peak_inflow"],
+        "period": ["d1", "d1_b", "d1", "d1", "d1_b", "d1_b"], "value": [80.0, 80.0, 80.0, 12.0, 80.0, 12.0]}))
+    put("solve_data", "complete_period_share_of_year_calc", pl.DataFrame({
+        "period": periods, "value": [2.0 / 8760.0] * 2}))
+    put("solve_data", "complete_hours_in_period", pl.DataFrame({"period": periods, "value": [2.0, 2.0]}))
+    put("solve_data", "p_timeline_duration_in_years", pl.DataFrame(
+        {"timeline": [], "value": []}, schema={"timeline": pl.Utf8, "value": pl.Float64}))
+    put("solve_data", "period__timeline_set", pl.DataFrame(
+        {"period": [], "timeline": []}, schema={"period": pl.Utf8, "timeline": pl.Utf8}))
+    put("solve_data", "complete_time_in_use_set", pl.DataFrame({"time": ["t1", "t2"]}))
+    put("solve_data", "steps_complete_solve", pl.DataFrame({"period": ["d1", "d1"], "time": ["t1", "t2"]}))
+    put("solve_data", "period__branch", pl.DataFrame({"period": ["d1", "d1"], "branch": ["d1", "d1_b"]}))
+
+    inp, sdd = Path("input"), Path("solve_data")
+    legacy = _compute_inflow_scaling_frames(inp, sdd, provider=provider)
+    vec = _compute_inflow_scaling_frames_vectorized(inp, sdd, provider=provider)
+    _gate_dicts(legacy, vec, "synthetic-branch-period")
+
+    def cells(frame):
+        return {(r[0], r[1]): float(r[2]) for r in frame.iter_rows()}
+
+    pfam = cells(vec["period_flow_annual_multiplier.csv"])
+    assert pfam[("annN", "d1")] == pytest.approx(1.0 / 438.0, rel=1e-12)
+    assert pfam[("annN", "d1_b")] == pfam[("annN", "d1")]
+    for k in ("new_old_slope.csv", "new_old_section.csv"):
+        got = cells(vec[k])
+        assert got[("peakN", "d1_b")] == got[("peakN", "d1")], k

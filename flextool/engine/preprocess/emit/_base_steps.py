@@ -47,3 +47,28 @@ def base_steps_of_solve_steps(solve_data_dir: Path, *, provider) -> dict[str, tu
     for t, s in df.select(pl.col("time").cast(pl.Utf8), pl.col("new_step").cast(pl.Utf8)).iter_rows():
         out.setdefault(s, []).append(t)
     return {s: tuple(ts) for s, ts in out.items()}
+
+
+def complete_steps_by_period(solve_data_dir: Path, periods: list[str], *, provider) -> list[tuple[str, str]]:
+    """``[(period, complete step)]`` for every period in ``periods``: the steps of ``steps_complete_solve`` of the
+    periods ``d2`` with ``(d2, period)`` in ``period__branch`` — the mapping ``complete_hours_in_period`` sums the
+    hours of.  A stochastic branch period has no complete steps of its own and gets its parent's; a period without a
+    ``period__branch`` row keeps its own steps.  When every period maps to itself the ``steps_complete_solve`` rows
+    are returned as they are (same order)."""
+    def _pairs(stem: str) -> list[tuple[str, str]]:
+        df = provider.get(_provider_key(solve_data_dir / stem)) if provider is not None else None
+        if df is None or df.height == 0 or df.width < 2:
+            return []
+        return [(str(a), str(b)) for a, b in df.select(df.columns[:2]).iter_rows()
+                if a is not None and b is not None and str(a) and str(b)]
+
+    complete = _pairs("steps_complete_solve.csv")
+    parents_of: dict[str, list[str]] = {}
+    for d2, d in _pairs("period__branch.csv"):
+        parents_of.setdefault(d, []).append(d2)
+    if all(parents_of.get(d, [d]) == [d] for d in periods):
+        return complete
+    steps_of: dict[str, list[str]] = {}
+    for d, t in complete:
+        steps_of.setdefault(d, []).append(t)
+    return [(d, t) for d in periods for d2 in parents_of.get(d, [d]) for t in steps_of.get(d2, ())]

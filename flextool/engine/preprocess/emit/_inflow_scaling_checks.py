@@ -47,7 +47,11 @@ from flextool.engine._behaviour_changes import warn_once
 from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine.preprocess.emit._base_steps import base_steps_of_solve_steps, read_new_step_base_steps
+from flextool.engine.preprocess.emit._base_steps import (
+    base_steps_of_solve_steps,
+    complete_steps_by_period,
+    read_new_step_base_steps,
+)
 from flextool.engine.preprocess.emit._pdt_lookup import PdLookup
 
 _ANNUAL = "scale_to_annual_flow"
@@ -128,11 +132,10 @@ def check_inflow_scaling_inputs(input_dir: Path, solve_data_dir: Path, *, provid
     pti = (_keyed_float(frames.get("ptNode_inflow.csv"), 2, ["node", "time"])
            .filter(pl.col("node").is_in(scaled_nodes)))
     weights = _keyed_float(_frame(provider, solve_data_dir / "timestep_weight.csv"), 2, ["period", "time"])
-    dt_complete = _keyed_float(None, 2, ["period", "time"]).drop("value")
-    dtc = _frame(provider, solve_data_dir / "steps_complete_solve.csv")
-    if dtc is not None:
-        dt_complete = dtc.select([pl.col(dtc.columns[0]).cast(pl.Utf8).alias("period"),
-                                  pl.col(dtc.columns[1]).cast(pl.Utf8).alias("time")])
+    # A stochastic branch period's complete steps are its parent's (the mapping complete_hours_in_period uses).
+    dtc_pairs = complete_steps_by_period(solve_data_dir, periods, provider=provider)
+    dt_complete = pl.DataFrame({"period": [d for d, _t in dtc_pairs], "time": [t for _d, t in dtc_pairs]},
+                               schema={"period": pl.Utf8, "time": pl.Utf8})
 
     def _weighted(steps: pl.DataFrame) -> pl.DataFrame:
         """Σ_t inflow[n, t] · w[d, t] over the (period, time) ``steps`` (the sums the methods divide by)."""
