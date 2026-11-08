@@ -749,6 +749,10 @@ class TimelineConfig:
             # Every solve step is one original step (an earlier coarsened
             # solve's rows must not reach this solve).
             provider.put(base_steps_key, pl.DataFrame(schema=NEW_STEP_BASE_STEPS_SCHEMA))
+            # No full-timeline inflow energy: scale_to_annual_flow uses the
+            # solve's own period share (not an earlier coarsened solve's).
+            provider.put(_provider_key(wf / "solve_data" / "node_full_timeline_flow.csv"),
+                         pl.DataFrame(schema={"node": pl.Utf8, "value": pl.Float64}))
             return
 
         # All timesets used by *solve* must resolve to the same
