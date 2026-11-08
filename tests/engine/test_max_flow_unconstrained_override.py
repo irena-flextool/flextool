@@ -140,3 +140,61 @@ def test_invest_no_limit_ceiling_honors_override(
     # ... which is unmistakably above the 1e6-default ceiling the buggy
     # ``p_``-prefixed lookup would silently produce.
     assert wind_units > buggy_units * 2
+
+
+# A value BELOW the former 1e6 floor is used as given (it used to be raised to 1e6).
+SMALL_VALUE = 5000.0
+_SMALL_ALT = "mfuv_small"
+
+
+@pytest.fixture(scope="module")
+def small_source(tmp_path_factory: pytest.TempPathFactory) -> SpineDbReader:
+    """``tests.json`` with ``model.max_flow_for_unconstrained_variables`` = 5000 on the same chain."""
+    if str(TESTS_DIR) not in sys.path:
+        sys.path.insert(0, str(TESTS_DIR))
+    from db_utils import json_to_db  # noqa: E402
+
+    data = json.loads(BASE_FIXTURE_JSON.read_text())
+    data["alternatives"].append([_SMALL_ALT, ""])
+    data["parameter_values"].append([
+        "model", "flexTool", "max_flow_for_unconstrained_variables", _b64_float(SMALL_VALUE), _SMALL_ALT,
+    ])
+    scenario = "mfuv_small_test"
+    chain = _CHAIN[:-1] + [_SMALL_ALT]
+    data["scenarios"].append([scenario, False, ""])
+    for alt, before in zip(chain, chain[1:] + [None]):
+        data["scenario_alternatives"].append([scenario, alt, before])
+    work = tmp_path_factory.mktemp("mfuv_small_db")
+    json_path = work / "mfuv_small.json"
+    json_path.write_text(json.dumps(data))
+    return SpineDbReader(json_to_db(json_path, work / "mfuv_small.sqlite"), scenario)
+
+
+def test_invest_no_limit_ceiling_uses_a_small_value(small_source: SpineDbReader) -> None:
+    """``p_entity_max_units`` of the ``invest_no_limit`` unit = (existing + 5000) / unitsize = 6000 / 1000 = 6.
+    Before: the value was raised to 1e6, (1000 + 1e6) / 1000 = 1001."""
+    ed_invest = dp.ed_invest_set_from_source(small_source, ACTIVE_SOLVE)
+    assert ed_invest is not None
+    pmu = dp.p_entity_max_units_from_source(
+        small_source, ed_invest, active_solve=ACTIVE_SOLVE, workdir=None, provider=None,
+    )
+    assert pmu is not None
+    ceiling = {(e, d): v for e, d, v in pmu.frame.iter_rows()}
+    assert ceiling[("wind_plant", INVEST_PERIOD)] == pytest.approx((WIND_EXISTING + SMALL_VALUE) / UNITSIZE)
+    assert (WIND_EXISTING + SMALL_VALUE) / UNITSIZE == 6.0
+
+
+@pytest.mark.solver
+def test_uncapped_arc_flow_uses_a_small_value(tmp_path_factory: pytest.TempPathFactory) -> None:
+    """water_pump's input from west has ``conversion_flow_coeff`` 0, so its flow is bounded only by
+    ``max_flow_for_unconstrained_variables``: ``p_flow_upper`` = 5000 at every (period, time).  Before: 1e6."""
+    import polars as pl
+
+    from tests.engine._unit_db import b64, solve, utf8
+
+    step = solve(tmp_path_factory, alt="mfuv_arc_small", base_chain=["init", "west", "coal", "water_pump"],
+                 values=[["model", "flexTool", "max_flow_for_unconstrained_variables", b64(SMALL_VALUE, "float")]])
+    rows = (utf8(step.flex_data.p_flow_upper.frame)
+            .filter((pl.col("p") == "water_pump") & (pl.col("source") == "west") & (pl.col("sink") == "water_pump")))
+    assert rows.height > 0
+    assert set(rows["value"].to_list()) == {SMALL_VALUE}
