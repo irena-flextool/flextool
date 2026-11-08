@@ -449,3 +449,30 @@ def test_bold_italic_and_code_have_the_size_of_the_body_text(host):
     finally:
         body.configure(size=old_size)
         transcript.destroy()
+
+
+# --- the token line (owner GUI feedback 2026-11-08 (2)) ------------------------------------------------------------
+def test_the_token_line_stays_at_the_bottom_and_not_in_the_transcript(windows, backends):
+    from flextool.assistant.llm_adapter import Message, Reply, Usage
+
+    def reply(text: str) -> Reply:
+        return Reply(Message("assistant", text), "end", None, Usage(2_000, 500, 100, 800))
+
+    save_provider(LOCAL)
+    backends.add([reply("First. " + "Line.\n" * 200), reply("Second.")])
+    window = windows.open()
+    tab = ask(window, "One")
+    wait_idle(window, tab)
+    assert str(tab.totals.cget("text")) == "This question: 3k in, 800 out · Whole chat: 3k in, 800 out"
+    ask(window, "Two")
+    wait_idle(window, tab)
+    assert str(tab.totals.cget("text")) == "This question: 3k in, 800 out · Whole chat: 5k in, 2k out"
+    assert "tokens" not in tab.transcript.contents() and "in, " not in tab.transcript.contents()
+    # Below the buttons, inside the tab, whatever the transcript's scroll position.
+    window.update()
+    for where in (0.0, 1.0):
+        tab.transcript.text.yview_moveto(where)
+        window.update()
+        assert tab.totals.winfo_ismapped()
+        assert tab.totals.winfo_rooty() >= tab.send_button.winfo_rooty() + tab.send_button.winfo_height()
+        assert tab.totals.winfo_rooty() + tab.totals.winfo_height() <= tab.winfo_rooty() + tab.winfo_height()

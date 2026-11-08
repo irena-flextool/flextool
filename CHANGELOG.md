@@ -1,5 +1,12 @@
 ## Unreleased
 
+- **Fixed: a chat in the AI assistant window changed model after the settings changed.** An open or reopened chat
+  took the model saved later for new chats at its next question (and that model's level). A chat now keeps the
+  service and model that answered in it, and its level unless you change the level of that same model; new chats
+  use the saved settings. The top of the window shows the selected chat's service, model and level and where its
+  data goes. The token line is now at the bottom of each chat, always in view, for the last question and the whole
+  chat in thousands ("26k"); the terminal rounds its token line the same way. One empty row now separates "Png
+  settings…" from "AI assistant…" in the side menu.
 - **New: assistant levels, safety caps and the free plan.** The AI assistant now places each model at a level
   (basic, standard or advanced) from its name and its context size; the window's settings and `--tier` offer only
   that level or a lower one, and say why (a model FlexTool does not recognise may go higher at your own risk).

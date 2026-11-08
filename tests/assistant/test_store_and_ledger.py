@@ -25,7 +25,7 @@ import pytest
 from flextool.assistant import _files, settings, store as store_module
 from flextool.assistant.llm_adapter import Message, ToolCall, Usage, not_reported
 from flextool.assistant.store import ConversationLocked, ConversationNotFound, Store
-from flextool.assistant.usage import Ledger, format_totals, format_turn_line, ledger_key
+from flextool.assistant.usage import Ledger, format_token_line, format_totals, format_turn_line, ledger_key, short_number
 from tests.assistant import store_workers
 
 ORIGIN = ("gemini", "https://generativelanguage.googleapis.com/v1beta/openai/", "model-a")
@@ -559,8 +559,29 @@ def test_turn_line_wording():
     turn = [Usage(310, 2900, 0, 412)]
     conversation = {"input_uncached": 970, "cache_read": 8900, "cache_write": 0, "output": 1230}
     assert format_turn_line(turn, conversation, "Gemini") == \
-        "tokens 3 210 in (2 900 from cache) · 412 out · conversation 9 870 in · 1 230 out"
+        "tokens 3k in (3k from cache) · 412 out · conversation 10k in · 1k out"
     assert format_turn_line([not_reported()], conversation, "Mistral") == "tokens not reported by Mistral"
+
+
+@pytest.mark.parametrize(("value", "text"), [
+    (0, "0"), (999, "999"), (1000, "1k"), (1499, "1k"), (1500, "2k"), (26_400, "26k"), (249_600, "250k"),
+    (999_499, "999k"), (999_500, "1M"), (1_000_000, "1M"), (1_249_999, "1.2M"), (1_250_000, "1.3M"),
+    (12_345_678, "12.3M"),
+])
+def test_token_numbers_are_rounded(value, text):
+    assert short_number(value) == text
+
+
+def test_the_window_token_line():
+    """Owner GUI feedback 2026-11-08 (2): "in" counts every input token (uncached, read from and written to the
+    cache)."""
+    turn = [Usage(20_000, 5_000, 1_000, 6_000), Usage(0, 0, 0, 2_000)]
+    conversation = {"input_uncached": 200_000, "cache_read": 40_000, "cache_write": 10_000, "output": 5_000}
+    assert format_token_line(turn, conversation, "Anthropic") == \
+        "This question: 26k in, 8k out · Whole chat: 250k in, 5k out"
+    assert format_token_line(None, conversation, "Anthropic") == "Whole chat: 250k in, 5k out"
+    assert format_token_line([not_reported()], {}, "Mistral") == "This question: tokens not reported by Mistral"
+    assert format_token_line(None, {}, "Mistral") == ""
 
 
 # --- imports -----------------------------------------------------------------------------------------------------

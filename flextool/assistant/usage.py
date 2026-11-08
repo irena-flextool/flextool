@@ -138,6 +138,21 @@ def number(value: int) -> str:
     return f"{value:,}".replace(",", " ")
 
 
+def short_number(value: int) -> str:
+    """*value* to the nearest thousand with "k" (``26k``), the exact number below 1 000 and millions with one
+    decimal from 1 000 000 on (``1.2M``); halves round up."""
+    value = int(value)
+    if value < 0:
+        return "-" + short_number(-value)
+    if value < 1000:
+        return str(value)
+    thousands = (value + 500) // 1000
+    if thousands < 1000:
+        return f"{thousands}k"
+    tenths = (value + 50_000) // 100_000
+    return f"{tenths // 10}M" if tenths % 10 == 0 else f"{tenths // 10}.{tenths % 10}M"
+
+
 def _cost(value: float) -> str:
     return f"{value:.6g}"
 
@@ -146,25 +161,55 @@ def _input(counts: Mapping[str, Any]) -> int:
     return sum(int(counts.get(name) or 0) for name in ("input_uncached", "cache_read", "cache_write"))
 
 
-def format_turn_line(turn: Iterable[Usage | None], conversation: Mapping[str, Any], provider: str) -> str:
-    """The line after an answer: ``tokens 3 210 in (2 900 from cache) · 412 out · conversation 9 870 in · 1 230
-    out``, or ``tokens not reported by {provider}`` when no request of the turn reported any."""
+def _turn_counts(turn: Iterable[Usage | None]) -> dict[str, Any]:
     counts = empty_counts()
     for usage in turn:
         add_usage(counts, usage)
+    return counts
+
+
+def _unreported(counts: Mapping[str, Any]) -> bool:
     nothing = _input(counts) == 0 and counts["output"] == 0
-    if counts["requests"] == 0 or (counts["not_reported"] == counts["requests"] and nothing):
+    return counts["requests"] == 0 or (counts["not_reported"] == counts["requests"] and nothing)
+
+
+def format_turn_line(turn: Iterable[Usage | None], conversation: Mapping[str, Any], provider: str) -> str:
+    """The terminal's line after an answer, rounded (:func:`short_number`): ``tokens 3k in (3k from cache) · 412
+    out · conversation 10k in · 1k out``, or ``tokens not reported by {provider}`` when no request of the turn
+    reported any."""
+    counts = _turn_counts(turn)
+    if _unreported(counts):
         return f"tokens not reported by {provider}"
-    line = f"tokens {number(_input(counts))} in"
+    line = f"tokens {short_number(_input(counts))} in"
     if counts["cache_read"]:
-        line += f" ({number(counts['cache_read'])} from cache)"
-    line += f" · {number(counts['output'])} out"
+        line += f" ({short_number(counts['cache_read'])} from cache)"
+    line += f" · {short_number(counts['output'])} out"
     if counts["not_reported"]:
         line += f" · {counts['not_reported']} of {counts['requests']} requests not fully reported"
-    line += f" · conversation {number(_input(conversation))} in · {number(int(conversation.get('output') or 0))} out"
+    line += (f" · conversation {short_number(_input(conversation))} in · "
+             f"{short_number(int(conversation.get('output') or 0))} out")
     if counts["cost"] is not None:
         line += f" · cost {_cost(counts['cost'])} (reported by {provider}, in credits)"
     return line
+
+
+def format_token_line(turn: Iterable[Usage | None] | None, conversation: Mapping[str, Any], provider: str) -> str:
+    """The chat window's token line, rounded: ``This question: 26k in, 8k out · Whole chat: 250k in, 5k out``
+    ("in" counts every input token, read from the cache or written to it too).  Without a *turn* (a reopened
+    chat) only the whole chat; ``""`` when nothing was used."""
+    parts: list[str] = []
+    if turn is not None:
+        counts = _turn_counts(turn)
+        if _unreported(counts):
+            parts.append(f"This question: tokens not reported by {provider}")
+        else:
+            parts.append(f"This question: {short_number(_input(counts))} in, {short_number(counts['output'])} out")
+            if counts["cost"] is not None:
+                parts[-1] += f", cost {_cost(counts['cost'])} credits"
+    chat_in, chat_out = _input(conversation), int(conversation.get("output") or 0)
+    if chat_in or chat_out:
+        parts.append(f"Whole chat: {short_number(chat_in)} in, {short_number(chat_out)} out")
+    return " · ".join(parts)
 
 
 def format_totals(data: Mapping[str, Any]) -> str:

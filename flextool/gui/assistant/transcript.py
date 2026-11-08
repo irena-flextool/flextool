@@ -389,13 +389,6 @@ class Transcript(ttk.Frame):
         self._insert(text + "\n", ("notice",))
         self._follow(at_end)
 
-    def usage_line(self, text: str) -> None:
-        at_end = self._at_end()
-        self._close_answer()
-        self._ensure_newline()
-        self._insert(text + "\n", ("usage",))
-        self._follow(at_end)
-
     def error(self, text: str, actions: list[tuple[str, Callable[[], None]]]) -> list[ttk.Button]:
         """An error message, with a button for each of *actions* after it."""
         at_end = self._at_end()

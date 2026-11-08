@@ -119,7 +119,6 @@ MODEL_LINE = "{provider} · {model} · {level}"
 MODEL_LINE_NO_MODEL = "{provider} · no model chosen"
 
 # --- the totals and the footer ------------------------------------------------------------------------------------
-TOTALS = "This chat: {input} in · {output} out"
 FOOTER = "{provider} this month: {input} in · {output} out"
 FOOTER_REJECTED = " · rate-limited attempts: {n}"
 FOOTER_NONE = "{provider} this month: nothing used yet"

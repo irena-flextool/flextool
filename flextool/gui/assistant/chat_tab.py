@@ -41,14 +41,6 @@ PREFIXES = {WORKING: strings.PREFIX_WORKING, WAITING: strings.PREFIX_WAITING, NO
 SETTINGS_ERRORS = frozenset({"auth", "no_key", "model", "permission", "quota", "credit", "routing"})
 
 
-def usage_numbers(totals: dict[str, Any] | None) -> tuple[int, int]:
-    """(input tokens, output tokens) of a conversation's usage counts."""
-    if not totals:
-        return 0, 0
-    tokens_in = sum(int(totals.get(name) or 0) for name in ("input_uncached", "cache_read", "cache_write"))
-    return tokens_in, int(totals.get("output") or 0)
-
-
 class ChatTab(ttk.Frame):
     """A chat of *window*.  ``is_new`` is the "New chat" tab: no worker, nothing sent yet."""
 
@@ -78,6 +70,7 @@ class ChatTab(ttk.Frame):
         self._tool_lines: list[int] = []
         self._pending_name: str | None = None
         self._totals: dict[str, Any] = {}
+        self._question_usage: list | None = None      # the Usage of the last question answered in this window
         self._build()
         if new:
             self.transcript.show_example(strings.EXAMPLE)
@@ -109,14 +102,15 @@ class ChatTab(ttk.Frame):
         bottom = ttk.Frame(self)
         bottom.grid(row=3, column=0, sticky="ew", pady=(lh // 3, 0))
         bottom.columnconfigure(0, weight=1)
-        self.totals = ttk.Label(bottom, text="", anchor="w")
-        self.totals.grid(row=0, column=0, sticky="w")
         self.close_button = ttk.Button(bottom, text=strings.CLOSE_CHAT, command=self.request_close)
         self.close_button.grid(row=0, column=1, padx=(cw, 0))
         self.stop_button = ttk.Button(bottom, text=strings.STOP, command=self.stop, state="disabled")
         self.stop_button.grid(row=0, column=2, padx=(cw // 2, 0))
         self.send_button = ttk.Button(bottom, text=strings.SEND, command=self.send, style="Accent.TButton")
         self.send_button.grid(row=0, column=3, padx=(cw // 2, 0))
+        # The token line: under the buttons, outside the transcript, so it never scrolls away.
+        self.totals = ttk.Label(self, text="", anchor="w", justify="left")
+        self.totals.grid(row=4, column=0, sticky="ew", pady=(lh // 3, 0))
         if self.is_new:
             self.close_button.state(["disabled"])
         self.bind("<Configure>", self._wrap_status, add="+")
@@ -136,6 +130,7 @@ class ChatTab(ttk.Frame):
     def _wrap_status(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         if event.widget is self:
             self.status.configure(wraplength=max(100, event.width - 16))
+            self.totals.configure(wraplength=max(100, event.width - 16))
 
     def _bind_input(self) -> None:
         box = self.input
@@ -236,13 +231,10 @@ class ChatTab(ttk.Frame):
         self.window.tab_changed(self, text_only=True)
 
     def _show_totals(self) -> None:
-        tokens_in, tokens_out = usage_numbers(self._totals)
-        if tokens_in or tokens_out:
-            from flextool.assistant.usage import number
+        """The token line: the last question of this window (when there is one) and the whole chat."""
+        from flextool.assistant.usage import format_token_line
 
-            self.totals.configure(text=strings.TOTALS.format(input=number(tokens_in), output=number(tokens_out)))
-        else:
-            self.totals.configure(text="")
+        self.totals.configure(text=format_token_line(self._question_usage, self._totals, self.provider))
 
     @property
     def provider(self) -> str:
@@ -389,6 +381,7 @@ class ChatTab(ttk.Frame):
             return
         active = self.active_job is not None and job_id == self.active_job.job_id
         if isinstance(event, w.TurnFinished) and not active:
+            self._question_usage = list(event.result.usage)
             self._totals = dict(event.totals)
             self._show_totals()
             self.answered = self.answered or bool(event.result.rounds)
@@ -484,10 +477,10 @@ class ChatTab(ttk.Frame):
 
     def _finished(self, event: Any) -> None:
         from flextool.assistant.llm_errors import message_for
-        from flextool.assistant.usage import format_turn_line
 
         result = event.result
         self.transcript.end_answer()
+        self._question_usage = list(result.usage)
         self._totals = dict(event.totals)
         self._show_totals()
         if result.rounds or result.text:
@@ -503,8 +496,6 @@ class ChatTab(ttk.Frame):
                            (strings.ACTION_NEW_CHAT_SUMMARY, lambda s=summary: self.window.new_chat(seed=s))]
             self.transcript.error(message_for(error, "gui"), actions)
             self.state = ERROR
-        if result.usage:
-            self.transcript.usage_line(format_turn_line(result.usage, event.totals, self.provider))
         self.active_job = None
 
     def _idle(self) -> None:

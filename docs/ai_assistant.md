@@ -66,7 +66,10 @@ layout ("Reset window layout" in "UI settings…" forgets them).
 | Data use | Where the data goes, the privacy settings sent with every request (OpenRouter's data-collection setting can be turned off, after a question), and the settings only your account can change. |
 | Keep conversations for | Days (default 30). Older conversations are deleted when FlexTool closes; `0` saves no conversations. |
 
-Saved settings apply to each chat from its next question.
+Saved settings apply to each chat from its next question, except the provider, the address and the model: a chat
+keeps the model that answered in it, also when it is reopened, and with it its level (unless you change the level
+of that same model). A new chat, or one without an answer yet, uses the saved ones. The top of the window shows the
+selected chat's service, model and level ("Anthropic · claude-opus-5-5 · advanced") and where its data goes.
 
 ### Ask
 
@@ -80,8 +83,10 @@ and what the result viewer shows (mode, scenarios, plot and time range). The ass
 source and scenario when your question names none.
 
 Each tool call is one line in the chat; click it (or press Enter on it) to see the arguments and the first 4 000
-characters of what was sent to the service. After each answer a line gives the tokens used, the chat's totals are
-at the bottom, and the window's last line gives this month's tokens of the service. An error that a setting fixes
+characters of what was sent to the service. Under the buttons, always in view, a line gives the tokens of the last
+question and of the whole chat, rounded to thousands ("This question: 26k in, 8k out · Whole chat: 250k in, 5k
+out"; "in" counts every token sent, also the ones the service read from its cache), and the window's last line
+gives this month's tokens of the service. An error that a setting fixes
 comes with an "Open settings" button; a conversation that got too long for the model offers "New chat" and "New chat
 with summary".
 
@@ -154,7 +159,8 @@ choose.
 
 Then type a question after `you>`. The answer appears as it arrives. Each tool call the assistant makes is one dim
 line, for example `· search_docs query="penalty_up" → 5 results (0.1 s)`, and after each answer a line gives the
-tokens used. End a line with `\` to go on with the question on the next line. Ctrl-C stops an answer at once;
+tokens used, rounded to thousands (`tokens 26k in (20k from cache) · 8k out · conversation 250k in · 5k out`). End
+a line with `\` to go on with the question on the next line. Ctrl-C stops an answer at once;
 Ctrl-C or Ctrl-D at the prompt leaves the chat.
 
 The start of the chat shows where the data goes:
