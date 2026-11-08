@@ -227,9 +227,9 @@ def query_result(ctx: AssistantContext, args: dict) -> Fit:
 
 
 def _comparison_source(ctx: AssistantContext, state: dict, stem: str) -> tuple[_query.Table | None, str | None]:
-    """The comparison file of *stem* when it may be used (P0 §5.6), else ``(None, why not)``."""
-    from flextool.run_record import parse_iso
-
+    """The comparison file of *stem* when it may be used (P0 §5.6), else ``(None, why not)``: the metadata says
+    every member is fresh, and the table has the members as its scenario level and the metadata's ``write_id``
+    in its footer (it was written by the write the metadata describes)."""
     if not state["usable"]:
         return None, state.get("note") or COMPARISON_MISMATCH
     folder = ctx.project_path / _runs.COMPARISON_DIR
@@ -240,8 +240,7 @@ def _comparison_source(ctx: AssistantContext, state: dict, stem: str) -> tuple[_
     members = {m["folder"] for m in state["members"]}
     if SCENARIO_LEVEL not in table.layout.col or set(table.layout.level_values(SCENARIO_LEVEL)) != members:
         return None, COMPARISON_MISMATCH
-    written = parse_iso(state["written_at"])
-    if written is None or table.path.stat().st_mtime < written.timestamp():
+    if table.layout.write_id is None or table.layout.write_id != state.get("write_id"):
         return None, COMPARISON_MISMATCH
     return table, None
 

@@ -873,16 +873,22 @@ def _is_run_record_file(filename: str) -> bool:
     )
 
 
-def _note_parquet_written(parquet_dir: str) -> None:
-    """Tell the run record that the parquet files of *parquet_dir* are complete.
+def _note_parquet(parquet_dir: str, *, written: bool) -> None:
+    """Tell the run record that the parquet files of *parquet_dir* are being replaced (*written* false: the
+    folder was just emptied) or are complete (*written* true).
 
     During an engine run the active recorder takes it.  Without one (``flextool-write-outputs`` rewriting the
-    outputs of an earlier run) an existing ``_run_status.json`` gets ``outputs.by = write_outputs``.  A run whose
-    recorder stopped (another run took the folder over) leaves the file alone: it is the other run's record.
+    outputs of an earlier run) an existing ``_run_status.json`` gets ``outputs.parquet_state = partial`` while
+    the files are rewritten, then ``written`` with ``outputs.by = write_outputs`` and a new ``written_at`` (so a
+    comparison built from the old files, or during the rewrite, is not taken as this folder's results).  A run
+    whose recorder stopped (another run took the folder over) leaves the file alone: it is the other run's record.
     """
     rec = run_record.active()
     if rec.is_recording:
-        rec.outputs_written()
+        if written:
+            rec.outputs_written()
+        else:
+            rec.outputs_cleared()
         return
     if rec.stopped:
         return
@@ -890,13 +896,21 @@ def _note_parquet_written(parquet_dir: str) -> None:
     if status is None:
         return
     outputs = dict(status.get("outputs") or {})
-    outputs.update(parquet_state="written", by="write_outputs", written_at=run_record.now_iso(), previous=None,
-                   reason=None)
+    if written:
+        outputs.update(parquet_state="written", by="write_outputs", written_at=run_record.now_iso(),
+                       previous=None, reason=None)
+    else:
+        outputs.update(parquet_state="partial", previous=None, reason=None)
     status["outputs"] = outputs
     try:
         run_record.write_status_atomic(parquet_dir, status)
     except OSError as exc:
         logging.warning("Could not update the run record in %s: %s", parquet_dir, exc)
+
+
+def _note_parquet_written(parquet_dir: str) -> None:
+    """:func:`_note_parquet` for complete parquet files."""
+    _note_parquet(parquet_dir, written=True)
 
 
 def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, timing_recorder=None, flex_data=None, solution=None, solve_name=None, solve_steps=None, flex_data_provider=None, results_db_url=None):
@@ -1105,13 +1119,13 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         # single-result guard (partial runs must not wipe sibling outputs).
         # The run record (``_run_status.json``, ``_run.log``) stays.
         if not single_result:
+            _note_parquet(parquet_dir, written=False)
             for filename in os.listdir(parquet_dir):
                 if _is_run_record_file(filename):
                     continue
                 file_path = os.path.join(parquet_dir, filename)
                 if os.path.isfile(file_path):
                     os.remove(file_path)
-            run_record.active().outputs_cleared()
 
         for name, df in results.items():
             col_meta = None

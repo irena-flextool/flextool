@@ -23,39 +23,67 @@ from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
 from flextool.scenario_comparison.data_models import TimeSeriesResults
 
 
+#: The ``format`` of the ``_metadata.json`` :func:`write_comparison_metadata` writes.  Metadata without it (an
+#: older writer) is never taken as matching the current runs.
+COMPARISON_METADATA_FORMAT = 2
+
+
+def new_write_id() -> str:
+    """The id of one write of the comparison files: in every table's footer and in ``_metadata.json``."""
+    import uuid
+
+    return uuid.uuid4().hex
+
+
 def comparison_members(member_dirs: dict[str, Path]) -> list[dict]:
-    """The run each member folder holds, from its run record: ``[{folder, run_id, started_at, finished_at}]``
-    (``None`` fields for a folder without a run record)."""
-    from flextool.run_record import read_status_file
+    """The run each member folder holds, from its run record read strictly:
+    ``[{folder, path, run_id, started_at, finished_at, outputs_written_at}]``.
+
+    *path* is the resolved member folder.  ``run_id`` and ``outputs_written_at`` are set only when the record
+    exists and ``run_record.results_usable`` holds for it; a running, failed or damaged record, one that stays
+    unreadable for 2 s, and a folder without a record give ``None``.  The times are the record's (for display).
+    """
+    from flextool.run_record import read_status_settled, results_usable, well_formed
 
     members = []
     for name, folder in member_dirs.items():
-        status = read_status_file(folder) or {}
-        members.append({"folder": name, "run_id": status.get("run_id"), "started_at": status.get("started_at"),
-                        "finished_at": status.get("finished_at")})
+        status = read_status_settled(folder)
+        usable = status is not None and results_usable(status)
+        shown = status if well_formed(status) else {}
+        outputs = shown.get("outputs") or {}
+        members.append({"folder": name, "path": str(Path(folder).resolve()),
+                        "run_id": shown.get("run_id") if usable else None,
+                        "started_at": shown.get("started_at"), "finished_at": shown.get("finished_at"),
+                        "outputs_written_at": outputs.get("written_at") if usable else None})
     return members
 
 
-def settled_members(before: list[dict] | None, member_dirs: dict[str, Path]) -> list[dict]:
-    """The members as their run records say now; a member whose run changed since *before* (a run started while
-    the comparison read its files) gets no ``run_id``, so the comparison files are not taken as its results."""
+def settled_members(before: list[dict], member_dirs: dict[str, Path]) -> list[dict]:
+    """The members as their run records say now (:func:`comparison_members`).  A member keeps its ``run_id`` only
+    when *before* (taken before any of its files was read) has the same folder path, the same ``run_id`` and the
+    same ``outputs_written_at``: its results were usable then and now, and neither a run nor a rewrite of its
+    outputs came between.  Otherwise its ``run_id`` is ``None``, so the comparison files are not taken as its
+    results."""
     now = comparison_members(member_dirs)
-    if before is None:
-        return now
-    then = {m["folder"]: m["run_id"] for m in before}
+    then = {m["folder"]: m for m in before}
     for member in now:
-        if then.get(member["folder"]) != member["run_id"]:
+        prev = then.get(member["folder"])
+        if (prev is None or prev["run_id"] is None or prev["run_id"] != member["run_id"]
+                or prev["outputs_written_at"] != member["outputs_written_at"] or prev["path"] != member["path"]):
             member["run_id"] = None
+            member["outputs_written_at"] = None
     return now
 
 
 def write_comparison_metadata(output_dir: Path | str, scenarios: list[str], members: list[dict],
-                              written_at: str) -> None:
+                              written_at: str, write_id: str) -> None:
     """Write ``_metadata.json`` of the comparison files: the scenario folders, the run each was built from
-    (``members``) and when the writing started (``written_at``; every comparison table written then is not older),
-    as UTF-8 through a temporary file."""
+    (``members``), when the writing started (``written_at``), the id the tables of this write carry in their
+    footers (``write_id``) and ``format`` (:data:`COMPARISON_METADATA_FORMAT`), as UTF-8 through a temporary
+    file."""
     output_dir = Path(output_dir)
-    meta = {"scenarios": list(scenarios), "members": members, "written_at": written_at}
+    meta = {"scenarios": list(scenarios), "members": members, "written_at": written_at, "write_id": write_id,
+            "format": COMPARISON_METADATA_FORMAT}
     fd, tmp = tempfile.mkstemp(dir=str(output_dir), prefix="_metadata_", suffix=".tmp")
     try:
         with open(fd, "w", encoding="utf-8") as f:
@@ -356,40 +384,41 @@ def combine_scenario_parquets(
             f"No scenario directories found under {parquet_base} "
             f"for scenarios: {scenario_names}"
         )
-    # The runs the members hold, before their files are read (see settled_members).
+    # The runs the members hold, before any of their files is read (see settled_members).
     member_dirs = {name: parquet_base / name for name in scenario_folders}
     members_before = comparison_members(member_dirs)
 
     # 2. Collect all parquet files grouped by filename
     files_by_name = collect_parquet_files(scenario_folders, output_subdir="")
 
-    # 3. Combine parquet files across scenarios
+    # 3. Combine parquet files across scenarios, and merge the scenarios' timeline breaks
+    # (a break of one scenario also cuts the others' lines: the scenarios share one time axis)
     combined_dfs = combine_parquet_files(
         files_by_name, num_scenarios=len(scenario_names)
     )
+    from flextool.plot_outputs.format_helpers import load_timeline_breaks, write_timeline_breaks
+    break_times = load_timeline_breaks(*(parquet_base / name for name in scenario_folders))
 
-    # 4. Write combined DataFrames to output_dir
+    # 4. Write combined DataFrames to output_dir, each stamped with this write's id
     #    Skip mapping DataFrames (flat columns) — they have duplicate column
     #    names after axis=1 concat and are handled separately via dispatch
     #    mappings.  Only write time-series DataFrames (MultiIndex columns).
     output_dir.mkdir(parents=True, exist_ok=True)
     from flextool.run_record import now_iso
     written_at = now_iso()
+    write_id = new_write_id()
     for name, df in combined_dfs.items():
         if df.empty:
             continue
         if not isinstance(df.columns, pd.MultiIndex):
             continue
-        write_lean_parquet(df, output_dir / f"{name}.parquet")
+        write_lean_parquet(df, output_dir / f"{name}.parquet", write_id=write_id)
 
-    # 5. Write metadata: the scenario folders and the runs they held
+    # 5. Write metadata: the scenario folders and the runs they held, checked again after every read and write
     write_comparison_metadata(output_dir, list(scenario_folders.keys()),
-                              settled_members(members_before, member_dirs), written_at)
+                              settled_members(members_before, member_dirs), written_at, write_id)
 
-    # 6. Merge timeline breaks from all scenarios
-    # (a break of one scenario also cuts the others' lines: the scenarios share one time axis)
-    from flextool.plot_outputs.format_helpers import load_timeline_breaks, write_timeline_breaks
-    break_times = load_timeline_breaks(*(parquet_base / name for name in scenario_folders))
+    # 6. Write the merged timeline breaks
     write_timeline_breaks(output_dir, break_times)
 
     written_count = sum(

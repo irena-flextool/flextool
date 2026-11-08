@@ -86,7 +86,7 @@ UNREADABLE_STATE = "unreadable"
 MALFORMED_STATE = "malformed"
 #: A status that does not parse is taken as being written while it is younger than this, else as damaged.
 _WRITE_IN_PROGRESS_SECONDS = 10.0
-#: How long the owner keeps trying to read a status it must finish.
+#: How long :func:`read_status_settled` keeps trying to read a status that cannot be read now.
 _FINALIZE_READ_SECONDS = 2.0
 
 
@@ -558,6 +558,19 @@ def read_status_file(folder: Path | str, *, strict: bool = False) -> dict | None
     return None
 
 
+def read_status_settled(folder: Path | str, seconds: float | None = None) -> dict | None:
+    """:func:`read_status_file` read strictly, and read again every 0.1 s for up to *seconds* (2 s by default)
+    while it answers ``unreadable`` (a reader on Windows holding the file, or a write in progress); the last
+    answer then stands.  For callers that must decide now and keep the decision: the pipe owner finishing a
+    record, the comparison recording which run each member holds."""
+    deadline = time.monotonic() + (_FINALIZE_READ_SECONDS if seconds is None else seconds)
+    while True:
+        status = read_status_file(folder, strict=True)
+        if status is None or status.get("state") != UNREADABLE_STATE or time.monotonic() >= deadline:
+            return status
+        time.sleep(0.1)
+
+
 def _replace(tmp: Path, path: Path, *, final: bool) -> None:
     """``os.replace`` with retries on ``PermissionError`` (a reader holds the target open on Windows)."""
     deadline = time.monotonic() + 2.0
@@ -737,16 +750,11 @@ def finalize_unfinished(
     running becomes ``error``.
     """
     folder = Path(folder)
-    deadline = time.monotonic() + _FINALIZE_READ_SECONDS
-    while True:
-        status = read_status_file(folder, strict=True)
-        if status is None or status.get("state") != UNREADABLE_STATE:
-            break
-        if time.monotonic() >= deadline:
-            _logger.warning("Cannot read the run record in %s to finish it; it keeps the state the engine left.",
-                            folder)
-            return False
-        time.sleep(0.1)
+    status = read_status_settled(folder)
+    if status is not None and status.get("state") == UNREADABLE_STATE:
+        _logger.warning("Cannot read the run record in %s to finish it; it keeps the state the engine left.",
+                        folder)
+        return False
     if status is None or status.get("state") != "running" or status.get("run_id") != run_id:
         return False
     if killed:
@@ -893,6 +901,7 @@ __all__ = [
     "parse_iso",
     "parse_marker",
     "read_status_file",
+    "read_status_settled",
     "results_usable",
     "solve_verdict",
     "UNUSABLE_CODES",

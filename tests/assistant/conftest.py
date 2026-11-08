@@ -9,7 +9,6 @@ files but no run record (an older FlexTool); ``output_parquet_comparison`` was b
 """
 from __future__ import annotations
 
-import json
 import shutil
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -176,6 +175,7 @@ def build_assistant_project(root: Path, db: Path) -> Path:
     """The synthetic project of the assistant tests (see the module text) under *root*; also used by
     ``tools/record_llm_replies.py``, so recorded replies come from this project only."""
     from flextool.run_record import now_iso
+    from flextool.scenario_comparison.db_reader import comparison_members, new_write_id, write_comparison_metadata
 
     project = make_project(root, db)
     coal = record_run(project, "coal_1", "coal", succeed)
@@ -184,9 +184,9 @@ def build_assistant_project(root: Path, db: Path) -> Path:
     write_parquet(project / "output_parquet" / "base_1")
     comparison = project / "output_parquet_comparison"
     write_parquet(comparison)
-    (comparison / "_metadata.json").write_text(json.dumps({
-        "scenarios": ["coal_1"], "members": [{"folder": "coal_1", "run_id": coal}], "written_at": now_iso()}),
-        encoding="utf-8")
+    members = comparison_members({"coal_1": project / "output_parquet" / "coal_1"})
+    assert members[0]["run_id"] == coal
+    write_comparison_metadata(comparison, ["coal_1"], members, now_iso(), new_write_id())
     return project
 
 

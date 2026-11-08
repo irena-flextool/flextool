@@ -30,10 +30,13 @@ import pyarrow.parquet as pq
 if TYPE_CHECKING:
     import polars as pl
 
+#: The footer key of :func:`write_lean_parquet`'s *write_id*.
+WRITE_ID_KEY = b"flextool_write_id"
+
 
 def write_lean_parquet(
     df: pd.DataFrame, path: str | Path, *, index: bool = True,
-    column_metadata: "dict | None" = None,
+    column_metadata: "dict | None" = None, write_id: str | None = None,
 ) -> None:
     """Write *df* to parquet with minimal metadata.
 
@@ -52,6 +55,10 @@ def write_lean_parquet(
         ``flextool_columns`` JSON blob (keyed by *leaf* name, robust to the
         MultiIndex/scenario flattening that arrow applies to field names).
         Read it back with :func:`read_lean_parquet_column_meta`.
+    write_id : str, optional
+        The id of the write this file belongs to (the comparison files: every table and ``_metadata.json`` of
+        one write carry the same id), stored as ``flextool_write_id``.  Read it back with
+        :func:`read_lean_parquet_write_id` or :attr:`LeanLayout.write_id`.
     """
     # Don't preserve RangeIndex as a physical column — it carries no data
     # and would create a stray ``__index_level_0__`` column without the
@@ -83,6 +90,8 @@ def write_lean_parquet(
     meta[b"flextool"] = json.dumps(info).encode()
     if column_metadata:
         meta[b"flextool_columns"] = json.dumps(column_metadata).encode()
+    if write_id is not None:
+        meta[WRITE_ID_KEY] = write_id.encode()
     table = table.replace_schema_metadata(meta)
 
     pq.write_table(table, str(path))
@@ -97,6 +106,19 @@ def read_lean_parquet_column_meta(path: str | Path) -> dict | None:
     file_meta = pq.ParquetFile(str(path)).schema_arrow.metadata or {}
     blob = file_meta.get(b"flextool_columns")
     return json.loads(blob) if blob else None
+
+
+def read_lean_parquet_write_id(path: str | Path) -> str | None:
+    """The ``write_id`` :func:`write_lean_parquet` stored in the file at *path* (``None`` without one).  Reads
+    only the footer."""
+    with pq.ParquetFile(_open_source(Path(path))) as pf:
+        meta = pf.schema_arrow.metadata or {}
+    return _write_id_of(meta)
+
+
+def _write_id_of(meta: dict) -> str | None:
+    value = meta.get(WRITE_ID_KEY)
+    return value.decode() if value else None
 
 
 def read_lean_parquet(path: str | Path) -> pd.DataFrame:
@@ -187,7 +209,8 @@ class LeanLayout:
     columns; *col* the column level names (empty for a flat table, whose columns are all row levels).  Each data
     column has its key (one value per column level) in *columns* and its physical name in *physical*, in file
     order.  *column_meta* is the ``flextool_columns`` blob, *num_rows* the row count, and *lean* whether the file
-    carries FlexTool's footer (else the pandas metadata, or none, described it).
+    carries FlexTool's footer (else the pandas metadata, or none, described it).  *write_id* is the id of the
+    write the file belongs to (``write_lean_parquet(write_id=...)``), ``None`` without one.
     """
 
     idx: tuple[str, ...]
@@ -198,6 +221,7 @@ class LeanLayout:
     column_meta: dict | None
     num_rows: int
     lean: bool
+    write_id: str | None = None
 
     def level_values(self, level: str) -> list[str]:
         """The distinct keys of the column level *level*, in file order."""
@@ -280,10 +304,11 @@ def lean_parquet_layout(path: str | Path) -> LeanLayout:
     present = [p for p in index_physical if p in names]
     idx = tuple(level for level, p in zip(idx, index_physical) if p in names)
     if not col:                                       # a flat table: every column is a row level
-        return LeanLayout(tuple(names), tuple(names), (), (), (), column_meta, num_rows, lean)
+        return LeanLayout(tuple(names), tuple(names), (), (), (), column_meta, num_rows, lean, _write_id_of(meta))
     data = [n for n in names if n not in set(present)]
     columns = tuple(_key_of(n, len(col)) for n in data)
-    return LeanLayout(idx, tuple(present), col, columns, tuple(data), column_meta, num_rows, lean)
+    return LeanLayout(idx, tuple(present), col, columns, tuple(data), column_meta, num_rows, lean,
+                      _write_id_of(meta))
 
 
 def read_lean_parquet_wide(path: str | Path, *, keep: "list[str] | None" = None,

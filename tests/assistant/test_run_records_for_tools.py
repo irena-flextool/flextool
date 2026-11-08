@@ -173,13 +173,16 @@ def test_a_changed_input_and_a_legacy_folder_carry_notes(tmp_path: Path, tests_d
 
 def test_comparison_falls_back_when_a_member_ran_again_or_only_scenarios_are_recorded(
         tmp_path: Path, tests_db: Path) -> None:
+    from flextool.scenario_comparison.db_reader import comparison_members, new_write_id, write_comparison_metadata
+
     project = _project_with(tmp_path, tests_db, ("coal_1", succeed))
     first = read_status_file(project / "output_parquet" / "coal_1")["run_id"]
     comparison = project / "output_parquet_comparison"
     comparison.mkdir()
     meta = comparison / "_metadata.json"
-    meta.write_text(json.dumps({"scenarios": ["coal_1"], "members": [{"folder": "coal_1", "run_id": first}],
-                                "written_at": run_record.now_iso()}), encoding="utf-8")
+    members = comparison_members({"coal_1": project / "output_parquet" / "coal_1"})
+    assert members[0]["run_id"] == first
+    write_comparison_metadata(comparison, ["coal_1"], members, run_record.now_iso(), new_write_id())
     ctx = make_context(project)
     assert _runs.comparison_state(ctx)["usable"] is True
     record_run(project, "coal_1", "coal", succeed)              # the member ran again: another run id
@@ -452,10 +455,12 @@ def test_comparison_falls_back_to_member_folders(tmp_path: Path, tests_db: Path)
     fresh = meta_path.read_text(encoding="utf-8")
     ctx = make_context(project)
 
-    # A comparison table older than the comparison: the member folders.
+    # Tables of one write under the metadata of another (two writers at once): the member folders, though the
+    # runs are fresh and the tables are newer than written_at.
     meta = json.loads(fresh)
-    meta["written_at"] = (datetime.now().astimezone() + timedelta(hours=1)).isoformat(timespec="seconds")
+    meta["write_id"] = "f" * 32
     meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    assert _runs.comparison_state(ctx)["usable"] is True
     out = _compare(ctx)
     assert out["source"] == "run_folders" and out["notes"][0].startswith("The comparison files do not match")
 
@@ -503,6 +508,188 @@ def test_the_comparison_orchestrator_records_its_runs(tmp_path: Path, tests_db: 
     assert [(m["folder"], m["run_id"]) for m in meta["members"]] == [("base_1", ids["base_1"]),
                                                                       ("high_1", ids["high_1"])]
     assert _compare(make_context(project))["source"] == "comparison_files"
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Comparison freshness: a member is fresh only when its run was usable, and the same run with the same outputs,
+# before and after the comparison read its files (C2-1); the tables and the metadata are of one write
+
+
+def _finish_as_succeeded(folder: Path) -> None:
+    """The member's running record finishes: ``succeeded`` with its parquet ``written`` (the folder's files are
+    not touched, as when the run's own write comes later than the comparison read)."""
+    status = read_status_file(folder)
+    status["state"] = "succeeded"
+    status["finished_at"] = run_record.now_iso()
+    status["outputs"] = {**(status.get("outputs") or {}), "parquet_state": "written",
+                         "written_at": run_record.now_iso()}
+    write_status_atomic(folder, status)
+    _runs.clear_cache()
+
+
+def _members(project: Path) -> list[tuple[str, str | None]]:
+    meta = json.loads((project / "output_parquet_comparison" / "_metadata.json").read_text(encoding="utf-8"))
+    return [(m["folder"], m["run_id"]) for m in meta["members"]]
+
+
+def _during_read(monkeypatch, module, action) -> None:
+    """Run *action* once inside *module*'s ``combine_parquet_files``, before the files are read."""
+    from flextool.scenario_comparison import db_reader
+
+    real = db_reader.combine_parquet_files
+    done = []
+
+    def wrapped(*args, **kwargs):
+        if not done:
+            done.append(True)
+            action()
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(module, "combine_parquet_files", wrapped)
+
+
+def test_a_member_running_at_build_time_is_never_fresh(tmp_path: Path, tests_db: Path) -> None:
+    from flextool.scenario_comparison.db_reader import combine_scenario_parquets
+
+    project, ids = _comparison_project(tmp_path, tests_db)
+    high = project / "output_parquet" / "high_1"
+    r2 = record_run(project, "high_1", "high", _running)        # R2 runs; the folder still holds R1's parquet
+    combine_scenario_parquets(project, ["base_1", "high_1"])
+    _finish_as_succeeded(high)                                   # R2 succeeds later
+    assert read_status_file(high)["run_id"] == r2
+    assert _members(project) == [("base_1", ids["base_1"]), ("high_1", None)]
+    ctx = make_context(project)
+    assert _runs.comparison_state(ctx)["usable"] is False
+    assert _compare(ctx)["source"] == "run_folders"
+
+
+def test_a_member_that_finishes_during_the_read_is_not_fresh(tmp_path: Path, tests_db: Path, monkeypatch) -> None:
+    """The C2-1 sequence: running R2 at the before snapshot, succeeded R2 at the after snapshot, R1's parquet
+    read in between."""
+    from flextool.scenario_comparison import db_reader
+
+    project, ids = _comparison_project(tmp_path, tests_db)
+    high = project / "output_parquet" / "high_1"
+    record_run(project, "high_1", "high", _running)
+    _during_read(monkeypatch, db_reader, lambda: _finish_as_succeeded(high))
+    db_reader.combine_scenario_parquets(project, ["base_1", "high_1"])
+    assert _members(project) == [("base_1", ids["base_1"]), ("high_1", None)]
+    ctx = make_context(project)
+    assert _runs.comparison_state(ctx)["usable"] is False
+    assert _compare(ctx)["source"] == "run_folders"
+
+
+def test_a_member_whose_run_changes_during_the_read_is_not_fresh(tmp_path: Path, tests_db: Path,
+                                                                monkeypatch) -> None:
+    from flextool.scenario_comparison import db_reader
+
+    project, ids = _comparison_project(tmp_path, tests_db)
+    _during_read(monkeypatch, db_reader, lambda: record_run(project, "high_1", "high", succeed))
+    db_reader.combine_scenario_parquets(project, ["base_1", "high_1"])
+    assert _members(project) == [("base_1", ids["base_1"]), ("high_1", None)]
+
+
+def test_an_unreadable_or_malformed_member_record_is_not_fresh(tmp_path: Path, tests_db: Path) -> None:
+    from flextool.scenario_comparison.db_reader import combine_scenario_parquets
+
+    project, ids = _comparison_project(tmp_path, tests_db)
+    high = project / "output_parquet" / "high_1"
+    status_path = high / run_record.RUN_STATUS_FILE
+    status_path.write_text("{", encoding="utf-8")                # cut short long ago: damaged
+    then = time.time() - 60
+    os.utime(status_path, (then, then))
+    combine_scenario_parquets(project, ["base_1", "high_1"])
+    assert _members(project) == [("base_1", ids["base_1"]), ("high_1", None)]
+    # A record of the wrong shape that still names its run.
+    status_path.write_text(json.dumps({"state": "succeeded", "run_id": "a" * 32, "outputs": [1]}),
+                           encoding="utf-8")
+    combine_scenario_parquets(project, ["base_1", "high_1"])
+    assert _members(project) == [("base_1", ids["base_1"]), ("high_1", None)]
+
+
+def test_the_db_mode_comparison_takes_a_before_snapshot(tmp_path: Path, tests_db: Path, monkeypatch) -> None:
+    """DB mode (no folders given): the folders come from the database before any file is read, so a run that
+    starts during the read is not recorded as the member's."""
+    from unittest.mock import patch
+
+    from flextool.scenario_comparison import db_reader, orchestrator
+
+    project, ids = _comparison_project(tmp_path, tests_db)
+    config = tmp_path / "plots.yaml"
+    config.write_text("plots: {}\n", encoding="utf-8")
+    comparison = project / "output_parquet_comparison"
+    folders = {"base_1": str(project), "high_1": str(project)}
+    _during_read(monkeypatch, db_reader, lambda: record_run(project, "high_1", "high", succeed))
+    # The database is never opened: both names of the reader give the folders.
+    monkeypatch.setattr(db_reader, "read_scenario_folders", lambda url: dict(folders))
+    monkeypatch.setattr(orchestrator, "read_scenario_folders", lambda url: dict(folders), raising=False)
+    with patch("flextool.scenario_comparison.orchestrator.plot_dict_of_dataframes"):
+        orchestrator.run(
+            db_url="sqlite:///unused", parquet_subdir="output_parquet", plot_dir=str(tmp_path / "plots"),
+            output_config_path=str(config), active_configs=["default"], plot_rows=[0, 167], write_to_xlsx=False,
+            write_dispatch_xlsx=False, write_to_ods=False, show_plots=False, dispatch_plots=False,
+            scenario_folders=None, comparison_parquet_dir=str(comparison))
+    assert _members(project) == [("base_1", ids["base_1"]), ("high_1", None)]
+    assert _compare(make_context(project))["source"] == "run_folders"
+
+
+def test_metadata_of_an_older_writer_is_never_fresh(tmp_path: Path, tests_db: Path) -> None:
+    """Metadata without ``format`` 2 (an earlier writer that recorded a running member's id) is not used, even
+    when that run has succeeded since."""
+    from flextool.scenario_comparison.db_reader import combine_scenario_parquets
+
+    project, _ = _comparison_project(tmp_path, tests_db)
+    combine_scenario_parquets(project, ["base_1", "high_1"])
+    meta_path = project / "output_parquet_comparison" / "_metadata.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    older = {"scenarios": meta["scenarios"], "written_at": meta["written_at"],
+             "members": [{k: m[k] for k in ("folder", "run_id", "started_at")} | {"finished_at": None}
+                         for m in meta["members"]]}
+    meta_path.write_text(json.dumps(older), encoding="utf-8")
+    ctx = make_context(project)
+    state = _runs.comparison_state(ctx)
+    assert state["usable"] is False and [m["fresh"] for m in state["members"]] == [False, False]
+    assert "earlier FlexTool" in state["note"]
+    assert _compare(ctx)["source"] == "run_folders"
+
+
+def test_outputs_rewritten_without_a_new_run_are_not_fresh(tmp_path: Path, tests_db: Path) -> None:
+    """``flextool-write-outputs`` rewrites a run's parquet under the same run id: only ``outputs.written_at``
+    changes, and the comparison no longer stands for that member."""
+    from flextool.scenario_comparison.db_reader import combine_scenario_parquets
+
+    project, _ = _comparison_project(tmp_path, tests_db)
+    combine_scenario_parquets(project, ["base_1", "high_1"])
+    ctx = make_context(project)
+    assert _runs.comparison_state(ctx)["usable"] is True
+    high = project / "output_parquet" / "high_1"
+    status = read_status_file(high)
+    status["outputs"]["written_at"] = (datetime.now().astimezone() + timedelta(minutes=5)).isoformat(
+        timespec="seconds")
+    write_status_atomic(high, status)
+    _runs.clear_cache()
+    state = _runs.comparison_state(ctx)
+    assert state["usable"] is False and [m["fresh"] for m in state["members"]] == [True, False]
+    assert _compare(ctx)["source"] == "run_folders"
+
+
+def test_a_member_built_from_another_folder_is_not_fresh(tmp_path: Path, tests_db: Path) -> None:
+    from flextool.scenario_comparison.db_reader import combine_scenario_parquets
+
+    project, _ = _comparison_project(tmp_path, tests_db)
+    combine_scenario_parquets(project, ["base_1", "high_1"])
+    meta_path = project / "output_parquet_comparison" / "_metadata.json"
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    meta["members"][1]["path"] = str(tmp_path / "elsewhere" / "output_parquet" / "high_1")
+    meta_path.write_text(json.dumps(meta), encoding="utf-8")
+    state = _runs.comparison_state(make_context(project))
+    assert state["usable"] is False and "outside this project" in state["note"]
+
+
+def test_the_reader_knows_the_writers_metadata_format() -> None:
+    from flextool.scenario_comparison.db_reader import COMPARISON_METADATA_FORMAT
+
+    assert _runs.COMPARISON_FORMAT == COMPARISON_METADATA_FORMAT
 
 
 # ---------------------------------------------------------------------------------------------------------

@@ -17,6 +17,7 @@ from the current successful runs (P0 §5.6).
 from __future__ import annotations
 
 import json
+import os
 import threading
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -31,6 +32,8 @@ from flextool.assistant.errors import ToolError, close_names, message, name_list
 RESULTS_DIR = "output_parquet"
 COMPARISON_DIR = "output_parquet_comparison"
 COMPARISON_METADATA = "_metadata.json"
+#: The ``format`` of ``_metadata.json`` whose members can be fresh (``db_reader.COMPARISON_METADATA_FORMAT``).
+COMPARISON_FORMAT = 2
 SCENARIOS_MAX = 100
 RUNS_MAX = 200
 ERROR_MAX = 300
@@ -346,13 +349,16 @@ def resolve_run(ctx: AssistantContext, run: str) -> ResolvedRun:
 
 
 def comparison_state(ctx: AssistantContext) -> dict | None:
-    """``{members: [{folder, run_id, started_at, finished_at, fresh}], usable, written_at}`` of the comparison
-    files, or ``None`` when the project has none.
+    """``{members: [{folder, run_id, started_at, finished_at, fresh}], usable, written_at, write_id}`` of the
+    comparison files, or ``None`` when the project has none.
 
-    Usable only when ``_metadata.json`` records its ``members`` and ``written_at`` and every member's results are
-    usable with the run it was built from (the same ``run_id``).  A comparison table is further checked when it
-    is read (its own scenario level and time, P0 §5.6).  Metadata with only ``scenarios`` (older writers, the
-    window's metadata-only update) is never usable: the tools then read each scenario's own folder.
+    Usable only when ``_metadata.json`` is of the current ``format`` (2) and every member is fresh: its folder is
+    this project's ``output_parquet/<folder>``, and its results are usable with the run it was built from (the
+    same ``run_id`` and ``outputs.written_at``; the writer records a run only when it was usable before and after
+    the files were read).  A comparison table is further checked when it is read: its scenario level, and the
+    ``write_id`` in its footer equal to the metadata's (P0 §5.6).  Metadata with only ``scenarios`` (the window's
+    metadata-only update, released FlexTool) or of an older format is never usable: the tools then read each
+    scenario's own folder.
     """
     path = ctx.project_path / COMPARISON_DIR / COMPARISON_METADATA
     try:
@@ -371,22 +377,47 @@ def comparison_state(ctx: AssistantContext) -> dict | None:
                         for s in scenarios],
             "usable": False,
             "written_at": None,
+            "write_id": None,
             "note": ("The comparison files do not record the runs they were built from; the tools use each "
                      "scenario's own results instead."),
         }
+    current = meta.get("format") == COMPARISON_FORMAT and isinstance(meta.get("write_id"), str)
     out_members = []
+    outside = False
     for member in members:
-        folder = str(member.get("folder")) if isinstance(member, dict) else str(member)
-        run_id = member.get("run_id") if isinstance(member, dict) else None
+        entry = member if isinstance(member, dict) else {"folder": member}
+        folder = str(entry.get("folder"))
+        run_id = entry.get("run_id")
         status = read_status(base / folder) if "/" not in folder and "\\" not in folder else None
-        fresh = (status is not None and run_record.results_usable(status) and run_id is not None
-                 and status.get("run_id") == run_id)
+        fresh = (current and status is not None and run_record.results_usable(status) and run_id is not None
+                 and status.get("run_id") == run_id
+                 and (status.get("outputs") or {}).get("written_at") == entry.get("outputs_written_at"))
+        if fresh and not _same_folder(entry.get("path"), base / folder):
+            fresh, outside = False, True
         out_members.append({"folder": folder, "run_id": run_id,
                             "started_at": status.get("started_at") if status else None,
                             "finished_at": status.get("finished_at") if status else None, "fresh": fresh})
     usable = all(m["fresh"] for m in out_members)
-    state: dict[str, Any] = {"members": out_members, "usable": usable, "written_at": written_at}
-    if not usable:
+    state: dict[str, Any] = {"members": out_members, "usable": usable, "written_at": written_at,
+                             "write_id": meta.get("write_id") if current else None}
+    if not current:
+        state["note"] = ("The comparison files were written by an earlier FlexTool and cannot be matched to the "
+                         "current scenario runs; the tools use each scenario's own results instead.")
+    elif outside:
+        state["note"] = ("The comparison files were built from scenario folders outside this project; the tools "
+                         "use each scenario's own results instead.")
+    elif not usable:
         state["note"] = ("The comparison files do not match the current scenario runs; the tools use each "
                          "scenario's own results instead.")
     return state
+
+
+def _same_folder(recorded: Any, folder: Path) -> bool:
+    """Whether *recorded* (a member's resolved ``path``) is *folder*."""
+    if not isinstance(recorded, str) or not recorded:
+        return False
+    try:
+        here = folder.resolve()
+    except OSError:
+        return False
+    return os.path.normcase(recorded) == os.path.normcase(str(here))

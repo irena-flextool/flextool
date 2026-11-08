@@ -582,3 +582,36 @@ def test_takeover_leaves_the_other_runs_outputs_alone(tmp_path, recorders):
     finally:
         set_active(None)
     assert read_status_file(folder) == other
+
+
+def test_rewriting_an_earlier_runs_outputs_marks_them_partial_until_written(tmp_path):
+    """``flextool-write-outputs`` (no active recorder) on a folder of a finished run: the record says ``partial``
+    from before the files are removed until they are written again, then ``written`` with a new ``written_at``,
+    under the same run id (a comparison built meanwhile cannot take it for that run's results)."""
+    from flextool.process_outputs.write_outputs import _note_parquet
+
+    folder = tmp_path / "base"
+    folder.mkdir()
+    done = {"schema": "flextool.run_status", "schema_version": 1, "run_id": "1" * 32, "state": "succeeded",
+            "outputs": {"parquet_state": "written", "written_at": "2026-11-01T10:00:00+02:00", "by": "run",
+                        "previous": None, "reason": None}}
+    write_status_atomic(folder, done)
+    assert not active().is_recording
+    _note_parquet(str(folder), written=False)
+    status = read_status_file(folder)
+    assert status["outputs"]["parquet_state"] == "partial" and not results_usable(status)
+    assert status["run_id"] == "1" * 32
+    _note_parquet(str(folder), written=True)
+    status = read_status_file(folder)
+    assert (status["outputs"]["parquet_state"], status["outputs"]["by"]) == ("written", "write_outputs")
+    assert status["outputs"]["written_at"] != "2026-11-01T10:00:00+02:00" and results_usable(status)
+
+
+def test_a_settled_read_waits_out_a_status_that_cannot_be_read_now(tmp_path, monkeypatch):
+    answers = [{"state": "unreadable"}, {"state": "unreadable"}, {"state": "succeeded", "run_id": "r"}]
+    monkeypatch.setattr(_owner, "read_status_file", lambda folder, strict=False: answers.pop(0))
+    monkeypatch.setattr(_owner.time, "sleep", lambda s: None)
+    assert _owner.read_status_settled(tmp_path) == {"state": "succeeded", "run_id": "r"}
+    # Still unreadable when the time is up: that answer stands.
+    monkeypatch.setattr(_owner, "read_status_file", lambda folder, strict=False: {"state": "unreadable"})
+    assert _owner.read_status_settled(tmp_path, seconds=0.0) == {"state": "unreadable"}
