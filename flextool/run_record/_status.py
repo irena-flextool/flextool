@@ -10,8 +10,11 @@ are process-wide anyway.
 
 Writes are throttled to at most one per second (a heartbeat thread flushes a pending change on its 1 s tick and
 stamps ``heartbeat_at`` every 30 s); a solve start and the final write go out at once.  An ``OSError`` while
-writing logs one warning and turns the recorder into a no-op: the run record never changes a run's exit code.
-When another run takes the folder over (another ``run_id`` on disk) this recorder stops writing.
+writing (a Windows reader holding the file, a full disk) is transient: the change stays pending and is retried
+after 1, 2, 4, ... (at most 30) seconds, with one warning per streak of failures; the final write always tries,
+and :meth:`RunRecorder.close` tries a failed final write once more.  A status that cannot be serialised (a bug)
+logs one warning and stops the recorder.  When another run takes the folder over (another ``run_id`` on disk)
+this recorder stops writing.  The run record never changes a run's exit code.
 
 ``psutil`` is imported lazily (process start time, :func:`effective_state`).
 """
@@ -21,6 +24,7 @@ import glob
 import logging
 import math
 import os
+import re
 import platform as _platform
 import socket
 import sys
@@ -66,6 +70,16 @@ _KEEP_FIRST_SOLVES = 100
 MAX_WARNINGS = 50
 _MESSAGE_LIMIT = 2000
 _WARNING_MESSAGE_LIMIT = 500
+#: The longest wait before a failed write is tried again (the waits double from 1 s).
+_RETRY_MAX_SECONDS = 30.0
+#: ``run_id`` is the third key of a status (``indent=1``): it is within the first bytes of the file.
+_HEAD_BYTES = 512
+_HEAD_RUN_ID = re.compile(rb'"run_id": "([0-9a-f]{32})"')
+
+
+def _monotonic() -> float:
+    """The clock of the write throttle and the retry waits."""
+    return time.monotonic()
 
 
 def _finite(value: Any) -> float | None:
@@ -308,7 +322,12 @@ class RunRecorder:
         self._dirty = False
         self._last_write = 0.0
         self._last_heartbeat = 0.0
-        self._broken = False
+        self._taken_over = False
+        self._disabled = False
+        self._fail_count = 0
+        self._retry_at = 0.0
+        self._final_pending = False
+        self._final_warned = False
         self._finished = False
         self._current: dict[str, Any] | None = None
         self._current_t0: float | None = None
@@ -401,7 +420,7 @@ class RunRecorder:
             "warnings_omitted": 0,
         }
         write_status_atomic(folder, rec._status)
-        rec._last_write = rec._last_heartbeat = time.monotonic()
+        rec._last_write = rec._last_heartbeat = _monotonic()
         rec._thread = threading.Thread(target=rec._heartbeat_loop, name="flextool-run-record", daemon=True)
         rec._thread.start()
         return rec
@@ -411,9 +430,9 @@ class RunRecorder:
     def _heartbeat_loop(self) -> None:
         while not self._stop.wait(_TICK_SECONDS):
             with self._lock:
-                if self._broken or self._finished:
+                if self._taken_over or self._disabled or self._finished:
                     continue
-                now = time.monotonic()
+                now = _monotonic()
                 if now - self._last_heartbeat >= HEARTBEAT_SECONDS:
                     self._last_heartbeat = now
                     self._status["heartbeat_at"] = now_iso()
@@ -439,7 +458,7 @@ class RunRecorder:
 
     def _queue_warning(self, level: str, logger_name: str, message: str) -> None:
         """Queue one warning for the status (the warning handler; takes only the leaf lock)."""
-        if self._finished or self._broken:
+        if self._finished or self._taken_over or self._disabled:
             return
         entry = {"level": level, "logger": logger_name, "message": message[:_WARNING_MESSAGE_LIMIT]}
         with self._wq_lock:
@@ -465,32 +484,85 @@ class RunRecorder:
         if omitted:
             self._status["warnings_omitted"] = self._status.get("warnings_omitted", 0) + omitted
 
-    def _write(self, *, force: bool = False, final: bool = False) -> None:
-        """Write the status (caller holds the lock); throttled unless *force*."""
-        if self._broken or self.folder is None:
+    def _foreign_run_id(self) -> str | None:
+        """The ``run_id`` of another run that took the folder over, else ``None`` (caller holds the lock).
+
+        Reads the first bytes of the file (``run_id`` is near its start); only when they do not show a run id is
+        the whole file read.  An absent or unreadable file is not a takeover: this run writes it again.
+        """
+        assert self.folder is not None
+        try:
+            with open(self.folder / RUN_STATUS_FILE, "rb") as fh:
+                head = fh.read(_HEAD_BYTES)
+        except FileNotFoundError:
+            return None
+        except OSError:
+            head = b""
+        match = _HEAD_RUN_ID.search(head)
+        if match is not None:
+            run_id = match.group(1).decode("ascii")
+            return None if run_id == self.run_id else run_id
+        on_disk = read_status_file(self.folder)
+        if on_disk is not None and on_disk.get("run_id") != self.run_id:
+            return str(on_disk.get("run_id"))
+        return None
+
+    def _write(self, *, force: bool = False, final: bool = False, retry_now: bool = False) -> None:
+        """Write the status (caller holds the lock); throttled unless *force*.
+
+        While earlier writes fail, a non-final write waits for its retry time unless *retry_now*; the *final*
+        write always tries.
+        """
+        if self._taken_over or self._disabled or self.folder is None:
             return
         self._drain_warnings()
-        now = time.monotonic()
+        now = _monotonic()
+        if not final and not retry_now and now < self._retry_at:
+            self._dirty = True
+            return
         if not force and now - self._last_write < _MIN_WRITE_INTERVAL:
             self._dirty = True
             return
-        on_disk = read_status_file(self.folder)
-        if on_disk is not None and on_disk.get("run_id") != self.run_id:
-            self._broken = True
+        other = self._foreign_run_id()
+        if other is not None:
+            self._taken_over = True
             self._defer(
                 logging.WARNING, "Another run took over %s (run %s); this run no longer updates its run record.",
-                self.folder, on_disk.get("run_id"),
+                self.folder, other,
             )
             return
+        path = self.folder / RUN_STATUS_FILE
         self._status["updated_at"] = now_iso()
         try:
             write_status_atomic(self.folder, self._status, final=final)
-        except (OSError, ValueError) as exc:
-            self._broken = True
+        except (ValueError, TypeError) as exc:
+            self._disabled = True
             self._defer(logging.WARNING, "Cannot write the run record %s: %s; the run continues without it.",
-                        self.folder / RUN_STATUS_FILE, exc)
+                        path, exc)
             return
+        except OSError as exc:
+            self._dirty = True
+            self._fail_count += 1
+            self._retry_at = now + min(2.0 ** (self._fail_count - 1), _RETRY_MAX_SECONDS)
+            if final:
+                self._final_pending = True
+                if not self._final_warned:
+                    self._final_warned = True
+                    self._defer(logging.WARNING, "Cannot write the final run record %s: %s; trying once more "
+                                "when the run ends.", path, exc)
+                else:
+                    self._defer(logging.WARNING, "Cannot write the final run record %s: %s; it keeps its last "
+                                "written state.", path, exc)
+            elif self._fail_count == 1:
+                self._defer(logging.WARNING, "Cannot write the run record %s: %s; retrying.", path, exc)
+            return
+        if self._fail_count:
+            self._defer(logging.INFO, "The run record %s was written again after %d failed attempts.", path,
+                        self._fail_count)
+            self._fail_count = 0
+            self._retry_at = 0.0
         self._dirty = False
+        self._final_pending = False
         self._last_write = now
 
     @_flushing
@@ -730,14 +802,16 @@ class RunRecorder:
 
     @_flushing
     def close(self) -> None:
-        """Stop the heartbeat thread and write a pending change."""
+        """Stop the heartbeat thread and write a pending change (a final write that failed is tried once more)."""
         self._stop.set()
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=5.0)
         with self._lock:
-            if self._dirty and not self._finished:
-                self._write(force=True)
+            if self._final_pending:
+                self._write(force=True, final=True)
+            elif self._dirty and not self._finished:
+                self._write(force=True, retry_now=True)
 
     def snapshot(self) -> dict[str, Any]:
         """A copy of the status as it would be written now (for tests and diagnostics)."""
@@ -752,6 +826,9 @@ class _NullRecorder:
     """The recorder :func:`active` returns when no run records: every call does nothing."""
 
     is_recording = False
+    #: ``True`` for a run whose recorder stopped (taken over, or a status it cannot write): see
+    #: :class:`_StoppedRecorder`.
+    stopped = False
     run_id = None
     folder = None
     finished = False
@@ -770,15 +847,35 @@ def _noop(*args: Any, **kwargs: Any) -> None:
     return None
 
 
+class _StoppedRecorder(_NullRecorder):
+    """What :func:`active` returns for a run whose recorder stopped: a no-op that says so.
+
+    Code that would otherwise update ``_run_status.json`` itself without a recorder (``write_outputs``) leaves
+    it alone: after a takeover the file is another run's record.
+    """
+
+    stopped = True
+
+    def __init__(self, run_id: str, folder: Path | None) -> None:
+        self.run_id = run_id  # type: ignore[assignment]
+        self.folder = folder  # type: ignore[assignment]
+
+
 NULL_RECORDER = _NullRecorder()
 _active: RunRecorder | None = None
 
 
 def active() -> "RunRecorder | _NullRecorder":
-    """The recorder of the run in progress in this process, or a no-op recorder."""
+    """The recorder of the run in progress in this process, or a no-op recorder.
+
+    A recorder that stopped (another run took the folder over, or its status cannot be serialised) gives a
+    no-op whose ``stopped`` is ``True``; one whose writes fail for now stays active (they are retried).
+    """
     rec = _active
-    if rec is None or rec._broken:
+    if rec is None:
         return NULL_RECORDER
+    if rec._taken_over or rec._disabled:
+        return _StoppedRecorder(rec.run_id, rec.folder)
     return rec
 
 

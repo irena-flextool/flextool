@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ast
+import errno
 import logging
 import os
 import subprocess
@@ -13,7 +14,7 @@ from pathlib import Path
 import pytest
 
 from flextool.run_options import RunOptions
-from flextool.run_record import RunRecorder, read_status_file, worst_verdict
+from flextool.run_record import RunRecorder, active, read_status_file, results_usable, set_active, worst_verdict
 from flextool.run_record import _owner, _status
 from flextool.run_record._owner import RUN_LOG_FILE, VERDICT_ORDER, write_status_atomic
 
@@ -397,3 +398,187 @@ def test_finish_completes_after_a_signal_left_the_lock_held(tmp_path):
     t.start()
     assert done.wait(10), "finish hung on the recorder lock"
     assert read_status_file(tmp_path / "base")["state"] == "interrupted"
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Write failures are transient; the run-id guard reads only the head of the file
+
+
+class _Clock:
+    def __init__(self, now: float) -> None:
+        self.now = now
+
+    def __call__(self) -> float:
+        return self.now
+
+
+def _failing_replace(monkeypatch, n: int, exc: OSError) -> dict:
+    """``os.replace`` (as the status writer calls it) raises *exc* on its next *n* calls."""
+    real = os.replace
+    calls = {"n": 0, "failed": 0}
+
+    def replace(src, dst):
+        calls["n"] += 1
+        if calls["failed"] < n:
+            calls["failed"] += 1
+            raise exc
+        return real(src, dst)
+
+    monkeypatch.setattr(_owner.os, "replace", replace)
+    return calls
+
+
+def test_transient_permission_error_then_success(tmp_path, recorders, monkeypatch):
+    folder = tmp_path / "base"
+    rec = _start(recorders, folder)
+    set_active(rec)
+    try:
+        # One non-final write gives up after 5 replace attempts 50 ms apart (a Windows reader holds the file).
+        _failing_replace(monkeypatch, 5, PermissionError(13, "held open by a reader"))
+        rec.solve_started("y2030", "y2030", 0, None)
+        assert active() is rec
+        assert read_status_file(folder)["solves"] == []
+        rec.solve_classified(model_status="kOptimal", acceptance="optimal", message="", objective=1.0,
+                             warm_used=False)
+        rec.solve_finished(0)
+        rec.outputs_cleared()
+        assert active() is rec
+        active().outputs_written()
+        rec.finish("succeeded", exit_code=0, error=None)
+    finally:
+        set_active(None)
+    done = read_status_file(folder)
+    assert (done["state"], done["outputs"]["parquet_state"]) == ("succeeded", "written")
+    assert [s["name"] for s in done["solves"]] == ["y2030"]
+    assert results_usable(done) is True
+
+
+def test_oserror_backoff_schedule(tmp_path, monkeypatch, caplog):
+    rec = _bare_recorder(tmp_path / "base")  # no heartbeat thread: only the calls below write
+    clock = _Clock(100.0)
+    monkeypatch.setattr(_status, "_monotonic", clock)
+    calls = _failing_replace(monkeypatch, 3, OSError(errno.ENOSPC, "No space left on device"))
+    caplog.set_level(logging.INFO, logger="flextool.run_record._status")
+    attempts: list[float] = []
+
+    def write_at(t: float) -> None:
+        clock.now = t
+        before = calls["n"]
+        rec.note_solver(f"solver-{t}")  # a change, so there is something to write
+        rec._update(force=True)
+        if calls["n"] > before:
+            attempts.append(t)
+
+    for t in (100.0, 100.5, 100.99, 101.0, 102.9, 103.0, 106.9, 107.0, 107.5):
+        write_at(t)
+    # Waits of 1, 2 and 4 s after the 1st, 2nd and 3rd failure; the 4th attempt succeeds.
+    assert attempts == [100.0, 101.0, 103.0, 107.0, 107.5]
+    assert read_status_file(tmp_path / "base")["solver"] == "solver-107.5"
+    records = [r for r in caplog.records if r.name == "flextool.run_record._status"]
+    assert [(r.levelno, "retrying" in r.getMessage()) for r in records if r.levelno == logging.WARNING] == [
+        (logging.WARNING, True)]
+    infos = [r.getMessage() for r in records if r.levelno == logging.INFO]
+    assert len(infos) == 1 and "after 3 failed attempts" in infos[0]
+
+
+def test_backoff_wait_caps_at_30_seconds(tmp_path, monkeypatch):
+    rec = _bare_recorder(tmp_path / "base")
+    clock = _Clock(0.0)
+    monkeypatch.setattr(_status, "_monotonic", clock)
+    _failing_replace(monkeypatch, 100, OSError(errno.ENOSPC, "No space left on device"))
+    waits = []
+    for _ in range(8):
+        rec._update(force=True)
+        waits.append(rec._retry_at - clock.now)
+        clock.now = rec._retry_at
+    assert waits == [1.0, 2.0, 4.0, 8.0, 16.0, 30.0, 30.0, 30.0]
+
+
+def test_final_write_ignores_backoff(tmp_path, monkeypatch):
+    rec = _bare_recorder(tmp_path / "base")
+    _failing_replace(monkeypatch, 1, OSError(errno.ENOSPC, "No space left on device"))
+    rec.solve_started("y2030", "y2030", 0, None)
+    rec._retry_at = _status._monotonic() + 3600.0
+    rec.finish("succeeded", exit_code=0, error=None)
+    assert read_status_file(tmp_path / "base")["state"] == "succeeded"
+
+
+def test_failed_final_write_is_retried_by_close(tmp_path, monkeypatch):
+    rec = _bare_recorder(tmp_path / "base")
+    real = _status.write_status_atomic
+    failed = {"n": 0}
+
+    def write(folder, data, *, final=False):
+        if final and not failed["n"]:
+            failed["n"] += 1
+            raise PermissionError(13, "held open by a reader")  # the 2 s of replaces and the in-place open failed
+        return real(folder, data, final=final)
+
+    monkeypatch.setattr(_status, "write_status_atomic", write)
+    rec.finish("succeeded", exit_code=0, error=None)
+    assert read_status_file(tmp_path / "base")["state"] == "running"
+    rec.close()
+    assert read_status_file(tmp_path / "base")["state"] == "succeeded"
+
+
+@pytest.mark.parametrize("bad", [float("nan"), object()], ids=["nan", "not_json"])
+def test_unserialisable_status_stops_the_recorder_but_not_the_run(tmp_path, bad):
+    rec = _bare_recorder(tmp_path / "base")
+    set_active(rec)
+    try:
+        rec._status["input"] = {"db_version": bad}  # a value that bypasses _finite / _jsonable
+        rec.solve_started("y2030", "y2030", 0, None)
+        assert rec._disabled
+        assert active().is_recording is False and active().stopped is True
+        rec.finish("succeeded", exit_code=0, error=None)  # does not raise
+    finally:
+        set_active(None)
+    assert read_status_file(tmp_path / "base")["state"] == "running"
+
+
+def test_guard_skips_full_read_when_the_head_shows_our_run_id(tmp_path, recorders, monkeypatch):
+    rec = _start(recorders, tmp_path / "base")
+    reads = {"n": 0}
+    real = _status.read_status_file
+
+    def counting(*args, **kwargs):
+        reads["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(_status, "read_status_file", counting)
+    for i in range(50):
+        rec.solve_started(f"roll_{i}", "base", i, None)
+    assert reads["n"] == 0
+    assert len(read_status_file(tmp_path / "base")["solves"]) == 50
+
+
+def test_guard_detects_a_takeover_of_identical_size_and_mtime(tmp_path, recorders):
+    folder = tmp_path / "base"
+    rec = _start(recorders, folder)
+    path = folder / "_run_status.json"
+    st = path.stat()
+    foreign = read_status_file(folder)
+    foreign["run_id"] = "0" * 32
+    write_status_atomic(folder, foreign)
+    os.utime(path, ns=(st.st_atime_ns, st.st_mtime_ns))
+    assert path.stat().st_size == st.st_size and path.stat().st_mtime_ns == st.st_mtime_ns
+    rec.solve_started("y2030", "y2030", 0, None)
+    rec.finish("succeeded", exit_code=0, error=None)
+    assert read_status_file(folder) == foreign
+
+
+def test_takeover_leaves_the_other_runs_outputs_alone(tmp_path, recorders):
+    from flextool.process_outputs.write_outputs import _note_parquet_written
+
+    folder = tmp_path / "base"
+    rec = _start(recorders, folder)
+    set_active(rec)
+    try:
+        other = {"schema": "flextool.run_status", "schema_version": 1, "run_id": "1" * 32, "state": "running",
+                 "outputs": {"parquet_state": "partial"}}
+        write_status_atomic(folder, other)
+        rec.solve_started("y2030", "y2030", 0, None)  # sees the takeover and stops
+        _note_parquet_written(str(folder))
+    finally:
+        set_active(None)
+    assert read_status_file(folder) == other

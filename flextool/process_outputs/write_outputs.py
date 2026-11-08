@@ -877,11 +877,14 @@ def _note_parquet_written(parquet_dir: str) -> None:
     """Tell the run record that the parquet files of *parquet_dir* are complete.
 
     During an engine run the active recorder takes it.  Without one (``flextool-write-outputs`` rewriting the
-    outputs of an earlier run) an existing ``_run_status.json`` gets ``outputs.by = write_outputs``.
+    outputs of an earlier run) an existing ``_run_status.json`` gets ``outputs.by = write_outputs``.  A run whose
+    recorder stopped (another run took the folder over) leaves the file alone: it is the other run's record.
     """
     rec = run_record.active()
     if rec.is_recording:
         rec.outputs_written()
+        return
+    if rec.stopped:
         return
     status = run_record.read_status_file(parquet_dir)
     if status is None:
