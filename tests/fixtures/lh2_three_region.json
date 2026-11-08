@@ -4793,7 +4793,7 @@
         "float"
       ],
       null,
-      "[MW] Upper bound for capacities and flows that have no other limit: the capacity an entity with `invest_method` `invest_no_limit` or `invest_retire_no_limit` can reach, and the flow on a unit's input or output whose `conversion_flow_coeff` is 0. Keep it large enough not to limit the real solution and small enough to avoid numerical problems. Default 1,000,000. Values below the default are currently ignored.",
+      "[MW] Upper bound for capacities and flows that have no other limit: how much capacity an entity with `invest_method` `invest_no_limit` or `invest_retire_no_limit` (or `cumulative_limits` without `cumulative_max_capacity`) can add on top of its `existing` capacity, and the flow on a unit's input or output whose `conversion_flow_coeff` is 0. The value is used as given; with several model entities the largest value is used. Keep it large enough not to limit the real solution and small enough to avoid numerical problems. Default 1,000,000.",
       "model"
     ],
     [
@@ -5057,7 +5057,7 @@
         null
       ],
       null,
-      "[MWh] per time step. Energy flowing into the node in each time step (negative is outflow, e.g. demand). The value is the energy of the whole step, not a rate: on 1 h steps it equals the average MW, and on 3 h steps it is 3 \u00d7 the average MW. When the step length of your data changes, rescale the values yourself, e.g. sum hourly values to get 3 h steps, or halve MW values for 0.5 h steps. FlexTool does not convert them, and time-series values whose time names are not on the timeline are ignored. FlexTool sums the values for you only when a solve's `new_stepduration` coarsens a 1 h timeline, and when a group's `new_stepduration` balances the node per coarse step. A constant value is used as the same energy in every step. Constant, time or stochastic time.",
+      "[MWh] per time step. Energy flowing into the node in each time step (negative is outflow, e.g. demand). The value is the energy of the whole step, not a rate: on 1 h steps it equals the average MW, and on 3 h steps it is 3 \u00d7 the average MW. When the step length of your data changes, rescale the values yourself, e.g. sum hourly values to get 3 h steps, or halve MW values for 0.5 h steps. FlexTool does not convert them, and time-series values whose time names are not on the timeline are ignored. FlexTool sums the values for you only when a solve's `new_stepduration` coarsens the timeline, and when a group's `new_stepduration` balances the node per coarse step. A constant value is used as the same energy in every step. Constant, time or stochastic time.",
       "basics"
     ],
     [
@@ -5189,7 +5189,7 @@
         null
       ],
       null,
-      "[MWh] per time step. The highest inflow of a time step that the scaled inflow should reach. Use the same scale and sign as `inflow` (negative for a demand). Used only with `inflow_method` = `scale_to_annual_and_peak_flow`. If you change the step length, rescale it as you rescale `inflow`. The annual energy match of this method is correct only on 1 h time steps. Constant or period.",
+      "[MWh] per time step. The highest inflow of a time step that the scaled inflow should reach. Use the same scale and sign as `inflow` (negative for a demand). Used only with `inflow_method` = `scale_to_annual_and_peak_flow`. If you change the step length, rescale it as you rescale `inflow`. Each period reaches its own `peak_inflow`; with a solve's `new_stepduration`, `peak_inflow` is matched per original time step. Constant or period.",
       "basics"
     ],
     [
@@ -5673,7 +5673,7 @@
         null
       ],
       null,
-      "[hours] Creates a new `timeline` from the old for this `solve` with this timestep duration. The new timeline sums `inflow` and averages the other time series (e.g. `profile`) over each new time step. This summing is correct only when the original timeline has 1 h time steps.",
+      "[hours] Creates a new `timeline` from the old for this `solve` with this timestep duration. The new timeline sums `inflow` over the time steps that form each new time step (a constant `inflow` counts once per time step it combines) and averages the other time series (e.g. `profile`) over them, weighted by their durations. The `new_stepduration` must be a whole multiple of the timeline's time steps (on a timeline with time steps of different lengths, every new time step must end where a time step of the timeline ends); FlexTool stops with an error otherwise.",
       "timeline"
     ],
     [
