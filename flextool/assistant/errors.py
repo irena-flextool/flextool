@@ -49,6 +49,11 @@ MESSAGES: dict[str, str] = {
                        "parameter name. Parameters stored for this entity: {names}."),
     "inactive_entity": "'{entity}' exists in the input data but is not active in scenario '{scenario}' ({reason}).",
     "no_value": "No alternative of the scenario sets this value and the parameter has no default.",
+    "no_parameter_named": ("Name the parameter to read (parameter), or several (parameters). get_entity lists every "
+                           "value an entity has."),
+    "too_many_names": ("One get_parameter call reads at most {max_parameters} parameters and {max_entities} "
+                       "entities; this one names {parameters} parameters and {entities} entities. Split it into "
+                       "smaller calls, which can go in the same step."),
     "bad_time_range": "time_range takes {{\"from\": first index, \"to\": last index}}, for example {example}.",
     # Runs
     "no_runs": "The project has no scenario results (no folders in output_parquet).",

@@ -1,7 +1,8 @@
 """The tool registry: every assistant tool with its schema, and :func:`call_tool`, the one way to run one.
 
 A tool module (``flextool.assistant.tools.*``) lists its :class:`Tool` objects in ``TOOLS``.  :func:`call_tool`
-never raises: it clamps the caps arguments, validates the arguments against the tool's JSON schema (the
+never raises: it clamps the caps arguments, applies the tool's ``prepare`` (the forgiving forms of its arguments,
+for example one name where the schema has a list), validates the arguments against the tool's JSON schema (the
 connection server does not validate them), runs the handler and fits its payload into the caps
 (:func:`flextool.assistant.caps.fit_json`, which also redacts).  A :class:`~flextool.assistant.errors.ToolError`
 becomes an error outcome with its message; any other exception the fault message, with the traceback on stderr
@@ -57,17 +58,20 @@ class Tool:
     area: Area
     small_tier: bool
     caps: dict[str, CapArg] = field(default_factory=dict)
+    #: Turns the forgiving forms of the arguments into the schema's (one name for a list); runs before validation.
+    prepare: Callable[[dict], dict] | None = None
 
 
 def make_tool(*, name: str, title: str, description: str, properties: dict, required: tuple[str, ...] = (),
               handler: Callable[[AssistantContext, dict], "dict | Fit"], area: Area, small_tier: bool,
-              caps: dict[str, CapArg] | None = None) -> Tool:
+              caps: dict[str, CapArg] | None = None, prepare: Callable[[dict], dict] | None = None) -> Tool:
     """A :class:`Tool` whose description ends with :data:`DATA_SENTENCE` and whose schema is a closed object."""
     schema: dict[str, Any] = {"type": "object", "properties": properties, "additionalProperties": False}
     if required:
         schema["required"] = list(required)
     return Tool(name=name, title=title, description=f"{description.rstrip()} {DATA_SENTENCE}",
-                input_schema=schema, handler=handler, area=area, small_tier=small_tier, caps=dict(caps or {}))
+                input_schema=schema, handler=handler, area=area, small_tier=small_tier, caps=dict(caps or {}),
+                prepare=prepare)
 
 
 @dataclass
@@ -132,6 +136,8 @@ def call_tool(ctx: AssistantContext, name: str, args: dict | None) -> ToolOutcom
         if not isinstance(args, (dict, type(None))):
             raise ToolError("bad_arguments", name=name, problem="the arguments must be a JSON object")
         clamped = clamp_caps(dict(args or {}), tool.caps, ctx.caps)
+        if tool.prepare is not None:
+            clamped = tool.prepare(clamped)
         problem = _validate(tool, clamped)
         if problem is not None:
             raise ToolError("bad_arguments", name=name, problem=problem)

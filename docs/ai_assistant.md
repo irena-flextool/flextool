@@ -562,9 +562,13 @@ expected:
 ```bash
 flextool-assistant --project-path /home/me/flextool/projects/MyProject --call list_runs
 flextool-assistant --project-path /home/me/flextool/projects/MyProject --call get_entity '{"name": ["coal_plant"], "scenario": "coal"}'
+flextool-assistant --project-path /home/me/flextool/projects/MyProject --call get_parameter '{"entity_class": "unit", "parameters": ["existing", "invest_cost"], "entities": [["coal_plant"], ["wind_plant"]], "scenario": "coal"}'
 ```
 
-The arguments are a JSON object, or `@file.json` to read them from a file. `flextool-assistant --help` lists the
+The arguments are a JSON object, or `@file.json` to read them from a file. `get_parameter` takes lists of
+parameters (up to 10) and entities (up to 20) and answers with one table: a row for each entity and parameter, with
+the value, its shape and the alternative it comes from (or the default), and the units and notes once for each
+parameter. A name it does not know is listed with the closest names, and the other rows are still answered. `flextool-assistant --help` lists the
 options.
 
 ## When something goes wrong

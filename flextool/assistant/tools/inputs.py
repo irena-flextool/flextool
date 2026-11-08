@@ -3,12 +3,13 @@ differences of two scenarios.  Every value is read from the input database as st
 file, ``flextool.assistant.inputs._db``); the scenario decides which alternative's value counts."""
 from __future__ import annotations
 
+from collections import Counter
 from typing import Any
 
 from flextool.assistant import project
 from flextool.assistant.caps import DESCRIPTION_MAX, NAME_MAX, CapArg, cap_text
 from flextool.assistant.context import AssistantContext
-from flextool.assistant.errors import ToolError, did_you_mean, message, name_list, similar_text
+from flextool.assistant.errors import ToolError, close_names, closest_names, did_you_mean, message, name_list, similar_text
 from flextool.assistant.inputs import _db, _values
 from flextool.assistant.inputs._notes import notes_for
 from flextool.assistant.inputs._schema import ranks_in_words, shipped_schema
@@ -26,6 +27,10 @@ LIST_HINT = "use name_contains or member to narrow the list"
 #: get_entity shows a map of at most this many rows as its table, a longer one as a summary (P3 §4.7).
 ENTITY_TABLE_ROWS = 6
 VALUE_HINT = "name an entity, or narrow with entity_class"
+#: One get_parameter call reads at most this many parameters and entities (P0 §4.3, batching 2026-11-08).
+MAX_PARAMETERS = 10
+MAX_ENTITIES = 20
+CELLS_HINT = "name fewer parameters or entities, or split the call"
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -63,16 +68,25 @@ def _entity_text(byname: tuple[str, ...]) -> str:
     return "'" + "', '".join(byname) + "'" if len(byname) > 1 else f"'{byname[0]}'"
 
 
+def _find(db: _db.InputDB, entity_class: str, names: list[str]) -> tuple[str, ...] | None:
+    """The entity's names per dimension, or ``None`` when the class has no such entity; one name names a
+    0-dimensional entity, or a multi-dimensional one by its own name (``coal_chp__heat``)."""
+    if len(names) == 1 and len(db.classes[entity_class].dimensions) > 1:
+        found = db.entity_by_name(entity_class, names[0])
+        return found.byname if found is not None else None
+    byname = tuple(names)
+    return byname if db.entity(entity_class, byname) is not None else None
+
+
 def _byname(db: _db.InputDB, source: project.Source, entity_class: str, entity: Any) -> tuple[str, ...]:
-    """The entity's names per dimension; a string names a 0-dimensional entity, or a multi-dimensional one by its
-    own name (``coal_chp__heat``)."""
+    """The entity's names per dimension (:func:`_find`), or the error that says why there is none."""
     dims = db.classes[entity_class].dimensions
     names = [entity] if isinstance(entity, str) else [str(e) for e in entity]
+    found = _find(db, entity_class, names)
+    if found is not None:
+        return found
     if len(names) == 1 and len(dims) > 1:
-        found = db.entity_by_name(entity_class, names[0])
-        if found is None:
-            raise ToolError("entity_dimensions", entity_class=entity_class, n=len(dims), dimensions=", ".join(dims))
-        return found.byname
+        raise ToolError("entity_dimensions", entity_class=entity_class, n=len(dims), dimensions=", ".join(dims))
     byname = tuple(names)
     if db.entity(entity_class, byname) is None:
         candidates = [", ".join(b) for b in db.entities.get(entity_class, {})]
@@ -130,15 +144,22 @@ def _version_relation(db: _db.InputDB) -> str | None:
     return {"needs_migration": "older", "newer": "newer"}.get(status)
 
 
-def _check_parameter(db: _db.InputDB, entity_class: str, parameter: str) -> None:
+def _parameter_names(db: _db.InputDB, entity_class: str, parameter: str) -> list[str] | None:
+    """``None`` when *parameter* is a parameter of the class, else every parameter name of the class (of the
+    database and of this FlexTool) to suggest from."""
     if db.definition(entity_class, parameter) is not None:
-        return
+        return None
     if _version_relation(db) is not None and (entity_class, parameter) in shipped_schema().parameters:
-        return            # defined by this FlexTool, not (or not under this name) by the older / newer database
-    names = sorted(set(db.class_parameters(entity_class)) | {p.name for p in
-                                                             shipped_schema().class_parameters(entity_class)})
-    raise ToolError("unknown_parameter", entity_class=entity_class, parameter=parameter,
-                    similar=did_you_mean(parameter, names))
+        return None       # defined by this FlexTool, not (or not under this name) by the older / newer database
+    return sorted(set(db.class_parameters(entity_class)) | {p.name for p in
+                                                            shipped_schema().class_parameters(entity_class)})
+
+
+def _check_parameter(db: _db.InputDB, entity_class: str, parameter: str) -> None:
+    names = _parameter_names(db, entity_class, parameter)
+    if names is not None:
+        raise ToolError("unknown_parameter", entity_class=entity_class, parameter=parameter,
+                        similar=did_you_mean(parameter, names))
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -305,6 +326,10 @@ def get_entity(ctx: AssistantContext, args: dict) -> Fit:
 
 
 def get_parameter(ctx: AssistantContext, args: dict) -> Fit | dict:
+    if args.get("parameters") is not None or args.get("entities") is not None:
+        return _parameter_table(ctx, args)
+    if args.get("parameter") is None:
+        raise ToolError("no_parameter_named")
     source, db, notes = _open(ctx, args)
     entity_class = str(args["entity_class"])
     parameter = str(args["parameter"])
@@ -345,6 +370,205 @@ def get_parameter(ctx: AssistantContext, args: dict) -> Fit | dict:
     }
     payload = _session_notes(ctx, payload, units=bool(unit) and is_convention_unit(unit), stored=True)
     return Fit(payload, rows_key="entities", what="entities", hint=VALUE_HINT)
+
+
+# ---------------------------------------------------------------------------------------------------------
+# get_parameter with lists: one table of (entity, parameter) cells
+
+
+def _unique(items: list) -> list:
+    out: list = []
+    for item in items:
+        if item not in out:
+            out.append(item)
+    return out
+
+
+def _as_entity(item: Any) -> list[str]:
+    return [item] if isinstance(item, str) else [str(n) for n in item]
+
+
+def prepare_parameter_args(args: dict) -> dict:
+    """The forgiving forms of get_parameter's arguments in the schema's: ``parameters`` or ``parameter`` as one name
+    or a list, ``entities`` as one name, a list of names or a list of name lists, ``entity`` as one name."""
+    out = dict(args)
+    if isinstance(out.get("parameter"), list):
+        out["parameters"] = [*out.pop("parameter"), *(_as_list(out.get("parameters")))]
+    if isinstance(out.get("parameters"), str):
+        out["parameters"] = [out["parameters"]]
+    if isinstance(out.get("entity"), str):
+        out["entity"] = [out["entity"]]
+    entities = out.get("entities")
+    if isinstance(entities, str):
+        out["entities"] = [[entities]]
+    elif isinstance(entities, list):
+        out["entities"] = [[e] if isinstance(e, str) else e for e in entities]
+    return out
+
+
+def _as_list(value: Any) -> list:
+    if value is None:
+        return []
+    return [value] if isinstance(value, str) else list(value)
+
+
+def _requested_entities(db: _db.InputDB, entity_class: str, given: list[list[str]]) -> list[list[str]]:
+    """The requested entities; one name each that together name one entity of a multi-dimensional class (the
+    names of its dimensions given as a flat list) are that entity."""
+    dims = db.classes[entity_class].dimensions
+    if (len(dims) > 1 and len(given) == len(dims) and all(len(e) == 1 for e in given)
+            and not any(_find(db, entity_class, e) for e in given)
+            and db.entity(entity_class, tuple(e[0] for e in given)) is not None):
+        return [[e[0] for e in given]]
+    return given
+
+
+def _cell_value(value: Any, row_limit: int, time_range: tuple[str, str] | None) -> Any:
+    """A cell's value: a constant itself, a map of at most *row_limit* rows as its table, a longer one as a
+    summary (kind, index names, rows, minimum, mean, maximum)."""
+    if not _values.is_indexed(value):
+        return _values.compact(value)
+    summary = _values.summarize(value, max_rows=row_limit, time_range=time_range)
+    if "table" in summary:
+        return summary
+    keys = ("kind", "index_names", "time_range", "n", "min", "mean", "max", "non_numeric")
+    return {k: summary[k] for k in keys if k in summary}
+
+
+def _cell(db: _db.InputDB, view: _db.ScenarioView, entity_class: str, byname: tuple[str, ...], parameter: str,
+          row_limit: int, time_range: tuple[str, str] | None) -> dict:
+    """One (entity, parameter) cell: value, shape, alternative, default, unit and notes (as value_record)."""
+    winner = view.value(entity_class, byname, parameter)
+    notes: list[str] = []
+    value: Any = None
+    alternative = None
+    if winner is not None:
+        value, alternative, is_default = winner.parsed(), winner.alternative, False
+    elif _version_relation(db) is not None:
+        is_default = None
+        notes.append(message("older_database", relation=_version_relation(db),
+                             names=name_list(db.stored_parameters(entity_class, byname), 40)))
+    else:
+        definition = db.definition(entity_class, parameter)
+        value = definition.default() if definition is not None else None
+        is_default = value is not None
+        if value is None:
+            notes.append(message("no_value"))
+    shape = None
+    if value is not None:
+        shape, shape_note = _values.shape_of(entity_class, parameter, ", ".join(byname), value)
+        if shape_note:
+            notes.append(shape_note)
+    unit, unit_reason = _unit(view, entity_class, parameter, byname)
+    if unit_reason:
+        notes.append(unit_reason)
+    notes += notes_for(entity_class, parameter, value_of=_value_of(view, entity_class, byname))
+    return {"value": _cell_value(value, row_limit, time_range) if value is not None else None, "shape": shape,
+            "from_alternative": alternative, "is_default": is_default, "unit": unit, "notes": notes}
+
+
+def _parameter_table(ctx: AssistantContext, args: dict) -> Fit:
+    """get_parameter with lists (P0 §4.3, batching 2026-11-08): a row per (entity, parameter), what the rows
+    share in the header."""
+    source, db, notes = _open(ctx, args)
+    entity_class = str(args["entity_class"])
+    _check_class(db, entity_class)
+    parameters = _unique([str(p) for p in ([args["parameter"]] if args.get("parameter") is not None else [])
+                          + list(args.get("parameters") or [])])
+    given = _unique(([_as_entity(args["entity"])] if args.get("entity") is not None else [])
+                    + [_as_entity(e) for e in (args.get("entities") or [])])
+    if not parameters:
+        raise ToolError("no_parameter_named")
+    if len(parameters) > MAX_PARAMETERS or len(given) > MAX_ENTITIES:
+        raise ToolError("too_many_names", max_parameters=MAX_PARAMETERS, max_entities=MAX_ENTITIES,
+                        parameters=len(parameters), entities=len(given))
+    scenario = _scenario(ctx, source, db, args)
+    view = db.view(scenario)
+    time_range = _values.parse_time_range(args.get("time_range"))
+
+    known: list[str] = []
+    unknown_parameters: list[dict] = []
+    for p in parameters:
+        names = _parameter_names(db, entity_class, p)
+        if names is None:
+            known.append(p)
+        else:
+            unknown_parameters.append({"parameter": p, "did_you_mean": closest_names(p, names)})
+
+    entities: list[tuple[str, ...]] = []
+    unknown_entities: list[dict] = []
+    inactive: list[list[str]] = []
+    hidden = 0
+    if given:
+        dims = db.classes[entity_class].dimensions
+        candidates = sorted({e.name for e in db.entities.get(entity_class, {}).values()})
+        for names in _requested_entities(db, entity_class, given):
+            byname = _find(db, entity_class, names)
+            if byname is None:
+                entry: dict[str, Any] = {"entity": _names(tuple(names)),
+                                         "similar": close_names(", ".join(names) if len(names) > 1 else names[0],
+                                                                candidates)}
+                if len(names) == 1 and len(dims) > 1:
+                    entry["note"] = message("entity_dimensions", entity_class=entity_class, n=len(dims),
+                                            dimensions=", ".join(dims))
+                unknown_entities.append(entry)
+                continue
+            if byname in entities:
+                continue
+            entities.append(byname)
+            if not view.active(entity_class, byname)[0]:
+                inactive.append(_names(byname))
+    else:
+        for e in sorted(db.entities.get(entity_class, {}).values(), key=lambda e: e.byname):
+            if view.active(entity_class, e.byname)[0]:
+                entities.append(e.byname)
+            else:
+                hidden += 1
+
+    n_cells = len(entities) * len(known)
+    row_limit = max(1, min(args["max_rows"], max(ENTITY_TABLE_ROWS, args["max_rows"] // max(n_cells, 1))))
+    cells = [(byname, p, _cell(db, view, entity_class, byname, p, row_limit, time_range))
+             for byname in entities for p in known]
+
+    # What the cells of a parameter share goes in the header: its unit (the most common) and its notes.
+    units: dict[str, str | None] = {}
+    shared_notes: dict[str, list[str]] = {}
+    for p in known:
+        mine = [c for _, q, c in cells if q == p]
+        if not mine:
+            continue
+        units[p] = Counter(c["unit"] for c in mine).most_common(1)[0][0]
+        common = [n for n in mine[0]["notes"] if all(n in c["notes"] for c in mine[1:])]
+        if common:
+            shared_notes[p] = common
+    unit_column = any(c["unit"] != units.get(p) for _, p, c in cells)
+    columns = ["entity", "parameter", "value", "shape", "from_alternative", "is_default"]
+    columns += (["unit"] if unit_column else []) + ["notes"]
+    rows = []
+    for byname, p, c in cells:
+        row = [_names(byname), p, c["value"], c["shape"], c["from_alternative"], c["is_default"]]
+        if unit_column:
+            row.append(c["unit"] if c["unit"] != units[p] else None)
+        row.append([n for n in c["notes"] if n not in shared_notes.get(p, [])])
+        rows.append(row)
+
+    payload: dict[str, Any] = {"source": source.name, "scenario": scenario, "entity_class": entity_class,
+                               "alternatives_in_rank_order": view.ranked, "units": units, "columns": columns,
+                               "rows": rows, "total": len(rows)}
+    if shared_notes:
+        payload["notes_by_parameter"] = shared_notes
+    if inactive:
+        payload["inactive_in_scenario"] = inactive
+    if hidden:
+        payload["inactive_entities_not_shown"] = hidden
+    if unknown_parameters:
+        payload["unknown_parameters"] = unknown_parameters
+    if unknown_entities:
+        payload["unknown_entities"] = unknown_entities
+    payload["notes"] = notes
+    any_convention = any(u and is_convention_unit(u) for u in units.values())
+    payload = _session_notes(ctx, payload, units=any_convention, stored=True)
+    return Fit(payload, rows_key="rows", what="cells", hint=CELLS_HINT)
 
 
 def describe_parameter(ctx: AssistantContext, args: dict) -> Fit | dict:
@@ -465,6 +689,8 @@ def compare_inputs(ctx: AssistantContext, args: dict) -> Fit:
 # Registry entries
 
 _ENTITY = {"type": "array", "items": {"type": "string"}}     # P0-D7: one name per dimension
+_NAMES = {"type": "array", "items": {"type": "string"}}
+_ENTITIES = {"type": "array", "items": _ENTITY}
 _SOURCE = {"type": "string"}
 _SCENARIO = {"type": "string"}
 _TIME_RANGE = {"type": "object", "properties": {"from": {"type": "string"}, "to": {"type": "string"}},
@@ -497,17 +723,20 @@ TOOLS = [
         required=("name",), handler=get_entity, area="inputs", small_tier=True,
         caps={"max_rows": CapArg("max_rows")}),
     make_tool(
-        name="get_parameter", title="A parameter value and where it comes from",
-        description=("The value of a parameter in a scenario as stored in the input data: the value or a summary "
-                     "of a series, its shape, unit, the alternative it comes from and the alternatives it overrides, "
-                     "or the default when none sets it. Without entity: one line per active entity of the class. "
-                     "entity lists its names, one per dimension. time_range "
-                     '{"from": …, "to": …} keeps part of a series. ' + _SOURCE_TEXT),
-        properties={"entity_class": {"type": "string"}, "parameter": {"type": "string"}, "entity": _ENTITY,
+        name="get_parameter", title="Parameter values and where they come from",
+        description=("Parameter values of an entity class in a scenario as stored in the input data. parameters "
+                     f"(up to {MAX_PARAMETERS}) and entities (up to {MAX_ENTITIES}) take lists, so one call answers "
+                     "several lookups: one row per entity and parameter with the value (a long series "
+                     "summarised), shape, the alternative it comes from or the default; units and shared notes "
+                     "once per parameter. Without entities: every active entity. An entity is its names, one per "
+                     "dimension. parameter and entity (one each) give one value in full, with the alternatives it "
+                     'overrides. time_range {"from": …, "to": …} keeps part of a series. ' + _SOURCE_TEXT),
+        properties={"entity_class": {"type": "string"}, "parameters": _NAMES, "entities": _ENTITIES,
+                    "parameter": {"type": "string"}, "entity": _ENTITY,
                     "scenario": _SCENARIO, "source": _SOURCE, "time_range": _TIME_RANGE,
                     "max_rows": {"type": "integer"}},
-        required=("entity_class", "parameter"), handler=get_parameter, area="inputs", small_tier=True,
-        caps={"max_rows": CapArg("max_rows")}),
+        required=("entity_class",), handler=get_parameter, area="inputs", small_tier=True,
+        caps={"max_rows": CapArg("max_rows")}, prepare=prepare_parameter_args),
     make_tool(
         name="describe_parameter", title="What a parameter means",
         description=("The description of a parameter as this FlexTool defines it: meaning, default, allowed "
