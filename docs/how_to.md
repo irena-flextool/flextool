@@ -173,7 +173,7 @@ where c =
 / [peak*steps_in_period*(8760/hours_in_period) - (peak/peak_old)*(8760/hours_in_period)*sum(old_inflow)]
 ```
 
-`steps_in_period` is the number of time steps in the period (= hours_in_period on 1 h steps). `peak_inflow` is, like `inflow`, energy per time step; with `timeset_weights` or representative periods the sums and the step count are weighted.
+`peak_old` is the largest (by magnitude) inflow of the period's own time steps, so each period's peak reaches its `peak_inflow`. `steps_in_period` is the number of time steps in the period (= hours_in_period on 1 h steps). `peak_inflow` is, like `inflow`, energy per time step; with `timeset_weights` or representative periods the sums and the step count are weighted.
 
 Examples of all these options are shown in the demand.sqlite.
 
