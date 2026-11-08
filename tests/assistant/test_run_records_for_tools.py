@@ -686,6 +686,66 @@ def test_a_member_built_from_another_folder_is_not_fresh(tmp_path: Path, tests_d
     assert state["usable"] is False and "outside this project" in state["note"]
 
 
+def test_comparison_files_carry_the_members_run_notes(tmp_path: Path, tests_db: Path) -> None:
+    from flextool.scenario_comparison.db_reader import combine_scenario_parquets
+
+    project, _ = _comparison_project(tmp_path, tests_db)
+    combine_scenario_parquets(project, ["base_1", "high_1"])
+    db = project / "input_sources" / "tests.sqlite"
+    later = time.time() + 5
+    os.utime(db, (later, later))
+    out = _compare(make_context(project))
+    assert out["source"] == "comparison_files"
+    assert set(out["run_notes"]) == {"base_1", "high_1"}
+    assert "The input data changed after this run" in out["run_notes"]["high_1"][0]
+
+
+def _count_wide_reads(monkeypatch, after=None) -> list[Path]:
+    from flextool.assistant.results import _query
+
+    real = _query.read_lean_parquet_wide
+    calls: list[Path] = []
+
+    def counted(path, **kwargs):
+        frame = real(path, **kwargs)
+        calls.append(Path(path))
+        if after is not None:
+            after(Path(path))
+        return frame
+
+    monkeypatch.setattr(_query, "read_lean_parquet_wide", counted)
+    return calls
+
+
+def test_compare_runs_reads_the_comparison_file_once(tmp_path: Path, tests_db: Path, monkeypatch) -> None:
+    from flextool.scenario_comparison.db_reader import combine_scenario_parquets
+
+    project, _ = _comparison_project(tmp_path, tests_db)
+    combine_scenario_parquets(project, ["base_1", "high_1"])
+    calls = _count_wide_reads(monkeypatch)
+    out = _compare(make_context(project))
+    assert out["source"] == "comparison_files" and len(calls) == 1
+    # The values of test_comparison_files_record_their_runs_and_are_used_while_fresh.
+    assert [tuple(r) for r in out["rows"]] == [("p2020", "coal_plant", "west", 1000.0, 1500.0, 500.0),
+                                               ("p2025", "coal_plant", "west", 2000.0, 2000.0, 0.0)]
+
+
+def test_a_comparison_rewritten_during_the_read_is_not_used(tmp_path: Path, tests_db: Path, monkeypatch) -> None:
+    from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
+    from flextool.scenario_comparison.db_reader import combine_scenario_parquets
+
+    project, _ = _comparison_project(tmp_path, tests_db)
+    combine_scenario_parquets(project, ["base_1", "high_1"])
+
+    def rewrite(path: Path) -> None:                              # another writer replaces the file meanwhile
+        if path.parent.name == "output_parquet_comparison":
+            write_lean_parquet(read_lean_parquet(path), path)
+
+    _count_wide_reads(monkeypatch, after=rewrite)
+    out = _compare(make_context(project))
+    assert out["source"] == "run_folders" and out["built_from"] is None
+
+
 def test_the_reader_knows_the_writers_metadata_format() -> None:
     from flextool.scenario_comparison.db_reader import COMPARISON_METADATA_FORMAT
 

@@ -119,6 +119,8 @@ class Table:
     layout: LeanLayout
     measures: list[Measure]
     membership: bool
+    #: The frame :func:`preload` read (row levels and every column a query selects); ``None`` reads from the file.
+    wide: Any = field(default=None, repr=False, compare=False)
 
     @property
     def row_levels(self) -> list[str]:
@@ -165,9 +167,12 @@ def open_table(folder: Path, stem: str, *, where: str) -> Table:
 
 
 def read_wide(table: Table, keep: list[str]):
-    """The row levels (as text) and the data columns *keep* (as floats, NaN read as empty) of *table*."""
+    """The row levels (as text) and the data columns *keep* (as floats, NaN read as empty) of *table* (from its
+    :func:`preload` frame when it has one)."""
     import polars as pl
 
+    if table.wide is not None:
+        return table.wide.select([*table.row_levels, *keep])
     try:
         wide = read_lean_parquet_wide(table.path, keep=keep, layout=table.layout)
     except OSError:
@@ -257,6 +262,14 @@ def _selected_columns(table: Table, q: Query, scenario: str | None) -> list[str]
     if not keep:
         raise ToolError("no_match_combination", table=table.stem)
     return keep
+
+
+def preload(table: Table, q: Query) -> Table:
+    """*table* with the row levels and every data column *q* selects, for all ``scenario`` values, read once: the
+    queries of each scenario of a comparison file then select from that frame."""
+    import dataclasses
+
+    return dataclasses.replace(table, wide=read_wide(table, _selected_columns(table, q, None)))
 
 
 def _filter_rows(table: Table, wide, q: Query):

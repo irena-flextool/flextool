@@ -333,6 +333,12 @@ def resolve_run(ctx: AssistantContext, run: str) -> ResolvedRun:
             raise ToolError("run_no_parquet", run=run, methods=", ".join(methods) or "none")
         error = found.entry["error"] or run_record.unusable_reason(status) or "no reason recorded"
         raise ToolError("run_failed", run=run, error=error)
+    return ResolvedRun(found.folder, status, found.entry, run_notes(found), found)
+
+
+def run_notes(found: Run) -> list[str]:
+    """The notes a result read from *found* carries: no run record, an input changed after the run, another
+    FlexTool version."""
     notes: list[str] = []
     if found.entry.get("note"):
         notes.append(found.entry["note"])
@@ -341,7 +347,14 @@ def resolve_run(ctx: AssistantContext, run: str) -> ResolvedRun:
     if found.entry["other_flextool_version"]:
         notes.append(f"This run was made with FlexTool {found.entry['flextool_version']}; this is FlexTool "
                      f"{_flextool_version()}.")
-    return ResolvedRun(found.folder, status, found.entry, notes, found)
+    return notes
+
+
+def member_notes(ctx: AssistantContext, folders: list[str]) -> dict[str, list[str]]:
+    """:func:`run_notes` of each run folder in *folders* from one scan of the runs (``[]`` for a folder the scan
+    does not list)."""
+    by_name = {r.folder.name: r for r in runs(ctx)}
+    return {name: run_notes(by_name[name]) if name in by_name else [] for name in folders}
 
 
 # ---------------------------------------------------------------------------------------------------------

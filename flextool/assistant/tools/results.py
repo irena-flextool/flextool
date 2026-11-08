@@ -245,6 +245,19 @@ def _comparison_source(ctx: AssistantContext, state: dict, stem: str) -> tuple[_
     return table, None
 
 
+def _preloaded(table: _query.Table, q: _query.Query, write_id: str) -> _query.Table | None:
+    """*table* read once for all members (:func:`_query.preload`); ``None`` when the file was rewritten while it
+    was read (its footer no longer carries *write_id*)."""
+    from flextool.lean_parquet import read_lean_parquet_write_id
+
+    loaded = _query.preload(table, q)
+    try:
+        same = read_lean_parquet_write_id(table.path) == write_id
+    except Exception:  # noqa: BLE001 — OSError, or pyarrow's error for a file being written
+        same = False
+    return loaded if same else None
+
+
 def compare_runs(ctx: AssistantContext, args: dict) -> Fit:
     import polars as pl
 
@@ -262,11 +275,16 @@ def compare_runs(ctx: AssistantContext, args: dict) -> Fit:
             raise ToolError("no_comparison")
         members = [m["folder"] for m in state["members"]]
         table, why = _comparison_source(ctx, state, stem)
+        if table is not None and not table.membership:
+            table = _preloaded(table, q, state["write_id"])
+            if table is None:
+                why = COMPARISON_MISMATCH
         if table is not None:
             source = "comparison_files"
             built_from = [{k: m[k] for k in ("folder", "run_id", "started_at", "finished_at")}
                           for m in state["members"]]
-            sources = [(m, table, m, []) for m in members]
+            member_notes = _runs.member_notes(ctx, members)
+            sources = [(m, table, m, member_notes[m]) for m in members]
         else:
             notes.append(why)
             names = members
