@@ -10,8 +10,11 @@ The subset (what the system prompt tells the model, P2 §7):
 
 * ``#``, ``##``, ``###`` headings (``md_h1`` … ``md_h3``; more ``#`` stay literal);
 * list items (``-``, ``*``, ``+`` → "•", numbered items keep their number; ``md_list``);
-* ``**bold**`` (``md_bold``) and ```` `code` ```` (``md_code``) inside a line; a marker without its closing
-  partner on the same line stays literal;
+* ``**bold**`` (``md_bold``), ``*italic*`` (``md_italic``) and ```` `code` ```` (``md_code``) inside a line; a
+  marker without its closing partner on the same line stays literal.  An italic ``*`` opens only before a
+  character that is not a space and not after a letter or digit, and closes only after one that is not a space and
+  not before a letter or digit (``2 * 3 * 4`` and ``a*b*c`` stay literal); ``_`` never marks italic (FlexTool's
+  names have underscores);
 * fenced blocks between ```` ``` ```` lines (``md_codeblock``; the fence lines themselves are not shown; a block
   still open when the answer ends is shown as code);
 * lines that start with ``|`` verbatim in the fixed font (``md_table``).
@@ -32,9 +35,20 @@ _BULLET = re.compile(r"^([ \t]*)([-*+])[ \t]+(.*)$")
 _NUMBERED = re.compile(r"^([ \t]*)(\d{1,9}[.)])[ \t]+(.*)$")
 
 
+def _italic_end(text: str, start: int) -> int:
+    """The index of the ``*`` that closes an italic span opened at *start* - 1, or -1 (see the module text)."""
+    end = text.find("*", start)
+    if end <= start or text.startswith("**", end):
+        return -1
+    inner = text[start:end]
+    if inner[0].isspace() or inner[-1].isspace() or (end + 1 < len(text) and text[end + 1].isalnum()):
+        return -1
+    return end
+
+
 def inline(text: str, base: tuple[str, ...] = ()) -> Line:
-    """The segments of one line's text: ``**bold**`` and ```` `code` ```` spans, the rest plain (with *base*).
-    A marker whose partner is not on the line is literal text."""
+    """The segments of one line's text: ``**bold**``, ``*italic*`` and ```` `code` ```` spans, the rest plain
+    (with *base*).  A marker whose partner is not on the line is literal text."""
     out: Line = []
     plain: list[str] = []
 
@@ -68,6 +82,13 @@ def inline(text: str, base: tuple[str, ...] = ()) -> Line:
             plain.append("**")
             i += 2
             continue
+        if text[i] == "*" and (i == 0 or not text[i - 1].isalnum()):
+            end = _italic_end(text, i + 1)
+            if end != -1:
+                flush()
+                out.extend(inline(text[i + 1:end], base + ("md_italic",)))
+                i = end + 1
+                continue
         plain.append(text[i])
         i += 1
     flush()

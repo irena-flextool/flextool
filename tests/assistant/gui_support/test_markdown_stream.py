@@ -17,6 +17,7 @@ ANSWER = (
     "## In S2_Dry_1\n"
     "### Details\n"
     "The **upward slack** appears at node `north` in **p2030**.\n"
+    "An *italic* word, *two `x` words*, but 2 * 3 * 4, a*b*c and *open stay literal.\n"
     "- first item with `code`\n"
     "* second **bold** item\n"
     "2. numbered item\n"
@@ -38,6 +39,9 @@ EXPECTED = [
     [("Details\n", ("md_h3",))],
     [("The ", ()), ("upward slack", ("md_bold",)), (" appears at node ", ()), ("north", ("md_code",)),
      (" in ", ()), ("p2030", ("md_bold",)), (".\n", ())],
+    [("An ", ()), ("italic", ("md_italic",)), (" word, ", ()), ("two ", ("md_italic",)),
+     ("x", ("md_italic", "md_code")), (" words", ("md_italic",)),
+     (", but 2 * 3 * 4, a*b*c and *open stay literal.\n", ())],
     [("• ", ("md_list",)), ("first item with ", ("md_list",)), ("code", ("md_list", "md_code")),
      ("\n", ("md_list",))],
     [("• ", ("md_list",)), ("second ", ("md_list",)), ("bold", ("md_list", "md_bold")),
@@ -91,7 +95,8 @@ def test_one_character_at_a_time():
 
 def test_no_link_tag_and_only_the_known_tags():
     tags = {tag for line in render(ANSWER) for _text, seg_tags in line for tag in seg_tags}
-    assert tags == {"md_h1", "md_h2", "md_h3", "md_bold", "md_code", "md_list", "md_codeblock", "md_table"}
+    assert tags == {"md_h1", "md_h2", "md_h3", "md_bold", "md_italic", "md_code", "md_list", "md_codeblock",
+                    "md_table"}
     assert not any("link" in tag for tag in tags)
 
 

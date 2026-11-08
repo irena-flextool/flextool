@@ -11,10 +11,19 @@ Shift+Tab move the focus on, Escape stops the answer, Enter or space on a tool l
 on a tool line does the same.  It draws no insertion cursor (only the input box has one): while it has the focus,
 the tool or context line the keyboard is on is shaded instead, so Enter and space still show what they open.  Its
 tags take their colours from the widget's own theme colours.
+
+Fonts (owner decision 2026-11-08): the text is in ``TkTextFont``, FlexTool's body text font (a ``tk.Text`` would
+otherwise use the fixed-width font, and bold text in the proportional font then looked smaller).  Bold, italic and
+the headings are named fonts of the same family (:data:`FONTS`): bold and italic at the same size, the headings
+larger in proportion; inline code, code blocks and tables use the fixed-width family at the point size of the body
+text (Tk tells no x-height, and the ascent misleads: Noto Sans reports a taller ascent than DejaVu Sans Mono, whose
+letters are not smaller).  :func:`sync_fonts` sets them from the body font
+again — at every answer and on a theme change — so a changed font size reaches them.
 """
 from __future__ import annotations
 
 import tkinter as tk
+import tkinter.font as tkfont
 from collections.abc import Callable
 from tkinter import ttk
 from typing import TYPE_CHECKING
@@ -35,6 +44,46 @@ KEYBOARD_LINE = "keyboard_line"
 TOOL_OPEN = "▾"
 TOOL_CLOSED = "▸"
 DETAIL_INDENT = "    "
+#: The transcript's body font, and the named fonts derived from it (shared by every chat of the process).
+BODY_FONT = "TkTextFont"
+FONTS = {"bold": "FlexToolChatBold", "italic": "FlexToolChatItalic", "code": "FlexToolChatCode",
+         "h1": "FlexToolChatHeading1", "h2": "FlexToolChatHeading2"}
+#: How much larger the headings are than the body text.
+HEADING_SCALE = {"h1": 1.3, "h2": 1.15}
+
+
+def _named(widget: tk.Misc, name: str, **options: object) -> tkfont.Font:
+    try:
+        font = tkfont.Font(root=widget, name=name, exists=True)
+        font.configure(**options)
+    except tk.TclError:
+        font = tkfont.Font(root=widget, name=name, **options)
+    return font
+
+
+def _scaled(size: int, factor: float) -> int:
+    """*size* times *factor*, keeping Tk's sign (points positive, pixels negative)."""
+    value = max(1, round(abs(size) * factor))
+    return -value if size < 0 else value
+
+
+def sync_fonts(widget: tk.Misc) -> dict[str, tkfont.Font]:
+    """Set the transcript's named fonts from :data:`BODY_FONT` (and the fixed-width family) as they are now."""
+    body = tkfont.nametofont(BODY_FONT, root=widget)
+    size = int(body.cget("size")) or int(body.actual("size"))
+    family = body.actual("family")
+    fixed = tkfont.nametofont("TkFixedFont", root=widget).actual("family")
+    fonts = {
+        "bold": _named(widget, FONTS["bold"], family=family, size=size, weight="bold", slant="roman"),
+        "italic": _named(widget, FONTS["italic"], family=family, size=size, weight="normal", slant="italic"),
+        "h1": _named(widget, FONTS["h1"], family=family, size=_scaled(size, HEADING_SCALE["h1"]), weight="bold",
+                     slant="roman"),
+        "h2": _named(widget, FONTS["h2"], family=family, size=_scaled(size, HEADING_SCALE["h2"]), weight="bold",
+                     slant="roman"),
+    }
+    fonts["code"] = _named(widget, FONTS["code"], family=fixed, size=size, weight="normal", slant="roman")
+    return fonts
+
 
 
 class Transcript(ttk.Frame):
@@ -65,10 +114,12 @@ class Transcript(ttk.Frame):
         self._example = False
         self._configure_tags()
         self._bind_keys(bind_commands)
+        # A new theme: the colours and the fonts again (a changed body font size reaches the derived fonts).
+        self.text.bind("<<ThemeChanged>>", lambda _e: self._configure_tags(), add="+")
 
     # --- appearance -----------------------------------------------------------------------------------------
     def _configure_tags(self) -> None:
-        from flextool.gui.ui_metrics import blend_rgb, get_metrics, rgb_hex
+        from flextool.gui.ui_metrics import blend_rgb, rgb_hex
 
         txt = self.text
         try:
@@ -76,7 +127,9 @@ class Transcript(ttk.Frame):
             fg = txt.winfo_rgb(txt.cget("foreground"))
         except tk.TclError:
             return
-        bold = get_metrics(self).bold_font
+        fonts = sync_fonts(txt)
+        txt.configure(font=BODY_FONT)
+        bold = fonts["bold"]
         dim = blend_rgb(fg, rgb_hex(bg), 0.45)
         txt.tag_configure("speaker", font=bold)
         txt.tag_configure("user", spacing1=4)
@@ -90,12 +143,13 @@ class Transcript(ttk.Frame):
         txt.tag_configure("example", foreground=dim)
         txt.tag_configure("context", foreground=dim)
         txt.tag_configure("md_bold", font=bold)
-        txt.tag_configure("md_code", font="TkFixedFont", background=blend_rgb(bg, "#808080", 0.14))
-        txt.tag_configure("md_codeblock", font="TkFixedFont", background=blend_rgb(bg, "#808080", 0.10),
+        txt.tag_configure("md_italic", font=fonts["italic"])
+        txt.tag_configure("md_code", font=fonts["code"], background=blend_rgb(bg, "#808080", 0.14))
+        txt.tag_configure("md_codeblock", font=fonts["code"], background=blend_rgb(bg, "#808080", 0.10),
                           lmargin1=12, lmargin2=12)
-        txt.tag_configure("md_table", font="TkFixedFont")
-        txt.tag_configure("md_h1", font=("TkHeadingFont", 13, "bold"), spacing1=6)
-        txt.tag_configure("md_h2", font=("TkHeadingFont", 12, "bold"), spacing1=4)
+        txt.tag_configure("md_table", font=fonts["code"])
+        txt.tag_configure("md_h1", font=fonts["h1"], spacing1=6)
+        txt.tag_configure("md_h2", font=fonts["h2"], spacing1=4)
         txt.tag_configure("md_h3", font=bold, spacing1=2)
         txt.tag_configure("md_list", lmargin1=8, lmargin2=20)
         txt.tag_configure(KEYBOARD_LINE, background=blend_rgb(bg, "#4aa3ff", 0.16))
@@ -256,6 +310,10 @@ class Transcript(ttk.Frame):
         self.text.mark_gravity("pending_start", "left")
         self._md = MarkdownStream()
         self._answer_open = True
+        try:
+            sync_fonts(self.text)           # a font size changed since the last answer reaches bold, code, …
+        except tk.TclError:
+            pass
 
     def _insert_line(self, line: Line, index: str) -> None:
         for text, tags in line:

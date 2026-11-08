@@ -398,3 +398,45 @@ def test_a_continuation_shows_one_line_and_the_note_stays_out(windows, backends)
     again = tab.transcript.contents()
     assert again.count(line) == 1 and "Final answer." in again and "You  question" in again
     assert "A note for" not in again and "This question continues" not in again
+
+
+# --- the fonts of the answer ------------------------------------------------------------------------------------
+def test_bold_italic_and_code_have_the_size_of_the_body_text(host):
+    """Owner decision 2026-11-08: bold and italic are the body font's family and size; inline code the fixed-width
+    family at the same size; headings larger; a changed body size reaches them all."""
+    import tkinter.font as tkfont
+
+    from flextool.gui.assistant.transcript import Transcript
+
+    body = tkfont.nametofont("TkTextFont", root=host)
+    fixed = tkfont.nametofont("TkFixedFont", root=host).actual()
+    old_size = body.cget("size")
+    transcript = Transcript(host)
+    try:
+        transcript.pack()
+        text = transcript.text
+
+        def actual(tag: str) -> dict:
+            return tkfont.Font(root=host, font=text.tag_cget(tag, "font")).actual()
+
+        base = tkfont.Font(root=host, font=text.cget("font")).actual()
+        assert base == body.actual()
+        bold, italic, code = actual("md_bold"), actual("md_italic"), actual("md_code")
+        assert (bold["family"], bold["size"], bold["weight"], bold["slant"]) == (
+            base["family"], base["size"], "bold", "roman")
+        assert (italic["family"], italic["size"], italic["weight"], italic["slant"]) == (
+            base["family"], base["size"], "normal", "italic")
+        assert code["family"] == fixed["family"] and code["size"] == base["size"]
+        assert actual("md_codeblock") == code and actual("md_table") == code
+        assert actual("md_h1")["size"] > actual("md_h2")["size"] > base["size"]
+        assert actual("md_h3")["size"] == base["size"] and actual("md_h3")["weight"] == "bold"
+        # The size of the body text changes (the Settings font size, another monitor): the next answer follows.
+        body.configure(size=old_size + 4)
+        transcript.begin_answer()
+        transcript.stream("the peak was **246 MW** in `node_a`\n")
+        transcript.end_answer()
+        assert actual("md_bold")["size"] == body.actual("size") == actual("md_italic")["size"]
+        assert actual("md_code")["size"] == body.actual("size")
+    finally:
+        body.configure(size=old_size)
+        transcript.destroy()
