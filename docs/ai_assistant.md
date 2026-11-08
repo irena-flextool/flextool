@@ -258,8 +258,10 @@ When the model is loaded, the chat checks its context before the first question.
 Another server with the OpenAI request format: `--provider openai_compatible --base-url http://localhost:8000/v1`.
 A server on this computer or your local network never goes through a proxy.
 
-A model on this computer may take minutes to load or to read a long question; the chat shows "Waiting for the model
-(45 s) — Ctrl-C stops" meanwhile.
+A model on this computer may take minutes to load or to read a long question, and a large model of a service may
+think for minutes before it answers; the chat shows "Waiting for the model (45 s) — Ctrl-C stops" meanwhile. FlexTool
+waits up to 15 minutes for a model on this computer or your local network and up to 5 minutes for a service on the
+internet, counted from the last part of the answer that arrived.
 
 ### Levels
 

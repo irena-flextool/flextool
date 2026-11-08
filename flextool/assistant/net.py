@@ -45,8 +45,9 @@ KEY_HEADER = "authorization"
 
 CONNECT_TIMEOUT = 10.0
 #: Longest silence between two parts of an answer: a model on this computer may load or read the prompt for
-#: minutes before it sends anything.
-READ_TIMEOUT_REMOTE = 120.0
+#: minutes before it sends anything, and a large remote model may think for minutes before its first byte (one
+#: took 88 s to the first streamed byte and over 150 s for a plain request).
+READ_TIMEOUT_REMOTE = 300.0
 READ_TIMEOUT_LOCAL = 900.0
 
 BASE_URL_CREDENTIALS = "Put the key in the key setting, not in the address; FlexTool stores and shows the address."

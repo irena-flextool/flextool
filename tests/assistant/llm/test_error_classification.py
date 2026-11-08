@@ -25,7 +25,7 @@ SECRET = "sk-test-0123456789abcdefghijklmnop"
 def _ctx(preset_id: str = "openai", **kw) -> ErrorContext:
     defaults = {"preset_id": preset_id, "provider": "Example AI", "model": "example-model",
                 "key_source": "environment variable EXAMPLE_KEY", "host": "api.example.test", "port": 443,
-                "local": False, "read_timeout": 120.0, "secret": SECRET}
+                "local": False, "read_timeout": 300.0, "secret": SECRET}
     defaults.update(kw)
     return ErrorContext(**defaults)
 

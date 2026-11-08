@@ -124,7 +124,7 @@ class ErrorContext:
     server_name: str | None = None
     key_env: str | None = None
     zdr: bool = False
-    read_timeout: float = 120.0
+    read_timeout: float = 300.0
     secret: str = field(default="", repr=False)
 
     def fields(self) -> dict[str, object]:

@@ -391,6 +391,88 @@ def test_abort_wakes_a_request_waiting_for_the_first_byte():
         backend.close()
 
 
+def test_the_read_timeouts():
+    from flextool.assistant import net
+
+    assert net.read_timeout_for("https://api.mistral.ai/v1") == 300.0
+    assert net.read_timeout_for("http://localhost:11434/v1") == 900.0
+    assert net.read_timeout_for("http://192.168.1.20:8000/v1") == 900.0
+
+
+def _silent_server():
+    """A loopback server that accepts and never answers; returns (port, accepted, stop, close)."""
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    accepted = threading.Event()
+    stop_server = threading.Event()
+
+    def serve():
+        conn, _ = server.accept()
+        accepted.set()
+        stop_server.wait(10)
+        conn.close()
+
+    threading.Thread(target=serve, daemon=True).start()
+    return server.getsockname()[1], accepted, stop_server, server
+
+
+def test_a_slow_first_byte_shows_the_wait_then_times_out(monkeypatch):
+    """The model sends nothing: the waiting line counts up until the read timeout (shortened for the test), then
+    the message names it."""
+    from flextool.assistant import net
+
+    monkeypatch.setattr(net, "READ_TIMEOUT_LOCAL", 0.8)
+    port, accepted, stop_server, server = _silent_server()
+    backend = make_backend(PRESETS["ollama"], connection("ollama", url=f"http://127.0.0.1:{port}/v1", key=None))
+    backend.wait_interval = 0.2
+    events, on_event = collect()
+    try:
+        started = time.monotonic()
+        with pytest.raises(E.TimedOut) as info:
+            backend.stream(request(ask()), on_event, threading.Event())
+        assert accepted.is_set() and 0.7 < time.monotonic() - started < 3.0
+        assert info.value.user_message == "Ollama did not answer within 0.8 seconds."
+        waits = [e.seconds for e in events if isinstance(e, Waiting)]
+        assert len(waits) >= 2 and waits == sorted(waits)           # the waiting line kept counting
+    finally:
+        stop_server.set()
+        server.close()
+        backend.close()
+
+
+def test_stop_still_works_late_in_a_long_wait(monkeypatch):
+    """Stop late in the wait for the first byte (here after 0.6 of 0.8 seconds) ends the request at once."""
+    from flextool.assistant import net
+
+    monkeypatch.setattr(net, "READ_TIMEOUT_LOCAL", 0.8)
+    port, accepted, stop_server, server = _silent_server()
+    backend = make_backend(PRESETS["ollama"], connection("ollama", url=f"http://127.0.0.1:{port}/v1", key=None))
+    backend.wait_interval = 0.1
+    outcome: list = []
+
+    def worker():
+        try:
+            outcome.append(backend.stream(request(ask()), lambda e: None, threading.Event()))
+        except Exception as exc:  # noqa: BLE001 — the outcome is the test's subject
+            outcome.append(exc)
+
+    thread = threading.Thread(target=worker, daemon=True)
+    try:
+        thread.start()
+        assert accepted.wait(5)
+        time.sleep(0.6)
+        stopped = time.monotonic()
+        backend.abort()
+        thread.join(2)
+        assert not thread.is_alive() and time.monotonic() - stopped < 0.5
+        assert isinstance(outcome[0], E.Cancelled)
+    finally:
+        stop_server.set()
+        server.close()
+        backend.close()
+
+
 def test_replies_are_new_objects_each_time():
     backend, _ = backend_for("openai", [answer("openai", "text_usage"), answer("openai", "text_usage")])
     a = backend.stream(request(ask()), lambda e: None, threading.Event())
