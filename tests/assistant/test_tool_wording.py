@@ -54,10 +54,10 @@ def test_plain_words(where: str, text: str) -> None:
 
 def test_tool_names_and_small_tier() -> None:
     """The tools of this step and the basic set among them (P3 §2.2: search_docs, read_doc, get_entity,
-    get_parameter, list_runs, find_result_tables, query_result)."""
+    get_parameter, list_sources, list_runs, find_result_tables, query_result)."""
     tools = all_tools()
     small = {name for name, tool in tools.items() if tool.small_tier}
-    basic = {"search_docs", "read_doc", "get_entity", "get_parameter", "list_runs", "find_result_tables",
-             "query_result"}
+    basic = {"search_docs", "read_doc", "get_entity", "get_parameter", "list_sources", "list_runs",
+             "find_result_tables", "query_result"}
     assert small == basic & set(tools)
     assert not tools["get_gui_context"].small_tier

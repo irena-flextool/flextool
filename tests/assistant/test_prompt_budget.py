@@ -2,7 +2,8 @@
 
 * the instructions and tool schemas of each level and front end fit the level's prefix budget (digit-aware
   estimate, P3 §4.1);
-* basic sends exactly the seven tools of P3-O15, standard and advanced all eighteen;
+* basic sends exactly the eight tools of P3-O15 (with list_sources, 2026-11-08), standard and advanced all
+  eighteen;
 * no layer sent at a level — the chat's five layers for each front end, and the connection's instructions —
   names a tool outside that level's set (critique M1);
 * the level texts are the owner-approved ones (P3-O9, O15's tool sentence), byte-stable across builds;
@@ -22,17 +23,17 @@ from flextool.assistant import prompt, registry
 from flextool.assistant.budget import LEVEL_BUDGETS, approx_tokens, schema_tokens
 from flextool.assistant.session import tool_specs
 
-BASIC_TOOLS = ("find_result_tables", "get_entity", "get_parameter", "list_runs", "query_result", "read_doc",
-               "search_docs")
+BASIC_TOOLS = ("find_result_tables", "get_entity", "get_parameter", "list_runs", "list_sources", "query_result",
+               "read_doc", "search_docs")
 FRONT_ENDS = ("terminal", "gui", "agent")
 LEVELS = ("small", "medium", "large")
 
-#: The basic level's tool sentence (P3-O15), word for word.
-BASIC_TOOL_SENTENCE = ("- Use only these tools: search_docs, read_doc, get_entity, get_parameter, list_runs, "
-                       "find_result_tables and query_result.")
+#: The basic level's tool sentence (P3-O15, with list_sources since 2026-11-08), word for word.
+BASIC_TOOL_SENTENCE = ("- Use only these tools: search_docs, read_doc, get_entity, get_parameter, list_sources, "
+                       "list_runs, find_result_tables and query_result.")
 #: sha256 of each level text as approved (P3 §2.1, word for word; any change goes back to the owner, P3-O9).
 ADDENDA_SHA256 = {
-    "small": "56f83966710c4f203607f6a67f37e278a6967ef76aadced214fefaff6d885272",
+    "small": "b1d94326a7416cbaad8eca1df18ffc07244f8bffd0dfe2433a9030f77a377ac8",
     "medium": "e1b0aebb67e1413f3b3ee5cc7a6e3ec4fe5b5ec5d051888181cc8c19b372b9c3",
     "large": "2700bf6339a535c19f473ea18459c73887b7bfcfb397d1fd8dd09d8b76771e86",
 }
@@ -51,7 +52,7 @@ def test_the_prefix_fits_the_level_budget(front_end, level):
     assert prefix <= LEVEL_BUDGETS[level].prefix_tokens, f"{level} {front_end}: {prefix} tokens"
 
 
-def test_basic_is_the_seven_tools():
+def test_basic_is_the_eight_tools():
     assert tuple(t.name for t in registry.tools_for_tier("small")) == BASIC_TOOLS
     assert tuple(t.name for t in tool_specs("basic")) == BASIC_TOOLS
     assert len(registry.all_tools()) == 18

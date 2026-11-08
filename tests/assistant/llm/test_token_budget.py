@@ -28,17 +28,17 @@ def _plain(c: caps.Caps) -> tuple[int, int, int, int]:
 
 
 def test_the_small_window_caps_worked_check():
-    """P3 §4.3 with the shipped basic budget (prefix 4 500, output 4 096, three planned calls) at 16 384 tokens,
-    keep 0: 16 384 − 4 500 − 4 096 − 1 638.4 − min(4 000, 2 457.6) = 3 692; per call 3 692 / 1 / 3 = 1 230.7
-    tokens; × 1.5 = 1 846 characters, raised to the 2 000 floor; rows max(10, round(50 × 2 000 / 6 000 = 16.7))
+    """P3 §4.3 with the shipped basic budget (prefix 4 700, output 4 096, three planned calls) at 16 384 tokens,
+    keep 0: 16 384 − 4 700 − 4 096 − 1 638.4 − min(4 000, 2 457.6) = 3 492; per call 3 492 / 1 / 3 = 1 164.0
+    tokens; × 1.5 = 1 746 characters, raised to the 2 000 floor; rows max(10, round(50 × 2 000 / 6 000 = 16.7))
     = 17; results max(3, round(1.67)) = 3; items max(3, round(33.3)) = 33."""
     assert _plain(fit_caps(16_384, LEVEL_BUDGETS["small"], 4_096, 0)) == (17, 2_000, 3, 33)
-    # 30 000 tokens: 30 000 − 4 500 − 4 096 − 3 000 − 4 000 = 14 404; / 3 = 4 801.3; × 1.5 = 7 202 → the small
+    # 30 000 tokens: 30 000 − 4 700 − 4 096 − 3 000 − 4 000 = 14 204; / 3 = 4 734.7; × 1.5 = 7 102 → the small
     # preset's 6 000 characters; everything at the small preset.
     assert _plain(fit_caps(30_000, LEVEL_BUDGETS["small"], 4_096, 0)) == (50, 6_000, 5, 100)
-    # 24 000 tokens, keep 0: 24 000 − 4 500 − 4 096 − 2 400 − 3 600 = 9 404; / 3 = 3 134.7; × 1.5 = 4 702;
-    # rows round(50 × 0.78367) = 39; results round(3.92) = 4; items round(78.4) = 78.
-    assert _plain(fit_caps(24_000, LEVEL_BUDGETS["small"], 4_096, 0)) == (39, 4_702, 4, 78)
+    # 24 000 tokens, keep 0: 24 000 − 4 700 − 4 096 − 2 400 − 3 600 = 9 204; / 3 = 3 068; × 1.5 = 4 602;
+    # rows round(50 × 0.767) = 38; results round(3.835) = 4; items round(76.7) = 77.
+    assert _plain(fit_caps(24_000, LEVEL_BUDGETS["small"], 4_096, 0)) == (38, 4_602, 4, 77)
 
 
 def _float_rows(n: int, seed: int) -> dict:

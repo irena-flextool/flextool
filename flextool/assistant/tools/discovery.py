@@ -23,7 +23,7 @@ TOOLS = [
         description=("The input sources of the project (spreadsheets and databases) with their number (the "
                      "suffix of their result folders), scenarios, database version and whether it is current, the "
                      "state of a spreadsheet's conversion, and notices of FlexTool behaviour changes."),
-        properties={}, handler=list_sources, area="discovery", small_tier=False),
+        properties={}, handler=list_sources, area="discovery", small_tier=True),
     make_tool(
         name="list_runs", title="Scenario runs of the project",
         description=("The scenario result folders of the project (for example S2_Dry_1: the scenario name and the "

@@ -161,11 +161,11 @@ class LevelBudget:
 
 
 #: Starting values that the calibration informs (P3 §4.1, §7.6).  The prefix budgets are above the estimate of
-#: the shipped instructions and tool schemas (about 4 260 / 8 300 / 8 390 tokens; P3 §4.1 drafted 3 500 / 7 500 /
-#: 8 500 before the schemas were final).
+#: the shipped instructions and tool schemas (about 4 520 / 8 300 / 8 390 tokens; P3 §4.1 drafted 3 500 / 7 500 /
+#: 8 500 before the schemas were final; basic rose from 4 500 to 4 700 when list_sources joined its tools).
 #: The history and the continuations are the owner's of 2026-11-08 (P3 §4.7).
 LEVEL_BUDGETS: dict[str, LevelBudget] = {
-    "small": LevelBudget(4_500, 3, 3, 3, 4_096, 3, 12_288, max_continuations=2, history="answers", history_turns=2),
+    "small": LevelBudget(4_700, 3, 3, 3, 4_096, 3, 12_288, max_continuations=2, history="answers", history_turns=2),
     "medium": LevelBudget(8_500, 8, 16, 8, 8_000, 6, 32_768, max_continuations=1, history="answers"),
     "large": LevelBudget(9_000, 12, 30, 8, 16_000, 8, 65_536, max_continuations=0, history="full"),
 }

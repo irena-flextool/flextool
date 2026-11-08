@@ -417,8 +417,8 @@ The assistant works at one of three levels. The level changes what the model is 
 how many steps it may take; it never changes what a tool returns.
 
 - **Basic** — look things up and explain them: one parameter, one result table or one documentation topic at a time,
-  with seven tools (`search_docs`, `read_doc`, `get_entity`, `get_parameter`, `list_runs`, `find_result_tables`,
-  `query_result`) and at most three tool calls for each part of a question (see [Budgets](#budgets)). A question
+  with eight tools (`search_docs`, `read_doc`, `get_entity`, `get_parameter`, `list_sources`, `list_runs`,
+  `find_result_tables`, `query_result`) and at most three tool calls for each part of a question (see [Budgets](#budgets)). A question
   that needs more, such as why there is slack or why two scenarios differ, gets what was found so far and the advice
   to use a higher level or a more capable model.
 - **Standard** — interpret results and compare scenarios, linking a result to the inputs that drive it; every tool.

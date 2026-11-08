@@ -2,7 +2,7 @@
 
 * Without ``--tier``: ``prompts/list`` gives basic, standard and advanced; ``prompts/get basic`` is one user
   message with the basic level text; ``tools/list`` gives the 18 tools.
-* ``--tier basic``: ``tools/list`` gives the seven basic tools and only the basic prompt; any other tool is an
+* ``--tier basic``: ``tools/list`` gives the eight basic tools and only the basic prompt; any other tool is an
   error result that says how to get it; a basic tool answers.
 * ``--tier standard`` keeps every tool and prompt.
 * ``--result-cap`` follows ``--tier`` unless it is given (basic small, standard medium, advanced large).
@@ -20,8 +20,8 @@ from tests.assistant.test_server_stdio import _MCP_MAJOR, _Connection, _script, 
 pytestmark = pytest.mark.skipif(_MCP_MAJOR < 2, reason="needs mcp 2.x (reinstall FlexTool: pip install -e .)")
 
 #: The basic level's tools (P3 §2.2, P3-O15), written from the design, not from the registry.
-BASIC_TOOLS = ["find_result_tables", "get_entity", "get_parameter", "list_runs", "query_result", "read_doc",
-               "search_docs"]
+BASIC_TOOLS = ["find_result_tables", "get_entity", "get_parameter", "list_runs", "list_sources", "query_result",
+               "read_doc", "search_docs"]
 REFUSED = ("The tool compare_runs is not part of the basic level. Restart the FlexTool connection without --tier "
            "basic to use it.")
 
@@ -61,7 +61,7 @@ def test_without_a_level_the_agent_gets_three_prompts_and_every_tool(assistant_p
         _finish(conn)
 
 
-def test_tier_basic_serves_the_seven_basic_tools_and_refuses_the_rest(assistant_project: Path) -> None:
+def test_tier_basic_serves_the_eight_basic_tools_and_refuses_the_rest(assistant_project: Path) -> None:
     conn = _server(assistant_project, "--tier", "basic")
     try:
         tools = conn.send("tools/list", {})["tools"]
