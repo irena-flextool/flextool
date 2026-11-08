@@ -95,6 +95,25 @@ def test_the_welcome_is_the_approved_text(host):
         dialog.finish("close")
 
 
+def test_the_welcome_body_is_one_point_above_the_gui_font(host):
+    import tkinter.font as tkfont
+
+    base = tkfont.nametofont("TkDefaultFont", root=host)
+    saved = base.cget("size")
+    base.configure(size=10)                     # the GUI's default body size
+    dialog = WelcomeDialog(host, record=False)
+    try:
+        title, heading, body = (tkfont.Font(root=host, font=dialog.fonts[i]).actual() for i in range(3))
+        assert body["size"] == 11 and body["weight"] == "normal"
+        assert heading["size"] == 11 and heading["weight"] == "bold"
+        assert title["size"] == 12 and title["weight"] == "bold"
+        head, text = dialog.section_labels[0]
+        assert str(text.cget("font")) == str(dialog.fonts.body) and str(head.cget("font")) == str(dialog.fonts.heading)
+    finally:
+        dialog.finish("close")
+        base.configure(size=saved)
+
+
 def test_the_welcome_comes_before_the_chat_and_close_records_it(host, connects):
     opened: list[str] = []
     dialog = with_welcome(host, lambda: opened.append("chat"))

@@ -28,6 +28,7 @@ import tkinter.font as tkfont
 from collections.abc import Callable
 from pathlib import Path
 from tkinter import ttk
+from typing import NamedTuple
 
 from flextool.gui.assistant import strings
 
@@ -43,6 +44,8 @@ GRAB_STEP_MS = 20
 ACCEPT_GUARD_MS = 500
 #: The longest chat name.
 NAME_MAX = 60
+#: The welcome's body text is this many points above the GUI's body font.
+WELCOME_BODY_STEP_PT = 1
 
 
 def install_shield(toplevel: tk.Misc) -> None:
@@ -250,13 +253,21 @@ class WelcomeDialog(_AssistantDialog):
         self._mark_seen = mark_seen
         self._done = False
         symbol = settings_symbol(self)
-        self.title_label = self.heading(self.body, strings.WELCOME_TITLE, pady=(0, self.lh // 2))
+        # Kept on the dialog: a named font is deleted when its last Python reference goes.
+        self.fonts = welcome_fonts(self)
+        self.wrap = self.fonts.body.measure("0") * 60
+        gap = self.fonts.body.metrics("linespace") // 2
+        self.title_label = ttk.Label(self.body, text=strings.WELCOME_TITLE, font=self.fonts.title,
+                                     wraplength=self.wrap, justify="left")
+        self.title_label.pack(anchor="w", pady=(0, gap))
         self.section_labels: list[tuple[ttk.Label, ttk.Label]] = []
         for heading, text in strings.WELCOME_SECTIONS:
-            head = ttk.Label(self.body, text=heading, font=_bold_font(self), wraplength=self.wrap,
+            head = ttk.Label(self.body, text=heading, font=self.fonts.heading, wraplength=self.wrap,
                              justify="left")
-            head.pack(anchor="w", pady=(self.lh // 2, 0))
-            body = self.paragraph(self.body, text.replace(strings.SETTINGS_SYMBOL, symbol))
+            head.pack(anchor="w", pady=(gap, 0))
+            body = ttk.Label(self.body, text=text.replace(strings.SETTINGS_SYMBOL, symbol), font=self.fonts.body,
+                             wraplength=self.wrap, justify="left")
+            body.pack(anchor="w", fill="x")
             self.section_labels.append((head, body))
         row = self.buttons()
         self.close_button = ttk.Button(row, text=strings.CLOSE, command=lambda: self.finish("close"))
@@ -291,10 +302,28 @@ class WelcomeDialog(_AssistantDialog):
             self._on_close(action)
 
 
-def _bold_font(widget: tk.Misc) -> tkfont.Font:
-    from flextool.gui.ui_metrics import get_metrics
+class WelcomeFonts(NamedTuple):
+    title: tkfont.Font
+    heading: tkfont.Font
+    body: tkfont.Font
 
-    return get_metrics(widget).bold_font
+
+def welcome_fonts(widget: tk.Misc) -> WelcomeFonts:
+    """The welcome's fonts, copies of the GUI's body font (``ui_metrics.setup_fonts``): the body
+    :data:`WELCOME_BODY_STEP_PT` larger (11 pt at the default 10 pt; the font size setting still scales it), the
+    section headings the same size in bold, the title one point larger again in bold, as the GUI's heading font
+    stands to its body font."""
+    base = tkfont.nametofont("TkDefaultFont", root=widget)
+    size = int(base.cget("size"))
+    if size <= 0:                       # a size in pixels: the size in points Tk shows it at
+        size = int(base.actual("size")) or 10
+    body = base.copy()
+    body.configure(size=size + WELCOME_BODY_STEP_PT, weight="normal")
+    heading = body.copy()
+    heading.configure(weight="bold")
+    title = body.copy()
+    title.configure(size=size + WELCOME_BODY_STEP_PT + 1, weight="bold")
+    return WelcomeFonts(title, heading, body)
 
 
 def _record_welcome_seen(config_root: Path | None, mark_seen: Callable[[], None] | None) -> threading.Thread:
