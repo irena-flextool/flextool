@@ -418,9 +418,9 @@ how many steps it may take; it never changes what a tool returns.
 
 - **Basic** — look things up and explain them: one parameter, one result table or one documentation topic at a time,
   with seven tools (`search_docs`, `read_doc`, `get_entity`, `get_parameter`, `list_runs`, `find_result_tables`,
-  `query_result`) and at most three tool calls for each question. A question that needs more, such as why there is
-  slack or why two scenarios differ, gets what was found so far and the advice to use a higher level or a more
-  capable model.
+  `query_result`) and at most three tool calls for each part of a question (see [Budgets](#budgets)). A question
+  that needs more, such as why there is slack or why two scenarios differ, gets what was found so far and the advice
+  to use a higher level or a more capable model.
 - **Standard** — interpret results and compare scenarios, linking a result to the inputs that drive it; every tool.
 - **Advanced** — diagnose problems in several steps: trace slack and penalty costs to a limit and back to the inputs
   behind it, read the model's equations, and explain investment differences between scenarios; every tool.
@@ -473,11 +473,26 @@ requests within the model's context; they are not usage limits.
 | Steps for each question (one request to the service each) | 3 | 8 | 12 |
 | Tool calls for each question | 3 | 16 | 30 |
 | Longest answer (tokens; at most a quarter of the context size) | 4 096 | 8 000 | 16 000 |
-| Steps / tool calls with the free plan | 3 / 3 | 4 / 8 | 6 / 12 |
+| Continuations with a fresh context | 2 | 1 | none |
+| Steps / tool calls / continuations with the free plan | 3 / 3 / 1 | 4 / 8 / none | 6 / 12 / none |
 
-When a question reaches its limit, the model is asked to answer with what it has and to say what is still unknown.
-The context size also sets how much one tool result may hold and how often the tool results of earlier questions are
-replaced by a short note:
+When a question reaches its limit of steps or tool calls and its level allows a continuation, the model writes a
+short note of what it found so far and the next step (the note is not shown), and the question goes on with a fresh
+context: the question, the note and the tool results the note needs, with new steps and tool calls. The chat shows
+one line, for example "Continuing with a fresh context (part 2 of 3)…"; Stop works as at any other time. Every
+request is counted in the usage. When no continuation is left, the model is asked to answer with what it has and to
+say what is still unknown.
+
+What each request carries of the earlier questions depends on the level, which keeps the requests of smaller models
+short and focused. The saved conversation keeps everything.
+
+| | Basic | Standard | Advanced |
+|---|---|---|---|
+| Earlier questions in each request | the last two, each with its final answer (text only) | every one, with its final answer (text only) | the whole conversation, with the tool calls and results |
+
+The context block (your project, input source and scenario) is always sent. The context size also sets how much one
+tool result may hold and, at the advanced level, how often the tool results of earlier questions are replaced by a
+short note:
 
 | Context size (tokens) | One tool result holds at most | Earlier results shortened |
 |---|---|---|
