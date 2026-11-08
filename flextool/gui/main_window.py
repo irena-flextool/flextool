@@ -43,7 +43,13 @@ from flextool.gui.scenario_lists import (
     row_check_glyph,
     row_state_tag,
 )
-from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobStatus
+from flextool.gui.execution_manager import (
+    KILL_REASON_PROJECT_DELETED,
+    KILL_REASON_PROJECT_SWITCHED,
+    ExecutionJob,
+    ExecutionManager,
+    JobStatus,
+)
 from flextool.gui.execution_window import ExecutionWindow
 from flextool.gui.output_actions import OutputActionManager
 from flextool.gui.result_viewer import ResultViewer
@@ -1772,7 +1778,7 @@ class MainWindow(tk.Tk):
         self._assistant.close_for_project()
         if self.execution_mgr is not None:
             try:
-                self.execution_mgr.kill_all()
+                self.execution_mgr.kill_all(KILL_REASON_PROJECT_DELETED)
             except Exception:
                 logger.warning(
                     "Failed to kill execution jobs after project deletion",
@@ -1913,7 +1919,7 @@ class MainWindow(tk.Tk):
                 # Reset the combo back – it already shows the new name
                 self.project_combo.set(self.current_project or "")
                 return
-            self.execution_mgr.kill_all()
+            self.execution_mgr.kill_all(KILL_REASON_PROJECT_SWITCHED)
 
         # The AI assistant's chat window belongs to the previous project.
         self._assistant.close_for_project()
@@ -2012,6 +2018,47 @@ class MainWindow(tk.Tk):
 
     # ── Window close ─────────────────────────────────────────────────
 
+    def _cleanup_execution_jobs(self) -> None:
+        """Stop every job and wait for their run records (``ExecutionManager.cleanup``) without a frozen window.
+
+        With jobs running, the main window is hidden and a small note says what is happening; ``cleanup`` calls
+        back about every 0.1 s and the note's ``update`` keeps the event loop going, so the system never marks the
+        window "Not responding".  The wait is bounded by ``CLEANUP_WAIT_S``.
+        """
+        mgr = self.execution_mgr
+        if mgr is None:
+            return
+        if not mgr.has_pending_or_running():
+            mgr.cleanup()
+            return
+        note: tk.Toplevel | None = None
+        try:
+            self.withdraw()
+            note = tk.Toplevel(self)
+            note.title("FlexTool")
+            note.protocol("WM_DELETE_WINDOW", lambda: None)  # closing is already under way
+            ttk.Label(note, text="Stopping the runs and finishing their run records\u2026",
+                      padding=16).pack()
+            note.update()
+        except tk.TclError:
+            note = None
+
+        def progress() -> None:
+            if note is not None:
+                try:
+                    note.update()
+                except tk.TclError:
+                    pass
+
+        try:
+            mgr.cleanup(progress=progress)
+        finally:
+            if note is not None:
+                try:
+                    note.destroy()
+                except tk.TclError:
+                    pass
+
     def _on_close(self) -> None:
         """Save state and close the application."""
         # Warn if executions are still active
@@ -2034,10 +2081,12 @@ class MainWindow(tk.Tk):
         except Exception:
             logger.exception("Error closing the AI assistant")
 
-        # Kill all running subprocesses (cleanup is idempotent)
+        # Kill all running subprocesses (cleanup is idempotent).  It waits for
+        # the stopped jobs' run records (at most CLEANUP_WAIT_S): the window is
+        # hidden first and a small note keeps the event loop going meanwhile.
         try:
             if self.execution_mgr is not None:
-                self.execution_mgr.cleanup()
+                self._cleanup_execution_jobs()
         except Exception:
             logger.exception("Error killing execution jobs during close")
 
@@ -5324,6 +5373,8 @@ class MainWindow(tk.Tk):
             on_status_change=self._on_job_status_change,
             on_all_finished=self._on_all_jobs_finished,
             global_settings=self.global_settings,
+            # The GUI finished a job's run record after the job's status notify (a kill, a failure): show it.
+            on_run_record_closed=lambda job: self.post_to_main(self._refresh_executed_scenarios),
         )
         # ExecutionManager seeds max_workers from ProjectSettings (with
         # the legacy GlobalSettings.max_workers as fallback) in its

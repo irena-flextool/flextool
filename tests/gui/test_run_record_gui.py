@@ -123,6 +123,163 @@ def test_of_two_pending_jobs_on_one_folder_the_first_runs_first(manager):
         assert manager._pick_next_pending() is None
 
 
+# ---------------------------------------------------------------------------
+# The end of a job: who stopped it, the order of the record and the next job
+# ---------------------------------------------------------------------------
+
+
+def _wait_for(predicate, what, timeout: float = 60.0) -> None:
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        assert time.monotonic() < deadline, what
+        time.sleep(0.02)
+
+
+def _start_sleeping_job(manager: ExecutionManager, folder: Path) -> tuple[ExecutionJob, threading.Thread]:
+    """A ``sleep`` stub job in a plain thread, returned once its engine has written its record."""
+    job = _stub_job(manager, folder, "sleep")
+    job.source_name = "model.sqlite"
+    worker = threading.Thread(target=manager._run_job, args=(job,), daemon=True)
+    worker.start()
+    _wait_for(lambda: job.run_record_folder is not None and "sleeping" in manager.get_stdout(job.job_id),
+              "the stub engine did not start")
+    return job, worker
+
+
+def test_removing_the_source_records_the_kill_and_closing_waits_for_it(manager, tmp_path):
+    folder = tmp_path / "output_parquet" / "scen"
+    job, worker = _start_sleeping_job(manager, folder)
+
+    manager.remove_jobs_for_source("model.sqlite")
+    assert manager.get_jobs() == []
+    # Closing FlexTool right away: cleanup waits for the worker of the job already taken off the list.
+    manager.cleanup()
+
+    record = read_status_file(folder)
+    assert record["state"] == "killed"
+    assert record["error"]["message"] == "its input source was removed"
+    assert job.worker_done.is_set()
+    worker.join(10)
+
+
+def test_closing_flextool_finishes_the_record_before_cleanup_returns(manager, tmp_path):
+    folder = tmp_path / "output_parquet" / "scen"
+    job, _worker = _start_sleeping_job(manager, folder)
+
+    manager.cleanup()  # no join: cleanup itself waits
+
+    assert job.status is JobStatus.KILLED
+    record = read_status_file(folder)
+    assert (record["state"], record["error"]["message"]) == ("killed", "FlexTool was closed")
+
+
+def test_cleanup_keeps_calling_its_progress_callback_while_it_waits(manager):
+    pending = threading.Event()
+    manager._live_waits.add(pending)
+    calls: list[int] = []
+
+    def progress() -> None:
+        calls.append(1)
+        pending.set()  # the job finishes after the first call
+
+    manager.cleanup(progress=progress)
+
+    assert calls == [1]
+
+
+def test_the_list_is_refreshed_after_the_record_is_finished(tmp_path, monkeypatch):
+    monkeypatch.setattr(em, "_wrap_for_memory_cap", lambda cmd, estimate_gb: (list(cmd), {}, None))
+    folder = tmp_path / "output_parquet" / "scen"
+    at_status: list[str] = []
+    at_close: list[str] = []
+
+    def on_status_change(job):
+        if job.status is JobStatus.FAILED:
+            at_status.append(read_status_file(folder)["state"])
+
+    manager = ExecutionManager(project_path=tmp_path, settings=ProjectSettings(), on_status_change=on_status_change,
+                               on_run_record_closed=lambda job: at_close.append(read_status_file(folder)["state"]))
+    job = _stub_job(manager, folder, "exit1")
+
+    manager._run_job(job)
+
+    assert job.status is JobStatus.FAILED
+    # The job's own notify comes before the record is finished; the second call comes after it.
+    assert at_status == ["running"]
+    assert at_close == ["failed"]
+
+
+def test_a_folder_stays_busy_until_the_worker_has_closed_its_owner(manager, tmp_path, monkeypatch):
+    folder = tmp_path / "output_parquet" / "a"
+    first, second = _job("a", JobStatus.PENDING, 0), _job("a", JobStatus.PENDING, 1)
+    manager._jobs = [first, second]
+    manager._max_workers = 4
+    manager._memory_admits = lambda candidate, source, estimate: True
+    manager._build_run_command = lambda job, work_folder: [sys.executable, str(STUB), str(folder), "exit1"]
+    closing, release = threading.Event(), threading.Event()
+    real_close = em.RunLogOwner.close
+
+    def slow_close(self, *args, **kwargs):
+        closing.set()
+        assert release.wait(60)
+        return real_close(self, *args, **kwargs)
+
+    monkeypatch.setattr(em.RunLogOwner, "close", slow_close)
+    with manager._lock:
+        assert manager._pick_next_pending() is first
+    worker = threading.Thread(target=manager._run_job, args=(first,), daemon=True)
+    worker.start()
+    assert closing.wait(60)
+    assert first.status is JobStatus.FAILED
+
+    with manager._lock:
+        assert manager._pick_next_pending() is None  # the first job's record is not finished yet
+    release.set()
+    worker.join(60)
+    with manager._lock:
+        assert manager._pick_next_pending() is second
+
+
+def test_a_failure_while_finishing_the_record_still_frees_the_folder(manager, tmp_path, monkeypatch):
+    folder = tmp_path / "output_parquet" / "a"
+    first, second = _job("a", JobStatus.PENDING, 0), _job("a", JobStatus.PENDING, 1)
+    manager._jobs = [first, second]
+    manager._max_workers = 4
+    manager._memory_admits = lambda candidate, source, estimate: True
+    manager._build_run_command = lambda job, work_folder: [sys.executable, str(STUB), str(folder), "exit1"]
+
+    def broken_close(self, *args, **kwargs):
+        raise ValueError("a bug while finishing the record")
+
+    monkeypatch.setattr(em.RunLogOwner, "close", broken_close)
+    with manager._lock:
+        assert manager._pick_next_pending() is first
+    manager._run_job(first)
+
+    assert first.worker_done.is_set()
+    assert manager._running_count == 0
+    with manager._lock:
+        assert manager._pick_next_pending() is second
+
+
+def test_a_job_stopped_between_its_pick_and_its_start_never_starts(manager, monkeypatch):
+    job = _job("a", JobStatus.PENDING, 0)
+    manager._jobs = [job]
+    with manager._lock:
+        assert manager._pick_next_pending() is job
+    manager.kill_job(job.job_id)
+
+    def no_popen(*args, **kwargs):
+        raise AssertionError("the engine of a stopped job was started")
+
+    monkeypatch.setattr(em.subprocess, "Popen", no_popen)
+    manager._run_job(job)
+
+    assert job.status is JobStatus.KILLED
+    assert job.kill_reason == "stopped from the FlexTool window"
+    assert manager._running_count == 0 and job.worker_done.is_set()
+
+
 def test_the_gui_command_names_its_launcher_and_the_spreadsheet(manager, tmp_path):
     xlsx = tmp_path / "input_sources" / "model.xlsx"
     job = ExecutionJob(job_id=0, scenario_name="scen", output_subdir="scen_1", is_xlsx_source=True, xlsx_path=xlsx,
@@ -376,3 +533,26 @@ def test_an_unreadable_row_is_scanned_again_at_most_three_times(project, tk_root
     rows = {tree.set(iid, "scenario_name"): iid for iid in tree.get_children()}
     assert tree.set(rows["cut"], "check") == "\u2717"
     assert host._unreadable_rescans_left == mw.UNREADABLE_RESCANS
+
+
+def test_closing_with_jobs_hides_the_window_and_keeps_its_event_loop_going(tk_root):
+    tk_root.deiconify()
+    seen: list[tuple[str, bool]] = []
+
+    class FakeManager:
+        def has_pending_or_running(self):
+            return True
+
+        def cleanup(self, progress=None):
+            # While cleanup waits: the main window is hidden, a note is shown, and events are processed.
+            fired: list[int] = []
+            tk_root.after(0, lambda: fired.append(1))
+            progress()
+            notes = [w for w in tk_root.winfo_children() if isinstance(w, tk.Toplevel)]
+            seen.append((tk_root.state(), bool(notes) and bool(fired)))
+
+    tk_root.execution_mgr = FakeManager()
+    mw.MainWindow._cleanup_execution_jobs(tk_root)
+
+    assert seen == [("withdrawn", True)]
+    assert not [w for w in tk_root.winfo_children() if isinstance(w, tk.Toplevel)]

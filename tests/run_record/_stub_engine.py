@@ -8,6 +8,7 @@ the ``_run.log`` header into *folder*, prints the marker, and then, by *mode*:
 * ``segv``: prints a Python line, writes a line straight to fd 1 and segfaults with ``faulthandler`` on;
 * ``sigkill``: kills itself with SIGKILL;
 * ``exit0``: exits 0 without finishing its status;
+* ``exit1``: prints a line and exits 1 without finishing its status;
 * ``sleep``: prints a line and sleeps for a minute (until it is killed);
 * ``stubborn``: ignores SIGINT and SIGTERM, prints a line and sleeps for a minute.
 
@@ -54,6 +55,9 @@ def main() -> None:
     elif mode == "exit0":
         print("done", flush=True)
         sys.exit(0)
+    elif mode == "exit1":
+        print("failing", flush=True)
+        sys.exit(1)
     elif mode in ("sleep", "stubborn"):
         if mode == "stubborn":
             signal.signal(signal.SIGINT, signal.SIG_IGN)

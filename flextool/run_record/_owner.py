@@ -352,6 +352,8 @@ class RunLogOwner:
         self._lines_since_check = 0
         self._lock = threading.Lock()
         self._closed = False
+        #: Whether :meth:`close` changed the run's ``_run_status.json`` (it finished a record the engine left).
+        self.record_changed = False
         for line in preamble:
             self._buffer_line(line)
 
@@ -463,6 +465,7 @@ class RunLogOwner:
                 except OSError as exc:
                     _logger.warning("Cannot finish the run record in %s: %s", self.folder, exc)
                     finalized = False
+                self.record_changed = finalized
                 if finalized and writer is not None and not writer.closed:
                     status = read_status_file(self.folder) or {}
                     error = status.get("error") or {}
