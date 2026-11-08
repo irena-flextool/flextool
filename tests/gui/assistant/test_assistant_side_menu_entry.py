@@ -54,6 +54,13 @@ def test_the_entry_sits_above_execution_jobs_and_is_as_wide(tmp_path: Path, monk
         assert str(entry.settings_button.cget("text")) in ("⚙", "…")
         pump(main, lambda: frame.winfo_width() == main.execution_menu_btn.winfo_width(), timeout=3)
         assert frame.winfo_rootx() == main.execution_menu_btn.winfo_rootx()
+        # One empty row between "Png settings…" and "AI assistant…", and nothing overlaps.
+        row_height = main.plot_menu_btn.winfo_height()
+        gap = entry.chat_button.winfo_rooty() - (main.plot_menu_btn.winfo_rooty() + row_height)
+        assert gap >= row_height
+        bottoms = [(w.winfo_rooty(), w.winfo_rooty() + w.winfo_height()) for w in (
+            main.plot_menu_btn, entry.chat_button, main.execution_menu_btn, main.view_results_btn)]
+        assert all(top_next >= bottom for (_t, bottom), (top_next, _b) in zip(bottoms, bottoms[1:]))
         assert entry.available
     finally:
         main.destroy()

@@ -717,7 +717,7 @@ class MainWindow(tk.Tk):
         # Bottom: AI assistant · Execution jobs · Results viewer (rows 5-7,
         #         anchored to the bottom of the section, touching the divider)
         # The weighted-1 spacer row 4 in the middle absorbs the slack so the
-        # two groups separate cleanly.
+        # two groups separate cleanly; it is never lower than one row.
         from flextool.gui.hover_tooltip import attach_tooltip as _attach_tip
         side_menu = ttk.Frame(outer)
         side_menu.grid(
@@ -811,6 +811,11 @@ class MainWindow(tk.Tk):
             command=self._on_plot_menu,
         )
         self.plot_menu_btn.grid(row=3, column=0, sticky="w", pady=(0, 2))
+        # The spacer is at least one row high, so the two groups never touch
+        # when the column has no slack (owner feedback 2026-11-08).
+        side_menu.rowconfigure(
+            4, weight=1, minsize=self.plot_menu_btn.winfo_reqheight() + 4,
+        )
 
         # Row 4 is the stretch spacer; the bottom group lives in rows 5-7:
         # the AI assistant entry (row 5, built below), Execution jobs and
