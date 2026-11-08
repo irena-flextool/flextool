@@ -10,10 +10,13 @@ Reading is one small local file; fetching the list stays on the dialog's backgro
 file.  A file that cannot be read or written only loses the saved lists: they are fetched again.
 
 The file also keeps the models a test (:mod:`flextool.assistant.model_check`) found **not available to your
-account** (``"unavailable"``: by list key, model id → the time of the test).  A marked model is left out of the
+account** (``"unavailable"``: by list key, model id → the time of the test and the fingerprint of the key the
+test used, :func:`flextool.assistant.keys.key_fingerprint`; never the key).  A marked model is left out of the
 default list and marked under "Show all models".  The mark goes when the list is fetched again (:func:`remember`),
-when the key of the provider and address changes (:func:`clear_marks`), when a test of the model succeeds, and
-after :data:`MARK_MAX_AGE`.
+when the key is stored or forgotten here (:func:`clear_marks`), when a test of the model succeeds, and after
+:data:`MARK_MAX_AGE`.  A mark counts only for the key it was found with (:func:`unavailable`), so a key changed
+outside FlexTool (the environment variable, the keyring, the key file) ends it too; a mark of another key, or of an
+older FlexTool without a fingerprint, is dropped when the provider and address are marked again.
 """
 from __future__ import annotations
 
@@ -116,11 +119,28 @@ def remember(preset_id: str, base_url: str, ids: list[str], *, now: float | None
 
 
 # --- models not available to the account ----------------------------------------------------------------------
-Marks = dict[str, dict[str, float]]
+@dataclass(frozen=True)
+class Mark:
+    at: float                    # the time of the test, seconds since the epoch
+    key: str                     # the fingerprint of the key of the test ("" in a mark without one: never matches)
+
+
+Marks = dict[str, dict[str, Mark]]
+
+
+def _mark(entry: object) -> Mark | None:
+    if isinstance(entry, dict):
+        at, fingerprint = entry.get("at"), entry.get("key")
+        if isinstance(at, (int, float)) and not isinstance(at, bool) and isinstance(fingerprint, str):
+            return Mark(float(at), fingerprint)
+        return None
+    if isinstance(entry, (int, float)) and not isinstance(entry, bool):
+        return Mark(float(entry), "")         # written before the fingerprint: its key is not known
+    return None
 
 
 def load_marks(root: Path | None = None) -> Marks:
-    """Every "not available to your account" mark, by :func:`key` then model id (the time of the test)."""
+    """Every "not available to your account" mark, by :func:`key` then model id."""
     path = (root or _root()) / FILE
     try:
         data = _files.read_json(path, check_format=False) or {}
@@ -132,29 +152,34 @@ def load_marks(root: Path | None = None) -> Marks:
         return out
     for name, models in marks.items():
         if isinstance(models, dict):
-            out[str(name)] = {str(m): float(t) for m, t in models.items()
-                              if isinstance(t, (int, float)) and not isinstance(t, bool)}
+            out[str(name)] = {str(m): mark for m, entry in models.items() if (mark := _mark(entry)) is not None}
     return out
 
 
-def unavailable(marks: Marks, preset_id: str, base_url: str | None, *, now: float | None = None) -> set[str]:
-    """The models of *preset_id* at *base_url* marked not available within :data:`MARK_MAX_AGE`."""
-    if not base_url:
+def unavailable(marks: Marks, preset_id: str, base_url: str | None, key_fingerprint: str | None, *,
+                now: float | None = None) -> set[str]:
+    """The models of *preset_id* at *base_url* marked not available within :data:`MARK_MAX_AGE` by a test with the
+    key of *key_fingerprint* (the key resolved now; ``None`` while it is not known yet: no model)."""
+    if not base_url or not key_fingerprint:
         return set()
     now = time.time() if now is None else now
-    return {m for m, t in marks.get(key(preset_id, base_url), {}).items() if 0 <= now - t <= MARK_MAX_AGE}
+    return {m for m, mark in marks.get(key(preset_id, base_url), {}).items()
+            if mark.key == key_fingerprint and 0 <= now - mark.at <= MARK_MAX_AGE}
 
 
-def mark_unavailable(preset_id: str, base_url: str, model: str, *, now: float | None = None,
+def mark_unavailable(preset_id: str, base_url: str, model: str, key_fingerprint: str, *, now: float | None = None,
                      root: Path | None = None) -> None:
-    """Mark *model* not available to the account (call off the Tk thread)."""
+    """Mark *model* not available to the account of the key of *key_fingerprint* (call off the Tk thread); the
+    marks of the provider and address made with another key, or with none known, are dropped."""
     when = time.time() if now is None else now
     name = key(preset_id, base_url)
 
     def change(data: dict) -> None:
         models = data["unavailable"].get(name)
         models = models if isinstance(models, dict) else {}
-        models[model] = when
+        models = {m: entry for m, entry in models.items()
+                  if (mark := _mark(entry)) is not None and mark.key == key_fingerprint}
+        models[model] = {"at": when, "key": key_fingerprint}
         data["unavailable"][name] = models
 
     try:

@@ -113,6 +113,7 @@ def test_stop_ends_the_wait(user_config_in_tmp):
 
 # --- the marks ------------------------------------------------------------------------------------------------
 URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+FP = "0123456789ab"          # the fingerprint of the key of the tests below
 
 
 def test_a_mark_hides_the_model_until_a_refresh_a_new_key_success_or_seven_days(tmp_path):
@@ -120,23 +121,23 @@ def test_a_mark_hides_the_model_until_a_refresh_a_new_key_success_or_seven_days(
 
     ids = ["gemini-2.5-pro", "gemini-3.8-flash"]
     cache.remember("gemini", URL, ids, now=100.0, root=tmp_path)
-    cache.mark_unavailable("gemini", URL, "gemini-2.5-pro", now=1000.0, root=tmp_path)
+    cache.mark_unavailable("gemini", URL, "gemini-2.5-pro", FP, now=1000.0, root=tmp_path)
     marks = cache.load_marks(tmp_path)
-    closed = cache.unavailable(marks, "gemini", URL, now=1000.0 + 6 * 86400)
+    closed = cache.unavailable(marks, "gemini", URL, FP, now=1000.0 + 6 * 86400)
     assert closed == {"gemini-2.5-pro"}
     assert shown_models(PRESETS["gemini"], ids, unavailable=closed) == ["gemini-3.8-flash"]
     assert shown_models(PRESETS["gemini"], ids, show_all=True, unavailable=closed) == ids
     assert hidden_reason("gemini-2.5-pro", closed) == "unavailable"
-    assert cache.unavailable(marks, "gemini", URL, now=1000.0 + 8 * 86400) == set()        # 7 days
-    assert cache.unavailable(marks, "openrouter", URL, now=1000.0) == set()                # another list
+    assert cache.unavailable(marks, "gemini", URL, FP, now=1000.0 + 8 * 86400) == set()        # 7 days
+    assert cache.unavailable(marks, "openrouter", URL, FP, now=1000.0) == set()                # another list
     assert cache.lookup(cache.load_all(tmp_path), "gemini", URL).ids == tuple(ids)        # the list is kept
     # A success of the model removes its mark; a new key every mark of the provider and address; a refresh too.
-    cache.mark_unavailable("gemini", URL, "gemini-3.8-flash", now=1000.0, root=tmp_path)
+    cache.mark_unavailable("gemini", URL, "gemini-3.8-flash", FP, now=1000.0, root=tmp_path)
     cache.clear_marks("gemini", URL, "gemini-2.5-pro", root=tmp_path)
     assert set(cache.load_marks(tmp_path)[cache.key("gemini", URL)]) == {"gemini-3.8-flash"}
     cache.clear_marks("gemini", URL, root=tmp_path)
     assert cache.load_marks(tmp_path) == {}
-    cache.mark_unavailable("gemini", URL, "gemini-2.5-pro", now=1000.0, root=tmp_path)
+    cache.mark_unavailable("gemini", URL, "gemini-2.5-pro", FP, now=1000.0, root=tmp_path)
     cache.remember("gemini", URL, ids, now=2000.0, root=tmp_path)
     assert cache.load_marks(tmp_path) == {}
 
@@ -145,5 +146,48 @@ def test_a_mark_hides_the_model_until_a_refresh_a_new_key_success_or_seven_days(
 def test_a_damaged_file_loses_only_the_marks(tmp_path, damaged):
     (tmp_path / cache.FILE).write_text(damaged, encoding="utf-8")
     assert cache.load_marks(tmp_path) == {}
-    cache.mark_unavailable("gemini", URL, "gemini-2.5-pro", now=1.0, root=tmp_path)
-    assert cache.unavailable(cache.load_marks(tmp_path), "gemini", URL, now=2.0) == {"gemini-2.5-pro"}
+    cache.mark_unavailable("gemini", URL, "gemini-2.5-pro", FP, now=1.0, root=tmp_path)
+    assert cache.unavailable(cache.load_marks(tmp_path), "gemini", URL, FP, now=2.0) == {"gemini-2.5-pro"}
+
+
+KEY = "sk-test-0123456789abcdefghij"
+
+
+def test_a_mark_counts_only_for_the_key_it_was_found_with(tmp_path, user_config_in_tmp):
+    """A mark keeps a one-way fingerprint of the key: another key (or none) does not see it, the same key does,
+    and marking again drops the marks of another key and those of an older FlexTool without a fingerprint."""
+    import json
+
+    from flextool.assistant.keys import NO_KEY, SALT_FILE, key_fingerprint
+
+    mine, other = key_fingerprint(KEY), key_fingerprint(KEY + "x")
+    assert mine == key_fingerprint(KEY) and len(mine) == 12 and mine != other
+    assert key_fingerprint(None) == key_fingerprint("") == NO_KEY
+    assert (user_config_in_tmp / SALT_FILE).exists()
+    cache.mark_unavailable("gemini", URL, "gemini-2.5-pro", mine, now=1000.0, root=tmp_path)
+    marks = cache.load_marks(tmp_path)
+    assert cache.unavailable(marks, "gemini", URL, mine, now=1001.0) == {"gemini-2.5-pro"}
+    assert cache.unavailable(marks, "gemini", URL, other, now=1001.0) == set()
+    assert cache.unavailable(marks, "gemini", URL, NO_KEY, now=1001.0) == set()
+    assert cache.unavailable(marks, "gemini", URL, None, now=1001.0) == set()      # the key not known yet
+    # Neither the key nor any 6 characters of it are in the file.
+    text = (tmp_path / cache.FILE).read_text(encoding="utf-8")
+    assert all(KEY[i:i + 6] not in text for i in range(len(KEY) - 5))
+    # A mark of an older FlexTool (a bare time) never matches; marking with another key drops it and the old key's.
+    data = json.loads(text)
+    data["unavailable"][cache.key("gemini", URL)]["gemini-1.5-pro"] = 1000.0
+    (tmp_path / cache.FILE).write_text(json.dumps(data), encoding="utf-8")
+    assert cache.unavailable(cache.load_marks(tmp_path), "gemini", URL, mine, now=1001.0) == {"gemini-2.5-pro"}
+    cache.mark_unavailable("gemini", URL, "gemini-3.8-flash", other, now=1002.0, root=tmp_path)
+    assert set(cache.load_marks(tmp_path)[cache.key("gemini", URL)]) == {"gemini-3.8-flash"}
+
+
+def test_the_salt_is_kept_per_installation(user_config_in_tmp):
+    """The fingerprint is salted: the same key gives another fingerprint with another salt file."""
+    from flextool.assistant.keys import SALT_FILE, key_fingerprint
+
+    first = key_fingerprint(KEY)
+    salt = (user_config_in_tmp / SALT_FILE).read_text(encoding="utf-8")
+    assert KEY not in salt and key_fingerprint(KEY) == first
+    (user_config_in_tmp / SALT_FILE).unlink()
+    assert key_fingerprint(KEY) != first

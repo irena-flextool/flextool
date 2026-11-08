@@ -143,6 +143,9 @@ class AssistantSettingsDialog(_AssistantDialog):
         self._level_values: list[str | None] = [None]
         self._free_choice: bool | None = self._settings.free_tier
         self._has_key: bool | None = None
+        #: The fingerprint of the key resolved now (:func:`keys.key_fingerprint`); a mark counts only for it.
+        #: ``None`` until the key check of the shown provider ends: no model is marked meanwhile.
+        self._key_fp: str | None = None
         self._preset: Preset | None = None
         self._knob_frame_children: list[tk.Misc] = []
         self.knob_vars: dict[str, tk.BooleanVar] = {}
@@ -362,6 +365,7 @@ class AssistantSettingsDialog(_AssistantDialog):
         self._preset = preset
         self.generation += 1
         self._has_key = None
+        self._key_fp = None
         self.provider_var.set(preset.label if preset is not None else "")
         if preset is not None and self._address_editable(preset):
             self.address_entry.state(["!disabled", "!readonly"])
@@ -561,19 +565,24 @@ class AssistantSettingsDialog(_AssistantDialog):
 
             try:
                 key, source, note = keys.resolve_key(preset, endpoint, config_root=config_root)
+                fingerprint = keys.key_fingerprint(key, config_root=config_root)
             except Exception as exc:  # noqa: BLE001 — shown, nothing else depends on it
                 self._post(generation, self._show_key_text, strings.KEY_PROBLEM.format(reason=exc), None)
                 return
-            self._post(generation, self._show_key, source.name, note, bool(key))
+            self._post(generation, self._show_key, source.name, note, bool(key), fingerprint)
 
         self._run(run, "flextool-assistant-key-status")
 
-    def _show_key(self, source: str, note: str | None, has_key: bool) -> None:
+    def _show_key(self, source: str, note: str | None, has_key: bool, fingerprint: str | None = None) -> None:
         from flextool.assistant import keys
 
         preset = self._preset
         if preset is None:
             return
+        if fingerprint is not None and fingerprint != self._key_fp:
+            self._key_fp = fingerprint          # the marks of this key now count
+            if self._list_ids:
+                self._show_list()
         if source == "ENV":
             text = strings.KEY_FROM_ENV.format(name=preset.key_env)
         elif source == "KEYRING":
@@ -810,7 +819,7 @@ class AssistantSettingsDialog(_AssistantDialog):
         ids = self._list_ids
         if not ids:
             return
-        closed = model_list_cache.unavailable(self._marks, preset.id, self._checked_address())
+        closed = model_list_cache.unavailable(self._marks, preset.id, self._checked_address(), self._key_fp)
         shown = set(shown_models(preset, ids, show_all=self.show_all_var.get(), unavailable=closed))
         model = self.model_var.get().strip()
         closed_mark = strings.MODEL_HIDDEN_MARKS["unavailable"]
@@ -917,7 +926,7 @@ class AssistantSettingsDialog(_AssistantDialog):
 
     def _check(self, test: dict[str, Any]) -> None:
         """On the test's thread: the request, then the marks in the saved model list."""
-        from flextool.assistant import model_check, model_list_cache
+        from flextool.assistant import keys, model_check, model_list_cache
         from flextool.assistant.budget import free_tier_on
         from flextool.assistant.llm_errors import LLMError, message_for
         from flextool.assistant.usage import Ledger, ledger_key
@@ -965,7 +974,8 @@ class AssistantSettingsDialog(_AssistantDialog):
             backend.close()
         marks = None
         if result.unavailable:
-            model_list_cache.mark_unavailable(preset.id, conn.base_url, model)
+            model_list_cache.mark_unavailable(preset.id, conn.base_url, model,
+                                              keys.key_fingerprint(conn.api_key, config_root=self._config_root))
             marks = model_list_cache.load_marks()
         elif result.outcome == "available":
             model_list_cache.clear_marks(preset.id, conn.base_url, model)

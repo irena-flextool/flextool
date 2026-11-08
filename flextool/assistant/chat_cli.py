@@ -526,9 +526,10 @@ def _error_text(err: Exception) -> str:
     return message_for(err, "terminal") if isinstance(err, LLMError) else str(err)
 
 
-def list_models(choice: Choice, factory: BackendFactory) -> list:
-    """The live model list of *choice*'s provider (sends the key, no case data)."""
-    backend = factory(choice.preset, connection_for(choice))
+def list_models(choice: Choice, factory: BackendFactory, conn: Connection | None = None) -> list:
+    """The live model list of *choice*'s provider (sends the key, no case data); *conn*: its connection, when the
+    caller already has it."""
+    backend = factory(choice.preset, conn or connection_for(choice))
     try:
         return backend.list_models()
     finally:
@@ -1164,8 +1165,9 @@ def cmd_list_models(args: argparse.Namespace, term: Terminal, factory: BackendFa
     from flextool.assistant.settings import load_settings
 
     choice = _need_choice(args, load_settings(), term)
+    conn = connection_for(choice)
     try:
-        models = list_models(choice, factory)
+        models = list_models(choice, factory, conn)
     except LLMError as exc:
         term.say(_error_text(exc), err=True)
         return 1
@@ -1173,9 +1175,11 @@ def cmd_list_models(args: argparse.Namespace, term: Terminal, factory: BackendFa
         term.say(TEXTS["no_models"].format(provider=choice.preset.label), err=True)
         return 0
     from flextool.assistant import model_list_cache
+    from flextool.assistant.keys import key_fingerprint
     from flextool.assistant.providers import hidden_reason, shown_models
 
-    closed = model_list_cache.unavailable(model_list_cache.load_marks(), choice.preset.id, choice.base_url)
+    closed = model_list_cache.unavailable(model_list_cache.load_marks(), choice.preset.id, choice.base_url,
+                                          key_fingerprint(conn.api_key))
     shown = set(shown_models(choice.preset, [e.id for e in models], show_all=args.all_models, unavailable=closed))
     hidden = [hidden_reason(e.id, closed) for e in models if e.id not in shown]
     models = [e for e in models if e.id in shown]
@@ -1272,7 +1276,9 @@ def cmd_test_model(args: argparse.Namespace, term: Terminal, factory: BackendFac
     finally:
         backend.close()
     if result.unavailable:
-        model_list_cache.mark_unavailable(preset.id, choice.base_url, conn.model)
+        from flextool.assistant.keys import key_fingerprint
+
+        model_list_cache.mark_unavailable(preset.id, choice.base_url, conn.model, key_fingerprint(conn.api_key))
     elif result.outcome == "available":
         model_list_cache.clear_marks(preset.id, choice.base_url, conn.model)
     term.say(result.message)

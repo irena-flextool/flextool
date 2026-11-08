@@ -17,11 +17,19 @@ key came from ("from the environment variable GEMINI_API_KEY").
 
 Keys stored for a service with a fixed address are kept under the preset id; an optional key of a local server or
 a custom endpoint is kept per endpoint (``"<preset>:<normalised address>"``).  A key never appears in a message.
+
+What is saved about a key elsewhere (the "not available to your account" marks of the model list) is only its
+fingerprint (:func:`key_fingerprint`): a one-way HMAC-SHA-256 of the key with a random salt of this installation
+(``<config>/assistant/key_salt.json``), cut to 12 hex digits, so a mark can tell that the key changed without
+holding anything the key can be read from.
 ``keyring`` is imported only here, inside the functions that use it.
 """
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
+import secrets
 import threading
 from collections.abc import Callable
 from enum import Enum
@@ -36,6 +44,10 @@ if TYPE_CHECKING:
 
 SERVICE = "flextool-assistant"
 KEY_FILE = "keys.json"
+SALT_FILE = "key_salt.json"
+#: The fingerprint of "no key" (a local server, an optional key not set).
+NO_KEY = "none"
+FINGERPRINT_LENGTH = 12
 KEYRING_TIMEOUT = 5.0
 
 KEYRING_SLOW = "The system keyring did not answer within {seconds} seconds."
@@ -242,6 +254,44 @@ def _change_file(config_root: Path | None, change: Callable[[dict[str, str]], bo
 def _remove_from_file(config_root: Path | None, account: str) -> None:
     if key_file_path(config_root).exists():
         _change_file(config_root, lambda keys: keys.pop(account, None) is not None)
+
+
+# --- the fingerprint of a key ------------------------------------------------------------------------------------
+#: The salt of this process when the salt file can neither be read nor written: fingerprints then hold for this
+#: process only, so what was saved with them stops matching (a mark is dropped, never kept for another key).
+_PROCESS_SALT = secrets.token_hex(16)
+
+
+def _salt(config_root: Path | None) -> str:
+    path = (config_root or _files.config_root()) / SALT_FILE
+
+    def read() -> str | None:
+        data = _files.read_json(path, check_format=False) or {}
+        salt = data.get("salt")
+        return salt if isinstance(salt, str) and len(salt) >= 32 else None
+
+    try:
+        salt = read()
+        if salt:
+            return salt
+        with _files.locked(path):
+            salt = read()                   # another process may have written it meanwhile
+            if not salt:
+                salt = secrets.token_hex(16)
+                _files.write_json_atomic(path, {"format": _files.FORMAT, "salt": salt}, private=True)
+        return salt
+    except (OSError, _files.UnreadableFile, _files.LockTimeout, _files.NewerFormat):
+        return _PROCESS_SALT
+
+
+def key_fingerprint(key: str | None, *, config_root: Path | None = None) -> str:
+    """A short one-way fingerprint of *key*: ``HMAC-SHA-256(salt of this installation, key)``, 12 hex digits;
+    :data:`NO_KEY` without a key.  Tells whether the key changed; the key cannot be read back from it."""
+    key = (key or "").strip()
+    if not key:
+        return NO_KEY
+    digest = hmac.new(_salt(config_root).encode("utf-8"), key.encode("utf-8"), hashlib.sha256).hexdigest()
+    return digest[:FINGERPRINT_LENGTH]
 
 
 # --- the public calls --------------------------------------------------------------------------------------------

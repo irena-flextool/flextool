@@ -648,3 +648,35 @@ def test_test_model_marks_a_model_closed_to_the_account(project, fake_backends, 
     assert chat_cli.main(["--provider", "gemini", "--list-models"], backend_factory=models,
                          terminal=listed_again) == 0
     assert listed_again.stdout.getvalue() == "gemini-2.5-pro\ngemini-3.8-flash\n"
+
+
+
+def test_a_changed_key_in_the_environment_ends_the_marks(project, fake_backends, monkeypatch, user_cache_in_tmp):
+    """The marks keep a fingerprint of the key, never the key: the same key keeps them, a key changed in the
+    environment variable does not see them."""
+    from flextool.assistant import model_list_cache
+    from flextool.assistant.llm_errors import ErrorContext, classify_status
+
+    key = "test-key-abcdef0123456789"
+    monkeypatch.setenv("GEMINI_API_KEY", key)
+    ctx = ErrorContext(preset_id="gemini", provider="Google Gemini", model="gemini-2.5-pro")
+    body = [{"error": {"code": 404, "status": "NOT_FOUND",
+                       "message": "This model models/gemini-2.5-pro is no longer available to new users."}}]
+    listed = [ModelEntry("gemini-2.5-pro"), ModelEntry("gemini-3.8-flash")]
+    models = Models([classify_status(404, body, None, ctx)], fake_backends, models=listed)
+    argv = ["--provider", "gemini", "--model", "gemini-2.5-pro", "--test-model", "--accept-data-notice"]
+    assert chat_cli.main(argv, backend_factory=models, terminal=terminal(tty=False)) == 1
+    text = (user_cache_in_tmp / "assistant" / model_list_cache.FILE).read_text(encoding="utf-8")
+    assert "gemini-2.5-pro" in text
+    assert all(key[i:i + 6] not in text for i in range(len(key) - 5))
+
+    def listing() -> str:
+        term = terminal(tty=False)
+        assert chat_cli.main(["--provider", "gemini", "--list-models"], backend_factory=models, terminal=term) == 0
+        return term.stdout.getvalue()
+
+    assert listing() == "gemini-3.8-flash\n"                       # the same key: still marked
+    monkeypatch.setenv("GEMINI_API_KEY", "another-key-9876543210")
+    assert listing() == "gemini-2.5-pro\ngemini-3.8-flash\n"      # another key: not marked
+    monkeypatch.setenv("GEMINI_API_KEY", key)
+    assert listing() == "gemini-3.8-flash\n"                       # back to the key of the test

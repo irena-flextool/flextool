@@ -554,7 +554,7 @@ def test_a_model_closed_to_the_account_is_marked_until_refresh(open_dialog, host
                          models=[ModelEntry("gemini-2.5-pro"), ModelEntry("gemini-3.8-flash")])
     dialog = _gemini_dialog(open_dialog, monkeypatch, user_config_in_tmp, factory, "gemini-2.5-pro")
     dialog.refresh_models()
-    pump(host, lambda: dialog.models_label.cget("text") == "2 models")
+    pump(host, lambda: dialog.models_label.cget("text") == "2 models" and dialog._key_fp is not None)
     url = dialog._checked_address()
     route = endpoint.route_for(PRESETS["gemini"], url, model="gemini-2.5-pro")
     endpoint.record_consent(endpoint.consent_key("gemini", url, route), user_config_in_tmp)
@@ -577,6 +577,7 @@ def test_a_model_closed_to_the_account_is_marked_until_refresh(open_dialog, host
     # The mark is in the saved list file: a new dialog hides the model too; Refresh clears it.
     dialog.close()
     again = open_dialog(backend_factory=factory)
+    pump(host, lambda: again._key_fp is not None)                # a mark counts once the key is known
     again.model_var.set("gemini-3.8-flash")
     again._show_list()
     assert list(again.model_box["values"]) == ["gemini-3.8-flash"]
