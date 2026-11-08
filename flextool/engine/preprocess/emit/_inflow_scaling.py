@@ -61,7 +61,7 @@ from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
 )
-from flextool.engine.preprocess.emit._base_steps import read_new_step_base_steps
+from flextool.engine.preprocess.emit._base_steps import base_steps_of_solve_steps, read_new_step_base_steps
 from flextool.engine.preprocess.emit._inflow_scaling_checks import check_inflow_scaling_inputs
 from flextool.engine.preprocess.emit._vectorize import _render_value_column
 
@@ -510,28 +510,37 @@ def _compute_inflow_scaling_frames(
     has_node_time_inflow: dict[str, bool] = {
         n: any(nn == n for (nn, _t) in peak_nti) for n in nodes
     }
-    # Per-node max/min across t (independent of d).
-    op_max_by_n: dict[str, float] = {}
-    op_min_by_n: dict[str, float] = {}
-    op_sign_by_n: dict[str, float] = {}
-    old_peak_by_n: dict[str, float] = {}
+    # Per-(node, period) max/min over the period's own original steps: the
+    # original steps behind dt_complete[d] (the steps orig_flow_sum sums),
+    # so each period's peak reaches its own peak_inflow.
+    base_of = base_steps_of_solve_steps(solve_data_dir, provider=provider)
+    original_steps_of_d = {
+        d: [tb for t in dt_complete_for_d.get(d, ()) for tb in base_of.get(t, (t,))]
+        for d in period_in_use
+    }
+    op_max_by_nd: dict[tuple[str, str], float] = {}
+    op_min_by_nd: dict[tuple[str, str], float] = {}
+    op_sign_by_nd: dict[tuple[str, str], float] = {}
+    old_peak_by_nd: dict[tuple[str, str], float] = {}
     for n in nodes:
-        if has_node_time_inflow[n]:
-            inflow_vals = [peak_pti[(n, t)] for t in time_set]
-            op_max = max(inflow_vals) if inflow_vals else 0.0
-            op_min = min(inflow_vals) if inflow_vals else 0.0
-        else:
-            scalar = p_node_inflow_default[n]
-            op_max = scalar
-            op_min = scalar
-        op_max_by_n[n] = op_max
-        op_min_by_n[n] = op_min
-        if has_node_time_inflow[n]:
-            op_sign = 1.0 if abs(op_max) >= abs(op_min) else -1.0
-        else:
-            op_sign = 1.0 if p_node_inflow_default[n] >= 0 else -1.0
-        op_sign_by_n[n] = op_sign
-        old_peak_by_n[n] = op_max if op_sign >= 0 else op_min
+        for d in period_in_use:
+            if has_node_time_inflow[n]:
+                inflow_vals = [peak_pti.get((n, t), p_node_inflow_default[n])
+                               for t in original_steps_of_d[d]]
+                op_max = max(inflow_vals) if inflow_vals else 0.0
+                op_min = min(inflow_vals) if inflow_vals else 0.0
+            else:
+                scalar = p_node_inflow_default[n]
+                op_max = scalar
+                op_min = scalar
+            op_max_by_nd[(n, d)] = op_max
+            op_min_by_nd[(n, d)] = op_min
+            if has_node_time_inflow[n]:
+                op_sign = 1.0 if abs(op_max) >= abs(op_min) else -1.0
+            else:
+                op_sign = 1.0 if p_node_inflow_default[n] >= 0 else -1.0
+            op_sign_by_nd[(n, d)] = op_sign
+            old_peak_by_nd[(n, d)] = op_max if op_sign >= 0 else op_min
 
     rows_nps: list[tuple[str, str, float]] = []
     rows_opmax: list[tuple[str, str, float]] = []
@@ -553,10 +562,10 @@ def _compute_inflow_scaling_frames(
                 continue
             peak = pdNode.get((n, "peak_inflow", d), 0.0)
             rows_nps.append((n, d, 1.0 if peak >= 0 else -1.0))
-            rows_opmax.append((n, d, op_max_by_n[n]))
-            rows_opmin.append((n, d, op_min_by_n[n]))
-            rows_ops.append((n, d, op_sign_by_n[n]))
-            old_peak_val = old_peak_by_n[n]
+            rows_opmax.append((n, d, op_max_by_nd[(n, d)]))
+            rows_opmin.append((n, d, op_min_by_nd[(n, d)]))
+            rows_ops.append((n, d, op_sign_by_nd[(n, d)]))
+            old_peak_val = old_peak_by_nd[(n, d)]
             if old_peak_val == 0.0:
                 # Legacy skips downstream rows when old_peak is 0 (avoids
                 # division by zero) — npop / npopinflow remain absent.
@@ -1117,7 +1126,7 @@ def _compute_inflow_scaling_frames_vectorized(
         pfam_df, ("node", "period", "value"), ["__eo", "__po"],
     )
 
-    # ── Stage 7: per-node peak precompute (Tier A: max/min/sign) ───────
+    # ── Stage 7: per-(node, period) peak precompute (Tier A) ───────────
     # has_node_time_inflow[n] = node has ANY explicit (n, t) inflow row.
     peak_eo = _ordered_node_frame(
         lambda n: _has_method(n, "scale_to_annual_and_peak_flow"))
@@ -1134,20 +1143,29 @@ def _compute_inflow_scaling_frames_vectorized(
         peak_nti = frozenset(base_inflow)
         peak_pti_df = _dense_inflow(base_inflow, peak_nti)
     hnti_nodes = {nn for (nn, _t) in peak_nti}
-    # Per-node max/min over the WHOLE time series (dense grid).  When
-    # time_set is empty the group has no rows → null → fill 0.0 (matches
-    # the legacy ``max(inflow_vals) if inflow_vals else 0.0``).
+    # Per-(node, period) max/min over the period's own original steps (the
+    # original steps behind dt_complete[d], the steps orig_flow_sum sums),
+    # so each period's peak reaches its own peak_inflow.  A period without
+    # steps has no rows → null → fill 0.0 (the legacy empty-list 0.0).
+    base_of = base_steps_of_solve_steps(solve_data_dir, provider=provider)
+    orig_pairs = [(d, tb) for d, t in dt_complete_pairs for tb in base_of.get(t, (t,))]
+    orig_steps_df = pl.DataFrame(
+        {"period": [d for d, _t in orig_pairs], "time": [t for _d, t in orig_pairs]},
+        schema={"period": pl.Utf8, "time": pl.Utf8},
+    )
     minmax_df = (
-        peak_pti_df.group_by("node")
+        peak_pti_df.join(orig_steps_df, on="time", how="inner")
+        .group_by(["node", "period"])
         .agg(
             pl.col("value_f").max().alias("v_tmax"),
             pl.col("value_f").min().alias("v_tmin"),
         )
     )
-    # Per-node precompute over ALL nodes (the legacy loop iterates nodes).
+    # Precompute over ALL (node, period) (the legacy loop iterates both).
     precomp = (
         node_eo
-        .join(minmax_df, on="node", how="left")
+        .join(period_po, how="cross")
+        .join(minmax_df, on=["node", "period"], how="left")
         .with_columns(
             pl.col("node").is_in(list(hnti_nodes)).alias("__hnti"),
             pl.col("node").replace_strict(
@@ -1184,7 +1202,7 @@ def _compute_inflow_scaling_frames_vectorized(
         )
         # op_max / op_min were only needed to DERIVE op_sign / old_peak
         # above; nothing downstream reads them, so drop them here.
-        .select(["node", "op_sign", "old_peak"])
+        .select(["node", "period", "op_sign", "old_peak"])
     )
 
     # ── Stage 8: peak-domain family ────────────────────────────────────
@@ -1203,7 +1221,7 @@ def _compute_inflow_scaling_frames_vectorized(
         .filter(pl.col("v_af").fill_null(0.0) != 0.0)
         .join(peak_lk, on=["node", "period"], how="left")
         .filter(pl.col("v_peak").fill_null(0.0) != 0.0)
-        .join(precomp, on="node", how="left")
+        .join(precomp, on=["node", "period"], how="left")
         .sort(["__eo", "__po"])
     )
     # The per-cell peak ingredients new_peak_sign / old_peak_max /

@@ -47,7 +47,7 @@ from flextool.engine._behaviour_changes import warn_once
 from flextool.engine.input._constants import HOURS_PER_YEAR
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine.preprocess.emit._base_steps import read_new_step_base_steps
+from flextool.engine.preprocess.emit._base_steps import base_steps_of_solve_steps, read_new_step_base_steps
 from flextool.engine.preprocess.emit._pdt_lookup import PdLookup
 
 _ANNUAL = "scale_to_annual_flow"
@@ -145,32 +145,34 @@ def check_inflow_scaling_inputs(input_dir: Path, solve_data_dir: Path, *, provid
     times_frame = pl.DataFrame({"time": times}, schema={"time": pl.Utf8})
     complete_sum = {(r[0], r[1]): r[2] for r in _weighted(dt_complete).iter_rows()}
     time_sum = {(r[0], r[1]): r[2] for r in _weighted(period_frame.join(times_frame, how="cross")).iter_rows()}
-    series = {n: pti.filter(pl.col("node") == n).get_column("value").to_list() for n in scaled_nodes}
-    # Original time steps per solve step (new_stepduration); empty → 1.  The peak is per original step: a coarsened
-    # solve reads it from the original series (input/pt_node_inflow, else the p_node constant).
+    # Original time steps per solve step (new_stepduration); empty → 1.  The peak is per original step and per
+    # period: the extreme over the original steps behind the period's complete steps; a coarsened solve reads it from
+    # the original series (input/pt_node_inflow, else the p_node constant).
     n_of, _absorbed = read_new_step_base_steps(solve_data_dir, provider=provider)
+    base_steps = base_steps_of_solve_steps(solve_data_dir, provider=provider)
+    const = {r[0]: r[2] for r in _keyed_float(_frame(provider, input_dir / "p_node.csv"), 2, ["node", "param"])
+             .filter(pl.col("param") == "inflow").iter_rows()}
+    peak_value = {(r[0], r[1]): r[2] for r in pti.iter_rows()}
     if n_of:
         base = _keyed_float(_frame(provider, input_dir / "pt_node_inflow.csv"), 2, ["node", "time"])
         explicit_nodes = set(base.get_column("node").to_list())
-        base_of = {(r[0], r[1]): r[2] for r in base.iter_rows()}
-        const = {r[0]: r[2] for r in _keyed_float(_frame(provider, input_dir / "p_node.csv"), 2, ["node", "param"])
-                 .filter(pl.col("param") == "inflow").iter_rows()}
-        series = {n: [base_of.get((n, t), const.get(n, 0.0)) for t in times] for n in scaled_nodes}
+        peak_value = {(r[0], r[1]): r[2] for r in base.iter_rows()}
     hours = {r[0]: r[1] for r in _keyed_float(
         _frame(provider, solve_data_dir / "complete_hours_in_period.csv"), 1, ["period"]).iter_rows()}
     share = {r[0]: r[1] for r in _keyed_float(
         _frame(provider, solve_data_dir / "complete_period_share_of_year_calc.csv"), 1, ["period"]).iter_rows()}
     w_of = {(r[0], r[1]): r[2] for r in weights.iter_rows()}
 
-    def _old_peak(n: str) -> tuple[float, float]:
-        """``(sign, peak)`` of the inflow profile as the peak scaling reads them."""
-        vals = series.get(n) or [0.0]
+    def _old_peak(n: str, d: str) -> tuple[float, float]:
+        """``(sign, peak)`` of the inflow profile in period *d* as the peak scaling reads them."""
         if n in explicit_nodes:
+            vals = [peak_value.get((n, tb), const.get(n, 0.0))
+                    for t in steps_of.get(d, ()) for tb in base_steps.get(t, (t,))] or [0.0]
             hi, lo = max(vals), min(vals)
             sign = 1.0 if abs(hi) >= abs(lo) else -1.0
         else:
-            hi = lo = vals[0]
-            sign = 1.0 if vals[0] >= 0 else -1.0
+            hi = lo = const.get(n, 0.0)
+            sign = 1.0 if hi >= 0 else -1.0
         return sign, hi if sign >= 0 else lo
 
     slope = {(r[0], r[1]): r[2] for r in _keyed_float(frames.get("new_old_slope.csv"), 2, ["n", "d"]).iter_rows()}
@@ -221,7 +223,7 @@ def check_inflow_scaling_inputs(input_dir: Path, solve_data_dir: Path, *, provid
                     errors.append(f"{where}: the inflow sums to 0 over the solve's timesteps (no inflow profile?), "
                                   f"so it cannot be scaled in proportion to annual_flow {_fmt(af)}; {no_inflow_fix}")
             else:
-                sign, old_peak = _old_peak(n)
+                sign, old_peak = _old_peak(n, d)
                 if old_peak == 0:
                     errors.append(f"{where}: the node has no inflow profile (all inflow is 0), so there is no shape "
                                   f"to scale to peak_inflow {_fmt(peak)} and annual_flow {_fmt(af)}; "

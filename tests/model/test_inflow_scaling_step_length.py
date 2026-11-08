@@ -87,9 +87,11 @@ def test_coarse_step_is_the_sum_of_its_original_steps(tmp_path_factory, base, st
 
 
 def test_two_periods_on_their_own_steps(tmp_path_factory) -> None:
-    """Two periods on two timesets of one timeline (p2020 = t0001-t0024, p2025 = t0025-t0048, 1 h): each period's
-    inflow sums to its own annual_flow × 24/8760 (3e6 → −8219.18, 5e6 → −13 698.63).  Before: the sum the scaling
-    divides by ran over the steps of both periods, so neither period met its annual_flow."""
+    """Two periods on two timesets of one timeline (p2020 = t0001-t0024, extreme −696; p2025 = t0025-t0048, extreme
+    −872; 1 h): each period's inflow sums to its own annual_flow × 24/8760 (5e6 → −13 698.63, 7e6 → −19 178.08), its
+    extreme step reaches peak_inflow −1100 and every step stays a demand.  Before: the sum the scaling divides by ran
+    over the steps of both periods, so neither period met its annual_flow, and the peak was the extreme of both
+    periods (−872), so p2020 never reached peak_inflow."""
     values = [
         ["timeset", "ta", "timeline", b64("y2020", "str")],
         ["timeset", "tb", "timeline", b64("y2020", "str")],
@@ -99,7 +101,7 @@ def test_two_periods_on_their_own_steps(tmp_path_factory) -> None:
         ["solve", "y2020_2day_dispatch", "realized_periods",
          b64({"value_type": "str", "data": ["p2020", "p2025"]}, "array")],
         ["node", "west", "inflow_method", b64("scale_to_annual_and_peak_flow", "str")],
-        ["node", "west", "annual_flow", _pmap({"p2020": 3.0e6, "p2025": 5.0e6})],
+        ["node", "west", "annual_flow", _pmap({"p2020": 5.0e6, "p2025": 7.0e6})],
         ["node", "west", "peak_inflow", b64(PEAK, "float")],
     ]
     url, scen = make_db(tmp_path_factory, alt="pk_two_periods", values=values, base_chain=BATTERY,
@@ -113,5 +115,8 @@ def test_two_periods_on_their_own_steps(tmp_path_factory) -> None:
         if (d, t) in dt:
             per_period.setdefault(d, []).append(v)
     assert {d: len(v) for d, v in per_period.items()} == {"p2020": 24, "p2025": 24}
-    assert sum(per_period["p2020"]) == pytest.approx(-3.0e6 * 24 / 8760.0, rel=1e-9)
-    assert sum(per_period["p2025"]) == pytest.approx(-5.0e6 * 24 / 8760.0, rel=1e-9)
+    assert sum(per_period["p2020"]) == pytest.approx(-5.0e6 * 24 / 8760.0, rel=1e-9)
+    assert sum(per_period["p2025"]) == pytest.approx(-7.0e6 * 24 / 8760.0, rel=1e-9)
+    for d, vals in per_period.items():
+        assert min(vals) == pytest.approx(PEAK, rel=1e-12), d
+        assert max(vals) < 0.0, d

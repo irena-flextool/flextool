@@ -35,3 +35,15 @@ def read_new_step_base_steps(solve_data_dir: Path, *, provider) -> tuple[dict[st
     n_of = {t: float(v) for t, s, v in df.iter_rows() if t == s}
     absorbed = frozenset(t for t, s, _v in df.iter_rows() if t != s)
     return n_of, absorbed
+
+
+def base_steps_of_solve_steps(solve_data_dir: Path, *, provider) -> dict[str, tuple[str, ...]]:
+    """``{solve step: the original steps it combines, in timeline order}``; empty without ``new_stepduration``
+    (then every solve step is its own original step)."""
+    df = provider.get(_provider_key(solve_data_dir / NEW_STEP_BASE_STEPS)) if provider is not None else None
+    if df is None or df.height == 0:
+        return {}
+    out: dict[str, list[str]] = {}
+    for t, s in df.select(pl.col("time").cast(pl.Utf8), pl.col("new_step").cast(pl.Utf8)).iter_rows():
+        out.setdefault(s, []).append(t)
+    return {s: tuple(ts) for s, ts in out.items()}
