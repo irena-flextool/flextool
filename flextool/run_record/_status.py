@@ -28,8 +28,9 @@ import threading
 import time
 import uuid
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, TypeVar
 
 from flextool.run_record._owner import (
     RUN_LOG_FILE,
@@ -237,29 +238,58 @@ def _previous_outputs(folder: Path, old: Mapping[str, Any] | None) -> dict[str, 
 
 
 class _WarningHandler(logging.Handler):
-    """Collects WARNING and worse records into the active recorder's ``warnings`` list."""
+    """Collects WARNING and worse records into the active recorder's ``warnings`` list.
+
+    It takes no lock of its own (:meth:`handle` skips the handler lock) and never the recorder's: a record is
+    queued under the recorder's leaf lock and merged into the status by the next write.  So a thread that logs
+    while another holds the recorder lock never waits for it (no lock-order deadlock).
+    """
 
     def __init__(self, recorder: "RunRecorder") -> None:
         super().__init__(level=logging.WARNING)
         self._recorder = recorder
-        self._busy = threading.local()
+
+    def handle(self, record: logging.LogRecord) -> logging.LogRecord | bool:
+        rv = self.filter(record)
+        if isinstance(rv, logging.LogRecord):
+            record = rv
+        if rv:
+            self.emit(record)
+        return rv
 
     def emit(self, record: logging.LogRecord) -> None:
-        if getattr(self._busy, "on", False):
-            return
-        self._busy.on = True
         try:
-            try:
-                message = record.getMessage()
-            except Exception:  # noqa: BLE001 - a malformed log call must not break the run
-                message = str(record.msg)
-            self._recorder._add_warning(record.levelname, record.name, message)
+            message = record.getMessage()
+        except Exception:  # noqa: BLE001 - a malformed log call must not break the run
+            message = str(record.msg)
+        self._recorder._queue_warning(record.levelname, record.name, message)
+
+
+_F = TypeVar("_F", bound=Callable[..., Any])
+
+
+def _flushing(method: _F) -> _F:
+    """Log the messages *method* deferred, once the recorder lock is no longer held (see ``_flush_deferred``)."""
+
+    @wraps(method)
+    def wrapper(self: "RunRecorder", *args: Any, **kwargs: Any) -> Any:
+        try:
+            return method(self, *args, **kwargs)
         finally:
-            self._busy.on = False
+            self._flush_deferred()
+
+    return wrapper  # type: ignore[return-value]
 
 
 class RunRecorder:
-    """Writes ``_run_status.json`` of one engine run.  Create it with :meth:`start`."""
+    """Writes ``_run_status.json`` of one engine run.  Create it with :meth:`start`.
+
+    Locking: ``_lock`` (re-entrant, always taken with a plain ``with``, so a signal raised in the main thread can
+    never leave it held where the same thread's ``finish`` could not take it again) guards the status.  Nothing
+    logs while it is held: messages are deferred (``_defer``) and logged by ``_flush_deferred`` after the
+    outermost block, from the public methods (``_flushing``) and the heartbeat loop.  Warnings arrive through
+    ``_queue_warning`` under the leaf lock ``_wq_lock``, which is held for nothing else.
+    """
 
     #: ``False`` for the no-op recorder returned by :func:`active` when no run records.
     is_recording = True
@@ -269,6 +299,10 @@ class RunRecorder:
         self.folder: Path | None = None
         self._status: dict[str, Any] = {}
         self._lock = threading.RLock()
+        self._deferred: list[tuple[int, str, tuple[Any, ...]]] = []
+        self._wq_lock = threading.Lock()
+        self._wq: list[dict[str, str]] = []
+        self._wq_omitted = 0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._dirty = False
@@ -386,11 +420,56 @@ class RunRecorder:
                     self._write(force=True)
                 elif self._dirty:
                     self._write()
+            self._flush_deferred()
+
+    def _defer(self, level: int, msg: str, *args: Any) -> None:
+        """Log *msg* once the lock is released (caller holds the lock)."""
+        self._deferred.append((level, msg, args))
+
+    def _flush_deferred(self) -> None:
+        """Log the deferred messages, unless this thread still holds the lock (an outer block flushes them)."""
+        if self._lock._is_owned():
+            return
+        with self._lock:
+            if not self._deferred:
+                return
+            pending, self._deferred = self._deferred, []
+        for level, msg, args in pending:
+            _logger.log(level, msg, *args)
+
+    def _queue_warning(self, level: str, logger_name: str, message: str) -> None:
+        """Queue one warning for the status (the warning handler; takes only the leaf lock)."""
+        if self._finished or self._broken:
+            return
+        entry = {"level": level, "logger": logger_name, "message": message[:_WARNING_MESSAGE_LIMIT]}
+        with self._wq_lock:
+            if len(self._wq) + len(self._status.get("warnings") or ()) >= MAX_WARNINGS:
+                self._wq_omitted += 1
+            else:
+                self._wq.append(entry)
+        self._dirty = True
+
+    def _drain_warnings(self) -> None:
+        """Merge the queued warnings into the status (caller holds the lock)."""
+        with self._wq_lock:
+            queued, self._wq = self._wq, []
+            omitted, self._wq_omitted = self._wq_omitted, 0
+        if not queued and not omitted:
+            return
+        warnings = self._status.setdefault("warnings", [])
+        for entry in queued:
+            if len(warnings) >= MAX_WARNINGS:
+                omitted += 1
+            else:
+                warnings.append(entry)
+        if omitted:
+            self._status["warnings_omitted"] = self._status.get("warnings_omitted", 0) + omitted
 
     def _write(self, *, force: bool = False, final: bool = False) -> None:
         """Write the status (caller holds the lock); throttled unless *force*."""
         if self._broken or self.folder is None:
             return
+        self._drain_warnings()
         now = time.monotonic()
         if not force and now - self._last_write < _MIN_WRITE_INTERVAL:
             self._dirty = True
@@ -398,8 +477,8 @@ class RunRecorder:
         on_disk = read_status_file(self.folder)
         if on_disk is not None and on_disk.get("run_id") != self.run_id:
             self._broken = True
-            _logger.warning(
-                "Another run took over %s (run %s); this run no longer updates its run record.",
+            self._defer(
+                logging.WARNING, "Another run took over %s (run %s); this run no longer updates its run record.",
                 self.folder, on_disk.get("run_id"),
             )
             return
@@ -408,18 +487,20 @@ class RunRecorder:
             write_status_atomic(self.folder, self._status, final=final)
         except (OSError, ValueError) as exc:
             self._broken = True
-            _logger.warning("Cannot write the run record %s: %s; the run continues without it.",
-                            self.folder / RUN_STATUS_FILE, exc)
+            self._defer(logging.WARNING, "Cannot write the run record %s: %s; the run continues without it.",
+                        self.folder / RUN_STATUS_FILE, exc)
             return
         self._dirty = False
         self._last_write = now
 
+    @_flushing
     def _update(self, *, force: bool = False) -> None:
         with self._lock:
             self._write(force=force)
 
     # -- facts ----------------------------------------------------------------------------------------------
 
+    @_flushing
     def note_input(self, **fields: Any) -> None:
         """Add facts about the input: ``db_version``, ``alternatives`` (ranked), ..."""
         with self._lock:
@@ -430,6 +511,7 @@ class RunRecorder:
                 target[key] = value
             self._write()
 
+    @_flushing
     def note_solver(self, name: str | None) -> None:
         """The solver a solve was dispatched to (the last one wins)."""
         with self._lock:
@@ -437,6 +519,7 @@ class RunRecorder:
                 self._status["solver"] = str(name)
                 self._write()
 
+    @_flushing
     def solve_started(self, name: str, parent: str | None, index: int, log_anchor: str | None) -> None:
         """A solve of the loop starts (``name`` = the per-roll solve, ``parent`` its complete solve)."""
         with self._lock:
@@ -466,6 +549,7 @@ class RunRecorder:
             self._status["progress"] = None
             self._write(force=True)
 
+    @_flushing
     def solve_classified(
         self,
         *,
@@ -491,6 +575,7 @@ class RunRecorder:
             self._status["verdict"] = worst_verdict(self._status["solves"])
             self._write()
 
+    @_flushing
     def solve_benders(
         self,
         *,
@@ -532,6 +617,7 @@ class RunRecorder:
             self._status["verdict"] = worst_verdict(self._status["solves"])
             self._write()
 
+    @_flushing
     def benders_progress(self, iteration: int, gap: float | None) -> None:
         """A Benders iteration finished (shown as ``progress`` until the solve ends)."""
         with self._lock:
@@ -543,6 +629,7 @@ class RunRecorder:
             }
             self._write()
 
+    @_flushing
     def solve_finished(self, exit_status: int) -> None:
         """``solver.run`` returned *exit_status* for the running solve."""
         with self._lock:
@@ -558,6 +645,7 @@ class RunRecorder:
             self._status["verdict"] = worst_verdict(self._status["solves"])
             self._write()
 
+    @_flushing
     def _set_outputs(self, **fields: Any) -> None:
         with self._lock:
             self._status["outputs"].update(fields)
@@ -571,6 +659,7 @@ class RunRecorder:
         """The parquet files of this run are complete."""
         self._set_outputs(parquet_state="written", written_at=now_iso(), by=by, reason=None)
 
+    @_flushing
     def outputs_skipped(self, reason: str) -> None:
         """The run wrote no outputs although it succeeded (the folder keeps what it had)."""
         with self._lock:
@@ -580,6 +669,7 @@ class RunRecorder:
             outputs["reason"] = str(reason)
             self._write()
 
+    @_flushing
     def outputs_not_requested(self) -> None:
         """The run's write methods have no parquet."""
         with self._lock:
@@ -594,17 +684,6 @@ class RunRecorder:
         with self._lock:
             return (self._status.get("outputs") or {}).get("parquet_state")
 
-    def _add_warning(self, level: str, logger_name: str, message: str) -> None:
-        with self._lock:
-            if self._finished:
-                return
-            warnings = self._status.setdefault("warnings", [])
-            if len(warnings) >= MAX_WARNINGS:
-                self._status["warnings_omitted"] = self._status.get("warnings_omitted", 0) + 1
-            else:
-                warnings.append({"level": level, "logger": logger_name, "message": message[:_WARNING_MESSAGE_LIMIT]})
-            self._write()
-
     def warning_handler(self) -> logging.Handler:
         """A logging handler (WARNING and worse) that adds each record to ``warnings`` (at most 50 kept)."""
         if self._handler is None:
@@ -613,6 +692,7 @@ class RunRecorder:
 
     # -- end ------------------------------------------------------------------------------------------------
 
+    @_flushing
     def finish(self, state: str, *, exit_code: int | None, error: Mapping[str, Any] | None) -> None:
         """Write the run's final state (idempotent: only the first call counts).
 
@@ -648,6 +728,7 @@ class RunRecorder:
     def finished(self) -> bool:
         return self._finished
 
+    @_flushing
     def close(self) -> None:
         """Stop the heartbeat thread and write a pending change."""
         self._stop.set()
@@ -663,6 +744,7 @@ class RunRecorder:
         import copy
 
         with self._lock:
+            self._drain_warnings()
             return copy.deepcopy(self._status)
 
 

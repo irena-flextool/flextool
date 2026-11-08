@@ -1,7 +1,12 @@
 """``_run_status.json`` through a run: start, solves, finish; the ``previous`` carry rules; foreign runs; retries."""
 from __future__ import annotations
 
+import ast
+import logging
 import os
+import subprocess
+import sys
+import threading
 from datetime import datetime
 from pathlib import Path
 
@@ -9,7 +14,7 @@ import pytest
 
 from flextool.run_options import RunOptions
 from flextool.run_record import RunRecorder, read_status_file, worst_verdict
-from flextool.run_record import _owner
+from flextool.run_record import _owner, _status
 from flextool.run_record._owner import RUN_LOG_FILE, VERDICT_ORDER, write_status_atomic
 
 
@@ -194,3 +199,201 @@ def test_verdict_is_the_worst_solve_in_the_documented_order():
             assert worst_verdict([_entry_for(better), _entry_for(worse)]) == worse
     assert worst_verdict([{"state": "running"}]) is None
     assert worst_verdict([]) is None
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Locks: the warning handler never waits for the recorder, and the recorder never logs while it holds its lock
+
+
+def _bare_recorder(folder: Path) -> RunRecorder:
+    """A recorder writing into *folder* without a heartbeat thread (deterministic: nothing writes on its own)."""
+    folder.mkdir(parents=True, exist_ok=True)
+    rec = RunRecorder()
+    rec.folder = folder
+    rec._status = {"schema": "flextool.run_status", "schema_version": 1, "run_id": rec.run_id,
+                   "state": "running", "updated_at": None, "outputs": {"parquet_state": "none"},
+                   "solves": [], "solves_omitted": 0, "warnings": [], "warnings_omitted": 0}
+    write_status_atomic(folder, rec._status)
+    return rec
+
+
+def test_warning_handler_takes_no_recorder_lock(tmp_path):
+    rec = _bare_recorder(tmp_path / "base")
+    logger = logging.getLogger("flextool.test.warning_handler_lock")
+    logger.propagate = False
+    logger.addHandler(rec.warning_handler())
+    held, release = threading.Event(), threading.Event()
+
+    def hold():
+        with rec._lock:
+            held.set()
+            release.wait(30)
+
+    holder = threading.Thread(target=hold, daemon=True)
+    holder.start()
+    assert held.wait(10)
+    worker = threading.Thread(target=lambda: logger.warning("from a worker thread"), daemon=True)
+    worker.start()
+    worker.join(10)
+    returned = not worker.is_alive()
+    release.set()
+    holder.join(10)
+    worker.join(10)
+    logger.removeHandler(rec.warning_handler())
+    assert returned, "the warning handler waited for the recorder lock"
+    rec.finish("succeeded", exit_code=0, error=None)
+    warnings = read_status_file(tmp_path / "base")["warnings"]
+    assert [w["message"] for w in warnings] == ["from a worker thread"]
+
+
+def test_no_log_call_while_recorder_lock_held(tmp_path, monkeypatch):
+    failing, taken_over = _bare_recorder(tmp_path / "a"), _bare_recorder(tmp_path / "b")
+    rec = failing
+    violations: list[str] = []
+    seen: list[str] = []
+
+    class Probe(logging.Handler):
+        def emit(self, record):
+            seen.append(record.getMessage())
+            result = {}
+
+            def try_lock():
+                got = rec._lock.acquire(timeout=0)
+                result["free"] = got
+                if got:
+                    rec._lock.release()
+
+            t = threading.Thread(target=try_lock)
+            t.start()
+            t.join(10)
+            if not result.get("free"):
+                violations.append(record.getMessage())
+
+    probe = Probe(level=logging.INFO)
+    status_logger = logging.getLogger("flextool.run_record._status")
+    status_logger.addHandler(probe)
+    try:
+        def failing_write(*args, **kwargs):
+            raise OSError(28, "No space left on device")
+
+        with monkeypatch.context() as m:
+            m.setattr(_status, "write_status_atomic", failing_write)
+            failing.solve_started("y2030", "y2030", 0, None)
+        rec = taken_over
+        write_status_atomic(tmp_path / "b", {"run_id": "f" * 32, "state": "running"})
+        taken_over.finish("succeeded", exit_code=0, error=None)
+    finally:
+        status_logger.removeHandler(probe)
+    assert any("Cannot write the run record" in s for s in seen)
+    assert any("Another run took over" in s for s in seen)
+    assert violations == []
+
+
+def test_logger_calls_only_after_the_lock_is_released():
+    """In ``RunRecorder`` the module logger is used only by ``_flush_deferred`` (called after a ``with`` block)."""
+    tree = ast.parse(Path(_status.__file__).read_text(encoding="utf-8"))
+    cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "RunRecorder")
+    users = set()
+    for fn in (n for n in cls.body if isinstance(n, ast.FunctionDef)):
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Name) and node.id == "_logger":
+                users.add(fn.name)
+    assert users == {"_flush_deferred"}
+
+
+_DEADLOCK_SCRIPT = r'''
+import logging, os, sys, threading
+from pathlib import Path
+from flextool.run_record import _status
+from flextool.run_record._owner import write_status_atomic
+
+folder = Path(sys.argv[1])
+folder.mkdir(parents=True, exist_ok=True)
+rec = _status.RunRecorder()
+rec.folder = folder
+rec._status = {"run_id": rec.run_id, "state": "running", "outputs": {}, "solves": [], "solves_omitted": 0,
+               "warnings": [], "warnings_omitted": 0}
+write_status_atomic(folder, rec._status)
+root = logging.getLogger()
+root.addHandler(rec.warning_handler())
+b_in_emit = threading.Event()
+
+class Message:
+    def __str__(self):
+        b_in_emit.set()      # thread B is inside the warning handler (its lock taken, if it has one)
+        return "warning from thread B"
+
+def failing_write(*args, **kwargs):
+    b_in_emit.wait(30)       # thread A holds the recorder lock until B is inside the handler
+    raise OSError(28, "No space left on device")
+
+_status.write_status_atomic = failing_write
+
+a = threading.Thread(target=lambda: rec.solve_started("y2030", "y2030", 0, None), daemon=True)
+b = threading.Thread(target=lambda: logging.getLogger("other").warning(Message()), daemon=True)
+a.start()
+b.start()
+a.join(30)
+b.join(30)
+print("ok" if not a.is_alive() and not b.is_alive() else "stuck", flush=True)
+'''
+
+
+def test_deadlock_scenario_exits(tmp_path):
+    script = tmp_path / "deadlock.py"
+    script.write_text(_DEADLOCK_SCRIPT, encoding="utf-8")
+    try:
+        proc = subprocess.run([sys.executable, str(script), str(tmp_path / "base")], capture_output=True,
+                              text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        pytest.fail("the engine process hung (lock-order deadlock)")
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "ok"
+
+
+class _SignalAfterAcquire:
+    """A recorder lock whose first ``__enter__`` acquires and then raises, as a signal handler would."""
+
+    def __init__(self, inner):
+        self._inner = inner
+        self.armed = True
+
+    def __enter__(self):
+        self._inner.acquire()
+        if self.armed:
+            self.armed = False
+            raise KeyboardInterrupt("signal right after the acquire")
+        return self
+
+    def __exit__(self, *exc):
+        self._inner.release()
+        return False
+
+    def acquire(self, *args, **kwargs):
+        return self._inner.acquire(*args, **kwargs)
+
+    def release(self):
+        self._inner.release()
+
+    def _is_owned(self):
+        return self._inner._is_owned()
+
+
+def test_finish_completes_after_a_signal_left_the_lock_held(tmp_path):
+    """SIGTERM -> ``RunTerminated`` can land right after an acquire; ``finish`` on the same thread must not hang."""
+    rec = _bare_recorder(tmp_path / "base")
+    rec._lock = _SignalAfterAcquire(rec._lock)
+    done = threading.Event()
+
+    def run():
+        try:
+            rec.note_solver("highs")
+        except KeyboardInterrupt:
+            pass
+        rec.finish("interrupted", exit_code=143, error={"type": "RunTerminated", "message": "SIGTERM"})
+        done.set()
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    assert done.wait(10), "finish hung on the recorder lock"
+    assert read_status_file(tmp_path / "base")["state"] == "interrupted"
