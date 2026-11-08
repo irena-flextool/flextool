@@ -1337,6 +1337,7 @@ def native_run_model(state, solver) -> int:
                     _key.startswith("solve_data/pt_")
                     or _key.startswith("solve_data/pbt_")
                     or _key.endswith("node_full_timeline_flow")
+                    or _key.endswith("new_step_base_steps")
                 ):
                     sub_solve_provider.put(_key, _frame)
         previous_complete_solve = complete_solve[solve]

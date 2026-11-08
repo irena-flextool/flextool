@@ -396,3 +396,40 @@ def test_vectorized_pdtNodeInflow_synthetic_branches(tmp_path):
         pytest.fail(
             "synthetic: unexpected Tier-B demotion on integer-valued "
             "synthetic sums — investigate")
+
+
+def test_vectorized_pdtNodeInflow_new_step_base_steps(tmp_path):
+    """A solve with ``new_stepduration`` whose steps t1, t3 combine two original steps each: the peak term is
+    ``slope · pti − section · n(t)`` (n = 2).  By hand: t1: 4 · 5 − 20 · 2 = −20, t3: 4 · 15 − 20 · 2 = 20.
+    Twins byte-identical (Tier A)."""
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+
+    provider = FlexDataProvider()
+
+    def put(parent: str, stem: str, df: pl.DataFrame) -> None:
+        provider.put(f"{parent}/{stem}", df)
+        provider.put(stem, df)
+
+    put("input", "node", pl.DataFrame({"node": ["peakN"]}))
+    put("solve_data", "node__inflow_method", pl.DataFrame({
+        "node": ["peakN"], "method": ["scale_to_annual_and_peak_flow"]}))
+    put("solve_data", "nodeBalance", pl.DataFrame({"node": ["peakN"]}))
+    put("solve_data", "nodeBalancePeriod", pl.DataFrame({"node": []}, schema={"node": pl.Utf8}))
+    put("solve_data", "ptNode_inflow", pl.DataFrame({
+        "node": ["peakN", "peakN"], "time": ["t1", "t3"], "value": [5.0, 15.0]}))
+    put("solve_data", "pdNode", pl.DataFrame({
+        "node": ["peakN", "peakN"], "param": ["annual_flow", "peak_inflow"],
+        "period": ["d1", "d1"], "value": [100.0, 7.0]}))
+    put("solve_data", "new_old_slope", pl.DataFrame({"node": ["peakN"], "period": ["d1"], "value": [4.0]}))
+    put("solve_data", "new_old_section", pl.DataFrame({"node": ["peakN"], "period": ["d1"], "value": [20.0]}))
+    put("solve_data", "new_step_base_steps", pl.DataFrame({
+        "time": ["t1", "t2", "t3", "t4"], "new_step": ["t1", "t1", "t3", "t3"], "value": [2.0] * 4}))
+    put("solve_data", "steps_in_use", pl.DataFrame({"period": ["d1", "d1"], "time": ["t1", "t3"]}))
+
+    inp = tmp_path / "input"
+    sdd = tmp_path / "solve_data"
+    df_legacy = derive_pdtNodeInflow(inp, sdd, provider=provider)
+    df_vec = derive_pdtNodeInflow_vectorized(inp, sdd, provider=provider)
+    leg = {r[2]: r[3] for r in df_legacy.iter_rows()}
+    assert leg == {"t1": repr(-20.0), "t3": repr(20.0)}, leg
+    assert _assert_parity(df_legacy, df_vec, "new-step-base-steps") == "A"

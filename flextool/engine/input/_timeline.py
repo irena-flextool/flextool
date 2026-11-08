@@ -62,6 +62,7 @@ from flextool.engine.input._solve_state import (
     ActiveTimeEntry,
     FlexToolConfigError,
 )
+from flextool.engine.preprocess.emit._base_steps import NEW_STEP_BASE_STEPS, NEW_STEP_BASE_STEPS_SCHEMA
 from flextool.engine.preprocess._provider_io import (
     _provider_key,
 )
@@ -734,6 +735,7 @@ class TimelineConfig:
             solve in self.new_step_durations
             and self.new_step_durations[solve] is not None
         )
+        base_steps_key = _provider_key(wf / "solve_data" / NEW_STEP_BASE_STEPS)
         if not create:
             for timeseries in timeseries_map:
                 src_path = wf / "input" / timeseries
@@ -744,6 +746,9 @@ class TimelineConfig:
                 if frame is None:
                     continue
                 provider.put(dst_key, frame)
+            # Every solve step is one original step (an earlier coarsened
+            # solve's rows must not reach this solve).
+            provider.put(base_steps_key, pl.DataFrame(schema=NEW_STEP_BASE_STEPS_SCHEMA))
             return
 
         # All timesets used by *solve* must resolve to the same
@@ -767,6 +772,8 @@ class TimelineConfig:
         # (O(1) access per row); a timeline that is not an aggregated
         # one keeps one step per step.
         base_durations: dict[str, list[float]] = {}
+        # (original step, the new step that combines it), in timeline order.
+        base_step_rows: list[tuple[str, str]] = []
         for timeline in timelines_list:
             new_timeline = self.timelines[timeline]
             original = self.original_timeline.get(timeline)
@@ -775,9 +782,16 @@ class TimelineConfig:
                     self.timelines[original], new_timeline, logger,
                     solve_name=solve, timeline_name=timeline,
                 ))
+                base_step_rows.extend(_new_step_of_base_steps(self.timelines[original], new_timeline))
             else:
                 for timeline_row in new_timeline:
                     base_durations[timeline_row[0]] = [float(timeline_row[1])]
+                    base_step_rows.append((timeline_row[0], timeline_row[0]))
+        # The scalings read how many original steps each solve step combines
+        # (inflow and peak_inflow are energy per original step).
+        provider.put(base_steps_key, pl.DataFrame(
+            [(t, s, float(len(base_durations[s]))) for t, s in base_step_rows],
+            schema=NEW_STEP_BASE_STEPS_SCHEMA, orient="row"))
 
         # node-name → constant-inflow value (used to append per-step
         # contributions to pt_node_inflow below).
@@ -1045,6 +1059,20 @@ def _base_steps_of_new_steps(
         )
         logger.error(message)
         raise FlexToolConfigError(message)
+    return out
+
+
+def _new_step_of_base_steps(old_steps: list, new_steps: list) -> list[tuple[str, str]]:
+    """``[(original step, the new step that combines it)]`` in timeline order: the walk of
+    :func:`_base_steps_of_new_steps` (every original step belongs to the latest new step label seen)."""
+    labels = {step[0] for step in new_steps}
+    out: list[tuple[str, str]] = []
+    current: str | None = None
+    for name, _duration in old_steps:
+        if name in labels:
+            current = name
+        if current is not None:
+            out.append((name, current))
     return out
 
 

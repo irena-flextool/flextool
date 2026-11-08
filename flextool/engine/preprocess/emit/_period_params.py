@@ -27,6 +27,7 @@ from flextool.engine.preprocess._provider_io import (
     _emit,
     _provider_key,
 )
+from flextool.engine.preprocess.emit._base_steps import read_new_step_base_steps
 from flextool.engine.preprocess.emit._pdt_lookup import inherit_pd_branch_periods
 from flextool.engine.preprocess.emit._vectorize import (
     build_entity_dt_grid,
@@ -159,7 +160,8 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
       3. Deterministic additive sum of the 4 scaling methods:
          * ``scale_to_annual_flow``            — pfa[n,d] * pti[n,t]
          * ``scale_in_proportion``             — pfp[n,d] * pti[n,t]
-         * ``scale_to_annual_and_peak_flow``   — slope[n,d] * pti[n,t] - section[n,d]
+         * ``scale_to_annual_and_peak_flow``   — slope[n,d] * pti[n,t] - section[n,d] * n(t)
+           (n(t) = original time steps in solve step t, 1 without new_stepduration)
          * ``use_original``                    — pti[n,t]
 
     Domain: nodes whose method is anything BUT ``no_inflow``.  Non-
@@ -277,6 +279,9 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
     )
     nos_slope = _read_2_keyed_value(solve_data_dir / "new_old_slope.csv")
     nos_section = _read_2_keyed_value(solve_data_dir / "new_old_section.csv")
+    # Original time steps per solve step (``new_stepduration``; absent → 1):
+    # the peak section is per original step.
+    n_of, _absorbed = read_new_step_base_steps(solve_data_dir, provider=provider)
 
     eligible_nodes = [
         n for n in nodes if (n, "no_inflow") not in inflow_method_pairs
@@ -336,7 +341,7 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
                             and pdNode_af.get((n, d), 0.0)
                             and pdNode_pk.get((n, d), 0.0)):
                         value += nos_slope.get((n, d), 0.0) * pti \
-                                 - nos_section.get((n, d), 0.0)
+                                 - nos_section.get((n, d), 0.0) * n_of.get(t, 1.0)
                     if has_use_original:
                         value += pti
                 emit_v = value
@@ -497,6 +502,9 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
     )
     nos_slope = _read_2_keyed_value(solve_data_dir / "new_old_slope.csv")
     nos_section = _read_2_keyed_value(solve_data_dir / "new_old_section.csv")
+    # Original time steps per solve step (``new_stepduration``; absent → 1):
+    # the peak section is per original step.
+    n_of, _absorbed = read_new_step_base_steps(solve_data_dir, provider=provider)
 
     eligible_nodes = [
         n for n in nodes if (n, "no_inflow") not in inflow_method_pairs
@@ -529,6 +537,7 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
     pfp_df = lift_dict_to_lookup(pfp, ["node", "period"], "v_pfp")
     slope_df = lift_dict_to_lookup(nos_slope, ["node", "period"], "v_slope")
     sect_df = lift_dict_to_lookup(nos_section, ["node", "period"], "v_sect")
+    nstep_df = lift_dict_to_lookup(n_of, ["time"], "v_nstep")
     af_df = lift_dict_to_lookup(pdNode_af, ["node", "period"], "v_af")
     pk_df = lift_dict_to_lookup(pdNode_pk, ["node", "period"], "v_pk")
 
@@ -568,6 +577,7 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
         .join(pfp_df, on=["node", "period"], how="left")
         .join(slope_df, on=["node", "period"], how="left")
         .join(sect_df, on=["node", "period"], how="left")
+        .join(nstep_df, on=["time"], how="left")
         .join(af_df, on=["node", "period"], how="left")
         .join(pk_df, on=["node", "period"], how="left")
     )
@@ -592,7 +602,7 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
     t_peak = (
         pl.when(pl.col("__m_peak").fill_null(False) & af_ok & pk_ok)
         .then(pl.col("v_slope").fill_null(0.0) * pti
-              - pl.col("v_sect").fill_null(0.0))
+              - pl.col("v_sect").fill_null(0.0) * pl.col("v_nstep").fill_null(1.0))
         .otherwise(0.0)
     )
     t_orig = (

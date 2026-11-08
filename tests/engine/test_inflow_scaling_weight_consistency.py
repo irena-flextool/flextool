@@ -39,10 +39,13 @@ def _provider(
     cpsoy: float,
     method: str = "scale_to_annual_flow",
     peak_inflow: float | None = None,
+    hours: float | None = None,
 ) -> tuple[FlexDataProvider, list[str]]:
     """One node ``annN`` over one period ``d1`` with ``len(inflow)``
     timesteps.  ``weights=None`` → no ``timestep_weight.csv`` (``w ≡ 1``);
-    a list → the per-(period, time) representative weight.
+    a list → the per-(period, time) representative weight.  ``hours``
+    → ``complete_hours_in_period[d1]`` (absent: the scaling falls back to
+    ``cpsoy · 8760``).
     """
     provider = FlexDataProvider()
 
@@ -73,6 +76,9 @@ def _provider(
         "value": [r[2] for r in pd_rows]}))
     put("solve_data", "complete_period_share_of_year_calc",
         pl.DataFrame({"period": ["d1"], "value": [cpsoy]}))
+    if hours is not None:
+        put("solve_data", "complete_hours_in_period",
+            pl.DataFrame({"period": ["d1"], "value": [hours]}))
     put("solve_data", "p_timeline_duration_in_years", pl.DataFrame(
         {"timeline": [], "value": []},
         schema={"timeline": pl.Utf8, "value": pl.Float64}))
@@ -179,3 +185,28 @@ def test_peak_method_annual_leg_uses_weighted_orig_flow_sum():
     ofs = _cell(frames["orig_flow_sum.csv"], ("annN", "d1"))
     assert abs(ofs - 35.0) <= 1e-12, \
         f"orig_flow_sum {ofs} != weighted hand-calc 35 (uniform would be 26)"
+
+
+def test_peak_method_constant_peak_sum_counts_weighted_steps():
+    """The annual sum of a constant peak (``new_peak_inflow_sum``) is
+    ``peak × (time steps in the period) / (period share of the year)``,
+    with the steps weighted like ``orig_flow_sum``.  By hand, with
+    w = [0.5, 1, 1.5, 2], cpsoy = 0.5 (4380 h), peak = 12:
+
+        weighted steps S = 0.5 + 1 + 1.5 + 2 = 5
+        npis = peak · S / cpsoy = 12 · 5 / 0.5 = 120   <- pinned
+             = (peak · 8760) · S / H = 105 120 · 5 / 4380
+
+    Before: npis = peak · 8760 = 105 120 (one step per hour of a year).
+    Pinned with ``complete_hours_in_period`` given (4380) and with its
+    ``cpsoy · 8760`` fallback.
+    """
+    for hours in (4380.0, None):
+        provider, _times = _provider(
+            weights=[0.5, 1.0, 1.5, 2.0], inflow=[5.0, 6.0, 7.0, 8.0],
+            annual_flow=80.0, cpsoy=0.5,
+            method="scale_to_annual_and_peak_flow", peak_inflow=12.0,
+            hours=hours)
+        frames = _compute_inflow_scaling_frames(INP, SDD, provider=provider)
+        npis = _cell(frames["new_peak_inflow_sum.csv"], ("annN", "d1"))
+        assert abs(npis - 120.0) <= 1e-9, (hours, npis)

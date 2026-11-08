@@ -116,3 +116,22 @@ def test_peak_scaling_direction_flip_warns(tmp_path_factory, capsys) -> None:
     out = capsys.readouterr().out
     assert "node 'west'" in out and "changes direction" in out, out
     assert _west_inflow(step).max() > 0.0
+
+
+def _two_hour_steps() -> list:
+    steps = [f"t{i:04d}" for i in range(1, 73)]
+    return ["timeline", "y2020", "timestep_duration",
+            b64({"index_type": "str", "index_name": "timestep", "rank": 1, "data": [[t, 2.0] for t in steps]},
+                "map")]
+
+
+@pytest.mark.parametrize("annual_flow, warns", [(6e6, True), (4e6, False)], ids=["above", "below"])
+def test_peak_reach_counts_the_time_steps_of_a_year(tmp_path_factory, capsys, annual_flow, warns) -> None:
+    """2 h steps: a year has 8760 / 2 = 4380 time steps, so |peak_inflow| x 4380 = 1100 x 4380 = 4.818e6 is the
+    most a profile with peak 1100 reaches.  annual_flow 6e6 is above it (warning), 4e6 below (none).  Before: the
+    reach was 1100 x 8760 = 9.636e6 and 6e6 gave no warning."""
+    step = _run(tmp_path_factory, f"is_peak_reach_2h_{int(annual_flow)}",
+                _west(inflow_method=PEAK, annual_flow=annual_flow, peak_inflow=-1100) + [_two_hour_steps()])
+    out = capsys.readouterr().out
+    assert ("above |peak_inflow| x 4380 time steps a year = 4.818e+06" in out) is warns, out
+    assert _west_inflow(step).sum() == pytest.approx(-annual_flow * 96 / 8760, rel=1e-9)
