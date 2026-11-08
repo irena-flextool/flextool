@@ -71,3 +71,6 @@ tests/calibrate/test_sizing_h2trade_local.py
 # not shipped with the repo.  This folder is local-only; never track it.
 _audit_reports/
 _diagrams/
+# Editor / IDE settings and local scratch notes — personal, never tracked.
+.vscode/
+namespace_structure.txt
