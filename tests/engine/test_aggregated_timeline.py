@@ -418,10 +418,13 @@ def _steps_of(tl: TimelineConfig, ts: str) -> list[tuple[str, str]]:
     ([1.0] * 24 + [2.0] * 24, 2.0,
      [(f"t{i:04d}", "2.0") for i in range(1, 25, 2)] + [(f"t{i:04d}", "2.0") for i in range(25, 49)]),
     ([1.0, 2.0] * 24, 3.0, [(f"t{i:04d}", "3.0") for i in range(1, 49, 2)]),
-], ids=["2h-by-4", "0.5h-by-1", "1h-then-2h-by-2", "1h2h-by-3"])
+    ([0.5] * 35040, 8760.0, [("t0001", "8760.0"), ("t17521", "8760.0")]),
+    ([1.0] * 35040, 17520.0, [("t0001", "17520.0"), ("t17521", "17520.0")]),
+], ids=["2h-by-4", "0.5h-by-1", "1h-then-2h-by-2", "1h2h-by-3", "0.5h-by-8760", "1h-by-17520"])
 def test_chunks_of_any_base_step(durations, step, expected) -> None:
     """The new time steps hold exactly new_stepduration hours of the timeline's steps, for 2 h, 0.5 h and mixed base
-    steps (a chunk closes when it reaches the new step, it never adds one more base step)."""
+    steps (a chunk closes when it reaches the new step, it never adds one more base step), also for a year-long new
+    step on half-hour steps and a two-year one on hourly steps (the tolerance stays below half a base step)."""
     n = len(durations)
     tl, sc = _config({"all": [("t0001", n)]}, {"s": [("p2020", "all")]}, {"s": step}, durations=durations)
     tl.create_timeline_from_timestep_duration(sc)
@@ -441,6 +444,30 @@ def test_rounded_fractional_steps_fit(caplog) -> None:
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
 
 
+def test_unused_solve_not_fitting_does_not_stop_the_run() -> None:
+    """A solve with new_stepduration 1.5 on 1 h steps that the model does not run does not stop the run; the same
+    solve in the model does."""
+    tl, sc = _config({"all": [("t0001", 12)]}, {"s": [("p2020", "all")]}, {"s": 1.5})
+    sc.model_solve = {"m": []}
+    tl.create_timeline_from_timestep_duration(sc)
+    tl, sc = _config({"all": [("t0001", 12)]}, {"s": [("p2020", "all")]}, {"s": 1.5})
+    with pytest.raises(FlexToolConfigError, match="Solve 's': new_stepduration 1.5 h is not a whole multiple"):
+        tl.create_timeline_from_timestep_duration(sc)
+
+
+def test_new_step_off_the_original_timeline_raises(caplog) -> None:
+    """Internal guard: an aggregated step that is not a step of the original timeline is logged and raised, naming
+    the solve and the timeline."""
+    from flextool.engine.input._timeline import _base_steps_of_new_steps
+
+    log = logging.getLogger(__name__)
+    match = r"Solve 's': time steps \['t0009'\] of the aggregated timeline 'T_s'"
+    with caplog.at_level(logging.ERROR), pytest.raises(FlexToolConfigError, match=match):
+        _base_steps_of_new_steps([("t0001", "1"), ("t0002", "1")], [("t0001", "2.0"), ("t0009", "1.0")], log,
+                                 solve_name="s", timeline_name="T_s")
+    assert any("t0009" in r.message for r in caplog.records if r.levelno == logging.ERROR)
+
+
 def test_long_gap_step_is_its_own_chunk() -> None:
     """A 24 h filler step in the gap between two blocks of 1 h steps, new_stepduration 2: the gap step is one new
     step of 24 h (never active, so not an error); the blocks get 2 h steps."""
@@ -456,8 +483,9 @@ def test_long_gap_step_is_its_own_chunk() -> None:
     ([2.0] * 12, 3.0, r"new_stepduration 3 h is not a whole multiple of the 2 h time steps of timeline 'T'"),
     ([2.0] * 12, 1.0, r"new_stepduration 1 h is not a whole multiple of the 2 h time steps"),
     ([1.0] * 12, 1.5, r"new_stepduration 1.5 h is not a whole multiple of the 1 h time steps"),
-    ([1.0, 2.0] * 6, 2.0, r"new_stepduration 2 h does not fit the time steps of timeline 'T': the new time step starting at "
-                            r"'t0001' would end inside base time step 't0002' \(3 h in total\).*must end where"),
+    ([1.0, 2.0] * 6, 2.0, r"new_stepduration 2 h does not fit the time steps of timeline 'T': the new time step "
+                            r"starting at 't0001' would end inside base time step 't0002' \(3 h in total\)"
+                            r".*must end where"),
 ], ids=["2h-by-3", "2h-by-1", "1h-by-1.5", "1h2h-by-2"])
 def test_step_not_fitting_the_base_steps_raises(durations, step, match) -> None:
     """A new_stepduration that is not a whole multiple of the timeline's steps, or (mixed step lengths) that would
@@ -593,7 +621,8 @@ def _base_series() -> dict[str, list[float]]:
     data = _json.loads((FLEXTOOL_ROOT / "tests" / "fixtures" / "tests.json").read_text())
     out = {}
     for cls, ent, param, val, alt in data["parameter_values"]:
-        if (cls, ent, param, alt) in (("node", "west", "inflow", "west"), ("profile", "wind_profile", "profile", "wind")):
+        if (cls, ent, param, alt) in (("node", "west", "inflow", "west"),
+                                      ("profile", "wind_profile", "profile", "wind")):
             m = _json.loads(_b64.b64decode(val[0]))
             assert [t for t, _v in m["data"]] == TIMESTEPS72
             out[param] = [float(v) for _t, v in m["data"]]
@@ -629,8 +658,8 @@ def _inflow_dt(step) -> list[tuple[str, float]]:
 def test_coarse_solve_equals_native_twin(tmp_path_factory, base) -> None:
     """2day on a timeline of 2 h (0.5 h) steps with new_stepduration 4 (1) builds the same LP as the twin timeline
     that has the 4 h (1 h) steps natively (t0001, t0003, ...; inflow summed and profile averaged pairwise), and the
-    west inflow sums to the 48 base steps' −29 103 (t0001: −589 − 537 = −1126).  Before: 2 h by 4 read four steps
-    per new step (Σ doubled), 0.5 h by 1 read one (Σ −14 607)."""
+    west inflow sums to the 48 base steps' −29 103 (t0001: −589 − 537 = −1126).  Before: 2 h by 4 read four
+    steps per new step (Σ doubled), 0.5 h by 1 read one (Σ −14 607)."""
     series = _base_series()
     infl, prof = series["inflow"], series["profile"]
     twin_steps = TIMESTEPS72[0::2]

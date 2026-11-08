@@ -390,14 +390,18 @@ class TimelineConfig:
                     f"{ts} (representative_period_weights)": [str(b) for b in self.rp_weights[ts]]
                     for ts in tl_timesets if self.rp_weights.get(ts)
                 }
+                # The fit of the new step is checked only for solves the model
+                # runs: an unused solve must not stop the run.
+                used_by = [step_solve_in_model_of[ts] for ts in tl_timesets if ts in step_solve_in_model_of]
                 chunks, block_chunks = _aggregate_timeline_pieces(
                     old_steps,
                     {ts: raw_durations[ts] for ts in tl_timesets},
                     step_duration,
                     logger,
                     extra_cuts=base_cuts,
-                    solve_name=first_solve,
+                    solve_name=used_by[0] if used_by else first_solve,
                     timeline_name=timeline_name,
+                    check_fit=bool(used_by),
                 )
                 # Guard: every base start on the original timeline must start a step
                 # of the aggregated one, else the rp base chain would sort it last.
@@ -767,7 +771,10 @@ class TimelineConfig:
             new_timeline = self.timelines[timeline]
             original = self.original_timeline.get(timeline)
             if original is not None and original in self.timelines:
-                base_durations.update(_base_steps_of_new_steps(self.timelines[original], new_timeline))
+                base_durations.update(_base_steps_of_new_steps(
+                    self.timelines[original], new_timeline, logger,
+                    solve_name=solve, timeline_name=timeline,
+                ))
             else:
                 for timeline_row in new_timeline:
                     base_durations[timeline_row[0]] = [float(timeline_row[1])]
@@ -1013,7 +1020,7 @@ def _solves_in_model(solve_config: "SolveConfig") -> set[str]:
 
 
 def _base_steps_of_new_steps(
-    old_steps: list, new_steps: list,
+    old_steps: list, new_steps: list, logger: logging.Logger, *, solve_name: str, timeline_name: str,
 ) -> dict[str, list[float]]:
     """``{new step: [durations of the original steps it combines]}``.
 
@@ -1032,9 +1039,12 @@ def _base_steps_of_new_steps(
             current.append(float(duration))
     missing = [step[0] for step in new_steps if step[0] not in out]
     if missing:
-        raise FlexToolConfigError(
-            f"Aggregated time steps {missing[:5]} are not time steps of the original timeline."
+        message = (
+            f"Solve '{solve_name}': time steps {missing[:5]} of the aggregated timeline '{timeline_name}' are not "
+            f"time steps of its original timeline."
         )
+        logger.error(message)
+        raise FlexToolConfigError(message)
     return out
 
 
@@ -1047,6 +1057,7 @@ def _aggregate_timeline_pieces(
     *,
     solve_name: str,
     timeline_name: str,
+    check_fit: bool = True,
 ) -> tuple[list[tuple[str, str]], dict[str, list[tuple[str, int]]]]:
     """Aggregate a whole timeline to ``step_duration`` hours, piece by piece.
 
@@ -1056,14 +1067,17 @@ def _aggregate_timeline_pieces(
     (``{owner: [step, ...]}``, e.g. representative base-period starts).  Each piece is aggregated from its
     first step: a chunk closes as soon as its steps add up to ``step_duration`` hours (within a relative
     tolerance of 1e-4, so steps entered with rounded fractions still fit), and a chunk always holds at least
-    one step.  The steps may have any length (0.5 h, 2 h, mixed).
+    one step.  The steps may have any length (0.5 h, 2 h, mixed).  The
+    tolerance is capped at half the shortest step, so a long new step still
+    closes at the right step.
     Returns the chunks ``[(first step, str(hours)), ...]`` in timeline order and
     per timeset ``[(block start, number of chunks in the block), ...]`` (a block
     whose start is not on the timeline is kept as given; ``get_active_time``
     skips it).  Logs a warning when a block ends with a shorter chunk, naming
     the other timeset when its boundary is what cut the chunk short.
 
-    Raises :class:`FlexToolConfigError` when a chunk that starts inside a block
+    Raises :class:`FlexToolConfigError` (only with ``check_fit``, i.e. for a
+    solve the model runs) when a chunk that starts inside a block
     would be longer than ``step_duration``: the new step is not a whole multiple
     of the timeline's steps, or (steps of different lengths) it would end inside
     a step.  A gap chunk (outside every block, never active) may be longer, e.g.
@@ -1091,7 +1105,11 @@ def _aggregate_timeline_pieces(
                 cut_owners.setdefault(index_of[label], set()).add(owner)
     cuts = sorted(c for c in cut_owners if c < n_steps) + [n_steps]
     block_ranges = [(rng[1], rng[2]) for rngs in ranges.values() for rng in rngs if rng is not None]
-    tol = 1e-4 * step_duration
+    # Relative to the new step (rounded fractions like 0.333333 h still add
+    # up), but below half a base step, so a long new step never closes one
+    # base step early.
+    positive = [float(step[1]) for step in old_steps if float(step[1]) > 0]
+    tol = min(1e-4 * step_duration, 0.5 * min(positive)) if positive else 0.0
 
     chunks: list[tuple[str, str]] = []
     chunk_first: list[int] = []
@@ -1105,7 +1123,8 @@ def _aggregate_timeline_pieces(
                 hours += float(old_steps[i][1])
                 i += 1
             label = old_steps[first][0]
-            if hours > step_duration + tol and any(b_first <= first < b_end for b_first, b_end in block_ranges):
+            if (check_fit and hours > step_duration + tol
+                    and any(b_first <= first < b_end for b_first, b_end in block_ranges)):
                 ds = [float(step[1]) for step in old_steps[first:i]]
                 if all(d == ds[0] for d in ds):
                     message = (
