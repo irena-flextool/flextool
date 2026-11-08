@@ -481,6 +481,129 @@ def test_models_that_are_not_chat_models_are_hidden_and_a_chosen_one_marked(open
                                                 "lyria-3.5"]
 
 
+# --- [Test model] ----------------------------------------------------------------------------------------------
+class TestModels:
+    """The backend factory of the test: one shared script; the threads the backends were built on are kept."""
+
+    def __init__(self, script: list, fake_backends: list, models: list[ModelEntry] = ()) -> None:  # noqa: ANN001
+        self.script = script
+        self.models = list(models)
+        self.threads: list[threading.Thread] = []
+        self.made: list[FakeBackend] = []
+        self._registry = fake_backends
+
+    def __call__(self, preset, conn):  # noqa: ANN001, ANN204
+        backend = FakeBackend(self.script, origin=(preset.id, conn.base_url, conn.model), models=self.models)
+        backend.script = self.script
+        self.threads.append(threading.current_thread())
+        self.made.append(backend)
+        self._registry.append(backend)
+        return backend
+
+
+TestModels.__test__ = False           # a helper, not a test class
+
+
+def _gemini_dialog(open_dialog, monkeypatch, user_config_in_tmp, factory, model: str):  # noqa: ANN001, ANN202
+    from flextool.assistant.pacing import Pacer
+    from flextool.assistant.settings import ProviderSettings, Settings, save_settings
+    from flextool.gui.assistant.gate import ProviderGate
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    save_settings(Settings(provider=ProviderSettings(preset="gemini", model=model)), user_config_in_tmp)
+    return open_dialog(backend_factory=factory, gate=ProviderGate(pacer=Pacer()))
+
+
+def test_test_model_asks_the_data_notice_then_reports_the_answer(open_dialog, host, monkeypatch, fake_backends,
+                                                                 user_config_in_tmp):
+    from flextool.assistant.llm_adapter import Message, Reply, Usage
+    from flextool.assistant.usage import Ledger
+
+    factory = TestModels([Reply(Message("assistant", "OK"), "end", None, Usage(9, 0, 0, 1))], fake_backends)
+    dialog = _gemini_dialog(open_dialog, monkeypatch, user_config_in_tmp, factory, "gemini-3.8-flash")
+    assert dialog.test_button.cget("text") == "Test model"
+    dialog.test_button.invoke()
+    confirm = _open_confirm(dialog, host)
+    assert "Before sending to Google Gemini" in str(confirm.title())
+    assert factory.made == []                                    # nothing is sent before the answer
+    confirm.action_button.invoke()
+    pump(host, lambda: dialog.test_label.cget("text").startswith("gemini-3.8-flash is available"), timeout=5)
+    assert dialog.test_button.cget("text") == "Test model"
+    assert factory.threads and threading.main_thread() not in factory.threads
+    (request,) = factory.made[0].requests
+    assert request.tools == ()
+    (month,) = Ledger(user_config_in_tmp).read()["months"].values()
+    assert month["gemini"]["models"]["gemini-3.8-flash"]["output"] == 1
+    # The notice was accepted: the next test asks nothing.
+    factory.script.append(Reply(Message("assistant", "OK"), "end", None, Usage(9, 0, 0, 1)))
+    dialog.test_label.configure(text="")
+    dialog.test_button.invoke()
+    pump(host, lambda: dialog.test_label.cget("text").startswith("gemini-3.8-flash is available"), timeout=5)
+    assert dialog.confirm is None
+
+
+def test_a_model_closed_to_the_account_is_marked_until_refresh(open_dialog, host, monkeypatch, fake_backends,
+                                                               user_config_in_tmp):
+    from flextool.assistant import endpoint
+    from flextool.assistant.llm_errors import classify_status
+
+    ctx = ErrorContext(preset_id="gemini", provider="Google Gemini", model="gemini-2.5-pro")
+    body = [{"error": {"code": 404, "status": "NOT_FOUND",
+                       "message": "This model models/gemini-2.5-pro is no longer available to new users."}}]
+    factory = TestModels([classify_status(404, body, None, ctx)], fake_backends,
+                         models=[ModelEntry("gemini-2.5-pro"), ModelEntry("gemini-3.8-flash")])
+    dialog = _gemini_dialog(open_dialog, monkeypatch, user_config_in_tmp, factory, "gemini-2.5-pro")
+    dialog.refresh_models()
+    pump(host, lambda: dialog.models_label.cget("text") == "2 models")
+    url = dialog._checked_address()
+    route = endpoint.route_for(PRESETS["gemini"], url, model="gemini-2.5-pro")
+    endpoint.record_consent(endpoint.consent_key("gemini", url, route), user_config_in_tmp)
+    dialog.test_button.invoke()
+    pump(host, lambda: "refused" in dialog.test_label.cget("text"), timeout=5)
+    assert dialog.test_label.cget("text").startswith(
+        "Google Gemini refused the test request: This model models/gemini-2.5-pro is no longer available to new "
+        "users")
+    # Hidden from the default list; the chosen model stays, marked; "Show all models" shows it marked.
+    assert list(dialog.model_box["values"]) == ["gemini-2.5-pro (not available to your account)",
+                                                "gemini-3.8-flash"]
+    assert dialog.models_label.cget("text") == "1 model"
+    dialog.model_var.set("gemini-3.8-flash")
+    dialog._show_list()
+    assert list(dialog.model_box["values"]) == ["gemini-3.8-flash"]
+    dialog.show_all_button.invoke()
+    assert list(dialog.model_box["values"]) == ["gemini-2.5-pro (not available to your account)",
+                                                "gemini-3.8-flash"]
+    dialog.show_all_button.invoke()
+    # The mark is in the saved list file: a new dialog hides the model too; Refresh clears it.
+    dialog.close()
+    again = open_dialog(backend_factory=factory)
+    again.model_var.set("gemini-3.8-flash")
+    again._show_list()
+    assert list(again.model_box["values"]) == ["gemini-3.8-flash"]
+    again.refresh_models()
+    pump(host, lambda: again.models_label.cget("text") == "2 models")
+    assert list(again.model_box["values"]) == ["gemini-2.5-pro", "gemini-3.8-flash"]
+
+
+def test_stop_ends_a_test_that_waits(open_dialog, host, monkeypatch, fake_backends, user_config_in_tmp):
+    from flextool.assistant import endpoint
+    from tests.assistant.llm.fake_backend import Block
+
+    block = Block()
+    factory = TestModels([block], fake_backends)
+    dialog = _gemini_dialog(open_dialog, monkeypatch, user_config_in_tmp, factory, "gemini-3.8-flash")
+    url = dialog._checked_address()
+    route = endpoint.route_for(PRESETS["gemini"], url, model="gemini-3.8-flash")
+    endpoint.record_consent(endpoint.consent_key("gemini", url, route), user_config_in_tmp)
+    dialog.test_button.invoke()
+    assert dialog.test_label.cget("text") == "Testing gemini-3.8-flash…"
+    pump(host, lambda: block.started.is_set(), timeout=5)
+    assert dialog.test_button.cget("text") == "Stop test"
+    dialog.test_button.invoke()
+    pump(host, lambda: dialog.test_label.cget("text") == "Stopped.", timeout=5)
+    assert dialog.test_button.cget("text") == "Test model"
+
+
 def test_partly_on_the_processor_hint(open_dialog, host):
     probes.remember_facts("ollama", "http://localhost:11434/v1", "big-model:70b",
                           ModelFacts(loaded_context=32768, partly_on_cpu=True))

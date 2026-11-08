@@ -598,3 +598,53 @@ def test_list_models_shows_the_newest_stable_versions_and_all_with_all(fake_back
     assert chat_cli.main(["--provider", "gemini", "--list-models"], backend_factory=models, terminal=chat) == 0
     assert chat.stdout.getvalue() == "gemini-3-flash\n"
     assert chat.stderr.getvalue() == "Not shown: 2 models that are not chat models; add --all to list them.\n"
+
+
+# --- --test-model -------------------------------------------------------------------------------------------------
+def test_test_model_needs_the_data_notice_and_reports_the_answer(project, fake_backends):
+    import re
+
+    models = Models([say("OK")], fake_backends)
+    term = terminal(tty=False)
+    assert chat_cli.main(remote(project, "--test-model"), backend_factory=models, terminal=term) == 3
+    assert models.made == [] and NOT_ACCEPTED in term.stderr.getvalue()
+    term = terminal(["yes"])
+    assert chat_cli.main(remote(project, "--test-model"), backend_factory=models, terminal=term) == 0
+    assert NOTICE_START in term.stdout.getvalue()
+    assert re.search(r"example-model is available: the answer started after \d+\.\d s and ended after \d+\.\d s\.\n$",
+                     term.stdout.getvalue())
+    (request,) = models.requests
+    assert request.tools == ()
+    assert "Testing example-model of Custom endpoint…" in term.stderr.getvalue()
+
+
+def test_test_model_marks_a_model_closed_to_the_account(project, fake_backends, monkeypatch):
+    from flextool.assistant.llm_errors import ErrorContext, classify_status
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    ctx = ErrorContext(preset_id="gemini", provider="Google Gemini", model="gemini-2.5-pro")
+    body = [{"error": {"code": 404, "status": "NOT_FOUND",
+                       "message": "This model models/gemini-2.5-pro is no longer available to new users."}}]
+    listed = [ModelEntry("gemini-2.5-pro"), ModelEntry("gemini-3.8-flash")]
+    models = Models([classify_status(404, body, None, ctx), say("OK")], fake_backends, models=listed)
+    argv = ["--provider", "gemini", "--model", "gemini-2.5-pro", "--test-model", "--accept-data-notice"]
+    term = terminal(tty=False)
+    assert chat_cli.main(argv, backend_factory=models, terminal=term) == 1
+    assert term.stdout.getvalue().startswith(
+        "Google Gemini refused the test request: This model models/gemini-2.5-pro is no longer available to new users")
+    shown = terminal(tty=False)
+    assert chat_cli.main(["--provider", "gemini", "--list-models"], backend_factory=models, terminal=shown) == 0
+    assert shown.stdout.getvalue() == "gemini-3.8-flash\n"
+    assert shown.stderr.getvalue() == ("Not shown: 1 model a test found not available to your account; add --all to "
+                                       "list it.\n")
+    every = terminal(tty=False)
+    assert chat_cli.main(["--provider", "gemini", "--list-models", "--all"], backend_factory=models,
+                         terminal=every) == 0
+    assert every.stdout.getvalue() == "gemini-2.5-pro  not available to your account\ngemini-3.8-flash\n"
+    # A test that succeeds removes the mark.
+    again = terminal(tty=False)
+    assert chat_cli.main(argv, backend_factory=models, terminal=again) == 0
+    listed_again = terminal(tty=False)
+    assert chat_cli.main(["--provider", "gemini", "--list-models"], backend_factory=models,
+                         terminal=listed_again) == 0
+    assert listed_again.stdout.getvalue() == "gemini-2.5-pro\ngemini-3.8-flash\n"

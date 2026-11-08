@@ -1,7 +1,7 @@
 """``flextool-assistant``: FlexTool's AI assistant in the terminal, and the read-only FlexTool tools for AI agents.
 
 * Without ``--mcp`` or ``--call``: the chat with an AI model in the terminal (an interactive chat, or one question
-  with ``-q``), and the small commands ``--list-models``, ``--set-key``, ``--forget-key`` and ``--usage``
+  with ``-q``), and the small commands ``--list-models``, ``--test-model``, ``--set-key``, ``--forget-key`` and ``--usage``
   (:mod:`flextool.assistant.chat_cli`, imported only for them: ``--mcp`` and ``--call`` load no AI service
   library).
 * ``--mcp`` serves the tools to an AI agent (Claude Code and others) over stdin and stdout
@@ -69,6 +69,9 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--call", nargs="+", metavar=("TOOL", "ARGUMENTS"),
                       help="run one tool and print its result; ARGUMENTS is a JSON object or @file.json")
     mode.add_argument("--list-models", action="store_true", help="list the models of the AI service")
+    mode.add_argument("--test-model", action="store_true",
+                      help="send one tiny request (no data of your project) to the model and say whether it answers "
+                           "and how fast")
     mode.add_argument("--set-key", action="store_true",
                       help="store the key of the AI service in the system keyring (asked in the terminal)")
     mode.add_argument("--forget-key", action="store_true", help="remove the stored key of the AI service")

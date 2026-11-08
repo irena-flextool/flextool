@@ -5,7 +5,7 @@ use and how long conversations are kept.
 Provider [Google Gemini ▾]   Address [https://…] (fixed)
 Key      Using the key from the environment variable GEMINI_API_KEY. …   [•••••••] [Store key] [Forget key]
          Store in: (o) system keyring ( ) a file on this computer (not encrypted)
-Model    [gemini-… ▾] [Refresh list] 34 models
+Model    [gemini-… ▾] [Refresh list] [Test model] 34 models
 Level    [Automatic (standard for this model) ▾]   the reason
          Free plan: fewer steps for each question, … [Automatic (off for this model) ▾]
 Questions answered at the same time [1] (more chats wait their turn)
@@ -28,6 +28,11 @@ or the provider or address changed since (critique m16).  The saved settings fil
   model whose name ends ``:free`` — then On and Off.  Saved with the rest (``free_tier``: null, true or false).
 * **Data use**: one check box per privacy setting the requests carry (unchecking one that is on by default asks
   first; "Keep on" checks it again), the settings only the account can change as a list (no links).
+* **Test model** (owner decisions 2026-11-08): one tiny request to the model in the box
+  (:func:`~flextool.assistant.model_check.check_model`) on a background thread, through the window's provider gate
+  and pacing, after the data notice when the route needs it; the button stops it meanwhile.  A refusal saying the
+  model is not available to the account marks it in the saved model list (hidden from the default list, marked
+  under "Show all models"); a later success removes the mark, and so do Refresh and a stored or forgotten key.
 * **Save** writes P1's ``settings.json`` (keeping keys this FlexTool does not know), then calls *on_saved()* —
   the chat window's :meth:`~flextool.gui.assistant.chat_window.ChatWindow.settings_changed`.  Cancel discards
   everything except a key already stored or forgotten.
@@ -81,7 +86,7 @@ class AssistantSettingsDialog(_AssistantDialog):
 
     def __init__(self, parent: tk.Misc, post_to_main: PostToMain | None, on_saved: Callable[[], None] | None, *,
                  backend_factory: Callable[[Preset, Any], Any] | None = None,
-                 config_root: Path | None = None) -> None:
+                 config_root: Path | None = None, gate: Any = None) -> None:
         from flextool.assistant.providers import PRESETS
         from flextool.assistant.settings import Settings, load_settings
 
@@ -98,6 +103,14 @@ class AssistantSettingsDialog(_AssistantDialog):
         self._on_saved = on_saved
         self._backend_factory = backend_factory or _default_backend_factory
         self._config_root = config_root
+        if gate is None:
+            from flextool.gui.assistant.gate import PROCESS_GATE
+
+            gate = PROCESS_GATE
+        #: The process-wide provider gate the chats share: the test waits its turn like a question.
+        self._gate = gate
+        #: The running test: its cancel event and its backend (set by the test's thread), else ``None``.
+        self._test: dict[str, Any] | None = None
         self.alive = True
         self.generation = 0
         #: Background results dropped because the dialog closed or the provider changed (for the tests).
@@ -121,6 +134,8 @@ class AssistantSettingsDialog(_AssistantDialog):
 
         #: The model lists of earlier fetches, by preset and address (one small file, read once).
         self._saved_lists = model_list_cache.load_all()
+        #: The models a test found not available to the account, by list key (the same file).
+        self._marks = model_list_cache.load_marks()
         #: The whole model list shown in the model box (the fetched or saved one); the box shows the newest stable
         #: version of each model unless "Show all models" is on.  ``_list_date``: the date of a saved list.
         self._list_ids: list[str] = []
@@ -212,8 +227,12 @@ class AssistantSettingsDialog(_AssistantDialog):
         self.model_box.pack(side="left")
         self.refresh_button = ttk.Button(model_row, text=strings.SET_REFRESH, command=self.refresh_models)
         self.refresh_button.pack(side="left", padx=(cw, 0))
+        self.test_button = ttk.Button(model_row, text=strings.SET_TEST_MODEL, command=self.test_model)
+        self.test_button.pack(side="left", padx=(cw // 2, 0))
         self.models_label = ttk.Label(model_row, text="", wraplength=cw * 36, justify="left")
         self.models_label.pack(side="left", padx=(cw, 0))
+        self.test_label = ttk.Label(model, text="", wraplength=self.wrap, justify="left")
+        self.test_label.pack(anchor="w", fill="x")
         self.show_all_var = tk.BooleanVar(self, value=False)
         self.show_all_button = ttk.Checkbutton(model, text=strings.SET_SHOW_ALL_MODELS, variable=self.show_all_var,
                                                command=self._show_list)
@@ -333,6 +352,7 @@ class AssistantSettingsDialog(_AssistantDialog):
         """Show the settings of the preset *preset_id* (``None``: no provider chosen yet)."""
         from flextool.assistant.providers import PRESETS
 
+        self.stop_test(quiet=True)
         old = self._preset
         if old is not None:
             self._models[old.id] = self.model_var.get().strip()
@@ -356,7 +376,7 @@ class AssistantSettingsDialog(_AssistantDialog):
                 self.address_fixed_label.pack_forget()
         enabled = ["!disabled"] if preset is not None else ["disabled"]
         for widget in (self.key_entry, self.store_button, self.forget_button, self.model_box, self.refresh_button,
-                       self.level_box):
+                       self.test_button, self.level_box):
             widget.state(enabled)
         if preset is not None:
             self.level_box.state(["readonly"])
@@ -402,6 +422,7 @@ class AssistantSettingsDialog(_AssistantDialog):
         if self._addresses.get(preset.id) == self._address():
             return
         self._addresses[preset.id] = self._address()
+        self.stop_test(quiet=True)
         self.generation += 1
         self._clear_list()
         self._show_saved_list()
@@ -600,6 +621,7 @@ class AssistantSettingsDialog(_AssistantDialog):
     def _store(self, preset: Preset, key: str, to_file: bool) -> None:
         generation = self.generation
         endpoint = self._key_endpoint()
+        list_url = self._checked_address()
         config_root = self._config_root
         self.key_status.configure(text=strings.SET_KEY_CHECKING)
 
@@ -612,11 +634,24 @@ class AssistantSettingsDialog(_AssistantDialog):
                 self._post(generation, self._show_key_text, strings.KEY_STORE_FAILED.format(reason=exc),
                            self._has_key)
                 return
-            self._post(generation, self._key_stored)
+            self._post(generation, self._key_stored, self._clear_marks_for(preset, list_url))
 
         self._run(run, "flextool-assistant-key-store")
 
-    def _key_stored(self) -> None:
+    @staticmethod
+    def _clear_marks_for(preset: Preset, list_url: str | None):  # noqa: ANN205 — model_list_cache.Marks
+        """From a background thread: a new or forgotten key ends the "not available" marks of the provider and
+        address; returns the marks now saved."""
+        from flextool.assistant import model_list_cache
+
+        if list_url:
+            model_list_cache.clear_marks(preset.id, list_url)
+        return model_list_cache.load_marks()
+
+    def _key_stored(self, marks: Any = None) -> None:
+        if marks is not None:
+            self._marks = marks
+            self._show_list()
         self.key_entry.delete(0, "end")
         self._check_key()
 
@@ -627,6 +662,7 @@ class AssistantSettingsDialog(_AssistantDialog):
             return
         generation = self.generation
         endpoint = self._key_endpoint()
+        list_url = self._checked_address()
         config_root = self._config_root
         self.key_status.configure(text=strings.SET_KEY_CHECKING)
 
@@ -638,11 +674,14 @@ class AssistantSettingsDialog(_AssistantDialog):
             except Exception as exc:  # noqa: BLE001 — a locked or newer key file
                 self._post(generation, self._show_key_text, strings.KEY_PROBLEM.format(reason=exc), self._has_key)
                 return
-            self._post(generation, self._key_forgotten, note)
+            self._post(generation, self._key_forgotten, note, self._clear_marks_for(preset, list_url))
 
         self._run(run, "flextool-assistant-key-forget")
 
-    def _key_forgotten(self, note: str | None) -> None:
+    def _key_forgotten(self, note: str | None, marks: Any = None) -> None:
+        if marks is not None:
+            self._marks = marks
+            self._show_list()
         self._check_key()
         if note:
             from flextool.assistant import keys
@@ -729,6 +768,7 @@ class AssistantSettingsDialog(_AssistantDialog):
 
         if preset_id is not None and base_url is not None and saved is not None:
             self._saved_lists[model_list_cache.key(preset_id, base_url)] = saved
+            self._marks.pop(model_list_cache.key(preset_id, base_url), None)       # a fresh list has no marks
         self._list_ids, self._list_date = list(ids), None
         if not ids:
             preset = self._preset
@@ -758,8 +798,10 @@ class AssistantSettingsDialog(_AssistantDialog):
     def _show_list(self, *, select: bool = False) -> None:
         """The model box from the whole list: the newest stable version of each model (all of them with "Show all
         models", or for a server on this computer).  The chosen model stays in the box when the default list leaves
-        it out, marked "(pre-release)", "(alias)", "(older version)" or "(not a chat model)"; it is never replaced.
-        *select*: the chosen model is the selected entry."""
+        it out, marked "(pre-release)", "(alias)", "(older version)", "(not a chat model)" or "(not available to
+        your account)"; it is never replaced.  A model a test found not available to the account is marked so also
+        under "Show all models".  *select*: the chosen model is the selected entry."""
+        from flextool.assistant import model_list_cache
         from flextool.assistant.providers import hidden_reason, shown_models
 
         preset = self._preset
@@ -768,9 +810,12 @@ class AssistantSettingsDialog(_AssistantDialog):
         ids = self._list_ids
         if not ids:
             return
-        shown = set(shown_models(preset, ids, show_all=self.show_all_var.get()))
+        closed = model_list_cache.unavailable(self._marks, preset.id, self._checked_address())
+        shown = set(shown_models(preset, ids, show_all=self.show_all_var.get(), unavailable=closed))
         model = self.model_var.get().strip()
-        values = [i if i in shown else i + strings.MODEL_HIDDEN_MARKS[hidden_reason(i)]
+        closed_mark = strings.MODEL_HIDDEN_MARKS["unavailable"]
+        values = [(i + closed_mark if i in closed else i) if i in shown
+                  else i + strings.MODEL_HIDDEN_MARKS[hidden_reason(i, closed)]
                   for i in ids if i in shown or i == model]
         self.model_box["values"] = values
         if select and model in ids:
@@ -781,6 +826,189 @@ class AssistantSettingsDialog(_AssistantDialog):
 
     def _show_models_text(self, text: str) -> None:
         self.models_label.configure(text=text)
+
+    # --- [Test model] -------------------------------------------------------------------------------------------
+    def test_model(self) -> None:
+        """[Test model]: one tiny request to the model in the box (see the module text); while it runs, the button
+        stops it."""
+        from flextool.assistant.net import BaseUrlRefused, check_base_url
+        from flextool.assistant.providers import model_id
+
+        if self._test is not None:
+            self.stop_test()
+            return
+        preset = self._preset
+        if preset is None:
+            return
+        model = model_id(preset.id, self.model_var.get())
+        if not model:
+            self.test_label.configure(text=strings.TEST_NEEDS_MODEL)
+            return
+        try:
+            base_url = check_base_url(self._address())
+        except BaseUrlRefused as exc:
+            self.test_label.configure(text=str(exc) if self._address() else strings.SET_ADDRESS_NEEDED)
+            return
+        test: dict[str, Any] = {"cancel": threading.Event(), "backend": None, "generation": self.generation,
+                                "preset": preset, "base_url": base_url, "model": model, "knobs": dict(self._knobs),
+                                "endpoint": self._key_endpoint(), "free": self._free_choice}
+        self._test = test
+        self.test_button.configure(text=strings.SET_TEST_STOP)
+        self.test_label.configure(text=strings.TEST_RUNNING.format(model=model))
+        config_root = self._config_root
+
+        def run() -> None:
+            from flextool.assistant import endpoint, keys
+            from flextool.assistant.llm_adapter import Connection
+
+            try:
+                key, source, _note = keys.resolve_key(preset, test["endpoint"], config_root=config_root)
+                if preset.key_required and not key:
+                    self._post(None, self._test_done, test, strings.TEST_NEEDS_KEY, None)
+                    return
+                route = endpoint.route_for(preset, base_url, model=model)
+                test["conn"] = Connection(base_url=base_url, model=model, api_key=key or "",
+                                          key_source=source.describe(preset) if key else "", knobs=test["knobs"],
+                                          route=route)
+                consent = endpoint.consent_key(preset.id, base_url, route)
+                if endpoint.needs_consent(consent, config_root):
+                    notice = endpoint.consent_notice(route, required_headers=preset.required_headers)
+                    self._post(None, self._ask_test_consent, test, consent, route, notice,
+                               endpoint.indicator_text(route))
+                    return
+            except Exception as exc:  # noqa: BLE001 — shown, logged
+                logger.warning("The model test could not start", exc_info=True)
+                self._post(None, self._test_done, test, strings.TEST_FAILED_INTERNAL.format(type=type(exc).__name__),
+                           None)
+                return
+            self._check(test)
+
+        self._run(run, "flextool-assistant-model-test")
+
+    def _ask_test_consent(self, test: dict[str, Any], consent: Any, route: Any, notice: str, indicator: str) -> None:
+        """The data notice of the test's route, as a question (the test sends no case data, but it is a request
+        to the service)."""
+        if self._test is not test:
+            return
+
+        def answered(send: bool) -> None:
+            self.confirm = None
+            if self._test is not test:
+                return
+            if not send or test["cancel"].is_set():
+                self._test_done(test, strings.TEST_NOTHING_SENT.format(provider=route.label), None)
+                return
+            config_root = self._config_root
+
+            def run() -> None:
+                from flextool.assistant import _files, endpoint
+
+                try:
+                    endpoint.record_consent(consent, config_root)
+                except (_files.NewerFormat, _files.LockTimeout, OSError):
+                    logger.info("The acceptance of the data notice could not be kept", exc_info=True)
+                self._check(test)
+
+            self._run(run, "flextool-assistant-model-test")
+
+        self.confirm = ConfirmDialog(self, strings.NOTICE_TITLE.format(provider=route.label),
+                                     f"{notice}\n\n{indicator}", strings.NOTICE_SEND.format(provider=route.label),
+                                     answered)
+
+    def _check(self, test: dict[str, Any]) -> None:
+        """On the test's thread: the request, then the marks in the saved model list."""
+        from flextool.assistant import model_check, model_list_cache
+        from flextool.assistant.budget import free_tier_on
+        from flextool.assistant.llm_errors import LLMError, message_for
+        from flextool.assistant.usage import Ledger, ledger_key
+        from flextool.gui.assistant.gate import GatedBackend, GateWait
+
+        preset, conn, model = test["preset"], test["conn"], test["model"]
+        cancel: threading.Event = test["cancel"]
+        route = conn.route
+        if cancel.is_set():
+            self._post(None, self._test_done, test, model_check.STOPPED, None)
+            return
+        try:
+            inner = self._backend_factory(preset, conn)
+        except LLMError as err:
+            self._post(None, self._test_done, test, message_for(err, "gui"), None)
+            return
+        except Exception as exc:  # noqa: BLE001 — a missing library: shown, logged
+            logger.warning("The model test could not start", exc_info=True)
+            self._post(None, self._test_done, test, strings.TEST_FAILED_INTERNAL.format(type=type(exc).__name__),
+                       None)
+            return
+        key = ledger_key(preset.id, conn.base_url, forwarded_to=route.forwarded_to)
+        backend = GatedBackend(inner, self._gate, key, label=route.label)
+        test["backend"] = backend
+
+        def waiting(event: object) -> None:
+            from flextool.assistant.llm_adapter import RetryWait
+
+            if isinstance(event, RetryWait):
+                self._post(None, self._test_progress, test, event.reason)
+            elif isinstance(event, GateWait):
+                self._post(None, self._test_progress, test, strings.TEST_RUNNING.format(model=model))
+
+        try:
+            if cancel.is_set():
+                result = model_check.CheckResult("stopped", model_check.STOPPED)
+            else:
+                result = model_check.check_model(
+                    preset, backend, cancel, label=route.label, ledger=Ledger(self._config_root), ledger_key=key,
+                    free_plan=free_tier_on(preset.id, model, test["free"]), front_end="gui", on_event=waiting)
+        except Exception as exc:  # noqa: BLE001 — shown, logged
+            logger.warning("The model test failed", exc_info=True)
+            result = model_check.CheckResult("failed", strings.TEST_FAILED_INTERNAL.format(type=type(exc).__name__))
+        finally:
+            backend.close()
+        marks = None
+        if result.unavailable:
+            model_list_cache.mark_unavailable(preset.id, conn.base_url, model)
+            marks = model_list_cache.load_marks()
+        elif result.outcome == "available":
+            model_list_cache.clear_marks(preset.id, conn.base_url, model)
+            marks = model_list_cache.load_marks()
+        self._post(None, self._test_done, test, result.message, marks)
+
+    def _test_progress(self, test: dict[str, Any], text: str) -> None:
+        if self._test is test:
+            self.test_label.configure(text=text)
+
+    def _test_done(self, test: dict[str, Any], text: str, marks: Any) -> None:
+        """The test ended: its text (when the provider and address are still the shown ones), the button back and
+        the list with the new marks."""
+        if marks is not None:
+            self._marks = marks
+        if self._test is not test:
+            return
+        self._test = None
+        self.test_button.configure(text=strings.SET_TEST_MODEL)
+        if test["generation"] == self.generation:
+            self.test_label.configure(text=text)
+            if marks is not None:
+                self._show_list()
+
+    def stop_test(self, *, quiet: bool = False) -> None:
+        """Stop the running test: its cancel event, and the response being read closed on a short daemon thread.
+        *quiet* (the provider or address changed, the dialog closes): the button comes back at once and the test's
+        result is not shown."""
+        test = self._test
+        if test is None:
+            return
+        test["cancel"].set()
+        backend = test.get("backend")
+        if backend is not None:
+            threading.Thread(target=_abort_quietly, args=(backend,), name="flextool-assistant-abort",
+                             daemon=True).start()
+        if quiet:
+            self._test = None
+            try:
+                self.test_button.configure(text=strings.SET_TEST_MODEL)
+                self.test_label.configure(text="")
+            except tk.TclError:
+                pass
 
     def _model_changed(self) -> None:
         value = self.model_var.get()
@@ -1000,6 +1228,7 @@ class AssistantSettingsDialog(_AssistantDialog):
         self.close()
 
     def close(self) -> None:
+        self.stop_test(quiet=True)
         self.alive = False
         if self._poll_id is not None:
             try:
@@ -1012,6 +1241,13 @@ class AssistantSettingsDialog(_AssistantDialog):
     def _on_destroy(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         if event.widget is self:
             self.alive = False
+
+
+def _abort_quietly(backend: Any) -> None:
+    try:
+        backend.abort()
+    except Exception:  # noqa: BLE001 — closing a response another thread reads may fail; the cancel event holds
+        logger.debug("abort of the model test failed", exc_info=True)
 
 
 def _count_text(n: int) -> str:

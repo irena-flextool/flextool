@@ -136,7 +136,10 @@ TEXTS: dict[str, str] = {
     "hidden_older_one": "1 older version",
     "hidden_not-chat": "{n} models that are not chat models",
     "hidden_not-chat_one": "1 model that is not a chat model",
+    "hidden_unavailable": "{n} models a test found not available to your account",
+    "hidden_unavailable_one": "1 model a test found not available to your account",
     "all_only_with_list": "--all goes with --list-models.",
+    "testing": "Testing {model} of {provider}…",
     "model_choice": "Model (number or name; Enter to stop): ",
     "model_name": "Model name (Enter to stop): ",
     "no_models": "{provider} lists no models.",
@@ -765,40 +768,7 @@ class Chat:
     # --- the data notice ------------------------------------------------------------------------------------------
     def consent(self, route: Route) -> int | None:
         """``None`` when data may go on *route*; else the exit code (3), after saying why."""
-        key = endpoint.consent_key(self.choice.preset.id, self.choice.base_url, route)
-        if key in self.accepted or not endpoint.needs_consent(key):
-            return None
-        provider = route.label
-        where = route.forwarded_to or route.host
-        notice = endpoint.consent_notice(route, required_headers=self.choice.preset.required_headers)
-        if self.args.accept_data_notice:
-            self.term.say(notice, err=True)
-            self.term.say(endpoint.indicator_text(route), err=True)
-            self._record(key, provider, where, err=True)
-            return None
-        if self.quiet:
-            self.term.say(TEXTS["not_accepted"].format(provider=provider, endpoint=where), err=True)
-            return 3
-        self.term.say(notice)
-        self.term.say(endpoint.indicator_text(route))
-        answer = self.term.read_line(TEXTS["consent_question"].format(provider=provider))
-        if answer is not None and answer.strip().lower() == "yes":
-            self._record(key, provider, where, err=False)
-            return None
-        self.term.say(TEXTS["nothing_sent"].format(provider=provider))
-        return 3
-
-    def _record(self, key: endpoint.ConsentKey, provider: str, where: str, *, err: bool) -> None:
-        from flextool.assistant import _files
-
-        self.accepted.add(key)
-        try:
-            endpoint.record_consent(key)
-        except (_files.NewerFormat, _files.LockTimeout, OSError) as exc:
-            self.term.say(TEXTS["accept_not_kept"].format(reason=exc), err=err)
-            return
-        if self.args.accept_data_notice:
-            self.term.say(TEXTS["accepted_lasting"].format(provider=provider, endpoint=where), err=err)
+        return ask_consent(self.term, self.args, self.choice, route, self.accepted, quiet=self.quiet)
 
     # --- the connection -------------------------------------------------------------------------------------------
     def _wait(self, done: threading.Event, stop: Callable[[], None]) -> bool:
@@ -1139,6 +1109,49 @@ class Chat:
 
 
 # --- the small commands -------------------------------------------------------------------------------------------
+def ask_consent(term: Terminal, args: argparse.Namespace, choice: Choice, route: Route,
+                accepted: set[endpoint.ConsentKey], *, quiet: bool) -> int | None:
+    """The data notice of *route*: ``None`` when data may go there (accepted before, in *accepted*, with
+    ``--accept-data-notice`` or by typing yes); else the exit code (3), after saying why.  *quiet*: no question is
+    asked (``-q``, or no terminal)."""
+    key = endpoint.consent_key(choice.preset.id, choice.base_url, route)
+    if key in accepted or not endpoint.needs_consent(key):
+        return None
+    provider = route.label
+    where = route.forwarded_to or route.host
+    notice = endpoint.consent_notice(route, required_headers=choice.preset.required_headers)
+    if args.accept_data_notice:
+        term.say(notice, err=True)
+        term.say(endpoint.indicator_text(route), err=True)
+        _record_consent(term, args, accepted, key, provider, where, err=True)
+        return None
+    if quiet:
+        term.say(TEXTS["not_accepted"].format(provider=provider, endpoint=where), err=True)
+        return 3
+    term.say(notice)
+    term.say(endpoint.indicator_text(route))
+    answer = term.read_line(TEXTS["consent_question"].format(provider=provider))
+    if answer is not None and answer.strip().lower() == "yes":
+        _record_consent(term, args, accepted, key, provider, where, err=False)
+        return None
+    term.say(TEXTS["nothing_sent"].format(provider=provider))
+    return 3
+
+
+def _record_consent(term: Terminal, args: argparse.Namespace, accepted: set[endpoint.ConsentKey],
+                    key: endpoint.ConsentKey, provider: str, where: str, *, err: bool) -> None:
+    from flextool.assistant import _files
+
+    accepted.add(key)
+    try:
+        endpoint.record_consent(key)
+    except (_files.NewerFormat, _files.LockTimeout, OSError) as exc:
+        term.say(TEXTS["accept_not_kept"].format(reason=exc), err=err)
+        return
+    if args.accept_data_notice:
+        term.say(TEXTS["accepted_lasting"].format(provider=provider, endpoint=where), err=err)
+
+
 def _need_choice(args: argparse.Namespace, settings: Settings, term: Terminal) -> Choice:
     choice = choice_from(args, settings, term)
     if choice is None:
@@ -1159,13 +1172,17 @@ def cmd_list_models(args: argparse.Namespace, term: Terminal, factory: BackendFa
     if not models:
         term.say(TEXTS["no_models"].format(provider=choice.preset.label), err=True)
         return 0
+    from flextool.assistant import model_list_cache
     from flextool.assistant.providers import hidden_reason, shown_models
 
-    shown = set(shown_models(choice.preset, [e.id for e in models], show_all=args.all_models))
-    hidden = [hidden_reason(e.id) for e in models if e.id not in shown]
+    closed = model_list_cache.unavailable(model_list_cache.load_marks(), choice.preset.id, choice.base_url)
+    shown = set(shown_models(choice.preset, [e.id for e in models], show_all=args.all_models, unavailable=closed))
+    hidden = [hidden_reason(e.id, closed) for e in models if e.id not in shown]
     models = [e for e in models if e.id in shown]
     for entry in models:
         parts = [entry.id]
+        if entry.id in closed:
+            parts.append("not available to your account")
         if entry.context_window:
             from flextool.assistant.usage import number
 
@@ -1176,10 +1193,90 @@ def cmd_list_models(args: argparse.Namespace, term: Terminal, factory: BackendFa
     if hidden:
         kinds = [TEXTS[f"hidden_{kind}_one"] if hidden.count(kind) == 1 else
                  TEXTS[f"hidden_{kind}"].format(n=hidden.count(kind))
-                 for kind in ("pre-release", "alias", "older", "not-chat") if kind in hidden]
+                 for kind in ("pre-release", "alias", "older", "not-chat", "unavailable") if kind in hidden]
         term.say(TEXTS["hidden_model" if len(hidden) == 1 else "hidden_models"].format(kinds=", ".join(kinds)),
                  err=True)
     return 0
+
+
+def cmd_test_model(args: argparse.Namespace, term: Terminal, factory: BackendFactory) -> int:
+    """``--test-model``: one tiny request to the chosen model (:func:`flextool.assistant.model_check.check_model`)
+    after the data notice; 0 when it answered, 1 when not, 130 when stopped."""
+    from flextool.assistant import model_check, model_list_cache
+    from flextool.assistant.backends._common import error_context
+    from flextool.assistant.budget import free_tier_on
+    from flextool.assistant.llm_adapter import RetryWait, Waiting
+    from flextool.assistant.llm_errors import LLMError, render
+    from flextool.assistant.settings import load_settings
+    from flextool.assistant.usage import Ledger, ledger_key
+
+    settings = load_settings()
+    choice = _need_choice(args, settings, term)
+    preset = choice.preset
+    if not choice.model:
+        term.say(TEXTS["no_model"].format(provider=preset.label, preset=preset.id), err=True)
+        return 2
+    conn = connection_for(choice)
+    if preset.key_required and not conn.api_key:
+        term.say(render("no_key", error_context(preset, conn)), err=True)
+        return 2
+    route = conn.route
+    code = ask_consent(term, args, choice, route, set(), quiet=not term.interactive)
+    if code is not None:
+        return code
+    try:
+        backend = factory(preset, conn)
+    except LLMError as exc:
+        term.say(_error_text(exc), err=True)
+        return 1
+    renderer = Renderer(term, quiet=True)            # the waits on stderr, the outcome alone on stdout
+    renderer.note(TEXTS["testing"].format(model=conn.model, provider=route.label))
+    cancel = threading.Event()
+    box: dict[str, Any] = {}
+    done = threading.Event()
+
+    def waits(event: object) -> None:
+        if isinstance(event, (RetryWait, Waiting)):
+            renderer.event(event)  # type: ignore[arg-type]
+
+    def run() -> None:
+        try:
+            box["result"] = model_check.check_model(
+                preset, backend, cancel, label=route.label, ledger=Ledger(),
+                ledger_key=ledger_key(preset.id, choice.base_url, forwarded_to=route.forwarded_to),
+                free_plan=free_tier_on(preset.id, conn.model, free_tier_setting(args, settings)),
+                front_end="terminal", on_event=waits)
+        except BaseException as exc:  # noqa: BLE001 — handed to the waiting thread
+            box["error"] = exc
+        finally:
+            done.set()
+
+    threading.Thread(target=run, name="flextool-assistant-model-test", daemon=True).start()
+    try:
+        try:
+            while not done.wait(0.05):
+                if term.interrupt.is_set():
+                    term.interrupt.clear()
+                    raise KeyboardInterrupt
+        except KeyboardInterrupt:
+            cancel.set()
+            backend.abort()
+            done.wait(5.0)
+            renderer.finish()
+            term.say(TEXTS["stopped"])
+            return 130
+        renderer.finish()
+        if "error" in box:
+            raise box["error"]
+        result: model_check.CheckResult = box["result"]
+    finally:
+        backend.close()
+    if result.unavailable:
+        model_list_cache.mark_unavailable(preset.id, choice.base_url, conn.model)
+    elif result.outcome == "available":
+        model_list_cache.clear_marks(preset.id, choice.base_url, conn.model)
+    term.say(result.message)
+    return {"available": 0, "stopped": 130}.get(result.outcome, 1)
 
 
 def cmd_set_key(args: argparse.Namespace, term: Terminal) -> int:
@@ -1198,6 +1295,10 @@ def cmd_set_key(args: argparse.Namespace, term: Terminal) -> int:
         term.say(TEXTS["key_needed"].format(provider=preset.label), err=True)
         return 2
     stored = _store_key(term, preset, choice.base_url, typed, None, to_file=args.key_file)
+    if stored:
+        from flextool.assistant import model_list_cache
+
+        model_list_cache.clear_marks(preset.id, choice.base_url)       # a new key: the marks are tested again
     return 0 if stored else 2
 
 
@@ -1206,7 +1307,10 @@ def cmd_forget_key(args: argparse.Namespace, term: Terminal) -> int:
     from flextool.assistant.settings import load_settings
 
     choice = _need_choice(args, load_settings(), term)
+    from flextool.assistant import model_list_cache
+
     note = keys.forget_key(choice.preset, choice.base_url)
+    model_list_cache.clear_marks(choice.preset.id, choice.base_url)
     term.say(TEXTS["key_removed"].format(provider=choice.preset.label))
     if note:
         term.say(note, err=True)
@@ -1241,6 +1345,8 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser, *, backend_fa
             return cmd_usage(term)
         if args.list_models:
             return cmd_list_models(args, term, factory)
+        if args.test_model:
+            return cmd_test_model(args, term, factory)
         if args.set_key:
             return cmd_set_key(args, term)
         if args.forget_key:

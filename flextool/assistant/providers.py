@@ -306,21 +306,30 @@ def lists_latest_only(preset: Preset) -> bool:
     return not preset.local
 
 
-def shown_models(preset: Preset, ids: Iterable[str], *, show_all: bool = False) -> list[str]:
-    """The ids of a model list as shown: all of them with *show_all* or for a server on this computer, else the
-    chat models (:func:`is_chat_model`) and of those the newest stable version of each family (no pre-releases, no
-    ``latest`` aliases).  The saved list keeps every id; this runs when the list is shown."""
+def shown_models(preset: Preset, ids: Iterable[str], *, show_all: bool = False,
+                 unavailable: Iterable[str] = ()) -> list[str]:
+    """The ids of a model list as shown: all of them with *show_all*; else without the models a test found not
+    available to the account (*unavailable*), and for a remote service only the chat models (:func:`is_chat_model`)
+    and of those the newest stable version of each family (no pre-releases, no ``latest`` aliases).  The saved list
+    keeps every id; this runs when the list is shown."""
     from flextool.assistant.model_versions import latest_ids
 
     ids = list(ids)
-    if show_all or not lists_latest_only(preset):
+    if show_all:
+        return ids
+    closed = set(unavailable)
+    ids = [i for i in ids if i not in closed]
+    if not lists_latest_only(preset):
         return ids
     return latest_ids(i for i in ids if is_chat_model(i))
 
 
-def hidden_reason(model: str) -> str:
-    """Why the default list of a remote service leaves *model* out: ``"not-chat"`` (:func:`is_chat_model`), else
-    :func:`flextool.assistant.model_versions.hidden_kind` (``"pre-release"``, ``"alias"`` or ``"older"``)."""
+def hidden_reason(model: str, unavailable: Iterable[str] = ()) -> str:
+    """Why the default list leaves *model* out: ``"unavailable"`` (a test found it not available to the account),
+    ``"not-chat"`` (:func:`is_chat_model`), else :func:`flextool.assistant.model_versions.hidden_kind`
+    (``"pre-release"``, ``"alias"`` or ``"older"``)."""
     from flextool.assistant.model_versions import hidden_kind
 
+    if model in set(unavailable):
+        return "unavailable"
     return "not-chat" if not is_chat_model(model) else hidden_kind(model)

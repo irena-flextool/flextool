@@ -162,7 +162,15 @@ SET_SHOW_ALL_MODELS = "Show all models"
 #: After the chosen model in the list when the default list leaves it out, by the reason
 #: (:func:`flextool.assistant.providers.hidden_reason`).
 MODEL_HIDDEN_MARKS = {"pre-release": " (pre-release)", "alias": " (alias)", "older": " (older version)",
-                      "not-chat": " (not a chat model)"}
+                      "not-chat": " (not a chat model)", "unavailable": " (not available to your account)"}
+#: [Test model] (owner decisions 2026-11-08): one tiny request to the chosen model; the button stops it meanwhile.
+SET_TEST_MODEL = "Test model"
+SET_TEST_STOP = "Stop test"
+TEST_RUNNING = "Testing {model}…"
+TEST_NEEDS_MODEL = "Choose or type a model first."
+TEST_NEEDS_KEY = "Store a key first to test the model."
+TEST_NOTHING_SENT = "Nothing was sent to {provider}."
+TEST_FAILED_INTERNAL = "The test could not run ({type})."
 MODELS_LOADING = "Fetching the model list…"
 MODELS_COUNT = "{n} models"
 MODELS_ONE = "1 model"
