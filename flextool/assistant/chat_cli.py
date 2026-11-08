@@ -126,8 +126,14 @@ TEXTS: dict[str, str] = {
     "key_file_only_with_set": "--key-file goes with --set-key.",
     "key_not_needed": "{provider} needs no key.",
     "models_head": "Models of {provider}:",
-    "older_hidden": "{n} older model versions are not shown; add --all to list them.",
-    "older_hidden_one": "1 older model version is not shown; add --all to list it.",
+    "hidden_models": "Not shown: {kinds}; add --all to list them.",
+    "hidden_model": "Not shown: {kinds}; add --all to list it.",
+    "hidden_pre-release": "{n} pre-releases",
+    "hidden_pre-release_one": "1 pre-release",
+    "hidden_alias": "{n} -latest aliases",
+    "hidden_alias_one": "1 -latest alias",
+    "hidden_older": "{n} older versions",
+    "hidden_older_one": "1 older version",
     "all_only_with_list": "--all goes with --list-models.",
     "model_choice": "Model (number or name; Enter to stop): ",
     "model_name": "Model name (Enter to stop): ",
@@ -1153,8 +1159,10 @@ def cmd_list_models(args: argparse.Namespace, term: Terminal, factory: BackendFa
         return 0
     from flextool.assistant.providers import shown_models
 
+    from flextool.assistant.model_versions import hidden_kind
+
     shown = set(shown_models(choice.preset, [e.id for e in models], show_all=args.all_models))
-    hidden = len(models) - len(shown)
+    hidden = [hidden_kind(e.id) for e in models if e.id not in shown]
     models = [e for e in models if e.id in shown]
     for entry in models:
         parts = [entry.id]
@@ -1166,7 +1174,11 @@ def cmd_list_models(args: argparse.Namespace, term: Terminal, factory: BackendFa
             parts.append(entry.note)
         term.say("  ".join(parts))
     if hidden:
-        term.say(TEXTS["older_hidden_one"] if hidden == 1 else TEXTS["older_hidden"].format(n=hidden), err=True)
+        kinds = [TEXTS[f"hidden_{kind}_one"] if hidden.count(kind) == 1 else
+                 TEXTS[f"hidden_{kind}"].format(n=hidden.count(kind))
+                 for kind in ("pre-release", "alias", "older") if kind in hidden]
+        term.say(TEXTS["hidden_model" if len(hidden) == 1 else "hidden_models"].format(kinds=", ".join(kinds)),
+                 err=True)
     return 0
 
 

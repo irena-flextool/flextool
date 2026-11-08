@@ -403,10 +403,10 @@ def test_the_model_list_is_kept_per_provider_and_address(open_dialog, host, monk
     assert list(again.model_box["values"]) == ["model-a", "model-b"]
 
 
-def test_the_list_shows_the_latest_versions_and_keeps_the_chosen_older_one(open_dialog, host, monkeypatch,
-                                                                           fake_backends, user_config_in_tmp,
-                                                                           user_cache_in_tmp):
-    """A remote service's list shows the latest version of each model; the chosen model, when older, stays in the
+def test_the_list_shows_the_newest_stable_versions_and_keeps_the_chosen_older_one(open_dialog, host, monkeypatch,
+                                                                                 fake_backends, user_config_in_tmp,
+                                                                                 user_cache_in_tmp):
+    """A remote service's list shows the newest stable version of each model; the chosen model, when older, stays in the
     list marked "(older version)" and is not replaced; "Show all models" shows the whole list, which is what is
     saved.  A server on this computer lists all its models (the box is off)."""
     from flextool.assistant.settings import ProviderSettings, Settings, save_settings
@@ -434,6 +434,31 @@ def test_the_list_shows_the_latest_versions_and_keeps_the_chosen_older_one(open_
     assert dialog.models_label.cget("text") == "3 models"
     dialog.select_preset("ollama")
     assert "disabled" in dialog.show_all_button.state()
+
+
+@pytest.mark.parametrize(("chosen", "mark"), [("gemini-3.1-flash-preview", " (pre-release)"),
+                                              ("gemini-flash-latest", " (alias)")])
+def test_a_chosen_pre_release_or_alias_stays_marked(open_dialog, host, monkeypatch, fake_backends, user_config_in_tmp,
+                                                    user_cache_in_tmp, chosen, mark):
+    """Pre-releases and -latest aliases are not in the default list; the chosen one stays, marked, and is not
+    replaced; "Show all models" shows them all."""
+    from flextool.assistant.settings import ProviderSettings, Settings, save_settings
+
+    monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+    backend = FakeBackend([], models=[ModelEntry("gemini-3-flash"), ModelEntry("gemini-3.1-flash-preview"),
+                                      ModelEntry("gemini-exp-1206"), ModelEntry("gemini-flash-latest")])
+    fake_backends.append(backend)
+    save_settings(Settings(provider=ProviderSettings(preset="gemini", model=chosen)), user_config_in_tmp)
+    dialog = open_dialog(backend_factory=lambda preset, conn: backend)
+    dialog.refresh_models()
+    pump(host, lambda: dialog.models_label.cget("text") == "1 model")
+    assert list(dialog.model_box["values"]) == ["gemini-3-flash", chosen + mark]
+    assert dialog.model_var.get() == chosen
+    dialog.model_box.current(1)                                  # picking the marked entry gives the bare name
+    assert dialog.model_var.get() == chosen
+    dialog.show_all_button.invoke()
+    assert list(dialog.model_box["values"]) == ["gemini-3-flash", "gemini-3.1-flash-preview", "gemini-exp-1206",
+                                                "gemini-flash-latest"]
 
 
 def test_partly_on_the_processor_hint(open_dialog, host):

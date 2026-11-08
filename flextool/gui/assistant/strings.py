@@ -156,10 +156,12 @@ KEY_PROBLEM = "The key could not be read: {reason}"
 KEY_STORE_FAILED = "The key was not stored: {reason}"
 SET_MODEL = "Model"
 SET_REFRESH = "Refresh list"
-#: Off: the model list shows the latest version of each model (a remote service); on: every model it lists.
+#: Off: the model list shows the newest stable version of each model (a remote service); on: every model it lists,
+#: also pre-releases, "-latest" aliases and older versions.
 SET_SHOW_ALL_MODELS = "Show all models"
-#: After the chosen model in the list when it is not the latest version of its model.
-MODEL_OLDER_MARK = " (older version)"
+#: After the chosen model in the list when the default list leaves it out, by the reason
+#: (:func:`flextool.assistant.model_versions.hidden_kind`).
+MODEL_HIDDEN_MARKS = {"pre-release": " (pre-release)", "alias": " (alias)", "older": " (older version)"}
 MODELS_LOADING = "Fetching the model list…"
 MODELS_COUNT = "{n} models"
 MODELS_ONE = "1 model"

@@ -264,7 +264,7 @@ def model_entries(preset_id: str, items: Iterable[Mapping[str, Any]]) -> list[Mo
 
 
 def lists_latest_only(preset: Preset) -> bool:
-    """Whether the model list of *preset* is shown with only the latest version of each family by default
+    """Whether the model list of *preset* is shown with only the newest stable version of each family by default
     (:mod:`flextool.assistant.model_versions`): the remote services.  Ollama and LM Studio list exactly the models
     the user installed, so all of them are shown."""
     return not preset.local
@@ -272,7 +272,8 @@ def lists_latest_only(preset: Preset) -> bool:
 
 def shown_models(preset: Preset, ids: Iterable[str], *, show_all: bool = False) -> list[str]:
     """The ids of a model list as shown: all of them with *show_all* or for a server on this computer, else the
-    latest version of each family.  The saved list keeps every id; this runs when the list is shown."""
+    newest stable version of each family (no pre-releases, no ``latest`` aliases).  The saved list keeps every id;
+    this runs when the list is shown."""
     from flextool.assistant.model_versions import latest_ids
 
     ids = list(ids)

@@ -1,9 +1,10 @@
-"""The latest version of each model family in a service's model list (owner feedback 2026-11-08).
+"""The newest stable version of each model family in a service's model list (owner decisions 2026-11-08).
 
 A service lists every version it still answers for, also ones closed to new accounts (Gemini listed
-``gemini-2.5-flash`` after it stopped serving it to new users).  The settings dialog and ``--list-models`` show only
-the newest version of each family by default; "Show all models" / ``--all`` show the whole list.  Presets name no
-models (P1-O1): the families come from the ids the service returns, never from a list of model names.
+``gemini-2.5-flash`` after it stopped serving it to new users), and many pre-releases.  The settings dialog and
+``--list-models`` show by default only stable releases, and of those only the newest version of each family; "Show
+all models" / ``--all`` show the whole list.  Presets name no models (P1-O1): the families come from the ids the
+service returns, never from a list of model names.
 
 :func:`model_key` splits an id into its family and version:
 
@@ -12,18 +13,19 @@ models (P1-O1): the families come from the ids the service returns, never from a
 * the first run of short numbers is the version (``2.5``, ``3``, ``3-1``, ``4-5``, ``v3.1``);
 * numbers after it — dates (``20251001``, ``2025-08-07``, ``09-2025``), snapshots (``001``, ``2411``) — are the
   snapshot, a lower-priority part of the version;
-* ``preview`` / ``exp`` / ``experimental`` / ``alpha`` / ``beta`` mark a preview, ``latest`` a moving alias;
+* a pre-release word marks a pre-release: ``preview`` (Gemini ``-preview-05-06``, OpenAI ``-preview``), ``exp`` /
+  ``experimental`` (Gemini ``-exp-1206``, OpenRouter ``-exp:free``), ``alpha``, ``beta``, ``rc``, ``pre``,
+  ``dev``, ``nightly``, ``canary``, also with a number (``rc1``, ``beta2``);
+* ``latest`` marks a moving alias (``gemini-flash-latest``, ``mistral-large-latest``);
 * every other word stays in the family, in order (``gemini-flash``, ``gemini-flash-lite``, ``claude-haiku``,
   ``gpt-mini``, ``mistral-large``, ``llama-70b-instruct``);
 * an id without a version number is never compared with numbered ones of the same words: it is a family of its
-  own, together with its dated snapshots and its ``latest`` alias (``gpt-4o`` and ``gpt-4o-2024-08-06``).
+  own, together with its dated snapshots (``gpt-4o`` and ``gpt-4o-2024-08-06``).
 
-:func:`latest_ids` keeps, in each family: the newest stable release (an undated alias before the dated snapshots
-of its version); the newest preview when it is of a newer version than that release (or there is none); and every
-``latest`` alias without a version number (one with a version, ``claude-3-5-sonnet-latest``, is that
-version's undated name).  A ``latest`` alias stands for the dated snapshots of a family that has no version number
-(``mistral-large-latest`` for ``mistral-large-2411``), so those are left out beside it; beside numbered versions
-(``gemini-flash-latest``) it is shown as well, since it may point to a preview.
+:func:`latest_ids` leaves out every pre-release and every ``latest`` alias (its name does not say whether it points
+to a stable model), and keeps in each family the newest stable release: an undated name before the dated snapshots
+of its version, else the newest snapshot (``mistral-large-2411`` over ``-2407``).  A family with only pre-releases
+is not shown.  :func:`hidden_kind` says why an id is not shown.
 """
 from __future__ import annotations
 
@@ -34,7 +36,7 @@ from dataclasses import dataclass
 _VERSION = re.compile(r"v?\d{1,2}(?:\.\d+)*", re.IGNORECASE)
 _NUMBER = re.compile(r"v?\d+(?:\.\d+)*", re.IGNORECASE)
 _YEAR = re.compile(r"(?:19|20)\d\d")
-_PREVIEW = frozenset({"preview", "exp", "experimental", "alpha", "beta"})
+_PREVIEW = re.compile(r"(?:preview|exp|experimental|alpha|beta|rc|pre|dev|nightly|canary)\d*")
 _ALIAS = frozenset({"latest"})
 
 
@@ -43,7 +45,7 @@ class ModelKey:
     family: str
     version: tuple[int, ...]        # () when the id has no version number
     snapshot: tuple[int, ...]       # () for an undated id
-    preview: bool
+    preview: bool                   # a pre-release
     alias: bool                     # a moving "latest" name
 
 
@@ -85,9 +87,10 @@ def model_key(model: str) -> ModelKey:
         if low in _ALIAS:
             alias = True
             continue
-        if low in _PREVIEW or not _NUMBER.fullmatch(tok):
-            preview = preview or low in _PREVIEW
-            if low not in _PREVIEW:
+        marker = bool(_PREVIEW.fullmatch(low))
+        if marker or not _NUMBER.fullmatch(tok):
+            preview = preview or marker
+            if not marker:
                 words.append(low)
             if state == "in":
                 state = "after"         # a word ends the version
@@ -112,27 +115,22 @@ def _rank(key: ModelKey) -> tuple:
 
 
 def latest_ids(ids: Iterable[str]) -> list[str]:
-    """The ids of *ids* that are the latest version of their family, in the order given."""
+    """The ids of *ids* that are the newest stable release of their family, in the order given."""
     ids = list(ids)
     families: dict[tuple[str, bool], list[tuple[str, ModelKey]]] = {}
     for model in ids:
         key = model_key(model)
+        if key.preview or key.alias:
+            continue
         # An id without a version number is never compared with numbered ones (``assistant-model`` is not an
-        # older ``assistant-model-2``); it is the undated alias of its dated snapshots (``gpt-4o``).
+        # older ``assistant-model-2``); it is the undated name of its dated snapshots (``gpt-4o``).
         families.setdefault((key.family, bool(key.version)), []).append((model, key))
-    keep: set[str] = set()
-    for (_family, numbered), members in families.items():
-        # A "latest" without a version number stands for the snapshots beside it; one with a version number
-        # (``claude-3-5-sonnet-latest``) is the undated name of that version.
-        aliases = [] if numbered else [m for m, k in members if k.alias]
-        keep.update(aliases)
-        rest = [] if aliases else members
-        stable = [(m, k) for m, k in rest if not k.preview]
-        previews = [(m, k) for m, k in rest if k.preview]
-        best = max(stable, key=lambda mk: _rank(mk[1]), default=None)
-        if best is not None:
-            keep.add(best[0])
-        newest = max(previews, key=lambda mk: _rank(mk[1]), default=None)
-        if newest is not None and (best is None or newest[1].version > best[1].version):
-            keep.add(newest[0])
+    keep = {max(members, key=lambda mk: _rank(mk[1]))[0] for members in families.values()}
     return [m for m in ids if m in keep]
+
+
+def hidden_kind(model: str) -> str:
+    """Why *model*, when :func:`latest_ids` leaves it out, is not shown: ``"pre-release"``, ``"alias"`` (a moving
+    ``latest`` name) or ``"older"`` (a stable release with a newer one in its family)."""
+    key = model_key(model)
+    return "pre-release" if key.preview else "alias" if key.alias else "older"

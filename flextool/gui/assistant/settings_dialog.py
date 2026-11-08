@@ -121,7 +121,7 @@ class AssistantSettingsDialog(_AssistantDialog):
 
         #: The model lists of earlier fetches, by preset and address (one small file, read once).
         self._saved_lists = model_list_cache.load_all()
-        #: The whole model list shown in the model box (the fetched or saved one); the box shows the latest
+        #: The whole model list shown in the model box (the fetched or saved one); the box shows the newest stable
         #: version of each model unless "Show all models" is on.  ``_list_date``: the date of a saved list.
         self._list_ids: list[str] = []
         self._list_date: float | None = None
@@ -756,10 +756,11 @@ class AssistantSettingsDialog(_AssistantDialog):
         self.models_label.configure(text="")
 
     def _show_list(self, *, select: bool = False) -> None:
-        """The model box from the whole list: the latest version of each model (all of them with "Show all
-        models", or for a server on this computer).  The chosen model stays in the box when it is not the latest
-        version, marked "(older version)"; it is never replaced.  *select*: the chosen model is the selected
-        entry."""
+        """The model box from the whole list: the newest stable version of each model (all of them with "Show all
+        models", or for a server on this computer).  The chosen model stays in the box when the default list leaves
+        it out, marked "(pre-release)", "(alias)" or "(older version)"; it is never replaced.  *select*: the chosen
+        model is the selected entry."""
+        from flextool.assistant.model_versions import hidden_kind
         from flextool.assistant.providers import shown_models
 
         preset = self._preset
@@ -770,10 +771,11 @@ class AssistantSettingsDialog(_AssistantDialog):
             return
         shown = set(shown_models(preset, ids, show_all=self.show_all_var.get()))
         model = self.model_var.get().strip()
-        values = [i if i in shown else i + strings.MODEL_OLDER_MARK for i in ids if i in shown or i == model]
+        values = [i if i in shown else i + strings.MODEL_HIDDEN_MARKS[hidden_kind(i)]
+                  for i in ids if i in shown or i == model]
         self.model_box["values"] = values
         if select and model in ids:
-            self.model_box.current([v.removesuffix(strings.MODEL_OLDER_MARK) for v in values].index(model))
+            self.model_box.current([i for i in ids if i in shown or i == model].index(model))
         count = _count_text(len(shown))
         self.models_label.configure(text=count if self._list_date is None else strings.MODELS_SAVED.format(
             count=count, date=_date_text(self._list_date)))
@@ -783,9 +785,10 @@ class AssistantSettingsDialog(_AssistantDialog):
 
     def _model_changed(self) -> None:
         value = self.model_var.get()
-        if value.endswith(strings.MODEL_OLDER_MARK):        # picked from the box: the mark is not the name
-            self.model_var.set(value.removesuffix(strings.MODEL_OLDER_MARK))
-            return
+        for mark in strings.MODEL_HIDDEN_MARKS.values():
+            if value.endswith(mark):                        # picked from the box: the mark is not the name
+                self.model_var.set(value.removesuffix(mark))
+                return
         self._update_level()
         self._update_free_plan()
         self._update_route()

@@ -155,7 +155,7 @@ def test_saved_lists_are_kept_per_preset_and_address(tmp_path):
     assert list(cache.load_all(tmp_path)) == ["ollama|http://localhost:11434/v1"]
 
 
-# --- the latest version of each model -------------------------------------------------------------------------------
+# --- the newest stable version of each model -----------------------------------------------------------------------
 # Synthetic ids in each service's id format; the expected survivors are worked out by hand from the rules in
 # flextool/assistant/model_versions.py, not from its output.
 FAMILY_LISTS: dict[str, tuple[list[str], list[str]]] = {
@@ -165,47 +165,47 @@ FAMILY_LISTS: dict[str, tuple[list[str], list[str]]] = {
         "models/gemini-2.5-pro-preview-05-06", "models/gemini-3-flash", "models/gemini-3-flash-lite",
         "models/gemini-3-pro-preview", "models/gemini-3.1-flash-preview", "models/gemini-3.1-pro-preview",
         "models/gemini-exp-1206", "models/gemini-flash-latest", "models/gemma-3-27b-it"],
-        # flash: 3 is the newest release, 3.1 a newer preview, -latest a moving alias; the 2.5 preview is
-        # outranked by the 2.5 release.  pro: 2.5 release + 3.1 preview.  flash-lite: 3.
-        ["gemini-2.5-pro", "gemini-3-flash", "gemini-3-flash-lite", "gemini-3.1-flash-preview",
-         "gemini-3.1-pro-preview", "gemini-exp-1206", "gemini-flash-latest", "gemma-3-27b-it"]),
+        # flash: 3 is the newest release (the 3.1 preview, the exp and the -latest alias are hidden); pro: 2.5,
+        # its 3 and 3.1 previews hidden; flash-lite: 3; gemini-exp-1206 is a family of previews only.
+        ["gemini-2.5-pro", "gemini-3-flash", "gemini-3-flash-lite", "gemma-3-27b-it"]),
     "anthropic": ([
-        "claude-3-5-haiku-20241022", "claude-3-5-sonnet-latest", "claude-3-7-sonnet-20250219", "claude-haiku-4-5", "claude-haiku-4-5-20251001",
-        "claude-opus-4-1", "claude-opus-4-1-20250805", "claude-opus-4-5", "claude-opus-4-5-20251101",
-        "claude-opus-5-20260201", "claude-opus-5-20260301", "claude-sonnet-4-20250514", "claude-sonnet-4-5",
-        "claude-sonnet-4-5-20250929", "claude-sonnet-5-20260115"],
-        # haiku 4-5: the undated alias before its snapshot; opus 5: the newer of two snapshots.
+        "claude-3-5-haiku-20241022", "claude-3-5-sonnet-latest", "claude-3-7-sonnet-20250219", "claude-haiku-4-5",
+        "claude-haiku-4-5-20251001", "claude-opus-4-1", "claude-opus-4-1-20250805", "claude-opus-4-5",
+        "claude-opus-4-5-20251101", "claude-opus-5-20260201", "claude-opus-5-20260301", "claude-sonnet-4-20250514",
+        "claude-sonnet-4-5", "claude-sonnet-4-5-20250929", "claude-sonnet-5-20260115"],
+        # haiku 4-5: the undated name before its snapshot; opus 5: the newer of two snapshots; the -latest alias
+        # is hidden.
         ["claude-haiku-4-5", "claude-opus-5-20260301", "claude-sonnet-5-20260115"]),
     "openai": ([
-        "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-mini", "gpt-5",
-        "gpt-5-2025-08-07", "gpt-5-mini", "gpt-5-nano", "gpt-5.1", "gpt-5.1-2025-11-13", "gpt-5.1-codex", "o3",
-        "o4-mini"],
-        # gpt 4.1 < 5 < 5.1 (the alias before its snapshot); mini and nano are their own families; "4o" is a
-        # name, not a version: gpt-4o keeps its alias over its snapshot.
+        "gpt-4.1", "gpt-4.1-mini", "gpt-4.1-nano", "gpt-4o", "gpt-4o-2024-08-06", "gpt-4o-mini",
+        "gpt-4o-search-preview", "gpt-5", "gpt-5-2025-08-07", "gpt-5-mini", "gpt-5-nano", "gpt-5.1",
+        "gpt-5.1-2025-11-13", "gpt-5.1-codex", "gpt-5.2-preview", "o1-preview", "o3", "o4-mini"],
+        # gpt 4.1 < 5 < 5.1 (the undated name before its snapshot; the 5.2 preview hidden); mini and nano are
+        # their own families; "4o" is a name, not a version: gpt-4o keeps its undated name over its snapshot;
+        # gpt-4o-search and o1 have previews only.
         ["gpt-4o", "gpt-4o-mini", "gpt-5-mini", "gpt-5-nano", "gpt-5.1", "gpt-5.1-codex", "o3", "o4-mini"]),
     "mistral": ([
         "codestral-2501", "codestral-2508", "magistral-medium-2509", "ministral-8b-2410", "ministral-8b-latest",
         "mistral-large-2407", "mistral-large-2411", "mistral-large-latest", "mistral-small-2503",
-        "mistral-small-latest"],
-        # -latest stands for the dated snapshots of a family without a version number.
-        ["codestral-2508", "magistral-medium-2509", "ministral-8b-latest", "mistral-large-latest",
-         "mistral-small-latest"]),
+        "mistral-small-latest", "pixtral-large-latest"],
+        # -latest is hidden, so the dated snapshots compare normally; pixtral-large has only an alias.
+        ["codestral-2508", "magistral-medium-2509", "ministral-8b-2410", "mistral-large-2411",
+         "mistral-small-2503"]),
     "openrouter": ([
         "anthropic/claude-opus-4.1", "anthropic/claude-sonnet-4", "anthropic/claude-sonnet-4.5",
         "deepseek/deepseek-chat-v3-0324:free", "deepseek/deepseek-chat-v3.1:free", "google/gemini-2.0-flash-exp:free",
         "google/gemini-2.5-flash", "google/gemini-3-flash-preview", "meta-llama/llama-3.1-70b-instruct",
         "meta-llama/llama-3.3-70b-instruct", "meta-llama/llama-3.3-70b-instruct:free", "openai/gpt-oss-120b",
         "openai/gpt-oss-120b:free", "qwen/qwen3-coder"],
-        # The vendor path and :free are part of the family.
+        # The vendor path and :free are part of the family; google/gemini-flash:free has only an exp.
         ["anthropic/claude-opus-4.1", "anthropic/claude-sonnet-4.5", "deepseek/deepseek-chat-v3.1:free",
-         "google/gemini-2.0-flash-exp:free", "google/gemini-2.5-flash", "google/gemini-3-flash-preview",
-         "meta-llama/llama-3.3-70b-instruct", "meta-llama/llama-3.3-70b-instruct:free", "openai/gpt-oss-120b",
-         "openai/gpt-oss-120b:free", "qwen/qwen3-coder"]),
+         "google/gemini-2.5-flash", "meta-llama/llama-3.3-70b-instruct", "meta-llama/llama-3.3-70b-instruct:free",
+         "openai/gpt-oss-120b", "openai/gpt-oss-120b:free", "qwen/qwen3-coder"]),
 }
 
 
 @pytest.mark.parametrize("preset_id", sorted(FAMILY_LISTS))
-def test_the_list_shows_the_latest_version_of_each_model(preset_id):
+def test_the_list_shows_the_newest_stable_version_of_each_model(preset_id):
     from flextool.assistant.providers import model_entries, shown_models
 
     ids, expected = FAMILY_LISTS[preset_id]
@@ -230,6 +230,19 @@ def test_family_and_version_of_an_id():
     assert model_key("meta-llama/llama-3.3-70b-instruct:free").family == "meta-llama/llama-70b-instruct:free"
     assert model_key("gpt-oss:120b-cloud").family == "gpt-oss:120b-cloud"
     assert model_key("mistral-large-latest").alias
+    for model in ("tool-2-rc1", "tool-2-beta", "tool-2-alpha2", "tool-2-preview-05-06", "tool-exp-1206",
+                  "tool-2-experimental", "tool-2-nightly"):
+        assert model_key(model).preview, model
+    assert not model_key("devstral-small-2505").preview         # a marker is a whole word, not part of one
+
+
+def test_pre_releases_and_aliases_are_hidden_and_why():
+    from flextool.assistant.model_versions import hidden_kind, latest_ids
+
+    # A family of pre-releases only, or of a -latest alias only, is not shown at all.
+    assert latest_ids(["tool-3-preview", "tool-3.1-preview", "tool-exp-1206", "other-latest"]) == []
+    assert latest_ids(["tool-2", "tool-3-rc1", "tool-latest"]) == ["tool-2"]
+    assert [hidden_kind(m) for m in ("tool-3-rc1", "tool-latest", "tool-1")] == ["pre-release", "alias", "older"]
 
 
 def test_an_id_without_a_version_is_its_own_family():

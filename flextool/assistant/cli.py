@@ -107,8 +107,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--continue", dest="resume", nargs="?", const="", default=None, metavar="ID",
                         help="go on with the newest saved conversation of the project, or the one with this id")
     parser.add_argument("--all", dest="all_models", action="store_true",
-                        help="with --list-models: every model of the list, also the older versions (by default "
-                             "only the latest version of each model of a remote service)")
+                        help="with --list-models: every model of the list, also pre-releases, -latest aliases and older "
+                             "versions (by default only the newest stable version of each model of a remote "
+                             "service)")
     parser.add_argument("--key-file", action="store_true",
                         help="with --set-key: store the key unencrypted in a file of your user folder instead of "
                              "the system keyring")

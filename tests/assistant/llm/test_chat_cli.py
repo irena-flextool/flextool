@@ -327,14 +327,14 @@ def test_first_run_setup_lists_the_models_and_saves(project, fake_backends, echo
     from flextool.assistant.providers import PRESETS
 
     number = list(PRESETS).index("openai_compatible") + 1
-    models = Models([], fake_backends, models=[ModelEntry("alpha"), ModelEntry("beta", note="a note")])
+    models = Models([], fake_backends, models=[ModelEntry("model-a"), ModelEntry("model-b", note="a note")])
     term = terminal([str(number), REMOTE, "", "2", "yes", "/quit"])
     assert chat_cli.main(["--project-path", str(project)], backend_factory=models, terminal=term) == 0
     out = term.stdout.getvalue()
-    assert "  2. beta  (a note)" in out
-    assert "Saved: the chat starts with Custom endpoint and beta next time." in out
+    assert "  2. model-b  (a note)" in out
+    assert "Saved: the chat starts with Custom endpoint and model-b next time." in out
     saved = load_settings().provider
-    assert (saved.preset, saved.base_url, saved.model) == ("openai_compatible", REMOTE, "beta")
+    assert (saved.preset, saved.base_url, saved.model) == ("openai_compatible", REMOTE, "model-b")
     assert models.requests == []                    # the model list only; no question was sent
 
 
@@ -570,16 +570,25 @@ def test_a_continuation_is_one_line_in_the_terminal(project, fake_backends, echo
 
 
 # --- the model list -----------------------------------------------------------------------------------------------
-def test_list_models_shows_the_latest_versions_and_all_with_all(fake_backends, monkeypatch):
+def test_list_models_shows_the_newest_stable_versions_and_all_with_all(fake_backends, monkeypatch):
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
-    listed = [ModelEntry("gemini-2.5-flash"), ModelEntry("gemini-3-flash", "a note")]
+    listed = [ModelEntry("gemini-2.5-flash"), ModelEntry("gemini-3-flash", "a note"),
+              ModelEntry("gemini-3.1-flash-preview"), ModelEntry("gemini-3.1-pro-preview"),
+              ModelEntry("gemini-flash-latest")]
     models = Models([], fake_backends, models=listed)
     term = terminal(tty=False)
     assert chat_cli.main(["--provider", "gemini", "--list-models"], backend_factory=models, terminal=term) == 0
     assert term.stdout.getvalue() == "gemini-3-flash  a note\n"
-    assert term.stderr.getvalue() == "1 older model version is not shown; add --all to list it.\n"
+    assert term.stderr.getvalue() == ("Not shown: 2 pre-releases, 1 -latest alias, 1 older version; add --all to "
+                                      "list them.\n")
     every = terminal(tty=False)
     assert chat_cli.main(["--provider", "gemini", "--list-models", "--all"], backend_factory=models,
                          terminal=every) == 0
-    assert every.stdout.getvalue().splitlines() == ["gemini-2.5-flash", "gemini-3-flash  a note"]
+    assert every.stdout.getvalue().splitlines() == [
+        "gemini-2.5-flash", "gemini-3-flash  a note", "gemini-3.1-flash-preview", "gemini-3.1-pro-preview",
+        "gemini-flash-latest"]
     assert every.stderr.getvalue() == ""
+    one = terminal(tty=False)
+    models = Models([], fake_backends, models=[ModelEntry("gemini-3-flash"), ModelEntry("gemini-3.1-flash-preview")])
+    assert chat_cli.main(["--provider", "gemini", "--list-models"], backend_factory=models, terminal=one) == 0
+    assert one.stderr.getvalue() == "Not shown: 1 pre-release; add --all to list it.\n"
