@@ -125,6 +125,8 @@ def test_the_placeholder(windows, backends):
     pump(window, timeout=0.05)
     assert tab.placeholder_shown
     assert str(tab._placeholder.cget("text")) == PLACEHOLDER
+    from flextool.gui.assistant.fonts import CHAT_FONT          # the input box and its placeholder: the chat font
+    assert str(tab.input.cget("font")) == CHAT_FONT == str(tab._placeholder.cget("font"))
     assert _text(tab) == ""
     key(tab.input, "<Key-x>")
     assert _text(tab) == "x"
@@ -402,15 +404,19 @@ def test_a_continuation_shows_one_line_and_the_note_stays_out(windows, backends)
 
 # --- the fonts of the answer ------------------------------------------------------------------------------------
 def test_bold_italic_and_code_have_the_size_of_the_body_text(host):
-    """Owner decision 2026-11-08: bold and italic are the body font's family and size; inline code the fixed-width
-    family at the same size; headings larger; a changed body size reaches them all."""
+    """Owner decisions 2026-11-08: the chat text is one named base font, 11 pt at the GUI's default 10 pt; bold and
+    italic are its family and size; inline code, code blocks, tables and tool details the fixed-width family at
+    the same size; headings 14 / 13 / 11 bold (13 / 12 / 10 at body 10, in proportion); a changed body size
+    reaches them all."""
     import tkinter.font as tkfont
 
+    from flextool.gui.assistant.fonts import CHAT_FONT
     from flextool.gui.assistant.transcript import Transcript
 
     body = tkfont.nametofont("TkTextFont", root=host)
     fixed = tkfont.nametofont("TkFixedFont", root=host).actual()
     old_size = body.cget("size")
+    body.configure(size=10)                     # the GUI's default body size
     transcript = Transcript(host)
     try:
         transcript.pack()
@@ -419,24 +425,27 @@ def test_bold_italic_and_code_have_the_size_of_the_body_text(host):
         def actual(tag: str) -> dict:
             return tkfont.Font(root=host, font=text.tag_cget(tag, "font")).actual()
 
+        assert str(text.cget("font")) == CHAT_FONT
         base = tkfont.Font(root=host, font=text.cget("font")).actual()
-        assert base == body.actual()
+        assert base["family"] == body.actual("family") and base["size"] == 11
         bold, italic, code = actual("md_bold"), actual("md_italic"), actual("md_code")
         assert (bold["family"], bold["size"], bold["weight"], bold["slant"]) == (
             base["family"], base["size"], "bold", "roman")
         assert (italic["family"], italic["size"], italic["weight"], italic["slant"]) == (
             base["family"], base["size"], "normal", "italic")
         assert code["family"] == fixed["family"] and code["size"] == base["size"]
-        assert actual("md_codeblock") == code and actual("md_table") == code
-        assert actual("md_h1")["size"] > actual("md_h2")["size"] > base["size"]
-        assert actual("md_h3")["size"] == base["size"] and actual("md_h3")["weight"] == "bold"
+        assert actual("md_codeblock") == code and actual("md_table") == code and actual("tooldetail") == code
+        assert actual("speaker") == bold
+        assert [actual(h)["size"] for h in ("md_h1", "md_h2", "md_h3")] == [14, 13, 11]
+        assert all(actual(h)["weight"] == "bold" for h in ("md_h1", "md_h2", "md_h3"))
         # The size of the body text changes (the Settings font size, another monitor): the next answer follows.
-        body.configure(size=old_size + 4)
+        body.configure(size=14)
         transcript.begin_answer()
         transcript.stream("the peak was **246 MW** in `node_a`\n")
         transcript.end_answer()
-        assert actual("md_bold")["size"] == body.actual("size") == actual("md_italic")["size"]
-        assert actual("md_code")["size"] == body.actual("size")
+        assert tkfont.nametofont(CHAT_FONT, root=host).actual("size") == 15
+        assert actual("md_bold")["size"] == 15 == actual("md_italic")["size"] == actual("md_code")["size"]
+        assert [actual(h)["size"] for h in ("md_h1", "md_h2", "md_h3")] == [20, 17, 15]
     finally:
         body.configure(size=old_size)
         transcript.destroy()

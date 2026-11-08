@@ -1088,8 +1088,11 @@ class ChatWindow(tk.Toplevel):
             area = finder(self.master) or (0, 0, screen_w, screen_h)
         except tk.TclError:
             area = (0, 0, screen_w, screen_h)
-        avg = average_char_px(tkfont.nametofont("TkDefaultFont").measure(SAMPLE))
-        fixed = tkfont.nametofont("TkFixedFont").measure("0")
+        from flextool.gui.assistant.fonts import sync_fonts
+
+        fonts = sync_fonts(self)                # the transcript's text and tables, in the chat's fonts
+        avg = average_char_px(fonts["base"].measure(SAMPLE))
+        fixed = fonts["code"].measure("0")
         chrome = 4 * cw + 40                    # scroll bar, paddings and borders around the transcript
         exec_rect = self._exec_rect() if self._exec_rect is not None else None
         self._placement = (area, avg, fixed, exec_rect, chrome, min_size)

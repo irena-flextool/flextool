@@ -115,7 +115,9 @@ error, "•" an answer arrived while you were in another chat.
   Ctrl+T to "New chat". On macOS Command+T and Command+W work too.
 
 Answers show their headings, lists, **bold**, *italic*, `code` and tables. Bold and italic text has the size and
-font of the rest of the answer, and code the fixed-width font at the same size; headings are larger.
+font of the rest of the answer, and code the fixed-width font at the same size; headings are larger. The text of
+the chat window (the answers, the box you type in, the tool lines) and of the assistant's dialogs is one point
+larger than FlexTool's body text: 11 pt at the default size, and it follows the font size setting.
 
 The chats that were open come back when you open the chat window again, also after FlexTool restarts. An answer
 that was in progress is not restarted; ask again if you need it.

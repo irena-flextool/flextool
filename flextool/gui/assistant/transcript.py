@@ -12,24 +12,22 @@ on a tool line does the same.  It draws no insertion cursor (only the input box 
 the tool or context line the keyboard is on is shaded instead, so Enter and space still show what they open.  Its
 tags take their colours from the widget's own theme colours.
 
-Fonts (owner decision 2026-11-08): the text is in ``TkTextFont``, FlexTool's body text font (a ``tk.Text`` would
-otherwise use the fixed-width font, and bold text in the proportional font then looked smaller).  Bold, italic and
-the headings are named fonts of the same family (:data:`FONTS`): bold and italic at the same size, the headings
-larger in proportion; inline code, code blocks and tables use the fixed-width family at the point size of the body
-text (Tk tells no x-height, and the ascent misleads: Noto Sans reports a taller ascent than DejaVu Sans Mono, whose
-letters are not smaller).  :func:`sync_fonts` sets them from the body font
-again — at every answer and on a theme change — so a changed font size reaches them.
+Fonts (owner decisions 2026-11-08, :mod:`flextool.gui.assistant.fonts`): the text is in the chat's base font
+(FlexTool's body text font one point larger; a ``tk.Text`` would otherwise use the fixed-width font, and bold text
+in the proportional font then looked smaller).  Bold, italic and the headings are its family, code, tables and the
+details of a tool call the fixed-width family at its size.  :func:`sync_fonts` sets them from the body font again —
+at every answer and on a theme change — so a changed font size reaches them.
 """
 from __future__ import annotations
 
 import tkinter as tk
-import tkinter.font as tkfont
 from collections.abc import Callable
 from tkinter import ttk
 from typing import TYPE_CHECKING
 
 from flextool.assistant.chat_cli import args_text
 from flextool.gui.assistant import strings
+from flextool.gui.assistant.fonts import CHAT_FONT, sync_fonts
 from flextool.gui.assistant.markdown_stream import Line, MarkdownStream
 from flextool.gui.assistant.markdown_stream import render as render_markdown
 
@@ -44,46 +42,6 @@ KEYBOARD_LINE = "keyboard_line"
 TOOL_OPEN = "▾"
 TOOL_CLOSED = "▸"
 DETAIL_INDENT = "    "
-#: The transcript's body font, and the named fonts derived from it (shared by every chat of the process).
-BODY_FONT = "TkTextFont"
-FONTS = {"bold": "FlexToolChatBold", "italic": "FlexToolChatItalic", "code": "FlexToolChatCode",
-         "h1": "FlexToolChatHeading1", "h2": "FlexToolChatHeading2"}
-#: How much larger the headings are than the body text.
-HEADING_SCALE = {"h1": 1.3, "h2": 1.15}
-
-
-def _named(widget: tk.Misc, name: str, **options: object) -> tkfont.Font:
-    try:
-        font = tkfont.Font(root=widget, name=name, exists=True)
-        font.configure(**options)
-    except tk.TclError:
-        font = tkfont.Font(root=widget, name=name, **options)
-    return font
-
-
-def _scaled(size: int, factor: float) -> int:
-    """*size* times *factor*, keeping Tk's sign (points positive, pixels negative)."""
-    value = max(1, round(abs(size) * factor))
-    return -value if size < 0 else value
-
-
-def sync_fonts(widget: tk.Misc) -> dict[str, tkfont.Font]:
-    """Set the transcript's named fonts from :data:`BODY_FONT` (and the fixed-width family) as they are now."""
-    body = tkfont.nametofont(BODY_FONT, root=widget)
-    size = int(body.cget("size")) or int(body.actual("size"))
-    family = body.actual("family")
-    fixed = tkfont.nametofont("TkFixedFont", root=widget).actual("family")
-    fonts = {
-        "bold": _named(widget, FONTS["bold"], family=family, size=size, weight="bold", slant="roman"),
-        "italic": _named(widget, FONTS["italic"], family=family, size=size, weight="normal", slant="italic"),
-        "h1": _named(widget, FONTS["h1"], family=family, size=_scaled(size, HEADING_SCALE["h1"]), weight="bold",
-                     slant="roman"),
-        "h2": _named(widget, FONTS["h2"], family=family, size=_scaled(size, HEADING_SCALE["h2"]), weight="bold",
-                     slant="roman"),
-    }
-    fonts["code"] = _named(widget, FONTS["code"], family=fixed, size=size, weight="normal", slant="roman")
-    return fonts
-
 
 
 class Transcript(ttk.Frame):
@@ -128,7 +86,7 @@ class Transcript(ttk.Frame):
         except tk.TclError:
             return
         fonts = sync_fonts(txt)
-        txt.configure(font=BODY_FONT)
+        txt.configure(font=CHAT_FONT)
         bold = fonts["bold"]
         dim = blend_rgb(fg, rgb_hex(bg), 0.45)
         txt.tag_configure("speaker", font=bold)
@@ -136,7 +94,7 @@ class Transcript(ttk.Frame):
         txt.tag_configure("user_pending", foreground=dim, spacing1=4)
         txt.tag_configure("assistant", spacing1=2)
         txt.tag_configure("tool", foreground=blend_rgb(fg, "#4aa3ff", 0.45))
-        txt.tag_configure("tooldetail", font="TkFixedFont", lmargin1=24, lmargin2=24, foreground=dim)
+        txt.tag_configure("tooldetail", font=fonts["code"], lmargin1=24, lmargin2=24, foreground=dim)
         txt.tag_configure("notice", foreground=dim)
         txt.tag_configure("usage", foreground=dim)
         txt.tag_configure("error", foreground=blend_rgb(fg, "#ff3b30", 0.70))

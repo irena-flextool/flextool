@@ -45,8 +45,6 @@ GRAB_STEP_MS = 20
 ACCEPT_GUARD_MS = 500
 #: The longest chat name.
 NAME_MAX = 60
-#: The welcome's body text is this many points above the GUI's body font.
-WELCOME_BODY_STEP_PT = 1
 
 
 def install_shield(toplevel: tk.Misc) -> None:
@@ -194,10 +192,15 @@ class _AssistantDialog(tk.Toplevel):
         install_shield(self)
         from flextool.gui.ui_metrics import get_metrics
 
+        from flextool.gui.assistant.fonts import sync_fonts
+
         metrics = get_metrics(self)
         self.cw = metrics.cw
         self.lh = metrics.lh
-        self.wrap = metrics.cw * 60
+        #: The text of every assistant dialog is in the chat's fonts (:mod:`flextool.gui.assistant.fonts`):
+        #: paragraphs and the entry in the base font, headings bold at its size; the buttons keep the theme's.
+        self.chat_fonts = sync_fonts(self)
+        self.wrap = self.chat_fonts["base"].measure("0") * 60
         self.body = ttk.Frame(self, padding=(metrics.cw * 2, metrics.lh))
         self.body.pack(fill="both", expand=True)
         self.bind("<Escape>", lambda _e: self.cancel())
@@ -226,12 +229,12 @@ class _AssistantDialog(tk.Toplevel):
             pass
 
     def heading(self, parent: tk.Misc, text: str, *, pady: tuple[int, int] = (0, 0)) -> ttk.Label:
-        label = ttk.Label(parent, text=text, font="TkHeadingFont", wraplength=self.wrap, justify="left")
+        label = ttk.Label(parent, text=text, font=self.chat_fonts["bold"], wraplength=self.wrap, justify="left")
         label.pack(anchor="w", pady=pady)
         return label
 
     def paragraph(self, parent: tk.Misc, text: str, *, pady: tuple[int, int] = (0, 0)) -> ttk.Label:
-        label = ttk.Label(parent, text=text, wraplength=self.wrap, justify="left")
+        label = ttk.Label(parent, text=text, font=self.chat_fonts["base"], wraplength=self.wrap, justify="left")
         label.pack(anchor="w", fill="x", pady=pady)
         return label
 
@@ -257,21 +260,17 @@ class WelcomeDialog(_AssistantDialog):
         self._mark_seen = mark_seen
         self._done = False
         symbol = settings_symbol(self)
-        # Kept on the dialog and deleted when it is destroyed, on the Tk thread: a Font left to the garbage
-        # collector can be deleted on another thread, which Tcl does not allow (the call blocks).
-        self.fonts = welcome_fonts(self)
-        self.bind("<Destroy>", self._drop_fonts, add="+")
-        self.wrap = self.fonts.body.measure("0") * 60
-        gap = self.fonts.body.metrics("linespace") // 2
-        self.title_label = ttk.Label(self.body, text=strings.WELCOME_TITLE, font=self.fonts.title,
+        self.fonts = fonts = welcome_fonts(self)
+        gap = fonts.body.metrics("linespace") // 2
+        self.title_label = ttk.Label(self.body, text=strings.WELCOME_TITLE, font=fonts.title,
                                      wraplength=self.wrap, justify="left")
         self.title_label.pack(anchor="w", pady=(0, gap))
         self.section_labels: list[tuple[ttk.Label, ttk.Label]] = []
         for heading, text in strings.WELCOME_SECTIONS:
-            head = ttk.Label(self.body, text=heading, font=self.fonts.heading, wraplength=self.wrap,
+            head = ttk.Label(self.body, text=heading, font=fonts.heading, wraplength=self.wrap,
                              justify="left")
             head.pack(anchor="w", pady=(gap, 0))
-            body = ttk.Label(self.body, text=text.replace(strings.SETTINGS_SYMBOL, symbol), font=self.fonts.body,
+            body = ttk.Label(self.body, text=text.replace(strings.SETTINGS_SYMBOL, symbol), font=fonts.body,
                              wraplength=self.wrap, justify="left")
             body.pack(anchor="w", fill="x")
             self.section_labels.append((head, body))
@@ -296,16 +295,6 @@ class WelcomeDialog(_AssistantDialog):
 
     def initial_focus(self) -> tk.Misc | None:
         return self.close_button
-
-    def _drop_fonts(self, event: tk.Event) -> None:  # type: ignore[type-arg]
-        if event.widget is not self:
-            return
-        for font in self.fonts:
-            font.delete_font = False        # Font.__del__ deletes nothing more
-            try:
-                self.tk.call("font", "delete", font.name)
-            except tk.TclError:
-                pass
 
     def text(self) -> str:
         """The shown text, as :func:`strings.welcome_text` builds it (for the tests)."""
@@ -335,21 +324,13 @@ class WelcomeFonts(NamedTuple):
 
 
 def welcome_fonts(widget: tk.Misc) -> WelcomeFonts:
-    """The welcome's fonts, copies of the GUI's body font (``ui_metrics.setup_fonts``): the body
-    :data:`WELCOME_BODY_STEP_PT` larger (11 pt at the default 10 pt; the font size setting still scales it), the
-    section headings the same size in bold, the title one point larger again in bold, as the GUI's heading font
-    stands to its body font."""
-    base = tkfont.nametofont("TkDefaultFont", root=widget)
-    size = int(base.cget("size"))
-    if size <= 0:                       # a size in pixels: the size in points Tk shows it at
-        size = int(base.actual("size")) or 10
-    body = base.copy()
-    body.configure(size=size + WELCOME_BODY_STEP_PT, weight="normal")
-    heading = body.copy()
-    heading.configure(weight="bold")
-    title = body.copy()
-    title.configure(size=size + WELCOME_BODY_STEP_PT + 1, weight="bold")
-    return WelcomeFonts(title, heading, body)
+    """The welcome's fonts, the chat's (:mod:`flextool.gui.assistant.fonts`): the body in the base font (11 pt at
+    the default 10 pt; the font size setting still scales it), the section headings bold at its size, the title as
+    a ``##`` heading of an answer."""
+    from flextool.gui.assistant.fonts import sync_fonts
+
+    fonts = sync_fonts(widget)
+    return WelcomeFonts(fonts["h2"], fonts["bold"], fonts["base"])
 
 
 def _record_welcome_seen(config_root: Path | None, mark_seen: Callable[[], None] | None) -> threading.Thread:
@@ -479,10 +460,11 @@ class RenameChatDialog(_AssistantDialog):
         self._done = False
         row = ttk.Frame(self.body)
         row.pack(fill="x")
-        ttk.Label(row, text=strings.RENAME_LABEL).pack(side="left", padx=(0, self.cw))
+        ttk.Label(row, text=strings.RENAME_LABEL, font=self.chat_fonts["base"]).pack(side="left", padx=(0, self.cw))
         self.var = tk.StringVar(self, value=current[:NAME_MAX])
         check = (self.register(lambda proposed: len(proposed) <= NAME_MAX), "%P")
-        self.entry = ttk.Entry(row, textvariable=self.var, width=40, validate="key", validatecommand=check)
+        self.entry = ttk.Entry(row, textvariable=self.var, width=40, validate="key", validatecommand=check,
+                               font=self.chat_fonts["base"])
         self.entry.pack(side="left", fill="x", expand=True)
         self.paragraph(self.body, strings.RENAME_HINT, pady=(self.lh // 2, 0))
         buttons = self.buttons()

@@ -97,10 +97,15 @@ def test_the_welcome_is_the_approved_text(host):
         dialog.finish("close")
 
 
-def test_the_welcome_body_is_one_point_above_the_gui_font(host):
+def test_the_assistant_dialogs_use_the_chat_fonts(host):
+    """The welcome, the data notice and the rename dialog are in the chat's fonts: text 11 pt at the GUI's
+    default 10 pt (one point above it), section headings bold at 11, the welcome's title 13 bold (a ``##``
+    heading of an answer)."""
     import tkinter.font as tkfont
 
-    base = tkfont.nametofont("TkDefaultFont", root=host)
+    from flextool.gui.assistant.notices import ConsentDialog, RenameChatDialog
+
+    base = tkfont.nametofont("TkTextFont", root=host)
     saved = base.cget("size")
     base.configure(size=10)                     # the GUI's default body size
     dialog = WelcomeDialog(host, record=False)
@@ -108,12 +113,28 @@ def test_the_welcome_body_is_one_point_above_the_gui_font(host):
         title, heading, body = (tkfont.Font(root=host, font=dialog.fonts[i]).actual() for i in range(3))
         assert body["size"] == 11 and body["weight"] == "normal"
         assert heading["size"] == 11 and heading["weight"] == "bold"
-        assert title["size"] == 12 and title["weight"] == "bold"
+        assert title["size"] == 13 and title["weight"] == "bold"
         head, text = dialog.section_labels[0]
         assert str(text.cget("font")) == str(dialog.fonts.body) and str(head.cget("font")) == str(dialog.fonts.heading)
     finally:
         dialog.finish("close")
+    notice = ConsentDialog(host, "Example", "The notice.", "Sent to Example.", "1", lambda _a: None)
+    rename = None
+    try:
+        size = tkfont.Font(root=host, font=notice.notice_label.cget("font")).actual("size")
+        assert size == 11
+        notice.cancel()
+        rename = RenameChatDialog(host, "Chat 1", lambda _n: None)
+        assert tkfont.Font(root=host, font=rename.entry.cget("font")).actual("size") == 11
+    finally:
+        notice.cancel()
+        if rename is not None:
+            rename.cancel()
         base.configure(size=saved)
+        import gc
+
+        rename = notice = None
+        gc.collect()                            # the dialogs' Tk variables go here, on the Tk thread
 
 
 def test_the_welcome_comes_before_the_chat_and_close_records_it(host, connects):

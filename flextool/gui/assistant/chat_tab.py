@@ -95,8 +95,11 @@ class ChatTab(ttk.Frame):
         self.rowconfigure(0, weight=1)
         self.transcript = Transcript(self, on_escape=self.stop, bind_commands=self.window.bind_tab_commands)
         self.transcript.grid(row=0, column=0, sticky="nsew")
+        from flextool.gui.assistant.fonts import CHAT_FONT, sync_fonts
+
+        sync_fonts(self)                    # the input box is in the chat's base font, as the transcript
         self.input = tk.Text(self, height=3, wrap="word", undo=True, borderwidth=1, highlightthickness=1,
-                             padx=6, pady=4)
+                             padx=6, pady=4, font=CHAT_FONT)
         self.input.grid(row=1, column=0, sticky="ew", pady=(lh // 2, 0))
         self._placeholder = ttk.Label(self.input, text=strings.PLACEHOLDER, cursor="xterm", takefocus=0)
         self._style_placeholder()

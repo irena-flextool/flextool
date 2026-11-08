@@ -405,8 +405,10 @@ def test_the_window_takes_the_work_area_height_beside_the_execution_window(windo
     decoration = window.measure_decoration()
     assert (x, y) == (100, 20)                                    # the side the Execution window leaves free
     assert h + decoration.top + decoration.border == 900
-    avg = tkfont.nametofont("TkDefaultFont").measure(SAMPLE) / len(SAMPLE)
-    fixed = tkfont.nametofont("TkFixedFont").measure("0")
+    from flextool.gui.assistant.fonts import CHAT_FONT, FONTS
+
+    avg = tkfont.nametofont(CHAT_FONT).measure(SAMPLE) / len(SAMPLE)          # the transcript's fonts
+    fixed = tkfont.nametofont(FONTS["code"]).measure("0")
     assert w >= max(avg * CHARACTERS, fixed * FIXED_CHARACTERS)
     assert w + 2 * decoration.border <= 1600
 
