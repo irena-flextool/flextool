@@ -5938,8 +5938,9 @@ _V82_DESCRIPTIONS: dict[tuple[str, str], str] = {
     ("group", "non_synchronous_limit"): (
         "[-] e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real "
         "demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no "
-        "value means 0. Constant, period, time or period+time. Over a coarse time step the row uses the step "
-        "mean (a time step without a value counts as 0)."),
+        "value means 0. Constant, period, time or period+time. A time step that a time map leaves out has no "
+        "limit. Over a coarse time step the row uses the step mean; a map without values for some time steps of "
+        "a coarse step keeps the rows at the time steps it covers."),
 }
 
 

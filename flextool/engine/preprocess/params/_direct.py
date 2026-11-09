@@ -1047,9 +1047,10 @@ def pdtGroup_non_synchronous_limit_from_source(source: "InputSource",
     """``group.non_synchronous_limit`` → ``Param`` with the authored dims ⊆ ``(g, d, t)``.
 
     Constant, period, time or period + time map (:func:`resolve_param_shape` →
-    :func:`broadcast_to_period_time`); zero rows dropped (the limit reads as 0).  A period map, or the period
-    level of a period + time map, of a group with ``has_non_synchronous = yes`` must cover ``need_periods``
-    (:func:`require_period_coverage_time`).
+    :func:`broadcast_to_period_time`).  Zero rows are kept: an authored 0 is a limit of 0, while a time step
+    that a time map leaves out has no limit (``non_sync_constraint`` has no row there).  A period map, or the
+    period level of a period + time map, of a group with ``has_non_synchronous = yes`` must cover
+    ``need_periods`` (:func:`require_period_coverage_time`).
     """
     resolved = resolve_param_shape(
         source, "group", "non_synchronous_limit",
@@ -1057,7 +1058,7 @@ def pdtGroup_non_synchronous_limit_from_source(source: "InputSource",
     active = _group_names(groupNonSync(source)) if _gate_needed(need_periods, resolved) else None
     return require_period_coverage_time(
         resolved, "g", period_filter, entity_class="group", parameter_name="non_synchronous_limit",
-        need_periods=need_periods, active=active, filter_zero=True)
+        need_periods=need_periods, active=active, filter_zero=False)
 
 
 def pdGroup_penalty_non_synchronous_from_source(source: "InputSource",

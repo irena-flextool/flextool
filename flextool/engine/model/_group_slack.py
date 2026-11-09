@@ -558,7 +558,10 @@ def _eq_non_sync(b: _Build) -> None:
     pss = d.process_source_sink
     p_us = d.p_unitsize
     invc = d.p_inv_group_cap
-    pgns = d.pdtGroup_non_synchronous_limit
+    pgns_all = d.pdtGroup_non_synchronous_limit           # authored values, zeros included
+    # The coefficients read the nonzero values only (a 0 limit adds no right-hand-side term).
+    pgns = (None if pgns_all is None
+            else Param(pgns_all.dims, pgns_all.lazy.filter(pl.col("value") != 0.0)))
     gn_in_gns = d.group_node.join(d.groupNonSync, on="g", how="inner")
     proc_inside = d.process_group_inside_nonSync          # (p, g) | None
     sink_ns = d.process_sink_nonSync                      # (p, sink) | None
@@ -581,11 +584,12 @@ def _eq_non_sync(b: _Build) -> None:
     #                                       v_online[p,d,t] · section[p] · unitsize[p] · Δt[d,t]
     #                                 + Σ_{(p,s,k) ∈ back_out(g)} v_flow_back[p,s,k,d,t] · unitsize[p] · Δt[d,t]
     #                                 − Σ_{n ∈ N(g)} negative_inflow[n,d,t] )
-    #   ∀ g ∈ groupNonSync, (d,t) ∈ dt
+    #   ∀ g ∈ groupNonSync, (d,t) ∈ dt, unless g has a time or period + time map without a value at (d,t)
     #   groupNonSync = groups with has_non_synchronous = yes
     #   N(g) = nodes of g;  icap = inv_group_cap;  ns_limit = non_synchronous_limit (constant, period, time or
-    #   period + time), 0 where not authored (the right-hand side then vanishes: no non-synchronous infeed without
-    #   the penalised slack)
+    #   period + time); a group without any value, and an authored 0, read as 0 (the right-hand side then
+    #   vanishes: no non-synchronous infeed without the penalised slack); a time step that a group's time map
+    #   leaves out has no limit (no row; its slack is in no row and costs, so it stays 0)
     #   in_ns(g)      = arcs (p,s,k), k ∈ N(g), (p,k) ∈ process_sink_nonSync, (p,g) ∉ inside
     #   back_in_ns(g) = twoway1var_arcs (p,s,k), s ∈ N(g), (p,s) ∈ process_sink_nonSync, (p,g) ∉ inside
     #   out_*(g)      = arcs (p,s,k), s ∈ N(g), (p,g) ∉ inside
@@ -688,9 +692,26 @@ def _eq_non_sync(b: _Build) -> None:
         if exo_out.height > 0:
             rhs["exo_demand"] = Param(("g", "d", "t"), exo_out)
 
-    over = d.groupNonSync.join(d.dt, how="cross")
+    over = _non_sync_rows(d, pgns_all)
     _coarse_flows.add_row_rule_cstr(b, "non_sync_constraint", over=over, sense="<=", lhs_terms=lhs, rhs_terms=rhs,
                                     partition=_row_partition(b, "non_sync", over))
+
+
+def _non_sync_rows(d, limit: "Param | None") -> pl.DataFrame:
+    """``(g, d, t)`` of the non_sync_constraint rows: every (d, t) of a flagged group, less the time steps that its
+    time or period + time map leaves out (no limit there).  A group without any value keeps every step (limit 0).
+
+        rows = { (g,d,t) ∈ groupNonSync × dt : limit[g,d,t] has a value  or  g has no value at all }
+    """
+    over = d.groupNonSync.join(d.dt, how="cross")
+    if limit is None or "t" not in limit.dims:
+        return over
+    cells = promote_param_to_dt(limit, d.dt).select("g", "d", "t").collect()
+    cells, over_k = align_join_dtypes(cells, over, ("g", "d", "t"))
+    valued = over_k.join(cells.unique(), on=["g", "d", "t"], how="semi")
+    without = over_k.join(cells.select("g").unique(), on="g", how="anti")
+    rows = pl.concat([valued, without])
+    return rows.select(*(pl.col(c).cast(over.schema[c]) for c in over.columns))
 
 
 # ---------------------------------------------------------------------------

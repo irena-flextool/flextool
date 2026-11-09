@@ -282,11 +282,13 @@ def test_solve_step_aggregation_takes_the_step_mean(tmp_path_factory) -> None:
 # in coal_wind_inertia (no flow leaves west).
 WEST_DEMAND = {"t0001": 589.0, "t0002": 537.0, "t0013": 572.0, "t0014": 564.0, "t0025": 436.0, "t0026": 446.0}
 NS_MISSING = "t0007"
+NS_ZERO = "t0008"
 
 
 def _ns_alternating() -> list:
-    """0.2 in the odd hours, 0.6 in the even hours, no value at t0007."""
-    return tmap({t: (0.2 if i % 2 == 0 else 0.6) for i, t in enumerate(T48) if t != NS_MISSING})
+    """0.2 in the odd hours, 0.6 in the even hours, no value at t0007 and an authored 0 at t0008."""
+    return tmap({t: (0.0 if t == NS_ZERO else 0.2 if i % 2 == 0 else 0.6)
+                 for i, t in enumerate(T48) if t != NS_MISSING})
 
 
 def _ns_expected_ub(t: str) -> float:
@@ -299,25 +301,28 @@ def _ns_expected_ub(t: str) -> float:
 def test_non_synchronous_limit_varies_by_hour(tmp_path_factory, mode) -> None:
     """Hand derivation: t0001 0.2 · 589 = 117.8 MWh, t0002 0.6 · 537 = 322.2 MWh, and in the rolls t0013 0.2 · 572 =
     114.4, t0014 0.6 · 564 = 338.4, t0025 0.2 · 436 = 87.2, t0026 0.6 · 446 = 267.6.  A limit joined to the
-    wrong hour would swap 0.2 and 0.6.  At t0007 the map has no value, so the limit is 0: the right-hand side is
-    0 and any wind infeed there is slack (groups.md, non_synchronous_limit)."""
+    wrong hour would swap 0.2 and 0.6.  At t0007 the map has no value, so that hour has no limit: no
+    non_sync_constraint row (groups.md, non_synchronous_limit), like an inertia time map without an hour (no
+    requirement).  At t0008 the authored 0 is a limit of 0: the right-hand side 0 · demand = 0, so any wind
+    infeed there is slack."""
     extra = ROLLING if mode == "rolling" else []
     steps = _run(tmp_path_factory, f"c5_ns_tmap_{mode}", TESTS_JSON, DET_CHAIN,
                  extra + _det_values(scalar(L_INERTIA), _ns_alternating()))
     checked = set()
     for step in steps.values():
         rows = _lp(step.flex_data)["rows"]
-        for t in WEST_DEMAND.keys() | {NS_MISSING}:
+        assert f"non_sync_constraint[electricity,p2020,{NS_MISSING}]" not in rows
+        for t in WEST_DEMAND.keys() | {NS_ZERO}:
             name = f"non_sync_constraint[electricity,p2020,{t}]"
             if name not in rows:
                 continue
             lo, hi, terms = rows[name]
-            want = 0.0 if t == NS_MISSING else _ns_expected_ub(t)
+            want = 0.0 if t == NS_ZERO else _ns_expected_ub(t)
             assert (lo, hi) == (float("-inf"), pytest.approx(want, rel=1e-12, abs=1e-12)), name
             assert terms[f"v_flow[wind_plant,wind_plant,west,p2020,{t}]"] == pytest.approx(1000.0, rel=1e-12)
             assert terms[f"vq_non_synchronous[electricity,p2020,{t}]"] == pytest.approx(-1.0, rel=1e-12)
             checked.add(t)
-    assert checked == WEST_DEMAND.keys() | {NS_MISSING}, checked
+    assert checked == WEST_DEMAND.keys() | {NS_ZERO}, checked
     if mode == "rolling":
         assert len([k for k in steps if "_roll_" in k]) >= 3
 
