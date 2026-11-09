@@ -4046,6 +4046,17 @@
     ],
     [
       "connection",
+      "constraint_online_coeff",
+      [
+        null,
+        null
+      ],
+      null,
+      "[unit of the constraint per unit online] A map of coefficients (Index: constraint name, value: coefficient). Puts the number of units of the connection online in each time step on the left side of the user constraint. One unit is virtual_unitsize; without it, the largest existing capacity, else 1000 MW (set virtual_unitsize when the capacity is invested). Needs online variables (startup_method linear or binary, or a minimum_time_method); a coefficient without them is an error. With linear startup the number is continuous. For MW online, use the unit size (MW per unit) as the coefficient.",
+      "constraint"
+    ],
+    [
+      "connection",
       "constraint_retired_capacity_coeff",
       [
         null,
@@ -4961,7 +4972,7 @@
       "model",
       "version",
       [
-        "NzguMA==",
+        "NzkuMA==",
         "float"
       ],
       null,
@@ -6103,6 +6114,17 @@
     ],
     [
       "unit",
+      "constraint_online_coeff",
+      [
+        null,
+        null
+      ],
+      null,
+      "[unit of the constraint per unit online] A map of coefficients (Index: constraint name, value: coefficient). Puts the number of units online in each time step on the left side of the user constraint. One unit is virtual_unitsize; without it, the largest existing capacity, else 1000 MW (set virtual_unitsize when the capacity is invested). Needs online variables (startup_method linear or binary, or a minimum_time_method); a coefficient without them is an error. With linear startup the number is continuous. For MW online, use the unit size (MW per unit) as the coefficient.",
+      "constraint"
+    ],
+    [
+      "unit",
       "constraint_retired_capacity_coeff",
       [
         null,
@@ -6795,6 +6817,12 @@
     [
       "connection",
       "constraint_invested_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "connection",
+      "constraint_online_coeff",
       "map",
       1
     ],
@@ -8451,6 +8479,12 @@
     [
       "unit",
       "constraint_invested_capacity_coeff",
+      "map",
+      1
+    ],
+    [
+      "unit",
+      "constraint_online_coeff",
       "map",
       1
     ],

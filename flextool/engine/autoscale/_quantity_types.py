@@ -86,6 +86,10 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # Puts the storage capacity in construction in each period on the left side of the user constraint. Capacity...
     ('constraint_in_construction_capacity_coeff', 'unit'): QuantityType.DIMENSIONLESS,
     # Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in con...
+    ('constraint_online_coeff', 'connection'): QuantityType.DIMENSIONLESS,
+    # Puts the number of units of the connection online in each time step on the left side of the user constraint.
+    ('constraint_online_coeff', 'unit'): QuantityType.DIMENSIONLESS,
+    # Puts the number of units online in each time step on the left side of the user constraint.
     ('constraint_retired_capacity_coeff', 'connection'): QuantityType.DIMENSIONLESS,
     # Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.
     ('constraint_retired_capacity_coeff', 'node'): QuantityType.DIMENSIONLESS,
@@ -660,7 +664,8 @@ QUANTITY_UNITS: dict[QuantityType, frozenset[str]] = {
     QuantityType.RAMP_RATE: frozenset({"[share of capacity per minute]"}),
     QuantityType.DIMENSIONLESS: frozenset({
         "[choice]", "[yes/no]", "[name]", "[text]", "[count]", "[version number]", "[p.u.]",
-        "[unit of the constraint per MW]", "[unit of the constraint per MWh]", "[the constraint's own unit]",
+        "[unit of the constraint per MW]", "[unit of the constraint per MWh]", "[unit of the constraint per unit online]",
+        "[the constraint's own unit]",
     }),
     QuantityType.UNKNOWN: frozenset({"[MW or MWh]"}),
 }

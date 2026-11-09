@@ -65,13 +65,13 @@ unpack_map_params:
     source_classes: ["unit"]
     params: ["constraint_invested_capacity_coeff", "constraint_cumulative_pre_built_capacity_coeff",
              "constraint_capacity_coeff", "constraint_retired_capacity_coeff",
-             "constraint_in_construction_capacity_coeff"]
+             "constraint_in_construction_capacity_coeff", "constraint_online_coeff"]
     index_column: "constraint"
   connection_constraint:
     source_classes: ["connection"]
     params: ["constraint_invested_capacity_coeff", "constraint_cumulative_pre_built_capacity_coeff",
              "constraint_capacity_coeff", "constraint_retired_capacity_coeff",
-             "constraint_in_construction_capacity_coeff"]
+             "constraint_in_construction_capacity_coeff", "constraint_online_coeff"]
     index_column: "constraint"
 
 # Add columns from a related multi-dim entity class to a sheet.
@@ -344,6 +344,7 @@ period_only_params:
     - constraint_capacity_coeff
     - constraint_retired_capacity_coeff
     - constraint_in_construction_capacity_coeff
+    - constraint_online_coeff
     - cumulative_max_capacity
     - cumulative_min_capacity
     - existing
@@ -364,6 +365,7 @@ period_only_params:
     - constraint_capacity_coeff
     - constraint_retired_capacity_coeff
     - constraint_in_construction_capacity_coeff
+    - constraint_online_coeff
     - cumulative_max_capacity
     - cumulative_min_capacity
     - existing

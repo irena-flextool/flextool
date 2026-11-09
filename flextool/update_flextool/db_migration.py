@@ -1804,6 +1804,8 @@ def migrate_database(
                 _migrate_v77_schema_batch(db)
             elif next_version == 78:
                 _migrate_v78_unit_prefixes(db)
+            elif next_version == 79:
+                _migrate_v79_constraint_online_coeff(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -5782,6 +5784,46 @@ def _migrate_v78_unit_prefixes(db) -> None:
         if new != current:
             db.update_parameter_definition(id=pdef["id"], description=new)
     _commit_step(db, "v78: a unit on every parameter description")
+
+
+def _v79_texts() -> dict[tuple[str, str], str]:
+    """Descriptions written by v79 (``constraint_online_coeff``)."""
+    t: dict[tuple[str, str], str] = {}
+    for cls, what in (("unit", "units"), ("connection", "units of the connection")):
+        t[(cls, "constraint_online_coeff")] = (
+            "[unit of the constraint per unit online] A map of coefficients (Index: constraint name, value: "
+            f"coefficient). Puts the number of {what} online in each time step on the left side of the user "
+            "constraint. One unit is virtual_unitsize; without it, the largest existing capacity, else 1000 MW "
+            "(set virtual_unitsize when the capacity is invested). Needs online variables (startup_method linear "
+            "or binary, or a minimum_time_method); a coefficient without them is an error. With linear startup "
+            "the number is continuous. For MW online, use the unit size (MW per unit) as the coefficient.")
+    return t
+
+
+def _migrate_v79_constraint_online_coeff(db) -> None:
+    """``constraint_online_coeff`` on unit and connection (v78 -> v79).
+
+    A new optional ``1d_map`` (index: constraint name) in the ``constraint``
+    group, no default and no value list: the number of units online in each
+    time step as a term of the user constraint.  No data is rewritten.
+    Idempotent: an existing definition is updated to the v79 fields.
+    """
+    texts = _v79_texts()
+    for cls in ("unit", "connection"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        _ensure_parameter_group(db, "constraint", "a36784", 70)
+        fields = {
+            "parameter_type_list": ("1d_map",),
+            "parameter_group_name": "constraint",
+            "description": texts[(cls, "constraint_online_coeff")],
+        }
+        pdef = _pdef_or_none(db, cls, "constraint_online_coeff")
+        if pdef is None:
+            db.add_parameter_definition(entity_class_name=cls, name="constraint_online_coeff", **fields)
+        elif any(pdef[k] != v for k, v in fields.items()):
+            db.update_parameter_definition(id=pdef["id"], **fields)
+    _commit_step(db, "v79: constraint_online_coeff on unit and connection")
 
 
 _V70_MAX_FLOW_UNCONSTRAINED_DESCRIPTION = (
