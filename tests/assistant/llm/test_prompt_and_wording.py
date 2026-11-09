@@ -32,6 +32,8 @@ FORBIDDING_RULE = "Never say the data is private or not used for training."
 CANNOT_GUARANTEE = "FlexTool cannot guarantee"
 #: The one abbreviation the window's welcome keeps, explained in place (P2-O6).
 WELCOME_LLM = "AI model (LLM)"
+#: The owner's own wording for an account with a request limit of 0 (OR-2, review G9) keeps "API access".
+OWNER_API_ACCESS = "its API access is not active yet"
 URL = re.compile(r"https?://[\w.\[\]:-]+[^\s)'\",]*")
 
 
@@ -89,7 +91,7 @@ def _texts() -> list[tuple[str, str]]:
 
 @pytest.mark.parametrize("where,text", _texts(), ids=[w for w, _ in _texts()])
 def test_plain_english(where, text):
-    prose = LITERAL_FIELDS.sub("", text).replace(WELCOME_LLM, "")
+    prose = LITERAL_FIELDS.sub("", text).replace(WELCOME_LLM, "").replace(OWNER_API_ACCESS, "")
     for word in ABBREVIATIONS:
         assert not re.search(rf"\b{word}\b", prose, re.IGNORECASE), f"{where}: {word}"
     for promise in PROMISES:

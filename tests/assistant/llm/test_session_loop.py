@@ -610,3 +610,19 @@ def test_a_limit_of_zero_ends_the_question_at_once(rig):
     text = ("Your Mistral account allows 0 requests per minute: its API access is not active yet. Activate a plan "
             "in your Mistral account, then ask again.")
     assert message_for(result.error, "terminal") == message_for(result.error, "gui") == text
+
+
+def test_a_request_too_large_for_the_minute_is_trimmed_once_then_says_so(rig):
+    """Review G9, C4-m8: OpenAI's "request too large" 429 gets the trim once, then the per-minute message with
+    the provider's words, not "too long for the model" (before: retried as a rate limit)."""
+    from flextool.assistant.llm_errors import classify_status
+
+    ctx = ErrorContext(preset_id="openai", provider="OpenAI", model="fake-model")
+    text = "Request too large for gpt-4o on tokens per min (TPM): Limit 30000, Requested 45000."
+    body = {"error": {"message": text, "type": "tokens", "code": "rate_limit_exceeded"}}
+    r = rig([classify_status(429, body, None, ctx), classify_status(429, body, None, ctx), say("never sent")])
+    result = r.ask()
+    assert isinstance(result.error, ContextTooLong)
+    assert len(r.backend.requests) == 2
+    assert result.error.user_message.startswith("This request is larger than your Custom endpoint account may "
+                                                "send in one minute (its answer: Request too large for gpt-4o")

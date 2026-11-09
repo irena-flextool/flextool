@@ -778,7 +778,12 @@ class Session:
         emit(Notice(render("context_retry", self.error_ctx)))
 
     def _still_too_long(self, cause: LLMError | None) -> LLMError:
-        err = make_error(ContextTooLong, "context", self.error_ctx)
+        if cause is not None and cause.message_key == "tpm_too_large":
+            # The per-minute token limit, not the model's context window (review G9, C4-m8): the provider's words.
+            err = make_error(ContextTooLong, "tpm_too_large", self.error_ctx,
+                             message_fields={"text": cause.fields.get("text", "")})
+        else:
+            err = make_error(ContextTooLong, "context", self.error_ctx)
         if cause is not None:
             err.partial_usage = cause.partial_usage
         return err

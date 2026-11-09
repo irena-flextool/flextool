@@ -84,9 +84,10 @@ HTTP_DATE = email.utils.formatdate(NOW + 30, usegmt=True)
 
 # (case, library, preset, status, headers, body, class, retry_after)
 CASES = [
+    # Updated (review G9, C4-m8): no credit or the monthly spend cap, which does not reset by itself.
     ("insufficient_quota", "openai", "openai", 429, {},
      {"error": {"message": "You exceeded your current quota.", "type": "insufficient_quota",
-                "code": "insufficient_quota"}}, E.QuotaExhausted, None),
+                "code": "insufficient_quota"}}, E.NoCredit, None),
     ("gemini list body per day", "openai", "gemini", 429, {},
      _gemini_429("GenerateRequestsPerDayPerProjectPerModel-FreeTier", "41s"), E.QuotaExhausted, None),
     ("gemini retryDelay", "openai", "gemini", 429, {},
@@ -365,3 +366,42 @@ def test_a_stream_error_without_headers_is_classified():
     """Guard: a stream error has no headers (``None``)."""
     err = E.classify_status(None, {"error": {"type": "rate_limit_error", "message": "slow"}}, None, _ctx())
     assert type(err) is E.RateLimited and err.rate_headers is None
+
+
+# --- OpenAI's two 429 kinds and the connect timeout (review G9: C4-m8, C4-m3) ------------------------------------
+TOO_LARGE = ("Request too large for gpt-4o in organization org-example on tokens per min (TPM): Limit 30000, "
+             "Requested 45000. The input or output tokens must be reduced in order to run successfully.")
+
+
+def test_openai_request_too_large_is_context():
+    """A request above the per-minute token limit cannot succeed on a retry: the session's trim, with its own
+    message quoting the provider (before: a retried rate limit)."""
+    body = {"error": {"message": TOO_LARGE, "type": "tokens", "param": None, "code": "rate_limit_exceeded"}}
+    err = classify_openai(openai_exception(_handler(429, body)), _ctx(provider="OpenAI"))
+    assert type(err) is E.ContextTooLong and err.message_key == "tpm_too_large"
+    assert err.user_message == (
+        "This request is larger than your OpenAI account may send in one minute (its answer: " + TOO_LARGE[:-1]
+        + "). A shorter conversation fits: start a new one, or switch to a model or plan with a higher limit.")
+
+
+def test_insufficient_quota_is_no_credit():
+    body = {"error": {"message": "You exceeded your current quota, please check your plan and billing details.",
+                      "type": "insufficient_quota", "param": None, "code": "insufficient_quota"}}
+    err = classify_openai(openai_exception(_handler(429, body)), _ctx(provider="OpenAI"))
+    assert type(err) is E.NoCredit
+    assert err.user_message == ("Your OpenAI account has no credit left. Add credit in your provider account, or "
+                                "switch provider.")
+
+
+@pytest.mark.parametrize("library", ["openai", "anthropic"])
+def test_connect_timeout_names_the_connect_time(library):
+    """A connect timeout (10 s) is not reported as the 300 s read timeout (before: "did not answer within 300
+    seconds")."""
+    def unreachable(request):
+        raise httpx2.ConnectTimeout("timed out", request=request)
+
+    exception = openai_exception if library == "openai" else anthropic_exception
+    classify = classify_openai if library == "openai" else classify_anthropic
+    err = classify(exception(unreachable), _ctx(host="llm.example.test"))
+    assert isinstance(err, E.TimedOut)
+    assert err.user_message == "Could not connect to llm.example.test within 10 seconds."

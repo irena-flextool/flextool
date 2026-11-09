@@ -555,8 +555,10 @@ One question may take several requests to the service: one for each round of too
 That is why a limit on requests per second matters even when you ask one question at a time. FlexTool spaces the
 requests to one service and model:
 
-- When the service's answers say how many requests are left until a reset (OpenAI and Anthropic send this),
-  FlexTool spreads the remaining requests over that time, and waits for the reset when none are left.
+- When the service's answers say how many requests are left until a reset (OpenAI and Anthropic send this;
+  Mistral sends the requests left in the current minute), FlexTool spreads the remaining requests over that time,
+  and waits for the reset when none are left. This only ever makes the wait longer, never shorter than the waits
+  below. A refusal whose answer says none are left waits for that reset before trying again.
 - When the service refuses a request as too fast without saying how long to wait, FlexTool waits 1.1 seconds
   between requests from then on, doubling the wait after each further refusal (at most 20 seconds), and tries again
   by itself: up to 3 times, or 6 with the free plan on, all within 90 seconds. Each answered request shortens the
@@ -567,6 +569,10 @@ requests to one service and model:
   a paid account loses about a second per round of tool calls). With the free plan on, OpenRouter's free models
   start with 3 seconds (20 requests per minute). The learned wait never goes below these.
 - A wait the service asks for is always kept.
+- When the service says your account may send 0 requests per minute, nothing is tried again: the account's API
+  access is not active yet. The message says so, for example "Your Mistral account allows 0 requests per minute:
+  its API access is not active yet. Activate a plan in your Mistral account, then ask again." Test model in the
+  settings shows the same message.
 
 The chat shows the wait, for example "Mistral limits how fast requests may be sent. Sending the next one in 2
 seconds."; Stop works during it. All chats of the FlexTool window that use the same service and model share one

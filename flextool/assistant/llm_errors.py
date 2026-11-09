@@ -46,6 +46,9 @@ MESSAGES: dict[str, str] = {
                       "again."),
     "context": ("The conversation is still too long for {model}. Start a new one with /new (/new carry keeps a "
                 "short summary of this one)."),
+    "tpm_too_large": ("This request is larger than your {provider} account may send in one minute (its answer: "
+                      "{text}). A shorter conversation fits: start a new one, or switch to a model or plan with a "
+                      "higher limit."),
     "history": ("The provider did not accept earlier reasoning data, so FlexTool sent the conversation without "
                 "it."),
     "routing": ("No provider for this model matches your privacy setting (data collection: deny). Change it in "
@@ -61,6 +64,7 @@ MESSAGES: dict[str, str] = {
     "connection_remote": "Could not reach {host}. Check the internet connection or proxy settings.",
     "connection_retry": "Could not reach {host}. Trying again in {seconds} seconds.",
     "timeout": "{provider} did not answer within {seconds} seconds.",
+    "connect_timeout": "Could not connect to {host} within {seconds} seconds.",
     "refused": "{provider} declined to answer this request{reason_suffix}.",
     "length": "The answer was cut off at the output limit ({tokens} tokens).",
     "length_no_finish": "The connection ended before the answer was complete.",
@@ -403,6 +407,9 @@ _BUSY_STATUS = frozenset({500, 502, 503, 504, 529})
 _CONTEXT_PHRASES = ("context_length_exceeded", "prompt is too long", "maximum context length", "context window",
                     "too many tokens", "input token count", "maximum number of tokens")
 _TOOL_PHRASES = ("does not support tools", "tool choice requires")
+#: OpenAI's 429 for one request above the per-minute token limit ("Request too large for … on tokens per min
+#: (TPM): Limit …, Requested …. The input or output tokens must be reduced …"): a retry cannot succeed.
+_TOO_LARGE_PHRASES = ("request too large", "must be reduced")
 
 
 def _body_status(body: _Body) -> int | None:
@@ -520,10 +527,16 @@ def classify_status(status: int | None, body: object, headers: Any, ctx: ErrorCo
     if effective == 402 or "billing_error" in types or "insufficient credits" in text:
         return make(NoCredit, "credit")
     rate_limited = effective == 429 or "rate_limit_error" in types or "RESOURCE_EXHAUSTED" in info.statuses
+    # In this order (review G9): too large for the minute, a limit of 0, no credit, a used-up quota, a rate limit.
+    if rate_limited and any(p in text for p in _TOO_LARGE_PHRASES):
+        return make(ContextTooLong, "tpm_too_large",
+                    message_fields={"text": _provider_text(ctx, info, fallback_text).rstrip(".")})
     if rate_limited and _limit_zero(headers, info):
         return make(AccessInactive, "inactive")
-    if rate_limited and ("insufficient_quota" in types or "insufficient_quota" in codes
-                         or any("perday" in q.lower() or "daily" in q.lower() for q in info.quota_ids)
+    if rate_limited and ("insufficient_quota" in types or "insufficient_quota" in codes):
+        # OpenAI: no credit left or the monthly spend cap reached; neither resets by itself.
+        return make(NoCredit, "credit")
+    if rate_limited and (any("perday" in q.lower() or "daily" in q.lower() for q in info.quota_ids)
                          or "free-models-per-day" in text):
         return make(QuotaExhausted, "quota")
     if rate_limited:
@@ -561,10 +574,23 @@ def classify_status(status: int | None, body: object, headers: Any, ctx: ErrorCo
     return make(ProviderError, "other", message_fields={"status": effective, "text": provider_text})
 
 
-def _connection_error(ctx: ErrorContext, *, timeout: bool, **kwargs: Any) -> LLMError:
+def _connection_error(ctx: ErrorContext, *, timeout: bool, connect: bool = False, **kwargs: Any) -> LLMError:
+    if timeout and connect:
+        from flextool.assistant.net import CONNECT_TIMEOUT
+
+        return make_error(TimedOut, "connect_timeout", ctx, message_fields={"seconds": _seconds(CONNECT_TIMEOUT)},
+                          **kwargs)
     if timeout:
         return make_error(TimedOut, "timeout", ctx, **kwargs)
     return make_error(Unreachable, "connection_local" if ctx.local else "connection_remote", ctx, **kwargs)
+
+
+def _connect_timeout(exc: BaseException) -> bool:
+    """Whether a library's timeout error came from the connect timeout (the libraries raise it ``from`` the
+    ``httpx2`` exception), not the read timeout (review G9, C4-m3)."""
+    import httpx2
+
+    return isinstance(exc.__cause__, httpx2.ConnectTimeout)
 
 
 def _other(exc: BaseException, ctx: ErrorContext, **kwargs: Any) -> LLMError:
@@ -579,7 +605,7 @@ def classify_openai(exc: BaseException, ctx: ErrorContext, *, now: float | None 
     import openai
 
     if isinstance(exc, openai.APITimeoutError):
-        return _connection_error(ctx, timeout=True, **kwargs)
+        return _connection_error(ctx, timeout=True, connect=_connect_timeout(exc), **kwargs)
     if isinstance(exc, openai.APIConnectionError):
         return _connection_error(ctx, timeout=False, **kwargs)
     if isinstance(exc, openai.APIStatusError):
@@ -599,7 +625,7 @@ def classify_anthropic(exc: BaseException, ctx: ErrorContext, *, now: float | No
     import anthropic
 
     if isinstance(exc, anthropic.APITimeoutError):
-        return _connection_error(ctx, timeout=True, **kwargs)
+        return _connection_error(ctx, timeout=True, connect=_connect_timeout(exc), **kwargs)
     if isinstance(exc, anthropic.APIConnectionError):
         return _connection_error(ctx, timeout=False, **kwargs)
     if isinstance(exc, anthropic.APIStatusError):
