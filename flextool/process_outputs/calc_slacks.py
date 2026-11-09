@@ -3,6 +3,28 @@ import pandas as pd
 from flextool.process_outputs._annualize import annualize_dt_to_d
 
 
+def inertia_limit_on_slack_cells(limit: pd.DataFrame, q_inertia: pd.DataFrame) -> pd.DataFrame:
+    """``group_inertia_limit`` on the ``(period, time) × group`` cells of ``vq_inertia``, 0 where it has no value.
+
+    The limit is per (period, time); a step without a limit (not authored, or authored 0) has no requirement, so
+    its slack is 0 MWs rather than a blank cell.  The 0 must not stand in for a limit that is there but whose index
+    does not line up with the slack's (other level names, or time labels of another type or spelling): that would
+    report every shortfall as 0.  A group whose limit has a value but none on the slack's cells raises.
+    """
+    if limit.empty or q_inertia.empty:
+        return limit.reindex(index=q_inertia.index, columns=q_inertia.columns).fillna(0.0)
+    if list(limit.index.names) != list(q_inertia.index.names):
+        raise ValueError(f"group_inertia_limit is indexed by {list(limit.index.names)}, the inertia slack by "
+                         f"{list(q_inertia.index.names)}")
+    on_cells = limit.reindex(index=q_inertia.index, columns=q_inertia.columns)
+    lost = [g for g in q_inertia.columns.intersection(limit.columns)
+            if limit[g].notna().any() and not on_cells[g].notna().any()]
+    if lost:
+        raise ValueError(f"group_inertia_limit of {lost} has values, but none at the (period, time) steps of the "
+                         f"inertia slack: the indexes do not line up")
+    return on_cells.fillna(0.0)
+
+
 def compute_slacks(par, s, v, r) -> None:
     """Compute slack and reserve quantities.
 
@@ -69,10 +91,7 @@ def compute_slacks(par, s, v, r) -> None:
 
     # Inertia penalty: mod uses × step_duration × timestep_weight (objective line ~2380).
     # Per-step cost = q × inertia_limit × penalty × step_duration × timestep_weight.
-    # inertia_limit is per (period, time); a step without a limit (not authored, or authored 0) has no
-    # requirement, so its slack is 0 MWs rather than a blank cell.
-    inertia_limit = par.group_inertia_limit.reindex(index=v.q_inertia.index, columns=v.q_inertia.columns)
-    r.q_inertia_dt = v.q_inertia.mul(inertia_limit.fillna(0.0))
+    r.q_inertia_dt = v.q_inertia.mul(inertia_limit_on_slack_cells(par.group_inertia_limit, v.q_inertia))
     r.q_inertia_d_not_annualized = r.q_inertia_dt.mul(par.step_duration, axis=0).groupby('period').sum()
     r.q_inertia_d = annualize_dt_to_d(r.q_inertia_dt, par.timestep_weight, par.complete_period_share_of_year, par.step_duration)
     r.costPenalty_inertia_dt = r.q_inertia_dt.mul(par.group_penalty_inertia).mul(step_x_rp, axis=0)
