@@ -363,6 +363,12 @@ def _slack_tables(folder: Path) -> None:
     costs = pd.DataFrame({"investment": [3.0, 0.0], "upward slack penalty": [0.125, 0.0]}, index=periods)
     costs.columns.name = "category"
     write_result(folder, "annualized_costs_d_p", costs, "coal")
+    # nodeGroup_slack_reserve_d_eeg [MW]: two reserves, two directions, two groups that can share members.
+    reserve = pd.DataFrame([[4.0, 3.0, 2.0], [0.0, 0.0, 0.0]], index=periods,
+                           columns=pd.MultiIndex.from_tuples([("r1", "up", "g1"), ("r1", "up", "g2"),
+                                                              ("r2", "down", "g1")],
+                                                             names=["reserve", "updown", "node_group"]))
+    write_result(folder, "nodeGroup_slack_reserve_d_eeg", reserve, "coal")
 
 
 def test_get_slack_summary_with_feeding_entities(tmp_path: Path, tests_db: Path) -> None:
@@ -373,7 +379,11 @@ def test_get_slack_summary_with_feeding_entities(tmp_path: Path, tests_db: Path)
     record_run(project, "clean_1", "coal", succeed)
     ctx = make_context(project)
     out = _call(ctx, "get_slack_summary", run="coal_1")
-    (slack,) = out["slacks"]
+    slack, reserve = out["slacks"]
+    # Reserves are not added up across reserves, directions or groups (before: total p2020 4 + 3 + 2 = 9).
+    assert reserve["slack"] == "vq_reserve" and reserve["total"] is None
+    assert reserve["total_note"].startswith("No total: the values of reserve, updown, node_group are not added up")
+    assert [e["value"] for e in reserve["entries"]] == [4.0, 3.0, 2.0]
     assert (slack["slack"], slack["table"], slack["unit"]) == ("vq_state_up", "node_slack_up_d_e",
                                                                 "MWh/a (default convention)")
     assert slack["entries"] == [{"entity": ["west"], "period": "p2020", "value": 12.5}]

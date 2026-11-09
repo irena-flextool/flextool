@@ -15,8 +15,19 @@ min, max, count, the time of the maximum, and the sum where a sum over time is m
 first.
 
 :func:`check_aggregation` refuses a sum that does not mean anything (P0 §5.4): power at each time step summed over
-time is not energy (the step durations are not stored), annual values summed over periods are not a horizon
-total, levels, averages, ratios and prices do not add up.
+time is not energy (the step durations are not stored), annual and per-period values summed over periods are not a
+horizon total, levels, averages, ratios and prices do not add up.
+
+What combining over a level that is not time means is declared per table (``OutputDims.kinds``,
+:func:`flextool.process_outputs._output_meta.level_kind`): entities add up, cost categories are parts of one total
+(no mean across them), groups can share members (no sum across them), and the values of a level such as
+``parameter`` are different quantities (not combined at all).
+
+The peak of a total: when entity or part levels are combined together with time (``time``, ``solve`` or
+``period``) by ``max``, ``min``, ``mean`` or ``time_of_max``, the values are first added up over those levels at each
+time step and the statistic is then taken over time, so "max over units and time" is the peak of the units' sum,
+not the largest single value.  Where the values do not add up over entities (prices, ratios) the statistic is taken
+over the single values.  The result says which (``Result.how``); a per-entity peak keeps the entity level.
 """
 from __future__ import annotations
 
@@ -30,6 +41,7 @@ from flextool.assistant.errors import ToolError, name_list, similar_text
 from flextool.assistant.results import _catalog
 from flextool.assistant.results._catalog import Measure
 from flextool.lean_parquet import LeanLayout, lean_parquet_layout, read_lean_parquet_wide, to_long
+from flextool.process_outputs import _output_meta
 
 #: The most values (rows × kept data columns) a query may turn into rows.
 LONG_CELLS_MAX = 5_000_000
@@ -50,13 +62,19 @@ PER_STEP_SUM_NOTE = ("The sum over time is the total of the period's time steps 
                      "a full year.")
 
 
-def level_kind(level: str) -> str:
-    """``time``, ``period`` or ``entity``: what combining over a level means."""
-    if level in TIME_LEVELS:
-        return "time"
-    if level == PERIOD_LEVEL:
-        return "period"
-    return "entity"
+def level_kind(stem: str, level: str) -> str:
+    """``time``, ``period``, ``entity``, ``part``, ``overlapping`` or ``quantity``: what combining over *level* of
+    the table *stem* means (declared in ``OUTPUT_DIMS``)."""
+    return _output_meta.level_kind(stem, level)
+
+
+#: How a combined level is reported in ``combined_over`` (and what :func:`sum_problem` receives).
+_OVER_LABEL = {"time": "time", "period": "period", "entity": "entity", "part": "category", "overlapping": "group"}
+#: The statistics that take the peak (or the mean) of a total when entity or part levels go with time.
+_TOTAL_FIRST_AGGS = ("mean", "min", "max", "time_of_max")
+_TOTAL_FIRST_LABEL = {"max": "peak", "min": "lowest value", "mean": "mean", "time_of_max": "time of the peak"}
+_SINGLE_VALUE_LABEL = {"max": "largest single value", "min": "smallest single value",
+                       "mean": "mean of the single values", "time_of_max": "time of the largest single value"}
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -69,7 +87,7 @@ def default_agg(semantics: str) -> str:
 
 def sum_problem(stem: str, semantics: str, over: set[str]) -> tuple[str, dict] | None:
     """``(message key, fields)`` when a sum of a *semantics* table over *over* (``time`` / ``period`` /
-    ``entity``) is not meaningful, else ``None``."""
+    ``entity`` / ``category``) is not meaningful, else ``None``."""
     counterpart = _catalog.counterpart(stem)
     use = f" Use the annual table {counterpart} instead." if counterpart else ""
     if semantics == "instantaneous":
@@ -81,13 +99,15 @@ def sum_problem(stem: str, semantics: str, over: set[str]) -> tuple[str, dict] |
     if semantics in ("annualized", "count"):
         return ("sum_annual_over_periods", {}) if over & {"period", "time"} else None
     if semantics == "per_period":
-        return ("sum_per_period_over_periods", {}) if over & {"period", "time"} else None
+        return ("sum_per_period_over_periods", {"use": ""}) if over & {"period", "time"} else None
+    if semantics == "per_step":
+        return ("sum_per_period_over_periods", {"use": use}) if "period" in over else None
     if semantics in ("average", "level"):
         span = "time steps" if "time" in over else "periods"
         return ("sum_level", {"span": span}) if over & {"period", "time"} else None
     if semantics in ("ratio", "price"):
         return ("sum_ratio", {"what": "prices" if semantics == "price" else "ratios"}) if over else None
-    if semantics in ("per_step", "discounted", "horizon"):
+    if semantics in ("discounted", "horizon"):
         return None
     return ("sum_unknown", {}) if over else None
 
@@ -163,6 +183,9 @@ def open_table(folder: Path, stem: str, *, where: str) -> Table:
         if type(exc).__module__.startswith("pyarrow"):
             raise _damaged() from None
         raise
+    clash = [level for level in layout.col if level in layout.idx]
+    if clash:
+        raise ToolError("level_name_clash", table=stem, level=clash[0])
     return Table(stem, path, layout, _catalog.measures(stem, layout), _catalog.membership_set(stem, layout))
 
 
@@ -244,6 +267,8 @@ class Result:
     semantics: set[str]
     units: dict[str, str]             # column label (or "*") → unit as written
     empty_dropped: int = 0
+    #: How an aggregate combined entities with time ("peak of the sum over unit, …"), or ``None``.
+    how: str | None = None
 
 
 def _selected_columns(table: Table, q: Query, scenario: str | None) -> list[str]:
@@ -333,7 +358,7 @@ def run_query(table: Table, q: Query, *, scenario: str | None = None, value_only
     if q.group_by is None and q.agg is None and not value_only:
         return _summary(table, q, keep, semantics, units)
     if q.group_by is None:
-        kept = [level for level in table.levels if level_kind(level) != "time"]
+        kept = [level for level in table.levels if level_kind(table.stem, level) != "time"]
     else:
         kept = list(q.group_by)
     agg = q.agg or default_agg(sorted(semantics)[0] if len(semantics) == 1 else "unknown")
@@ -384,6 +409,7 @@ def _aggregate(table: Table, q: Query, keep: list[str], kept: list[str], agg: st
     wide = _filter_rows(table, read_wide(table, keep), q)
     keys_of = dict(zip(layout.physical, layout.columns))
     position = {level: i for i, level in enumerate(layout.col)}
+    kind = {level: level_kind(table.stem, level) for level in table.levels}
     ck = [level for level in table.column_levels if level in kept]
     cd = [level for level in table.column_levels if level not in kept]
     rk = [level for level in table.row_levels if level in kept]
@@ -392,10 +418,15 @@ def _aggregate(table: Table, q: Query, keep: list[str], kept: list[str], agg: st
     groups: dict[tuple[str, ...], list[str]] = {}
     for p in keep:
         groups.setdefault(tuple(keys_of[p][position[level]] for level in ck), []).append(p)
-    over: set[str] = {level_kind(level) for level in rd if wide[level].n_unique() > 1}
-    for level in cd:
-        if _varying(keys_of[p][position[level]] for p in keep):
-            over.add("entity")
+    # The dropped levels whose values vary within the selection, with those values: combining happens over these.
+    varying: dict[str, list[str]] = {}
+    for level in rd:
+        values = wide[level].unique(maintain_order=True).to_list()
+        if len(values) > 1:
+            varying[level] = [str(v) for v in values]
+    for level in cd:                     # a column level is combined when it varies within a kept key
+        if any(_varying(keys_of[p][position[level]] for p in cols) for cols in groups.values()):
+            varying[level] = list(dict.fromkeys(keys_of[p][position[level]] for p in keep))
     measure_of = table.measure_of()
     for cols in groups.values():
         group_units = {measure_of[p].unit for p in cols}
@@ -403,11 +434,64 @@ def _aggregate(table: Table, q: Query, keep: list[str], kept: list[str], agg: st
             level = next(lv for lv in cd if _varying(keys_of[p][position[lv]] for p in cols))
             raise ToolError("mixed_units", table=table.stem, units=sorted(u or "no unit" for u in group_units),
                             level=level)
+    for level, values in varying.items():
+        if kind[level] == "quantity":
+            raise ToolError("combine_quantities", table=table.stem, level=level, values=name_list(values, 10))
+        if kind[level] == "overlapping" and agg == "sum":
+            raise ToolError("sum_over_groups", table=table.stem, level=level)
+    over = {_OVER_LABEL[kind[level]] for level in varying}
+    timed = [level for level in varying if kind[level] in ("time", "period")]
+    additive = [level for level in varying if kind[level] in ("entity", "part")]
+    summable = all(sum_problem(table.stem, sem, {"entity"}) is None for sem in semantics)
+    total_first = agg in _TOTAL_FIRST_AGGS and bool(timed) and bool(additive) and summable
+    if agg == "mean" and not total_first:
+        part = next((level for level in additive if kind[level] == "part"), None)
+        if part is not None:
+            raise ToolError("mean_of_parts", table=table.stem, level=part)
     notes = check_aggregation(table.stem, semantics, over, agg)
+    how = None
+    if agg in _TOTAL_FIRST_AGGS and timed and additive:
+        rest = [level for level in varying if level not in additive]
+        if total_first:
+            how = (f"{_TOTAL_FIRST_LABEL[agg]} of the sum over {', '.join(additive)}: the values are added up over "
+                   f"{', '.join(additive)} at each time step first, then the "
+                   f"{'max' if agg == 'time_of_max' else agg} is taken over {', '.join(rest)}")
+        else:
+            how = (f"{_SINGLE_VALUE_LABEL[agg]} over {', '.join(varying)}; these values do not add up over "
+                   f"{', '.join(additive)}")
 
+    row_levels = list(table.row_levels)
     names = [f"__g{i}" for i in range(len(groups))]
+    members: list[list[str]] = list(groups.values())
+    source = wide
+    if total_first:
+        # The peak of a total: add up over the entity and part levels at each time step first (per value of the
+        # other dropped column levels, such as overlapping groups, which are combined by agg afterwards).
+        add_cd = [level for level in cd if kind[level] in ("entity", "part")]
+        other_cd = [level for level in cd if level not in add_cd]
+        sums: list[Any] = []
+        members = []
+        for name, cols in zip(names, groups.values()):
+            parts: dict[tuple[str, ...], list[str]] = {}
+            for p in cols:
+                parts.setdefault(tuple(keys_of[p][position[level]] for level in other_cd), []).append(p)
+            members.append([])
+            for j, part_cols in enumerate(parts.values()):
+                sub = f"{name}_{j}"
+                members[-1].append(sub)
+                sums.append(pl.when(pl.any_horizontal(pl.col(part_cols).is_not_null()))
+                            .then(pl.sum_horizontal(part_cols)).alias(sub))
+        source = wide.select([*(pl.col(level) for level in row_levels), *sums])
+        add_rd = [level for level in rd if kind[level] in ("entity", "part")]
+        if add_rd:
+            row_levels = [level for level in row_levels if level not in add_rd]
+            subs = [sub for subs_ in members for sub in subs_]
+            source = source.group_by(row_levels, maintain_order=True).agg(
+                [pl.when(pl.col(sub).count() > 0).then(pl.col(sub).sum()).alias(sub) for sub in subs])
+            rd = [level for level in rd if level not in add_rd]
+
     horizontal: list[Any] = []
-    for name, cols in zip(names, groups.values()):
+    for name, cols in zip(names, members):
         c = pl.col(cols)
         present = pl.any_horizontal(c.is_not_null())
         if agg in ("sum", "mean"):
@@ -419,11 +503,11 @@ def _aggregate(table: Table, q: Query, keep: list[str], kept: list[str], agg: st
             horizontal.append(pl.min_horizontal(cols).alias(name))
         else:                                   # max, time_of_max
             horizontal.append(pl.max_horizontal(cols).alias(name))
-    frame = wide.select([*(pl.col(level) for level in table.row_levels), *horizontal])
+    frame = source.select([*(pl.col(level) for level in row_levels), *horizontal])
 
     extras: list[str] = []
     if agg == "time_of_max":
-        extras = [level for level in rd if level_kind(level) != "entity"]
+        extras = [level for level in rd if kind[level] in ("time", "period")]
     final: list[Any] = []
     for name in names:
         if agg == "sum":
@@ -467,7 +551,7 @@ def _aggregate(table: Table, q: Query, keep: list[str], kept: list[str], agg: st
     before = long.height
     long = long.filter(pl.col("value").is_not_null())
     return Result(long, keys, value_columns, "aggregate", agg, keys, sorted(over), notes, semantics, units,
-                  empty_dropped=before - long.height)
+                  empty_dropped=before - long.height, how=how)
 
 
 def _summary(table: Table, q: Query, keep: list[str], semantics: set[str], units: dict[str, str]) -> Result:
@@ -476,8 +560,8 @@ def _summary(table: Table, q: Query, keep: list[str], semantics: set[str], units
     import polars as pl
 
     wide = _filter_rows(table, read_wide(table, keep), q)
-    rk = [level for level in table.row_levels if level_kind(level) != "time"]
-    tl = [level for level in table.row_levels if level_kind(level) == "time"]
+    rk = [level for level in table.row_levels if level_kind(table.stem, level) != "time"]
+    tl = [level for level in table.row_levels if level_kind(table.stem, level) == "time"]
     with_sum = all(sum_problem(table.stem, sem, {"time"}) is None for sem in semantics)
     stats = [s for s in SUMMARY_STATS if s != "sum" or with_sum]
     exprs: list[Any] = []

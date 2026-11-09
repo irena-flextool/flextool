@@ -67,6 +67,31 @@ def _long(table: _query.Table):
     return long.drop(_query.SCENARIO_LEVEL) if _query.SCENARIO_LEVEL in long.columns else long
 
 
+def _totals(table: _query.Table, long, levels: list[str], max_rows: int) -> dict[str, Any]:
+    """``total`` (and ``total_by``) of a slack: the sum per period over the levels that add up (entities, such as
+    nodes), kept apart by the others (groups can share members; reserves and their directions are different
+    requirements).  Without a level that adds up the entries are the totals already: ``total`` is ``None``."""
+    import polars as pl
+
+    if "period" not in long.columns:
+        return {"total": None}
+    kinds = {level: _query.level_kind(table.stem, level) for level in levels}
+    additive = [level for level in levels if kinds[level] in ("entity", "part")]
+    by = [level for level in levels if level not in additive]
+    if not additive:
+        return {"total": None,
+                "total_note": (f"No total: the values of {', '.join(by)} are not added up (groups can share "
+                               "members; reserves and their directions are separate requirements). Each entry is "
+                               f"one {', '.join(by)}.")}
+    totals = long.group_by([*by, "period"], maintain_order=True).agg(pl.col("value").sum())
+    if not by:
+        return {"total": {str(p): _query._number(v) for p, v in totals.sort("period").iter_rows()}}
+    totals = totals.sort("value", descending=True, maintain_order=True)
+    rows = [{"key": [row[c] for c in by], "period": row["period"], "value": _query._number(row["value"])}
+            for row in totals.head(max_rows).iter_rows(named=True)]
+    return {"total": rows, "total_by": by, "totals_shown": f"{len(rows)} of {totals.height}"}
+
+
 def _feeding(ctx: AssistantContext, rr: _runs.ResolvedRun, nodes: list[str]) -> tuple[dict | None, str | None]:
     """``{node: [{entity_class, entity}]}``: the units and connections that have the node as a dimension and are
     active in the run's scenario of its input source."""
@@ -115,14 +140,12 @@ def slack_summary(ctx: AssistantContext, run: str, *, min_value: float, max_rows
         long = long.sort("value", descending=True, maintain_order=True)
         entries = [{"entity": [row[c] for c in entity_levels], "period": row.get("period"),
                     "value": _query._number(row["value"])} for row in long.head(max_rows).iter_rows(named=True)]
-        totals = (long.group_by("period", maintain_order=True).agg(pl.col("value").sum()).sort("period")
-                  if "period" in long.columns else None)
         record: dict[str, Any] = {
             "slack": spec.slack,
             "table": spec.table,
             "meaning": spec.meaning,
             "unit": shown_unit(table.measures[0].unit) if table.measures else None,
-            "total": ({str(p): _query._number(v) for p, v in totals.iter_rows()} if totals is not None else None),
+            **_totals(table, long, entity_levels, max_rows),
             "entries": entries,
             "entries_shown": f"{len(entries)} of {long.height}",
             "related_inputs": list(spec.related_inputs),

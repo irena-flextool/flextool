@@ -200,7 +200,8 @@ TOOLS = [
         name="get_slack_summary", title="Where a run used its slacks",
         description=("The penalised slacks a run that succeeded used: node balance (loss of load and excess "
                      "load), non-synchronous limit, inertia, reserve and capacity margin, each with what it "
-                     "means, its unit, the total per period, the largest entries, the inputs that decide it and, "
+                     "means, its unit, the total per period (over nodes; groups and reserves are not added up), "
+                     "the largest entries, the inputs that decide it and, "
                      "for a node, the units and connections that feed it in the run's scenario; and the penalty "
                      "costs. min_value (default 0.000001) leaves out smaller values; max_rows (default 20) entries "
                      "per slack. " + _RUN_TEXT),

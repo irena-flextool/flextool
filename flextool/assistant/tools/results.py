@@ -74,6 +74,7 @@ def _applied(q: Query, result: _query.Result) -> dict:
         "group_by": result.kept if result.mode == "aggregate" else None,
         "agg": result.agg,
         "combined_over": result.over or None,
+        "how": result.how,
         "sort": {"by": q.sort_by, "descending": q.descending} if q.sort_by else None,
         "top_n": q.top_n,
     }
@@ -332,7 +333,7 @@ def compare_runs(ctx: AssistantContext, args: dict) -> Fit:
             missing[name] = f"{n} keys without a value"
     result = _query.Result(joined, keys, run_names + diff_names, first_result.mode, first_result.agg,
                            first_result.kept, first_result.over, first_result.notes, first_result.semantics,
-                           first_result.units)
+                           first_result.units, how=first_result.how)
     frame = _query.ordered(result, q, default_by=diff_names[0] if diff_names else None)
     max_rows = int(args["max_rows"])
     total = frame.height

@@ -115,7 +115,17 @@ MESSAGES: dict[str, str] = {
                                 "the horizon. Use the discounted cost table, or compare periods side by side."),
     "sum_per_period_over_periods": ("These values are sums over the sampled time steps of each period, not "
                                     "scaled to the years a period represents; adding them across periods does not "
-                                    "give a total over the horizon. Compare periods side by side."),
+                                    "give a total over the horizon. Compare periods side by side.{use}"),
+    "level_name_clash": ("The table {table} uses the name {level} for a row level and a column level, so it "
+                         "cannot be queried."),
+    "combine_quantities": ("The level {level} of {table} holds different quantities ({values}); they cannot be "
+                           "added up or combined. Keep {level} in group_by, or filter it to one value; or keep the "
+                           "level and add the values you need yourself."),
+    "mean_of_parts": ("The {level} values of {table} are parts of one total; their mean is not a meaningful "
+                      "figure. Use sum, or keep {level} in group_by."),
+    "sum_over_groups": ("Groups of {table} can share members, so adding them up may count a member more than "
+                        "once. Keep {level} in group_by or filter it to one group; for a system total use a table "
+                        "by unit, node or process."),
     "sum_level": ("This table holds levels or averages (a capacity, a storage state, a mean over the period); "
                   "adding them over {span} gives no meaningful total. Use mean, min or max, or keep the {span} "
                   "apart in group_by."),
