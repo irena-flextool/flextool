@@ -45,11 +45,16 @@ HOME_TOKEN = "~"
 
 _SEP = r"[\\/]"
 _PART = r"[^\s/\\'\"<>|]+"                          # a part of a path: runs to white space, a quote or a separator
-_MID = rf"{_PART}(?: {_PART}){{0,3}}"               # a folder in the middle: up to four words, single spaces
+#: A folder in the middle of a path may hold up to four words with single spaces ("Acme Corp", "Program Files
+#: (x86)"), but a sentence does not continue one: no space after ``. , ; :`` or a backquote, and no backquote,
+#: ``;`` or square bracket in a later word ("see [reference](../x.md)" is two things, not a folder).
+_SPACE = r"(?<![.,;:`]) "
+_CONT = r"[^\s/\\'\"<>|`;\[\]]+"
+_MID = rf"{_PART}(?:{_SPACE}{_CONT}){{0,3}}"
 _LAST = rf"(?:{_MID}{_SEP})*{_PART}{_SEP}?"         # the folders, then the last part
-_FIRST = r"[^\s/\\'\"<>|{}]+(?: [^\s/\\'\"<>|{}]+){0,3}"  # a server or top folder (no braces: not TeX)
+_FIRST = rf"[^\s/\\'\"<>|{{}}]+(?:{_SPACE}[^\s/\\'\"<>|{{}}`;\[\]]+){{0,3}}"  # a server or top folder (no braces: TeX)
 _UPART = r"[^\s/\\'\"<>|?#]+"                        # a part of a URL's path
-_UMID = rf"{_UPART}(?: {_UPART}){{0,3}}"
+_UMID = rf"{_UPART}(?:{_SPACE}[^\s/\\'\"<>|?#`;\[\]]+){{0,3}}"
 _SCHEME = r"(?:file:(?=/)|(?!(?:https?|ftp|ftps|flextool-docs):)[A-Za-z][A-Za-z0-9+.-]*://)"
 _URL = rf"{_SCHEME}/*(?:[A-Za-z]:[\\/])?(?:{_UMID}[\\/])*{_UPART}[\\/]?(?:[?#][^\s'\"<>]*)?"
 #: Where a backslash path may start: not inside a word, after another backslash or a dot (``..\\x`` climbs), or
