@@ -5862,7 +5862,6 @@ def _migrate_v80_ramp_cost_descriptions(db) -> None:
     _commit_step(db, "v80: ramp_method and ramp_cost descriptions (ramp_cost is functional)")
 
 
-
 #: v81: the two solve-level detail reductions; values in the fixed word order of the design.
 REDUCE_UNIT_DETAIL_METHODS: tuple[str, ...] = (
     "none", "integers", "integers_ramps", "integers_min_limits", "integers_ramps_min_limits", "online",
@@ -5878,8 +5877,9 @@ _V81_DESCRIPTIONS: dict[str, str] = {
         "integers_min_limits: integers, and no min_load, capacity_min_coeff floors or minimum up / down times. "
         "integers_ramps_min_limits: integers, no ramps and no min limits. online: everything of "
         "integers_min_limits, and no online variables: no start-up costs, user constraints that count units "
-        "online are left out whole, min_load_efficiency units use their full-load efficiency, and ramp limits "
-        "apply to the capacity. online_ramps: online, and no ramp limits or ramp costs. Never adds detail."),
+        "online are left out whole, min_load_efficiency units use their full-load efficiency (less fuel than "
+        "the curve at part load), and ramp limits apply to the capacity. Reserves are then limited by built "
+        "capacity, not online capacity, and inertia is counted from flows. online_ramps: online, and no ramp limits or ramp costs. Never adds detail."),
     "reduce_system_detail_method": (
         "[choice] System detail that this solve leaves out, to make it faster. none (default): all detail. "
         "reserves: no reserve requirements. inertia: no inertia limits. non_synchronous: no non-synchronous "
@@ -5902,8 +5902,9 @@ def _migrate_v81_reduce_detail_methods(db) -> None:
                               ("reduce_system_detail_methods", REDUCE_SYSTEM_DETAIL_METHODS)):
         if not db.get_item("parameter_value_list", name=list_name):
             db.add_parameter_value_list(name=list_name)
-        present = {x["parsed_value"] for x in db.get_items("list_value", parameter_value_list_name=list_name)}
-        index = len(present)
+        items = db.get_items("list_value", parameter_value_list_name=list_name)
+        present = {x["parsed_value"] for x in items}
+        index = max((x["index"] for x in items), default=-1) + 1
         for value in values:
             if value in present:
                 continue
@@ -5923,6 +5924,7 @@ def _migrate_v81_reduce_detail_methods(db) -> None:
         elif any(pdef[k] != v for k, v in fields.items()):
             db.update_parameter_definition(id=pdef["id"], **fields)
     _commit_step(db, "v81: solve.reduce_unit_detail_method and solve.reduce_system_detail_method")
+
 
 _V70_MAX_FLOW_UNCONSTRAINED_DESCRIPTION = (
     "[MW] Upper bound assigned to LP variables that have no other cap "

@@ -9,7 +9,8 @@
   start-up costs; `min_load_efficiency` units use their full-load efficiency (the same fuel at full load, less at
   part load), ramp limits apply to the capacity, and a user constraint with a `constraint_online_coeff` term is
   left out of the solve, with a warning naming it. *online_ramps* is *online* without ramps. A level never adds
-  detail, and the rolls of a rolling solve and its realization solve use the solve's own level. The companion
+  detail. Every roll of a rolling solve uses the solve's level, and a realization solve uses its parent solve's
+  levels, whatever is set on the realization solve itself. The companion
   `reduce_system_detail_method` (reserves, inertia, non-synchronous limits, DC power flow) is added to the
   database in the same version. Databases are migrated automatically; models that do not set the parameters are
   unchanged.

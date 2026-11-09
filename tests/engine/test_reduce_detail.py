@@ -16,7 +16,10 @@ Hand values (design solve_relaxation_design.md, implementation brief WP1 test 3,
 unit online): 75 + 50 = 125.  Under ``online`` the slope is 1.5 + 0.5 = 2: 200 at 100 MW and 100 at 50 MW.  With the
 output conversion_flow_coeff 2 (k_sink 2, k_src 1) the folded slope is 1.5 · 2 = 3 and the section 0.5: fuel 350 /
 200 at 100 / 50 MW without reduction, 3.5 · output = 350 / 175 under ``online`` (the full-load input
-(slope⁰·k_sink + section⁰)/k_src is kept).  The cost is fuel only, so objective ratios are fuel ratios.
+(slope⁰·k_sink + section⁰)/k_src is kept).  With the input conversion_flow_coeff 2 (k_src 2; units.md: input·2 =
+output·slope⁰ + section⁰·online) the fuel flow is (1.5 · output + 0.5 · 100 · online)/2: (150 + 50)/2 = 100 at 100
+MW and (75 + 50)/2 = 62.5 at 50 MW; under ``online`` 2 · output / 2 = output: 100 and 50 (folded slope 1).  The cost
+is fuel only, so objective ratios are fuel ratios.
 """
 from __future__ import annotations
 
@@ -106,6 +109,15 @@ def _solve(tmp_path_factory, alt: str, values: list, entities: list):
     return step
 
 
+def _all_families(pb) -> tuple[set[str], set[str], set[str]]:
+    """(row families, column families, families of the integer columns) of a built problem."""
+    m = pb.canonicalise()
+    rows = {n.split("[", 1)[0] for n in m.row_names}
+    cols = {n.split("[", 1)[0] for n in m.col_names}
+    ints = {m.col_names[i].split("[", 1)[0] for i in range(len(m.col_names)) if m.col_int[i]}
+    return rows, cols, ints
+
+
 def _families(pb) -> tuple[set[str], set[str]]:
     """(row families, families of the integer columns) of a built problem."""
     m = pb.canonicalise()
@@ -133,6 +145,9 @@ def test_engine_values_are_the_schema_value_lists() -> None:
 
 def test_level_parts() -> None:
     """online contains every integers_min_limits effect; system values split in the fixed word order."""
+    from flextool.engine.preprocess._reduce_detail import UNIT_PARTS
+
+    assert tuple(UNIT_PARTS) == REDUCE_UNIT_DETAIL_METHODS
     assert unit_parts("none") == frozenset()
     assert unit_parts("integers_ramps_min_limits") == {"integers", "ramps", "min_limits"}
     assert unit_parts("online") == {"integers", "min_limits", "online"}
@@ -174,34 +189,43 @@ def test_resolver_roll_realization_and_unknown(tmp_path_factory) -> None:
 # per level: the row families and integer columns
 
 
-_FULL = {"ramp": {"ramp_sink_up_constraint", "ramp_sink_down_constraint"}, "ramp_cost": {"ramp_change_eq"},
-         "min_load": {"minFlow_minload_integer"}, "min_up": {"minimum_uptime_integer"},
-         "online": {"maxOnline_integer", "online_change_integer", "maxStartup_integer", "maxFlow_online_integer"},
-         # the start-up / shut-down capacity reduction of a ramp-limited online unit (_online._cap_reduction)
-         "shutdown": {"maxFlow_online_shutdown_integer"},
-         "exact": {"maxFlow_exact_forward", "maxFlow_exact_reverse"}, "user": {"process_constraint_greater_than"}}
+# The row / column families each part removes from the rd_full model (design §2.A, rows U1-U9): the exact direction
+# switch (integers), the ramp limits and ramp cost with the start-up / shut-down capacity reduction of the
+# ramp-limited online unit (ramps, _online._cap_reduction), min load and min up time (min_limits), every online row
+# and column and the user constraint that counts units online (online).
+_EXACT = ({"maxFlow_exact_forward", "maxFlow_exact_reverse"}, {"v_exact_forward"})
+_RAMPS = ({"ramp_sink_up_constraint", "ramp_sink_down_constraint", "ramp_change_eq", "maxFlow_online_shutdown_integer"},
+          {"v_ramp_up", "v_ramp_down"})
+_MIN_LIMITS = ({"minFlow_minload_integer", "minimum_uptime_integer"}, set())
+_ONLINE = ({"maxOnline_integer", "online_change_integer", "maxStartup_integer", "maxShutdown_integer",
+            "maxFlow_online_integer", "maxFlow_online_shutdown_integer", "process_constraint_greater_than"},
+           {"v_online_integer", "v_startup_integer", "v_shutdown_integer"})
 
 
-@pytest.mark.parametrize("level, kept, ints", [
-    ("none", {"ramp", "ramp_cost", "min_load", "min_up", "online", "shutdown", "exact", "user"},
-     {"v_online_integer", "v_exact_forward"}),
-    ("integers", {"ramp", "ramp_cost", "min_load", "min_up", "online", "shutdown", "user"}, set()),
-    ("integers_ramps", {"min_load", "min_up", "online", "user"}, set()),
-    ("integers_min_limits", {"ramp", "ramp_cost", "online", "shutdown", "user"}, set()),
-    ("integers_ramps_min_limits", {"online", "user"}, set()),
-    ("online", {"ramp", "ramp_cost"}, set()),
-    ("online_ramps", set(), set()),
+def _removed(*parts) -> tuple[set[str], set[str]]:
+    return set().union(*(p[0] for p in parts)), set().union(*(p[1] for p in parts))
+
+
+@pytest.mark.parametrize("level, removed, ints", [
+    ("none", _removed(), {"v_online_integer", "v_exact_forward"}),
+    ("integers", _removed(_EXACT), set()),
+    ("integers_ramps", _removed(_EXACT, _RAMPS), set()),
+    ("integers_min_limits", _removed(_EXACT, _MIN_LIMITS), set()),
+    ("integers_ramps_min_limits", _removed(_EXACT, _RAMPS, _MIN_LIMITS), set()),
+    ("online", _removed(_EXACT, _MIN_LIMITS, _ONLINE), set()),
+    ("online_ramps", _removed(_EXACT, _RAMPS, _MIN_LIMITS, _ONLINE), set()),
 ])
-def test_row_families_per_level(tmp_path_factory, level, kept, ints) -> None:
-    """Each level removes its families (and nothing else of the list) and leaves no integer column unless none."""
+def test_row_families_per_level(tmp_path_factory, level, removed, ints) -> None:
+    """Each level removes exactly its row and column families, adds none, and leaves no integer column unless
+    none."""
     step = _solve(tmp_path_factory, "rd_full", _full_values(), _full_entities())
+    none_rows, none_cols, _ = _all_families(build(step.flex_data))
     reduced, report = apply_reduce_detail(step.flex_data, level)
-    rows, int_families = _families(build(reduced))
-    for key, families in _FULL.items():
-        if key in kept:
-            assert families <= rows, (level, key, families - rows)
-        else:
-            assert not (families & rows), (level, key, families & rows)
+    rows, cols, int_families = _all_families(build(reduced))
+    removed_rows, removed_cols = removed
+    assert none_rows - rows == removed_rows, level
+    assert none_cols - cols == removed_cols, level
+    assert rows - none_rows == set() and cols - none_cols == set(), level
     assert int_families == ints
     if level == "none":
         assert reduced is step.flex_data and not report.changed
@@ -210,8 +234,6 @@ def test_row_families_per_level(tmp_path_factory, level, kept, ints) -> None:
         assert report.removed["integer_online"] == ["g1"]
         # Integer online columns are relaxed in place (same family name) only while online variables remain.
         assert reduced.relax_integrality is (level.startswith("integers"))
-        if level.startswith("integers"):
-            assert "v_online_integer" in {n.split("[", 1)[0] for n in build(reduced).canonicalise().col_names}
     if level.startswith("online"):
         assert report.removed["user_constraints"] == ["c_online"]
         assert report.removed["min_load_efficiency"] == ["g1"]
@@ -291,31 +313,36 @@ def test_online_from_the_database_solves(tmp_path_factory) -> None:
 # min_load_efficiency at full-load efficiency (online)
 
 
-def _fold_values(demand: float, k_sink: float, level: str | None) -> list:
+def _fold_values(demand: float, k_sink: float, level: str | None, k_src: float = 1.0) -> list:
     vals = _base_values(demand)
     if k_sink != 1.0:
         vals.append(["unit__outputNode", ["g1", "elec"], "conversion_flow_coeff", _f(k_sink)])
+    if k_src != 1.0:
+        vals.append(["unit__inputNode", ["g1", "fuel"], "conversion_flow_coeff", _f(k_src)])
     if level is not None:
         vals.append(["solve", SOLVE, "reduce_unit_detail_method", _s(level)])
     return vals
 
 
-@pytest.mark.parametrize("k_sink, fuel_none_100, fuel_none_50, fuel_online_100, fuel_online_50, slope_online", [
-    (1.0, 200.0, 125.0, 200.0, 100.0, 2.0),
-    (2.0, 350.0, 200.0, 350.0, 175.0, 3.5),
-])
-def test_min_load_efficiency_folds_to_full_load(tmp_path_factory, k_sink, fuel_none_100, fuel_none_50,
+@pytest.mark.parametrize(
+    "k_sink, k_src, fuel_none_100, fuel_none_50, fuel_online_100, fuel_online_50, slope_online", [
+        (1.0, 1.0, 200.0, 125.0, 200.0, 100.0, 2.0),
+        (2.0, 1.0, 350.0, 200.0, 350.0, 175.0, 3.5),
+        (1.0, 2.0, 100.0, 62.5, 100.0, 50.0, 1.0),
+    ])
+def test_min_load_efficiency_folds_to_full_load(tmp_path_factory, k_sink, k_src, fuel_none_100, fuel_none_50,
                                                 fuel_online_100, fuel_online_50, slope_online) -> None:
     """Under online the unit's fuel is output × (slope + section): the full-load fuel is kept, part load uses
     less (hand values in the module docstring).  The objective is fuel × 20 CUR/MWh × the same weights in every
     case, so its ratios are the fuel ratios."""
-    tag = f"k{int(k_sink)}"
-    none_100 = _solve(tmp_path_factory, f"rd_fold_none_100_{tag}", _fold_values(100.0, k_sink, None),
+    tag = f"k{int(k_sink)}s{int(k_src)}"
+
+    def run(level, demand, name):
+        return _solve(tmp_path_factory, f"rd_fold_{name}_{tag}", _fold_values(demand, k_sink, level, k_src),
                       _base_entities())
-    none_50 = _solve(tmp_path_factory, f"rd_fold_none_50_{tag}", _fold_values(50.0, k_sink, None), _base_entities())
-    on_100 = _solve(tmp_path_factory, f"rd_fold_on_100_{tag}", _fold_values(100.0, k_sink, "online"),
-                    _base_entities())
-    on_50 = _solve(tmp_path_factory, f"rd_fold_on_50_{tag}", _fold_values(50.0, k_sink, "online"), _base_entities())
+
+    none_100, none_50 = run(None, 100.0, "none_100"), run(None, 50.0, "none_50")
+    on_100, on_50 = run("online", 100.0, "on_100"), run("online", 50.0, "on_50")
     slope = utf8(on_50.flex_data.p_slope.frame).filter(pl.col("p") == "g1")["value"]
     section = utf8(on_50.flex_data.p_section.frame).filter(pl.col("p") == "g1")["value"]
     assert slope.to_list() == pytest.approx([slope_online] * slope.len(), rel=1e-12)

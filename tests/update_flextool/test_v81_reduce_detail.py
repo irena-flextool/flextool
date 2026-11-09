@@ -75,6 +75,32 @@ def test_adds_the_value_lists_in_order(migrated) -> None:
     assert "reduce_unit_detail_methods" not in migrated["lists_before"]
     assert migrated["lists_after"]["reduce_unit_detail_methods"] == UNIT_VALUES
     assert migrated["lists_after"]["reduce_system_detail_methods"] == SYSTEM_VALUES
+    assert tuple(UNIT_VALUES) == m.REDUCE_UNIT_DETAIL_METHODS
+    assert tuple(SYSTEM_VALUES) == m.REDUCE_SYSTEM_DETAIL_METHODS
+
+
+def test_completes_a_partial_list(tmp_path_factory) -> None:
+    """A list that already holds some values (here only ``none`` and ``online``, at indexes 0 and 5) is completed:
+    no value twice, and the added values take indexes after the largest one present."""
+    from spinedb_api import to_database
+
+    url = json_to_db(SEED, tmp_path_factory.mktemp("v81_partial") / "seed.sqlite")
+    migrate_database(url, up_to=80)
+    with DatabaseMapping(url) as db:
+        db.add_parameter_value_list(name="reduce_unit_detail_methods")
+        for index, value in ((0, "none"), (5, "online")):
+            val, typ = to_database(value)
+            db.add_list_value(parameter_value_list_name="reduce_unit_detail_methods", value=val, type=typ,
+                              index=index)
+        db.commit_session("partial list")
+    migrate_database(url, up_to=81)
+    with DatabaseMapping(url) as db:
+        items = sorted(db.get_items("list_value", parameter_value_list_name="reduce_unit_detail_methods"),
+                       key=lambda x: x["index"])
+    values = [x["parsed_value"] for x in items]
+    assert sorted(values) == sorted(UNIT_VALUES) and len(values) == len(UNIT_VALUES)
+    assert [x["index"] for x in items] == [0, 5, 6, 7, 8, 9, 10]
+    assert values[:2] == ["none", "online"]
 
 
 def test_changes_nothing_else(migrated) -> None:

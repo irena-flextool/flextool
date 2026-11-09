@@ -58,7 +58,6 @@ UNIT_PARTS: dict[str, frozenset[str]] = {
     "online": frozenset({"integers", "min_limits", "online"}),
     "online_ramps": frozenset({"integers", "ramps", "min_limits", "online"}),
 }
-assert tuple(UNIT_PARTS) == REDUCE_UNIT_DETAIL_METHODS
 
 #: The system parts, in the fixed word order of the value names.
 SYSTEM_TOKENS: tuple[str, ...] = ("reserves", "inertia", "non_synchronous", "dc_power_flow")
@@ -192,8 +191,15 @@ def _fold_min_load_efficiency(d: "FlexData", procs: set[str]) -> tuple[Param, Pa
     sf, ef = _frame(slope), _frame(section)
     sec = (ef.select(*u, pl.col("value").cast(pl.Float64).alias("__sec"))
            .filter(pl.col("__p").is_in(sorted(procs))))
+    dup = sec.group_by(uk).len().filter(pl.col("len") > 1)
+    if dup.height > 0:
+        raise ValueError("reduce_unit_detail_method online: p_section has duplicate (p, d, t) cells: "
+                         f"{dup.select(uk).head(5).rows()}.")
     joined = (sf.with_row_index("__row").with_columns(*u)
               .join(sec, on=uk, how="left").sort("__row"))
+    if joined.height != sf.height:
+        raise ValueError(f"reduce_unit_detail_method online: folding the section changed the p_slope rows "
+                         f"({sf.height} -> {joined.height}).")
     missing = sec.join(joined.select(uk), on=uk, how="anti")
     if missing.height > 0:
         raise ValueError("reduce_unit_detail_method online: min_load_efficiency cells with a section but no "
@@ -277,8 +283,18 @@ def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport) -> 
         if online:
             removed["online"] = sorted(online)
         clear(ONLINE_FIELDS)
-        folded = _names(d.process_min_load_eff) & online
-        if folded and d.p_slope is not None and d.p_section is not None:
+        min_load_eff = _names(d.process_min_load_eff)
+        not_online = sorted(min_load_eff - online)
+        if not_online:
+            # The method table gives a min_load_efficiency process an online variable; clearing the set without
+            # folding would silently drop the section of these processes.
+            raise ValueError(f"reduce_unit_detail_method {report.unit}: min_load_efficiency process(es) "
+                             f"{', '.join(not_online)} have no online variable; their section cannot be folded.")
+        folded = min_load_eff & online
+        if folded and (d.p_slope is None or d.p_section is None):
+            raise ValueError(f"reduce_unit_detail_method {report.unit}: min_load_efficiency process(es) "
+                             f"{', '.join(sorted(folded))} have no p_slope / p_section to fold.")
+        if folded:
             new["p_slope"], new["p_section"] = _fold_min_load_efficiency(d, folded)
             removed["min_load_efficiency"] = sorted(folded)
         if d.process_min_load_eff is not None:

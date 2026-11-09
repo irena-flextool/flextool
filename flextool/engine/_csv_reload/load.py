@@ -48,7 +48,9 @@ def load_from_dump_with_provider(dump_dir: Path | str, *, db_url: str | None = N
     ``load_flextool`` with that provider.  With ``db_url`` + ``scenario`` the loader reads the DB-direct parameters
     from that database (no axis Enums, as in production); without them it is a CSV-only load.  Nothing is
     discovered: no ``tests.sqlite`` next to the dump, no scenario from the folder name.  The reload has no
-    solve-to-solve carry (``handoff/`` folders are not read), so it can differ from the solved model.
+    solve-to-solve carry (``handoff/`` folders are not read), so it can differ from the solved model.  Nor does it
+    apply the solve's ``reduce_unit_detail_method`` / ``reduce_system_detail_method`` (the cascade's
+    ``preprocess._reduce_detail.apply_reduce_detail``): a reduced solve's dump reloads as the unreduced model.
 
     Raises ``ValueError`` when only one of ``db_url`` / ``scenario`` is given.
     """

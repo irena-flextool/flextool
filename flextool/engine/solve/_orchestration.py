@@ -3141,8 +3141,11 @@ def _drive_cascade(
             if _reduce_report.warnings:
                 _warned = self.__dict__.setdefault("_reduce_detail_warned", set())
                 _reduce_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
-                if _reduce_base not in _warned:
-                    _warned.add(_reduce_base)
+                # One warning per chain: a realization solve repeats its parent's.
+                _warn_key = (getattr(self.state.solve, "realized_dispatch_parent", {}) or {}).get(
+                    _reduce_base, _reduce_base)
+                if _warn_key not in _warned:
+                    _warned.add(_warn_key)
                     for _line in _reduce_report.warnings:
                         self.state.logger.warning("Solve %s: %s", _reduce_base, _line)
                         print(f"Warning: solve {_reduce_base}: {_line}", flush=True)
