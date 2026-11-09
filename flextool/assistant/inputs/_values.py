@@ -206,6 +206,29 @@ def compact(value: Any) -> Any:
     return out
 
 
+def _canonical(x: Any) -> Any:
+    """*x* (a :func:`_plain` leaf or index) in one form for equal values: a number as a float (``1`` and ``1.0``
+    are one value, as :func:`same_value` has them)."""
+    if isinstance(x, (int, float)) and not isinstance(x, bool):
+        return float(x) if math.isfinite(float(x)) else str(x)
+    return x
+
+
+def value_key(value: Any) -> str:
+    """A stable hash of the whole parsed *value*: its kind, index names and every row of an indexed value, the
+    uncut text of a string.  Two values have one key only when they are the same value (:func:`same_value`), so
+    a listing may group entities on it (:func:`compact` is a summary: values with the same length, min, mean and
+    max share it)."""
+    import hashlib
+
+    if is_indexed(value):
+        form: Any = [kind_of(value), index_names(value), [[_canonical(x) for x in r] for r in rows_of(value)]]
+    else:
+        form = ["scalar", type(value).__name__ if isinstance(value, (str, bool)) else "", _canonical(_plain(value))]
+    text = json.dumps(form, ensure_ascii=False, separators=(",", ":"), default=str)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
 def same_value(a: Any, b: Any) -> bool:
     """Whether two parsed values are equal (``1`` equals ``1.0``)."""
     if is_indexed(a) or is_indexed(b):

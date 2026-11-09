@@ -693,22 +693,21 @@ COMPARE_COLUMNS = ["alternative", "alternative_a", "alternative_b", "entity_clas
                    "entities"]
 
 
-def _difference_alternative(ia: Any, ib: Any, va: _db.ScenarioView, vb: _db.ScenarioView) -> str | None:
-    """The alternative that makes the two scenarios differ in one value: the winner (b's, then a's) that the
-    other scenario does not have; when both winners are in both scenarios (the ranks differ), b's (Cycle 1
-    critique M1)."""
+def _difference_alternatives(ia: Any, ib: Any, va: _db.ScenarioView, vb: _db.ScenarioView) -> list[str]:
+    """The alternatives that make the two scenarios differ in one value, the row's ``alternative`` first: each
+    winner (b's, then a's) that the other scenario does not have; when both winners are in both scenarios (the
+    ranks differ), b's alone (Cycle 1 critique M1).  When b's and a's winners are both missing from the other
+    scenario, both make the difference: the row is credited to b's, and the ``alternative`` filter finds it by
+    either (Cycle 1 review m1)."""
     candidates = [(ib, va), (ia, vb)]
-    for item, other in candidates:
-        if item is not None and item.alternative not in other.rank:
-            return item.alternative
-    for item, _ in candidates:
-        if item is not None:
-            return item.alternative
-    return None
+    own = [item.alternative for item, other in candidates if item is not None and item.alternative not in other.rank]
+    if own:
+        return list(dict.fromkeys(own))
+    return [item.alternative for item, _ in candidates if item is not None][:1]
 
 
 def compare_inputs(ctx: AssistantContext, args: dict) -> Fit:
-    from flextool.assistant.caps import dumps, fit_rows
+    from flextool.assistant.caps import fit_rows
 
     source, db, notes = _open(ctx, args)
     a = project.resolve_scenario(ctx, source, db, args["scenario_a"])
@@ -737,14 +736,19 @@ def compare_inputs(ctx: AssistantContext, args: dict) -> Fit:
         pb = ib.parsed() if ib is not None else None
         if ia is not None and ib is not None and _values.same_value(pa, pb):
             continue                       # equal once parsed (1 and 1.0)
-        alternative = _difference_alternative(ia, ib, va, vb)
-        if only_alternative is not None and alternative != only_alternative:
+        makers = _difference_alternatives(ia, ib, va, vb)
+        alternative = makers[0] if makers else None
+        if only_alternative is not None and only_alternative not in makers:
             continue
         ca = _values.compact(pa) if ia is not None else None
         cb = _values.compact(pb) if ib is not None else None
         alt_a = ia.alternative if ia is not None else None
         alt_b = ib.alternative if ib is not None else None
-        group_key = (alternative, alt_a, alt_b, cls, param, dumps(ca), dumps(cb))   # canonical: maps too (m2)
+        # Entities share a row only when their values are the same: the key hashes the whole value, not its
+        # summary (Cycle 1 review M1).
+        group_key = (alternative, alt_a, alt_b, cls, param,
+                     _values.value_key(pa) if ia is not None else None,
+                     _values.value_key(pb) if ib is not None else None)
         group = groups.setdefault(group_key, {"alternative": alternative, "alternative_a": alt_a,
                                               "alternative_b": alt_b, "entity_class": cls, "parameter": param,
                                               "a": ca, "b": cb, "entities": []})
@@ -783,7 +787,8 @@ def compare_inputs(ctx: AssistantContext, args: dict) -> Fit:
     total_values = sum(len(g["entities"]) for g in groups.values())
     out_notes = notes + ["a and b are the stored values each scenario uses; a missing value (null) means no "
                          "alternative of that scenario sets it (FlexTool then uses the default). alternative is "
-                         "the one that makes them differ; n counts the entities with that change."]
+                         "the one that makes them differ; n counts the entities with that change (the same "
+                         "values: a long series is shown summarised)."]
     if longer:
         out_notes.append(f"entities lists at most {COMPARE_ENTITIES_MAX}; get_parameter with entity_class and "
                          "parameters gives the others.")
@@ -809,7 +814,8 @@ def compare_inputs(ctx: AssistantContext, args: dict) -> Fit:
     def note(k: int, _n: int) -> str | None:
         if k == len(rows):
             return None
-        return f"{k} of {len(rows)} rows ({total_values} values); pass alternative or entity_class"
+        text = f"{k} of {len(rows)} rows ({total_values} values); pass alternative or entity_class"
+        return text + (", or a larger max_rows" if k == max_rows else "")
 
     fitted = fit_rows(payload, "differences", ctx.caps.max_chars, ctx.redact, note_key="shown", note=note)
     return Fit(fitted, rows_key="differences", what="rows", hint="pass alternative or entity_class")

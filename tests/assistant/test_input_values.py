@@ -463,4 +463,81 @@ def test_compare_inputs_groups_identical_changes(tmp_path, tests_db) -> None:
     # max_rows caps the rows, and says so.
     capped = _call(ctx, "compare_inputs", scenario_a="A", scenario_b="B", max_rows=1)
     assert len(capped["differences"]) == 1
-    assert capped["shown"] == "1 of 2 rows (14 values); pass alternative or entity_class"
+    assert capped["shown"] == "1 of 2 rows (14 values); pass alternative or entity_class, or a larger max_rows"
+
+
+def _distinct_changes(path):
+    """On a copy of tests.json: connections d01, d02, d03 active in base_net; in alternative y, d01 and d03 get
+    the map {p2020: 0.9, p2025: 0.95} and d02 the same values the other way round {p2020: 0.95, p2025: 0.9} (same
+    length, min, mean and max).  e01 has efficiency 0.8 in x and 0.7 in y.  Scenarios A = [base_net, x] and
+    B = [base_net, y]."""
+    from spinedb_api import Map, to_database
+
+    from flextool.update_flextool.db_handle import open_database_mapping
+
+    def put(db, entity: str, alternative: str, value) -> None:
+        raw, value_type = to_database(value)
+        db.add_parameter_value_item(entity_class_name="connection", entity_byname=(entity,),
+                                    parameter_definition_name="efficiency", alternative_name=alternative,
+                                    value=raw, type=value_type)
+
+    with open_database_mapping(f"sqlite:///{path.as_posix()}") as db:
+        for alt in ("base_net", "x", "y"):
+            db.add_alternative_item(name=alt)
+        for scenario, alts in (("A", ("base_net", "x")), ("B", ("base_net", "y"))):
+            db.add_scenario_item(name=scenario)
+            for rank, alt in enumerate(alts, start=1):
+                db.add_scenario_alternative_item(scenario_name=scenario, alternative_name=alt, rank=rank)
+        for name in ("d01", "d02", "d03", "e01"):
+            db.add_entity_item(entity_class_name="connection", name=name)
+            db.add_entity_alternative_item(entity_class_name="connection", entity_byname=(name,),
+                                           alternative_name="base_net", active=True)
+        for name in ("d01", "d03"):
+            put(db, name, "y", Map(["p2020", "p2025"], [0.9, 0.95], index_name="period"))
+        put(db, "d02", "y", Map(["p2020", "p2025"], [0.95, 0.9], index_name="period"))
+        put(db, "e01", "x", 0.8)
+        put(db, "e01", "y", 0.7)
+        db.commit_session("test: distinct changes")
+
+
+def test_compare_inputs_groups_only_identical_values(tmp_path, tests_db) -> None:
+    """Cycle 1 review M1: entities share a row only when their values are the same, not when their summaries
+    are (d02's map has d01's values in another order).  m1: e01's value comes from x in A and from y in B, which
+    the other scenario lacks; the row is credited to y, and ``alternative: "x"`` finds it too.  Before: d01 and d02
+    in one row (n 2), and ``alternative: "x"`` gave no differences."""
+    from flextool.assistant.context import make_context
+    from tests.assistant.conftest import make_project
+
+    project = make_project(tmp_path, tests_db)
+    _distinct_changes(project / "input_sources" / "tests.sqlite")
+    ctx = make_context(project)
+    out = _call(ctx, "compare_inputs", scenario_a="A", scenario_b="B", entity_class="connection")
+    rows = [dict(zip(out["columns"], r)) for r in out["differences"]]
+    assert [(r["entities"], r["n"], r["alternative"], r["alternative_a"], r["alternative_b"]) for r in rows] == [
+        ([["d01"], ["d03"]], 2, "y", None, "y"), ([["d02"]], 1, "y", None, "y"), ([["e01"]], 1, "y", "x", "y")]
+    assert rows[0]["b"] == rows[1]["b"]                    # the same summary, two values
+    assert (rows[2]["a"], rows[2]["b"]) == (0.8, 0.7)
+    assert out["by_alternative"] == {"y": {"connection": 4}} and (out["total_values"], out["total_rows"]) == (4, 3)
+    by_x = _call(ctx, "compare_inputs", scenario_a="A", scenario_b="B", alternative="x")
+    assert (by_x["total_values"], [r[-1] for r in by_x["differences"]]) == (1, [[["e01"]]])
+    assert by_x["by_alternative"] == {"y": {"connection": 1}}
+    assert _call(ctx, "compare_inputs", scenario_a="A", scenario_b="B", alternative="base_net")["total_values"] == 0
+
+
+def test_value_key_tells_values_apart_that_their_summary_does_not() -> None:
+    """M1: the grouping key hashes the whole value: a string that differs after the shown 500 characters, a
+    series in another order; 1 and 1.0 are one value."""
+    from spinedb_api import Map, TimeSeriesVariableResolution
+
+    from flextool.assistant.inputs._values import STRING_MAX, compact, value_key
+
+    long_a, long_b = "x" * STRING_MAX + "a", "x" * STRING_MAX + "b"
+    assert compact(long_a) == compact(long_b) and value_key(long_a) != value_key(long_b)
+    assert value_key(1) == value_key(1.0) and value_key(1.0) != value_key("1") != value_key(True)
+    m1 = Map(["p1", "p2"], [1.0, 2.0], index_name="period")
+    m2 = Map(["p1", "p2"], [2.0, 1.0], index_name="period")
+    assert compact(m1) == compact(m2) and value_key(m1) != value_key(m2)
+    assert value_key(m1) == value_key(Map(["p1", "p2"], [1, 2], index_name="period"))
+    ts = TimeSeriesVariableResolution(["2020-01-01T00:00", "2020-01-01T01:00"], [1.0, 2.0], False, False)
+    later = TimeSeriesVariableResolution(["2020-01-01T01:00", "2020-01-01T02:00"], [1.0, 2.0], False, False)
+    assert value_key(ts) != value_key(later)
