@@ -5662,7 +5662,8 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
         # ``_load_time``).  Run pass 1b so broadcast-needing Direct
         # Params still apply against the CSV-loaded dt.
         _loadflex_prof("apply_db_overrides:pass_direct_params_b")
-        _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
+        _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data,
+               active_solve=active_solve)
 
         # RESERVE-1 — the synthetic-solve early-return skips passes 3-10
         # entirely, but two reserve-feature fields are produced by those
@@ -5931,7 +5932,8 @@ def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",
     # ``p_commodity_price`` / ``p_process_availability`` / similar
     # fields empty on the fast path even when Spine carried the data.
     _loadflex_prof("apply_db_overrides:pass_direct_params_b")
-    _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data)
+    _timed("1b direct_params_b", _dp.apply_direct_params_b, db_reader, flex_data,
+               active_solve=active_solve)
 
     _loadflex_prof("apply_db_overrides:pass_derived_b")
     _timed("4  derived_b", _drv.apply_derived_b, flex_data, db_reader, workdir_path, ctx=ctx, provider=provider)

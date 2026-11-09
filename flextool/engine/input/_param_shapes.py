@@ -3105,6 +3105,60 @@ def fill_default_over_grid(
 # Period coverage — a period map must give a value for every period of the solve
 # ---------------------------------------------------------------------------
 
+#: The periods a :class:`PeriodNeed` lists, by ``kind``: the noun of the error message and the closing rule.
+_PERIOD_NEED_WORDING: dict[str, tuple[str, str]] = {
+    "solve": ("period(s) {periods} used by {solve} (including look-ahead periods)",
+              "every period of the solve, including its look-ahead periods"),
+    "invest": ("investment period(s) {periods} of {solve}",
+               "every investment period of the solve"),
+    "online": ("period(s) {periods} in which investments of {solve} start to operate (construction lead time)",
+               "every period in which an investment of the solve starts to operate"),
+}
+
+
+@dataclass(frozen=True)
+class PeriodNeed:
+    """The periods a limit's period map must cover in one solve (:func:`require_period_coverage`).
+
+    * ``periods`` — one set for every entity, or ``{entity label: periods}`` when the periods differ per entity
+      (an entity missing from the mapping needs none);
+    * ``kind`` — what the periods are, for the error message: ``"solve"`` (every period of the solve, look-ahead
+      included), ``"invest"`` (the investment periods) or ``"online"`` (the periods in which investments start
+      to operate, with a construction lead time);
+    * ``solve`` — the name of the active solve (a roll ``<solve>_roll_<n>`` is named as solve and roll), or
+      ``None`` when not known.
+
+    Falsy when no entity needs a period, which skips the check.
+    """
+
+    periods: "frozenset[str] | dict[str, frozenset[str]]"
+    kind: str = "solve"
+    solve: "str | None" = None
+
+    def __post_init__(self) -> None:
+        if self.kind not in _PERIOD_NEED_WORDING:
+            raise ValueError(f"PeriodNeed.kind must be one of {sorted(_PERIOD_NEED_WORDING)}, not {self.kind!r}")
+
+    def __bool__(self) -> bool:
+        if isinstance(self.periods, dict):
+            return any(self.periods.values())
+        return bool(self.periods)
+
+    def of(self, entity: str) -> "frozenset[str]":
+        """The periods ``entity`` (an entity label) must cover."""
+        if isinstance(self.periods, dict):
+            return self.periods.get(entity, frozenset())
+        return self.periods
+
+    def solve_words(self) -> str:
+        """``"solve 'a'"``, ``"solve 'a', roll 3"`` or ``"this solve"``."""
+        if not self.solve:
+            return "this solve"
+        base, sep, roll = self.solve.rpartition("_roll_")
+        if sep and base and roll.isdigit():
+            return f"solve '{base}', roll {roll}"
+        return f"solve '{self.solve}'"
+
 
 def _period_coverage_problems(
     resolved: ResolvedShape,
@@ -3112,35 +3166,45 @@ def _period_coverage_problems(
     entity_keys: "tuple[str, ...]",
     period_filter: pl.DataFrame,
     *,
-    need_periods: "set[str]",
+    need: PeriodNeed,
     active: "set[str] | None",
-) -> "list[tuple[str, list[str]]]":
-    """``[(entity, missing periods)]`` of the entities whose period map leaves out a needed period.
+) -> "list[tuple[str, list[str], list[str]]]":
+    """``[(entity, missing periods, periods without a time step)]`` of the entities whose period map leaves out
+    a needed period.
 
-        need       = { d ∈ period_filter.d : d ∈ need_periods }                (period_filter order)
+        need[k]    = { d ∈ period_filter.d : d ∈ need.of(k) }                  (period_filter order)
         mapped     = { k : resolved has a row of k with a non-null period } ∩ active
+        stepped[k] = { d : a (period, time) map of k has a number in period d }
         have[k]    = { d : out[k, d(, t)] is not null and not NaN }
-        missing[k] = need − have[k]                                            ∀ k ∈ mapped, missing[k] ≠ ∅
+        lacking[k] = need[k] − have[k]                                          ∀ k ∈ mapped, lacking[k] ≠ ∅
+        missing[k] = lacking[k] − stepped[k];  no_step[k] = lacking[k] ∩ stepped[k]
 
-    A constant (a null-period row) applies to every period and is never checked.  ``out`` is the
-    broadcast without the zero filter, so an authored 0 counts as a value.  Entity labels are the
-    entity's dim values joined with ``", "`` (the bare name for a 0-dim class); ``active`` holds the
-    same labels.
+    ``no_step`` is a period a (period, time) map gives but none of whose time steps is in the solve.  A
+    constant (a null-period row) applies to every period and is never checked.  ``out`` is the broadcast
+    without the zero filter, so an authored 0 counts as a value.  Entity labels are the entity's dim values
+    joined with ``", "`` (the bare name for a 0-dim class); ``active`` holds the same labels.
     """
     if resolved.frame is None or resolved.period_index_column is None:
         return []
     order = [str(d) for d in period_filter.get_column("d").cast(pl.Utf8).unique(maintain_order=True).to_list()]
-    need = [d for d in order if d in need_periods]
-    if not need:
-        return []
     ent_cols = list(resolved.entity_dim_columns)
     label = pl.concat_str([pl.col(c).cast(pl.Utf8) for c in ent_cols], separator=", ").alias("__k")
     mapped = set(resolved.frame.filter(pl.col(resolved.period_index_column).is_not_null())
                  .select(label).get_column("__k").to_list())
     if active is not None:
         mapped &= set(active)
+    mapped = {k for k in mapped if need.of(k)}
     if not mapped:
         return []
+    # A period a (period, time) map gives with a number in it, but at none of the solve's time steps.
+    stepped: dict[str, set[str]] = {}
+    if resolved.time_index_column is not None and "value" in resolved.frame.columns:
+        num = pl.col("value").cast(pl.Float64, strict=False)
+        for k, d in (resolved.frame.filter(pl.col(resolved.period_index_column).is_not_null()
+                                           & num.is_not_null() & num.is_not_nan())
+                     .select(label, pl.col(resolved.period_index_column).cast(pl.Utf8).alias("__d"))
+                     .iter_rows()):
+            stepped.setdefault(k, set()).add(d)
     have: dict[str, set[str]] = {}
     if out is not None and "d" in out.dims:
         value = pl.col("value").cast(pl.Float64, strict=False)
@@ -3154,23 +3218,35 @@ def _period_coverage_problems(
             have.setdefault(k, set()).add(d)
     problems = []
     for k in sorted(mapped):
-        lacking = [d for d in need if d not in have.get(k, set())]
+        wanted = need.of(k)
+        lacking = [d for d in order if d in wanted and d not in have.get(k, set())]
         if lacking:
-            problems.append((k, lacking))
+            given = stepped.get(k, set())
+            problems.append((k, [d for d in lacking if d not in given], [d for d in lacking if d in given]))
     return problems
 
 
-def _raise_period_coverage(problems: "list[tuple[str, list[str]]]", *, entity_class: str,
-                           parameter_name: str) -> None:
-    """Raise one :class:`FlexToolConfigError` listing every entity of ``problems`` (no-op when empty)."""
+def _raise_period_coverage(problems: "list[tuple[str, list[str], list[str]]]", *, entity_class: str,
+                           parameter_name: str, need: PeriodNeed) -> None:
+    """Raise one :class:`FlexToolConfigError` listing every entity of ``problems`` (no-op when empty).
+
+    The message names the class, the entity, the parameter, the missing periods with what they are
+    (``need.kind``) and the solve (and roll)."""
     if not problems:
         return
-    parts = [f"{entity_class} '{k}', parameter '{parameter_name}': the period map has no value for "
-             f"period(s) {', '.join(lacking)} used by this solve (including look-ahead periods)"
-             for k, lacking in problems]
+    noun, rule = _PERIOD_NEED_WORDING[need.kind]
+    solve = need.solve_words()
+    parts = []
+    for k, missing, no_step in problems:
+        what = []
+        if missing:
+            what.append("the period map has no value for " + noun.format(periods=", ".join(missing), solve=solve))
+        if no_step:
+            what.append(f"the period map gives period(s) {', '.join(no_step)} but none of their time steps is in "
+                        f"{solve}")
+        parts.append(f"{entity_class} '{k}', parameter '{parameter_name}': " + "; ".join(what))
     raise FlexToolConfigError(
-        "; ".join(parts) + ". A period map must give a value for every period of the solve "
-        "(a constant applies to all periods).")
+        "; ".join(parts) + f". A period map must give a value for {rule} (a constant applies to all periods).")
 
 
 def _drop_zero_rows(out: "Param | None") -> "Param | None":
@@ -3187,27 +3263,28 @@ def require_period_coverage(
     *,
     entity_class: str,
     parameter_name: str,
-    need_periods: "set[str] | None",
+    need_periods: "PeriodNeed | None",
     active: "set[str] | None" = None,
     filter_zero: bool = False,
 ) -> "Param | None":
     """:func:`broadcast_to_period`, after checking that every period map covers the periods it must.
 
         out        = broadcast_to_period(resolved, aliases, period_filter, filter_zero=False)
-        missing[k] = (need_periods ∩ period_filter.d) − { d : out[k, d] is a number }
+        missing[k] = (need_periods.of(k) ∩ period_filter.d) − { d : out[k, d] is a number }
                      ∀ entity k with a period map (∩ active)
-        raise FlexToolConfigError naming entity_class, k, parameter_name and missing[k]   if any missing[k] ≠ ∅
+        raise FlexToolConfigError naming entity_class, k, parameter_name, missing[k] and the solve
+                                                                                    if any missing[k] ≠ ∅
         return out, without the rows of value 0 when filter_zero
 
-    A period the solve uses (including look-ahead periods) but a limit's period map leaves out would
-    otherwise get no row, or a null that a consumer reads as 0, so it is an error.  A constant applies to
-    every period and is never checked.  A stochastic branch period without a value of its own inherits the
-    value of its anchor in the broadcast (:func:`_with_branch_periods`), so it counts as covered.  The zero
-    filter runs after the check, so an authored 0 is never read as a missing period.  ``need_periods`` is
-    intersected with ``period_filter``'s periods, because the broadcast only keeps those; None or an empty
-    set skips the check (e.g. a solve with no investment periods).  ``active`` (entity labels, see
+    A period a limit applies to but its period map leaves out would otherwise get no row, or a null that a
+    consumer reads as 0, so it is an error.  A constant applies to every period and is never checked.  A
+    stochastic branch period without a value of its own inherits the value of its anchor in the broadcast
+    (:func:`_with_branch_periods`), so it counts as covered.  The zero filter runs after the check, so an
+    authored 0 is never read as a missing period.  ``need_periods`` (:class:`PeriodNeed`) is intersected with
+    ``period_filter``'s periods, because the broadcast only keeps those; None or an empty need skips the check
+    (e.g. a solve with no investment periods).  ``active`` (entity labels, see
     :func:`_period_coverage_problems`) limits the check to the entities whose limit is switched on; None
-    checks every entity.  Pure: the caller works out the period sets and the gate.
+    checks every entity.  Pure: the caller works out the period sets, the gate and the solve name.
     """
     if not need_periods or period_filter is None or period_filter.height == 0:
         return broadcast_to_period(resolved, entity_dim_aliases, period_filter, filter_zero=filter_zero)
@@ -3215,9 +3292,8 @@ def require_period_coverage(
     if resolved is not None and resolved.frame is not None:
         _rename, keys = _resolve_entity_dim_aliases(resolved, entity_dim_aliases, "require_period_coverage")
         _raise_period_coverage(
-            _period_coverage_problems(resolved, out, keys, period_filter, need_periods=need_periods,
-                                      active=active),
-            entity_class=entity_class, parameter_name=parameter_name)
+            _period_coverage_problems(resolved, out, keys, period_filter, need=need_periods, active=active),
+            entity_class=entity_class, parameter_name=parameter_name, need=need_periods)
     return _drop_zero_rows(out) if filter_zero else out
 
 
@@ -3228,7 +3304,7 @@ def require_period_coverage_time(
     *,
     entity_class: str,
     parameter_name: str,
-    need_periods: "set[str] | None",
+    need_periods: "PeriodNeed | None",
     active: "set[str] | None" = None,
     filter_zero: bool = False,
 ) -> "Param | None":
@@ -3236,7 +3312,8 @@ def require_period_coverage_time(
 
     Only the entities with a period level (a period map, or the period level of a period + time map) are
     checked, and only against the periods: a time map, a constant and the time steps inside a period are
-    not.  The value of a (period, time) map covers a period when it has at least one number in it.
+    not.  The value of a (period, time) map covers a period when it has at least one number in it; a period
+    the map gives but with none of the solve's time steps is reported as such.
     """
     if not need_periods or period_filter is None or period_filter.height == 0:
         return broadcast_to_period_time(resolved, entity_dim_aliases, period_filter, filter_zero=filter_zero)
@@ -3244,7 +3321,6 @@ def require_period_coverage_time(
     if resolved is not None and resolved.frame is not None:
         _rename, keys = _resolve_entity_dim_aliases(resolved, entity_dim_aliases, "require_period_coverage_time")
         _raise_period_coverage(
-            _period_coverage_problems(resolved, out, keys, period_filter, need_periods=need_periods,
-                                      active=active),
-            entity_class=entity_class, parameter_name=parameter_name)
+            _period_coverage_problems(resolved, out, keys, period_filter, need=need_periods, active=active),
+            entity_class=entity_class, parameter_name=parameter_name, need=need_periods)
     return _drop_zero_rows(out) if filter_zero else out

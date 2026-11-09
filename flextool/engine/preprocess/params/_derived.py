@@ -5984,7 +5984,27 @@ def _apply_lead_time_sets(flex_data: object,
                               ) -> None:
     """``flex_data.edd_invest_commission`` / ``edd_invest_in_construction`` / ``e_construction_lead_time`` (``[e, L]``,
     the longest lead time of the entity's decisions) of a solve where some investment decision has a construction
-    lead time (offered or not); all ``None`` otherwise, so the model keeps the formulation without lead times."""
+    lead time (offered or not); all ``None`` otherwise, so the model keeps the formulation without lead times.
+
+    Then checks the period maps of the per-period investment limits against the periods in which the solve's
+    investments start to operate (:func:`._direct.require_invest_period_coverage`)."""
+    _set_lead_time_sets(flex_data, source, active_solve, ed_inv, commission_lf, period_in_use, workdir,
+                        lineage=lineage)
+    from flextool.engine.preprocess.params._direct import require_invest_period_coverage
+    require_invest_period_coverage(source, flex_data, active_solve)
+
+
+def _set_lead_time_sets(flex_data: object,
+                        source: "InputSource",
+                        active_solve: str | None,
+                        ed_inv: "pl.DataFrame | None",
+                        commission_lf: "pl.LazyFrame | None",
+                        period_in_use,
+                        workdir: "Path | None",
+                        *,
+                        lineage: "pl.DataFrame | None" = None,
+                        ) -> None:
+    """The lead-time sets of :func:`_apply_lead_time_sets`."""
     flex_data.edd_invest_commission = None
     flex_data.edd_invest_in_construction = None
     flex_data.e_construction_lead_time = None

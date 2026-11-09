@@ -12,13 +12,17 @@
 - **Fixed: a limit given as a period map no longer drops the periods it leaves out without a word.** A period
   the solve uses (look-ahead periods included) but a period map does not cover is now an error naming the entity,
   the parameter and the missing periods. Before, such a period got a CO2 cap of 0 (`co2_max_period`), no
-  inertia requirement, no limit or floor (`cumulative_min_capacity`, `invest_min_period`, cumulative and instant
-  flow limits), an error about another entity (the investment maxima), or a capacity margin of 0. This covers
+  inertia requirement, a non-synchronous limit of 0 (no non-synchronous infeed without a penalty), no limit or
+  floor (`cumulative_min_capacity`, `invest_min_period`, cumulative and instant flow limits), an error about
+  another entity (the investment maxima), or a capacity margin of 0. This covers
   `co2_max_period`, `inertia_limit`, `non_synchronous_limit`, `capacity_margin`, the per-period investment and
   retirement limits, `cumulative_max_capacity` / `cumulative_min_capacity` and the flow group limits; the
-  investment limits and the capacity margin need a value in the investment periods of the solve only. Only limits
-  that are switched on are checked, and a constant still applies to every period. Fill in the missing periods if
-  a model now stops with this error.
+  investment limits and the capacity margin need a value in the investment periods of the solve only
+  (`invest_max_period` / `invest_min_period` with a construction lead time: in the periods the investments start
+  to operate). Only limits that are switched on are checked, and a constant still applies to every period. The
+  error names the solve (and the roll of a rolling solve); each solve and roll checks its own periods, so the run
+  stops at the first solve or roll that uses the missing period. Fill in the missing periods if a model now stops
+  with this error.
 - **Fixed: an explicit 0 in a flow group limit is a limit of 0.** `max_cumulative_flow`, `min_cumulative_flow`,
   `max_instant_flow` and `min_instant_flow` dropped a value of 0 (also one time step of a time map), so there was
   no limit at all. The net flow into a flow group can be negative, so a 0 limit now binds.

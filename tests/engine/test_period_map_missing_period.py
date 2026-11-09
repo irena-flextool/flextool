@@ -1,7 +1,9 @@
 """A period map that leaves out a period of the solve is an error; an explicit 0 is a value.
 
 A limit given as a period map must give a value for every period the solve uses (including look-ahead
-periods; for the investment limits and the capacity margin, every investment period of the solve).  Before, a
+periods; for the investment limits and the capacity margin, every investment period of the solve; for
+``invest_max_period`` / ``invest_min_period`` with a construction lead time, every period in which an investment
+of the solve starts to operate).  Before, a
 missing period was silent: ``co2_max_period`` became a cap of 0, ``inertia_limit`` no requirement, a missing
 ``cumulative_min_capacity`` / cumulative / instant flow limit no row; the investment maxima failed with an error
 about another entity.  Now the reader raises ``FlexToolConfigError`` naming the class, the entity, the parameter
@@ -16,6 +18,9 @@ Two related fixes:
 - (b) a ``co2_method`` that caps emissions per period (or in total) without a ``co2_max_period``
   (``co2_max_total``) value is an error; before it was a cap of 0 in every period, or a developer error.
 
+The message says what the missing periods are (periods of the solve, its investment periods, or the periods
+in which its investments start to operate with a construction lead time) and names the solve (and the roll).
+
 Expected outcomes are specified by hand (error / no error, a 0 right-hand side), not taken from the code.
 Fixtures: ``tests.json`` and ``stochastics.json`` plus an override alternative, built from JSON.
 """
@@ -23,6 +28,7 @@ from __future__ import annotations
 
 import pytest
 
+from flextool.engine.input._param_shapes import PeriodNeed
 from flextool.engine.input._solve_state import FlexToolConfigError
 from tests.engine._lp_rows import row_bounds
 from tests.engine._unit_db import FLEXTOOL_ROOT, PLANT, TIMESTEPS, b64, build, make_db, run, utf8
@@ -234,3 +240,129 @@ def test_co2_total_method_without_value_is_an_error(tmp_path_factory) -> None:
                        match=r"group 'co2_limit', co2_method 'total' needs parameter 'co2_max_total'"):
         _run(tmp_path_factory, "c1_co2_total_noval",
              [["group", "co2_limit", "co2_method", text("total")]], PLANT_CHAIN + ["co2_limit"])
+
+
+# ---------------------------------------------------------------------------
+# The families with their own period sets, the group gate and the solve in the message
+
+
+def _period_time_map(values: dict[str, dict[str, float]]) -> list:
+    """A (period, time) map."""
+    return b64({"type": "map", "index_type": "str", "index_name": "period", "rank": 2,
+                "data": [[d, {"type": "map", "index_type": "str", "index_name": "time",
+                              "data": [[t, v] for t, v in steps.items()]}]
+                         for d, steps in values.items()]}, "map")
+
+
+def test_period_time_map_missing_a_period_is_an_error(tmp_path_factory) -> None:
+    """``max_instant_flow`` as a (period, time) map over p2025 only, on the one-period (p2020) dispatch solve
+    y2020_2day_dispatch: p2020 is missing, and the message says it is a period of that solve."""
+    with pytest.raises(FlexToolConfigError,
+                       match=r"flowGroup 'coal_fuel', parameter 'max_instant_flow': the period map has no value "
+                             r"for period\(s\) p2020 used by solve 'y2020_2day_dispatch' \(including look-ahead"):
+        _run(tmp_path_factory, "c1_pt_gap",
+             [["flowGroup", FLOW_GROUP, "max_instant_flow",
+               _period_time_map({"p2025": {t: 1000.0 for t in TIMESTEPS}})]],
+             PLANT_CHAIN, entities=FLOW_ENTITIES)
+
+
+def test_period_time_map_covering_the_period_is_fine(tmp_path_factory) -> None:
+    """The same (period, time) map over p2020: no error, and each step of p2020 has its row with the upper
+    bound 1000."""
+    rows = _bounds(tmp_path_factory, "c1_pt_ok",
+                   [["flowGroup", FLOW_GROUP, "max_instant_flow",
+                     _period_time_map({"p2020": {t: 1000.0 for t in TIMESTEPS}})]], "maxInstant_flow")
+    assert rows[f"maxInstant_flow[{FLOW_GROUP},p2020,t0001]"][1] == 1000.0
+
+
+def test_period_time_map_period_without_a_solve_step_says_so(tmp_path_factory) -> None:
+    """y2020_5week (p2020 + look-ahead p2025): a (period, time) map that gives p2025 only at a step t9999 the
+    solve does not have is reported as a period without a time step of the solve, not as a missing period."""
+    with pytest.raises(FlexToolConfigError,
+                       match=r"flowGroup 'coal_fuel', parameter 'max_instant_flow': the period map gives "
+                             r"period\(s\) p2025 but none of their time steps is in solve 'y2020_5week'\."):
+        _run(tmp_path_factory, "c1_pt_nostep",
+             [["flowGroup", FLOW_GROUP, "max_instant_flow",
+               _period_time_map({"p2020": {t: 1000.0 for t in TIMESTEPS}, "p2025": {"t9999": 5.0}})]],
+             LOOKAHEAD_CHAIN, entities=FLOW_ENTITIES)
+
+
+@pytest.mark.parametrize(("solve", "words"), [("dispatch", "solve 'dispatch'"),
+                                              ("dispatch_roll_3", "solve 'dispatch', roll 3"),
+                                              ("my_roll_x", "solve 'my_roll_x'"),
+                                              (None, "this solve")])
+def test_the_message_names_the_solve_and_roll(solve, words) -> None:
+    """A roll of a rolling solve is named ``<solve>_roll_<n>``; the message names the solve and the roll."""
+    assert PeriodNeed(frozenset({"p2020"}), "solve", solve).solve_words() == words
+
+
+CAPACITY_MARGIN_CHAIN = MULTI_YEAR_CHAIN + ["network", "capacity_margin"]
+
+
+def test_capacity_margin_covers_the_investment_periods_only(tmp_path_factory) -> None:
+    """``capacity_margin = {p2020: 100, p2025: 100}`` (method manual) on the solve investing in p2020 and p2025:
+    the margin applies to the investment periods, so the dispatch-only p2030 / p2035 need no value."""
+    values = _two_invest_periods() + [
+        ["group", "capacity_margin", "capacity_margin", pmap({"p2020": 100.0, "p2025": 100.0})]]
+    assert _run(tmp_path_factory, "c1_margin_ok", values, CAPACITY_MARGIN_CHAIN)
+
+
+def test_capacity_margin_missing_an_investment_period_is_an_error(tmp_path_factory) -> None:
+    """``capacity_margin = {p2020: 100}``: the investment period p2025 is missing (before: a margin of 0)."""
+    values = _two_invest_periods() + [["group", "capacity_margin", "capacity_margin", pmap({"p2020": 100.0})]]
+    with pytest.raises(FlexToolConfigError,
+                       match=r"group 'capacity_margin', parameter 'capacity_margin': the period map has no value "
+                             r"for investment period\(s\) p2025 of solve 'y2020_2035_5week'\."):
+        _run(tmp_path_factory, "c1_margin_gap", values, CAPACITY_MARGIN_CHAIN)
+
+
+@pytest.mark.parametrize(("method", "raises"), [("invest_period", True), ("not_active", False)])
+def test_group_invest_max_period_gap_follows_the_method(tmp_path_factory, method, raises) -> None:
+    """Group wind_coal (coal_plant, wind_plant) with ``invest_max_period = {p2020: 1000}`` on the solve
+    investing in p2020 and p2025: an error naming p2025 with ``invest_method = invest_period``; none with
+    ``not_active`` (the group sets no limit)."""
+    values = _two_invest_periods() + [
+        ["group", "wind_coal", "invest_method", text(method)],
+        ["group", "wind_coal", "invest_max_period", pmap({"p2020": 1000.0})]]
+    if raises:
+        with pytest.raises(FlexToolConfigError,
+                           match=r"group 'wind_coal', parameter 'invest_max_period': the period map has no value "
+                                 r"for investment period\(s\) p2025 of solve 'y2020_2035_5week'"):
+            _run(tmp_path_factory, f"c1_gimp_{method}", values, MULTI_YEAR_CHAIN)
+    else:
+        assert _run(tmp_path_factory, f"c1_gimp_{method}", values, MULTI_YEAR_CHAIN)
+
+
+# Construction lead time: y2020_2035_5week (p2020 … p2035, all investment periods, horizon ends 2040), coal_plant
+# with a 10-year lead time.  A decision in p2020 starts to operate in p2030 and one in p2025 in p2035; the
+# decisions of p2030 / p2035 would start in 2040 or later and are not offered.  The per-period investment
+# limit applies where the capacity comes online: p2030 and p2035.
+LEAD_TIME_CHAIN = ["init", "west", "wind", "coal", "coal_invest", "5weeks", "invest_solveSequence_5weeks",
+                   "invest_allYears_5weeks"]
+
+
+def _lead_time_values(limit: dict[str, float]) -> list:
+    return [["unit", PLANT, "construction_lead_time", num(10.0)],
+            ["unit", PLANT, "invest_method", text("invest_period")],
+            ["unit", PLANT, "invest_max_period", pmap(limit)]]
+
+
+def test_lead_time_map_of_the_online_periods_is_fine(tmp_path_factory) -> None:
+    """``invest_max_period = {p2030: 100, p2035: 50}`` covers both periods where capacity comes online: no
+    error (the decision periods p2020 / p2025 need no value), and the rows cap p2030 at 100 MW and p2035 at
+    50 MW."""
+    rows = _bounds(tmp_path_factory, "c1_lt_ok", _lead_time_values({"p2030": 100.0, "p2035": 50.0}),
+                   "maxInvest_entity_period_p", chain=LEAD_TIME_CHAIN, entities=None)
+    assert {r: ub for r, (_lb, ub) in rows.items()} == {
+        f"maxInvest_entity_period_p[{PLANT},p2030]": 100.0, f"maxInvest_entity_period_p[{PLANT},p2035]": 50.0}
+
+
+def test_lead_time_map_missing_an_online_period_is_an_error(tmp_path_factory) -> None:
+    """``invest_max_period = {p2020: 100, p2030: 100}`` leaves out p2035, where the p2025 decision comes
+    online; p2020 (a decision period, nothing comes online) and p2025 are not needed."""
+    with pytest.raises(FlexToolConfigError,
+                       match=r"unit 'coal_plant', parameter 'invest_max_period': the period map has no value for "
+                             r"period\(s\) p2035 in which investments of solve 'y2020_2035_5week' start to "
+                             r"operate \(construction lead time\)\."):
+        _run(tmp_path_factory, "c1_lt_gap", _lead_time_values({"p2020": 100.0, "p2030": 100.0}),
+             LEAD_TIME_CHAIN)
