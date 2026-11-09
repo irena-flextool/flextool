@@ -10,7 +10,8 @@ without calls.
 
 **Provider data** (thinking blocks, signatures) is replayed only while the history before it is byte-identical to
 the request that produced it.  The history is append-only except at the *compaction points* (P1-D7), where the
-provider data of every message is dropped:
+provider data of every message is dropped (in the middle of a turn, the current part's tool calls keep theirs:
+Gemini checks the current turn's thought signatures):
 
 * a turn boundary every ``compaction_every`` turns (old tool results replaced by a short note, the last
   ``keep_recent_turns`` completed turns kept);
@@ -440,15 +441,21 @@ class _Carried:
         return f"- {self.label}: {self.outcome}"
 
 
-def _normalised(value: object) -> object:
-    """*value* in one spelling for comparing tool calls: text trimmed and in lower case, keys sorted, empty
-    arguments left out."""
+#: Free-text arguments, compared without case and inner spacing (search_docs, find_result_tables).  Every other
+#: text is a name, and FlexTool names are case-sensitive (review G11, C5-5).
+_CASE_FREE_ARGS = frozenset({"query"})
+
+
+def _normalised(value: object, case_free: bool = False) -> object:
+    """*value* in one spelling for comparing tool calls: text trimmed (a free-text argument also in lower case with
+    its spaces collapsed, :data:`_CASE_FREE_ARGS`), keys sorted, empty arguments left out."""
     if isinstance(value, str):
-        return " ".join(value.split()).casefold()
+        return " ".join(value.split()).casefold() if case_free else value.strip()
     if isinstance(value, dict):
-        return {k: _normalised(v) for k, v in sorted(value.items()) if v not in (None, "", [], {})}
+        return {k: _normalised(v, case_free or k in _CASE_FREE_ARGS) for k, v in sorted(value.items())
+                if v not in (None, "", [], {})}
     if isinstance(value, list):
-        return [_normalised(v) for v in value]
+        return [_normalised(v, case_free) for v in value]
     return value
 
 
@@ -599,11 +606,20 @@ class Session:
     def _last_turn(self) -> int:
         return max((m.turn for m in self.messages), default=0)
 
-    def _compact(self, keep_after: int) -> None:
-        """Replace each tool result of a turn up to *keep_after* by a short note, and drop all provider data."""
+    def _compact(self, keep_after: int, keep_calls_from: int | None = None) -> None:
+        """Replace each tool result of a turn up to *keep_after* by a short note, and drop all provider data —
+        except, from the message at *keep_calls_from* on (a compaction in the middle of a turn: the current part),
+        the tool calls' own data (Gemini's thought signatures, which Gemini checks for the current turn's calls;
+        review G11, C5-8).  Message data (Anthropic's thinking blocks, reasoning details) is always dropped: a
+        provider that replays it rejects it once the history before it changed (P1-D7)."""
         calls: dict[str, ToolCall] = {}
         out: list[Message] = []
-        for m in drop_provider_extra(self.messages):
+        kept = self.messages[keep_calls_from:] if keep_calls_from is not None else []
+        dropped = drop_provider_extra(self.messages)
+        if kept:
+            start = len(self.messages) - len(kept)
+            dropped[start:] = [dataclasses.replace(m, provider_extra={}) for m in kept]
+        for m in dropped:
             if m.role == "assistant":
                 calls.update({c.id: c for c in m.tool_calls})
             elif m.role == "tool" and m.turn <= keep_after and not m.compacted:
@@ -738,7 +754,7 @@ class Session:
             # The results of the coming request are built: which notes they carry in full is settled by the reply.
             self.ctx.notes_in_flight.clear()
             req = self._request(tool_choice)
-            text_part, tool_part = budget_module.request_parts(req)
+            text_part, tool_part = budget_module.request_parts(req, self.backend.origin)
             try:
                 reply = call_with_retries(lambda: self.backend.stream(req, emit, cancel), self.retry_policy, emit,
                                           cancel, sleep=self._sleep, clock=self._clock, rng=self._rng,
@@ -808,7 +824,7 @@ class Session:
 
     def _fits(self, tool_choice: Literal["auto", "none"]) -> bool:
         assert self.budget is not None
-        tokens = budget_module.request_tokens(self._request(tool_choice), self.correction)
+        tokens = budget_module.request_tokens(self._request(tool_choice), self.correction, self.backend.origin)
         return budget_module.fits(tokens, self._max_output(), self.budget.window)
 
     def _replays_data(self, turn: int) -> bool:
@@ -833,7 +849,7 @@ class Session:
             return limit
         # 2. A compaction point: every earlier turn's tool results.
         if any(m.role == "tool" and m.turn < turn and not m.compacted for m in self._sent(turn)):
-            self._compact(keep_after=turn - 1)
+            self._compact(keep_after=turn - 1, keep_calls_from=self._part_start(turn))
             self._fit_notice(state, emit)
             if self._fits(choice):
                 return limit
@@ -873,7 +889,7 @@ class Session:
         return " ".join([placeholder, *kept])
 
     def _overflow(self, turn: int, emit: OnEvent) -> None:
-        self._compact(keep_after=turn - 1)
+        self._compact(keep_after=turn - 1, keep_calls_from=self._part_start(turn))
         emit(Notice(render("context_retry", self.error_ctx)))
 
     def _still_too_long(self, cause: LLMError | None) -> LLMError:
@@ -1156,14 +1172,23 @@ class Session:
         no note: the question then ends as without a continuation."""
         if cancel.is_set():
             raise _Stopped
+        def request_text(found: list[_Carried]) -> str:
+            lines = [SESSION_MESSAGES["note_request"]]
+            if found:
+                lines.append(SESSION_MESSAGES["note_keep"])
+                lines += [f"[{i}] {c.label}{'' if c.ok else SESSION_MESSAGES['note_failed']}"
+                          for i, c in enumerate(found, start=1)]
+            return "\n".join(lines)
+
         candidates = self._candidates(state)
-        lines = [SESSION_MESSAGES["note_request"]]
-        if candidates:
-            lines.append(SESSION_MESSAGES["note_keep"])
-            lines += [f"[{i}] {c.label}{'' if c.ok else SESSION_MESSAGES['note_failed']}"
-                      for i, c in enumerate(candidates, start=1)]
-        self.messages.append(Message("user", "\n".join(lines), turn=turn, kind="note_request"))
+        self.messages.append(Message("user", request_text(candidates), turn=turn, kind="note_request"))
         self._fit(turn, True, state, emit)
+        # The fit may have shortened some of them: the model is offered only the results it can still see, numbered
+        # as it sees them (review G11, C5-11).  Fewer lines only shorten the request, so it still fits.
+        fitted = self._candidates(state)
+        if fitted != candidates:
+            candidates = fitted
+            self.messages[-1] = dataclasses.replace(self.messages[-1], text=request_text(candidates))
 
         def quiet(event: Event) -> None:            # the note is for the next part, not for the user
             if not isinstance(event, (TextDelta, ToolCallStarted)):

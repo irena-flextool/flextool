@@ -16,6 +16,7 @@ from typing import Any
 
 from flextool.assistant.backends._common import InFlight, api_key_for, error_context
 from flextool.assistant.llm_adapter import (
+    ANTHROPIC_BLOCKS_KEY,
     Connection,
     Message,
     ModelEntry,
@@ -46,7 +47,7 @@ from flextool.assistant.net import build_http_client, key_header_value
 from flextool.assistant.providers import Preset, model_entries
 
 EPHEMERAL = {"type": "ephemeral"}
-BLOCKS_KEY = "anthropic_blocks"
+BLOCKS_KEY = ANTHROPIC_BLOCKS_KEY
 #: Stop reasons of the Messages API and what the session makes of them.
 STOPS: dict[str, Stop] = {"tool_use": "tools", "end_turn": "end", "stop_sequence": "end", "pause_turn": "end",
                           "max_tokens": "length", "model_context_window_exceeded": "context", "refusal": "refused"}

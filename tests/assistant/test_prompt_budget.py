@@ -105,3 +105,20 @@ def test_the_connection_prompts_embed_the_level_texts(level):
     assert asked.endswith("\n\nQuestion: How large is h2_tank?")
     assert prompt.level_prompt(level, "x" * 3_000).endswith("x" * prompt.QUESTION_MAX)
     assert len(prompt.level_prompt(level, "x" * 3_000)) == len(text) + len("\n\nQuestion: ") + prompt.QUESTION_MAX
+
+
+def test_the_basic_planning_sentence_is_one_switch():
+    """Owner decision D1 is open (review G11, C5-10): the approved sentence (a) is in use, and each option is one
+    constant away.  Option (b)'s number of steps is the basic budget's; every option keeps the prefix within the
+    basic budget."""
+    assert prompt.BASIC_PLAN_OPTION == "a"
+    assert prompt.BASIC_PLAN_SENTENCES["a"] in prompt.ADDENDA["small"]
+    assert "at most three steps" in prompt.BASIC_PLAN_SENTENCES["b"] and LEVEL_BUDGETS["small"].max_rounds == 3
+    assert not any(word in prompt.BASIC_PLAN_SENTENCES["c"] for word in ("three", "3"))
+    approved = prompt.ADDENDA["small"]
+    for option, sentence in prompt.BASIC_PLAN_SENTENCES.items():
+        text = approved.replace(prompt.BASIC_PLAN_SENTENCES["a"], sentence)
+        assert text.count(sentence) == 1, option
+        layers = [text if layer == approved else layer for layer in prompt.system_layers("gui", "small")]
+        prefix = sum(approx_tokens(layer, "text") for layer in layers) + schema_tokens(tool_specs("small"))
+        assert prefix <= LEVEL_BUDGETS["small"].prefix_tokens, option

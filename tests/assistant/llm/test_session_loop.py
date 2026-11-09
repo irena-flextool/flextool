@@ -626,3 +626,31 @@ def test_a_request_too_large_for_the_minute_is_trimmed_once_then_says_so(rig):
     assert len(r.backend.requests) == 2
     assert result.error.user_message.startswith("This request is larger than your Custom endpoint account may "
                                                 "send in one minute (its answer: Request too large for gpt-4o")
+
+
+# --- a compaction in the middle of a turn (review G11, C5-8) ------------------------------------------------------
+SIGNATURE = {"extra_content": {"google": {"thought_signature": "sig"}}}
+BLOCKS = {"anthropic_blocks": [{"type": "thinking", "thinking": "t", "signature": "s"}]}
+
+
+def _signed(text: str) -> ToolCall:
+    return dataclasses.replace(call(text=text), provider_extra=SIGNATURE)
+
+
+def test_an_overflow_keeps_this_parts_call_signatures_and_drops_message_data(rig, tools):
+    """Gemini checks the thought signatures of the current turn's calls: after the overflow compaction the retried
+    request still carries this turn's call signature, an earlier turn's is gone, and message data (thinking
+    blocks, which Anthropic rejects once the history before them changed, P1-D7) is gone everywhere."""
+    ctx = ErrorContext(provider="Custom endpoint", model="fake-model")
+    r = rig([calls(_signed("one"), extra=BLOCKS), say("one"),
+             calls(_signed("two"), extra=BLOCKS), make_error(ContextTooLong, "context", ctx), say("two")],
+            tier="advanced")
+    assert r.ask("q1").ok
+    assert r.ask("q2").ok
+    retried = r.backend.requests[4].messages
+    with_calls = [m for m in retried if m.tool_calls]
+    assert [m.tool_calls[0].arguments["text"] for m in with_calls] == ["one", "two"]
+    assert with_calls[0].tool_calls[0].provider_extra == {}             # an earlier turn
+    assert with_calls[1].tool_calls[0].provider_extra == SIGNATURE      # this part
+    assert all(not m.provider_extra for m in retried)
+    r.validate_all()

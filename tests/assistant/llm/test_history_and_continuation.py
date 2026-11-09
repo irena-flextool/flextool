@@ -280,9 +280,9 @@ def test_each_fresh_part_lists_the_calls_that_did_not_help(tmp_path, tools):
 
 
 def test_a_fresh_part_that_repeats_earlier_calls_stops_the_question(tmp_path, tools):
-    """Part 2 asks again for 1b (other spacing and case): nothing is run, no third part, the model answers with
+    """Part 2 asks again for 1b (with spaces around it): nothing is run, no third part, the model answers with
     what it has, and the chat ends with a line that says why."""
-    script = (_limit_part(1) + [say("Note one.")] + [calls(call("2x"), call(" 1B "))] + [say("What I have.")])
+    script = (_limit_part(1) + [say("Note one.")] + [calls(call("2x"), call(" 1b "))] + [say("What I have.")])
     session, backend, _ctx = make(tmp_path, script, tier="basic", caps=BASIC_16K)
     events: list = []
     result = ask(session, "q", events)
@@ -517,3 +517,43 @@ def test_a_failure_after_the_repeat_stop_keeps_the_repeat_notice(tmp_path, tools
     result = ask(session, "q", events)
     assert not result.ok and result.repeated
     assert Notice(SESSION_MESSAGES["repeated"]) in events
+
+
+def test_a_name_in_another_case_is_another_call(tmp_path, tools):
+    """FlexTool names are case-sensitive: part 1 asked for ``chp`` (unknown), part 2 asks for ``CHP``, which is
+    not a repeat and runs (C5-5).  A search query still compares without case and inner spacing."""
+    from flextool.assistant.session import call_signature
+
+    def sig(name: str, **args) -> str:
+        return call_signature(ToolCall("x", name, args, json.dumps(args)))
+
+    assert sig("get_parameter", entity="chp") != sig("get_parameter", entity="CHP")
+    assert sig("get_parameter", entity=" CHP ") == sig("get_parameter", entity="CHP")
+    assert sig("search_docs", query="Unit  Size") == sig("search_docs", query="unit size")
+    assert sig("get_parameter", entity="a  b") != sig("get_parameter", entity="a b")
+    script = [calls(call("chp")), say("Note one."), calls(call("CHP")), say("What I have.")]
+    session, _backend, _ctx = make(tmp_path, script, tier="basic", caps=ONE_STEP)
+    result = ask(session, "q")
+    assert tools == ["chp", "CHP"] and not result.repeated
+
+
+def test_the_note_request_numbers_only_the_results_the_fit_kept(tmp_path, tools):
+    """The pre-send fit shortens the oldest of the part's three results for the note request: the request lists
+    the two the model can still see, numbered as it sees them, and "Keep: 1" carries the second call's result in
+    full (C5-11)."""
+    script = [calls(call("a"), call("b"), call("c")), say("Found b.\nKeep: 1"), say("The answer.")]
+    session, backend, _ctx = make(tmp_path, script, tier="basic", caps=ONE_STEP)
+    session.budget = resolve_budget("small", 200_000, "model", local=False)
+    session.preset = PRESETS["ollama"]          # no replayed data: the fit shortens this turn's results
+    # The note request fits only once a result is shortened (the window is not what is tested here).
+    session._fits = lambda _choice: (session.messages[-1].kind != "note_request"
+                                     or any(m.compacted for m in session.messages))
+    result = ask(session, "q")
+    assert result.ok and result.continuations == 1
+    note_request = backend.requests[1].messages[-1]
+    assert note_request.kind == "note_request"
+    assert note_request.text.endswith('Tool results:\n[1] echo({"text": "b"})\n[2] echo({"text": "c"})')
+    fresh = backend.requests[2].messages[0].text
+    assert '[1] echo({"text": "b"}):\n{"items":["b"]}' in fresh
+    assert '- echo({"text": "c"}): returned 1 items' in fresh
+    assert 'echo({"text": "a"})' not in fresh

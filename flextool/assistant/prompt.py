@@ -270,6 +270,21 @@ def last_context_block(texts: list[str]) -> str | None:
     return None
 
 
+#: The basic level's planning sentence, by the options of owner decision D1 (review G11, C5-10; WAITING FOR THE
+#: OWNER): (a) the approved text, which counts tool calls although a basic part allows three steps of up to three
+#: calls; (b) the same plan counted in steps, which matches the budget at every window; (c) no number.
+BASIC_PLAN_SENTENCES: dict[str, str] = {
+    "a": ("- Use at most three tool calls for each question, so plan them: first find the right name (search_docs, "
+          "find_result_tables or list_runs), then fetch the value.\n"),
+    "b": ("- Use at most three steps for each question, so plan them: first find the right name (search_docs, "
+          "find_result_tables or list_runs), then fetch the value.\n"),
+    "c": ("- Plan your lookups: first find the right name (search_docs, find_result_tables or list_runs), then "
+          "fetch the value.\n"),
+}
+#: The option in use: (a), the approved text, until the owner decides D1.  Switching it changes the basic level's
+#: text, so its pinned hash (tests/assistant/test_prompt_budget.py) and P3 §4.7 change with it.
+BASIC_PLAN_OPTION = "a"
+
 #: The level texts by internal level name (P3 §2.1, owner-approved; do not edit without the owner).
 ADDENDA: dict[str, str] = {
     "small": (
@@ -278,8 +293,7 @@ ADDENDA: dict[str, str] = {
         "- Answer about one parameter, one result table or one documentation topic at a time.\n"
         "- Use only these tools: search_docs, read_doc, get_entity, get_parameter, list_sources, list_runs, "
         "find_result_tables and query_result.\n"
-        "- Use at most three tool calls for each question, so plan them: first find the right name (search_docs, "
-        "find_result_tables or list_runs), then fetch the value.\n"
+        + BASIC_PLAN_SENTENCES[BASIC_PLAN_OPTION] +
         "- Give numbers exactly as the tool returned them, with the entity, the parameter or result table, and the "
         "unit.\n"
         "- If the latest run of a scenario failed, say so, give the reason the tool returned, and suggest reading "

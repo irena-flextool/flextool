@@ -231,3 +231,66 @@ def test_the_free_plan_hint_is_remembered_once_per_route(tmp_path: Path):
     settings.save_settings(older, root)
     assert settings.load_settings(root).free_tier_suggested == s.free_tier_suggested
     assert math.isclose(budget.FIT_SHARE, 0.95)
+
+
+# --- replayed provider data and the correction window (review G11, C5-6) ----------------------------------------
+def _request(*messages):
+    from flextool.assistant.llm_adapter import Request
+
+    return Request(system=(), tools=(), messages=tuple(messages), max_output_tokens=100)
+
+
+ORIGIN = ("openrouter", "https://openrouter.ai/api/v1", "some-model")
+OTHER = ("ollama", "http://127.0.0.1:11434/v1", "other-model")
+
+
+def test_replayed_reasoning_counts_for_its_own_model_only():
+    """200 000 characters of reasoning details: 200 037 characters of JSON, ceil(200 037 / 2.2) + 4 = 90 930
+    tokens for the model that produced them, nothing for another.  The user message "q" is ceil(1 / 3.2) + 4 = 5
+    text tokens; no tools: the schema list "[]" is ceil(2 / 2.2) + 4 = 5."""
+    from flextool.assistant.llm_adapter import Message
+
+    extra = {"reasoning_details": [{"text": "a" * 200_000}]}
+    req = _request(Message("user", "q"), Message("assistant", "", provider_extra=extra, origin=ORIGIN))
+    assert budget.request_parts(req, ORIGIN) == (5, 5 + 90_930)
+    assert budget.request_parts(req, OTHER) == (5, 5)
+    assert budget.request_parts(req) == (5, 5)
+
+
+def test_anthropic_blocks_count_instead_of_the_text():
+    """Anthropic replays its content blocks in place of the text and the calls: '[{"type": "text", "text":
+    "hello"}]' is 35 characters, ceil(35 / 2.2) + 4 = 20 tokens, and the text "hello" (ceil(5 / 3.2) + 4 = 6) is
+    not counted again; to another model the text counts."""
+    from flextool.assistant.llm_adapter import Message
+
+    blocks = {"anthropic_blocks": [{"type": "text", "text": "hello"}]}
+    req = _request(Message("user", "q"), Message("assistant", "hello", provider_extra=blocks, origin=ORIGIN))
+    assert budget.request_parts(req, ORIGIN) == (5, 5 + 20)
+    assert budget.request_parts(req, OTHER) == (5 + 6, 5)
+
+
+def test_a_call_signature_counts_on_top_of_the_call():
+    """A Gemini thought signature on a call: the call 'echo{}' (ceil(6 / 2.2) + 4 = 7) and '{"extra_content":
+    "sig"}' (24 characters: ceil(24 / 2.2) + 4 = 15)."""
+    from flextool.assistant.llm_adapter import Message, ToolCall
+
+    tool_call = ToolCall("c1", "echo", {}, "{}", provider_extra={"extra_content": "sig"})
+    req = _request(Message("user", "q"), Message("assistant", "", tool_calls=[tool_call], origin=ORIGIN))
+    assert budget.request_parts(req, ORIGIN) == (5, 5 + 7 + 15)
+    assert budget.request_parts(req, OTHER) == (5, 5 + 7)
+
+
+def test_the_correction_follows_the_last_four_requests():
+    """One request reported three times the estimate; four later ones 1.1 times: the factor is the largest of the
+    last four, 1.1."""
+    corr = budget.TokenCorrection()
+    corr.update(300, 100)
+    assert corr.factor == pytest.approx(3.0)
+    for _ in range(3):
+        corr.update(110, 100)
+    assert corr.factor == pytest.approx(3.0)            # still among the last four
+    corr.update(110, 100)
+    assert corr.factor == pytest.approx(1.1)
+    for _ in range(4):
+        corr.update(50, 100)
+    assert corr.factor == 1.0                           # never below 1.0

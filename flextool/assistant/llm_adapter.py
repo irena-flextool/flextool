@@ -59,6 +59,10 @@ class Message:
     kind: str = ""                  # "" or one of MESSAGE_KINDS: the session's own messages
 
 
+#: The message data an Anthropic answer keeps: its content blocks, replayed *instead of* the text and the tool calls
+#: to the same origin (:mod:`flextool.assistant.backends.anthropic_messages`).
+ANTHROPIC_BLOCKS_KEY = "anthropic_blocks"
+
 #: The kinds of the session's own messages (P3 §4.7): the request for the model's note, the note, the first message
 #: of a fresh context, and the "tool limit reached" instruction before the tool-less request.  Backends send them like
 #: any other message.

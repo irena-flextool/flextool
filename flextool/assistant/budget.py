@@ -5,8 +5,11 @@ context window.
 **Estimates** (:func:`approx_tokens`): digits and non-ASCII characters count one token each, the rest one token per
 2.2 characters in JSON and per 3.2 in text, plus 4.  Tokenizers that give every digit its own token (Qwen,
 Mistral, Gemma) make result JSON with floats about one token per 1.4 characters; the digit-aware form stays above
-them without a tokenizer (checked against Qwen2.5 and o200k counts of a committed result fixture).  A per-session :class:`TokenCorrection` raises the estimates when a provider reports more
-prompt tokens than estimated (never lowers them).
+them without a tokenizer (checked against Qwen2.5 and o200k counts of a committed result fixture).  Provider data a
+request replays to the model that produced it (thinking blocks, reasoning details, thought signatures) counts as
+JSON, as the backend sends it.  A per-session :class:`TokenCorrection` raises the estimates when a provider reports
+more prompt tokens than estimated: by the largest ratio of the last :data:`CORRECTION_WINDOW` requests (never below
+1.0).
 
 **Budgets** (:data:`LEVEL_BUDGETS`, the free plan's in :data:`FREE_TIER_BUDGETS`) are safety caps, not usage
 limits; :func:`resolve_budget` combines a level with the window (P3 §3.3):
@@ -20,7 +23,8 @@ limits; :func:`resolve_budget` combines a level with the window (P3 §3.3):
 
 In the chat the result caps are both the defaults and the most a call may ask for.  Before every request whose
 window is known (or the assumed local one) the session checks :func:`fits`: the request and the answer must stay
-within 95 % of the window.  Standard library only (and :mod:`flextool.assistant.caps`).
+within 95 % of the window.  Standard library only (and :mod:`flextool.assistant.caps`, the key name of
+:mod:`flextool.assistant.llm_adapter`).
 
 **History and continuations** (P3 §4.7): a level's ``history`` says what each request carries of the earlier
 questions — ``"answers"``: each earlier question with its final answer as plain text (at most ``history_turns`` of
@@ -45,15 +49,17 @@ from __future__ import annotations
 import dataclasses
 import json
 import math
+from collections import deque
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from flextool.assistant import caps as caps_module
+from flextool.assistant.llm_adapter import ANTHROPIC_BLOCKS_KEY
 from flextool.assistant.tiers import ASSUMED_LOCAL_WINDOW, ASSUMED_REMOTE_WINDOW, MIN_WINDOW
 
 if TYPE_CHECKING:
-    from flextool.assistant.llm_adapter import Message, Request, ToolSpec, Usage
+    from flextool.assistant.llm_adapter import Message, Origin, Request, ToolSpec, Usage
     from flextool.assistant.tiers import TierChoice
 
 #: Characters per token of the characters that are neither digits nor non-ASCII.  P3 §4.0 started JSON at 2.5;
@@ -71,6 +77,9 @@ HISTORY_SHARE = 0.15
 #: Characters per token of result JSON at its densest, as the estimate counts it (P3 §4.3).
 RESULT_CHARS_PER_TOKEN = 1.5
 MIN_RESULT_CHARS = 2_000
+#: The token correction is the largest reported / estimated ratio of this many latest requests (review G11, C5-6):
+#: a request that carried much replayed data no longer raises the estimates for the rest of the session.
+CORRECTION_WINDOW = 4
 
 
 # --- estimates ------------------------------------------------------------------------------------------------
@@ -94,24 +103,37 @@ def reported_prompt_tokens(usage: Usage | None) -> int | None:
 
 @dataclass
 class TokenCorrection:
-    """One per session: the running maximum of reported / estimated prompt tokens, never below 1.0.  A resumed
-    conversation starts again at 1.0."""
+    """One per session: the largest reported / estimated prompt tokens of the last :data:`CORRECTION_WINDOW`
+    requests that reported a count, never below 1.0.  A resumed conversation starts again at 1.0."""
 
     factor: float = 1.0
+    recent: deque[float] = field(default_factory=lambda: deque(maxlen=CORRECTION_WINDOW))
 
     def update(self, reported_prompt: int | None, estimated: int) -> None:
         if reported_prompt is None or estimated <= 0:
             return
-        self.factor = max(self.factor, reported_prompt / estimated, 1.0)
+        self.recent.append(reported_prompt / estimated)
+        self.factor = max(1.0, *self.recent)
 
 
-def _message_parts(m: Message) -> tuple[int, int]:
+def _extra_tokens(extra: dict) -> int:
+    return approx_tokens(json.dumps(extra, ensure_ascii=False), "json") if extra else 0
+
+
+def _message_parts(m: Message, origin: Origin | None = None) -> tuple[int, int]:
     """(text tokens, JSON tokens) of one message.  The first message of a fresh context carries tool results, so
-    it counts as JSON (the larger estimate)."""
+    it counts as JSON (the larger estimate).  For the model that produced it (*origin*) an assistant message's
+    provider data counts as the backend sends it: Anthropic's content blocks instead of the text and the calls;
+    other data (reasoning details, the calls' thought signatures) on top of them."""
     if m.role == "tool" or m.kind == "continuation":
         return 0, approx_tokens(m.text, "json")
+    same = origin is not None and m.origin is not None and tuple(m.origin) == tuple(origin)
+    if same and m.provider_extra.get(ANTHROPIC_BLOCKS_KEY):
+        return 0, approx_tokens(json.dumps(m.provider_extra[ANTHROPIC_BLOCKS_KEY], ensure_ascii=False), "json")
     text = approx_tokens(m.text, "text") if m.text else 0
     calls = sum(approx_tokens(f"{c.name}{c.raw_arguments}", "json") for c in m.tool_calls)
+    if same:
+        calls += _extra_tokens(m.provider_extra) + sum(_extra_tokens(c.provider_extra) for c in m.tool_calls)
     return text, calls
 
 
@@ -122,21 +144,22 @@ def schema_tokens(tools: Iterable[ToolSpec]) -> int:
     return approx_tokens(payload, "json")
 
 
-def request_parts(req: Request) -> tuple[int, int]:
+def request_parts(req: Request, origin: Origin | None = None) -> tuple[int, int]:
     """(text part, tool part) of a request's estimate, uncorrected: the system layers and the user and assistant
-    text are text; the tool schemas, the tool calls and the tool results are JSON (P3 §4.0)."""
+    text are text; the tool schemas, the tool calls, the tool results and the provider data replayed to *origin*
+    (the backend's model) are JSON (P3 §4.0)."""
     text = sum(approx_tokens(layer, "text") for layer in req.system)
     tools = schema_tokens(req.tools)
     for m in req.messages:
-        t, j = _message_parts(m)
+        t, j = _message_parts(m, origin)
         text += t
         tools += j
     return text, tools
 
 
-def request_tokens(req: Request, corr: TokenCorrection | None = None) -> int:
-    """The estimate of the prompt tokens of *req*, multiplied by the session's correction."""
-    text, tools = request_parts(req)
+def request_tokens(req: Request, corr: TokenCorrection | None = None, origin: Origin | None = None) -> int:
+    """The estimate of the prompt tokens of *req* (to *origin*), multiplied by the session's correction."""
+    text, tools = request_parts(req, origin)
     factor = corr.factor if corr is not None else 1.0
     return math.ceil((text + tools) * factor)
 
