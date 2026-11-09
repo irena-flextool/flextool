@@ -109,7 +109,7 @@ def _pbt_profile_from_provider(p) -> dict:
     from flextool.engine.preprocess.emit._period_params import _cell_str
 
     out: dict = {}
-    df = p.get("input/pbt_profile")
+    df = p.get("solve_data/pbt_profile")
     if df is None:
         return out
     for row in df.iter_rows():
@@ -270,7 +270,7 @@ def test_vectorized_pdtProfile_synthetic_fold_and_cascade(tmp_path):
     # (fall-through, multi-parent → 1+1 = 2).  windB: b1=10 shared by
     # pA/pB.  hydroN / coGenP each one branch (stoch via node /
     # process_node UNION).
-    put("input", "pbt_profile", pl.DataFrame({
+    put("solve_data", "pbt_profile", pl.DataFrame({
         "profile": ["solarA", "solarA", "windB", "hydroN", "coGenP"],
         "branch": ["b1", "b2", "b1", "b1", "b1"],
         "time_start": ["s1", "s1", "s1", "s1", "s1"],

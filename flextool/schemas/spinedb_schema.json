@@ -1831,7 +1831,7 @@
     [
       "model",
       "version",
-      82.0,
+      83.0,
       null,
       "[version number] Contains database version information.",
       "model"
@@ -1945,7 +1945,7 @@
       "energy_margin_adder",
       0.0,
       null,
-      "[MWh] per time step. Extra demand (negative inflow) added to every time step of the investment solve, when `energy_margin_method` = `inflow_adder`. The value is not a total that is divided over the steps: each step gets the full value. On 24 h steps, a margin of 10 MW needs a value of 240. FlexTool does not rescale it, including when the investment solve uses `new_stepduration`. Dispatch solves are not affected. 0 = off. Constant, period or period+time.",
+      "[MWh] per time step of the timeline. Extra demand (negative inflow) added to every time step of the investment solve, when `energy_margin_method` = `inflow_adder`. The value is not a total that is divided over the steps: each time step gets the full value. On a timeline of 24 h time steps, a margin of 10 MW needs a value of 240. When the investment solve uses `new_stepduration`, a solve step gets the sum of the values of the time steps it combines (a constant or period value counts once per time step). Dispatch solves are not affected. 0 = off. Constant, period or period+time.",
       "investment"
     ],
     [

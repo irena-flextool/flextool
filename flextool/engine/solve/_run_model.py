@@ -1327,22 +1327,19 @@ def native_run_model(state, solver) -> int:
             # in Provider-land the equivalent is keeping the frames on
             # the cascade-input Provider so each fresh sub-solve
             # Provider seeds them at the top of its iter (line 444).
-            state.timeline.create_averaged_timeseries(
+            aggregated_keys = state.timeline.create_averaged_timeseries(
                 complete_solve[solve], state.solve, state.logger,
                 provider=cascade_input_provider,
                 work_folder=wf,
             )
-            # Mirror the freshly aggregated frames onto the current
-            # sub-solve Provider too — this iter's readers must find
-            # them without waiting for the next seed pass.
-            for _key, _frame in cascade_input_provider.items():
-                if (
-                    _key.startswith("solve_data/pt_")
-                    or _key.startswith("solve_data/pbt_")
-                    or _key.endswith("node_full_timeline_flow")
-                    or _key.endswith("new_step_base_steps")
-                ):
-                    sub_solve_provider.put(_key, _frame)
+            # Mirror every frame the aggregation wrote (pt_* / pbt_* /
+            # pdt_* / the energy-margin adder / the base steps / the
+            # full-timeline inflow) onto the current sub-solve Provider
+            # too: this iter's readers must find them, and a level
+            # Provider seeded before this aggregation (or cached from an
+            # earlier iter) would otherwise keep the earlier frames.
+            for _key in aggregated_keys:
+                sub_solve_provider.put(_key, cascade_input_provider.get(_key))
         previous_complete_solve = complete_solve[solve]
 
         # ---- Block data (node -> new_stepduration group) ----

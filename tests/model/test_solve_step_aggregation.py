@@ -256,19 +256,23 @@ def test_timeset_weights_take_the_step_mean(tmp_path_factory) -> None:
         assert v == pytest.approx(4.0 / 3.0 if int(t[1:]) < 25 else 2.0 / 3.0, rel=1e-12), t
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "C-13 WP-B: the energy_margin_adder emit (emit/_energy_margin_adder.py) reads input/pdt_energy_margin_adder, "
-    "not the SUM-aggregated solve_data frame, so a 2 h step takes the first hour's adder."))
-def test_energy_margin_adder_sums_over_the_step(tmp_path_factory) -> None:
-    """energy_margin_adder (MWh per step, SUM) 10 / 30 on west in an investment solve: each 2 h step adds
-    10 + 30 = 40 MWh of demand, so west's inflow at t0001 is −1126 − 40 = −1166 (west's −589 − 537 = −1126)."""
+@pytest.mark.parametrize(("label", "adder", "expected"), [
+    ("period_time_map", ptm("p2020", 10.0, 30.0), -1166.0),
+    ("constant", S(10.0), -1146.0),
+    ("period_map", b64({"index_type": "str", "index_name": "period", "data": [["p2020", 10.0]]}, "map"), -1146.0),
+])
+def test_energy_margin_adder_sums_over_the_step(tmp_path_factory, label, adder, expected) -> None:
+    """energy_margin_adder (MWh per original step, SUM) on west in an investment solve with 2 h steps.  West's own
+    inflow at t0001 is −589 − 537 = −1126.  A period+time map 10 / 30 adds 10 + 30 = 40 MWh to each 2 h step
+    (−1166); a constant 10, and a period map p2020 → 10, are the same 10 in each of the two hours: 2 · 10 = 20
+    (−1146)."""
     values = STEP2 + [["solve", SOLVE, "invest_periods", b64({"value_type": "str", "data": ["p2020"],
                                                               "index_name": "period"}, "array")],
                       ["node", "west", "energy_margin_method", b64("inflow_adder", "str")],
-                      ["node", "west", "energy_margin_adder", tm(10.0, 30.0)]]
-    steps = _run(tmp_path_factory, "c13_adder", values, ["init", "west", "coal"])
+                      ["node", "west", "energy_margin_adder", adder]]
+    steps = _run(tmp_path_factory, f"c13_adder_{label}", values, ["init", "west", "coal"])
     fd = list(steps.values())[-1].flex_data
-    assert _cells(fd, "p_inflow", {"n": "west"})["t0001"] == pytest.approx(-1166.0, rel=1e-12)
+    assert _cells(fd, "p_inflow", {"n": "west"})["t0001"] == pytest.approx(expected, rel=1e-12)
 
 
 # ---------------------------------------------------------------------------
@@ -309,10 +313,6 @@ def test_single_solve_maps_equal_constants(tmp_path_factory, which) -> None:
     _assert_same_lp(_vehicle(tmp_path_factory, which), _vehicle(tmp_path_factory, which, constant=True))
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "C-13 WP-B: the rolls of a rolling solve take p_slope and the variable costs from the emit seed "
-    "(emit/_pdt_params.py PdtLookup, emit/_period_params._derive_conversion_trio), which still reads input/pt_* "
-    "and input/pbt_* (the first hour of each step) instead of the aggregated solve_data frames."))
 @pytest.mark.parametrize("which", ["A", "B"])
 def test_rolling_solve_maps_equal_constants(tmp_path_factory, which) -> None:
     """The 2 h solve rolled with a 24 h horizon and a 12 h jump: every roll's LP equals the constants' LP."""
@@ -350,6 +350,44 @@ def test_stochastic_solve_maps_equal_constants(tmp_path_factory) -> None:
     fd = last_stochastic(steps).flex_data
     assert len(set(utf8(fd.dt)["d"].to_list())) > 1, "expected the branch periods"
     _assert_same_lp(steps, ref)
+
+
+def _branch_map(per_branch: dict[str, tuple[float, float]]) -> list:
+    """Stochastic-time map (branch → analysis_time t0001 → time): a in the odd hours, b in the even hours."""
+    return b64({"index_type": "str", "index_name": "branch", "rank": 3, "data": [[branch, {
+        "type": "map", "index_type": "str", "index_name": "analysis_time", "rank": 2, "data": [["t0001", {
+            "type": "map", "index_type": "str", "index_name": "time", "rank": 1,
+            "data": [[t, (a if i % 2 == 0 else b)] for i, t in enumerate(T48)]}]]}]
+        for branch, (a, b) in per_branch.items()]}, "map")
+
+
+def test_stochastic_branch_series_combine_by_kind(tmp_path_factory) -> None:
+    """2_day_stochastic_dispatch with new_stepduration 2 and stochastic-time maps (one series per branch) on the
+    stochastic entities: each branch period takes its own branch's step value, by the parameter's kind.
+
+    hydro_reservoir inflow (SUM): realized −100 / −300 → −400; upper −200 / −400 → −600; lower −50 / −70 → −120;
+    mid −10 / −30 → −40.  wind_plant availability (MEAN): 0.9 / 0.7 → 0.8; 0.6 / 0.4 → 0.5; 0.5 / 0.3 → 0.4;
+    1.0 / 0.8 → 0.9.  wind profile (MEAN): 0.2 / 0.4 → 0.3; 0.1 / 0.3 → 0.2; 0.5 / 0.7 → 0.6; 0.0 / 0.2 → 0.1."""
+    inflow = {"realized": (-100.0, -300.0), "upper": (-200.0, -400.0), "lower": (-50.0, -70.0), "mid": (-10.0, -30.0)}
+    avail = {"realized": (0.9, 0.7), "upper": (0.6, 0.4), "lower": (0.5, 0.3), "mid": (1.0, 0.8)}
+    prof = {"realized": (0.2, 0.4), "upper": (0.1, 0.3), "lower": (0.5, 0.7), "mid": (0.0, 0.2)}
+    values = [["solve", "2day_dispatch", "new_stepduration", S(2.0)],
+              ["node", "hydro_reservoir", "inflow", _branch_map(inflow)],
+              ["unit", "wind_plant", "availability", _branch_map(avail)],
+              ["profile", "wind", "profile", _branch_map(prof)]]
+    fd = last_stochastic(_run(tmp_path_factory, "c13_stoch_branch", values, STOCH_CHAIN, STOCHASTICS_JSON)).flex_data
+    expected = {
+        ("p_inflow", "n", "hydro_reservoir"): {"realized": -400.0, "upper": -600.0, "lower": -120.0, "mid": -40.0},
+        ("p_process_availability", "p", "wind_plant"): {"realized": 0.8, "upper": 0.5, "lower": 0.4, "mid": 0.9},
+        ("p_profile_value", "f", "wind"): {"realized": 0.3, "upper": 0.2, "lower": 0.6, "mid": 0.1},
+    }
+    for (field, dim, name), per_branch in expected.items():
+        frame = utf8(promote_param_to_dt(getattr(fd, field), fd.dt).collect()).filter(pl.col(dim) == name)
+        got = {(d, t): float(v) for d, t, v in frame.select("d", "t", "value").iter_rows()}
+        for branch, want in per_branch.items():
+            cells = {t: v for (d, t), v in got.items() if d == f"period1_{branch}"}
+            assert sorted(cells) == STEPS, (field, branch)
+            assert all(v == pytest.approx(want, rel=1e-12) for v in cells.values()), (field, branch, cells)
 
 
 # ---------------------------------------------------------------------------

@@ -50,6 +50,15 @@ already been normalised by ingestion — and broadcast over the invest grid
 through :func:`._param_shapes.promote_param_to_dt` (NEVER by a hand-rolled
 column-name cross-join; invariant #2).
 
+The adder is MWh per ORIGINAL time step (``TIME_AGGREGATION`` kind ``SUM``,
+like ``inflow``).  When the invest solve has ``new_stepduration``, a solve
+step combines ``n(t)`` original steps: the period+time Map is read from
+``solve_data/pdt_energy_margin_adder`` (``create_averaged_timeseries`` sums
+it over each new step), and the scalar and the period Map (the same value in
+every original step) are multiplied by ``n(t)``
+(``solve_data/new_step_base_steps``).  Without ``new_stepduration``
+``n(t) = 1`` and the ``solve_data`` frames are the ``input`` frames.
+
 Early-return byte-parity contract
 ----------------------------------
 If the solve is NOT an invest solve, OR no node has
@@ -102,6 +111,7 @@ from flextool.engine.preprocess._provider_io import (
     _provider_key,
 )
 from flextool.engine.input._param_shapes import promote_param_to_dt
+from flextool.engine.preprocess.emit._base_steps import read_new_step_base_steps
 from flextool.engine.preprocess.emit._energy_margin import _record_unmargined_inflow
 from flextool.engine.preprocess.emit._vectorize import _render_value_column
 
@@ -112,10 +122,13 @@ _PDT_COLS = ("node", "period", "time", "value")
 # scalar float, a period Map (1d), and a period-time Map (2d).  Each lands
 # in its own CSV / Provider key; the emitter reads all three and unions
 # the broadcast frames.  A node has a scalar OR a map adder, never both.
+# (file, its folder, the value is the same in every original step: times n(t)
+# on a new_stepduration solve).  The period+time Map is read from solve_data/,
+# where create_averaged_timeseries has summed it over each solve step.
 _ADDER_FILES = (
-    "energy_margin_adder.csv",       # scalar float → shape (node,)
-    "pd_energy_margin_adder.csv",    # 1d Map       → shape (node, d)
-    "pdt_energy_margin_adder.csv",   # 2d Map       → shape (node, d, t)
+    ("energy_margin_adder.csv", "input", True),           # scalar float → shape (node,)
+    ("pd_energy_margin_adder.csv", "solve_data", True),   # 1d Map       → shape (node, d)
+    ("pdt_energy_margin_adder.csv", "solve_data", False),  # 2d Map      → shape (node, d, t)
 )
 
 
@@ -228,17 +241,36 @@ def emit_energy_margin_adder(
     #    a scalar OR a map adder, never both, so the per-file frames are
     #    disjoint by node; union them into one (node, period, time, __adder)
     #    frame.  No authored value anywhere → early return (byte-parity).
+    #    The scalar and the period Map are per original time step: a solve
+    #    step that combines n(t) original steps gets n(t) times the value
+    #    (n_of is empty without new_stepduration: no rescaling).
+    n_of, _absorbed = read_new_step_base_steps(solve_data_dir, provider=provider)
+    n_frame = pl.DataFrame({"time": list(n_of), "__n": list(n_of.values())},
+                           schema={"time": pl.Utf8, "__n": pl.Float64})
     parts = []
-    for fname in _ADDER_FILES:
-        adder_df = provider.get(_provider_key(input_dir / fname))
+    for fname, folder, per_original_step in _ADDER_FILES:
+        base = input_dir if folder == "input" else solve_data_dir
+        adder_df = provider.get(_provider_key(base / fname))
         part = _broadcast_authored_adder(adder_df, manual_nodes, dt_grid)
-        if part is not None:
-            parts.append(part)
+        if part is None:
+            continue
+        if per_original_step and n_of:
+            part = (part.join(n_frame, on="time", how="left")
+                    .with_columns((pl.col("__adder") * pl.col("__n").fill_null(1.0)).alias("__adder"))
+                    .drop("__n"))
+        parts.append(part)
     if not parts:
         return
     adder_dt = pl.concat(parts) if len(parts) > 1 else parts[0]
     if adder_dt.height == 0:
         return
+    if n_of:
+        # Earlier releases added the value of a solve step's first original step once (behaviour-change
+        # notice; printed only while the input database carries the marker).
+        from flextool.engine import _behaviour_changes
+
+        _behaviour_changes.notice("energy_margin_adder_per_original_step", "nodes",
+                                  sorted(set(adder_dt.get_column("node").to_list())))
 
     # 6. Record the un-margined inflow (if the multiplier did not already).
     _record_unmargined_inflow(provider, solve_data_dir, applying=True, refresh=False)

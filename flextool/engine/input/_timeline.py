@@ -26,8 +26,13 @@ Architecture notes
   either by taking timeset durations as the second argument.
 
 * ``create_averaged_timeseries`` combines the provider's time-series
-  frames (``pt_*`` / ``pbt_*`` / ``pdt_process`` / ``pdt_node``) to the
-  steps of a solve with ``new_stepduration``.  The kind of each row
+  frames (``pt_*`` / ``pbt_*`` / ``pdt_process`` / ``pdt_node`` /
+  ``pdt_energy_margin_adder``) to the steps of a solve with
+  ``new_stepduration`` and writes them under ``solve_data/``; without
+  ``new_stepduration`` they pass through verbatim.  The per-solve emit
+  folds (``PdtLookup``, ``pdtNodeInflow``, ``pdtProfile``, ``pdtGroup``,
+  ``pdtCommodity``, ``pdtReserve``, the energy-margin adder) read those
+  ``solve_data/`` frames, never ``input/``.  The kind of each row
   (mean, harmonic mean, sum, last) is the parameter's
   ``TIME_AGGREGATION`` entry and the arithmetic is
   ``aggregate_to_solve_steps``, both in ``_solve_step_aggregation``: the
@@ -671,7 +676,7 @@ class TimelineConfig:
         *,
         provider: "FlexDataProvider",
         work_folder: "Path | None" = None,
-    ) -> None:
+    ) -> list[str]:
         """Average or sum input timeseries to match a coarsened timeline.
 
         If ``solve`` does not set ``new_stepduration`` (solve-scoped as
@@ -714,8 +719,18 @@ class TimelineConfig:
                 ``solve_data/`` is resolved under it (used only to
                 build canonical Provider keys); defaults to the
                 current working directory.
+
+        Returns:
+            The provider keys written (every ``solve_data/`` frame of this
+            solve's steps), so the caller can mirror exactly these frames
+            onto the sub-solve provider.
         """
         wf = Path(work_folder) if work_folder is not None else Path.cwd()
+        written: list[str] = []
+
+        def _put(key: str, frame: pl.DataFrame) -> None:
+            provider.put(key, frame)
+            written.append(key)
         # As of DB v50 new_stepduration is keyed by solve.  ``None`` is
         # the parameter_definition default in the master template; treat
         # it as "not set" and skip aggregation.
@@ -733,15 +748,15 @@ class TimelineConfig:
                 frame = _provider_get_or_read(provider, src_key, src_path)
                 if frame is None:
                     continue
-                provider.put(dst_key, frame)
+                _put(dst_key, frame)
             # Every solve step is one original step (an earlier coarsened
             # solve's rows must not reach this solve).
-            provider.put(base_steps_key, pl.DataFrame(schema=NEW_STEP_BASE_STEPS_SCHEMA))
+            _put(base_steps_key, pl.DataFrame(schema=NEW_STEP_BASE_STEPS_SCHEMA))
             # No full-timeline inflow energy: scale_to_annual_flow uses the
             # solve's own period share (not an earlier coarsened solve's).
-            provider.put(_provider_key(wf / "solve_data" / "node_full_timeline_flow.csv"),
+            _put(_provider_key(wf / "solve_data" / "node_full_timeline_flow.csv"),
                          pl.DataFrame(schema={"node": pl.Utf8, "value": pl.Float64}))
-            return
+            return written
 
         # All timesets used by *solve* must resolve to the same
         # timeline — new_stepduration rewrites that timeline once per
@@ -787,7 +802,7 @@ class TimelineConfig:
         base_steps = pl.DataFrame(
             [(t, s, float(len(base_durations[s])), d, i) for i, (t, s, d) in enumerate(base_step_rows)],
             schema=NEW_STEP_BASE_STEPS_SCHEMA, orient="row")
-        provider.put(base_steps_key, base_steps)
+        _put(base_steps_key, base_steps)
 
         # node-name → constant-inflow value (used to append per-step
         # contributions to pt_node_inflow below).
@@ -816,7 +831,7 @@ class TimelineConfig:
             headers = src_frame.columns
             if "time" not in headers:
                 # No time column — pass through verbatim.
-                provider.put(dst_key, src_frame)
+                _put(dst_key, src_frame)
                 continue
             out_rows = _aggregate_csv_series(timeseries, src_frame, base_steps, notes)
 
@@ -836,7 +851,7 @@ class TimelineConfig:
                                 [node__value[0], timeline_row[0], value]
                             )
 
-            provider.put(
+            _put(
                 dst_key,
                 _build_frame_with_headers(headers, out_rows),
             )
@@ -907,10 +922,11 @@ class TimelineConfig:
                 )
                 flow_rows.append([n_name, energy / duration_in_years])
             flow_path = wf / "solve_data" / "node_full_timeline_flow.csv"
-            provider.put(
+            _put(
                 _provider_key(flow_path),
                 _build_frame_with_headers(["node", "value"], flow_rows),
             )
+        return written
 
 
 # ---------------------------------------------------------------------------
@@ -941,7 +957,15 @@ _CSV_SERIES: dict[str, tuple[tuple[str, ...], "str | None"]] = {
     "pbt_process_source.csv": (("unit__inputNode",), None),
     "pbt_process_sink.csv": (("unit__outputNode",), None),
     "pbt_reserve__upDown__group.csv": (("reserve__upDown__group",), None),
+    # The period Map has no time column and passes through; the emit multiplies it by the step's base-step count.
+    "pd_energy_margin_adder.csv": (("node",), "energy_margin_adder"),
+    "pdt_energy_margin_adder.csv": (("node",), "energy_margin_adder"),
 }
+
+
+# Frames whose values earlier releases already combined over a new_stepduration step (the time-map profile and
+# inflow), or that have a notice of their own (the energy-margin adder): no solve_step_series_combined notice.
+_CSV_COMBINED_BEFORE = frozenset({"pt_profile.csv", "pt_node_inflow.csv", "pdt_energy_margin_adder.csv"})
 
 
 def csv_series_kind(file: str, parameter: str) -> "tuple[tuple[str, str], Agg]":
@@ -968,10 +992,11 @@ def _aggregate_csv_series(file: str, frame: pl.DataFrame, base_steps: pl.DataFra
     group_cols = headers[:ti]
     value_col = headers[ti + 1]
     classes, fixed = _CSV_SERIES[file]
+    report = file not in _CSV_COMBINED_BEFORE
     if fixed is not None:
         key, kind = csv_series_kind(file, fixed)
         out = aggregate_to_solve_steps(frame, kind, group_cols, base_steps, time_col="time",
-                                       value_col=value_col, keys=key, notes=notes)
+                                       value_col=value_col, keys=key, notes=notes, report_changes=report)
     else:
         param_col = next((c for c in group_cols if c.endswith("Param")), None)
         if param_col is None:
@@ -981,7 +1006,7 @@ def _aggregate_csv_series(file: str, frame: pl.DataFrame, base_steps: pl.DataFra
         out = aggregate_to_solve_steps(
             frame, param_col, group_cols, base_steps, time_col="time", value_col=value_col,
             keys={p: key for p, (key, _k) in resolved.items()},
-            kind_values={p: k for p, (_key, k) in resolved.items()}, notes=notes)
+            kind_values={p: k for p, (_key, k) in resolved.items()}, notes=notes, report_changes=report)
     return [list(r) for r in out.select(*group_cols, "time", value_col).iter_rows()]
 
 

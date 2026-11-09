@@ -264,6 +264,7 @@ def aggregate_to_solve_steps(
     keys: "dict[str, tuple[str, str]] | tuple[str, str] | None" = None,
     kind_values: "dict[str, Agg] | None" = None,
     notes: "set | None" = None,
+    report_changes: bool = True,
 ) -> pl.DataFrame:
     """``frame`` (``group_cols``, ``time_col``, ``value_col``, …) with one row per (group, solve step).
 
@@ -276,6 +277,11 @@ def aggregate_to_solve_steps(
     the ``(class, parameter)`` of the rows for the messages (one key, or per kind-column value).  Null values are
     dropped.  The output keeps ``group_cols`` (their dtypes), ``time_col`` (Utf8, the solve step) and
     ``value_col`` (Float64), in the order of each group's first row in ``frame``.
+
+    ``report_changes``: name the entities whose step value differs from the value of the step's first base step
+    (what earlier releases used) in the behaviour-change notice ``solve_step_series_combined``; off for the
+    series that earlier releases already combined (the time-map profile and inflow, the energy-margin adder,
+    which has its own notice).
     """
     group_cols = list(group_cols)
     per_row = isinstance(kind, str)
@@ -315,9 +321,12 @@ def aggregate_to_solve_steps(
     out_values: list[float] = []
     partial: dict = {}
     varying: dict = {}
+    changed: dict = {}
     for i, (k, vs, ds, n) in enumerate(zip(kinds, vals, durs, counts)):
         try:
             out_values.append(combine(k, vs, ds))
+            if out_values[-1] != vs[0]:
+                changed.setdefault(labels[i], i)
         except ValueError as exc:
             key = key_of(labels[i])
             raise FlexToolConfigError(
@@ -341,9 +350,31 @@ def aggregate_to_solve_steps(
     for key, idx in varying.items():
         names = sorted({str(grouped.get_column(entity_cols[0])[i]) for i in idx}) if entity_cols else []
         _note_once(notes, ("varying", key), _APPROXIMATE_WHEN_VARYING[key].format(entities=", ".join(names)))
+    if report_changes and changed:
+        _report_changes(changed, grouped, entity_cols, kinds, vals, out_values, labels, key_of)
     out = grouped.select(*group_cols, pl.col("__s").alias(time_col)).with_columns(
         pl.Series(value_col, out_values, dtype=pl.Float64))
     return out
+
+
+def _report_changes(changed: dict, grouped: pl.DataFrame, entity_cols: list[str], kinds: list, vals: list,
+                    out_values: list[float], labels: list, key_of) -> None:
+    """The behaviour-change notice ``solve_step_series_combined`` (printed only while the input database carries
+    its marker): the parameters and entities whose solve-step value is no longer the value of the step's first
+    base step."""
+    from flextool.engine import _behaviour_changes
+
+    if not _behaviour_changes.has_marker("solve_step_series_combined"):
+        return
+    first_col = grouped.get_column(entity_cols[0]).cast(pl.Utf8).to_list() if entity_cols else None
+    names: list[str] = []
+    for i, (vs, v) in enumerate(zip(vals, out_values)):
+        if v == vs[0]:
+            continue
+        key = key_of(labels[i])
+        what = _what(key) if key else "a time series"
+        names.append(f"{what} of {first_col[i]}" if first_col is not None else what)
+    _behaviour_changes.notice("solve_step_series_combined", "parameters", sorted(dict.fromkeys(names)))
 
 
 # ---------------------------------------------------------------------------

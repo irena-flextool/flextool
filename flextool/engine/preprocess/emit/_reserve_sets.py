@@ -343,10 +343,10 @@ def derive_pdtReserve_upDown_group(
     while that registry names it, even once the seeds are retired.
     """
     pbt = _read_pbt_reserve(
-        input_dir / "pbt_reserve__upDown__group.csv", provider=provider,
+        solve_data_dir / "pbt_reserve__upDown__group.csv", provider=provider,
     )
     pt = _read_pt_reserve(
-        input_dir / "pt_reserve__upDown__group.csv", provider=provider,
+        solve_data_dir / "pt_reserve__upDown__group.csv", provider=provider,
     )
     p = _read_p_reserve(
         input_dir / "p_reserve__upDown__group.csv", provider=provider,

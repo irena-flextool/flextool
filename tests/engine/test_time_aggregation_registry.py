@@ -301,3 +301,28 @@ def test_nothing_armed_is_a_pass_through() -> None:
         finally:
             deactivate_solve_step_aggregation(tok)
         assert sorted(out.rows()) == [("g", "t1", 1.0), ("g", "t2", 2.0)]
+
+
+def test_behaviour_change_notice_names_the_changed_entities(capsys) -> None:
+    """With the marker ``solve_step_series_combined`` (an upgraded database), the notice names each parameter and
+    entity whose step value is not its first base step's value: availability u 0.3 / 0.5 → 0.4 (changed), v 0.9 /
+    0.9 → 0.9 (unchanged, not named).  Without the marker, or for a series earlier releases already combined
+    (``report_changes=False``), nothing is printed."""
+    from flextool.engine import _behaviour_changes as bc
+
+    base = _base([("h1", "h1", 1.0), ("h2", "h1", 1.0)])
+    frame = pl.DataFrame({"name": ["u", "u", "v", "v"], "t": ["h1", "h2", "h1", "h2"], "value": [0.3, 0.5, 0.9, 0.9]})
+    key = ("unit", "availability")
+    try:
+        bc.start_run({})
+        aggregate_to_solve_steps(frame, Agg.MEAN, ["name"], base, keys=key)
+        assert capsys.readouterr().out == ""
+        bc.start_run({"solve_step_series_combined": "83"})
+        aggregate_to_solve_steps(frame, Agg.MEAN, ["name"], base, keys=key, report_changes=False)
+        assert capsys.readouterr().out == ""
+        aggregate_to_solve_steps(frame, Agg.MEAN, ["name"], base, keys=key)
+        out = capsys.readouterr().out
+        assert "Affected parameters: unit.availability of u." in out
+        assert "of v" not in out
+    finally:
+        bc.start_run(None)

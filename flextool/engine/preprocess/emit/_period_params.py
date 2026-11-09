@@ -205,7 +205,7 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
 
     # pbt_node_inflow{(n, branch, ts, t) → value}
     pbt_inflow: dict[tuple[str, str, str, str], float] = {}
-    pbt_path = input_dir / "pbt_node_inflow.csv"
+    pbt_path = solve_data_dir / "pbt_node_inflow.csv"
     pbt_df = provider.get(_provider_key(pbt_path))
     if pbt_df is not None:
         for row in pbt_df.iter_rows():
@@ -428,7 +428,7 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
 
     # pbt_node_inflow{(n, branch, ts, t) → value}
     pbt_inflow: dict[tuple[str, str, str, str], float] = {}
-    pbt_path = input_dir / "pbt_node_inflow.csv"
+    pbt_path = solve_data_dir / "pbt_node_inflow.csv"
     pbt_df = provider.get(_provider_key(pbt_path))
     if pbt_df is not None:
         for row in pbt_df.iter_rows():
@@ -677,7 +677,7 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
 
     # pbt / pt / p loaders.
     pbt_profile: dict[tuple[str, str, str, str], float] = {}
-    pbt_path = input_dir / "pbt_profile.csv"
+    pbt_path = solve_data_dir / "pbt_profile.csv"
     pbt_df = provider.get(_provider_key(pbt_path))
     if pbt_df is not None:
         for row in pbt_df.iter_rows():
@@ -865,7 +865,7 @@ def derive_pdtProfile_vectorized(input_dir: Path, solve_data_dir: Path,
 
     # pbt / pt / p loaders.
     pbt_profile: dict[tuple[str, str, str, str], float] = {}
-    pbt_path = input_dir / "pbt_profile.csv"
+    pbt_path = solve_data_dir / "pbt_profile.csv"
     pbt_df = provider.get(_provider_key(pbt_path))
     if pbt_df is not None:
         for row in pbt_df.iter_rows():
@@ -1496,7 +1496,7 @@ def derive_pdtGroup(input_dir: Path, solve_data_dir: Path,
     ``p_group[g, param]`` → 0.  A stochastic branch period without a
     ``pd_group`` row of its own uses its anchor period's.
     """
-    pt_g = _read_pd_2(input_dir / "pt_group.csv", provider=provider)  # same (k1, k2, k3, v) shape
+    pt_g = _read_pd_2(solve_data_dir / "pt_group.csv", provider=provider)  # same (k1, k2, k3, v) shape
     pd_g = _read_pd_2(input_dir / "pd_group.csv", provider=provider)
     p_g = _read_p_2(input_dir / "p_group.csv", provider=provider)
     groups = _read_singles(input_dir / "group.csv", provider=provider)
@@ -1551,7 +1551,7 @@ def derive_pdtGroup_vectorized(input_dir: Path, solve_data_dir: Path,
     Cascade (inline 4-branch, time-first):
     ``pt_group`` → ``pd_group`` → ``p_group`` → ``0.0``.
     """
-    pt_g = _read_pd_2(input_dir / "pt_group.csv", provider=provider)
+    pt_g = _read_pd_2(solve_data_dir / "pt_group.csv", provider=provider)
     pd_g = _read_pd_2(input_dir / "pd_group.csv", provider=provider)
     p_g = _read_p_2(input_dir / "p_group.csv", provider=provider)
     groups = _read_singles(input_dir / "group.csv", provider=provider)
@@ -1615,7 +1615,7 @@ def derive_pdtCommodity(input_dir: Path, solve_data_dir: Path,
     A stochastic branch period without a ``pd_commodity`` row of its own
     uses its anchor period's.
     """
-    pt = _read_pd_2(input_dir / "pt_commodity.csv", provider=provider)
+    pt = _read_pd_2(solve_data_dir / "pt_commodity.csv", provider=provider)
     pd_ = _read_pd_2(input_dir / "pd_commodity.csv", provider=provider)
     p = _read_p_2(input_dir / "p_commodity.csv", provider=provider)
     commodities = _read_singles(input_dir / "commodity.csv", provider=provider)
@@ -1663,7 +1663,7 @@ def derive_pdtCommodity_vectorized(input_dir: Path, solve_data_dir: Path,
     Cascade (inline 3-branch, time-first):
     ``pt_commodity`` → ``pd_commodity`` → ``p_commodity`` → ``0.0``.
     """
-    pt = _read_pd_2(input_dir / "pt_commodity.csv", provider=provider)
+    pt = _read_pd_2(solve_data_dir / "pt_commodity.csv", provider=provider)
     pd_ = _read_pd_2(input_dir / "pd_commodity.csv", provider=provider)
     p = _read_p_2(input_dir / "p_commodity.csv", provider=provider)
     commodities = _read_singles(input_dir / "commodity.csv", provider=provider)

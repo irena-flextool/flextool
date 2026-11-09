@@ -207,6 +207,27 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             published="7.11.2026",
         ),
         BehaviourChange(
+            id="solve_step_series_combined",
+            summary=("A solve with new_stepduration now combines every time series over the time steps of each "
+                     "new step by the kind of its value: prices, costs, limits, availability, min_load, penalties, "
+                     "reservations, self-discharge, time-step weights and profiles take the duration-weighted "
+                     "mean, efficiencies the harmonic mean (exact fuel use at a constant flow), inflow the sum and "
+                     "storage_state_reference_value the value at the end of the step. Before, these took the value "
+                     "of the step's first time step; only time-map profiles and inflow were combined "
+                     "(results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "solve_step_series_combined"),
+        ),
+        BehaviourChange(
+            id="energy_margin_adder_per_original_step",
+            summary=("energy_margin_adder is now an energy per time step of the timeline: when the investment "
+                     "solve has new_stepduration, a solve step adds the sum of the values of the time steps it "
+                     "combines (a constant or period value counts once per time step). Before, a solve step "
+                     "added the value of its first time step once, so a coarse investment solve added less "
+                     "demand (results change). To keep the old demand, divide the value by the number of time "
+                     "steps a solve step combines."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "energy_margin_adder_per_original_step"),
+        ),
+        BehaviourChange(
             id="gui_solver_defaults",
             summary=("Runs started from the FlexTool GUI now use the same solver settings as terminal and Spine "
                      "Toolbox runs: presolve is on (before: choose), and the MIP gap of each solve comes from its "

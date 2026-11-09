@@ -4722,7 +4722,7 @@
         null
       ],
       null,
-      "[-] e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means 0. Constant, period, time or period+time. Over a coarse time step the row uses the step mean (a time step without a value counts as 0).",
+      "[-] e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means 0. Constant, period, time or period+time. A time step that a time map leaves out has no limit. Over a coarse time step the row uses the step mean; a map without values for some time steps of a coarse step keeps the rows at the time steps it covers.",
       "network"
     ],
     [
@@ -4960,7 +4960,7 @@
       "model",
       "version",
       [
-        "ODIuMA==",
+        "ODMuMA==",
         "float"
       ],
       null,
@@ -5118,7 +5118,7 @@
         "float"
       ],
       null,
-      "[MWh] per time step. Extra demand (negative inflow) added to every time step of the investment solve, when `energy_margin_method` = `inflow_adder`. The value is not a total that is divided over the steps: each step gets the full value. On 24 h steps, a margin of 10 MW needs a value of 240. FlexTool does not rescale it, including when the investment solve uses `new_stepduration`. Dispatch solves are not affected. 0 = off. Constant, period or period+time.",
+      "[MWh] per time step of the timeline. Extra demand (negative inflow) added to every time step of the investment solve, when `energy_margin_method` = `inflow_adder`. The value is not a total that is divided over the steps: each time step gets the full value. On a timeline of 24 h time steps, a margin of 10 MW needs a value of 240. When the investment solve uses `new_stepduration`, a solve step gets the sum of the values of the time steps it combines (a constant or period value counts once per time step). Dispatch solves are not affected. 0 = off. Constant, period or period+time.",
       "investment"
     ],
     [

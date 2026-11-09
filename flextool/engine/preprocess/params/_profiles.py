@@ -501,7 +501,7 @@ def _profile_stochastic_lf(workdir: Path | None,
       stochastic-fold's outer-time-branch axis.
     * ``solve_data/first_timesteps`` — (anchor, time_start); the
       stochastic-fold's outer-time-start axis.
-    * ``input/pbt_profile`` — (profile, branch, time_start, time,
+    * ``solve_data/pbt_profile`` — (profile, branch, time_start, time,
       value) — the 3d_map values themselves.
     * ``input/groupIncludeStochastics`` + relationship frames — gate
       Branch 1 (per-profile is_stoch flag).
@@ -519,7 +519,7 @@ def _profile_stochastic_lf(workdir: Path | None,
     sd = workdir / "solve_data"
 
     # Read pbt_profile.csv: (profile, branch, time_start, time, pbt_profile).
-    pbt_path = inp / "pbt_profile.csv"
+    pbt_path = sd / "pbt_profile.csv"
     if not _provider_has_key(provider, pbt_path):
         return pl.LazyFrame(schema={
             "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,

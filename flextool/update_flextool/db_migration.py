@@ -1812,6 +1812,8 @@ def migrate_database(
                 _migrate_v81_reduce_detail_methods(db)
             elif next_version == 82:
                 _migrate_v82_group_limits_by_time(db)
+            elif next_version == 83:
+                _migrate_v83_solve_step_series(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -5964,6 +5966,41 @@ def _migrate_v82_group_limits_by_time(db) -> None:
         if fields:
             db.update_parameter_definition(id=pdef["id"], **fields)
     _commit_step(db, "v82: group inertia_limit and non_synchronous_limit per time step")
+
+
+#: v83: ``energy_margin_adder`` is an energy per time step of the timeline, summed over a new_stepduration step.
+_V83_ENERGY_MARGIN_ADDER_DESCRIPTION = (
+    "[MWh] per time step of the timeline. Extra demand (negative inflow) added to every time step of the "
+    "investment solve, when `energy_margin_method` = `inflow_adder`. The value is not a total that is divided over "
+    "the steps: each time step gets the full value. On a timeline of 24 h time steps, a margin of 10 MW needs a "
+    "value of 240. When the investment solve uses `new_stepduration`, a solve step gets the sum of the values of "
+    "the time steps it combines (a constant or period value counts once per time step). Dispatch solves are not "
+    "affected. 0 = off. Constant, period or period+time.")
+
+
+def _migrate_v83_solve_step_series(db) -> None:
+    """A solve's ``new_stepduration`` combines every time series by its kind (v82 -> v83).
+
+    No value is rewritten.  The ``node.energy_margin_adder`` description is rewritten (an energy per time step of
+    the timeline, summed over a new_stepduration step).  Behaviour-change markers, only on a database whose
+    results change: ``solve_step_series_combined`` when some solve has a ``new_stepduration`` value, and
+    ``energy_margin_adder_per_original_step`` when also some node has an ``energy_margin_adder`` value (the
+    marker value lists the solves / nodes).  Idempotent: a rerun finds the description and the markers written.
+    """
+    pdef = _pdef_or_none(db, "node", "energy_margin_adder")
+    if pdef is not None and (pdef["description"] or "") != _V83_ENERGY_MARGIN_ADDER_DESCRIPTION:
+        db.update_parameter_definition(id=pdef["id"], description=_V83_ENERGY_MARGIN_ADDER_DESCRIPTION)
+    solves = sorted({pv["entity_byname"][0] for pv in db.find_parameter_values(
+        entity_class_name="solve", parameter_definition_name="new_stepduration")
+        if from_database(pv["value"], pv["type"]) is not None})
+    if solves:
+        _v77_set_marker(db, "solve_step_series_combined", json.dumps({"since": 83, "solves": solves}))
+        nodes = sorted({pv["entity_byname"][0] for pv in db.find_parameter_values(
+            entity_class_name="node", parameter_definition_name="energy_margin_adder")})
+        if nodes:
+            _v77_set_marker(db, "energy_margin_adder_per_original_step",
+                            json.dumps({"since": 83, "solves": solves, "nodes": nodes}))
+    _commit_step(db, "v83: time series combined over a solve's new_stepduration step")
 
 
 _V70_MAX_FLOW_UNCONSTRAINED_DESCRIPTION = (

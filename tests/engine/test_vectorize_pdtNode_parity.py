@@ -175,7 +175,7 @@ def test_vectorized_pdtNode_extra_stochastic_fixtures(
     sdd = work / "solve_data"
 
     # Document the empty-pbt_node reality (the pdtNode fold cannot fire).
-    pbt = p.get("input/pbt_node")
+    pbt = p.get("solve_data/pbt_node")
     pbt_h = 0 if pbt is None else pbt.height
     assert pbt_h == 0, (
         f"{db_fixture}: pbt_node unexpectedly NON-empty ({pbt_h} rows) — "
@@ -240,7 +240,7 @@ def test_vectorized_pdtNode_synthetic_fold_and_cascade(tmp_path):
         provider.put(stem, df)
 
     # pbt_node: (node, param, branch, time_start, time, value)
-    put("input", "pbt_node", pl.DataFrame({
+    put("solve_data", "pbt_node", pl.DataFrame({
         "node": ["riverA", "riverA", "riverB"],
         "param": ["inflow", "inflow", "inflow"],
         "branch": ["b1", "b2", "b1"],
@@ -256,7 +256,7 @@ def test_vectorized_pdtNode_synthetic_fold_and_cascade(tmp_path):
         "value": [5.0, 9.0],
     }))
     # pt_node: (node, param, time, value) — time-first override on storage.
-    put("input", "pt_node", pl.DataFrame({
+    put("solve_data", "pt_node", pl.DataFrame({
         "node": ["lake"],
         "param": ["storage"],
         "time": ["t1"],
@@ -347,7 +347,7 @@ def test_vectorized_pdtNode_branch_period_inherits_anchor_pd(tmp_path):
         provider.put(f"{parent}/{stem}", df)
         provider.put(stem, df)
 
-    put("input", "pbt_node", pl.DataFrame(schema={
+    put("solve_data", "pbt_node", pl.DataFrame(schema={
         "node": pl.Utf8, "param": pl.Utf8, "branch": pl.Utf8,
         "time_start": pl.Utf8, "time": pl.Utf8, "value": pl.Float64}))
     put("input", "pd_node", pl.DataFrame({
@@ -356,10 +356,10 @@ def test_vectorized_pdtNode_branch_period_inherits_anchor_pd(tmp_path):
         "period": ["d1", "d1", "d1", "d1_b", "d1"],
         "value": [8000.0, 5.0, 9.0, 2.0, 10.0],
     }))
-    put("input", "pt_node", pl.DataFrame({
+    put("solve_data", "pt_node", pl.DataFrame({
         "node": ["lake", "lake"], "param": ["storage", "flow"], "time": ["t1", "t1"],
         "value": [7.0, 20.0]}))
-    put("input", "pdt_node", pl.DataFrame({
+    put("solve_data", "pdt_node", pl.DataFrame({
         "node": ["lake"], "param": ["flow"], "period": ["d1"], "time": ["t1"],
         "value": [30.0]}))
     put("input", "p_node", pl.DataFrame(schema={

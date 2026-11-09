@@ -131,7 +131,7 @@ def test_vectorized_pdtProcess_exercises_pbt_fold(tmp_path):
         provider.put(stem, df)
 
     # pbt_process: (process, param, branch, time_start, time, value)
-    put("input", "pbt_process", pl.DataFrame({
+    put("solve_data", "pbt_process", pl.DataFrame({
         "process": ["wind", "wind", "solar"],
         "param": ["cap", "cap", "cap"],
         "branch": ["b1", "b2", "b1"],
@@ -143,7 +143,7 @@ def test_vectorized_pdtProcess_exercises_pbt_fold(tmp_path):
     put("input", "pd_process", pl.DataFrame(schema={
         "process": pl.Utf8, "param": pl.Utf8, "period": pl.Utf8,
         "value": pl.Float64}))
-    put("input", "pt_process", pl.DataFrame(schema={
+    put("solve_data", "pt_process", pl.DataFrame(schema={
         "process": pl.Utf8, "param": pl.Utf8, "time": pl.Utf8,
         "value": pl.Float64}))
     put("input", "p_process", pl.DataFrame(schema={
@@ -206,7 +206,7 @@ def _branch_provider(pd_rows: dict, p_rows: dict, pbt_rows: list, pt_rows: "dict
         provider.put(f"{parent}/{stem}", df)
         provider.put(stem, df)
 
-    put("input", "pbt_process", pl.DataFrame(pbt_rows, schema={
+    put("solve_data", "pbt_process", pl.DataFrame(pbt_rows, schema={
         "process": pl.Utf8, "param": pl.Utf8, "branch": pl.Utf8,
         "time_start": pl.Utf8, "time": pl.Utf8, "value": pl.Float64},
         orient="row"))
@@ -214,7 +214,7 @@ def _branch_provider(pd_rows: dict, p_rows: dict, pbt_rows: list, pt_rows: "dict
         [(*k, v) for k, v in pd_rows.items()], schema={
             "process": pl.Utf8, "param": pl.Utf8, "period": pl.Utf8,
             "value": pl.Float64}, orient="row"))
-    put("input", "pt_process", pl.DataFrame(
+    put("solve_data", "pt_process", pl.DataFrame(
         [(*k, v) for k, v in pt_rows.items()], schema={
             "process": pl.Utf8, "param": pl.Utf8, "time": pl.Utf8,
             "value": pl.Float64}, orient="row"))
@@ -222,7 +222,7 @@ def _branch_provider(pd_rows: dict, p_rows: dict, pbt_rows: list, pt_rows: "dict
         [(*k, v) for k, v in p_rows.items()], schema={
             "process": pl.Utf8, "param": pl.Utf8, "value": pl.Float64},
         orient="row"))
-    put("input", "pdt_process", pl.DataFrame(
+    put("solve_data", "pdt_process", pl.DataFrame(
         [(*k, v) for k, v in pdt_rows.items()], schema={
             "process": pl.Utf8, "param": pl.Utf8, "period": pl.Utf8, "time": pl.Utf8,
             "value": pl.Float64}, orient="row"))

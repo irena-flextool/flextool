@@ -110,7 +110,7 @@ def _pbt_inflow_from_provider(p) -> dict:
     from flextool.engine.preprocess.emit._period_params import _cell_str
 
     out: dict = {}
-    df = p.get("input/pbt_node_inflow")
+    df = p.get("solve_data/pbt_node_inflow")
     if df is None:
         return out
     for row in df.iter_rows():
@@ -337,7 +337,7 @@ def test_vectorized_pdtNodeInflow_synthetic_branches(tmp_path):
     # pbt_node_inflow: (node, branch, time_start, time, value).  stochN b1
     # under d1 hit by TWO (tb, ts) combos (b1×s1, b1×s2) → multi-term
     # stoch sum 5+5 = 10.  b1 also reached via parent pA under dchild.
-    put("input", "pbt_node_inflow", pl.DataFrame({
+    put("solve_data", "pbt_node_inflow", pl.DataFrame({
         "node": ["stochN", "stochN"],
         "branch": ["b1", "b1"],
         "time_start": ["s1", "s2"],
