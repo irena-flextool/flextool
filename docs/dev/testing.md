@@ -387,13 +387,28 @@ What the scrub does before writing: no request header is recorded; message, call
 (`chatcmpl-…`, `msg_…`, `toolu_…`, `gen-…`, `call_…`, `req_…`) become placeholders of the same format, the same
 everywhere in the file; organisation and project ids, run ids, e-mail addresses and the key are replaced; the
 FlexTool redaction removes the project folder, the home folder, user and host names and other absolute paths; the
-address of a custom endpoint becomes `https://endpoint.example.test/v1`; a model list keeps only the recorded
-model. Signatures and thinking text stay, because the replay needs them. Response headers are kept only from an
+address of a custom endpoint becomes `https://endpoint.example.test/v1`. Any other address than the preset's own
+or one on this computer keeps its scheme, port and route kind with a placeholder host (`192.0.2.1` or
+`[2001:db8::1]` on the local network, `endpoint.example.test` elsewhere) and the preset's path; a `remote_host`
+outside the known services becomes `forwarded.example.test`. In every text, the top-level fields included, an IP
+address outside loopback and the documentation ranges becomes a numbered documentation address (`192.0.2.N`,
+`2001:db8::N`, never the endpoint's), and a host name of the local network (`*.lan`, `*.local`, `*.home`,
+`*.internal`, `*.intranet`, `*.corp`, `*.localdomain`, `*.home.arpa`, or a one-label host after `://`) becomes
+`host-N.example.test`; a one-label endpoint host is replaced only as a host (`://gpu`, `gpu:11434`), never inside a
+word. Public host names in texts stay. Of the model server's own answers only the fields the probe reads are
+recorded (Ollama `/api/show`: capabilities, `remote_host`, parameter size, architecture and context length;
+`/api/ps`: the recorded model's name, context, size and graphics memory, no digest; LM Studio: the recorded model's
+context, load state and capabilities), and a model list keeps only the recorded model. Signatures and thinking text stay, because the replay needs them. Response headers are kept only from an
 allow-list (`content-type`, `retry-after`, `retry-after-ms`, `x-ratelimit-*`, `anthropic-ratelimit-*`).
 
 What the scrub check (in the tool and in CI) refuses: a key-like text (`sk-`, `sk-ant-`, `sk-or-`, `AIza…`), a run
 of 32 or more letters and digits outside a signature field, an absolute path, an e-mail address, a request header,
-`x-stainless-*`, `openai-organization` or `openai-project` anywhere, and a project name other than the fixture's.
+`x-stainless-*`, `openai-organization` or `openai-project` anywhere, a project name other than the fixture's, an
+IP address outside loopback and the documentation ranges, a host name of the local network or a one-label host
+after `://`, a `base_url` or `remote_host` outside the known services, and (in the tool) the endpoint's own host
+left anywhere — a one-label one as a whole word. The check's patterns are its own and looser than the scrub's, and
+it also reads each streamed answer joined, so an address the scrub missed, or one split over two pieces, is
+refused rather than written.
 
 When a recording settles a point the design marked unverified (for example the shape of Ollama's `remote_host`
 or of LM Studio's model list), correct the code and its tests in the same change.

@@ -9,13 +9,16 @@ The tool builds the synthetic test project (``tests/fixtures/tests.json`` with t
 a temporary folder — never a user's project — and asks it two fixed questions (a parameter question and a result
 question) through the real session, backend and probe.  Every request body, status, allow-listed response header
 and raw server-sent event line is written to ``tests/assistant/llm/recorded/<preset>/<case>.json``, and the model
-server's own answers (Ollama, LM Studio, the OpenRouter model list) to ``probes``.
+server's own answers (Ollama, LM Studio, the OpenRouter model list) to ``probes`` — of those only the fields the
+probe reads, and of a model list only the model asked for.
 
 The key comes from where the chat finds it (the preset's environment variable, the system keyring or the key file),
 never from the command line.  Before writing, the recording is scrubbed (ids, the key, run ids, paths, user and
-host names; ``tests/assistant/llm/recordings.py``), checked (no key, no long letter-and-digit run outside a
-signature, no absolute path, no e-mail address, no request header, the fixture's project name only) and replayed
-through the backend to the same final answers.  Nothing is written when a question fails, when the model made
+host names, addresses and host names of the local network, an endpoint other than the preset's own;
+``tests/assistant/llm/recordings.py``), checked (no key, no long letter-and-digit run outside a signature, no
+absolute path, no e-mail address, no request header, the fixture's project name only, no IP address outside
+loopback and the documentation ranges, no host of the local network, no host field outside the known services, not
+the endpoint's own host) and replayed through the backend to the same final answers.  Nothing is written when a question fails, when the model made
 fewer than two rounds of tool calls, or when the check or the replay finds a problem.
 
 Exit codes: 0 written · 1 not written (the reason is printed) · 2 usage.
@@ -102,17 +105,68 @@ def _inner_transport(base_url: str) -> httpx2.BaseTransport:
     return httpx2.HTTPTransport(trust_env=not local, proxy=None if local else net.proxy_for(base_url))
 
 
+#: Of an Ollama ``/api/show`` answer, what the probe reads (``probes._probe_ollama``).
+OLLAMA_SHOW_FIELDS = ("capabilities", "remote_host", "remote_model")
+OLLAMA_INFO_FIELDS = ("general.architecture", "general.parameter_count")
+#: Of an Ollama ``/api/ps`` entry, what the probe reads (no ``digest``, no ``details``, no expiry).
+OLLAMA_PS_FIELDS = ("name", "model", "context_length", "size", "size_vram")
+#: Of an LM Studio model (``/api/v1/models`` entry, ``/api/v0/models/<m>``), what the probe reads.
+LMSTUDIO_FIELDS = ("id", "key", "model_key", "modelKey", "context_length", "max_context_length",
+                   "loaded_context_length", "loaded", "state", "loaded_instances", "capabilities")
+
+
+def _lmstudio_model(entry: dict[str, Any]) -> dict[str, Any]:
+    kept = {k: entry[k] for k in LMSTUDIO_FIELDS if k in entry}
+    if isinstance(kept.get("loaded_instances"), list):
+        kept["loaded_instances"] = [{} for _ in kept["loaded_instances"]]     # their count is what is read
+    return kept
+
+
+def reduce_probe_body(path: str, body: Any, model: str) -> Any:
+    """Of a model server's answer to the probe, only what the probe reads: a model list keeps only the model asked
+    for; Ollama's ``/api/show`` and ``/api/ps`` and LM Studio's model answers keep only the fields read (so no
+    ``digest``, ``modelfile``, licence, template or the models installed on the computer)."""
+    if not isinstance(body, dict):
+        return body
+    if path == "/api/show":
+        out = {k: body[k] for k in OLLAMA_SHOW_FIELDS if k in body}
+        details = body.get("details")
+        if isinstance(details, dict) and "parameter_size" in details:
+            out["details"] = {"parameter_size": details["parameter_size"]}
+        info = body.get("model_info")
+        if isinstance(info, dict):
+            out["model_info"] = {k: v for k, v in info.items()
+                                 if k in OLLAMA_INFO_FIELDS or k.endswith(".context_length")}
+        return out
+    if path == "/api/ps":
+        models = body.get("models")
+        if not isinstance(models, list):
+            return {}
+        return {"models": [{k: e[k] for k in OLLAMA_PS_FIELDS if k in e} for e in models
+                           if isinstance(e, dict) and probes._same_model(e, model)]}
+    if path == "/api/generate":
+        return {k: body[k] for k in ("done", "done_reason") if k in body}
+    if path.startswith("/api/v0/models/"):
+        return _lmstudio_model(body)
+    if path.endswith("/models"):
+        out = dict(body)
+        for name in ("data", "models"):
+            if isinstance(body.get(name), list):
+                kept = [e for e in body[name] if isinstance(e, dict) and probes._entry_id(e) == model]
+                out[name] = [_lmstudio_model(e) for e in kept] if path == "/api/v1/models" else kept
+        return out
+    return body
+
+
 def _probe_recorder(log: list[dict[str, Any]], model: str):
-    """A replacement of the probe's request that writes down each answer of the model server (a model list only
-    with the model asked for)."""
+    """A replacement of the probe's request that writes down each answer of the model server, reduced to what the
+    probe reads (:func:`reduce_probe_body`)."""
     original = probes._Asker._fetch
 
     def fetch(self, method: str, path: str, payload: dict | None, timeout: float):
         answer = original(self, method, path, payload, timeout)
-        body = answer.body
-        if isinstance(body, dict) and isinstance(body.get("data"), list) and path.endswith("/models"):
-            body = {**body, "data": [m for m in body["data"] if isinstance(m, dict) and m.get("id") == model]}
-        log.append({"method": method, "path": path, "request": payload, "status": answer.status, "body": body})
+        log.append({"method": method, "path": path, "request": payload, "status": answer.status,
+                    "body": reduce_probe_body(path, answer.body, model)})
         return answer
 
     return original, fetch
@@ -204,7 +258,7 @@ def record(preset_id: str, model: str, *, base_url: str | None, tier: str | None
         "format": recordings.FORMAT,
         "preset": preset.id,
         "model": model,
-        "base_url": recordings.CUSTOM_BASE_URL if preset.id == "openai_compatible" else address,
+        "base_url": address,                    # the scrub writes its placeholder (recordings.placeholder_base_url)
         "tier": level,
         "max_continuations": caps.max_continuations,
         "knobs": dict(conn.knobs),
@@ -225,8 +279,12 @@ def finish(raw: dict[str, Any], project: Path, work: Path) -> dict[str, Any]:
     from tests.assistant.conftest import PROJECT_DIR_NAME
 
     secrets = tuple(raw.pop("_secrets", ()))
+    private = [recordings.host_of(raw["base_url"])] if raw.get("base_url") else []
+    remote = (raw.get("facts") or {}).get("remote_host")
+    if isinstance(remote, str) and remote.strip():
+        private.append(recordings.host_of(remote))
     clean = recordings.scrub(raw, secrets=secrets, redact=Redactor(project).redact)
-    found = recordings.problems(clean, project_name=PROJECT_DIR_NAME)
+    found = recordings.problems(clean, project_name=PROJECT_DIR_NAME, private_hosts=private)
     if found:
         raise SystemExit("Not written: the scrubbed recording still has\n  " + "\n  ".join(found))
     texts, transport = recordings.replay(clean, project, work / "replay_config")
