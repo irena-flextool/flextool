@@ -32,7 +32,7 @@ from flextool.gui.assistant.worker import (
     Exited,
     Idle,
     OpenConversation,
-    Prepared,
+    RouteShown,
     SettingsChanged,
     SetupProblem,
     Shutdown,
@@ -95,7 +95,7 @@ def test_the_notice_comes_before_any_request_and_a_yes_sends(project, tools, rig
     assert notice.provider_label == "Google Gemini"
     assert "generativelanguage.googleapis.com" in notice.notice
     kinds = rig.kinds()
-    assert kinds.index("Prepared") < kinds.index("ConsentNeeded")
+    assert kinds.index("RouteShown") < kinds.index("ConsentNeeded")
     assert rig.made == [] and rig.probes == []          # neither the probe nor a request before the answer
     assert rig.worker.busy.is_set()
     rig.worker.submit(ConsentAnswer(job.job_id, True))
@@ -360,7 +360,7 @@ def test_settings_changed_applies_to_the_next_question_but_keeps_the_chats_model
     assert rig.made[0].closed
     finished = [ev.result.text for _jid, ev in rig.events if isinstance(ev, TurnFinished)]
     assert finished == ["One.", "Two.", "Three.", "Four."]
-    prepared = [ev for _jid, ev in rig.events if isinstance(ev, Prepared)]
+    prepared = _shown(rig)
     assert {p.model for p in prepared} == {"fake-model"}
     for req in rig.requests():
         history_check.validate(req)
@@ -378,6 +378,11 @@ def test_shutdown_while_idle_ends_at_once(project, tools, rigs):
 OPUS = ProviderSettings(preset="anthropic", model="claude-opus-5-5")
 FLASH_LITE = ProviderSettings(preset="gemini", model="gemini-3.5-flash-lite")
 OPUS_FACTS = ModelFacts(context_window=1_000_000, source="anthropic")
+
+
+def _shown(rig: Rig) -> list:
+    """The routes the worker showed for the header (``RouteShown`` with a route; ``None`` is "the settings")."""
+    return [ev.prepared for _jid, ev in rig.events if isinstance(ev, RouteShown) and ev.prepared is not None]
 
 
 def _answer_notices(rig: Rig, job) -> None:
@@ -417,7 +422,7 @@ def test_a_chat_keeps_its_model_and_level_after_the_settings_change(project, too
     rig.wait_for(Idle, count=2)
     assert [b.origin[2] for b in rig.made] == ["claude-opus-5-5"]
     assert len(rig.made[0].requests) == 2
-    prepared = [ev for _jid, ev in rig.events if isinstance(ev, Prepared)]
+    prepared = _shown(rig)
     assert {(p.model, p.level) for p in prepared} == {("claude-opus-5-5", "advanced")}
     assert rig.worker.session is not None and rig.worker.session.tier == "large"
     data = json.loads(_conversation_file(project, rig.worker.conversation_id).read_text(encoding="utf-8"))
@@ -428,7 +433,7 @@ def test_a_chat_keeps_its_model_and_level_after_the_settings_change(project, too
     rigs.append(rig2)
     _answer_notices(rig2, rig2.job())
     assert [b.origin[2] for b in rig2.made] == ["gemini-3.5-flash-lite"]
-    assert [p.level for _jid, p in rig2.events if isinstance(p, Prepared)][-1] == "basic"
+    assert [p.level for p in _shown(rig2)][-1] == "basic"
 
 
 def test_a_reopened_chat_goes_on_with_its_own_model(project, tools, rigs, monkeypatch):
@@ -447,7 +452,7 @@ def test_a_reopened_chat_goes_on_with_its_own_model(project, tools, rigs, monkey
     rigs.append(again)
     again.worker.submit(OpenConversation(conversation_id))
     again.wait_for(ConversationLoaded)
-    shown = again.wait_for(Prepared)                    # the tab shows the chat's own model before a question
+    shown = again.wait_for(RouteShown).prepared         # the tab shows the chat's own model before a question
     assert (shown.model, shown.level, shown.provider) == ("claude-opus-5-5", "advanced", "Anthropic")
     _answer_notices(again, again.job())
     assert [b.origin[2] for b in again.made] == ["claude-opus-5-5"]
@@ -488,7 +493,7 @@ def test_an_advanced_model_is_advanced_before_and_after_the_probe_in_the_window(
     rig = Rig(project, [FakeBackend([say("One.")])], probe=lambda *_a, **_k: facts)
     rigs.append(rig)
     _answer_notices(rig, rig.job())
-    levels = [ev.level for _jid, ev in rig.events if isinstance(ev, Prepared)]
+    levels = [p.level for p in _shown(rig)]
     assert levels and set(levels) == {"advanced"}           # the first one is from before the probe
     assert rig.worker.session is not None and rig.worker.session.tier == "large"
     assert any(layer.startswith("Your level: advanced.") for layer in rig.requests()[0].system)

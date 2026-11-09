@@ -239,6 +239,7 @@ class ChatWindow(tk.Toplevel):
         self._on_closed = on_closed
         self._calls: queue.SimpleQueue = queue.SimpleQueue()
         self._poll_id: str | None = None
+        self._footer_request = 0            # only the latest ledger read is shown (replies come in any order)
         self._rr = 0
         self._fit_scheduled = False
         self._open_chats_id: str | None = None
@@ -289,6 +290,7 @@ class ChatWindow(tk.Toplevel):
         for tab in self.tabs:
             tab.settings_changed()
         self._refresh_header()
+        self.refresh_footer()
         self.refresh_saved()
 
     @property
@@ -525,15 +527,16 @@ class ChatWindow(tk.Toplevel):
 
     # --- the header and the footer ---------------------------------------------------------------------------
     def _refresh_header(self) -> None:
-        """The selected chat's provider, model and level, and where its data goes: the chat's own once it has
-        them (prepared, or reopened), else what the settings give a new chat."""
+        """The selected chat's provider, model and level, and where its data goes: what its worker says the chat
+        goes with (G17-D1); for a chat the worker names nothing for, what the settings give a new chat — which is
+        what its next question takes."""
         from flextool.assistant import endpoint
 
         tab = self.current_tab()
         if tab.prepared is not None:
             prepared = tab.prepared
-            model_text = strings.MODEL_LINE.format(provider=prepared.provider, model=prepared.model,
-                                                   level=prepared.level)
+            line = strings.MODEL_LINE if prepared.level else strings.MODEL_LINE_NO_LEVEL
+            model_text = line.format(provider=prepared.provider, model=prepared.model, level=prepared.level)
             route_text = prepared.indicator
             relaxed = prepared.relaxed
         elif self._settings_route is not None:
@@ -554,6 +557,8 @@ class ChatWindow(tk.Toplevel):
     def refresh_footer(self) -> None:
         """This month's usage of the active chat's provider (the ledger read on a daemon thread)."""
         label = self.current_tab().provider
+        self._footer_request += 1
+        request = self._footer_request
 
         def read() -> None:
             from flextool.assistant.usage import Ledger
@@ -563,12 +568,15 @@ class ChatWindow(tk.Toplevel):
             except Exception:  # noqa: BLE001 — no footer then
                 logger.exception("The usage record could not be read")
                 return
-            self.call_soon(self._show_footer, label, data)
+            self.call_soon(self._show_footer, request, label, data)
 
         run_in_thread(read, "flextool-assistant-ledger")
 
-    def _show_footer(self, label: str, data: dict) -> None:
+    def _show_footer(self, request: int, label: str, data: dict) -> None:
         from flextool.assistant.usage import number
+
+        if request != self._footer_request:
+            return                          # a later read (another chat selected, another provider) is due
 
         month = datetime.now(timezone.utc).strftime("%Y-%m")
         tokens_in = tokens_out = rejected = 0

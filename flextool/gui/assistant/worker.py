@@ -10,11 +10,11 @@ stopped job ends with ``TurnRefused(job_id, "Stopped.")``:
 
 1. the conversation: a new chat gets its number (``store.allocate_chat_number``) and an empty conversation
    (:class:`ChatReady`);
-2. the settings, the provider, the address, the model and the key (:class:`Prepared` with the route the model
+2. the settings, the provider, the address, the model and the key (:class:`RouteShown` with the route the model
    name gives) — a missing piece is a :class:`SetupProblem`;
 3. the data notice of a remote route (:class:`ConsentNeeded`): the job is *parked* while the inbox goes on, until
    :class:`ConsentAnswer` (a Stop answers ``False``);
-4. the probe (an Ollama model may turn out to be forwarded to the cloud: a new :class:`Prepared` and notice);
+4. the probe (an Ollama model may turn out to be forwarded to the cloud: a new :class:`RouteShown` and notice);
 5. the backend behind the process-wide :class:`~flextool.gui.assistant.gate.ProviderGate` and the session
    (``Session.switch`` when a chat goes on with other settings);
 6. the window's snapshot of this question as the tools' defaults, :class:`TurnStarted`, ``Session.run_turn`` (its
@@ -27,6 +27,10 @@ answer yet, takes the settings' ones.  The level is resolved again from the chat
 the probe from the facts last found for it and then from the probe's; the conversation stores only the user's
 level.  :class:`Idle` follows every question (also a refused or
 failed one); ``busy`` is set from :meth:`AssistantWorker.submit` until then.
+
+The worker owns what the chat's header shows (G17-D1): only its :class:`RouteShown` sets it — at each prepare, at
+an open, and after :class:`SettingsChanged` (at once, or after a question that waits for the data notice, which
+still goes with the route it was prepared for).
 
 :meth:`AssistantWorker.shutdown` stops the answer and ends the thread without waiting: the history is repaired,
 saved and released, the backend closed, :attr:`AssistantWorker.exited` set.  Until then the worker is listed by
@@ -100,7 +104,10 @@ class Shutdown:
 # --- events (worker → Tk thread), besides every P1 event of the session --------------------------------------------
 @dataclass(frozen=True)
 class Prepared:
-    route: Route
+    """The provider, model, level and route a chat goes with (the payload of :class:`RouteShown`); *route* is
+    ``None`` when a bound chat's own provider or address cannot be described (*indicator* then says so)."""
+
+    route: Route | None
     indicator: str
     provider: str
     model: str
@@ -108,6 +115,15 @@ class Prepared:
     level_source: str               # "chosen" or "from the model name"
     key_source: str
     relaxed: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class RouteShown:
+    """What the chat's header shows (G17-D1): the route the worker uses for the tab's current or next question.
+    ``None`` means the next question takes the saved settings (a chat without an answer).  Always posted with the
+    job id ``None``: the header follows the worker, never the job the tab is watching."""
+
+    prepared: Prepared | None
 
 
 @dataclass(frozen=True)
@@ -285,6 +301,7 @@ class AssistantWorker:
         self._ctx = None
         self._link: _Link | None = None
         self._dirty = False
+        self._header_due = False            # a settings change waits for the parked question to finish
         self._parked: tuple[TurnJob, Any] | None = None
         self._current_job: TurnJob | None = None
         self._thread: threading.Thread | None = None
@@ -363,6 +380,11 @@ class AssistantWorker:
             self._delete()
         elif isinstance(item, SettingsChanged):
             self._dirty = True
+            if self._parked is not None:
+                # The parked question still goes with the route it was prepared for: the header changes after it.
+                self._header_due = True
+            else:
+                self._show(self._next_route())
 
     def _advance(self, job: TurnJob, flow: Any, value: object) -> None:
         """Run the question's steps until they end or park for the data notice."""
@@ -379,8 +401,19 @@ class AssistantWorker:
         self._emit(job.job_id, request)
 
     def _idle(self) -> None:
+        if self._header_due:
+            self._header_due = False
+            self._show(self._next_route())
         self.busy.clear()
         self._emit(None, Idle())
+
+    def _show(self, prepared: Prepared | None) -> None:
+        self._emit(None, RouteShown(prepared))
+
+    def _next_route(self) -> Prepared | None:
+        """What the next question goes with, as far as it is known without preparing: a bound chat's own model;
+        ``None`` (the settings) for a chat without an answer."""
+        return self._bound_event() if self._bound() is not None else None
 
     def _fault(self, exc: BaseException, item: object) -> None:
         logger.error("The AI assistant's chat worker failed", exc_info=exc)
@@ -481,9 +514,7 @@ class AssistantWorker:
             conv.number = store.allocate_chat_number(self.project_path)
         self._conversation = conv
         self.conversation_id = conv.id
-        shown = self._bound_event()
-        if shown is not None:
-            self._emit(None, shown)
+        self._show(self._bound_event())
         self._emit(None, ConversationLoaded(conv.id, conv.number, conv.title, tuple(conv.messages), conv.notice,
                                             dict(conv.usage)))
 
@@ -503,10 +534,16 @@ class AssistantWorker:
             self._check(job)
             link = self._link
             if link is None or self._dirty:
-                setup = self._setup(job)
-                if link is None or setup.fingerprint != link.fingerprint:
-                    link = yield from self._prepare(job, setup)
+                # Cleared before the setup, so a settings change while this question waits for the data notice
+                # is not lost (G17 critique B1); a question refused here prepares again next time.
                 self._dirty = False
+                try:
+                    setup = self._setup(job)
+                    if link is None or setup.fingerprint != link.fingerprint:
+                        link = yield from self._prepare(job, setup)
+                except BaseException:
+                    self._dirty = True
+                    raise
             self._check(job)
         except _Refused:
             return
@@ -607,9 +644,12 @@ class AssistantWorker:
         return bound_origin(conv) if conv is not None else None
 
     def _bound_event(self) -> Prepared | None:
-        """What the tab shows for a reopened chat before its next question: its own provider, model, level and
-        route (no key, no probe; the question prepares again).  ``None`` for a chat without an answer."""
-        from flextool.assistant import endpoint
+        """What the tab shows for a bound chat before its next question: its own provider, model, level and route
+        (no key, no probe; the question prepares again), with the facts of the chat's link when it has one, so a
+        probe's finding (an Ollama model forwarded to the cloud) stays shown.  ``None`` for a chat without an
+        answer.  A bound chat never falls back to the settings' line: when its own provider or address cannot be
+        described, the header says so (its next question is not sent then)."""
+        from flextool.assistant import endpoint, prompt, tiers
         from flextool.assistant.net import check_base_url
         from flextool.assistant.providers import PRESETS, relaxed_knobs
         from flextool.assistant.settings import load_settings
@@ -620,24 +660,42 @@ class AssistantWorker:
         preset_id, raw_url, model = bound
         preset = PRESETS.get(preset_id)
         if preset is None or not model:
-            return None
+            return self._not_shown(preset.label if preset is not None else preset_id, model)
         try:
             base_url = check_base_url(raw_url)
+        except Exception:  # noqa: BLE001 — the question says what is wrong; the header says it can't be shown
+            logger.debug("The chat's own address could not be described", exc_info=True)
+            return self._not_shown(preset.label, model)
+        try:
             settings = load_settings(self.config_root)
-        except Exception:  # noqa: BLE001 — the question says what is wrong; the tab shows the settings then
-            logger.debug("The chat's own model could not be described", exc_info=True)
-            return None
+        except Exception:  # noqa: BLE001 — the chat's own model is still shown, with its stored level
+            logger.debug("The settings could not be read for the chat's header", exc_info=True)
+            settings = None
+        link = self._link
+        facts = link.facts if link is not None and tuple(link.backend.origin) == tuple(bound) else None
         override = self._conversation.level if self._conversation is not None else None
-        if _settings_name(settings.provider, preset, model, base_url):
+        if settings is not None and _settings_name(settings.provider, preset, model, base_url):
             override = settings.provider.tier
-        route = endpoint.route_for(preset, base_url, model=model)
-        level, level_source = _level_before_probe(preset, base_url, model, override, route)
-        from flextool.assistant import prompt
-
+        route = endpoint.route_for(preset, base_url, model=model, facts=facts)
+        if facts is not None:
+            try:
+                tier = tiers.resolve_tier(preset, model, facts, override, route)
+                level, level_source = tier.chosen, _level_source(tier, override)
+            except tiers.WindowTooSmall:
+                level, level_source = _level_before_probe(preset, base_url, model, override, route)
+        else:
+            level, level_source = _level_before_probe(preset, base_url, model, override, route)
         names = {internal: name for name, internal in prompt.LEVELS.items()}
+        knobs = settings.provider.knobs if settings is not None else {}
         return Prepared(route=route, indicator=endpoint.indicator_text(route), provider=route.label, model=model,
-                        level=names.get(level, level), level_source=level_source, key_source="",
-                        relaxed=tuple(relaxed_knobs(preset, settings.provider.knobs)))
+                        level=names.get(level, level), level_source=level_source,
+                        key_source=link.conn.key_source if facts is not None else "",
+                        relaxed=tuple(relaxed_knobs(preset, knobs)))
+
+    @staticmethod
+    def _not_shown(provider: str, model: str) -> Prepared:
+        return Prepared(route=None, indicator=strings.ROUTE_NOT_SHOWN, provider=provider, model=model, level="",
+                        level_source="", key_source="", relaxed=())
 
     def _prepared_event(self, setup: _Setup, route: Route) -> Prepared:
         from flextool.assistant import endpoint, prompt
@@ -677,7 +735,7 @@ class AssistantWorker:
         from flextool.assistant.usage import ledger_key
 
         conn = setup.conn
-        self._emit(job.job_id, self._prepared_event(setup, conn.route))
+        self._show(self._prepared_event(setup, conn.route))
         yield from self._consent(job, setup, conn.route)
         self._check(job)
         needed = probes.needed_tokens(prompt.system_layers("gui", "small"), tool_specs("small"))
@@ -709,11 +767,11 @@ class AssistantWorker:
                 self._emit(job.job_id, Notice(line))
         if route != conn.route:
             conn = dataclasses.replace(conn, route=route)
-            self._emit(job.job_id, self._prepared_event(setup, route))
+            self._show(self._prepared_event(setup, route))
             yield from self._consent(job, setup, route)
             self._check(job)
         elif level_changed:
-            self._emit(job.job_id, self._prepared_event(setup, route))
+            self._show(self._prepared_event(setup, route))
         try:
             backend = self._backend_factory(setup.preset, conn)
         except LLMError as err:

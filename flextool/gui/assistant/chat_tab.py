@@ -273,12 +273,9 @@ class ChatTab(ttk.Frame):
         self._set_state(NOTICE, strings.STATUS_NOTICE_OPEN)
 
     def settings_changed(self) -> None:
-        """A chat without an answer takes the new settings at its next question, so it shows them now; one with
-        an answer keeps its own model and goes on showing it."""
+        """The worker prepares again at the next question and says what the header shows then (``RouteShown``):
+        the tab never guesses which model a chat goes on with (G17-D1)."""
         from flextool.gui.assistant.worker import SettingsChanged
-
-        if not self.answered:
-            self.prepared = None
 
         if self.worker is not None:
             self.worker.submit(SettingsChanged())
@@ -379,6 +376,9 @@ class ChatTab(ttk.Frame):
             return
         if isinstance(event, w.Deleted):
             return
+        if isinstance(event, w.RouteShown):
+            self._route_shown(event.prepared)
+            return
         active = self.active_job is not None and job_id == self.active_job.job_id
         if isinstance(event, w.TurnFinished) and not active:
             self._question_usage = list(event.result.usage)
@@ -388,10 +388,7 @@ class ChatTab(ttk.Frame):
             return
         if job_id is not None and not active:
             return
-        if isinstance(event, w.Prepared):
-            self.prepared = event
-            self.window.tab_changed(self)
-        elif isinstance(event, w.ConsentNeeded):
+        if isinstance(event, w.ConsentNeeded):
             self.window.consents.request(self, event)
         elif isinstance(event, w.TurnStarted):
             entry = self._job_lines.pop(event.job_id, None)
@@ -447,6 +444,14 @@ class ChatTab(ttk.Frame):
 
             self.transcript.notice(continuing_text(event.part, event.of))
             self._set_state(WORKING, strings.STATUS_THINKING)
+
+    def _route_shown(self, prepared: Prepared | None) -> None:
+        """The worker's word on what the header shows (G17-D1); the footer follows a changed provider."""
+        before = self.provider
+        self.prepared = prepared
+        self.window.tab_changed(self)
+        if self.provider != before and self.window.current_tab() is self:
+            self.window.refresh_footer()
 
     def _chat_ready(self, event: Any) -> None:
         self.conversation_id = event.conversation_id

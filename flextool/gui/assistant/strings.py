@@ -117,6 +117,9 @@ STATUS_TOOL_WAITING = "Waiting: another chat is running a tool."
 # --- the chat's model (the window's header follows the selected chat) -----------------------------------------------
 MODEL_LINE = "{provider} · {model} · {level}"
 MODEL_LINE_NO_MODEL = "{provider} · no model chosen"
+MODEL_LINE_NO_LEVEL = "{provider} · {model}"
+ROUTE_NOT_SHOWN = ("Where this chat's data goes can't be shown: its own provider or address can't be used now. "
+                   "Nothing is sent until that is fixed.")
 
 # --- the totals and the footer ------------------------------------------------------------------------------------
 FOOTER = "{provider} this month: {input} in · {output} out"
