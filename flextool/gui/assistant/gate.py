@@ -10,6 +10,17 @@ ledger key — and shares a cool-down after a rate-limit or overload answer:
 * a longer wait is not waited for: until it has passed, another chat's request ends at once with P1's "long
   wait" message, without being sent (and without being counted as a rejected attempt).
 
+A chat's backend may carry its own ``limit`` below ``parallel``: the free plan sends one request at a time
+(P3 §4.6), so a free-plan chat's :class:`GatedBackend` has ``limit=1`` while ``parallel`` stays the setting
+(review G18, C7-m4: one process-wide value let the last prepared chat decide for all).  The limit is compared with
+the requests running to the whole provider, so a free-plan chat also waits while a paid chat of the same provider
+runs, but a paid chat (``limit`` ``None``: ``parallel``) still enters beside a running free-plan one.
+
+Slots go in arrival order, per provider: a waiting request that is held only because the provider is full keeps
+every later request to that provider out, also one whose own limit would let it in, so two chats that keep the
+provider busy cannot starve a third (a free-plan chat behind paid ones).  A request held by another chat's
+cool-down does not hold the later ones (the chat that got the answer is not held by its own cool-down).
+
 :class:`GatedBackend` wraps a chat's backend so that each model request takes a slot; tool calls run outside the
 gate (they are serialised by the process-wide tool lock instead).  Holding its slot, a request then waits for its
 turn by the gate's :class:`~flextool.assistant.pacing.Pacer` (P1 §5.1; the process's for :data:`PROCESS_GATE`), so
@@ -52,6 +63,9 @@ class GateLongWait(LLMError):
 @dataclass
 class _Provider:
     active: int = 0
+    #: The waiting requests in arrival order: ticket → the owner of the request.
+    waiting: dict[int, object] = field(default_factory=dict)
+    next_ticket: int = 0
     cool_until: float = 0.0
     cool_owner: object = None
     long_until: float = 0.0
@@ -80,32 +94,55 @@ class ProviderGate:
     def acquire(self, key: str, limit: int | Callable[[], int] | None, cancel: threading.Event,
                 on_wait: Callable[[GateWait], None] | None = None, *, owner: object = None,
                 provider_label: str = "") -> None:
-        """Take a slot for one request to *key*.  Waits while *limit* (default ``parallel``) requests are running
-        or a short cool-down set by another *owner* lasts; raises :class:`GateLongWait` during a long one and
+        """Take a slot for one request to *key*.  Waits while *limit* (default ``parallel``) requests are running,
+        while a request that came earlier waits for a slot (arrival order), or while a short cool-down set by
+        another *owner* lasts; raises :class:`GateLongWait` during a long one and
         :class:`~flextool.assistant.llm_errors.Cancelled` when *cancel* is set while waiting."""
         shown: tuple[str, int | None] | None = None
         last_shown = 0.0
-        while True:
-            if cancel.is_set():
-                raise cancelled()
-            with self._lock:
-                now = self.clock()
-                p = self._provider(key)
-                if p.long_until > now and p.long_owner is not owner:
-                    raise _long_wait(provider_label, p.long_until - now)
-                cap = self.parallel if limit is None else (limit() if callable(limit) else limit)
-                cooling = p.cool_until > now and p.cool_owner is not owner
-                if not cooling and p.active < max(1, int(cap)):
-                    p.active += 1
-                    return
-                wait = GateWait("cool_down", math.ceil(p.cool_until - now)) if cooling else GateWait("busy", None)
-            moment = time.monotonic()
-            if on_wait is not None and ((wait.reason, wait.seconds_left) != shown or moment - last_shown >= 1.0):
-                shown = (wait.reason, wait.seconds_left)
-                last_shown = moment
-                on_wait(wait)
-            if cancel.wait(POLL):
-                raise cancelled()
+        ticket: int | None = None
+        try:
+            while True:
+                if cancel.is_set():
+                    raise cancelled()
+                with self._lock:
+                    now = self.clock()
+                    p = self._provider(key)
+                    if p.long_until > now and p.long_owner is not owner:
+                        raise _long_wait(provider_label, p.long_until - now)
+                    if ticket is None:
+                        ticket = p.next_ticket
+                        p.next_ticket += 1
+                        p.waiting[ticket] = owner
+                    cap = self.parallel if limit is None else (limit() if callable(limit) else limit)
+                    cooling = p.cool_until > now and p.cool_owner is not owner
+                    if not cooling and p.active < max(1, int(cap)) and not self._ahead(p, ticket, now):
+                        del p.waiting[ticket]
+                        ticket = None
+                        p.active += 1
+                        return
+                    wait = GateWait("cool_down", math.ceil(p.cool_until - now)) if cooling else GateWait("busy", None)
+                moment = time.monotonic()
+                if on_wait is not None and ((wait.reason, wait.seconds_left) != shown or moment - last_shown >= 1.0):
+                    shown = (wait.reason, wait.seconds_left)
+                    last_shown = moment
+                    on_wait(wait)
+                if cancel.wait(POLL):
+                    raise cancelled()
+        finally:
+            if ticket is not None:
+                with self._lock:
+                    self._provider(key).waiting.pop(ticket, None)
+
+    @staticmethod
+    def _ahead(p: _Provider, ticket: int, now: float) -> bool:
+        """Whether a request that arrived before *ticket* waits for a slot (not for another chat's cool-down)."""
+        for earlier, owner in p.waiting.items():
+            if earlier >= ticket:
+                return False                # dicts keep insertion order: the tickets ascend
+            if not (p.cool_until > now and p.cool_owner is not owner):
+                return True
+        return False
 
     def release(self, key: str) -> None:
         with self._lock:
@@ -154,7 +191,7 @@ class GatedBackend:
     paces = True
 
     def __init__(self, backend: Backend, gate: ProviderGate, key: str, *, label: str = "",
-                 limit: Callable[[], int] | None = None, policy: RetryPolicy | None = None,
+                 limit: int | Callable[[], int] | None = None, policy: RetryPolicy | None = None,
                  rng: random.Random | None = None) -> None:
         self.inner = backend
         self.gate = gate

@@ -639,10 +639,6 @@ class AssistantWorker:
             raise self._problem(job, strings.CHOOSE_MODEL.format(provider=preset.label))
         if bound is not None and _settings_name(provider, preset, model, base_url):
             override = provider.tier            # the settings name this chat's model: their level holds
-        from flextool.assistant.budget import free_tier_on
-
-        if free_tier_on(preset.id, model, settings.free_tier):
-            self.gate.set_parallel(1)           # the free plan sends one request at a time (P3 §4.6)
         self._check(job)
         key, source, note = keys.resolve_key(preset, base_url, config_root=self.config_root)
         self._check(job)
@@ -800,11 +796,14 @@ class AssistantWorker:
             backend = self._backend_factory(setup.preset, conn)
         except LLMError as err:
             raise self._problem(job, message_for(err, "gui"), err.code in SETTINGS_ERRORS) from None
-        gated = GatedBackend(backend, self.gate, ledger_key(setup.preset.id, setup.base_url,
-                                                             forwarded_to=route.forwarded_to), label=route.label)
         from flextool.assistant import budget
 
         free = budget.free_tier_on(setup.preset.id, conn.model, setup.settings.free_tier)
+        # The free plan sends one request at a time (P3 §4.6): this chat's own limit, so another chat's prepare
+        # cannot lift it (review G18, C7-m4); the setting stays the gate's ``parallel``.
+        gated = GatedBackend(backend, self.gate, ledger_key(setup.preset.id, setup.base_url,
+                                                             forwarded_to=route.forwarded_to), label=route.label,
+                             limit=1 if free else None)
         b = budget.budget_for(tier, free_tier=free, compaction_every=setup.settings.compaction_every,
                               keep_recent_turns=setup.settings.keep_recent_turns)
         link = _Link(setup.fingerprint, setup.preset, setup.base_url, conn, facts, gated, setup.level, b)

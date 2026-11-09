@@ -224,3 +224,53 @@ def test_no_slot_is_held_while_a_tool_runs(tmp_path, monkeypatch, fake_backends)
     assert result.ok
     assert seen == [0]
     assert gate.state(KEY)[0] == 0
+
+
+def test_an_int_limit_caps_one_backend_below_parallel(fake_backends):
+    """Review G18, C7-m4: a free-plan chat's own limit 1 holds it below the gate's ``parallel`` (3), counted against
+    every request to the provider; a backend without a limit still enters beside it."""
+    gate = ProviderGate(parallel=3)
+    b1, bn = Block(then=answer("one")), Block(then=answer("paid"))
+    one, paid, two = FakeBackend([b1]), FakeBackend([bn]), FakeBackend([answer("two")])
+    fake_backends += [one, paid, two]
+    t1, _, _ = _request(GatedBackend(one, gate, KEY, limit=1))
+    assert b1.started.wait(3)
+    tn, _, _ = _request(GatedBackend(paid, gate, KEY))            # limit None: parallel 3, one running
+    assert bn.started.wait(3)
+    t2, box2, events2 = _request(GatedBackend(two, gate, KEY, limit=1))
+    _until(lambda: events2)
+    assert events2[0] == GateWait("busy", None) and two.requests == []
+    b1.release.set()
+    t1.join(3)
+    _until(lambda: len(events2) >= 2)                # still held: the paid request runs and its limit is 1
+    assert two.requests == []
+    bn.release.set()
+    tn.join(3)
+    t2.join(3)
+    assert box2["reply"].message.text == "two"
+
+
+def test_slots_go_in_arrival_order(fake_backends):
+    """Review G18 critique m1: a free-plan request waiting for a slot keeps a later paid request out (before, the
+    paid one entered at once and two busy paid chats could starve it); once it runs, the paid one enters beside
+    it (the documented asymmetry)."""
+    gate = ProviderGate(parallel=3)
+    held, free_block = Block(then=answer("held")), Block(then=answer("free"))
+    first, free, later = FakeBackend([held]), FakeBackend([free_block]), FakeBackend([answer("later")])
+    fake_backends += [first, free, later]
+    t1, _, _ = _request(GatedBackend(first, gate, KEY))
+    assert held.started.wait(3)
+    tf, _, events_f = _request(GatedBackend(free, gate, KEY, limit=1))
+    _until(lambda: events_f)
+    tl, box_l, events_l = _request(GatedBackend(later, gate, KEY))
+    _until(lambda: events_l)
+    assert events_l[0] == GateWait("busy", None)
+    assert later.requests == [] and free.requests == []
+    held.release.set()
+    t1.join(3)
+    assert free_block.started.wait(3)
+    tl.join(3)
+    assert box_l["reply"].message.text == "later"   # entered beside the running free-plan request
+    free_block.release.set()
+    tf.join(3)
+    assert gate.state(KEY)[0] == 0 and gate._provider(KEY).waiting == {}

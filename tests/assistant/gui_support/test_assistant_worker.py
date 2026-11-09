@@ -497,3 +497,37 @@ def test_an_advanced_model_is_advanced_before_and_after_the_probe_in_the_window(
     assert levels and set(levels) == {"advanced"}           # the first one is from before the probe
     assert rig.worker.session is not None and rig.worker.session.tier == "large"
     assert any(layer.startswith("Your level: advanced.") for layer in rig.requests()[0].system)
+
+
+def test_a_paid_chat_does_not_lift_the_free_plans_one_request(project, tools, rigs):
+    """Review G18, C7-m4: the free plan's one request at a time is the free chat's own limit.  Before, it was the
+    gate's process-wide ``parallel``, which the next prepared paid chat set back to 3, so the waiting free-plan
+    request went out while the first one ran."""
+    from flextool.assistant.settings import Settings, save_settings
+    from flextool.gui.assistant.gate import GateWait, ProviderGate
+
+    gate = ProviderGate()
+    save_settings(Settings(provider=LOCAL, parallel_requests=3, free_tier=True))
+    block = Block(then=say("First."))
+    a1 = Rig(project, [FakeBackend([block])], gate=gate)
+    a2 = Rig(project, [FakeBackend([say("Second.")])], gate=gate)
+    rigs += [a1, a2]
+    a1.job()
+    assert block.started.wait(5)
+    a2.job()
+    a2.wait_for(GateWait)
+    assert a2.requests() == []
+    paid = ProviderSettings(preset="openai_compatible", base_url="http://127.0.0.1:8/v1", model="fake-model")
+    save_settings(Settings(provider=paid, parallel_requests=3, free_tier=False))
+    b = Rig(project, [FakeBackend([say("Paid.")])], gate=gate)
+    rigs.append(b)
+    b.job()
+    b.wait_for(TurnFinished)
+    # Two more busy notes after the paid chat's prepare (one a second): before the fix the waiting request has
+    # gone out by then, whatever the 50 ms poll's timing.
+    seen = len([ev for _j, ev in a2.events if isinstance(ev, GateWait)])
+    a2.wait_for(GateWait, count=seen + 2, timeout=5)
+    assert a2.requests() == []
+    block.release.set()
+    a2.wait_for(TurnFinished)
+    assert len(a2.requests()) == 1

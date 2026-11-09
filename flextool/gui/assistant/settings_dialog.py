@@ -949,7 +949,8 @@ class AssistantSettingsDialog(_AssistantDialog):
                        None)
             return
         key = ledger_key(preset.id, conn.base_url, forwarded_to=route.forwarded_to)
-        backend = GatedBackend(inner, self._gate, key, label=route.label)
+        free = free_tier_on(preset.id, model, test["free"])
+        backend = GatedBackend(inner, self._gate, key, label=route.label, limit=1 if free else None)
         test["backend"] = backend
 
         def waiting(event: object) -> None:
@@ -966,7 +967,7 @@ class AssistantSettingsDialog(_AssistantDialog):
             else:
                 result = model_check.check_model(
                     preset, backend, cancel, label=route.label, ledger=Ledger(self._config_root), ledger_key=key,
-                    free_plan=free_tier_on(preset.id, model, test["free"]), front_end="gui", on_event=waiting)
+                    free_plan=free, front_end="gui", on_event=waiting)
         except Exception as exc:  # noqa: BLE001 — shown, logged
             logger.warning("The model test failed", exc_info=True)
             result = model_check.CheckResult("failed", strings.TEST_FAILED_INTERNAL.format(type=type(exc).__name__))
