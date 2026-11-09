@@ -33,11 +33,30 @@
   `ts_unit` series (shares of capacity) become profiles with `profile_method` `fixed`, `lower_limit` and
   `upper_limit` on the unit's primary output (before: ignored, so must-run units were free). `storage start` /
   `storage finish` set `storage_start_end_method` explicitly (`fix_start`, `fix_end`, `fix_start_end`, else
-  `fix_nothing`): left to the default, a storage start would have been free after the upgrade to version 77, and
-  a start of 0 was fixed at 0. The import ends with a report of failed writes and of every FlexTool 2 input that
-  has no FlexTool 4 counterpart, with its entities (`time_in_years` ≠ 1 first, `curtailment_penalty`,
-  `reserve_duration`, `conversion eff`, `use min online`, `fueluse increase eq x output2`, `import (MWh)`, and
-  any other column the importer does not read), and the imported database carries no behaviour-change notices.
+  `fix_nothing`): before, a `storage start` of 0 fixed the first state at 0 (FlexTool 2 leaves it free), a
+  `storage finish` was not read, and with both set the storage still wrapped from the last step to the first
+  (now `bind_forward_only`, as in FlexTool 2). The import ends with a report of failed writes and of every
+  FlexTool 2 input that was not carried over or works differently, with its entities and what to do, grouped by
+  topic in plain sentences (`flextool-read-old --strict` makes a failed write an error), and the imported
+  database carries no behaviour-change notices.
+- **Fix: FlexTool 2 CHP units (output2) are imported as FlexTool 2 defines them.** The output2 (e.g. heat) used
+  fuel and shared the unit's capacity with the primary output, and `output2 max capacity ratio` was divided by
+  the capacity and written as `conversion_flow_coeff`, which changed the fuel use. The `output2 eq / gt / lt`
+  rows had output1 and output2 swapped (`heat >= 1.4 × elec` became `elec >= 1.4 × heat`), their constants were
+  not multiplied by the capacity, and a row with only a constant was dropped. Now the output2 edge has
+  `conversion_flow_coeff` 0 (no fuel, outside the capacity, ramp and minimum-load limits, as in FlexTool 2), and
+  each row, and the capacity ratio, becomes a user constraint `output2 − coeff × output1 {=, ≥, ≤} constant ×
+  (existing + invested capacity)`. Headers written with underscores (`output2_max_capacity_ratio`) are read.
+- **Fix: FlexTool 2 `availability` no longer derates dispatch.** FlexTool 2 uses it only in the capacity margin;
+  the import wrote it as FlexTool 4 `availability`, which reduces every flow of the unit. It is now left out and
+  listed in the import report (FlexTool 4 has no per-unit share in the capacity margin).
+- **The FlexTool 2 import report flags a `time_in_years` that does not match the time series.** FlexTool 2
+  scales operating costs by the years the series represents, FlexTool 4 by the hours it covers; the report now
+  compares `time_in_years` with steps × duration / 8760 (before: with 1, which missed a two-week workbook with
+  `time_in_years` = 1 and flagged a consistent two-year one) and gives the factor by which the ratio of operating
+  to investment costs differs, with the remedy. It also lists cf and inflow series that FlexTool 2 rescales over
+  the steps in use. In the FlexTool window, a converted FlexTool 2 model is written outside `input_sources` and
+  moved in only after the conversion, and the new source and its scenarios are ticked again.
   The CLI now prints its log, and a failed import leaves no database file behind.
 - **Fix: a solve's `new_stepduration` combines every time series over the new time step (results change).** A
   solve with its own `new_stepduration` used to take the value of the first original time step of each new step for
