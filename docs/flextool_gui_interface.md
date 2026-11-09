@@ -56,9 +56,23 @@ The **Input sources** panel lists every `.sqlite` and `.xlsx` file in the projec
 | Delete | Remove the selected source from the project. External references unlink the reference; the file on disk is untouched. |
 | Refresh | Rescan `input_sources/` on disk. |
 
-The **checkbox** column decides whether the source's scenarios appear in **Available scenarios**. The **#** column is the source's persistent number — it is assigned the first time the source is seen and stored in `settings.yaml` (`input_source_numbers`). When a source is deleted its number is freed only when no executed-scenario folder on disk still references it; the next new source picks the lowest free number, so a deleted slot is reused once its outputs are also cleaned up. Hovering over a row with an error, empty, or "editing" status shows a Toplevel tooltip explaining the status; external references show their POSIX path relative to the project root and a reminder that **Delete** only removes the reference.
+The **checkbox** column decides whether the source's scenarios appear in **Available scenarios**. The **#** column is the source's persistent number — it is assigned the first time the source is seen and stored in `settings.yaml` (`input_source_numbers`). When a source is deleted its number is freed only when no executed-scenario folder on disk still references it; the next new source picks the lowest free number, so a deleted slot is reused once its outputs are also cleaned up. Hovering over a row with an error, empty, "editing" or frozen status shows a Toplevel tooltip explaining the status; external references show their POSIX path relative to the project root and a reminder that **Delete** only removes the reference.
 
 Right-click a row for the same actions as the buttons. Column headers sort the list; the active sort direction is shown by a small arrow.
+
+### Migration and frozen databases
+
+When the list is refreshed, a `.sqlite` source older than this FlexTool is migrated to the current version: a source in `input_sources/` without asking (a safety copy is kept until the migration has finished), an external reference after asking whether to migrate it in place or copy it into the project first. Checking the version reads the file read-only, so nothing in the file changes before you agree. Adding scenarios to the execution list checks their sources again and migrates any that changed since the last refresh; FlexTool does not run a database that is not at the current version.
+
+A released model can be **frozen** so that it is never migrated in place without asking: right-click a `.sqlite` source → **Freeze database…** and give a label, e.g. `Reference case 1.0` (at most 170 characters). Only a database at the current version can be frozen. A frozen source shows ❄ in the status column; the tooltip shows the label, the version and the date it was frozen. **Unfreeze database** removes the marker. The same can be done in a terminal with `flextool-freeze` (see [Freeze a released database](terminal_workflow.md#freeze-a-released-database)).
+
+When a frozen source is older than this FlexTool, the refresh asks what to do with it:
+
+- **Migrate a copy** (default): the copy, `input_sources/<name>_v<version>.sqlite`, is migrated and added as a new input source. It has its own source number, so its results go to new result folders. The copy is not frozen; it records the label, the old version and the SHA-256 of the frozen file it was made from. The frozen file stays unchanged and is not asked about again while the copy is there.
+- **Migrate in place**: after a second confirm, the frozen file itself is migrated. Its frozen marker is kept with the new version.
+- **Cancel**: the source is not migrated. Until FlexTool is restarted it shows ❄✗ (frozen, older version), its scenarios are not listed and it is not asked about again; right-click → **Migrate frozen database…** asks again.
+
+Editing a frozen database in the database editor is not prevented; a frozen database is protected from migration only.
 
 Excel input is described in [Excel interface](excel_interface.md); the Spine database editor is described in [Spine database](spine_database.md).
 

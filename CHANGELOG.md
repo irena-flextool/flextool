@@ -1,5 +1,26 @@
 ## Unreleased
 
+- **Behaviour change: the model run refuses an input database that is not at the current FlexTool version.**
+  Before, only databases below version 25 were refused, so an unmigrated database ran old data under the new
+  version's semantics without a word. `flextool-run` (and `run_flextool.py`, `python -m
+  flextool.cli.cmd_run_flextool`) now stops with a message that names `flextool-migrate-database <file>`; a
+  database newer than FlexTool asks for a FlexTool update. The standard ways to run migrate first:
+  `execute_flextool_workflow.py` migrates the input database before the model run (new), the FlexTool window
+  migrates its sources on refresh and now also checks the sources of the scenarios added to the execution list,
+  and the Spine Toolbox workflow runs its **Migrate database** tool before FlexTool.
+- **New: frozen databases.** `flextool-freeze DB --label "Reference case 1.0"` (or right-click → **Freeze
+  database…** in the FlexTool window) marks a database at the current version as frozen, `--unfreeze` removes the
+  mark and `--status` shows it. A frozen database is never migrated in place without consent:
+  `flextool-migrate-database` exits with code 2 unless given `--copy-to NEW.sqlite` (migrates a copy that records
+  the label, the old version and the SHA-256 of the original, which stays byte-identical) or
+  `--allow-migrate-frozen` (migrates the file and keeps the marker with the new version); `flextool-update` skips
+  and lists frozen databases; the FlexTool window asks: migrate a copy (a new input source), migrate in place
+  (second confirm) or cancel (the source is not runnable this session and not asked about again). A frozen
+  database that is already current is left unchanged.
+- **Fix: checking the version of an input source no longer upgrades its SpineDB schema.** The FlexTool window
+  read the version by opening each `.sqlite` source with a schema upgrade, so an external file's schema changed
+  before the consent dialog was shown. The version is now read read-only.
+
 - **Fix: the FlexTool 2 importer (`flextool-read-old`, GUI "Convert from FlexTool 2.0 input file") translates
   more and reports what it cannot.** Sensitivities are now imported in the same run as the base data
   (`--master MASTER.xlsm`; in the GUI the master workbook is asked for before the conversion), before the
