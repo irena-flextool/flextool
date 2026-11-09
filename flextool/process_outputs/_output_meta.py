@@ -493,6 +493,40 @@ DOCS_ANCHOR: dict[str, str] = {
 }
 
 
+#: Row levels that place a value in time.  ``solve`` counts as time, ``period`` as its own kind.
+TIME_LIKE_LEVELS: tuple[str, ...] = ("period", "time", "solve")
+#: Levels whose values are distinct things of one quantity: adding across them gives a total.
+ENTITY_LEVELS: frozenset[str] = frozenset(
+    {"unit", "node", "connection", "process", "entity", "sink", "source", "commodity"}
+)
+#: Levels whose values can share members (a node or a process is in several groups): adding across them can
+#: count a member more than once.
+OVERLAPPING_LEVELS: frozenset[str] = frozenset({"group", "node_group"})
+#: What combining the values of a non-time level means (:meth:`OutputDims.level_kind`):
+#:
+#: - ``entity``: distinct things of one quantity; every statistic is allowed, the sum is a total;
+#: - ``part``: additive parts of one whole (cost categories); the sum is the total, a mean across them is not
+#:   a figure anyone means;
+#: - ``overlapping``: groups that can share members; a sum may count a member twice, the other statistics hold;
+#: - ``quantity``: different quantities (existing / invested / total capacity, up / down reserve); they are
+#:   not combined at all.
+LEVEL_KINDS: tuple[str, ...] = ("entity", "part", "overlapping", "quantity")
+
+
+def default_level_kind(level: str) -> str:
+    """The kind of *level* in a table that does not declare it: ``time`` / ``period`` for the time levels,
+    ``entity`` / ``overlapping`` by name, else ``quantity`` (an undeclared level is never combined)."""
+    if level == "period":
+        return "period"
+    if level in TIME_LIKE_LEVELS:
+        return "time"
+    if level in ENTITY_LEVELS:
+        return "entity"
+    if level in OVERLAPPING_LEVELS:
+        return "overlapping"
+    return "quantity"
+
+
 @dataclass(frozen=True)
 class OutputDims:
     """The layout of one result table: its row index levels and its column levels (below the top
@@ -500,12 +534,23 @@ class OutputDims:
 
     A membership set (``DIMENSION_TABLE``) has no measure columns: its ``rows`` are the set's columns.
     ``counterpart`` is the same quantity at the other time resolution (a per-step table and its
-    per-period table), or ``None``.
+    per-period table), or ``None``.  ``kinds`` declares, as ``(level, kind)`` pairs, the kind
+    (:data:`LEVEL_KINDS`) of each level that is neither a time level nor in :data:`ENTITY_LEVELS` /
+    :data:`OVERLAPPING_LEVELS`.
     """
 
     rows: tuple[str, ...]
     columns: tuple[str, ...] = ()
     counterpart: str | None = None
+    kinds: tuple[tuple[str, str], ...] = ()
+
+    def level_kind(self, level: str) -> str:
+        """``time``, ``period``, or one of :data:`LEVEL_KINDS`: what combining over *level* means."""
+        if level not in TIME_LIKE_LEVELS:
+            for name, kind in self.kinds:
+                if name == level:
+                    return kind
+        return default_level_kind(level)
 
     @property
     def has_time(self) -> bool:
@@ -518,6 +563,12 @@ class OutputDims:
 
 _DT = ("period", "time")
 _D = ("period",)
+_CATEGORY_PART = (("category", "part"),)
+_PARAMETER_QUANTITY = (("parameter", "quantity"),)
+_PARAM_QUANTITY = (("param", "quantity"),)
+_RESERVE_QUANTITY = (("reserve", "quantity"), ("updown", "quantity"))
+_NODE_CATEGORY = (("category", "quantity"),)              # signed balance terms: their sum is the net (about 0)
+_GROUP_FLOW_KINDS = (("type", "quantity"), ("item", "entity"))
 
 # One sentence per result table: what it holds.  Table names are the parquet stems
 # (``output_parquet/<scenario>/<stem>.parquet``); every key of OUTPUT_TRANSFORM and of the
@@ -704,19 +755,19 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
 }
 
 OUTPUT_DIMS: dict[str, OutputDims] = {
-    "costs_dt_p": OutputDims(_DT, ("category",), "annualized_costs_d_p"),
-    "annualized_costs_d_p": OutputDims(_D, ("category",), "costs_dt_p"),
-    "costs_discounted_d_p": OutputDims(_D, ("category",)),
-    "costs_discounted_p_": OutputDims(("category",)),
-    "cost_unit_annualized_d_ec": OutputDims(("period", "unit"), ("category",)),
-    "cost_connection_annualized_d_ec": OutputDims(("period", "connection"), ("category",)),
-    "cost_node_annualized_d_ec": OutputDims(("period", "node"), ("category",)),
-    "cost_unit_discounted_d_ec": OutputDims(("period", "unit"), ("category",)),
-    "cost_connection_discounted_d_ec": OutputDims(("period", "connection"), ("category",)),
-    "cost_node_discounted_d_ec": OutputDims(("period", "node"), ("category",)),
-    "discountFactors_d_p": OutputDims(_D, ("param",)),
+    "costs_dt_p": OutputDims(_DT, ("category",), "annualized_costs_d_p", _CATEGORY_PART),
+    "annualized_costs_d_p": OutputDims(_D, ("category",), "costs_dt_p", _CATEGORY_PART),
+    "costs_discounted_d_p": OutputDims(_D, ("category",), kinds=_CATEGORY_PART),
+    "costs_discounted_p_": OutputDims(("category",), kinds=_CATEGORY_PART),
+    "cost_unit_annualized_d_ec": OutputDims(("period", "unit"), ("category",), kinds=_CATEGORY_PART),
+    "cost_connection_annualized_d_ec": OutputDims(("period", "connection"), ("category",), kinds=_CATEGORY_PART),
+    "cost_node_annualized_d_ec": OutputDims(("period", "node"), ("category",), kinds=_CATEGORY_PART),
+    "cost_unit_discounted_d_ec": OutputDims(("period", "unit"), ("category",), kinds=_CATEGORY_PART),
+    "cost_connection_discounted_d_ec": OutputDims(("period", "connection"), ("category",), kinds=_CATEGORY_PART),
+    "cost_node_discounted_d_ec": OutputDims(("period", "node"), ("category",), kinds=_CATEGORY_PART),
+    "discountFactors_d_p": OutputDims(_D, ("param",), kinds=_PARAM_QUANTITY),
     "entity_annuity_d_p": OutputDims(("solve", "period"), ("entity",)),
-    "years_represented__d": OutputDims(_D, ("param",)),
+    "years_represented__d": OutputDims(_D, ("param",), kinds=_PARAM_QUANTITY),
     "unit_outputNode_dt_ee": OutputDims(_DT, ("unit", "node"), "unit_outputNode_d_ee"),
     "unit_outputNode_d_ee": OutputDims(_D, ("unit", "node"), "unit_outputNode_dt_ee"),
     "unit_inputNode_dt_ee": OutputDims(_DT, ("unit", "node"), "unit_inputNode_d_ee"),
@@ -732,11 +783,11 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "connection_losses_dt_eee": OutputDims(_DT, ("process",), "connection_losses_d_eee"),
     "connection_losses_d_eee": OutputDims(_D, ("process",), "connection_losses_dt_eee"),
     "connection_cf_d_e": OutputDims(_D, ("connection",)),
-    "CO2__": OutputDims(("param_CO2",), ("scope",)),
+    "CO2__": OutputDims(("param_CO2",), ("scope",), kinds=(("param_CO2", "quantity"), ("scope", "quantity"))),
     "CO2_d_g": OutputDims(_D, ("group",)),
-    "process_co2_d_eee": OutputDims(_D, ("type", "process", "commodity", "node")),
-    "node_dt_ep": OutputDims(_DT, ("node", "category"), "node_d_ep"),
-    "node_d_ep": OutputDims(_D, ("node", "category"), "node_dt_ep"),
+    "process_co2_d_eee": OutputDims(_D, ("type", "process", "commodity", "node"), kinds=(("type", "entity"),)),
+    "node_dt_ep": OutputDims(_DT, ("node", "category"), "node_d_ep", _NODE_CATEGORY),
+    "node_d_ep": OutputDims(_D, ("node", "category"), "node_dt_ep", _NODE_CATEGORY),
     "node_state_dt_e": OutputDims(_DT, ("node",)),
     "node_inflow__dt": OutputDims(_DT, ("node",)),
     "node_prices_dt_e": OutputDims(("solve", "period", "time"), ("node",)),
@@ -746,10 +797,13 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "node_slack_down_d_e": OutputDims(_D, ("node",), "node_slack_down_dt_e"),
     "nodeGroup_flows_dt_g": OutputDims(_DT, ("group",), "nodeGroup_flows_d_g"),
     "nodeGroup_flows_d_g": OutputDims(_D, ("group",), "nodeGroup_flows_dt_g"),
-    "nodeGroup_flows_dt_gpe": OutputDims(_DT, ("group", "type", "item"), "nodeGroup_flows_d_gpe"),
-    "nodeGroup_flows_d_gpe": OutputDims(_D, ("group", "type", "item"), "nodeGroup_flows_dt_gpe"),
-    "nodeGroup_gdt_p": OutputDims(("group", "period", "time"), ("parameter",), "nodeGroup_gd_p"),
-    "nodeGroup_gd_p": OutputDims(("group", "period"), ("parameter",), "nodeGroup_gdt_p"),
+    "nodeGroup_flows_dt_gpe": OutputDims(_DT, ("group", "type", "item"), "nodeGroup_flows_d_gpe",
+                                          _GROUP_FLOW_KINDS),
+    "nodeGroup_flows_d_gpe": OutputDims(_D, ("group", "type", "item"), "nodeGroup_flows_dt_gpe",
+                                         _GROUP_FLOW_KINDS),
+    "nodeGroup_gdt_p": OutputDims(("group", "period", "time"), ("parameter",), "nodeGroup_gd_p",
+                                   _PARAMETER_QUANTITY),
+    "nodeGroup_gd_p": OutputDims(("group", "period"), ("parameter",), "nodeGroup_gdt_p", _PARAMETER_QUANTITY),
     "nodeGroup_VRE_share_dt_g": OutputDims(_DT, ("group",), "nodeGroup_VRE_share_d_g"),
     "nodeGroup_VRE_share_d_g": OutputDims(_D, ("group",), "nodeGroup_VRE_share_dt_g"),
     "unit_VRE_potential_outputNode_dt_ee": OutputDims(_DT, ("unit", "sink"), "unit_VRE_potential_outputNode_d_ee"),
@@ -768,19 +822,20 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "connection_online_dt_e": OutputDims(_DT, ("process",), "connection_online_average_d_e"),
     "connection_online_average_d_e": OutputDims(_D, ("process",), "connection_online_dt_e"),
     "connection_startup_d_e": OutputDims(_D, ("process",)),
-    "unit_capacity_ed_p": OutputDims(("unit", "period"), ("parameter",)),
-    "connection_capacity_ed_p": OutputDims(("connection", "period"), ("parameter",)),
-    "node_capacity_ed_p": OutputDims(("node", "period"), ("parameter",)),
+    "unit_capacity_ed_p": OutputDims(("unit", "period"), ("parameter",), kinds=_PARAMETER_QUANTITY),
+    "connection_capacity_ed_p": OutputDims(("connection", "period"), ("parameter",), kinds=_PARAMETER_QUANTITY),
+    "node_capacity_ed_p": OutputDims(("node", "period"), ("parameter",), kinds=_PARAMETER_QUANTITY),
     "dual_invest_effective_unit_d_e": OutputDims(_D, ("entity",)),
     "dual_invest_effective_connection_d_e": OutputDims(_D, ("entity",)),
     "dual_invest_effective_node_d_e": OutputDims(_D, ("entity",)),
     "co2_price_period_d_g": OutputDims(_D, ("group",)),
     "co2_price_total_d_g": OutputDims(_D, ("group",)),
-    "reserve_prices_dt_ppg": OutputDims(("solve", "period", "time"), ("reserve", "updown", "node_group")),
+    "reserve_prices_dt_ppg": OutputDims(("solve", "period", "time"), ("reserve", "updown", "node_group"),
+                                         kinds=_RESERVE_QUANTITY),
     "process_reserve_upDown_node_dt_eppe": OutputDims(_DT, ("process", "reserve", "updown", "node"),
-                                                      "process_reserve_average_d_eppe"),
+                                                      "process_reserve_average_d_eppe", _RESERVE_QUANTITY),
     "process_reserve_average_d_eppe": OutputDims(_D, ("process", "reserve", "updown", "node"),
-                                                 "process_reserve_upDown_node_dt_eppe"),
+                                                 "process_reserve_upDown_node_dt_eppe", _RESERVE_QUANTITY),
     "nodeGroup_inertia_dt_g": OutputDims(_DT, ("group",)),
     "nodeGroup_unit_node_inertia_dt_gee": OutputDims(_DT, ("group", "process", "node")),
     "nodeGroup_inertia_largest_flow_dt_g": OutputDims(_DT, ("group",)),
@@ -790,11 +845,11 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "nodeGroup_slack_nonsync_dt_g": OutputDims(_DT, ("group",), "nodeGroup_slack_nonsync_d_g"),
     "nodeGroup_slack_nonsync_d_g": OutputDims(_D, ("group",), "nodeGroup_slack_nonsync_dt_g"),
     "nodeGroup_slack_reserve_dt_eeg": OutputDims(_DT, ("reserve", "updown", "node_group"),
-                                                 "nodeGroup_slack_reserve_d_eeg"),
+                                                 "nodeGroup_slack_reserve_d_eeg", _RESERVE_QUANTITY),
     "nodeGroup_slack_reserve_d_eeg": OutputDims(_D, ("reserve", "updown", "node_group"),
-                                                "nodeGroup_slack_reserve_dt_eeg"),
-    "flowGroup_gd_p": OutputDims(("group", "period"), ("parameter",), "flowGroup_gd_t"),
-    "flowGroup_gd_t": OutputDims(("group", "period", "time"), ("parameter",), "flowGroup_gd_p"),
+                                                "nodeGroup_slack_reserve_dt_eeg", _RESERVE_QUANTITY),
+    "flowGroup_gd_p": OutputDims(("group", "period"), ("parameter",), "flowGroup_gd_t", _PARAMETER_QUANTITY),
+    "flowGroup_gd_t": OutputDims(("group", "period", "time"), ("parameter",), "flowGroup_gd_p", _PARAMETER_QUANTITY),
     "dc_angle_dt_e": OutputDims(_DT, ("node",)),
     "dc_angle_diff_dt_e": OutputDims(_DT, ("connection",)),
     "group_node": OutputDims(("group", "node")),
@@ -807,6 +862,13 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "connection_dc_power_flow": OutputDims(("connection",)),
     "node_dc_power_flow": OutputDims(("node",)),
 }
+
+
+def level_kind(stem: str, level: str) -> str:
+    """What combining over *level* of the result table *stem* means (:meth:`OutputDims.level_kind`); a table
+    that is not declared falls back to :func:`default_level_kind`."""
+    dims = OUTPUT_DIMS.get(stem)
+    return dims.level_kind(level) if dims is not None else default_level_kind(level)
 
 
 def is_dimension(column: str) -> bool:

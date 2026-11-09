@@ -18,9 +18,14 @@ from flextool.process_outputs._output_meta import (
     OUTPUT_TRANSFORM,
     FORMULA_OVERRIDE,
     DOCS_ANCHOR,
+    ENTITY_LEVELS,
+    LEVEL_KINDS,
+    OVERLAPPING_LEVELS,
+    TIME_LIKE_LEVELS,
     Transform,
     Semantics,
     derive_column_meta,
+    level_kind,
 )
 from flextool.process_outputs.write_spinedb import SPINEDB_OUTPUT_SPEC
 
@@ -136,3 +141,44 @@ def test_dims_are_consistent():
             assert not dims.has_time, key
         if isinstance(OUTPUT_TRANSFORM.get(key), Transform) and OUTPUT_TRANSFORM[key].semantics is Semantics.DIMENSION:
             assert dims.columns == (), f"{key}: a membership set has no column levels"
+
+
+#: Level names that hold different quantities or parts in some table: never a default entity level.
+_NOT_ENTITY_NAMES = {"parameter", "param", "param_CO2", "category", "type", "item", "scope", "path", "updown",
+                     "reserve", "group", "node_group"}
+
+
+def test_every_level_has_a_kind():
+    """Ratchet: every level of every result table that is not a time level has a kind, declared in the table's
+    ``kinds`` or given by its name (ENTITY_LEVELS / OVERLAPPING_LEVELS); only known kinds are declared, only for
+    the table's own levels; and the names that mean different things in different tables are never a default."""
+    assert not ENTITY_LEVELS & _NOT_ENTITY_NAMES
+    assert OVERLAPPING_LEVELS == {"group", "node_group"}
+    for key, dims in OUTPUT_DIMS.items():
+        declared = dict(dims.kinds)
+        assert len(declared) == len(dims.kinds), f"{key}: a level declared twice"
+        for level, kind in dims.kinds:
+            assert level in dims.rows + dims.columns, f"{key}: kinds names {level}, not a level of the table"
+            assert kind in LEVEL_KINDS, f"{key}: unknown kind {kind}"
+            assert level not in TIME_LIKE_LEVELS, f"{key}: a time level needs no kind"
+        for level in dims.rows + dims.columns:
+            if level in TIME_LIKE_LEVELS:
+                continue
+            assert level in declared or level in ENTITY_LEVELS or level in OVERLAPPING_LEVELS, (
+                f"{key}: the level {level} has no kind (declare it in OutputDims.kinds)")
+
+
+def test_level_kinds_of_some_tables():
+    assert level_kind("unit_capacity_ed_p", "parameter") == "quantity"
+    assert level_kind("unit_capacity_ed_p", "unit") == "entity"
+    assert level_kind("unit_capacity_ed_p", "column_level_1") == "quantity"      # undeclared: never combined
+    assert level_kind("annualized_costs_d_p", "category") == "part"
+    assert level_kind("node_d_ep", "category") == "quantity"
+    assert level_kind("nodeGroup_flows_d_gpe", "item") == "entity"
+    assert level_kind("nodeGroup_flows_d_gpe", "type") == "quantity"
+    assert level_kind("CO2_d_g", "group") == "overlapping"
+    assert level_kind("nodeGroup_slack_reserve_d_eeg", "node_group") == "overlapping"
+    assert level_kind("nodeGroup_slack_reserve_d_eeg", "reserve") == "quantity"
+    assert level_kind("node_prices_dt_e", "solve") == "time"
+    assert level_kind("node_prices_dt_e", "period") == "period"
+    assert level_kind("no_such_table", "unit") == "entity"
