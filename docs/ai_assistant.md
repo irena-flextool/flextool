@@ -612,8 +612,27 @@ flextool-assistant --project-path /home/me/flextool/projects/MyProject --call ge
 The arguments are a JSON object, or `@file.json` to read them from a file. `get_parameter` takes lists of
 parameters (up to 10) and entities (up to 20) and answers with one table: a row for each entity and parameter, with
 the value, its shape and the alternative it comes from (or the default), and the units and notes once for each
-parameter. A name it does not know is listed with the closest names, and the other rows are still answered. `flextool-assistant --help` lists the
-options.
+parameter. A name it does not know is listed with the closest names, and the other rows are still answered. Its
+`provenance` lists the scenario's alternatives highest rank first (`alternatives_highest_first`: the first one that
+sets a value wins). `flextool-assistant --help` lists the options.
+
+Other tools keep their results short so that a project with many runs fits the agent's context:
+
+- `list_runs` gives the number of runs in each state, then one row per run: folder, state and whether its results
+  can be read. A folder whose result files were written without a run record (by an older FlexTool) has the state
+  `no_record`: its success is not known, and every result read from it says `"verified": false`. Named folders
+  (`"folders": ["base_1"]`), a filtered list of up to five runs or `"detail": "full"` add the verdict, times,
+  FlexTool version and error; a value shared by every row is then given once (`same_in_every_row`). Filter with
+  `source`, `scenario`, `state`, `results_usable` and `folders` (names or `*` patterns); a long list comes in pages,
+  and `shown` names the `offset` of the next one.
+- `list_sources` with `"scenario": "coal_chp"` gives that scenario's alternatives, highest rank first, and its base
+  alternative.
+- `compare_runs` without `group_by`, `agg`, `sort` and `top_n` gives each run's totals per period and category
+  (entities added up where that is meaningful; prices are kept per node), with the totals per period in `totals`;
+  `"by_difference": true` gives each series, largest difference first.
+- `compare_inputs` counts the differences by alternative and entity class first, then gives one row per parameter
+  and change with the entities it applies to (30 rows by default); `alternative` and `entity_class` narrow it. The
+  `alternative` of a row is the one that makes the two scenarios differ.
 
 ## When something goes wrong
 

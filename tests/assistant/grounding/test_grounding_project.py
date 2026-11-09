@@ -28,9 +28,10 @@ def _runs(project: Path) -> dict[str, dict]:
     from flextool.assistant import registry
     from flextool.assistant.context import make_context
 
-    outcome = registry.call_tool(make_context(project), "list_runs", {})
+    outcome = registry.call_tool(make_context(project), "list_runs", {"detail": "full"})
     assert outcome.ok, outcome.text
-    return {r["folder"]: r for r in outcome.payload["runs"]}
+    common = outcome.payload.get("same_in_every_row", {})
+    return {r["folder"]: {**common, **r} for r in outcome.payload["runs"]}
 
 
 def test_runs_in_order_and_the_failed_rewrite(built: gp.GroundingProject) -> None:

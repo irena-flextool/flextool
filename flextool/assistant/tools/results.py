@@ -59,6 +59,13 @@ def _record_units(rec: dict) -> tuple[Any, Any]:
     return ({c: _shown(v["unit"]) for c, v in cols.items()}, {c: v["semantics"] for c, v in cols.items()})
 
 
+def _verified(payload: dict, rr: _runs.ResolvedRun) -> dict:
+    """*payload* with ``verified: false`` when the run has no run record (only then)."""
+    if not rr.verified:
+        payload["verified"] = False
+    return payload
+
+
 def _top_n(args: dict, ceiling: int) -> dict:
     if args.get("top_n") is not None:
         args = dict(args)
@@ -148,7 +155,7 @@ def list_result_tables(ctx: AssistantContext, args: dict) -> dict:
         shown += len(by_topic[t])
     if shown < total:
         payload["truncated"] = f"showing {shown} of {total} tables — name a topic"
-    return _with_units_note(ctx, payload)
+    return _with_units_note(ctx, _verified(payload, rr))
 
 
 def describe_result_table(ctx: AssistantContext, args: dict) -> dict:
@@ -189,7 +196,7 @@ def describe_result_table(ctx: AssistantContext, args: dict) -> dict:
     }
     if table.membership:
         payload["note"] = "This table is a set of names with no values."
-    return _with_units_note(ctx, payload)
+    return _with_units_note(ctx, _verified(payload, rr))
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -218,6 +225,7 @@ def query_result(ctx: AssistantContext, args: dict) -> Fit:
         "notes": _result_notes(result),
         "run_notes": rr.run_notes,
     }
+    _verified(payload, rr)
     if result.units:
         _with_units_note(ctx, payload)
     return Fit(payload, rows_key="rows", hint=QUERY_HINT)
@@ -259,8 +267,74 @@ def _preloaded(table: _query.Table, q: _query.Query, write_id: str) -> _query.Ta
     return loaded if same else None
 
 
-def compare_runs(ctx: AssistantContext, args: dict) -> Fit:
+def _overview(table: _query.Table, q: Query) -> tuple[Query, list[str]]:
+    """The query of compare_runs' overview (no group_by, agg, sort, top_n and by_difference): every period,
+    category, quantity and group level kept; time combined; entity levels combined where a sum over entities is
+    meaningful for every kept column (prices and ratios keep them); periods combined only where a sum over periods
+    is (discounted costs).  agg: on a table with time steps the sum when every column's default statistic is the
+    sum, else the mean (the mean of the entities' total at each step); else the sum.  Returns the query and the
+    notes (Cycle 1 design §3, critique m6)."""
+    import dataclasses
+
+    stem = table.stem
+    keep = _query._selected_columns(table, q, None)
+    measure_of = table.measure_of()
+    semantics = {measure_of[p].semantics for p in keep}
+    kept: list[str] = []
+    notes: list[str] = []
+    for level in table.levels:
+        kind = _query.level_kind(stem, level)
+        if kind == "time":
+            continue
+        if kind == "period" and all(_query.sum_problem(stem, sem, {"period"}) is None for sem in semantics):
+            continue
+        if kind == "entity":
+            if all(_query.sum_problem(stem, sem, {"entity"}) is None for sem in semantics):
+                continue
+            notes.append(f"The values are not added up over {level} (they are prices or ratios); each {level} "
+                         "is shown.")
+        kept.append(level)
+    if table.has_time:
+        agg = "sum" if all(_query.default_agg(sem) == "sum" for sem in semantics) else "mean"
+    else:
+        agg = "sum"
+    return dataclasses.replace(q, group_by=tuple(kept), agg=agg), notes
+
+
+def _side_by_side(present: list[tuple], q: Query, *, value_only: bool):
+    """The runs' results of *q* joined on their keys, with ``difference_vs_first`` columns: ``(frame, keys,
+    run names, difference columns, the first run's result)``."""
     import polars as pl
+
+    frames: list[tuple[str, Any]] = []
+    first_result: _query.Result | None = None
+    for name, table, scenario, _ in present:
+        result = _query.run_query(table, q, scenario=scenario, value_only=value_only)
+        if first_result is None:
+            first_result = result
+        frames.append((name, result.frame.select([*result.keys, pl.col("value").alias(name)])))
+    assert first_result is not None
+    keys = first_result.keys
+    joined = frames[0][1]
+    for _, frame in frames[1:]:
+        joined = (joined.join(frame, on=keys, how="full", coalesce=True, maintain_order="left_right")
+                  if keys else pl.concat([joined, frame], how="horizontal"))
+    run_names = [name for name, _ in frames]
+    first = run_names[0]
+    diff_names: list[str] = []
+    for name in run_names[1:]:
+        col = "difference_vs_first" if len(run_names) == 2 else f"difference_vs_first:{name}"
+        joined = joined.with_columns((pl.col(name) - pl.col(first)).alias(col))
+        diff_names.append(col)
+    return joined, keys, run_names, diff_names, first_result
+
+
+def compare_runs(ctx: AssistantContext, args: dict) -> Fit:
+    import dataclasses
+
+    import polars as pl
+
+    from flextool.assistant.caps import fit_rows
 
     args = _top_n(args, int(args["max_rows"]))
     stem = str(args["table"])
@@ -269,6 +343,7 @@ def compare_runs(ctx: AssistantContext, args: dict) -> Fit:
     notes: list[str] = []
     source = "run_folders"
     built_from = None
+    unverified: list[str] = []
     sources: list[tuple[str, _query.Table | None, str | None, list[str]]] = []
     if names == [COMPARISON]:
         state = _runs.comparison_state(ctx)
@@ -294,6 +369,8 @@ def compare_runs(ctx: AssistantContext, args: dict) -> Fit:
             raise ToolError("compare_needs_runs")
         for name in dict.fromkeys(names):
             rr = _runs.resolve_run(ctx, name)
+            if not rr.verified:
+                unverified.append(name)
             path = rr.folder / f"{stem}.parquet"
             table = _query.open_table(rr.folder, stem, where=name) if path.is_file() else None
             sources.append((name, table, None, rr.run_notes))
@@ -303,29 +380,43 @@ def compare_runs(ctx: AssistantContext, args: dict) -> Fit:
     if present[0][1].membership:
         raise ToolError("membership_table", table=stem)
 
-    frames: list[tuple[str, Any]] = []
-    first_result: _query.Result | None = None
-    for name, table, scenario, _ in present:
-        result = _query.run_query(table, q, scenario=scenario, value_only=True)
-        if first_result is None:
-            first_result = result
-        frames.append((name, result.frame.select([*result.keys, pl.col("value").alias(name)])))
-    assert first_result is not None
-    keys = first_result.keys
-    if len(first_result.value_columns) > 1:
-        notes.append("compare_runs shows the values only; query_result of one run gives the time of each "
-                     "maximum.")
-    joined = frames[0][1]
-    for _, frame in frames[1:]:
-        joined = (joined.join(frame, on=keys, how="full", coalesce=True, maintain_order="left_right")
-                  if keys else pl.concat([joined, frame], how="horizontal"))
-    run_names = [name for name, _ in frames]
-    first = run_names[0]
-    diff_names: list[str] = []
-    for name in run_names[1:]:
-        col = "difference_vs_first" if len(run_names) == 2 else f"difference_vs_first:{name}"
-        joined = joined.with_columns((pl.col(name) - pl.col(first)).alias(col))
-        diff_names.append(col)
+    overview = (q.group_by is None and q.agg is None and q.sort_by is None and q.top_n is None
+                and not args.get("by_difference"))
+    totals = None
+    if overview:
+        oq, overview_notes = _overview(present[0][1], q)
+        try:
+            joined, keys, run_names, diff_names, first_result = _side_by_side(present, oq, value_only=False)
+        except ToolError:
+            # A combination the guard refuses (mixed units, the mean of parts): keep the entity levels too, and
+            # if that is refused as well, give each series (never fail the call without arguments).
+            entity = [lv for lv in present[0][1].levels if _query.level_kind(stem, lv) == "entity"]
+            kept = [lv for lv in present[0][1].levels if lv in set(oq.group_by or ()) | set(entity)]
+            oq = dataclasses.replace(oq, group_by=tuple(kept))
+            try:
+                joined, keys, run_names, diff_names, first_result = _side_by_side(present, oq, value_only=False)
+            except ToolError:
+                overview = False
+        if overview:
+            q_used = oq
+            notes += overview_notes
+            combined = ", ".join(lv for lv in present[0][1].levels if lv not in keys) or "nothing"
+            notes.append(f"Totals per {', '.join(keys) or 'run'} ({first_result.agg} over {combined}). "
+                         "by_difference true gives each series, largest difference first.")
+            parts = [lv for lv in keys if _query.level_kind(stem, lv) == "part"]
+            if parts:
+                tq = dataclasses.replace(oq, group_by=tuple(lv for lv in keys if lv not in parts))
+                try:
+                    tj, tkeys, _, _, _ = _side_by_side(present, tq, value_only=False)
+                    totals = {"columns": tj.columns, "rows": _query.rows_of(tj, int(args["max_rows"]))}
+                except ToolError:
+                    totals = None
+    if not overview:
+        q_used = q
+        joined, keys, run_names, diff_names, first_result = _side_by_side(present, q, value_only=True)
+        if len(first_result.value_columns) > 1:
+            notes.append("compare_runs shows the values only; query_result of one run gives the time of each "
+                         "maximum.")
     missing: dict[str, Any] = {s[0]: "no such table" for s in sources if s[1] is None}
     for name in run_names:
         n = joined.filter(pl.col(name).is_null()).height
@@ -334,9 +425,12 @@ def compare_runs(ctx: AssistantContext, args: dict) -> Fit:
     result = _query.Result(joined, keys, run_names + diff_names, first_result.mode, first_result.agg,
                            first_result.kept, first_result.over, first_result.notes, first_result.semantics,
                            first_result.units, how=first_result.how)
-    frame = _query.ordered(result, q, default_by=diff_names[0] if diff_names else None)
+    frame = _query.ordered(result, q_used, default_by=None if overview else (diff_names[0] if diff_names else None))
     max_rows = int(args["max_rows"])
     total = frame.height
+    applied = _applied(q_used, first_result)
+    if overview:
+        applied["mode"] = "overview"
     payload: dict[str, Any] = {
         "table": stem,
         "runs": [s[0] for s in sources],
@@ -344,18 +438,26 @@ def compare_runs(ctx: AssistantContext, args: dict) -> Fit:
         "rows": _query.rows_of(frame, max_rows),
         "unit": _unit_payload(first_result.units) if first_result.units else None,
         "semantics": _semantics_payload(first_result.semantics) if first_result.semantics else None,
-        "applied": _applied(q, first_result),
+        "applied": applied,
         "missing": missing or None,
         "source": source,
         "built_from": built_from,
         "total_rows": total,
-        "truncated": f"showing {max_rows} of {total} rows — {QUERY_HINT}" if total > max_rows else None,
         "notes": notes + list(first_result.notes),
         "run_notes": {s[0]: s[3] for s in sources if s[3]} or None,
     }
+    if totals is not None:
+        payload["totals"] = totals
+    if unverified:
+        payload["unverified"] = unverified
     if first_result.units:
         _with_units_note(ctx, payload)
-    return Fit(payload, rows_key="rows", hint=QUERY_HINT)
+
+    def note(k: int, _n: int) -> str | None:
+        return None if k == total else f"rows 1–{k} of {total}; {QUERY_HINT}"
+
+    fitted = fit_rows(payload, "rows", int(args["max_chars"]), ctx.redact, note_key="shown", note=note)
+    return Fit(fitted, rows_key="rows", hint=QUERY_HINT)
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -372,15 +474,20 @@ _QUERY_PROPERTIES = {
     "agg": {"type": "string", "enum": list(AGGS)}, "sort": _SORT, "top_n": {"type": "integer"},
     "max_rows": {"type": "integer"}, "max_chars": {"type": "integer"},
 }
-_QUERY_TEXT = (
+_QUERY_HEAD = (
     "filters keeps values of levels, {\"node\": [\"west\", \"north*\"]} (* matches any text); time_range "
     "{\"from\": …, \"to\": …} keeps time steps. group_by lists the levels to keep; the others are combined with agg "
     "(sum, mean, min, max, count, or time_of_max: the maximum and when it occurs); without group_by, agg combines "
-    "over time only. Without group_by and agg, a table with time steps gives one summary per series and period "
-    "(mean, min, max, count, time of the maximum, and the sum where it is meaningful). A sum that means nothing "
+    "over time only. ")
+#: query_result's own rule for a call without group_by and agg; compare_runs has its own (critique M2).
+_QUERY_SUMMARY = ("Without group_by and agg, a table with time steps gives one summary per series and period "
+                  "(mean, min, max, count, time of the maximum, and the sum where it is meaningful). ")
+_QUERY_TAIL = (
+    "A sum that means nothing "
     "is refused with the reason, for example power summed over time (use the annual table). sort {\"by\": "
     "column, \"descending\": true} and top_n keep the largest (top_n alone sorts by value). max_rows is up to "
     "5000.")
+_QUERY_TEXT = _QUERY_HEAD + _QUERY_SUMMARY + _QUERY_TAIL
 
 TOOLS = [
     make_tool(
@@ -417,14 +524,15 @@ TOOLS = [
         caps={"max_rows": CapArg("max_rows"), "max_chars": CapArg("max_chars")}),
     make_tool(
         name="compare_runs", title="One result table for several runs",
-        description=("The same query of one result table for several runs side by side, with the difference to "
-                     "the first run (difference_vs_first; one per run when more than two), largest difference "
-                     "first. runs lists result folders from list_runs, or is [\"comparison\"] for the runs of the "
-                     "comparison files (used only while they match the current runs; else each run's own "
-                     "files). A table with time steps without group_by and agg gives each series' mean (or sum, "
-                     "where a sum is meaningful) per period. " + _QUERY_TEXT),
+        description=("The same query of one result table for several runs side by side, with difference_vs_first "
+                     "(one per later run). Without group_by, agg, sort and top_n (filters and time_range narrow): "
+                     "each run's totals per period and category (entities added up where meaningful); "
+                     "by_difference true: each series (with time steps: its mean or sum per period). With "
+                     "by_difference, group_by or agg: largest difference first. runs lists folders from "
+                     "list_runs, or [\"comparison\"] for the comparison files' runs (each run's own files when "
+                     "they do not match). " + _QUERY_HEAD + _QUERY_TAIL),
         properties={"table": {"type": "string"}, "runs": {"type": "array", "items": {"type": "string"}},
-                    **_QUERY_PROPERTIES},
+                    "by_difference": {"type": "boolean"}, **_QUERY_PROPERTIES},
         required=("table", "runs"), handler=compare_runs, area="results", small_tier=False,
         caps={"max_rows": CapArg("max_rows"), "max_chars": CapArg("max_chars")}),
 ]

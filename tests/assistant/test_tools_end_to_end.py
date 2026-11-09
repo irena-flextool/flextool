@@ -51,9 +51,9 @@ def _call(ctx, tool: str, **args) -> dict:
 def test_tools_read_a_real_run(solved_project: Path) -> None:
     ctx = make_context(solved_project)
 
-    runs = {r["folder"]: r for r in _call(ctx, "list_runs")["runs"]}
+    runs = {r["folder"]: r for r in _call(ctx, "list_runs", detail="full")["runs"]}
     coal = runs["coal_1"]
-    assert (coal["state"], coal["results_usable"], coal["unusable_code"]) == ("succeeded", True, None)
+    assert (coal["state"], coal["results_usable"], coal.get("unusable_code")) == ("succeeded", True, None)
 
     costs = _call(ctx, "query_result", run="coal_1", table="annualized_costs_d_p")
     assert costs["unit"] == "M CUR/a (default convention)"

@@ -369,7 +369,7 @@ def test_describe_list_and_find(rctx) -> None:
 
 
 def test_compare_runs_with_a_missing_key(rctx) -> None:
-    out = _call(rctx, "compare_runs", table="unit_outputNode_d_ee", runs=["base_1", "high_1"])
+    out = _call(rctx, "compare_runs", table="unit_outputNode_d_ee", runs=["base_1", "high_1"], by_difference=True)
     assert out["columns"] == ["period", "unit", "node", "base_1", "high_1", "difference_vs_first"]
     # Largest difference first: coal p2025 4000 − 2000, coal p2020 2000 − 1000, wind 0 and 0; gas_plant is only in
     # base_1 (no difference, last).
@@ -385,7 +385,7 @@ def test_compare_runs_with_a_missing_key(rctx) -> None:
     # A time table: each series' mean per period (power: the mean, not a sum): coal p2025 (80+100+120)/3 = 100
     # against 50.
     out = _call(rctx, "compare_runs", table="unit_outputNode_dt_ee", runs=["base_1", "high_1"],
-                filters={"unit": ["coal_plant"]})
+                filters={"unit": ["coal_plant"]}, by_difference=True)
     assert _rows(out) == [("p2025", "coal_plant", "west", 50.0, 100.0, 50.0),
                           ("p2020", "coal_plant", "west", 20.0, 40.0, 20.0)]
     assert _refused(rctx, "compare_runs", table="unit_outputNode_d_ee", runs=["base_1"]).startswith(
@@ -445,3 +445,106 @@ def test_a_table_with_a_row_and_a_column_level_of_one_name(tmp_path: Path, tests
         message = _refused(ctx, "query_result", run="clash_1", table="node_state_dt_e", **args)
         assert message == ('The table "node_state_dt_e" uses the name "node" for a row level and a column level, so '
                            'it cannot be queried.')
+
+
+def _overview_tables(scale: dict) -> callable:
+    """The tables of one run of the overview test; *scale* holds that run's numbers."""
+    def write(folder: Path) -> None:
+        period_index = pd.Index(PERIODS, name="period")
+        write_result(folder, "unit_outputNode_dt_ee", _frame(scale["dt"], dt_index(), ["unit", "node"]),
+                     scale["scenario"])
+        rows = pd.MultiIndex.from_tuples([(p, u) for p in PERIODS for u in ("u1", "u2")], names=["period", "unit"])
+        write_result(folder, "cost_unit_annualized_d_ec", _frame(scale["cost"], rows, ["category"]),
+                     scale["scenario"])
+        write_result(folder, "costs_discounted_d_p", _frame(scale["discounted"], period_index, ["category"]),
+                     scale["scenario"])
+        solve_index = pd.MultiIndex.from_tuples([("s1", p, t) for p in PERIODS for t in TIMES],
+                                                names=["solve", "period", "time"])
+        write_result(folder, "node_prices_dt_e", _frame(scale["prices"], solve_index, ["node"]), scale["scenario"])
+    return write
+
+
+# Rows of cost_unit_annualized_d_ec: (p2020, u1), (p2020, u2), (p2025, u1), (p2025, u2).
+OVERVIEW_BASE = {"scenario": "base", "dt": OUTPUT_DT,
+                 "cost": {("commodity",): [10.0, 5.0, 20.0, 6.0], ("investment",): [100.0, 0.0, 0.0, 50.0]},
+                 "discounted": {("commodity",): [3.0, 2.0], ("investment",): [40.0, 10.0]},
+                 "prices": {("west",): [30.0, 40.0, 50.0, 60.0, 70.0, 80.0],
+                            ("east",): [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]}}
+OVERVIEW_HIGH = {"scenario": "high",
+                 "dt": {("coal_plant", "west"): [20.0, 40.0, 60.0, 80.0, 100.0, 120.0],
+                        ("wind_plant", "west"): [5.0, 0.0, 15.0, 0.0, 0.0, 0.0]},
+                 "cost": {("commodity",): [12.0, 5.0, 25.0, 6.0], ("investment",): [100.0, 10.0, 0.0, 50.0]},
+                 "discounted": {("commodity",): [4.0, 2.0], ("investment",): [40.0, 20.0]},
+                 "prices": {("west",): [40.0, 50.0, 60.0, 70.0, 80.0, 90.0],
+                            ("east",): [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]}}
+
+
+def test_compare_runs_overview(tmp_path: Path, tests_db: Path) -> None:
+    """Agent feedback waste 2: without group_by, agg, sort, top_n and by_difference, each run's totals per period
+    and category, in key order (not by difference); entities added up where that is meaningful.  Before: one row
+    per series, largest difference first."""
+    project = make_project(tmp_path, tests_db)
+    record_run(project, "base_1", "base", succeed_writing(_overview_tables(OVERVIEW_BASE)))
+    record_run(project, "high_1", "high", succeed_writing(_overview_tables(OVERVIEW_HIGH)))
+    ctx = make_context(project)
+    runs = ["base_1", "high_1"]
+
+    # Annualized costs per (period, category), units added up: p2020 commodity 10 + 5 = 15 against 12 + 5 = 17;
+    # investment 100 + 0 against 100 + 10; p2025 commodity 20 + 6 against 25 + 6; investment 0 + 50 both.
+    out = _call(ctx, "compare_runs", table="cost_unit_annualized_d_ec", runs=runs)
+    assert out["columns"] == ["period", "category", "base_1", "high_1", "difference_vs_first"]
+    assert _rows(out) == [("p2020", "commodity", 15.0, 17.0, 2.0), ("p2020", "investment", 100.0, 110.0, 10.0),
+                          ("p2025", "commodity", 26.0, 31.0, 5.0), ("p2025", "investment", 50.0, 50.0, 0.0)]
+    # Totals per period (categories added up too): 115 against 127, 76 against 81.
+    assert out["totals"] == {"columns": ["period", "base_1", "high_1", "difference_vs_first"],
+                             "rows": [["p2020", 115.0, 127.0, 12.0], ["p2025", 76.0, 81.0, 5.0]]}
+    assert out["applied"]["mode"] == "overview" and out["applied"]["group_by"] == ["period", "category"]
+    assert out["notes"][0] == ("Totals per period, category (sum over unit). by_difference true gives each "
+                               "series, largest difference first.")
+
+    # Discounted costs add up over periods too: commodity 3 + 2 against 4 + 2, investment 40 + 10 against 40 + 20;
+    # in total 55 against 66.
+    out = _call(ctx, "compare_runs", table="costs_discounted_d_p", runs=runs)
+    assert _rows(out) == [("commodity", 5.0, 6.0, 1.0), ("investment", 50.0, 60.0, 10.0)]
+    assert out["totals"]["rows"] == [[55.0, 66.0, 11.0]]
+
+    # Prices are not added up over nodes: the mean over time per period and node.  west p2020 (30+40+50)/3 = 40
+    # against 50; east 20 both; west p2025 70 against 80; east 50 both.
+    out = _call(ctx, "compare_runs", table="node_prices_dt_e", runs=runs)
+    assert _rows(out) == [("p2020", "west", 40.0, 50.0, 10.0), ("p2020", "east", 20.0, 20.0, 0.0),
+                          ("p2025", "west", 70.0, 80.0, 10.0), ("p2025", "east", 50.0, 50.0, 0.0)]
+    assert "totals" not in out
+    assert "The values are not added up over node (they are prices or ratios); each node is shown." in out["notes"]
+
+    # Power: the mean over time of the units' sum at each step.  base p2020 (16 + 22 + 48)/3 = 28.67, p2025
+    # (44 + 55 + 60)/3 = 53 (gas_plant has no value at the last step); high (25 + 40 + 75)/3 = 46.67 and
+    # (80 + 100 + 120)/3 = 100.
+    out = _call(ctx, "compare_runs", table="unit_outputNode_dt_ee", runs=runs)
+    assert out["columns"] == ["period", "base_1", "high_1", "difference_vs_first"]
+    assert _rows(out) == [("p2020", pytest.approx(86 / 3), pytest.approx(140 / 3), pytest.approx(18.0)),
+                          ("p2025", 53.0, 100.0, 47.0)]
+    assert out["applied"]["agg"] == "mean"
+
+    # by_difference: every series, largest difference first; group_by keeps that order too.
+    out = _call(ctx, "compare_runs", table="cost_unit_annualized_d_ec", runs=runs, by_difference=True)
+    assert out["total_rows"] == 8 and _rows(out)[0] == ("p2020", "u2", "investment", 0.0, 10.0, 10.0)
+    # Per (period, unit), categories added up: p2020 u1 110 against 112, u2 5 against 15; p2025 u1 20 against
+    # 25, u2 56 both.
+    out = _call(ctx, "compare_runs", table="cost_unit_annualized_d_ec", runs=runs, group_by=["period", "unit"])
+    assert out["applied"]["mode"] == "aggregate"
+    assert _rows(out) == [("p2020", "u2", 5.0, 15.0, 10.0), ("p2025", "u1", 20.0, 25.0, 5.0),
+                          ("p2020", "u1", 110.0, 112.0, 2.0), ("p2025", "u2", 56.0, 56.0, 0.0)]
+
+
+def test_compare_runs_description_matches_its_rule() -> None:
+    """Critique M2: compare_runs states its own rule for a call without group_by and agg, and not query_result's
+    per-series summary; filters and time_range narrow the overview."""
+    from flextool.assistant.registry import all_tools
+    from flextool.assistant.tools import results
+
+    compare = all_tools()["compare_runs"].description
+    assert "Without group_by, agg, sort and top_n (filters and time_range narrow): each run's totals" in compare
+    assert "by_difference true: each series" in compare
+    assert "With by_difference, group_by or agg: largest difference first." in compare
+    assert results._QUERY_SUMMARY not in compare
+    assert results._QUERY_SUMMARY in all_tools()["query_result"].description

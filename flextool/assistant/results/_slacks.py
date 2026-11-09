@@ -176,5 +176,8 @@ def slack_summary(ctx: AssistantContext, run: str, *, min_value: float, max_rows
     none_found = not slacks and not (penalty_costs and penalty_costs["entries"])
     notes.append(f"Values below {min_value:g} are left out. A slack is used when meeting the constraint costs "
                  "more than its penalty, or is impossible with the capacities the model has.")
-    return {"run": rr.folder.name, "slacks": slacks, "penalty_costs": penalty_costs, "none_found": none_found,
-            "notes": notes, "run_notes": rr.run_notes}
+    out = {"run": rr.folder.name, "slacks": slacks, "penalty_costs": penalty_costs, "none_found": none_found,
+           "notes": notes, "run_notes": rr.run_notes}
+    if not rr.verified:
+        out["verified"] = False
+    return out

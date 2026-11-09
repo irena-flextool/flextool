@@ -197,6 +197,8 @@ def _result_line(ref: ResultRef, redact: Callable[[str], str] | None) -> str:
         return f"{head} — {state}its results are not used. See the run log."
     if ref.state:
         return f"{head} — latest run {_name(ref.state, redact)}."
+    if ref.unverified:
+        return f"{head} — no run record; its success is not known."
     return f"{head}."
 
 

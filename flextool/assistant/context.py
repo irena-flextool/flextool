@@ -39,6 +39,11 @@ class ResultRef:
     unusable_code: str | None
     reason: str | None
 
+    @property
+    def unverified(self) -> bool:
+        """A folder whose results are offered without a run record (no state): its run's success is not known."""
+        return self.state is None and self.results_usable
+
 
 @dataclass(frozen=True)
 class ViewerState:
@@ -140,10 +145,13 @@ def _payload_list(out: dict[str, Any], key: str, items: Iterable[Any], render: C
 
 
 def _result_payload(ref: ResultRef, redact: Callable[[str], str] | None) -> dict[str, Any]:
-    return {"folder": _payload_text(ref.folder, redact), "source_number": ref.source_number,
-            "scenario": _payload_text(ref.scenario, redact), "state": ref.state,
-            "results_usable": ref.results_usable, "unusable_code": ref.unusable_code,
-            "reason": _payload_text(ref.reason, redact)}
+    out = {"folder": _payload_text(ref.folder, redact), "source_number": ref.source_number,
+           "scenario": _payload_text(ref.scenario, redact), "state": ref.state,
+           "results_usable": ref.results_usable, "unusable_code": ref.unusable_code,
+           "reason": _payload_text(ref.reason, redact)}
+    if ref.unverified:
+        out["verified"] = False
+    return out
 
 
 def _viewer_payload(v: ViewerState, redact: Callable[[str], str] | None) -> dict[str, Any]:

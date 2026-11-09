@@ -35,8 +35,14 @@ COMPARISON_METADATA = "_metadata.json"
 #: The ``format`` of ``_metadata.json`` whose members can be fresh (``db_reader.COMPARISON_METADATA_FORMAT``).
 COMPARISON_FORMAT = 2
 SCENARIOS_MAX = 100
-RUNS_MAX = 200
 ERROR_MAX = 300
+#: The shown state of a folder without a run record (it holds result files written by an older FlexTool).
+NO_RECORD_STATE = "no_record"
+#: What every result read from a folder without a run record says (agent feedback 2026-11-09, item 8).
+NO_RECORD_NOTE = ("No run record: the run's success is not known; results may be from a failed or older run. Say "
+                  "so when you use them.")
+#: The states list_runs shows, in this order.
+RUN_STATES = ("succeeded", "failed", "running", "abandoned", "unknown", "unreadable", "malformed", NO_RECORD_STATE)
 
 _status_cache: dict[str, tuple[tuple[int, int], dict | None]] = {}
 _status_lock = threading.Lock()
@@ -120,13 +126,20 @@ def _summary(ctx: AssistantContext, source: project.Source) -> dict:
     return out
 
 
-def list_sources(ctx: AssistantContext) -> list[dict]:
+def list_sources(ctx: AssistantContext, scenario: str | None = None) -> list[dict]:
+    """The input sources; with *scenario*, only those that have it, each with the scenario's alternatives highest
+    rank first and ``base`` (the lowest) in place of the scenario list."""
     from flextool.update_flextool import FLEXTOOL_DB_VERSION
 
     rows = []
+    known: list[str] = []
     for source in project.sources(ctx):
         summary = _summary(ctx, source)
         scenarios = summary["scenarios"]
+        if scenario is not None:
+            known += scenarios or []
+            if scenarios is None or scenario not in scenarios:
+                continue
         try:
             modified = _iso(source.path.stat().st_mtime)
         except OSError:
@@ -137,14 +150,23 @@ def list_sources(ctx: AssistantContext) -> list[dict]:
             "kind": source.kind,
             "path": project.relative(ctx, source.path),
             "modified": modified,
-            "scenarios": scenarios[:SCENARIOS_MAX] if scenarios is not None else None,
-            "scenarios_note": (f"showing {SCENARIOS_MAX} of {len(scenarios)} scenarios"
-                               if scenarios is not None and len(scenarios) > SCENARIOS_MAX else None),
+        }
+        if scenario is None:
+            row["scenarios"] = scenarios[:SCENARIOS_MAX] if scenarios is not None else None
+            row["scenarios_note"] = (f"showing {SCENARIOS_MAX} of {len(scenarios)} scenarios"
+                                     if scenarios is not None and len(scenarios) > SCENARIOS_MAX else None)
+        else:
+            row["scenario"] = scenario
+            ranked = _ranked_alternatives(ctx, source, scenario)
+            if ranked is not None:
+                row["alternatives"] = ranked
+                row["base"] = ranked[-1] if ranked else None
+        row.update({
             "database_version": summary["database_version"],
             "version_status": summary["version_status"],
             "conversion": project.conversion_state(ctx, source),
             "behaviour_notices": summary["behaviour_notices"],
-        }
+        })
         if summary["version_status"] == "needs_migration":
             row["version_note"] = message("needs_migration", db=summary["database_version"],
                                           tool=FLEXTOOL_DB_VERSION)
@@ -154,7 +176,22 @@ def list_sources(ctx: AssistantContext) -> list[dict]:
         if summary["problem"]:
             row["problem"] = summary["problem"]
         rows.append(row)
+    if scenario is not None and not rows:
+        names = list(dict.fromkeys(known))
+        raise ToolError("scenario_in_no_source", scenario=scenario,
+                        scenarios=name_list(close_names(scenario, names) or names))
     return rows
+
+
+def _ranked_alternatives(ctx: AssistantContext, source: project.Source, scenario: str) -> list[str] | None:
+    """The alternatives of *scenario*, highest rank first (the one whose value counts first), or ``None`` when
+    the source cannot be read now."""
+    try:
+        db, _ = project.open_source(ctx, source)
+    except ToolError:
+        return None
+    ranked = db.scenarios.get(scenario)
+    return list(reversed(ranked)) if ranked is not None else None
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -228,6 +265,13 @@ class Run:
     status: dict | None
     entry: dict
     source: project.Source | None = field(default=None, repr=False)
+    #: The scenario part of the folder name.
+    folder_scenario: str | None = None
+
+    @property
+    def verified(self) -> bool:
+        """Whether the folder has a run record: without one, the run's success is not known."""
+        return self.status is not None
 
 
 def _run(ctx: AssistantContext, folder: Path, settings, sources: list[project.Source],
@@ -243,7 +287,7 @@ def _run(ctx: AssistantContext, folder: Path, settings, sources: list[project.So
         "source_number": number,
         "source_name": source_name,
         "db_scenario": ((status.get("input") or {}).get("scenario") if status else None) or folder_scenario,
-        "state": effective,
+        "state": effective if status is not None else NO_RECORD_STATE,
         "verdict": status.get("verdict") if status else None,
         "started_at": status.get("started_at") if status else None,
         "finished_at": status.get("finished_at") if status else None,
@@ -261,9 +305,9 @@ def _run(ctx: AssistantContext, folder: Path, settings, sources: list[project.So
         text = str(error["message"])
         entry["error"] = text if len(text) <= ERROR_MAX else text[: ERROR_MAX - 1] + "…"
     if status is None:
-        entry["note"] = ("This folder has no run record (it ran before FlexTool kept run records); FlexTool cannot "
-                         "say whether its run succeeded.")
-    return Run(folder, status, entry, source)
+        entry["verified"] = False
+        entry["note"] = NO_RECORD_NOTE
+    return Run(folder, status, entry, source, folder_scenario)
 
 
 def runs(ctx: AssistantContext) -> list[Run]:
@@ -273,21 +317,39 @@ def runs(ctx: AssistantContext) -> list[Run]:
     return [_run(ctx, folder, settings, sources, installed) for folder in run_folders(ctx)]
 
 
-def list_runs(ctx: AssistantContext, source: str | None = None, scenario: str | None = None) -> dict:
+def select_runs(ctx: AssistantContext, *, source: str | None = None, scenario: str | None = None,
+                state: str | None = None, results_usable: bool | None = None,
+                folders: list[str] | None = None) -> list[Run]:
+    """The runs that pass every filter given (AND), in folder-name order (the order :func:`run_folders` gives,
+    by the real names: a page offset counts in it).  *folders* holds names and ``*`` patterns; an exact name that
+    is no run folder is refused with the close names, a *state* that is not a shown state with the states there
+    are."""
+    from flextool.assistant.results._query import _matching
+
     all_runs = runs(ctx)
+    selected = all_runs
     if source is not None:
         wanted = project.resolve_source(ctx, source)
-        all_runs = [r for r in all_runs if r.entry["source_number"] == wanted.number]
+        selected = [r for r in selected if r.entry["source_number"] == wanted.number]
     if scenario is not None:
-        all_runs = [r for r in all_runs if r.entry["db_scenario"] == scenario]
-    entries = [r.entry for r in all_runs]
-    return {
-        "runs": entries[:RUNS_MAX],
-        "total": len(entries),
-        "truncated": (f"showing {RUNS_MAX} of {len(entries)} runs — name a source or a scenario"
-                      if len(entries) > RUNS_MAX else None),
-        "comparison": comparison_state(ctx),
-    }
+        selected = [r for r in selected if r.entry["db_scenario"] == scenario]
+    if state is not None:
+        if state not in RUN_STATES:
+            present = sorted({r.entry["state"] for r in all_runs}, key=RUN_STATES.index)
+            raise ToolError("unknown_run_state", value=state, values=present or list(RUN_STATES))
+        selected = [r for r in selected if r.entry["state"] == state]
+    if results_usable is not None:
+        selected = [r for r in selected if r.entry["results_usable"] is results_usable]
+    if folders:
+        names = [r.folder.name for r in all_runs]
+        for name in folders:
+            if "*" not in name and name not in names:
+                if not names:
+                    raise ToolError("no_runs")
+                raise ToolError("unknown_run", run=name, runs=name_list(close_names(name, names) or names))
+        keep = set(_matching([r.folder.name for r in selected], [str(f) for f in folders]))
+        selected = [r for r in selected if r.folder.name in keep]
+    return selected
 
 
 @dataclass
@@ -297,6 +359,11 @@ class ResolvedRun:
     entry: dict
     run_notes: list[str]
     run: Run | None = field(default=None, repr=False)
+
+    @property
+    def verified(self) -> bool:
+        """Whether the folder has a run record (:attr:`Run.verified`)."""
+        return self.status is not None
 
 
 def find_run(ctx: AssistantContext, run: str) -> Run:
@@ -337,8 +404,8 @@ def resolve_run(ctx: AssistantContext, run: str) -> ResolvedRun:
 
 
 def run_notes(found: Run) -> list[str]:
-    """The notes a result read from *found* carries: no run record, an input changed after the run, another
-    FlexTool version."""
+    """The notes a result read from *found* carries: no run record (:data:`NO_RECORD_NOTE`, always first), an
+    input changed after the run, another FlexTool version."""
     notes: list[str] = []
     if found.entry.get("note"):
         notes.append(found.entry["note"])
@@ -397,11 +464,14 @@ def comparison_state(ctx: AssistantContext) -> dict | None:
     current = meta.get("format") == COMPARISON_FORMAT and isinstance(meta.get("write_id"), str)
     out_members = []
     outside = False
+    unrecorded: list[str] = []
     for member in members:
         entry = member if isinstance(member, dict) else {"folder": member}
         folder = str(entry.get("folder"))
         run_id = entry.get("run_id")
         status = read_status(base / folder) if "/" not in folder and "\\" not in folder else None
+        if status is None and "/" not in folder and "\\" not in folder and (base / folder).is_dir():
+            unrecorded.append(folder)
         fresh = (current and status is not None and run_record.results_usable(status) and run_id is not None
                  and status.get("run_id") == run_id
                  and (status.get("outputs") or {}).get("written_at") == entry.get("outputs_written_at"))
@@ -419,6 +489,10 @@ def comparison_state(ctx: AssistantContext) -> dict | None:
     elif outside:
         state["note"] = ("The comparison files were built from scenario folders outside this project; the tools "
                          "use each scenario's own results instead.")
+    elif unrecorded:
+        state["note"] = (f"The comparison files cannot be matched to their runs: {', '.join(unrecorded)} "
+                         f"{'has' if len(unrecorded) == 1 else 'have'} no run record. The tools use each "
+                         "scenario's own results instead.")
     elif not usable:
         state["note"] = ("The comparison files do not match the current scenario runs; the tools use each "
                          "scenario's own results instead.")
