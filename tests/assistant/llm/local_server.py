@@ -8,12 +8,13 @@ import threading
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-Answer = tuple[int, object]
+Answer = tuple[int, object] | tuple[int, object, dict[str, str]]
 
 
 class FakeServer:
     """Answers ``(method, path)`` from *routes*: a ``(status, body)`` pair (a dict body is sent as JSON, a string as
-    it is) or a callable ``(request body) -> (status, body)``.  Every request is recorded."""
+    it is), a ``(status, body, headers)`` triple (the headers are sent too; a ``Content-Type`` among them replaces
+    the JSON one) or a callable ``(request body) -> `` either.  Every request is recorded."""
 
     def __init__(self) -> None:
         self.routes: dict[tuple[str, str], Answer | Callable[[object], Answer]] = {}
@@ -31,11 +32,15 @@ class FakeServer:
                 body = json.loads(raw) if raw else None
                 fake.requests.append((method, self.path, body, dict(self.headers)))
                 route = fake.routes.get((method, self.path), (404, {"error": "not found"}))
-                status, out = route(body) if callable(route) else route
+                answer = route(body) if callable(route) else route
+                status, out = answer[0], answer[1]
+                extra = dict(answer[2]) if len(answer) > 2 else {}
                 data = (json.dumps(out) if isinstance(out, (dict, list)) else str(out)).encode("utf-8")
                 self.send_response(status)
-                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Type", extra.pop("Content-Type", "application/json"))
                 self.send_header("Content-Length", str(len(data)))
+                for name, value in extra.items():
+                    self.send_header(name, value)
                 self.end_headers()
                 self.wfile.write(data)
 

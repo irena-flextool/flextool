@@ -194,9 +194,13 @@ class GatedBackend:
 
     def _hold_others(self, err: LLMError) -> None:
         wait = err.retry_after
+        if wait is None and isinstance(err, RateLimited):
+            # The reset the answer's own headers name when none remain (review G9, C4-m1), else the raised interval.
+            wait = self.gate.pacer.header_wait(err.rate_headers)
+            if wait is None:
+                wait = self.gate.pacer.raised(self.pace_key)
         if wait is None:
-            wait = self.gate.pacer.raised(self.pace_key) if isinstance(err, RateLimited) else \
-                self.policy.backoff(self._rejected_in_row, self._rng)
+            wait = self.policy.backoff(self._rejected_in_row, self._rng)
         until = self.gate.clock() + max(0.0, wait)
         if wait <= self.policy.longest_auto_wait:
             self.gate.cool_down(self.key, until, owner=self)

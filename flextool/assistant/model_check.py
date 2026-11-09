@@ -10,8 +10,8 @@ needs it).  :func:`check_model` says how it went:
   saved model list (:mod:`flextool.assistant.model_list_cache`);
 * ``timeout``: no answer within the read timeout (300 seconds for a remote service);
 * ``stopped``: the user stopped the test;
-* ``failed``: any other error (a missing key, a rate limit FlexTool did not wait out, no connection), with its
-  message.
+* ``failed``: any other error (a missing key, a rate limit FlexTool did not wait out, no connection, an account
+  whose API access is not active, a used-up quota or no credit), with its message.
 
 The tokens are counted in the usage ledger like a question's, and the rejected attempts too.  Runs on a background
 thread, never on the Tk thread.
@@ -26,11 +26,14 @@ from typing import TYPE_CHECKING, Literal
 
 from flextool.assistant.llm_adapter import Message, Request, TextDelta, Thinking, ToolCallStarted
 from flextool.assistant.llm_errors import (
+    AccessInactive,
     AuthFailed,
     Cancelled,
     LLMError,
     ModelNotFound,
+    NoCredit,
     NoKey,
+    QuotaExhausted,
     RateLimited,
     ServerBusy,
     TimedOut,
@@ -132,6 +135,9 @@ def check_model(preset: Preset, backend: Backend, cancel: threading.Event, *, la
             return CheckResult("stopped", STOPPED)
         if isinstance(err, TimedOut):
             return CheckResult("timeout", message_for(err, front_end))
+        if isinstance(err, (AccessInactive, QuotaExhausted, NoCredit)):
+            # Its own message says what is wrong with the account (review G9), not "refused: no reason given".
+            return CheckResult("failed", message_for(err, front_end))
         if not_available(err) or err.status is not None and 400 <= err.status < 500 and not isinstance(
                 err, (RateLimited, AuthFailed)):
             text = str(err.fields.get("text") or "").strip()

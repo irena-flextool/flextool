@@ -593,3 +593,20 @@ def test_new_carry_summary():
     assert lines[1] == "Question: What is x?"
     assert len(lines[2]) == len("Answer: ") + 600 and lines[2].endswith("…")
     assert lines[3:] == ["Question: And z?", "Answer: Z is 1."]
+
+
+def test_a_limit_of_zero_ends_the_question_at_once(rig):
+    """Review G9, OR-2: Mistral's answer for an account whose API access is not active ends the question after one
+    request, with the owner's message and no free-plan hint (before: retried as a rate limit)."""
+    from flextool.assistant.llm_errors import AccessInactive, classify_status, message_for
+
+    ctx = ErrorContext(preset_id="mistral", provider="Mistral", model="fake-model")
+    inactive = classify_status(429, {"message": "Rate limit exceeded", "type": "rate_limited", "code": "1300"},
+                               {"x-ratelimit-limit-req-minute": "0", "x-ratelimit-remaining-req-minute": "0"}, ctx)
+    r = rig([inactive, say("never sent")])
+    result = r.ask()
+    assert isinstance(result.error, AccessInactive)
+    assert len(r.backend.requests) == 1
+    text = ("Your Mistral account allows 0 requests per minute: its API access is not active yet. Activate a plan "
+            "in your Mistral account, then ask again.")
+    assert message_for(result.error, "terminal") == message_for(result.error, "gui") == text

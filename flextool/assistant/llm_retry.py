@@ -7,8 +7,10 @@ message.  While waiting, :class:`RetryWait` is pushed every second and the cance
 
 * **Rate limit**: at most ``max_retries`` retries (``free_plan_rate_retries`` with the free plan on), and all their
   waits together at most ``longest_auto_wait``.  The wait is what the provider names (``retry_after``), else the
-  pacing interval, raised by the rate limit (:class:`~flextool.assistant.pacing.Pacer`).  When the provider named
-  no wait, the last message says that FlexTool now waits between requests (``rpm_paced``).
+  reset the answer's request-limit headers name when none remain, else the pacing interval, raised by the rate
+  limit (:class:`~flextool.assistant.pacing.Pacer`).  When neither named a wait, the last message says that
+  FlexTool now waits between requests (``rpm_paced``).
+* **A reported limit of 0** (:class:`AccessInactive`, review G9 / OR-2) is not retried and leaves the pacing alone.
 * **Overload**: at most ``max_retries`` retries, waiting ``retry_after`` or a doubling backoff with jitter.
 
 With a :class:`Pacing`, every attempt first waits for its turn (unless the backend paces itself, the window's
@@ -104,13 +106,16 @@ def call_with_retries(fn: Callable[[], Reply], policy: RetryPolicy, on_event: On
                 if on_rejected is not None:
                     on_rejected(err)
                 if err.retry_after is not None and err.retry_after > policy.longest_auto_wait:
-                    pacing.pacer.rate_limited(pacing.key, err.retry_after, pacing.headers())
+                    pacing.pacer.rate_limited(pacing.key, err.retry_after, _headers_of(err, pacing))
                     err.user_message = _message("rpm_long", err, minutes=max(1, math.ceil(err.retry_after / 60)))
                     err.args = (err.user_message,)
                     raise
-                wait = pacing.pacer.rate_limited(pacing.key, err.retry_after, pacing.headers())
+                headers = _headers_of(err, pacing)
+                from_headers = err.retry_after is None and pacing.pacer.header_wait(headers) is not None
+                wait = pacing.pacer.rate_limited(pacing.key, err.retry_after, headers)
                 if retries >= rate_retries or rate_waited + wait > policy.longest_auto_wait:
-                    if err.retry_after is None:
+                    # A wait named by the provider or its headers counts requests per minute: "rpm" says so.
+                    if err.retry_after is None and not from_headers:
                         err.user_message = _message("rpm_paced", err)
                         err.args = (err.user_message,)
                         err.message_key = "rpm_paced"
@@ -143,6 +148,13 @@ def call_with_retries(fn: Callable[[], Reply], policy: RetryPolicy, on_event: On
             continue
         pacing.pacer.succeeded(pacing.key, pacing.headers())
         return reply
+
+
+def _headers_of(err: LLMError, pacing: Pacing) -> dict[str, str] | None:
+    """The request-limit headers of the rate-limit answer *err*: its own, else the backend's last ones.  The
+    backend's are taken either way, so they do not count for a later answer."""
+    taken = pacing.headers()
+    return err.rate_headers or taken
 
 
 def _count_down(wait: float, err: LLMError, key: str, attempt: int, of: int, on_event: OnEvent,

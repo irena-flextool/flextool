@@ -213,20 +213,28 @@ def test_the_headers_pace_before_any_rate_limit():
     assert server.times == pytest.approx([0.0, 6.5, 7.0])            # 6.5 s; then 2 s / 4 = 0.5 s after the start
 
 
-def test_headers_come_before_the_learned_interval_and_the_seed():
+def test_headers_only_lengthen_the_learned_interval_and_the_seed():
+    """Updated (review G9): the headers' spacing counts only when it is longer than the learned interval and the
+    seed.  59 left in 1 s (1/59 s) is shorter than the learned 4.8 s; 1 left in 6 s (6 s) is longer."""
     clock, server, backend, pacer = rig(
-        [ok({"x-ratelimit-remaining-requests": "59", "x-ratelimit-reset-requests": "1s"}), ok(), ok()],
+        [ok({"x-ratelimit-remaining-requests": "59", "x-ratelimit-reset-requests": "1s"}), ok()],
         preset_id="openai")
     key = pace_key(backend.origin)
     pacer.prepare(key, 3.0)
     pacer.rate_limited(key, None)                                    # learned: 3.0 × 2 = 6 s
     ask(clock, backend, pacer)
     assert server.times == [0.0]                                     # a first request never waits
-    start = server.times[-1]
-    ask(clock, backend, pacer)                                       # the headers: 1 s / 59
-    assert server.times[-1] - start == pytest.approx(1 / 59)
-    ask(clock, backend, pacer)                                       # no headers in that answer: still fresh
-    assert server.times[-1] - server.times[-2] == pytest.approx(1 / 59)
+    ask(clock, backend, pacer)                                       # answered: 6 × 0.8 = 4.8 s > 1/59 s
+    assert server.times[-1] == pytest.approx(4.8)
+
+    clock, server, backend, pacer = rig(
+        [ok({"x-ratelimit-remaining-requests": "1", "x-ratelimit-reset-requests": "6s"}), ok()],
+        preset_id="openai")
+    pacer.prepare(key, 3.0)
+    pacer.rate_limited(key, None)
+    ask(clock, backend, pacer)
+    ask(clock, backend, pacer)                                       # 6 s / 1 > 4.8 s: the headers win
+    assert server.times[-1] == pytest.approx(6.0)
 
 
 def test_the_request_limit_headers_are_read():
@@ -281,3 +289,152 @@ def test_two_chats_of_the_window_share_one_interval(monkeypatch, fake_backends):
     assert name == "b"
     assert a2 - a1 >= 0.3 - 0.02 and b1 - a2 >= 0.3 - 0.02
     assert shared.interval(key) == pytest.approx(0.3)                # answered twice: never below the start
+
+
+# --- a reported limit of 0 and the 429's own headers (review G9: OR-2, C4-m1) ----------------------------------
+#: Mistral's answer seen on 2026-11-08 (OR-2) for an account whose API access is not active.
+OR2_BODY = {"message": "Rate limit exceeded", "type": "rate_limited", "param": None, "code": "1300"}
+OR2_HEADERS = {"x-ratelimit-limit-req-minute": "0", "x-ratelimit-remaining-req-minute": "0"}
+#: A paid account at its per-minute limit: the limit is 750, none remain.
+PAID_HEADERS = {"x-ratelimit-limit-req-minute": "750", "x-ratelimit-remaining-req-minute": "0"}
+INACTIVE = ("Your Mistral account allows 0 requests per minute: its API access is not active yet. Activate a plan "
+            "in your Mistral account, then ask again.")
+
+
+@pytest.fixture
+def mistral_server():
+    """A loopback server playing Mistral's chat completions; the test sets ``answers`` (one per request)."""
+    from tests.assistant.llm.local_server import FakeServer
+
+    server = FakeServer()
+    server.answers = []
+    server.routes[("POST", "/v1/chat/completions")] = lambda _body: server.answers.pop(0)
+    yield server
+    server.close()
+
+
+def _sse_ok(headers: dict | None = None) -> tuple:
+    text = openai_sse(payload("openai", "text_usage")["chunks"]).decode()
+    return 200, text, {"Content-Type": "text/event-stream", **(headers or {})}
+
+
+def _loopback_mistral(server, clock: FakeTime, *, persist: bool = False):
+    backend = make_backend(PRESETS["mistral"], connection("mistral", url=f"http://127.0.0.1:{server.port}/v1"))
+    pacer = Pacer(clock=clock.now, wall=lambda: WALL, persist=persist)
+    pacer.prepare(pace_key(backend.origin), 1.1)                      # Mistral's seed (RF-D15)
+    return backend, pacer
+
+
+@pytest.mark.parametrize("free_plan", [False, True])
+def test_limit_zero_is_not_retried_and_changes_no_pacing(mistral_server, user_cache_in_tmp, free_plan):
+    """OR-2: one request, no countdown, the owner's message, the interval stays at the seed and nothing is
+    stored (before: 4 or 7 requests, a learned 17.6–20 s interval stored, the "requests per second" message)."""
+    mistral_server.answers = [(429, OR2_BODY, OR2_HEADERS) for _ in range(8)]
+    clock = FakeTime()
+    backend, pacer = _loopback_mistral(mistral_server, clock, persist=True)
+    events: list = []
+    try:
+        with pytest.raises(E.AccessInactive) as info:
+            ask(clock, backend, pacer, free_plan=free_plan, events=events)
+    finally:
+        backend.close()
+    assert len(mistral_server.requests) == 1
+    assert not [e for e in events if isinstance(e, RetryWait)]
+    assert info.value.user_message == INACTIVE
+    assert E.message_for(info.value, "gui") == E.message_for(info.value, "terminal") == INACTIVE
+    key = pace_key(backend.origin)
+    assert pacer.interval(key) == pytest.approx(1.1)
+    assert probes.stored_interval(key, max_age=pacing.STORED_MAX_AGE, now=WALL) is None
+
+
+def test_a_paid_account_at_its_minute_limit_waits_for_the_window(mistral_server):
+    """Limit 750, none remaining: a rate limit, not an inactive account.  The retry waits the assumed 60 s window
+    (Mistral names no reset) and the learned interval is left alone (C4-m1; before: retried after 2.2 s)."""
+    mistral_server.answers = [(429, OR2_BODY, PAID_HEADERS), _sse_ok()]
+    clock = FakeTime()
+    backend, pacer = _loopback_mistral(mistral_server, clock)
+    times: list[float] = []
+    mistral_server.routes[("POST", "/v1/chat/completions")] = \
+        lambda _body: (times.append(clock.now()), mistral_server.answers.pop(0))[1]
+    try:
+        ask(clock, backend, pacer)
+    finally:
+        backend.close()
+    assert times == pytest.approx([0.0, 60.0])
+    assert pacer.interval(pace_key(backend.origin)) == pytest.approx(1.1)
+
+
+def test_a_second_minute_limit_ends_with_wait_a_minute(mistral_server):
+    """Two such answers: 60 + 60 s is past the 90 s of retry waits, so the question ends — with "wait a minute",
+    not the per-second wording (critique G9 item 7)."""
+    mistral_server.answers = [(429, OR2_BODY, PAID_HEADERS) for _ in range(3)]
+    clock = FakeTime()
+    backend, pacer = _loopback_mistral(mistral_server, clock)
+    try:
+        with pytest.raises(E.RateLimited) as info:
+            ask(clock, backend, pacer)
+    finally:
+        backend.close()
+    assert len(mistral_server.requests) == 2
+    assert info.value.user_message == "Mistral is still limiting requests. Wait a minute and ask again."
+
+
+def test_test_model_shows_the_limit_zero_message(mistral_server, user_config_in_tmp):
+    """Test model with the OR-2 answer: "failed" with the owner's message (before: a retried rate limit, or
+    "refused the test request: no reason given")."""
+    from flextool.assistant.model_check import check_model
+    from flextool.assistant.usage import Ledger
+
+    mistral_server.answers = [(429, OR2_BODY, OR2_HEADERS) for _ in range(8)]
+    clock = FakeTime()
+    backend, pacer = _loopback_mistral(mistral_server, clock)
+    try:
+        result = check_model(PRESETS["mistral"], backend, threading.Event(), label="Mistral",
+                             ledger=Ledger(user_config_in_tmp), ledger_key="mistral", pacer=pacer, clock=clock.now,
+                             sleep=clock.sleep, front_end="gui")
+    finally:
+        backend.close()
+    assert (result.outcome, result.message) == ("failed", INACTIVE)
+    assert len(mistral_server.requests) == 1
+
+
+def test_mistral_minute_headers_are_read():
+    assert requests_left({"x-ratelimit-remaining-req-minute": "59", "x-ratelimit-limit-req-minute": "60"},
+                         WALL) == (59, 60.0)
+    assert requests_left(PAID_HEADERS, WALL) == (0, 60.0)
+    assert requests_left(OR2_HEADERS, WALL) is None                  # limit 0: no pace, the classifier's case
+    assert pacing.rate_headers(OR2_HEADERS | {"x-ratelimit-limit-tokens-minute": "5"}) == OR2_HEADERS
+
+
+def test_a_429_reset_header_is_the_wait():
+    """C4-m1: remaining 0, reset 20 s, no retry-after: the wait is 20 s and nothing is learned (before: 1.1 s)."""
+    p = Pacer(clock=lambda: 0.0, wall=lambda: WALL)
+    p.prepare("k", 1.1)
+    headers = {"x-ratelimit-remaining-requests": "0", "x-ratelimit-reset-requests": "20s"}
+    assert p.rate_limited("k", None, headers) == pytest.approx(20.0)
+    assert p.interval("k") == pytest.approx(1.1)
+    assert p.header_wait({"x-ratelimit-remaining-requests": "0", "x-ratelimit-reset-requests": "2m"}) is None
+
+
+def test_header_spacing_is_held_at_the_seed():
+    """600 requests left over 60 s spread to 0.1 s, below the 1.1 s seed: the seed holds (before: 0.1 s)."""
+    clock, server, backend, pacer = rig(
+        [ok({"x-ratelimit-remaining-requests": "600", "x-ratelimit-reset-requests": "60s"}), ok()],
+        preset_id="openai")
+    pacer.prepare(pace_key(backend.origin), 1.1)
+    ask(clock, backend, pacer)
+    ask(clock, backend, pacer)
+    assert server.times == pytest.approx([0.0, 1.1])
+
+
+def test_mistral_headers_do_not_shorten_the_learned_interval():
+    """Guard (critique G9 item 2): 700 of 750 left spreads to 0.086 s; the learned interval holds."""
+    clock, server, backend, pacer = rig(
+        [ok({"x-ratelimit-remaining-req-minute": "700", "x-ratelimit-limit-req-minute": "750"}), ok()])
+    key = pace_key(backend.origin)
+    pacer.prepare(key, 1.1)
+    pacer.rate_limited(key, None)
+    pacer.rate_limited(key, None)                                    # learned 2.2, then 4.4
+    ask(clock, backend, pacer)                                       # answered: 4.4 × 0.8 = 3.52
+    ask(clock, backend, pacer)
+    assert server.times == pytest.approx([0.0, 3.52])

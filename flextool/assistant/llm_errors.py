@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import email.utils
 import math
+import re
 import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
@@ -26,6 +27,8 @@ MESSAGES: dict[str, str] = {
     "rpm_paced": ("{provider} limits how many requests per second a free plan may send. FlexTool now waits between "
                   "requests; ask again."),
     "pace_wait": "{provider} limits how fast requests may be sent. Sending the next one in {seconds} seconds.",
+    "inactive": ("Your {provider} account allows 0 requests per minute: its API access is not active yet. "
+                 "Activate a plan in your {provider} account, then ask again."),
     "rpm_long": ("{provider} asks to wait about {minutes} minutes before the next request. Ask again later, or "
                  "switch provider in the settings."),
     "busy_retry": ("{provider} is overloaded at the moment. Trying again in {seconds} seconds (attempt {n} of "
@@ -168,6 +171,11 @@ class LLMError(Exception):
         self.partial_text = partial_text
         self.fields = dict(fields or {})
         self.message_key: str | None = None     # the MESSAGES key the user message was made from
+        #: The request-limit headers of the answer (:data:`flextool.assistant.pacing.RATE_HEADERS`), for a rate
+        #: limit; the pacing reads the wait they name (review G9, C4-m1).
+        self.rate_headers: dict[str, str] | None = None
+        #: The pacing epoch the request started in, set by a backend that paces itself (the window's gate).
+        self.pace_epoch: int | None = None
 
     @property
     def params(self) -> dict[str, str]:
@@ -180,6 +188,13 @@ class LLMError(Exception):
 
 class RateLimited(LLMError):
     code = "rpm"
+
+
+class AccessInactive(LLMError):
+    """The provider reports a request limit of 0: the account's API access is not active (review G9, OR-2).  Not
+    retried, and the pacing does not change."""
+
+    code = "inactive"
 
 
 class ServerBusy(LLMError):
@@ -258,7 +273,7 @@ class ProviderError(LLMError):
 
 
 ERROR_CLASSES: tuple[type[LLMError], ...] = (
-    RateLimited, ServerBusy, QuotaExhausted, NoCredit, AuthFailed, NotPermitted, ContextTooLong, HistoryRejected,
+    RateLimited, AccessInactive, ServerBusy, QuotaExhausted, NoCredit, AuthFailed, NotPermitted, ContextTooLong, HistoryRejected,
     NoMatchingEndpoint, ToolsUnsupported, ModelNotFound, Unreachable, TimedOut, ContextTooSmall, Refused, Truncated,
     NoKey, Cancelled, ProviderError)
 
@@ -441,6 +456,32 @@ def retry_after_from(headers: Any, body: _Body | None = None, *, now: float | No
     return None
 
 
+#: Mistral's request-limit headers per minute (seen 2026-11-08, OR-2).
+LIMIT_MINUTE = "x-ratelimit-limit-req-minute"
+REMAINING_MINUTE = "x-ratelimit-remaining-req-minute"
+#: Google's quota text for a quota of 0 ("…, limit: 0, model: …"); "limit: 0.5" is not one.
+_LIMIT_ZERO = re.compile(r"\blimit:\s*0(?![\d.])")
+
+
+def _whole_number(value: object) -> int | None:
+    try:
+        number = float(str(value))
+    except ValueError:
+        return None
+    return int(number) if math.isfinite(number) and number.is_integer() else None
+
+
+def _limit_zero(headers: Any, info: _Body) -> bool:
+    """Whether a rate-limit answer reports a limit of 0: Mistral's per-minute limit and remaining both 0, or a
+    Google ``RESOURCE_EXHAUSTED`` whose quota text says ``limit: 0`` (a quota of 0 never resets)."""
+    if headers is not None:
+        limit, remaining = headers.get(LIMIT_MINUTE), headers.get(REMAINING_MINUTE)
+        if limit is not None and remaining is not None and _whole_number(limit) == 0 \
+                and _whole_number(remaining) == 0:
+            return True
+    return "RESOURCE_EXHAUSTED" in info.statuses and _LIMIT_ZERO.search(info.text) is not None
+
+
 def _provider_text(ctx: ErrorContext, body: _Body, fallback: str) -> str:
     from flextool.assistant.redact import Redactor
 
@@ -479,12 +520,18 @@ def classify_status(status: int | None, body: object, headers: Any, ctx: ErrorCo
     if effective == 402 or "billing_error" in types or "insufficient credits" in text:
         return make(NoCredit, "credit")
     rate_limited = effective == 429 or "rate_limit_error" in types or "RESOURCE_EXHAUSTED" in info.statuses
+    if rate_limited and _limit_zero(headers, info):
+        return make(AccessInactive, "inactive")
     if rate_limited and ("insufficient_quota" in types or "insufficient_quota" in codes
                          or any("perday" in q.lower() or "daily" in q.lower() for q in info.quota_ids)
                          or "free-models-per-day" in text):
         return make(QuotaExhausted, "quota")
     if rate_limited:
-        return make(RateLimited, "rpm", retry_after=retry_after_from(headers, info, now=now))
+        from flextool.assistant.pacing import rate_headers   # pacing imports this module
+
+        err = make(RateLimited, "rpm", retry_after=retry_after_from(headers, info, now=now))
+        err.rate_headers = rate_headers(headers) if headers is not None else None
+        return err
     if "overloaded_error" in types or (effective in _BUSY_STATUS):
         streamed = bool(kwargs.get("streamed"))
         return make(ServerBusy, "busy_streamed" if streamed else "busy",

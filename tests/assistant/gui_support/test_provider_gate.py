@@ -135,6 +135,20 @@ def test_a_short_wait_asked_of_one_chat_holds_the_other(fake_backends):
     assert box3["reply"].message.text == "again"
 
 
+def test_cool_down_follows_the_429_reset(fake_backends):
+    """Review G9, C4-m1: a 429 without retry-after whose headers say none remain for 20 s holds the other chats
+    for those 20 s (before: the raised interval, 1.1 s)."""
+    clock = Clock()
+    gate = ProviderGate(parallel=2, clock=clock)
+    err = RateLimited("slow down", provider="OpenAI")
+    err.rate_headers = {"x-ratelimit-remaining-requests": "0", "x-ratelimit-reset-requests": "20s"}
+    limited = FakeBackend([err])
+    fake_backends.append(limited)
+    _, box, _ = _request(GatedBackend(limited, gate, KEY, label="OpenAI"))
+    _until(lambda: box)
+    assert gate.state(KEY)[1] == pytest.approx(1020.0)
+
+
 def _session(tmp_path: Path, backend, preset_id: str = "gemini") -> tuple[Session, Ledger]:
     ctx = make_context(tmp_path / "project", front_end="gui")
     ledger = Ledger()

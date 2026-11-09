@@ -306,3 +306,62 @@ def test_every_error_class_has_a_message():
     codes = {cls.code for cls in E.ERROR_CLASSES}
     for code in codes:
         assert any(key == code or key.startswith(code + "_") for key in E.MESSAGES), code
+
+
+# --- a reported limit of 0 (review G9, OR-2) ---------------------------------------------------------------------
+OR2_BODY = {"message": "Rate limit exceeded", "type": "rate_limited", "param": None, "code": "1300"}
+
+
+def _gemini_limit(quota_id: str, limit: str) -> list:
+    body = _gemini_429(quota_id, "41s")
+    body[0]["error"]["message"] = (
+        "You exceeded your current quota, please check your plan and billing details.\n* Quota exceeded for "
+        f"metric: generativelanguage.googleapis.com/generate_content_free_tier_requests, limit: {limit}, model: "
+        "gemini-2.5-pro")
+    return body
+
+
+def test_mistral_limit_zero_is_access_inactive():
+    headers = {"x-ratelimit-limit-req-minute": "0", "x-ratelimit-remaining-req-minute": "0"}
+    err = classify_openai(openai_exception(_handler(429, OR2_BODY, headers)), _ctx("mistral", provider="Mistral"))
+    assert type(err) is E.AccessInactive and err.code == "inactive"
+    assert err.user_message == ("Your Mistral account allows 0 requests per minute: its API access is not active "
+                                "yet. Activate a plan in your Mistral account, then ask again.")
+
+
+@pytest.mark.parametrize("headers", [
+    {"x-ratelimit-limit-req-minute": "750", "x-ratelimit-remaining-req-minute": "0"},   # paid, at its limit
+    {"x-ratelimit-limit-req-minute": "0", "x-ratelimit-remaining-req-minute": "3"},     # not both 0
+    {"x-ratelimit-limit-req-minute": "0, 0", "x-ratelimit-remaining-req-minute": "0"},  # unreadable
+    {}], ids=["paid-750-remaining-0", "remaining-3", "duplicated", "no-headers"])
+def test_a_limit_above_zero_or_unread_is_a_rate_limit(headers):
+    """Guard: only a reported limit of 0 with none remaining is an inactive account."""
+    err = classify_openai(openai_exception(_handler(429, OR2_BODY, headers)), _ctx("mistral", provider="Mistral"))
+    assert type(err) is E.RateLimited
+    assert err.rate_headers == {k: v for k, v in headers.items()}
+
+
+@pytest.mark.parametrize("quota_id", ["GenerateRequestsPerMinutePerProjectPerModel-FreeTier",
+                                      "GenerateRequestsPerDayPerProjectPerModel-FreeTier"])
+def test_gemini_limit_zero_is_access_inactive(quota_id):
+    """A Google quota of 0 per minute or per day never resets (critique G9 item 6; before: a rate limit or a
+    quota "that resets on the provider's schedule")."""
+    err = classify_openai(openai_exception(_handler(429, _gemini_limit(quota_id, "0"))),
+                          _ctx("gemini", provider="Google Gemini"))
+    assert type(err) is E.AccessInactive
+    assert err.user_message.startswith("Your Google Gemini account allows 0 requests per minute")
+
+
+def test_gemini_limit_above_zero_is_unchanged():
+    """Guard: "limit: 0.5" and "limit: 15" are not a limit of 0."""
+    minute = classify_openai(openai_exception(_handler(429, _gemini_limit(
+        "GenerateRequestsPerMinutePerProjectPerModel-FreeTier", "15"))), _ctx("gemini"))
+    day = classify_openai(openai_exception(_handler(429, _gemini_limit(
+        "GenerateRequestsPerDayPerProjectPerModel-FreeTier", "0.5"))), _ctx("gemini"))
+    assert (type(minute), minute.retry_after, type(day)) == (E.RateLimited, 41.0, E.QuotaExhausted)
+
+
+def test_a_stream_error_without_headers_is_classified():
+    """Guard: a stream error has no headers (``None``)."""
+    err = E.classify_status(None, {"error": {"type": "rate_limit_error", "message": "slow"}}, None, _ctx())
+    assert type(err) is E.RateLimited and err.rate_headers is None

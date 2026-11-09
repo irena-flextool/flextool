@@ -6,9 +6,14 @@ question.  :class:`Pacer` keeps, per provider and model (:func:`pace_key`), the 
 start, from these sources in this order of precedence:
 
 1. **headers**: the request-limit headers of the last answer (:data:`RATE_HEADERS`; OpenAI's
-   ``x-ratelimit-remaining-requests`` / ``x-ratelimit-reset-requests`` and Anthropic's
-   ``anthropic-ratelimit-requests-remaining`` / ``-reset``): the remaining requests are spread over the time to the
-   reset, and none remaining waits for the reset.  They count while that reset lies ahead;
+   ``x-ratelimit-remaining-requests`` / ``x-ratelimit-reset-requests``, Anthropic's
+   ``anthropic-ratelimit-requests-remaining`` / ``-reset``, and Mistral's ``x-ratelimit-remaining-req-minute`` /
+   ``x-ratelimit-limit-req-minute``, which name no reset: a 60-second window is assumed): the remaining requests
+   are spread over the time to the reset, and none remaining waits for the reset.  They count while that reset
+   lies ahead, and only ever lengthen the spacing: it is never shorter than the learned interval or the seed below
+   (review G9).  A rate-limit answer whose headers say none remain waits for their reset and learns nothing
+   (C4-m1).  A reported limit of 0 is not a pace at all: the account's API access is not active
+   (:class:`~flextool.assistant.llm_errors.AccessInactive`, OR-2);
 2. **learned**: after a rate-limit answer without a wait named by the provider (no ``retry-after``), the interval
    between request starts is doubled (first :data:`START` seconds, at most :data:`CAP`); after each answered
    request it shrinks by :data:`DECAY`, never below :data:`START` (a per-second limit does not go away, and 1.1
@@ -37,7 +42,7 @@ from datetime import datetime
 from typing import Any
 
 from flextool.assistant.llm_adapter import OnEvent, RetryWait
-from flextool.assistant.llm_errors import MESSAGES, cancelled
+from flextool.assistant.llm_errors import LIMIT_MINUTE, MESSAGES, REMAINING_MINUTE, cancelled
 
 #: The first learned interval, the factor after each rate limit, the largest interval, and the factor after each
 #: answered request (seconds between request starts).
@@ -58,7 +63,10 @@ RATE_HEADERS = frozenset({
     "retry-after", "retry-after-ms",
     "x-ratelimit-remaining-requests", "x-ratelimit-reset-requests",                 # OpenAI and compatible
     "anthropic-ratelimit-requests-remaining", "anthropic-ratelimit-requests-reset",  # Anthropic
+    LIMIT_MINUTE, REMAINING_MINUTE,                                                  # Mistral
 })
+#: The window of Mistral's per-minute headers, which name no reset.
+MINUTE_WINDOW = 60.0
 
 _DURATION = re.compile(r"(\d+(?:\.\d+)?)(ms|h|m|s)")
 
@@ -109,8 +117,18 @@ def _timestamp(text: str, wall: float) -> float | None:
     return max(0.0, when.timestamp() - wall)
 
 
+def _count(text: str) -> int | None:
+    try:
+        value = float(text)
+    except ValueError:
+        return None
+    return int(value) if math.isfinite(value) else None
+
+
 def requests_left(headers: Mapping[str, str], wall: float) -> tuple[int, float] | None:
-    """(requests remaining, seconds to the reset) from the request-limit headers, ``None`` when there are none."""
+    """(requests remaining, seconds to the reset) from the request-limit headers, ``None`` when there are none.
+    Mistral's per-minute pair names no reset (:data:`MINUTE_WINDOW`); with a reported limit of 0 it is not read
+    (that is no pace: :class:`~flextool.assistant.llm_errors.AccessInactive`)."""
     for remaining_name, reset_name, parse in (
             ("x-ratelimit-remaining-requests", "x-ratelimit-reset-requests", _duration),
             ("anthropic-ratelimit-requests-remaining", "anthropic-ratelimit-requests-reset",
@@ -118,14 +136,28 @@ def requests_left(headers: Mapping[str, str], wall: float) -> tuple[int, float] 
         remaining, reset = headers.get(remaining_name), headers.get(reset_name)
         if remaining is None or reset is None:
             continue
-        try:
-            left = int(float(remaining))
-        except ValueError:
+        left = _count(remaining)
+        if left is None:
             continue
         seconds = parse(reset)
         if seconds is not None:
             return max(0, left), seconds
+    remaining, limit = headers.get(REMAINING_MINUTE), headers.get(LIMIT_MINUTE)
+    if remaining is not None:
+        left = _count(remaining)
+        if left is not None and (limit is None or _count(limit) != 0):
+            return max(0, left), MINUTE_WINDOW
     return None
+
+
+def header_wait(headers: Mapping[str, str] | None, wall: float) -> float | None:
+    """The wait the request-limit headers of a rate-limit answer name: the reset, when no request remains and the
+    reset is at most :data:`LONGEST_HEADER_WAIT` away; else ``None``."""
+    found = requests_left(headers, wall) if headers else None
+    if found is None:
+        return None
+    left, reset = found
+    return reset if left <= 0 and reset <= LONGEST_HEADER_WAIT else None
 
 
 @dataclass
@@ -185,12 +217,13 @@ class Pacer:
         return state.seed or 0.0
 
     def _not_before(self, state: _State, now: float) -> float:
+        # The headers only lengthen the spacing: never below the learned interval or the seed (review G9).
+        spacing = self._spacing(state)
         if now < state.header_until:
             if state.header_ready is not None:
-                return state.header_ready
-            spacing = state.header_spacing or 0.0
-        else:
-            spacing = self._spacing(state)
+                return state.header_ready if state.last_start is None else max(state.header_ready,
+                                                                              state.last_start + spacing)
+            spacing = max(state.header_spacing or 0.0, spacing)
         return now if state.last_start is None else state.last_start + spacing
 
     def raised(self, key: str) -> float:
@@ -241,9 +274,14 @@ class Pacer:
         if store is not None:
             self._store(key, store)
 
+    def header_wait(self, headers: Mapping[str, str] | None) -> float | None:
+        """The wait the headers of a rate-limit answer name (:func:`header_wait`); changes nothing."""
+        return header_wait(headers, self.wall())
+
     def rate_limited(self, key: str, retry_after: float | None, headers: Mapping[str, str] | None = None) -> float:
-        """A rate-limit answer before any output: the wait before the retry.  With *retry_after* that wait;
-        without, the interval is raised and is the wait."""
+        """A rate-limit answer before any output: the wait before the retry.  With *retry_after* that wait; else
+        the reset its *headers* name when none remain (the interval is left alone, C4-m1); else the interval is
+        raised and is the wait."""
         store: float | None = None
         with self._lock:
             state = self._state(key)
@@ -251,6 +289,11 @@ class Pacer:
             state.header_until = -math.inf
             if retry_after is not None:
                 return retry_after
+            reset = header_wait(headers, self.wall())
+            if reset is not None:
+                now = self.clock()
+                state.header_ready = state.header_until = now + reset
+                return reset
             state.learned = store = self._raised(state)
         self._store(key, store)
         return store
