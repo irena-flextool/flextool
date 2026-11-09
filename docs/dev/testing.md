@@ -311,6 +311,7 @@ Opt-in switches read by the test suite only (registered with audience `test` in 
 |---|---|---|---|
 | `FLEXTOOL_NATIVE_PARITY_SWEEP` | unset (skipped) | `1` | Run the slow parity sweep of `tests/engine/test_orchestration.py` over every fixture (about 5 min per fixture). |
 | `FLEXTOOL_TEST_RSS_BUDGET_MB` | `1500` | MB | RSS budget of the input-derivation memory test `tests/spinedb_backend/test_memory_budget.py`, for machines with unrelated memory pressure. |
+| `FLEXTOOL_TEST_KEYRING_LOG` | set by the suite | file | Set by the root `conftest.py` in the first process of a session and inherited by the xdist workers: every process appends a call that reached a system keyring backend, or a store or removal on the default keyring, to this file, and the session fails when it is not empty (`tests/user_dirs_guard.py`). Not for use by hand. |
 
 ## Running the tests
 

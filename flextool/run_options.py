@@ -338,6 +338,7 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         # --- test suite -----------------------------------------------------------------------------------
         _test("FLEXTOOL_NATIVE_PARITY_SWEEP", "run the slow parity sweep over every fixture"),
         _test("FLEXTOOL_TEST_RSS_BUDGET_MB", "RSS budget of the input-derivation memory test (1500)"),
+        _test("FLEXTOOL_TEST_KEYRING_LOG", "set by the root conftest: the file the session's keyring violations go to"),
     )
 }
 

@@ -57,6 +57,10 @@ import user_dirs_guard  # noqa: E402
 
 _REAL_USER_DIRS = user_dirs_guard.real_user_dirs()
 _TEST_USER_HOME = user_dirs_guard.redirect()
+# The first process of the session keeps the keyring log; the xdist workers inherit its path.
+_KEYRING_LOG_DIR = user_dirs_guard.keyring_log_dir()
+user_dirs_guard.forbid_system_keyring(_KEYRING_LOG_DIR)
+user_dirs_guard.patch_subprocess_env()
 
 TEST_DIR = Path(__file__).parent
 FIXTURES_DIR = TEST_DIR / "fixtures"
@@ -166,10 +170,19 @@ def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
             "\nERROR: the tests changed FlexTool's real user folders (every test must keep its user files under "
             f"FLEXTOOL_USER_HOME; a FlexTool window used during the run changes them too):\n  {shown}\n")
         session.exitstatus = pytest.ExitCode.TESTS_FAILED
+    touched = user_dirs_guard.keyring_violations()
+    if touched:
+        shown = "\n  ".join(touched[:40]) + ("\n  ..." if len(touched) > 40 else "")
+        sys.stderr.write(
+            "\nERROR: the tests reached the system keyring or wrote to the default keyring (a test that needs a "
+            f"keyring installs a fake one, tests/assistant/conftest.py fake_keyring):\n  {shown}\n")
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
 
 
 def pytest_unconfigure(config: pytest.Config) -> None:
     user_dirs_guard.remove(_TEST_USER_HOME)
+    if _KEYRING_LOG_DIR is not None:
+        user_dirs_guard.remove(_KEYRING_LOG_DIR)
 
 
 def pytest_configure(config: pytest.Config) -> None:
