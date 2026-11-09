@@ -10,7 +10,8 @@ type of :data:`FETCHED` from the closed mapping.  The mapping itself is dropped:
 and are parsed with ``spinedb_api.from_database`` when a tool needs them, so nothing parsed is kept.
 
 **One unfiltered load per file** (P0-D10).  :class:`InputDB` holds every alternative's values; the scenario view
-(:class:`ScenarioView`) is computed here and cached per scenario: the alternatives in rank order, the active
+(:class:`ScenarioView`) is computed here and kept in a small LRU per database (:data:`VIEW_LRU_SIZE` scenarios;
+a view costs about 40 bytes per stored value, and is rebuilt in well under a second per million): the alternatives in rank order, the active
 entities (the highest-ranked ``entity_alternative`` of the scenario decides, else the class's
 ``active_by_default``; a multi-dimensional entity also needs every element active; FlexTool's ``is_enabled = no``
 drops an entity of the classes it gates) and the winning value of each (class, entity, parameter): the value of
@@ -18,7 +19,8 @@ the highest-ranked alternative of the scenario.  spinedb-api's scenario filter i
 (``tests/assistant/test_input_scenario_view_matches_filter.py``).
 
 Loaded databases are cached by ``(path, mtime_ns, size)``: a database replaced or saved is loaded again.  At most
-:data:`LRU_SIZE` are kept.
+:data:`LRU_SIZE` are kept.  An :class:`InputDB` is never changed after it is loaded, so its index of the parameters
+stored per entity (:meth:`InputDB.parameters_of`) never goes stale: a changed file is a new ``InputDB``.
 """
 from __future__ import annotations
 
@@ -38,6 +40,9 @@ FETCHED = (
 )
 SQLITE_TIMEOUT_S = 5
 LRU_SIZE = 2
+#: Scenario views kept per database: two is the most one tool uses at once (compare_inputs); a running call
+#: holds its views by reference, so an eviction never affects it.
+VIEW_LRU_SIZE = 2
 
 
 def db_uri(path: Path) -> str:
@@ -48,8 +53,12 @@ def db_uri(path: Path) -> str:
 def uri_of_posix(posix: str) -> str:
     """``sqlite:///file:/a/b%20c.sqlite?mode=ro&uri=true`` of an absolute POSIX-style path; a Windows drive path
     ``C:/a/b.sqlite`` gets a leading ``/`` (``file:/C:/a/b.sqlite``), the form SQLite reads as an absolute file
-    URI there."""
-    if not posix.startswith("/"):
+    URI there.  A UNC path ``//server/share/x.sqlite`` gets ``//`` more (``file:////server/share/x.sqlite``): an
+    empty authority (SQLite refuses any other) and the UNC path as the path, which SQLite's Windows VFS opens as
+    ``\\\\server\\share\\x.sqlite``.  Every part is percent-encoded, the server and share names too."""
+    if posix.startswith("//"):
+        posix = "//" + posix
+    elif not posix.startswith("/"):
         posix = "/" + posix
     return "sqlite:///file:" + quote(posix, safe="/:") + "?mode=ro&uri=true"
 
@@ -135,11 +144,16 @@ class InputDB:
     list_values: dict[str, list[tuple[bytes | None, str | None]]]
     _by_name: dict[str, dict[str, EntityItem]] = field(default_factory=dict, repr=False)
     _related: dict[tuple[str, str], list[EntityItem]] | None = field(default=None, repr=False)
-    _views: dict[str, "ScenarioView"] = field(default_factory=dict, repr=False)
+    _params_of: dict[tuple[str, Byname], tuple[str, ...]] = field(default_factory=dict, repr=False)
+    _views: "OrderedDict[str, ScenarioView]" = field(default_factory=OrderedDict, repr=False)
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def __post_init__(self) -> None:
         self._by_name = {cls: {e.name: e for e in ents.values()} for cls, ents in self.entities.items()}
+        stored: dict[tuple[str, Byname], set[str]] = {}
+        for cls, byname, parameter in self.values:
+            stored.setdefault((cls, byname), set()).add(parameter)
+        self._params_of = {key: tuple(sorted(names)) for key, names in stored.items()}
 
     def scenario_names(self) -> list[str]:
         return list(self.scenarios)
@@ -160,10 +174,14 @@ class InputDB:
         """The value of every alternative that sets it (provenance)."""
         return self.values.get((entity_class, tuple(byname), parameter), {})
 
+    def parameters_of(self, entity_class: str, byname: Byname) -> tuple[str, ...]:
+        """The parameters with a value in some alternative for this entity, by name (from the index built at
+        load)."""
+        return self._params_of.get((entity_class, tuple(byname)), ())
+
     def stored_parameters(self, entity_class: str, byname: Byname) -> list[str]:
         """The parameters with a value in some alternative for this entity."""
-        byname = tuple(byname)
-        return sorted({p for (c, b, p) in self.values if c == entity_class and b == byname})
+        return list(self.parameters_of(entity_class, byname))
 
     def relationships_of(self, entity_class: str, name: str) -> list[EntityItem]:
         """The multi-dimensional entities that name the *entity_class* entity *name* as one of their elements."""
@@ -181,11 +199,16 @@ class InputDB:
             return list(self._related.get((entity_class, name), []))
 
     def view(self, scenario: str) -> "ScenarioView":
+        """The scenario's view, from the LRU of :data:`VIEW_LRU_SIZE` views."""
         with self._lock:
             view = self._views.get(scenario)
-            if view is None:
-                view = ScenarioView(self, scenario)
-                self._views[scenario] = view
+            if view is not None:
+                self._views.move_to_end(scenario)
+                return view
+            view = ScenarioView(self, scenario)
+            self._views[scenario] = view
+            while len(self._views) > VIEW_LRU_SIZE:
+                self._views.popitem(last=False)
             return view
 
 

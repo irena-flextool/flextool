@@ -289,3 +289,37 @@ def test_time_range_on_a_period_time_map_keeps_every_period() -> None:
     # Steps t5, t6, t7 of each of the two periods.
     assert out["table"] == [["p1", "t5", 5.0], ["p1", "t6", 6.0], ["p1", "t7", 7.0],
                             ["p2", "t5", 5.0], ["p2", "t6", 6.0], ["p2", "t7", 7.0]]
+
+
+#: unit coal_plant's parameters with a value in some alternative of tests.json (its parameter_values rows).
+COAL_PLANT_STORED = [
+    "availability", "conversion_method", "cumulative_max_capacity", "discount_rate", "efficiency",
+    "efficiency_at_min_load", "existing", "fixed_cost", "invest_cost", "invest_max_period", "invest_max_total",
+    "invest_method", "lifetime", "min_downtime", "min_load", "min_uptime", "minimum_time_method",
+    "retire_max_total", "salvage_value", "startup_cost", "startup_method", "virtual_unitsize"]
+
+
+class _NoScan(dict):
+    """The values of a database that may be looked up but never scanned."""
+
+    def _scan(self, *args, **kwargs):
+        raise AssertionError("every stored value was scanned")
+
+    __iter__ = keys = items = values = _scan
+
+
+def test_entity_lookups_use_the_index_of_stored_parameters(ctx, monkeypatch) -> None:
+    """C3-n3.  get_entity and stored_parameters read an index built at load, never every stored value.  In
+    scenario coal (init, west, coal) only alternative coal sets values of unit coal_plant: efficiency 0.4 and
+    existing 500."""
+    from flextool.assistant.inputs import _db
+
+    db = _db.load(ctx.project_path / "input_sources" / "tests.sqlite")
+    db.view("coal")
+    db.values = _NoScan(db.values)
+    monkeypatch.setattr(_db.ScenarioView, "winners", _NoScan._scan)
+    out = _call(ctx, "get_entity", name=["coal_plant"], scenario="coal")
+    unit = {m["entity_class"]: m for m in out["matches"]}["unit"]
+    assert [(p["parameter"], p["value"], p["from_alternative"]) for p in unit["parameters"]] == [
+        ("efficiency", 0.4, "coal"), ("existing", 500.0, "coal")]
+    assert db.stored_parameters("unit", ("coal_plant",)) == COAL_PLANT_STORED

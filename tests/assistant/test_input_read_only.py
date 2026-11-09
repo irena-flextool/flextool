@@ -105,6 +105,55 @@ def test_uri_is_read_only_and_percent_encoded() -> None:
     assert _db.uri_of_posix("C:/Users/A B/x#1.sqlite") == "sqlite:///file:/C:/Users/A%20B/x%231.sqlite?mode=ro&uri=true"
 
 
+def test_a_unc_path_gives_an_empty_authority() -> None:
+    from pathlib import PureWindowsPath
+
+    # C3-m3: the server goes into the path part (file:////server/…), never the URI authority; the server and
+    # share names are percent-encoded as the rest.
+    unc = PureWindowsPath(r"\\server\my share\G #1\x.sqlite").as_posix()
+    assert _db.uri_of_posix(unc) == "sqlite:///file:////server/my%20share/G%20%231/x.sqlite?mode=ro&uri=true"
+    drive = PureWindowsPath(r"C:\a b\x.sqlite").as_posix()
+    assert _db.uri_of_posix(drive) == "sqlite:///file:/C:/a%20b/x.sqlite?mode=ro&uri=true"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX reads //tmp/x as /tmp/x; Windows reads it as a share")
+def test_a_double_slash_path_opens_read_only(tmp_path: Path, tests_db: Path) -> None:
+    copy = tmp_path / "copy.sqlite"
+    shutil.copy(tests_db, copy)
+    doubled = Path("/" + str(copy))                  # pathlib keeps the two leading slashes, as of a UNC path
+    assert doubled.as_posix().startswith("//")
+    assert _db.load_uncached(doubled).version is not None
+    uri = _db.db_uri(doubled)
+    conn = sqlite3.connect(uri[len("sqlite:///"):], uri=True)
+    try:
+        with pytest.raises(sqlite3.OperationalError, match="attempt to write a readonly database"):
+            conn.execute("CREATE TABLE written_by_the_test (x)")
+    finally:
+        conn.close()
+
+
+def test_scenario_views_are_kept_in_a_small_lru(ctx) -> None:
+    """C3-m8.  At most two views per database; a hit is refreshed; a comparison after an eviction is unchanged
+    (tests.json: commodity coal price 20 in alternative coal only; unit coal_chp existing coal 1200, coal_chp
+    1000)."""
+    db = _db.load(ctx.project_path / "input_sources" / "tests.sqlite")
+    coal = db.view("coal")
+    every = db.view("all")
+    assert db.view("coal") is coal                       # a hit, now the most recent
+    db.view("coal_chp")                                  # evicts "all", the least recent
+    assert len(db._views) == 2 and list(db._views) == ["coal", "coal_chp"]
+    assert db.view("coal") is coal
+    assert db.view("all") is not every
+    out = call_tool(ctx, "compare_inputs", {"scenario_a": "coal", "scenario_b": "coal_chp", "max_rows": 500})
+    assert out.ok, out.message
+    diffs = {(d["entity_class"], tuple(d["entity"]), d["parameter"]): d for d in json.loads(out.text)["differences"]}
+    assert (diffs[("commodity", ("coal",), "price")]["a"], diffs[("commodity", ("coal",), "price")]["b"]) == (
+        20.0, None)
+    assert (diffs[("unit", ("coal_chp",), "existing")]["a"], diffs[("unit", ("coal_chp",), "existing")]["b"]) == (
+        1200.0, 1000.0)
+    assert len(db._views) == 2
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="the drive-letter URI is opened on Windows only")
 def test_windows_drive_uri_opens(assistant_project: Path) -> None:
     path = assistant_project / "input_sources" / "tests.sqlite"

@@ -293,8 +293,10 @@ def get_entity(ctx: AssistantContext, args: dict) -> Fit:
     for e in matches:
         active, reason = view.active(e.entity_class, e.byname)
         parameters = []
-        for (cls, byname, param), item in sorted(view.winners().items(), key=lambda kv: kv[0][2]):
-            if cls != e.entity_class or byname != e.byname:
+        cls, byname = e.entity_class, e.byname
+        for param in db.parameters_of(cls, byname):
+            item = view.value(cls, byname, param)
+            if item is None:
                 continue
             unit, _ = _unit(view, cls, param, byname)
             any_convention = any_convention or (bool(unit) and is_convention_unit(unit))
