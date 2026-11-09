@@ -590,7 +590,11 @@ def _store_facts(key: str, facts: ModelFacts, now: float) -> None:
 
 
 #: The fields of a cache entry that the pacing keeps (:mod:`flextool.assistant.pacing`); a probe keeps them.
-_PACING_FIELDS = ("request_interval", "interval_found")
+_PACING_FIELDS = ("request_interval", "interval_found", "interval_rule")
+#: The rule a stored interval was learned under.  An interval without it was stored before review G9, possibly
+#: while the provider reported a limit of 0 (OR-2: 20 s learned for an inactive account), so it is not used; the
+#: next store replaces it.
+INTERVAL_RULE = 2
 
 
 def store_interval(key: str, seconds: float, *, now: float) -> None:
@@ -606,15 +610,16 @@ def store_interval(key: str, seconds: float, *, now: float) -> None:
             except _files.UnreadableFile:
                 data = {}
             entry = data.get(key) if isinstance(data.get(key), dict) else {}
-            data[key] = {**entry, "request_interval": round(float(seconds), 3), "interval_found": now}
+            data[key] = {**entry, "request_interval": round(float(seconds), 3), "interval_found": now,
+                         "interval_rule": INTERVAL_RULE}
             _files.write_json_atomic(path, data)
     except (OSError, _files.LockTimeout):
         return
 
 
 def stored_interval(key: str, *, max_age: float, now: float) -> float | None:
-    """The learned interval of *key* in the model-facts cache, ``None`` when there is none or it is older than
-    *max_age* seconds."""
+    """The learned interval of *key* in the model-facts cache, ``None`` when there is none, it is older than
+    *max_age* seconds, or it was stored without :data:`INTERVAL_RULE`."""
     from flextool.assistant import _files
 
     try:
@@ -622,7 +627,7 @@ def stored_interval(key: str, *, max_age: float, now: float) -> float | None:
     except (OSError, _files.UnreadableFile):
         return None
     entry = (data or {}).get(key)
-    if not isinstance(entry, dict):
+    if not isinstance(entry, dict) or entry.get("interval_rule") != INTERVAL_RULE:
         return None
     seconds, found = entry.get("request_interval"), entry.get("interval_found")
     if not isinstance(seconds, (int, float)) or isinstance(seconds, bool) or not math.isfinite(seconds) \

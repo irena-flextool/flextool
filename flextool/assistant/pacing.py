@@ -28,7 +28,14 @@ start, from these sources in this order of precedence:
 A wait named by the provider (``retry-after``) is honoured by the retry countdown (:mod:`flextool.assistant.
 llm_retry`) and does not change the interval.  :meth:`Pacer.wait` is atomic across threads: the request that passes
 marks its start, so two chats of the FlexTool window that share a provider and model (the gate's pacer,
-:data:`PROCESS_PACER`) also share one interval.  Standard library only.
+:data:`PROCESS_PACER`) also share one interval.  It returns the key's *epoch*: rate-limit answers to requests
+that started in one epoch raise the interval once (two chats refused for one burst double it once), and each raise
+starts a new epoch.
+
+The model-facts cache is read in :meth:`Pacer.prepare`, outside the pacer's lock (a key never prepared starts
+without a learned interval), and written on a raise and, while the interval shrinks, only when it reaches its
+floor or :data:`STORE_EVERY` seconds after the key's last write; the writes of one process go in order (review
+G9, C4-n5).  Standard library only.
 """
 from __future__ import annotations
 
@@ -56,6 +63,9 @@ LONGEST_HEADER_WAIT = 90.0
 STORED_MAX_AGE = 7 * 24 * 3600.0
 #: How often a waiting request looks again and pushes its countdown.
 POLL = 1.0
+#: While the learned interval shrinks, it is written to the cache at most this often (wall seconds), and when it
+#: reaches its floor.
+STORE_EVERY = 60.0
 
 #: The response headers FlexTool reads for pacing (and nothing else).  They are read only, never logged; they
 #: hold counts and times, not keys.
@@ -169,6 +179,8 @@ class _State:
     header_ready: float | None = None       # from the headers: no request before this (none left until the reset)
     header_until: float = -math.inf         # the headers count until this time (their reset)
     loaded: bool = False
+    stored_at: float | None = None          # wall time of the last cache write (or read) of the learned interval
+    epoch: int = 0                          # raised by every raise of the learned interval
 
 
 @dataclass
@@ -179,20 +191,13 @@ class Pacer:
     wall: Callable[[], float] = time.time
     persist: bool = False
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _store_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
     _states: dict[str, _State] = field(default_factory=dict, repr=False)
 
     def _state(self, key: str) -> _State:
         state = self._states.get(key)
         if state is None:
             state = self._states[key] = _State()
-        if not state.loaded:
-            state.loaded = True
-            if self.persist:
-                from flextool.assistant import probes
-
-                stored = probes.stored_interval(key, max_age=STORED_MAX_AGE, now=self.wall())
-                if stored is not None and state.learned is None:
-                    state.learned = min(CAP, max(START, stored))
         return state
 
     def reset(self) -> None:
@@ -201,9 +206,23 @@ class Pacer:
             self._states.clear()
 
     def prepare(self, key: str, seed: float | None) -> None:
-        """Set *key*'s seed (``None``: the free plan is off or the preset has none) and read its learned interval."""
+        """Set *key*'s seed (``None``: the free plan is off or the preset has none) and, the first time, read its
+        learned interval from the cache (outside the lock: the file may be slow or locked by another process)."""
+        stored: float | None = None
         with self._lock:
-            self._state(key).seed = seed
+            loaded = self._state(key).loaded
+        if self.persist and not loaded:
+            from flextool.assistant import probes
+
+            stored = probes.stored_interval(key, max_age=STORED_MAX_AGE, now=self.wall())
+        with self._lock:
+            state = self._state(key)
+            state.seed = seed
+            if not state.loaded:
+                state.loaded = True
+                if stored is not None and state.learned is None:
+                    state.learned = min(CAP, max(START, stored))
+                    state.stored_at = self.wall()
 
     def interval(self, key: str) -> float:
         """The spacing of request starts without header information: learned, else seed, else 0."""
@@ -226,10 +245,16 @@ class Pacer:
             spacing = max(state.header_spacing or 0.0, spacing)
         return now if state.last_start is None else state.last_start + spacing
 
-    def raised(self, key: str) -> float:
-        """The interval :meth:`rate_limited` would set for a rate limit without a named wait."""
+    def raised(self, key: str, epoch: int | None = None) -> float:
+        """The interval :meth:`rate_limited` would set for a rate limit without a named wait to a request that
+        started in *epoch* (an earlier epoch: the interval as it is, already raised for that burst)."""
         with self._lock:
-            return self._raised(self._state(key))
+            state = self._state(key)
+            return self._spacing(state) if self._stale(state, epoch) else self._raised(state)
+
+    @staticmethod
+    def _stale(state: _State, epoch: int | None) -> bool:
+        return epoch is not None and epoch != state.epoch
 
     @staticmethod
     def _raised(state: _State) -> float:
@@ -237,10 +262,10 @@ class Pacer:
         return START if not base else min(CAP, max(START, base * FACTOR))
 
     def wait(self, key: str, cancel: threading.Event, on_event: OnEvent | None = None, *, label: str = "",
-             sleep: Callable[[float], bool] | None = None) -> None:
-        """Wait until a request to *key* may start, then mark its start.  Pushes a countdown (:class:`RetryWait`,
-        attempt 0) for a wait of a second or more; *sleep(seconds)* returns True when cancelled (default
-        ``cancel.wait``)."""
+             sleep: Callable[[float], bool] | None = None) -> int:
+        """Wait until a request to *key* may start, then mark its start; returns the epoch it started in (for
+        :meth:`rate_limited`).  Pushes a countdown (:class:`RetryWait`, attempt 0) for a wait of a second or more;
+        *sleep(seconds)* returns True when cancelled (default ``cancel.wait``)."""
         pause = cancel.wait if sleep is None else sleep
         shown: int | None = None
         while True:
@@ -252,7 +277,7 @@ class Pacer:
                 left = self._not_before(state, now) - now
                 if left <= 0:
                     state.last_start = now
-                    return
+                    return state.epoch
             seconds = math.ceil(left)
             if on_event is not None and left >= 1.0 and seconds != shown:
                 shown = seconds
@@ -262,27 +287,30 @@ class Pacer:
                 raise cancelled()
 
     def succeeded(self, key: str, headers: Mapping[str, str] | None = None) -> None:
-        """An answered request: the learned interval shrinks; the answer's request-limit headers count."""
-        store: float | None = None
+        """An answered request: the learned interval shrinks; the answer's request-limit headers count.  The
+        shrunk interval is written when it reaches its floor or :data:`STORE_EVERY` after the last write."""
+        store = False
         with self._lock:
             state = self._state(key)
             floor = max(START, state.seed or 0.0)
             if state.learned is not None and state.learned > floor:
                 state.learned = max(floor, state.learned * DECAY)
-                store = state.learned
+                store = state.learned <= floor or state.stored_at is None \
+                    or self.wall() - state.stored_at >= STORE_EVERY
             self._observe(state, headers)
-        if store is not None:
-            self._store(key, store)
+        if store:
+            self._persist(key)
 
     def header_wait(self, headers: Mapping[str, str] | None) -> float | None:
         """The wait the headers of a rate-limit answer name (:func:`header_wait`); changes nothing."""
         return header_wait(headers, self.wall())
 
-    def rate_limited(self, key: str, retry_after: float | None, headers: Mapping[str, str] | None = None) -> float:
+    def rate_limited(self, key: str, retry_after: float | None, headers: Mapping[str, str] | None = None, *,
+                     epoch: int | None = None) -> float:
         """A rate-limit answer before any output: the wait before the retry.  With *retry_after* that wait; else
         the reset its *headers* name when none remain (the interval is left alone, C4-m1); else the interval is
-        raised and is the wait."""
-        store: float | None = None
+        raised and is the wait — once per *epoch* (:meth:`wait`'s): a request that started before the last raise
+        waits the interval as it is."""
         with self._lock:
             state = self._state(key)
             state.header_spacing = state.header_ready = None
@@ -294,9 +322,12 @@ class Pacer:
                 now = self.clock()
                 state.header_ready = state.header_until = now + reset
                 return reset
-            state.learned = store = self._raised(state)
-        self._store(key, store)
-        return store
+            if self._stale(state, epoch):
+                return self._spacing(state)
+            state.learned = raised = self._raised(state)
+            state.epoch += 1
+        self._persist(key)
+        return raised
 
     def _observe(self, state: _State, headers: Mapping[str, str] | None) -> None:
         if not headers:
@@ -313,11 +344,21 @@ class Pacer:
             # A reset too far ahead is not waited for: the request goes, and the provider's answer says why.
             state.header_spacing, state.header_ready = (reset / left if left > 0 else 0.0), None
 
-    def _store(self, key: str, seconds: float) -> None:
-        if self.persist:
-            from flextool.assistant import probes
+    def _persist(self, key: str) -> None:
+        """Write *key*'s learned interval as it is now.  One write at a time, the value read just before it, so
+        the newest value is the one on disk."""
+        if not self.persist:
+            return
+        from flextool.assistant import probes
 
-            probes.store_interval(key, seconds, now=self.wall())
+        with self._store_lock:
+            with self._lock:
+                state = self._states.get(key)
+                seconds = state.learned if state is not None else None
+                if seconds is None:
+                    return
+                state.stored_at = now = self.wall()
+            probes.store_interval(key, seconds, now=now)
 
 
 #: The pacing of this process: the terminal chat's and, through the window's gate, every chat tab's.

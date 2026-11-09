@@ -388,3 +388,26 @@ def test_system_proxy_exceptions_give_the_probe_and_the_request_one_route(exampl
     # A host the exceptions do not list goes through the system proxy.
     monkeypatch.setattr(urllib.request, "proxy_bypass", lambda host: False)
     assert net.proxy_for(example_org) == proxy.url
+
+
+# --- the stored pacing interval (review G9) ---------------------------------------------------------------------
+PACE_KEY = "mistral|https://api.mistral.ai/v1|example-model"
+
+
+def test_an_interval_without_the_rule_is_discarded(user_cache_in_tmp):
+    """OR-2: an interval stored before the fix may have been learned while Mistral reported a limit of 0 (the
+    owner's 20 s); it is not used (before: 20.0)."""
+    from flextool.assistant import _files
+
+    path = probes.cache_root() / probes.FACTS_CACHE
+    path.parent.mkdir(parents=True, exist_ok=True)
+    _files.write_json_atomic(path, {PACE_KEY: {"found": 1000.0, "request_interval": 20.0, "interval_found": 1000.0}})
+    assert probes.stored_interval(PACE_KEY, max_age=7 * 24 * 3600.0, now=1060.0) is None
+
+
+def test_stored_interval_round_trips_with_the_rule_through_a_probe(user_cache_in_tmp):
+    """Guard (critique G9 item 1): a probe's write of the facts keeps the rule beside the interval."""
+    probes.store_interval(PACE_KEY, 2.2, now=1000.0)
+    probes.remember_facts("mistral", "https://api.mistral.ai/v1", "example-model", probes.ModelFacts(tools=True),
+                          clock=lambda: 1010.0)
+    assert probes.stored_interval(PACE_KEY, max_age=7 * 24 * 3600.0, now=1060.0) == pytest.approx(2.2)

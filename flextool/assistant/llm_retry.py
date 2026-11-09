@@ -93,8 +93,9 @@ def call_with_retries(fn: Callable[[], Reply], policy: RetryPolicy, on_event: On
     while True:
         if cancel.is_set():
             raise cancelled()
+        epoch: int | None = None
         if pacing.here:
-            pacing.pacer.wait(pacing.key, cancel, on_event, label=pacing.label, sleep=sleep)
+            epoch = pacing.pacer.wait(pacing.key, cancel, on_event, label=pacing.label, sleep=sleep)
         try:
             reply = fn()
         except LLMError as err:
@@ -112,7 +113,8 @@ def call_with_retries(fn: Callable[[], Reply], policy: RetryPolicy, on_event: On
                     raise
                 headers = _headers_of(err, pacing)
                 from_headers = err.retry_after is None and pacing.pacer.header_wait(headers) is not None
-                wait = pacing.pacer.rate_limited(pacing.key, err.retry_after, headers)
+                wait = pacing.pacer.rate_limited(pacing.key, err.retry_after, headers,
+                                                 epoch=epoch if pacing.here else err.pace_epoch)
                 if retries >= rate_retries or rate_waited + wait > policy.longest_auto_wait:
                     # A wait named by the provider or its headers counts requests per minute: "rpm" says so.
                     if err.retry_after is None and not from_headers:

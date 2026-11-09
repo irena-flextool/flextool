@@ -156,18 +156,23 @@ def test_answered_requests_shrink_the_interval_to_its_floor():
 
 # --- what starts the pacing -------------------------------------------------------------------------------------
 def test_the_learned_interval_is_kept_for_the_next_session(user_cache_in_tmp):
+    """Updated (review G9): the cache is read when a session prepares the key."""
     key = "mistral|https://api.mistral.ai/v1|example-model"
     first = Pacer(clock=lambda: 0.0, wall=lambda: WALL, persist=True)
     first.rate_limited(key, None)
     first.rate_limited(key, None)
-    # A probe of the same model afterwards keeps the interval beside its facts.
+    # A probe of the same model afterwards keeps the interval (and the rule it was learned under) beside its facts.
     probes.remember_facts("mistral", "https://api.mistral.ai/v1", "example-model", probes.ModelFacts(tools=True),
                           clock=lambda: WALL)
     later = Pacer(clock=lambda: 0.0, wall=lambda: WALL + 3600, persist=True)
+    later.prepare(key, None)
     assert later.interval(key) == pytest.approx(2.2)
     stale = Pacer(clock=lambda: 0.0, wall=lambda: WALL + 8 * 24 * 3600, persist=True)
+    stale.prepare(key, None)
     assert stale.interval(key) == 0.0                                # older than a week: not used
-    assert Pacer(clock=lambda: 0.0).interval(key) == 0.0             # a pacer that does not persist
+    plain = Pacer(clock=lambda: 0.0)
+    plain.prepare(key, None)
+    assert plain.interval(key) == 0.0                                # a pacer that does not persist
 
 
 @pytest.mark.parametrize("free_plan", [True, False])
@@ -438,3 +443,141 @@ def test_mistral_headers_do_not_shorten_the_learned_interval():
     ask(clock, backend, pacer)                                       # answered: 4.4 × 0.8 = 3.52
     ask(clock, backend, pacer)
     assert server.times == pytest.approx([0.0, 3.52])
+
+
+# --- the cache off the request path, and one raise per burst (review G9: C4-n5, thread safety) ------------------
+def test_prepare_reads_outside_the_lock(monkeypatch):
+    """C4-n5: the cache is read in ``prepare``, never under the pacer's lock, and never by ``wait``/``interval``
+    (before: read under the lock by the first ``wait``/``interval`` of a key)."""
+    p = Pacer(clock=lambda: 0.0, wall=lambda: WALL, persist=True)
+    reads: list[bool] = []
+
+    def stored(key, *, max_age, now):
+        reads.append(p._lock.locked())
+        return 4.4
+
+    monkeypatch.setattr(probes, "stored_interval", stored)
+    p.wait("other", threading.Event())
+    assert p.interval("other") == 0.0 and reads == []                 # never prepared: starts unlearned
+    p.prepare("k", 1.1)
+    p.prepare("k", 1.1)                                               # read once
+    p.wait("k", threading.Event())
+    assert p.interval("k") == pytest.approx(4.4)
+    assert reads == [False]
+
+
+def test_decay_writes_once_at_the_floor(monkeypatch):
+    """C4-n5: from 20 s, 13 answered requests shrink the interval to 1.1 s (20 × 0.8^13 < 1.1); with the wall
+    clock still, only the step that reaches the floor writes (before: 13 writes)."""
+    p = Pacer(clock=lambda: 0.0, wall=lambda: WALL, persist=True)
+    writes: list[float] = []
+    monkeypatch.setattr(probes, "stored_interval", lambda key, *, max_age, now: 20.0)
+    monkeypatch.setattr(probes, "store_interval", lambda key, seconds, *, now: writes.append(seconds))
+    p.prepare("k", 1.1)
+    for _ in range(13):
+        p.succeeded("k")
+    assert p.interval("k") == pytest.approx(1.1)
+    assert writes == [pytest.approx(1.1)]
+
+
+def test_decay_writes_again_after_a_minute(monkeypatch):
+    """Guard: a shrinking interval is written again once a minute has passed since the last write."""
+    wall = [WALL]
+    p = Pacer(clock=lambda: 0.0, wall=lambda: wall[0], persist=True)
+    writes: list[float] = []
+    monkeypatch.setattr(probes, "stored_interval", lambda key, *, max_age, now: 20.0)
+    monkeypatch.setattr(probes, "store_interval", lambda key, seconds, *, now: writes.append(seconds))
+    p.prepare("k", 1.1)
+    p.succeeded("k")                                                  # 16 s, 0 s after the read: not written
+    wall[0] += pacing.STORE_EVERY
+    p.succeeded("k")                                                  # 12.8 s, a minute later: written
+    assert writes == [pytest.approx(12.8)]
+
+
+def test_one_burst_raises_once():
+    """Two requests that started in one epoch and were both refused double the interval once (before: twice,
+    2.2 → 4.4 s)."""
+    clock = FakeTime()
+    p = Pacer(clock=clock.now)
+    p.prepare("k", 1.1)
+    first, second = p.wait("k", threading.Event()), 0
+    assert first == 0
+    assert p.rate_limited("k", None, epoch=first) == pytest.approx(2.2)
+    assert p.rate_limited("k", None, epoch=second) == pytest.approx(2.2)  # the same burst: as it is
+    assert p.interval("k") == pytest.approx(2.2)
+    assert p.wait("k", threading.Event(), sleep=clock.sleep) == 1        # the next request: a new epoch
+    assert p.rate_limited("k", None, epoch=1) == pytest.approx(4.4)
+
+
+def test_two_threads_refused_for_one_burst_raise_once(monkeypatch):
+    """The same through ``call_with_retries`` on two threads (real clock, the start shortened to 0.05 s): both
+    requests pass the pacer before either is refused; the interval is raised once, then shrinks to its floor
+    (before: 0.05 → 0.1 s, then 0.064 s after the two answers)."""
+    monkeypatch.setattr(pacing, "START", 0.05)
+    shared = Pacer()
+    shared.prepare("k", None)
+    barrier = threading.Barrier(2, timeout=5)
+    done = Reply(Message("assistant", "done"), "end", None, Usage(1, 0, 0, 1))
+    errors: list[BaseException] = []
+
+    def chat() -> None:
+        calls = []
+
+        def fn():
+            calls.append(1)
+            if len(calls) == 1:
+                barrier.wait()
+                raise E.make_error(E.RateLimited, "rpm", E.ErrorContext(provider="Mistral"))
+            return done
+
+        try:
+            call_with_retries(fn, NO_JITTER, lambda e: None, threading.Event(), pacing=Pacing("k", shared))
+        except BaseException as exc:  # noqa: BLE001 — handed to the test
+            errors.append(exc)
+
+    threads = [threading.Thread(target=chat) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert errors == []
+    assert shared.interval("k") == pytest.approx(0.05)
+
+
+def test_two_chat_tabs_refused_for_one_burst_raise_once(monkeypatch, fake_backends):
+    """The same through the window's gate (two parallel slots): each chat's request carries the epoch its gate
+    wait returned, so the retries raise the interval once (before: twice)."""
+    from flextool.gui.assistant.gate import GatedBackend, ProviderGate
+
+    monkeypatch.setattr(pacing, "START", 0.05)
+    shared = Pacer()
+    gate = ProviderGate(parallel=2, pacer=shared)
+    origin = ("mistral", "https://api.mistral.ai/v1", "example-model")
+    key = pace_key(origin)
+    shared.prepare(key, None)
+    barrier = threading.Barrier(2, timeout=5)
+    done = Reply(Message("assistant", "done"), "end", None, Usage(1, 0, 0, 1))
+
+    def refused(_req):
+        barrier.wait()
+        return E.make_error(E.RateLimited, "rpm", E.ErrorContext(provider="Mistral"))
+
+    errors: list[BaseException] = []
+
+    def chat(backend) -> None:
+        cancel = threading.Event()
+        try:
+            call_with_retries(lambda: backend.stream(request([Message("user", "hi")]), lambda e: None, cancel),
+                              NO_JITTER, lambda e: None, cancel, pacing=Pacing(key, shared, here=False))
+        except BaseException as exc:  # noqa: BLE001 — handed to the test
+            errors.append(exc)
+
+    inner = [FakeBackend([refused, done], origin=origin) for _ in range(2)]
+    fake_backends.extend(inner)
+    threads = [threading.Thread(target=chat, args=(GatedBackend(b, gate, "mistral"),)) for b in inner]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(10)
+    assert errors == []
+    assert shared.interval(key) == pytest.approx(0.05)

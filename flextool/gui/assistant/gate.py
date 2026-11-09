@@ -176,10 +176,12 @@ class GatedBackend:
 
     def stream(self, req: Request, on_event: OnEvent, cancel: threading.Event) -> Reply:
         self.gate.acquire(self.key, self.limit, cancel, on_event, owner=self, provider_label=self.label)
+        epoch: int | None = None
         try:
-            self.gate.pacer.wait(self.pace_key, cancel, on_event, label=self.label)
+            epoch = self.gate.pacer.wait(self.pace_key, cancel, on_event, label=self.label)
             reply = self.inner.stream(req, on_event, cancel)
         except (RateLimited, ServerBusy) as err:
+            err.pace_epoch = epoch              # the retries raise the interval once per burst (review G9)
             if not err.streamed:
                 self._rejected_in_row += 1
                 self._hold_others(err)
@@ -198,7 +200,7 @@ class GatedBackend:
             # The reset the answer's own headers name when none remain (review G9, C4-m1), else the raised interval.
             wait = self.gate.pacer.header_wait(err.rate_headers)
             if wait is None:
-                wait = self.gate.pacer.raised(self.pace_key)
+                wait = self.gate.pacer.raised(self.pace_key, err.pace_epoch)
         if wait is None:
             wait = self.policy.backoff(self._rejected_in_row, self._rng)
         until = self.gate.clock() + max(0.0, wait)
