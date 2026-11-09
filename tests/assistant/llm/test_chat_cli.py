@@ -6,7 +6,8 @@ notice: ``-q`` without an acceptance exits 3 and sends nothing; ``--accept-data-
 endpoint, a proxy and a model that Ollama forwards to its cloud ask again; an endpoint on this computer asks
 nothing.  The welcome is shown once and never in ``-q``; in ``-q`` stdout holds only the answer; a chat whose
 input is not a terminal exits 2; Ctrl-C while a real backend waits for the first byte of a loopback server returns
-within a second.  One test runs the installed ``flextool-assistant`` command against a loopback server.
+within a second; Ctrl-C at a prompt inside a question or a command never escapes as a traceback and stops a
+running turn; Ctrl-D on a continuation line sends nothing.  One test runs the installed ``flextool-assistant`` command against a loopback server.
 """
 from __future__ import annotations
 
@@ -358,6 +359,105 @@ def test_ctrl_c_at_the_prompt_leaves(project, fake_backends):
     term = Terminal(Interrupted(""), io.StringIO(), io.StringIO())
     endpoint.mark_welcome_seen()
     assert chat_cli.main(remote(project), backend_factory=Models([], fake_backends), terminal=term) == 0
+
+
+class _CtrlC:
+    """In a :class:`Scripted` input: Ctrl-C at this prompt."""
+
+
+class Scripted(TtyInput):
+    """A terminal input of lines, with Ctrl-C (:class:`_CtrlC`) at chosen prompts; then the end of the input."""
+
+    def __init__(self, items: list[object]) -> None:
+        super().__init__("")
+        self.items = list(items)
+
+    def readline(self, *args: object) -> str:
+        if not self.items:
+            return ""
+        item = self.items.pop(0)
+        if item is _CtrlC:
+            raise KeyboardInterrupt
+        return f"{item}\n"
+
+
+def _scripted(items: list[object]) -> Terminal:
+    return Terminal(Scripted(items), io.StringIO(), io.StringIO())
+
+
+def test_ctrl_c_at_the_data_notice_sends_nothing_and_goes_on(project, fake_backends, echo_tool):
+    """C6-m5: Ctrl-C at the consent question is a no; the chat reads the next line."""
+    models = Models([say("never")], fake_backends)
+    term = _scripted(["What is it?", _CtrlC, "/quit"])
+    endpoint.mark_welcome_seen()
+    assert chat_cli.main(remote(project), backend_factory=models, terminal=term) == 0
+    assert "Nothing was sent to Custom endpoint." in term.stdout.getvalue()
+    assert models.requests == []
+    assert acks(endpoint.acks_path().parent) == []
+
+
+def test_ctrl_c_in_the_model_chooser_goes_on(project, fake_backends):
+    """C6-m5: Ctrl-C at /model's prompt stops the command, not the chat."""
+    term = _scripted(["/model", _CtrlC, "/quit"])
+    endpoint.mark_welcome_seen()
+    assert chat_cli.main(remote(project), backend_factory=Models([], fake_backends), terminal=term) == 0
+    assert "Stopped." in term.stdout.getvalue()
+
+
+def test_ctrl_c_in_the_startup_chooser_leaves_with_2(project, fake_backends):
+    term = _scripted([_CtrlC])
+    endpoint.mark_welcome_seen()
+    argv = ["--project-path", str(project), "--provider", "openai_compatible", "--base-url", REMOTE]
+    assert chat_cli.main(argv, backend_factory=Models([], fake_backends), terminal=term) == 2
+
+
+def test_ctrl_c_at_the_key_prompt_leaves_with_130(fake_keyring):
+    term = terminal()
+
+    def interrupted(_prompt: str) -> str | None:
+        raise KeyboardInterrupt
+
+    term.secret_reader = interrupted
+    assert chat_cli.main(["--set-key", "--provider", "mistral"], terminal=term) == 130
+
+
+def test_ctrl_c_before_the_wait_stops_the_turn(project, fake_backends, echo_tool, monkeypatch):
+    """C6-m5, critique 10: a Ctrl-C that escapes the question while the turn runs (before the wait took over)
+    stops the turn; the chat goes on and no turn is left running."""
+    from tests.assistant.llm.fake_backend import Block
+
+    block = Block(then=say("never shown"))
+    models = Models([block], fake_backends)
+
+    wait = chat_cli.Chat._wait
+
+    def interrupted_wait(self, done, stop):
+        """The probe's wait as it is; the turn's is interrupted before it starts."""
+        deadline = time.monotonic() + 10
+        while not done.is_set() and not block.started.is_set() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        if block.started.is_set() and not done.is_set():
+            raise KeyboardInterrupt
+        return wait(self, done, stop)
+
+    monkeypatch.setattr(chat_cli.Chat, "_wait", interrupted_wait)
+    term = _scripted(["What is it?", "/quit"])
+    endpoint.mark_welcome_seen()
+    assert chat_cli.main(remote(project, "--accept-data-notice"), backend_factory=models, terminal=term) == 0
+    assert "Stopped." in term.stdout.getvalue()
+    assert not block.release.is_set()
+    assert models.made[-1].aborted.is_set()
+    assert not [t for t in threading.enumerate() if t.name == "flextool-assistant-turn" and t.is_alive()]
+
+
+def test_ctrl_d_on_a_continuation_line_sends_nothing(project, fake_backends, echo_tool):
+    """C6-n2: the end of the input on ``...>`` leaves without asking the unfinished question."""
+    models = Models([say("never")], fake_backends)
+    term = terminal(["first \\"])
+    endpoint.mark_welcome_seen()
+    assert chat_cli.main(remote(project, "--accept-data-notice"), backend_factory=models, terminal=term) == 0
+    assert "The unfinished question was not sent." in term.stdout.getvalue()
+    assert models.requests == []
 
 
 def test_set_key_needs_a_terminal_and_stores_in_the_keyring(fake_keyring):

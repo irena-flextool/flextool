@@ -108,6 +108,7 @@ TEXTS: dict[str, str] = {
                          "provider, the address, the proxy or the notice changes."),
     "accept_not_kept": "The acceptance could not be kept ({reason}); it holds for this session only.",
     "stopped": "Stopped.",
+    "partial_not_sent": "The unfinished question was not sent.",
     "unknown_command": "There is no command {command}. Type /help for the commands.",
     "choose_provider": "Choose the AI service:",
     "choose_number": "Number (Enter to stop): ",
@@ -1003,7 +1004,10 @@ class Chat:
         while True:
             line = self.term.read_line("you> " if not lines else "...> ")
             if line is None:
-                return "\n".join(lines) if lines else None
+                if lines:                   # Ctrl-D on a continuation line: leave without sending the part
+                    self.term.say("")
+                    self.term.say(TEXTS["partial_not_sent"])
+                return None
             if line.endswith("\\"):
                 lines.append(line[:-1])
                 continue
@@ -1022,11 +1026,23 @@ class Chat:
                 return 0
             if not text.strip():
                 continue
-            if text.strip().startswith("/"):
-                if not self.command(text.strip()):
-                    return 0
-                continue
-            self.ask(text)
+            try:
+                if text.strip().startswith("/"):
+                    if not self.command(text.strip()):
+                        return 0
+                    continue
+                self.ask(text)
+            except KeyboardInterrupt:
+                # Ctrl-C at a prompt inside a question or a command (the data notice, a chooser, a key), or one
+                # that came before the wait took over: any running turn is stopped, and the chat goes on.
+                self._stop_turn()
+                self.term.say("")
+                self.term.say(TEXTS["stopped"])
+
+    def _stop_turn(self) -> None:
+        if self.worker is not None and not self.worker.join(0):
+            self.worker.stop()
+            self._finish_worker()
 
     def command(self, line: str) -> bool:
         """Run a ``/`` command; ``False`` to leave."""
@@ -1133,7 +1149,11 @@ def ask_consent(term: Terminal, args: argparse.Namespace, choice: Choice, route:
         return 3
     term.say(notice)
     term.say(endpoint.indicator_text(route))
-    answer = term.read_line(TEXTS["consent_question"].format(provider=provider))
+    try:
+        answer = term.read_line(TEXTS["consent_question"].format(provider=provider))
+    except KeyboardInterrupt:                       # Ctrl-C is a no
+        term.say("")
+        answer = None
     if answer is not None and answer.strip().lower() == "yes":
         _record_consent(term, args, accepted, key, provider, where, err=False)
         return None
@@ -1363,6 +1383,9 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser, *, backend_fa
     except SetupProblem as exc:
         term.say(str(exc), err=True)
         return exc.code
+    except KeyboardInterrupt:                       # Ctrl-C at a prompt of a small command or the setup
+        term.say("", err=True)
+        return 130
 
 
 def _chat(args: argparse.Namespace, parser: argparse.ArgumentParser, term: Terminal, factory: BackendFactory) -> int:
@@ -1404,7 +1427,11 @@ def _chat(args: argparse.Namespace, parser: argparse.ArgumentParser, term: Termi
         term.say(TEXTS["no_model"].format(provider=choice.preset.label, preset=choice.preset.id), err=True)
         return 2
     elif not choice.model:
-        choice.model = _choose_model(term, choice, factory)
+        try:
+            choice.model = _choose_model(term, choice, factory)
+        except KeyboardInterrupt:
+            term.say("")
+            return 2
         if not choice.model:
             return 2
     # The level's result caps until the probe has seen the model (Chat._caps sets them again then).
