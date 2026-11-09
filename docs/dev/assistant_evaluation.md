@@ -73,7 +73,8 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
   fresh conversation. The eight turns of S01 share one conversation, and S01 runs only at the model's automatic
   level.
 - **Local models (Ollama).** Make one variant of the model for each context size. For example, write a Modelfile
-  with `FROM gpt-oss:20b` and `PARAMETER num_ctx 32768`, then run `ollama create gpt-oss-20b-32k -f Modelfile`.
+  with `FROM <model>` (a model you have pulled) and `PARAMETER num_ctx 32768`, then run
+  `ollama create <model>-32k -f Modelfile`.
   Do the same for `-16k` and `-64k`. Then pass
   `--ollama-context basic=16384,standard=32768,advanced=65536`. Before the first cell of each setting, the runner
   loads that setting's variant and records its context and memory use. If the variant runs with a smaller context

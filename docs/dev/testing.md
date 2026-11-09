@@ -373,7 +373,7 @@ To record one service:
 2. Run, from the repository root:
    ```bash
    python tools/record_llm_replies.py --preset gemini --model <a model from flextool-assistant --list-models>
-   python tools/record_llm_replies.py --preset ollama --model qwen3:14b
+   python tools/record_llm_replies.py --preset ollama --model <a pulled model that supports tools>
    python tools/record_llm_replies.py --preset openai_compatible --base-url http://localhost:8000/v1 --model <name>
    ```
    The tool asks two fixed questions (one about input data, one about a result) through the real session, so the

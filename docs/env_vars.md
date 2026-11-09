@@ -61,7 +61,7 @@ key stored in the system keyring or in the key file, and the chat says where its
 | `MISTRAL_API_KEY` | key | The key of Mistral for the assistant chat. It wins over a key stored in the system keyring or the key file. |
 | `OPENROUTER_API_KEY` | key | The key of OpenRouter for the assistant chat. It wins over a key stored in the system keyring or the key file. |
 | `GEMINI_API_KEY` | key | The key of Google Gemini for the assistant chat. It wins over a key stored in the system keyring or the key file. |
-| `OLLAMA_CONTEXT_LENGTH` | tokens, e.g. `16384` | Ollama's own: the context length Ollama loads models with. The assistant needs about 16384; set it where the Ollama server starts and restart Ollama. |
+| `OLLAMA_CONTEXT_LENGTH` | tokens, e.g. `16384` | Ollama's own: the context length Ollama loads models with. The assistant needs at least 12288 (a smaller context sends no question); set it where the Ollama server starts and restart Ollama. |
 | `PYTHON_KEYRING_BACKEND` | backend class | keyring's own: which keyring backend stores the keys. FlexTool does not use a backend that stores keys unencrypted. |
 
 The provider libraries the assistant uses read more variables of their own: `OPENAI_BASE_URL`, `OPENAI_ORG_ID`,

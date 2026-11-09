@@ -263,14 +263,15 @@ removes a stored key. A key is never written to a project folder or a conversati
 
 **Ollama**: install Ollama and pull a model that supports tools (the model's page in the Ollama library lists
 "tools"). Ollama loads models with a short context by default, too short for the assistant's instructions and
-tools; start the Ollama server with `OLLAMA_CONTEXT_LENGTH=16384` (or more). Before the first question the chat
+tools; FlexTool needs a context of at least 12 288 tokens, so start the Ollama server with, for example,
+`OLLAMA_CONTEXT_LENGTH=16384` (or more). Before the first question the chat
 loads the model and checks the context it runs with, and stops with that advice when it is too small. When the
 model does not fit in the graphics card's memory, the chat says that it will be slower. FlexTool sends no limits of
 threads or graphics memory: the Ollama server uses the computer as it is set up to. Ollama cloud models (names
 ending in `:cloud` or `-cloud`, or models Ollama forwards to another host) run on Ollama's servers: the chat shows
 them as such and asks for the data notice.
 
-**LM Studio**: load a model in LM Studio with a context length of about 16 000 tokens or more and start its server.
+**LM Studio**: load a model in LM Studio with a context length of at least 12 288 tokens (for example 16 384) and start its server.
 When the model is loaded, the chat checks its context before the first question.
 
 Another server with the OpenAI request format: `--provider openai_compatible --base-url http://localhost:8000/v1`.
@@ -508,7 +509,7 @@ other together, in one step: one call with lists (for example several parameters
 `get_parameter`), or several calls in the same step. Each step is one request to the service, so this matters most
 with the free plan, which counts steps; a step may hold the level's tool calls with the free plan too. With a
 context size below 32 768 tokens a question part has only as many tool calls as their results fit the context
-(at 16 384 tokens: three, with results of up to 2 000 characters; six from about 22 000 tokens).
+(for example, at 16 384 tokens: three, with results of up to 2 000 characters; six from about 22 000 tokens).
 
 When a question reaches its limit of steps or tool calls and its level allows a continuation, the model writes a
 short note of what it found so far and the next step (the note is not shown), and the question goes on with a fresh
