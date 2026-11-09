@@ -1226,3 +1226,19 @@ Results: with the higher invest-solve demand, wind investment in p2025/p2030/p20
 M CUR discounted) disappears.  Discounted costs: investment 469.65 -> 573.61, commodity 352.92 -> 233.26 M CUR.
 Battery state, `costs__dt` and the unit cost tables follow.  At the parent commit the scenario still matches the
 previous golden.  Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>`.
+
+## 2026-11-09 — every `costs__dt.csv` and `costs_discounted.csv` (the new cost category `ramps`)
+
+**Context.** `ramp_cost` is now charged (C-3, schema v80) and reported in the new cost category *ramps*, which is
+always written, as *starts* is.  No golden scenario has a ramp cost, so the column is 0 everywhere and nothing else
+changes; the LP of every standard fixture is byte-identical (`tools/lp_snapshot.py`).
+
+- `costs__dt.csv` (60 scenarios): a column `ramps` of zeros after `starts`.
+- `costs_discounted.csv` (13 scenarios): a row `ramps,0.0` after `starts`.
+- The per-entity cost tables are unchanged (a unit has a *ramps* column only with a ramp cost).
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the 60 failing scenarios.  The
+regenerated values of every other column and row matched the previous goldens within the comparison tolerance
+(largest relative difference 1.2e-5, solver noise against the frozen references), so the previous files were kept
+and only the zero column / row was added; the other files the regeneration rewrote (header spelling, number
+formatting, `summary_solve.csv` timestamps) were put back.
