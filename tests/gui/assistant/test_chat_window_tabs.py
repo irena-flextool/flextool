@@ -541,3 +541,95 @@ def test_the_header_shows_the_model_of_the_selected_chat(windows, backends):
     pump(window, lambda: window.current_tab() is first)
     assert str(window.model_label.cget("text")) == "Custom endpoint · fake-model · basic"
     assert str(window.route_label.cget("text")).startswith("Endpoint on this computer (127.0.0.1:9)")
+
+
+# --- the Tk thread does no store or cache I/O (review G18, C7-n5 and critique M2) -------------------------------
+def test_a_window_opened_right_after_a_rename_restores_the_moved_chats(tk_root, tmp_path, backends, tools,
+                                                                       monkeypatch):
+    """The rename returns while the store is still held (the chats move on the project-hook thread); the new
+    name's window waits for the move before it reads its open chats, so they are restored and not overwritten.
+    Before, the rename waited on the Tk thread for the whole time the store was held."""
+    import threading
+
+    from flextool.assistant.store import Store
+    from flextool.gui import project_utils
+    from tests.gui.assistant.window_rig import Windows
+
+    monkeypatch.chdir(tmp_path)
+    alpha = tmp_path / "projects" / "Alpha"
+    alpha.mkdir(parents=True)
+    save_provider(LOCAL)
+    first = Windows(tk_root, alpha, backends)
+    second = Windows(tk_root, tmp_path / "projects" / "Beta", backends)
+    free = threading.Event()
+    real = Store.rename_project
+
+    def held(self, old, new):  # noqa: ANN001, ANN202
+        assert free.wait(10)
+        return real(self, old, new)
+
+    try:
+        window = first.open()
+        (chat,) = _many_chats(window, backends, 1)
+        chat_id = chat.conversation_id
+        workers = window.workers()
+        window.close(ask=False)
+        window._last_open_chats_write.join(3)
+        for worker in workers:
+            assert worker.exited.wait(5)
+        monkeypatch.setattr(Store, "rename_project", held)
+        timer = threading.Timer(1.5, free.set)
+        timer.start()
+        start = time.monotonic()
+        project_utils.rename_project("Alpha", "Beta")
+        assert time.monotonic() - start < 1.0
+        again = second.open()
+        pump(again, timeout=0.2)
+        assert [t.conversation_id for t in again.tabs if t.conversation_id] == []    # waiting for the move
+        pump(again, lambda: [t.conversation_id for t in again.tabs if t.has_messages] == [chat_id], timeout=8)
+        assert "answer 1" in again.tabs[0].transcript.contents()
+        timer.join()
+    finally:
+        free.set()
+        first.close_all()
+        second.close_all()
+
+
+def test_window_open_reads_no_cache_on_the_tk_thread(windows, monkeypatch):
+    """The facts FlexTool last found for the settings' model are a file read: made on a daemon thread, the
+    header's level follows when they come.  gpt-5's name gives advanced; a 32 768-token window allows standard
+    at most (``tiers.WINDOW_LEVELS``)."""
+    import os
+    import threading
+
+    from flextool.assistant import probes
+    from flextool.assistant.probes import ModelFacts
+    from flextool.assistant.settings import ProviderSettings
+
+    save_provider(ProviderSettings(preset="openai_compatible", base_url="http://127.0.0.1:9/v1", model="gpt-5"))
+    seen: list[tuple[str, threading.Thread]] = []
+    real_mkdir, real_makedirs = os.mkdir, os.makedirs
+
+    def facts(*_args, **_kwargs) -> ModelFacts:
+        seen.append(("cached_facts", threading.current_thread()))
+        return ModelFacts(context_window=32_768, source="test")
+
+    def mkdir(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        seen.append(("mkdir", threading.current_thread()))
+        return real_mkdir(*args, **kwargs)
+
+    def makedirs(*args, **kwargs):  # noqa: ANN002, ANN003, ANN202
+        seen.append(("makedirs", threading.current_thread()))
+        return real_makedirs(*args, **kwargs)
+
+    monkeypatch.setattr(probes, "cached_facts", facts)
+    monkeypatch.setattr(os, "mkdir", mkdir)
+    monkeypatch.setattr(os, "makedirs", makedirs)
+    window = windows.open()
+    pump(window, lambda: str(window.model_label.cget("text")) == "Custom endpoint · gpt-5 · standard", timeout=5)
+    window.settings_changed()
+    assert str(window.model_label.cget("text")) == "Custom endpoint · gpt-5 · advanced"    # from the name
+    pump(window, lambda: str(window.model_label.cget("text")) == "Custom endpoint · gpt-5 · standard", timeout=5)
+    main = threading.main_thread()
+    assert [kind for kind, thread in seen if thread is main] == []
+    assert len([kind for kind, _t in seen if kind == "cached_facts"]) >= 2

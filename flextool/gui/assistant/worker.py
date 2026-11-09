@@ -471,6 +471,11 @@ class AssistantWorker:
 
     # --- the conversation -------------------------------------------------------------------------------------
     def _store_open(self) -> Store:
+        """The store, after the project hooks queued so far (a project rename or deletion moving or deleting its
+        chats, review G18 M2): this chat's reads and writes come after them."""
+        from flextool.gui.project_utils import wait_project_hooks
+
+        wait_project_hooks()
         if self._store is None:
             from flextool.assistant.store import open_store
 
@@ -604,7 +609,7 @@ class AssistantWorker:
         that provider, address and model (:func:`~flextool.assistant.store.bound_origin`), whatever the settings
         name now; a chat without an answer takes the settings' ones.  The level is the user's level for the chat
         (the settings' one when they name the chat's model) and else automatic, resolved again for the model."""
-        from flextool.assistant import endpoint, keys
+        from flextool.assistant import endpoint, keys, probes
         from flextool.assistant.backends._common import error_context
         from flextool.assistant.llm_adapter import Connection
         from flextool.assistant.llm_errors import NoKey, make_error, message_for
@@ -650,7 +655,8 @@ class AssistantWorker:
             err = make_error(NoKey, "no_key", error_context(preset, conn))
             message = message_for(err, "gui")
             raise self._problem(job, f"{message} {note}" if note else message)
-        level, level_source = _level_before_probe(preset, base_url, model, override, route)
+        cached = probes.cached_facts(preset.id, base_url, model)
+        level, level_source = _level_before_probe(preset, base_url, model, override, route, cached)
         fingerprint = (preset.id, base_url, model, override, tuple(sorted(
             (k, repr(v)) for k, v in provider.knobs.items())), conn.key_source,
             hashlib.sha256((key or "").encode("utf-8")).hexdigest()[:16], proxy_for(base_url),
@@ -669,7 +675,7 @@ class AssistantWorker:
         probe's finding (an Ollama model forwarded to the cloud) stays shown.  ``None`` for a chat without an
         answer.  A bound chat never falls back to the settings' line: when its own provider or address cannot be
         described, the header says so (its next question is not sent then)."""
-        from flextool.assistant import endpoint, prompt, tiers
+        from flextool.assistant import endpoint, probes, prompt, tiers
         from flextool.assistant.net import check_base_url
         from flextool.assistant.providers import PRESETS, relaxed_knobs
         from flextool.assistant.settings import load_settings
@@ -702,9 +708,11 @@ class AssistantWorker:
                 tier = tiers.resolve_tier(preset, model, facts, override, route)
                 level, level_source = tier.chosen, _level_source(tier, override)
             except tiers.WindowTooSmall:
-                level, level_source = _level_before_probe(preset, base_url, model, override, route)
+                level, level_source = _level_before_probe(preset, base_url, model, override, route,
+                                                          probes.cached_facts(preset.id, base_url, model))
         else:
-            level, level_source = _level_before_probe(preset, base_url, model, override, route)
+            level, level_source = _level_before_probe(preset, base_url, model, override, route,
+                                                      probes.cached_facts(preset.id, base_url, model))
         names = {internal: name for name, internal in prompt.LEVELS.items()}
         knobs = settings.provider.knobs if settings is not None else {}
         return Prepared(route=route, indicator=endpoint.indicator_text(route), provider=route.label, model=model,
@@ -867,13 +875,13 @@ def _level_source(tier, stored: str | None) -> str:
     return "from the model name"
 
 
-def _level_before_probe(preset: Preset, base_url: str, model: str, stored: str | None,
-                        route: Route) -> tuple[str, str]:
-    """The level before the probe (P3 §3.3): from the facts FlexTool last found for the model, else the name; a
-    stored level above the allowed ones is lowered (the probe's facts decide again)."""
-    from flextool.assistant import probes, tiers
+def _level_before_probe(preset: Preset, base_url: str, model: str, stored: str | None, route: Route,
+                        facts: ModelFacts | None) -> tuple[str, str]:
+    """The level before the probe (P3 §3.3): from *facts*, the facts FlexTool last found for the model
+    (:func:`~flextool.assistant.probes.cached_facts`, a file read the caller makes off the Tk thread), else the
+    name; a stored level above the allowed ones is lowered (the probe's facts decide again).  No I/O."""
+    from flextool.assistant import tiers
 
-    facts = probes.cached_facts(preset.id, base_url, model)
     try:
         tier = tiers.resolve_tier(preset, model, facts, stored, route)
     except tiers.WindowTooSmall:

@@ -322,11 +322,12 @@ def test_the_gui_and_the_terminal_give_an_advanced_model_advanced_before_the_pro
     preset = PRESETS[preset_id]
     route = endpoint.route_for(preset, preset.base_url, model=model)
     choice = Choice(preset=preset, base_url=preset.base_url, model=model, tier=None, knobs={})
-    assert _level_before_probe(preset, preset.base_url, model, None, route)[0] == "large"
+    assert _level_before_probe(preset, preset.base_url, model, None, route, None)[0] == "large"
     assert choice.level == "large"
     # With the facts a probe found (kept in the user cache), and after the probe itself.
     probes.remember_facts(preset_id, preset.base_url, model, ModelFacts(context_window=1_000_000, source="x"))
-    assert _level_before_probe(preset, preset.base_url, model, None, route)[0] == "large"
+    cached = probes.cached_facts(preset_id, preset.base_url, model)
+    assert _level_before_probe(preset, preset.base_url, model, None, route, cached)[0] == "large"
     assert choice.level == "large"
     assert choice.tier_choice(ModelFacts(source="none")).chosen == "large"
     assert choice.tier_choice(ModelFacts(context_window=1_000_000)).chosen == "large"

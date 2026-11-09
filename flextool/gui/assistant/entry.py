@@ -12,7 +12,9 @@
   workers within a budget; a rename or deletion is refused while a worker can still write (a slow tool call).
 * **FlexTool close** (P2-O2, P2-O11): the windows are withdrawn, the answers stop without asking and what was
   received is saved (a running tool call is recorded as not run, so the chat can be resumed), the runtime file is
-  deleted and the expired conversations are purged — within a budget; what is left is a daemon thread.
+  deleted, a project rename or deletion still moving its chats finishes and the expired conversations are purged
+  — within a budget; what is left is a daemon thread.  The Tk thread's waits serve the Tcl calls other threads
+  hand it (:func:`pumped_wait`), never the user's events.
 * **Start** (§5.7): the purge and the clean-up of runtime files left by processes that are gone run on a daemon
   thread a few seconds after the window opens.
 """
@@ -424,7 +426,9 @@ class AssistantEntry:
         def run() -> None:
             from flextool.assistant import runtime_context
             from flextool.assistant.store import open_store
+            from flextool.gui.project_utils import wait_project_hooks
 
+            wait_project_hooks()
             try:
                 open_store(config_root).purge_expired()
             except Exception:  # noqa: BLE001 — the purge runs again at the next start and close
@@ -468,6 +472,11 @@ class AssistantEntry:
         self._wait(workers + self.live_workers(), deadline - reserve)
         if writer is not None:
             writer.stop(wait=max(0.0, deadline - time.monotonic()))
+        # A project rename or deletion still moving or deleting its chats gets the rest of the budget: a daemon
+        # killed in the middle of a move can leave a chat under both names (review G18 M2).
+        from flextool.gui.project_utils import project_hooks_idle
+
+        pumped_wait(self.main, project_hooks_idle, deadline)
         thread = self._purge()
         if thread is not None:
             thread.join(max(0.0, deadline - time.monotonic()))

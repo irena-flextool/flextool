@@ -56,6 +56,7 @@ def test_rename_moves_the_chats_with_resolved_paths(projects: Path, monkeypatch:
 
     monkeypatch.setattr(Store, "rename_project", spy)
     project_utils.rename_project("Alpha", "Beta")
+    assert project_utils.wait_project_hooks(5)
     assert calls == [((projects / "Alpha").resolve(), (projects / "Beta").resolve())]
     assert [i.id for i in store.list_conversations(projects / "Beta")] == [chat]
     assert store.list_conversations(projects / "Alpha") == []
@@ -68,6 +69,7 @@ def test_a_failing_store_still_renames(projects: Path, monkeypatch: pytest.Monke
     monkeypatch.setattr(Store, "rename_project", broken)
     assert project_utils.rename_project("Alpha", "Beta") == projects / "Beta"
     assert (projects / "Beta").is_dir() and not (projects / "Alpha").exists()
+    assert project_utils.wait_project_hooks(5)
 
 
 def test_deleting_a_project_deletes_its_chats_but_one_held_elsewhere(projects: Path) -> None:
@@ -85,14 +87,109 @@ def test_deleting_a_project_deletes_its_chats_but_one_held_elsewhere(projects: P
         child.unlink()
     project.rmdir()
     project_utils.notify_assistant_project_deleted(resolved)
+    assert project_utils.wait_project_hooks(5)
     remaining = [i.id for i in store.list_conversations(resolved)]
     assert remaining == [held]
     assert free not in remaining
     lock.unlink()
     project_utils.notify_assistant_project_deleted(resolved)
+    assert project_utils.wait_project_hooks(5)
     assert store.list_conversations(resolved) == []
     rows = json.loads((store.root / "projects.json").read_text(encoding="utf-8"))["projects"]
     assert key not in rows
+
+
+def test_a_locked_store_does_not_hold_the_rename(projects: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review G18, C7-n5: the rename runs on the Tk thread; moving the chats waits for the store's file locks
+    (another FlexTool window or terminal), so it runs on the project-hook thread.  Before, the rename itself waited
+    for the store."""
+    free = threading.Event()
+    calls: list[tuple[Path, Path]] = []
+
+    def held(self: Store, old: Path, new: Path) -> int:
+        assert free.wait(10)
+        calls.append((old, new))
+        return 0
+
+    monkeypatch.setattr(Store, "rename_project", held)
+    renamer = threading.Thread(target=project_utils.rename_project, args=("Alpha", "Beta"), daemon=True)
+    try:
+        renamer.start()
+        renamer.join(2)
+        assert not renamer.is_alive()               # the rename returned while the store was still held
+        assert (projects / "Beta").is_dir() and calls == []
+        assert not project_utils.project_hooks_idle()
+    finally:
+        free.set()
+    assert project_utils.wait_project_hooks(5)
+    assert calls == [((projects / "Alpha").resolve(), (projects / "Beta").resolve())]
+
+
+def test_hooks_run_in_order(projects: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[tuple] = []
+
+    class Recording:
+        def rename_project(self, old: Path, new: Path) -> int:
+            time.sleep(0.05)                        # a slow first move: the later hooks still wait for it
+            seen.append(("rename", old.name, new.name))
+            return 0
+
+        def forget_project(self, path: Path) -> int:
+            seen.append(("forget", path.name))
+            return 0
+
+    monkeypatch.setattr(project_utils, "_assistant_store", Recording)
+    project_utils.rename_project("Alpha", "Beta")
+    project_utils.rename_project("Beta", "Gamma")
+    (projects / "Gamma").rmdir()
+    project_utils.notify_assistant_project_deleted(projects / "Gamma")
+    assert project_utils.wait_project_hooks(5)
+    assert seen == [("rename", "Alpha", "Beta"), ("rename", "Beta", "Gamma"), ("forget", "Gamma")]
+
+
+def test_a_project_made_again_keeps_the_chat_saved_after_its_deletion(projects: Path,
+                                                                     monkeypatch: pytest.MonkeyPatch) -> None:
+    """Review G18 critique M2: a project deleted and made again under the same name shares the store's key.  The
+    queued deletion of the old chats runs before the new chat's worker touches the store, so it cannot delete the
+    new chat."""
+    from tests.assistant.gui_support.worker_rig import LOCAL, Rig, Tools, save_provider, say
+    from tests.assistant.llm.fake_backend import FakeBackend
+    from flextool.gui.assistant.worker import TurnFinished
+
+    Tools().install(monkeypatch)
+    project = (projects / "Alpha").resolve()
+    free = threading.Event()
+    real = Store.forget_project
+
+    def held(self: Store, path: Path) -> int:
+        assert free.wait(10)
+        return real(self, path)
+
+    monkeypatch.setattr(Store, "forget_project", held)
+    project_utils.notify_assistant_project_deleted(project)
+    save_provider(LOCAL)
+    rig = Rig(project, [FakeBackend([say("Kept.")])])
+    try:
+        rig.job()
+        # The deletion is held for a second.  Had the question gone ahead (before the fix), its chat would be
+        # closed now, so the deletion that follows would remove it (a chat still open is skipped).
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline and not any(isinstance(ev, TurnFinished) for _j, ev in rig.events):
+            rig.read()
+            time.sleep(0.01)
+        if any(isinstance(ev, TurnFinished) for _j, ev in rig.events):
+            rig.worker.shutdown()
+            assert rig.worker.exited.wait(5)
+        free.set()
+        rig.wait_for(TurnFinished, timeout=15)
+        conversation_id = rig.worker.conversation_id
+        rig.worker.shutdown()
+        assert rig.worker.exited.wait(5)
+        assert project_utils.wait_project_hooks(5)
+        assert [i.id for i in open_store().list_conversations(project)] == [conversation_id]
+    finally:
+        free.set()
+        rig.close()
 
 
 def _eventually(condition, timeout: float = 3.0) -> bool:  # noqa: ANN001

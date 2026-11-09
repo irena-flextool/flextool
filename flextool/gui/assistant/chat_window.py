@@ -76,9 +76,9 @@ TOOLTIP_DELAY_MS = 400
 Rect = tuple[int, int, int, int]
 
 
-def _model_line(settings: Any, route: Any) -> str:
+def _model_line(settings: Any, route: Any, facts: Any = None) -> str:
     """The header's model line for a new chat: the settings' provider, model and level (before a probe: from
-    the facts last found for the model, else its name)."""
+    *facts*, the facts last found for the model, else its name).  No I/O: the Tk thread calls it."""
     from flextool.assistant.net import check_base_url
     from flextool.assistant.providers import PRESETS
     from flextool.assistant.tiers import LEVEL_NAMES
@@ -92,11 +92,25 @@ def _model_line(settings: Any, route: Any) -> str:
         return strings.MODEL_LINE_NO_MODEL.format(provider=route.label)
     try:
         base_url = check_base_url(provider.base_url or preset.base_url or "")
-        level, _source = _level_before_probe(preset, base_url, provider.model, provider.tier, route)
+        level, _source = _level_before_probe(preset, base_url, provider.model, provider.tier, route, facts)
     except Exception:  # noqa: BLE001 — an address the settings refuse: the question says why
         logger.debug("The level of the settings' model could not be found", exc_info=True)
         return f"{route.label} · {provider.model}"
     return strings.MODEL_LINE.format(provider=route.label, model=provider.model, level=LEVEL_NAMES[level])
+
+
+def _store_thread(fn: Callable[[], None], name: str) -> threading.Thread:
+    """Run the store work *fn* on a short daemon thread, after the project hooks queued so far (a rename or a
+    deletion of a project moving or deleting its chats, :func:`~flextool.gui.project_utils.wait_project_hooks`):
+    a window opened right after a rename then reads and writes the chats under the new name (review G18 M2)."""
+
+    def run() -> None:
+        from flextool.gui.project_utils import wait_project_hooks
+
+        wait_project_hooks()
+        fn()
+
+    return run_in_thread(run, name)
 
 
 def menu_entry(number: int | None, name: str | None, created: str, first_words: str) -> str:
@@ -240,6 +254,7 @@ class ChatWindow(tk.Toplevel):
         self._calls: queue.SimpleQueue = queue.SimpleQueue()
         self._poll_id: str | None = None
         self._footer_request = 0            # only the latest ledger read is shown (replies come in any order)
+        self._model_request = 0             # only the latest read of the model's facts is shown
         self._rr = 0
         self._fit_scheduled = False
         self._open_chats_id: str | None = None
@@ -282,7 +297,35 @@ class ChatWindow(tk.Toplevel):
         self._settings_route = endpoint.route_from_settings(settings)
         preset = PRESETS.get(settings.provider.preset or "")
         self._settings_relaxed = tuple(relaxed_knobs(preset, settings.provider.knobs)) if preset else ()
-        self._settings_model = _model_line(settings, self._settings_route)
+        # From the model's name now; the facts FlexTool last found for it are a file read, made on a daemon thread
+        # (review G18, C7-n5), and the line follows when they come.
+        route = self._settings_route
+        self._settings_model = _model_line(settings, route)
+        self._model_request += 1
+        request = self._model_request
+
+        def read() -> None:
+            from flextool.assistant import probes
+            from flextool.assistant.net import check_base_url
+
+            provider = settings.provider
+            try:
+                base_url = check_base_url(provider.base_url or (preset.base_url if preset else "") or "")
+                facts = probes.cached_facts(preset.id, base_url, provider.model) if preset and provider.model \
+                    else None
+            except Exception:  # noqa: BLE001 — the line from the name stays
+                logger.debug("The facts of the settings' model could not be read", exc_info=True)
+                return
+            if facts is not None:
+                self.call_soon(self._set_settings_model, request, _model_line(settings, route, facts))
+
+        run_in_thread(read, "flextool-assistant-model-facts")
+
+    def _set_settings_model(self, request: int, line: str) -> None:
+        if request != self._model_request:
+            return                          # the settings changed again: a later read is due
+        self._settings_model = line
+        self._refresh_header()
 
     def settings_changed(self) -> None:
         """The settings were saved: every chat prepares again at its next question, the header follows."""
@@ -789,7 +832,7 @@ class ChatWindow(tk.Toplevel):
                 logger.exception("The chat's name could not be saved")
             self.call_soon(self.refresh_saved)
 
-        run_in_thread(write, "flextool-assistant-title")
+        _store_thread(write, "flextool-assistant-title")
 
     def rename(self, tab: ChatTab | None = None) -> None:
         tab = tab or self.current_tab()
@@ -875,7 +918,7 @@ class ChatWindow(tk.Toplevel):
                 return
             self.call_soon(self._set_saved, saved)
 
-        run_in_thread(read, "flextool-assistant-list")
+        _store_thread(read, "flextool-assistant-list")
 
     def _set_saved(self, saved: list[ConversationInfo]) -> None:
         self._saved = list(saved)
@@ -963,7 +1006,7 @@ class ChatWindow(tk.Toplevel):
                 outcome = "failed"
             self.call_soon(self._deleted, outcome)
 
-        run_in_thread(run, "flextool-assistant-delete")
+        _store_thread(run, "flextool-assistant-delete")
 
     def _deleted(self, outcome: str) -> None:
         if outcome == "locked_elsewhere":
@@ -989,7 +1032,7 @@ class ChatWindow(tk.Toplevel):
             self.call_soon(self._deleted, "locked_elsewhere" if locked else "deleted")
 
         ConfirmDialog(self, strings.DELETE_TITLE, strings.CONFIRM_DELETE_ALL, strings.DELETE_BUTTON,
-                      lambda ok: ok and run_in_thread(run, "flextool-assistant-delete"))
+                      lambda ok: ok and _store_thread(run, "flextool-assistant-delete"))
 
     # --- the tab menu -------------------------------------------------------------------------------------
     def _tab_at(self, x: int, y: int) -> ChatTab | None:
@@ -1087,7 +1130,7 @@ class ChatWindow(tk.Toplevel):
             except Exception:  # noqa: BLE001 — the chats are just not restored next time
                 logger.exception("The open chats could not be kept")
 
-        return run_in_thread(write, "flextool-assistant-open-chats")
+        return _store_thread(write, "flextool-assistant-open-chats")
 
     def _restore_open_chats(self) -> None:
         if not self.saving:
@@ -1103,7 +1146,7 @@ class ChatWindow(tk.Toplevel):
                 return
             self.call_soon(self._restore, data)
 
-        run_in_thread(read, "flextool-assistant-restore")
+        _store_thread(read, "flextool-assistant-restore")
 
     def _restore(self, data: dict) -> None:
         ids = [i for i in data.get("ids") or [] if self.tab_for(i) is None]
@@ -1251,7 +1294,7 @@ class ChatWindow(tk.Toplevel):
                 except Exception:  # noqa: BLE001 — the chats are just not restored next time
                     logger.exception("The open chats could not be kept")
             # Written before the workers are told to stop, so the list is the one the user saw.
-            self._last_open_chats_write = run_in_thread(write, "flextool-assistant-open-chats")
+            self._last_open_chats_write = _store_thread(write, "flextool-assistant-open-chats")
         self.consents.close_all()
         for tab in list(self.tabs):
             tab.shutdown()

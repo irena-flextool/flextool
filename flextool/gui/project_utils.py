@@ -3,6 +3,9 @@ from __future__ import annotations
 import importlib.util
 import logging
 import shutil
+import threading
+from collections import deque
+from collections.abc import Callable
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -102,8 +105,66 @@ def rename_project(old_name: str, new_name: str) -> Path:
 
     old_resolved = old_path.resolve()
     old_path.rename(new_path)
-    _assistant_project_renamed(old_resolved, new_path.resolve())
+    _run_project_hook(_assistant_project_renamed, old_resolved, new_path.resolve())
     return new_path
+
+
+# --- the AI assistant's project hooks ---------------------------------------------------------------------------
+# A project rename moves its saved chats and a deletion deletes them: store work under file locks, which may wait
+# for another FlexTool window or terminal (review G18, C7-n5).  The callers are on the Tk thread, so the hooks run
+# on one daemon thread, one after another in the order they were asked for (a rename A→B, then B→C, moves in that
+# order).  Everything that uses the store for a project waits for them first (:func:`wait_project_hooks`, on its
+# own thread), so a chat window opened right after a rename sees the moved chats, and a project deleted and made
+# again does not lose its new chats to the queued deletion.  The thread ends when the queue is empty.
+_HOOKS: deque[tuple[Callable[..., None], tuple]] = deque()
+_HOOKS_CHANGED = threading.Condition()
+_hook_thread: threading.Thread | None = None
+#: How long a store user waits for the queued project hooks before it goes on (logged).
+PROJECT_HOOKS_WAIT_S = 10.0
+
+
+def _run_project_hook(fn: Callable[..., None], *args: object) -> None:
+    global _hook_thread
+    with _HOOKS_CHANGED:
+        _HOOKS.append((fn, args))
+        if _hook_thread is None:
+            _hook_thread = threading.Thread(target=_run_hooks, name="flextool-project-hooks", daemon=True)
+            _hook_thread.start()
+
+
+def _run_hooks() -> None:
+    global _hook_thread
+    while True:
+        with _HOOKS_CHANGED:
+            if not _HOOKS:
+                _hook_thread = None
+                _HOOKS_CHANGED.notify_all()
+                return
+            fn, args = _HOOKS[0]
+        try:
+            fn(*args)
+        except Exception:  # noqa: BLE001 — each hook logs its own failure; the next ones still run
+            logger.exception("A project hook of the AI assistant failed")
+        finally:
+            with _HOOKS_CHANGED:
+                _HOOKS.popleft()            # removed only once done: a waiter sees it pending while it runs
+                _HOOKS_CHANGED.notify_all()
+
+
+def project_hooks_idle() -> bool:
+    """Whether no project hook is queued or running (no wait; the Tk thread may ask)."""
+    with _HOOKS_CHANGED:
+        return not _HOOKS
+
+
+def wait_project_hooks(timeout: float | None = PROJECT_HOOKS_WAIT_S) -> bool:
+    """Wait until the project hooks queued so far have run (never on the Tk thread); ``True`` when none is left.
+    On a timeout it logs and returns ``False``: the caller goes on."""
+    with _HOOKS_CHANGED:
+        done = _HOOKS_CHANGED.wait_for(lambda: not _HOOKS, timeout)
+    if not done:
+        logger.warning("The AI assistant's project hooks (a rename or deletion of a project) are still running")
+    return done
 
 
 def _assistant_store():  # noqa: ANN202 — a flextool.assistant.store.Store, or None
@@ -119,8 +180,8 @@ def _assistant_store():  # noqa: ANN202 — a flextool.assistant.store.Store, or
 
 
 def _assistant_project_renamed(old: Path, new: Path) -> None:
-    """Move the renamed project's saved AI assistant chats to its new name.  A failure is logged: the rename
-    stands, and the chats left under the old name expire there."""
+    """Move the renamed project's saved AI assistant chats to its new name (the hook thread).  A failure is
+    logged: the rename stands, and the chats left under the old name expire there."""
     try:
         store = _assistant_store()
         if store is not None:
@@ -132,11 +193,15 @@ def _assistant_project_renamed(old: Path, new: Path) -> None:
 
 def notify_assistant_project_deleted(project_path: Path) -> None:
     """A project folder was deleted: delete its saved AI assistant chats (those open in another FlexTool window
-    or terminal are skipped and expire).  A failure is logged; the deletion is never undone."""
+    or terminal are skipped and expire), on the hook thread.  A failure is logged; the deletion is never undone."""
+    _run_project_hook(_assistant_project_deleted, Path(project_path).absolute())
+
+
+def _assistant_project_deleted(project_path: Path) -> None:
     try:
         store = _assistant_store()
         if store is not None:
-            store.forget_project(Path(project_path).absolute())
+            store.forget_project(project_path)
     except Exception:  # noqa: BLE001
-        logger.warning("The AI assistant chats of deleted project %s were not deleted", Path(project_path).name,
+        logger.warning("The AI assistant chats of deleted project %s were not deleted", project_path.name,
                        exc_info=True)
