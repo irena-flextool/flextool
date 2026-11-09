@@ -262,6 +262,37 @@ def test_stop_wakes_a_stream_that_went_quiet_mid_answer(preset, how, no_proxy_va
         backend.close()
 
 
+@pytest.mark.parametrize("stage", ["first_byte", "mid_answer"])
+@pytest.mark.parametrize("preset", ["ollama", "anthropic"])
+def test_stop_wakes_a_read_where_a_shutdown_does_not(preset, stage, monkeypatch, no_proxy_variables):
+    """Where shutting a socket down does not wake a read blocked on it (macOS while an answer is quiet, Windows
+    before the first byte: CI of PR #362), the read still ends within a slice of ``net.READ_SLICE``.  Here no
+    shutdown reaches the socket at all, so only the read's own check can end it."""
+    monkeypatch.setattr(socket.socket, "shutdown", lambda self, how: None)
+    server = _Server(_silent if stage == "first_byte" else _one_chunk_then_quiet(preset))
+    url = f"http://127.0.0.1:{server.port}" + ("/v1" if preset == "ollama" else "")
+    backend = make_backend(PRESETS[preset], connection(preset, url=url, key=None if preset == "ollama" else KEY))
+    first = threading.Event()
+    thread, outcome = _run(lambda: backend.stream(
+        request(ask()), lambda e: first.set() if isinstance(e, TextDelta) else None, threading.Event()))
+    try:
+        assert server.accepted.wait(5)
+        if stage == "mid_answer":
+            assert server.ready.wait(5) and first.wait(5)
+        assert _blocked_in(thread, "read", "httpcore2"), "the worker should wait for the server"
+        stopped = time.monotonic()
+        backend.abort()
+        thread.join(5)
+        assert not thread.is_alive() and time.monotonic() - stopped < STOP_WITHIN
+        err = outcome[0]
+        assert isinstance(err, E.Cancelled), err
+        assert err.partial_text == ("pa" if stage == "mid_answer" else "")
+    finally:
+        server.close()
+        thread.join(5)
+        backend.close()
+
+
 # --- C4-m7: a Stop during the TLS handshake -----------------------------------------------------------------------
 @needs_proc_fd
 @pytest.mark.parametrize("route", ["direct", "proxy_tunnel", "proxy_connect"])

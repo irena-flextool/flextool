@@ -25,7 +25,9 @@ FlexTool, not the library, decides what a request carries and where it goes:
 * **Cancel**: :meth:`HttpSession.abort_connections` shuts the open sockets down, which wakes a read that is
   blocked on one (closing a socket from another thread does not), whether it waits for the first byte or for
   the next part of an answer that went quiet.  Every close shuts the socket down first, so closing the response
-  from another thread wakes the reader too.  A TLS handshake is woken through a duplicate of the socket's
+  from another thread wakes the reader too.  Not every system wakes a blocked read on a shutdown (macOS while an
+  answer is quiet, Windows before the first byte), so a read also waits in slices of :data:`READ_SLICE` seconds
+  and ends at the first slice after its stream was shut.  A TLS handshake is woken through a duplicate of the socket's
   descriptor (the library's wrapping takes the descriptor away from the plain socket before the handshake
   starts).  After a Stop, a connection that opens later (its connect was under way) is shut as it opens, until
   the next request starts: each backend method that sends a request calls :meth:`HttpSession.begin_request`.
@@ -37,6 +39,7 @@ import ipaddress
 import socket
 import ssl
 import threading
+import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
@@ -71,6 +74,9 @@ CONNECT_TIMEOUT = 10.0
 #: took 88 s to the first streamed byte and over 150 s for a plain request).
 READ_TIMEOUT_REMOTE = 300.0
 READ_TIMEOUT_LOCAL = 900.0
+#: A read waits for data in slices this long, so a Stop ends it within one slice wherever a socket shutdown does
+#: not wake the read itself; the read's own timeout still counts from its start.
+READ_SLICE = 0.1
 
 BASE_URL_CREDENTIALS = "Put the key in the key setting, not in the address; FlexTool stores and shows the address."
 BASE_URL_SCHEME = "The address must start with http:// or https://, for example http://localhost:8000/v1."
@@ -232,11 +238,13 @@ class _ShutOnce:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._closed = False
+        self.was_shut = False           # set by the first shutdown or close: a read in progress ends
 
     def _socket(self) -> Any:
         raise NotImplementedError
 
     def _shut(self) -> None:
+        self.was_shut = True
         # A socket already shut, or one that is not connected, has nothing left to shut.
         with contextlib.suppress(Exception):
             sock = self._socket()
@@ -321,7 +329,21 @@ def _tracked_backend(registry: _SocketRegistry):
             return self._inner.get_extra_info("socket")
 
         def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
-            return self._inner.read(max_bytes, timeout)
+            # In slices: a shutdown wakes a blocked read on Linux, but not on every system (module text).
+            deadline = None if timeout is None else time.monotonic() + timeout
+            while True:
+                if self.was_shut:
+                    raise httpcore2.ReadError("the connection was shut down")
+                wait = READ_SLICE
+                if deadline is not None:
+                    left = deadline - time.monotonic()
+                    if left <= 0:           # never a zero timeout: that makes the socket non-blocking
+                        raise httpcore2.ReadTimeout("timed out")
+                    wait = min(wait, left)
+                try:
+                    return self._inner.read(max_bytes, wait)
+                except httpcore2.ReadTimeout:
+                    continue
 
         def write(self, buffer: bytes, timeout: float | None = None) -> None:
             self._inner.write(buffer, timeout)
