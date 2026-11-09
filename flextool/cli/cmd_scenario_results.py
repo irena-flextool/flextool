@@ -40,7 +40,7 @@ def main() -> None:
                         help='Settings database URL (fills in unset params; CLI overrides DB)')
     parser.add_argument(
         '--output-config-path', default=None,
-        help='Path to output configuration YAML file (default: templates/default_plots.yaml — '
+        help='Path to output configuration YAML file (default: the bundled flextool/schemas/default_plots.yaml — '
              'comparison mode reads scenario_rule + comparison_overrides from each leaf)'
     )
     parser.add_argument('--active-configs', type=str, default=None, nargs="+",

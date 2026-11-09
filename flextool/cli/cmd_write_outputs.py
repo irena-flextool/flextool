@@ -18,7 +18,7 @@ def main():
         parser.add_argument('--settings-db-url', type=str, default=None,
                             help='URL of the settings database (fills in unset params)')
         parser.add_argument('--config-path', type=str, default=None,
-                            help='Path to output configuration YAML file (default: templates/default_plots.yaml)')
+                            help='Path to output configuration YAML file (default: the bundled flextool/schemas/default_plots.yaml)')
         parser.add_argument('--active-configs', type=str, nargs='+', default=None,
                             help='Which plot configurations from config_path yaml to use (default: default)')
         parser.add_argument('--output-location', type=str, default=None,

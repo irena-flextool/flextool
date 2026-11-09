@@ -617,7 +617,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help='Target SpineDB URL for the spinedb write-method (default: <output-dir>/results.sqlite)')
     parser.add_argument('--output-config', metavar='PATH',
                         default=None,
-                        help='Path to output configuration file (default: templates/default_plots.yaml)')
+                        help='Path to output configuration file (default: the bundled flextool/schemas/default_plots.yaml)')
     parser.add_argument('--active-configs', type=str, nargs='+', default=None,
                         help='Active output configurations to use (default: default)')
     parser.add_argument('--plot-rows', type=int, nargs=2, default=None, metavar=('FIRST', 'LAST'),
