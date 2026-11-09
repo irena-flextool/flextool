@@ -80,7 +80,7 @@ is written as: `constraint_invested_capacity_coeff = { c: 1.0 }` and `constraint
 
 To tie the capacity in service in the period (the capacity that limits the flows, for example for a share of the fleet or a ratio between technologies), use `constraint_capacity_coeff`; for the capacity retired in the period, `constraint_retired_capacity_coeff`; for the capacity in construction (decided but not yet operating, only with a construction lead time), `constraint_in_construction_capacity_coeff`. Capacity in service = pre-built + invested − retired, with or without a construction lead time; capacity in construction is not in service.
 
-Finally, FlexTool can mix several types of constraint coefficients: `constraint_invested_capacity_coeff`, `constraint_retired_capacity_coeff`, `constraint_cumulative_pre_built_capacity_coeff`, `constraint_capacity_coeff`, `constraint_state_coeff` and `constraint_flow_coeff` allowing the user to create custom constraints between any types of entities in the model for the main variables in the model (*flow*, *state* as well as *invest*). So, the equation above is in full form:
+Finally, FlexTool can mix several types of constraint coefficients: `constraint_invested_capacity_coeff`, `constraint_retired_capacity_coeff`, `constraint_cumulative_pre_built_capacity_coeff`, `constraint_capacity_coeff`, `constraint_state_coeff`, `constraint_online_coeff` and `constraint_flow_coeff` allowing the user to create custom constraints between any types of entities in the model for the main variables in the model (*flow*, *state*, *online* as well as *invest*). So, the equation above is in full form:
 
 ```
   + sum_i [constraint_invested_capacity_coeff(i) * v_invest]
@@ -94,6 +94,9 @@ Finally, FlexTool can mix several types of constraint coefficients: `constraint_
            where j contains [unit--node, connection--node] belonging to the constraint
   + sum_k [constraint_state_coeff(k) * capacity]
            where k contains [node] belonging to the constraint
+  + sum_m [constraint_online_coeff(m) * v_online]
+           where m contains [unit, connection] with online variables belonging to the constraint,
+           and v_online is the number of units online (of virtual_unitsize) in the time step
   =
   constant (a constant, or a period map giving each period its own value)
 

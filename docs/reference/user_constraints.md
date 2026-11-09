@@ -1,15 +1,17 @@
 # User constraints
 
-A user constraint is a linear row that you write yourself. It ties flows, storage states and capacities of nodes, units and connections together, for example a fixed ratio between two capacities or a minimum share of a flow.
+A user constraint is a linear row that you write yourself. It ties flows, storage states, units online and capacities of nodes, units and connections together, for example a fixed ratio between two capacities or a minimum share of a flow.
 
 ## The `constraint` entity
 
-- `constraint`: a user-defined linear constraint between flow, state, and capacity variables on nodes, units and connections. The left-hand side is assembled by tagging the relevant entities with the matching coefficient parameter (`constraint_flow_coeff` on `unit__inputNode` / `unit__outputNode` / `connection__node`, `constraint_state_coeff` on `node`, `constraint_invested_capacity_coeff` / `constraint_in_construction_capacity_coeff` / `constraint_cumulative_pre_built_capacity_coeff` / `constraint_capacity_coeff` / `constraint_retired_capacity_coeff` on `node` / `unit` / `connection`); the constraint entity itself carries:
+- `constraint`: a user-defined linear constraint between flow, state, and capacity variables on nodes, units and connections. The left-hand side is assembled by tagging the relevant entities with the matching coefficient parameter (`constraint_flow_coeff` on `unit__inputNode` / `unit__outputNode` / `connection__node`, `constraint_state_coeff` on `node`, `constraint_online_coeff` on `unit` / `connection`, `constraint_invested_capacity_coeff` / `constraint_in_construction_capacity_coeff` / `constraint_cumulative_pre_built_capacity_coeff` / `constraint_capacity_coeff` / `constraint_retired_capacity_coeff` on `node` / `unit` / `connection`); the constraint entity itself carries:
 
     - `sense` - The sense of the constraint: `greater_than`, `less_than`, or `equal`.
     - `constant` - Right-hand side of the user constraint (default 0). A period map gives each period its own value; it must cover every period of the solve (a missing period is an error). Constant or period.
 
   Capacity terms, all in MW (MWh for storage nodes) and multiplied by the coefficient: *invested* (`constraint_invested_capacity_coeff`) is the capacity that comes online in the period, *in construction* (`constraint_in_construction_capacity_coeff`) the capacity decided but not yet operating, *retired* (`constraint_retired_capacity_coeff`) what is retired in it, *pre-built* (`constraint_cumulative_pre_built_capacity_coeff`) the capacity in service at the start of the period and *capacity* (`constraint_capacity_coeff`) the capacity in service in the period — the same capacity that limits the flows. Capacity = pre-built + invested − retired holds with or without a construction lead time; capacity in construction is not in *capacity*.
+
+  *Online* (`constraint_online_coeff`) is the number of units online in each time step (of `virtual_unitsize`, else of the whole unit).
 
   A constraint with only capacity terms is written once per period, otherwise once per time step (rows `process_constraint_{equal,less_than,greater_than}_period` with dimensions (constraint, period) in the `output_horizon` raw dump, instead of (constraint, period, time)). For plain sums of capacity with a period trajectory, the group parameters (`invest_max_period`, `retire_max_period`, `cumulative_max_capacity` and their minimum counterparts) are simpler: user constraints are for weighted, cross-class and ratio forms.
 
@@ -23,6 +25,7 @@ A user constraint is a linear row that you write yourself. It ties flows, storag
 |---|---|---|---|
 | `constraint_flow_coeff` | `unit__inputNode`, `unit__outputNode`, `connection__node` | The flow between the unit or connection and the node, in each time step. | MW |
 | `constraint_state_coeff` | `node` (storage) | The storage state of the node, in each time step. | MWh |
+| `constraint_online_coeff` | `unit`, `connection` (with online variables) | The number of units online, in each time step. One unit is `virtual_unitsize`; without it, the largest `existing` capacity, else 1000 MW. Whole numbers with *binary* startup, continuous with *linear*. | count of units |
 | `constraint_invested_capacity_coeff` | `node`, `unit`, `connection` | The capacity that comes online in the period. Without a construction lead time, this is the capacity invested in that period. | MW (MWh for a storage node) |
 | `constraint_in_construction_capacity_coeff` | `node`, `unit`, `connection` | The capacity in construction in the period: decided, but not yet online. It is zero without a construction lead time. | MW (MWh for a storage node) |
 | `constraint_retired_capacity_coeff` | `node`, `unit`, `connection` | The capacity retired in the period. | MW (MWh for a storage node) |
@@ -35,7 +38,7 @@ The full descriptions are with each entity: [nodes](nodes.md#data-for-nodes), [u
 
 **Capacity terms only.** A constraint that has only capacity terms is the same in every time step of a period. The model writes it once per period, and a period map in `constant` gives each period its own right-hand side.
 
-**Flow or state terms.** A constraint with at least one `constraint_flow_coeff` or `constraint_state_coeff` is written once per time step. Any capacity terms in it take the value of their period in each of those time steps.
+**Flow, state or online terms.** A constraint with at least one `constraint_flow_coeff`, `constraint_state_coeff` or `constraint_online_coeff` is written once per time step. Any capacity terms in it take the value of their period in each of those time steps.
 
 ## Example: storage size tied to turbine capacity
 
@@ -62,3 +65,14 @@ The full descriptions are with each entity: [nodes](nodes.md#data-for-nodes), [u
 - `unit__outputNode` (*coal_plant* | *elec*): `constraint_flow_coeff` Map (*wind_share* | -0.4)
 
 **The row.** The row has flow terms, so it is written once per time step: the share must hold in each time step, not only on average. Every unit that feeds the node has to be in the constraint, or its flow is left out of the total.
+
+## Example: two of three units online
+
+**Goal.** In every time step, at least two of the three units *g1*, *g2*, *g3* are online (for example, to keep spinning capacity), whatever the demand.
+
+**Data.**
+
+- `constraint` *two_online*: `sense` *greater_than*, `constant` 2
+- `unit` *g1*, *g2*, *g3*: `startup_method` *binary*, `constraint_online_coeff` Map (*two_online* | 1)
+
+**The row.** In each time step: online(g1) + online(g2) + online(g3) ≥ 2. The row counts units, so it is the same for one entity of three units: `existing` 3, `virtual_unitsize` 100 and `constraint_online_coeff` Map (*two_online* | 1). With *linear* startup, the count is continuous: ≥ 2 then means at least two units' worth of online capacity, with the minimum load applying to it, not two whole machines. A coefficient on a unit without online variables (`startup_method` unset and no `minimum_time_method`) stops the run with an error naming the unit and the constraint.

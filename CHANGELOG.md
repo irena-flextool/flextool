@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **New: units online in user constraints (`constraint_online_coeff`, database version 79).** A map on `unit` and
+  `connection` (index: constraint name) puts the number of units online in each time step on the left side of a
+  user `constraint`, for example "at least two of three units online": `constraint_online_coeff` 1 on each unit and
+  `constant` 2 with `sense` *greater_than*. One unit is `virtual_unitsize` (else the largest `existing` capacity,
+  else 1000 MW), so the same row works for three entities or for one entity of three units. The count is a whole
+  number with *binary* startup and continuous with *linear*; for MW online use the unit size as the coefficient. A
+  constraint with an online term is written once per time step. The unit or connection needs online variables
+  (`startup_method` *linear* or *binary*, or a `minimum_time_method`); a coefficient on one without them stops the
+  run with an error naming it and the constraint. Databases are migrated automatically; nothing else changes.
 - **Fixed: a limit given as a period map no longer drops the periods it leaves out without a word.** A period
   the solve uses (look-ahead periods included) but a period map does not cover is now an error naming the entity,
   the parameter and the missing periods. Before, such a period got a CO2 cap of 0 (`co2_max_period`), no
