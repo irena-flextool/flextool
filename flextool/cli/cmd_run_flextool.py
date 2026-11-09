@@ -1014,7 +1014,7 @@ def main():
         raise
     except KeyboardInterrupt:
         # An unhandled KeyboardInterrupt ends the interpreter by SIGINT (Windows: STATUS_CONTROL_C_EXIT).
-        state, exit_code = "interrupted", (-signal.SIGINT if os.name == "posix" else -1073741510)
+        state, exit_code = "interrupted", (-signal.SIGINT if os.name == "posix" else run_record.WINDOWS_CTRL_C_EXIT_SIGNED)
         error = {"type": "KeyboardInterrupt", "message": "interrupted by Ctrl-C"}
         raise
     except SystemExit as exc:
@@ -1052,7 +1052,7 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
         ("Work dir", str(work_folder)),
         ("DB URL", str(input_db_url)),
         ("Scenario", scenario_name),
-        ("Output", str(args.output_location or output_path)),
+        ("Output", str(output_location)),
         ("Options", ", ".join(run_options.summary_lines()) or "defaults"),
         ("Threads", header_text(run_options)),
     ]
@@ -1073,17 +1073,21 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
         )
     except Exception as e:
         # FlexToolUserError signals a user-visible configuration problem
-        # (unknown solver, missing license, model-level solver error).
-        # The message is already human-readable; logging the traceback
-        # on top is just noise.  Other exceptions get the full
-        # traceback because they're (probably) bugs in flextool.
+        # (unknown solver, missing license, model-level solver error), and
+        # FlexToolConfigError one in the input data (no scenario, an empty
+        # scenario, an old database version).  The message is already
+        # human-readable; logging the traceback on top is just noise.
+        # Other exceptions get the full traceback because they're
+        # (probably) bugs in flextool.
         try:
+            from flextool.engine.input._solve_state import FlexToolConfigError
             from flextool.engine.solve._solver_dispatch import (
                 FlexToolUserError,
             )
+            user_errors: tuple[type[BaseException], ...] = (FlexToolConfigError, FlexToolUserError)
         except Exception:  # noqa: BLE001
-            FlexToolUserError = ()  # type: ignore[assignment]
-        if isinstance(e, FlexToolUserError):
+            user_errors = ()
+        if isinstance(e, user_errors):
             logging.error(str(e))
         else:
             logging.error(

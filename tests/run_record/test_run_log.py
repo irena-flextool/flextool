@@ -59,6 +59,76 @@ def test_compaction_keeps_head_and_tail_and_counts_every_dropped_byte(tmp_path):
     assert int(omission.group(1)) == dropped
 
 
+def test_a_tail_setting_past_the_largest_value_is_clamped_to_it():
+    env = _owner.RUN_LOG_MAX_BYTES_ENV
+    assert _owner.LOG_TAIL_BYTES_MAX == 268435456  # 256 MiB
+    assert _owner.log_tail_bytes({env: "268435456"}) == 268435456
+    assert _owner.log_tail_bytes({env: "268435457"}) == 268435456
+    assert _owner.log_tail_bytes({env: str(10**15)}) == 268435456
+
+
+class _ReadSizes:
+    """A log file that remembers the size of every read."""
+
+    def __init__(self, fh):
+        self._fh = fh
+        self.sizes: list[int] = []
+
+    def read(self, n=-1):
+        self.sizes.append(n)
+        return self._fh.read(n)
+
+    def __getattr__(self, name):
+        return getattr(self._fh, name)
+
+
+def _write_numbered_lines(path: Path, *, chunk: int, monkeypatch) -> tuple[bytes, list[int]]:
+    monkeypatch.setattr(_owner, "_COMPACT_CHUNK_BYTES", chunk)
+    write_log_header(path, "r1", "2026-11-06T10:00:00+02:00")
+    writer = RunLogWriter(path, head=HEAD, tail=TAIL)
+    proxy = _ReadSizes(writer._fh)
+    writer._fh = proxy
+    for i in range(400):
+        writer.write_line(f"line {i:05d} ...ä...".ljust(18, "."))
+    writer.close()
+    return path.read_bytes(), proxy.sizes
+
+
+def test_compaction_moves_the_tail_in_pieces(tmp_path, monkeypatch):
+    # The same 400 lines with 7-byte and 1 MiB pieces give the same file; no read is unbounded or larger than
+    # the head (the first compaction reads the head, HEAD bytes) or the piece.
+    small, small_reads = _write_numbered_lines(tmp_path / "a.log", chunk=7, monkeypatch=monkeypatch)
+    large, large_reads = _write_numbered_lines(tmp_path / "b.log", chunk=1024 * 1024, monkeypatch=monkeypatch)
+    assert small == large
+    assert len(_OMISSION.findall(small)) == 1
+    assert small_reads and all(0 <= n <= HEAD for n in small_reads)
+    assert max(n for n in small_reads if n != HEAD) <= 7
+    assert all(n >= 0 for n in large_reads)
+
+
+def test_a_tail_shorter_than_the_omission_line_is_compacted_in_memory(tmp_path):
+    # Header "# H\n" (4 bytes), head 4, tail 8: the 4th 5-byte line takes the size to 24 > 4 + 2*8.  The tail
+    # from offset 16 is "xx\nL4xx\n"; it starts at the line after its first newline, offset 19, so 15 bytes go.
+    path = tmp_path / RUN_LOG_FILE
+    path.write_bytes(b"# H\n")
+    writer = RunLogWriter(path, head=4, tail=8)
+    for i in range(1, 5):
+        writer.write_line(f"L{i}xx")
+    writer.close()
+    assert path.read_bytes() == b"# H\n[... 15 bytes of log omitted ...]\nL4xx\n"
+
+
+def test_the_viewer_excerpt_reads_only_the_head_and_the_tail(tmp_path):
+    path = tmp_path / RUN_LOG_FILE
+    path.write_bytes(b"".join(f"line {i:02d}\n".encode() for i in range(10)))  # 10 lines of 8 bytes
+    assert _owner.read_log_excerpt(path, max_bytes=80) == (path.read_text(), 0)
+    # 40 bytes: the head is the first 16 bytes (two lines), the tail the last 24 (three lines); 40 are left out.
+    text, left_out = _owner.read_log_excerpt(path, max_bytes=40, head=16)
+    assert left_out == 40
+    assert text == (f"line 00\nline 01\n[... 40 bytes not shown here; the whole log is {path} ...]\n"
+                    "line 07\nline 08\nline 09\n")
+
+
 def test_marker_round_trips_a_non_ascii_folder():
     folder = Path("/tmp") / "projektit ä" / "output_parquet" / "ö_1"
     marker = format_marker(folder, "abc123")

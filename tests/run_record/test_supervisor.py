@@ -196,10 +196,74 @@ def test_classify_exit(returncode, plat, state, reason_part):
 def test_the_supervisor_does_not_import_flextool_or_polars():
     code = (
         "import json, sys, flextool_run_supervisor as s\n"
-        "s.load_owner(); s.load_env_check()\n"
+        "owner = s.load_owner(); env_check = s.load_env_check()\n"
+        "assert owner.classify_exit(-11, 'linux')[0] == 'crashed' and owner._load_env_check() is env_check\n"
         "print(json.dumps(sorted(m for m in sys.modules if m.split('.')[0] in ('flextool', 'polars'))))\n"
     )
     result = subprocess.run(
         [sys.executable, "-c", code], cwd=str(REPO), capture_output=True, text=True, timeout=120, check=True,
     )
     assert json.loads(result.stdout.strip().splitlines()[-1]) == []
+
+
+# ---------------------------------------------------------------------------
+# A stop request and the child's own end
+# ---------------------------------------------------------------------------
+
+
+class _FakeChild:
+    """A child process that has ended with *returncode* (``None``: still running)."""
+
+    pid = -1  # never signalled: the tests use the Windows stopper, which kills through ``kill``
+
+    def __init__(self, returncode: int | None) -> None:
+        self.returncode = returncode
+        self.killed = False
+        self.signals: list[int] = []
+
+    def poll(self) -> int | None:
+        return self.returncode
+
+    def kill(self) -> None:
+        self.killed = True
+
+    def send_signal(self, signum: int) -> None:
+        self.signals.append(signum)
+
+
+@pytest.mark.parametrize("windows", [False, True])
+def test_a_stop_after_the_child_ended_keeps_the_childs_exit_code(windows):
+    stopper = supervisor._Stopper(windows=windows)
+    child = _FakeChild(returncode=0)
+    stopper.attach(child)
+    stopper.handle(signal.SIGINT)
+    stopper.handle(signal.SIGINT)  # the second Ctrl-C comes after the run had ended 0
+    stopper.stop("stopped by the GUI")
+    assert stopper.outcome is None and not stopper.stopped_by_launcher and not child.killed
+    assert stopper.exit_status(0) == 0
+
+
+def test_a_second_ctrl_c_before_the_child_exists_kills_it_when_it_starts():
+    stopper = supervisor._Stopper(windows=True)
+    stopper.handle(signal.SIGINT)
+    stopper.handle(signal.SIGINT)
+    child = _FakeChild(returncode=None)
+    stopper.attach(child)
+    assert child.killed
+    assert stopper.outcome == ("interrupted", "second SIGINT: the run was killed")
+    assert stopper.exit_status(1) == -1073741510  # STATUS_CONTROL_C_EXIT 0xC000013A as a signed 32-bit number
+
+
+def test_the_supervisor_takes_the_signal_names_and_exit_codes_from_the_owner():
+    owner = supervisor.load_owner()
+    assert owner.WINDOWS_CTRL_C_EXIT_SIGNED == 0xC000013A - 2**32 == -1073741510
+    assert supervisor._signal_name(signal.SIGTERM) == owner.signal_name(signal.SIGTERM) == "SIGTERM"
+    assert owner.signal_name(None) == "signal None"
+
+
+def test_inside_the_package_the_owner_classifies_exits_with_the_packages_env_check():
+    import importlib
+
+    from flextool.run_record import _owner
+
+    assert _owner._load_env_check() is importlib.import_module("flextool.env_check")

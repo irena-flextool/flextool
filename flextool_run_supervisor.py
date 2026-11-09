@@ -9,9 +9,10 @@ code.  See ``flextool/run_record/`` and ``docs/dev/architecture.md`` "Run record
 
 This module uses the standard library only and never imports ``flextool``: ``import flextool`` imports polars,
 pandas and spinedb_api (about a second and 180 MB), which this process would hold for the whole run.  It loads
-two stdlib-only files of the installed package by path instead: ``flextool/run_record/_owner.py`` (the log writer
-and the status helpers) and, through it, ``flextool/env_check.py`` (the compatible-polars check, asked here, in
-the process that has the terminal, before the child starts).
+two stdlib-only files of the installed package by path instead (:func:`_load_file`, the one by-path loader):
+``flextool/run_record/_owner.py`` (the log writer, the status helpers, the signal names and exit codes) and,
+when it is first needed, ``flextool/env_check.py`` (the compatible-polars check, asked here, in the process that
+has the terminal, before the child starts; ``_owner`` classifies exits with the same module object).
 
 The engine's command line passes through unchanged (``--threads`` too: the child reads it from its own command
 line), plus ``--run-launcher flextool-run`` when it names no launcher.  The child's environment is this
@@ -56,7 +57,6 @@ DRAIN_TIMEOUT_S = 5.0
 STOP_FILE_CHECK_TICKS = 5
 
 _PRIVATE_NAME = "flextool_run_supervisor"
-_WINDOWS_CTRL_C_EXIT = 0xC000013A
 _owner_module: ModuleType | None = None
 
 
@@ -96,13 +96,22 @@ def load_owner() -> ModuleType:
     """``flextool/run_record/_owner.py`` (the run record's stdlib-only side), loaded once by path."""
     global _owner_module
     if _owner_module is None:
-        _owner_module = _load_file(f"{_PRIVATE_NAME}._owner", _flextool_dir() / "run_record" / "_owner.py")
+        flextool_dir = _flextool_dir()
+        owner = _load_file(f"{_PRIVATE_NAME}._owner", flextool_dir / "run_record" / "_owner.py")
+        owner.set_env_check_loader(
+            lambda: _load_file(f"{_PRIVATE_NAME}._env_check", flextool_dir / "env_check.py")
+        )
+        _owner_module = owner
     return _owner_module
 
 
 def load_env_check() -> ModuleType:
     """``flextool/env_check.py``, loaded by path (the same module object ``_owner`` classifies exits with)."""
     return load_owner()._load_env_check()
+
+
+def _signal_name(signum: int | None) -> str:
+    return load_owner().signal_name(signum)
 
 
 # ---------------------------------------------------------------------------
@@ -204,10 +213,14 @@ class _Stopper:
         self.outcome: tuple[str, str] | None = None
         #: Whether the child was stopped through the stop file (this process then exits 1).
         self.stopped_by_launcher = False
+        #: A kill asked for before the child existed: ``(reason, state)``, done by :meth:`attach`.
+        self._pending_kill: tuple[str, str] | None = None
 
     def attach(self, proc: subprocess.Popen) -> None:
         self._proc = proc
-        if self.first is not None and not self._windows:
+        if self._pending_kill is not None:
+            self._kill(*self._pending_kill)
+        elif self.first is not None and not self._windows:
             self._send(self.first)
 
     def handle(self, signum: int, frame=None) -> None:
@@ -241,24 +254,34 @@ class _Stopper:
         """The launcher's stop file appeared: kill the child and record the run as ``killed`` with *reason*."""
         if self.outcome is not None:
             return
-        self.stopped_by_launcher = True
-        self._kill(reason, state="killed")
+        if self._kill(reason, state="killed"):
+            self.stopped_by_launcher = True
 
-    def _kill(self, reason: str, state: str = "interrupted") -> None:
-        self.outcome = (state, reason)
+    def _kill(self, reason: str, state: str = "interrupted") -> bool:
+        """Kill a child that is still running and set :attr:`outcome`; return whether it was running.
+
+        A child that has already ended keeps its own exit code: no outcome is set, so the record and this
+        process's exit status come from that code.  The outcome is set before the kill, so the main loop never
+        sees the killed child's exit without it.
+        """
         proc = self._proc
-        if proc is None or proc.poll() is not None:
-            return
+        if proc is None:
+            self._pending_kill = (reason, state)
+            return False
+        if proc.poll() is not None:
+            return False
+        self.outcome = (state, reason)
         if not self._windows:
             try:
                 os.killpg(proc.pid, signal.SIGKILL)
-                return
+                return True
             except OSError:
                 pass
         try:
             proc.kill()
         except OSError:
             pass
+        return True
 
     def exit_status(self, returncode: int | None) -> int:
         """The status this process ends with: the child's, or the stop signal when this process killed the child."""
@@ -267,15 +290,8 @@ class _Stopper:
         if self.stopped_by_launcher:
             return 1
         if self._windows:
-            return _WINDOWS_CTRL_C_EXIT - 2**32
+            return load_owner().WINDOWS_CTRL_C_EXIT_SIGNED
         return -(self.first or signal.SIGINT)
-
-
-def _signal_name(signum: int | None) -> str:
-    try:
-        return signal.Signals(signum).name
-    except (TypeError, ValueError):
-        return f"signal {signum}"
 
 
 def _install_handlers(handler: Callable[[int, object], None], *, windows: bool) -> Callable[[], None]:

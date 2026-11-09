@@ -19,12 +19,12 @@ class DictMode(Enum):
 
 
 def check_version(db: api.DatabaseMapping, logger: logging.Logger) -> None:
-    """Verify that the input database version is compatible with this tool."""
+    """Verify that the input database version is compatible with this tool (:class:`FlexToolConfigError` if not)."""
     db_version_item = db.get_parameter_definition_item(entity_class_name="model", name="version")
     if not db_version_item:
-        message = "No version information found in the FlexTool input database, check you have a correct database."
-        logger.error(message)
-        raise FlexToolConfigError(message)
+        raise FlexToolConfigError(
+            "No version information found in the FlexTool input database, check you have a correct database."
+        )
     database_version = api.from_database(db_version_item["default_value"], db_version_item["default_type"])
     try:
         _version = float(database_version)
@@ -41,7 +41,6 @@ def check_version(db: api.DatabaseMapping, logger: logging.Logger) -> None:
             "- run command: python migrate_database.py path_to_database\n"
             "where path_to_database is replaced by the filepath of your current input database"
         )
-        logger.error(message)
         raise FlexToolConfigError(message)
 
 

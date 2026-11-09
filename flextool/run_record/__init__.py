@@ -7,6 +7,8 @@
 """
 from flextool.run_record._owner import (
     LOG_HEAD_BYTES,
+    LOG_TAIL_BYTES_MAX,
+    LOG_VIEW_MAX_BYTES,
     MALFORMED_STATE,
     MARKER,
     RUN_LOG_FILE,
@@ -19,6 +21,7 @@ from flextool.run_record._owner import (
     STATUS_TMP_SUFFIX,
     UNREADABLE_STATE,
     UNUSABLE_CODES,
+    WINDOWS_CTRL_C_EXIT_SIGNED,
     ExpectedRun,
     RunLogOwner,
     RunLogWriter,
@@ -30,6 +33,7 @@ from flextool.run_record._owner import (
     now_iso,
     parse_iso,
     parse_marker,
+    read_log_excerpt,
     read_status_file,
     read_status_settled,
     record_run_without_marker,
@@ -52,6 +56,8 @@ from flextool.run_record._tee import TeeStream, install_tee
 
 __all__ = [
     "LOG_HEAD_BYTES",
+    "LOG_TAIL_BYTES_MAX",
+    "LOG_VIEW_MAX_BYTES",
     "MALFORMED_STATE",
     "MARKER",
     "NULL_RECORDER",
@@ -65,6 +71,7 @@ __all__ = [
     "STATUS_TMP_SUFFIX",
     "UNREADABLE_STATE",
     "UNUSABLE_CODES",
+    "WINDOWS_CTRL_C_EXIT_SIGNED",
     "ExpectedRun",
     "RunLogOwner",
     "RunLogWriter",
@@ -81,6 +88,7 @@ __all__ = [
     "now_iso",
     "parse_iso",
     "parse_marker",
+    "read_log_excerpt",
     "read_status_file",
     "read_status_settled",
     "record_run_without_marker",

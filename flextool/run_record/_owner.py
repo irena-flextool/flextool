@@ -7,7 +7,8 @@ the native solver's lines and a crash dump.  Without such an owner the engine co
 the log (:mod:`flextool.run_record._tee`).
 
 This module uses the standard library only and no relative or ``flextool`` imports: the supervisor loads it from
-its file without importing ``flextool`` (which imports polars).  It holds:
+its file without importing ``flextool`` (which imports polars).  The one exception, ``flextool.env_check``, is
+imported only inside the package; the supervisor passes its own loader (:func:`set_env_check_loader`).  It holds:
 
 * the file names, the marker the engine prints for its pipe owner and the environment variable names;
 * :class:`RunLogWriter`, the tail-capped ``_run.log`` writer, and :class:`RunLogOwner`, the pipe owner's relay;
@@ -20,7 +21,6 @@ its file without importing ``flextool`` (which imports polars).  It holds:
 from __future__ import annotations
 
 import collections
-import importlib.util
 import json
 import logging
 import os
@@ -70,6 +70,12 @@ STOP_REASON_UNREADABLE = "stopped by its launcher"
 #: ``_run.log`` keeps its first ``LOG_HEAD_BYTES`` and its last ``FLEXTOOL_RUN_LOG_MAX_BYTES`` bytes.
 LOG_HEAD_BYTES = 64 * 1024
 LOG_TAIL_BYTES_DEFAULT = 4 * 1024 * 1024
+#: The largest ``FLEXTOOL_RUN_LOG_MAX_BYTES`` taken (256 MiB): a larger value is clamped to it.
+LOG_TAIL_BYTES_MAX = 256 * 1024 * 1024
+#: A compaction moves the kept tail in pieces of at most this many bytes.
+_COMPACT_CHUNK_BYTES = 1024 * 1024
+#: The log viewer shows at most this many bytes of a log: its head and its tail, with a line about the rest.
+LOG_VIEW_MAX_BYTES = 2 * 1024 * 1024
 #: The pipe owner keeps at most this many bytes of output that arrive before the engine's marker.
 PRE_MARKER_BUFFER_BYTES = 2 * 1024 * 1024
 #: The pipe owner re-reads the status ``run_id`` every this many lines.
@@ -90,7 +96,10 @@ _ERROR_STATUSES = frozenset({
 })
 _INFEASIBLE_STATUSES = frozenset({"kInfeasible", "kUnboundedOrInfeasible"})
 
-_WINDOWS_CTRL_C_EXIT = 0xC000013A
+#: The Windows exit status of a process ended by Ctrl-C (``STATUS_CONTROL_C_EXIT``) ...
+WINDOWS_CTRL_C_EXIT = 0xC000013A
+#: ... and the same status as Python reports it there: a signed 32-bit number.
+WINDOWS_CTRL_C_EXIT_SIGNED = WINDOWS_CTRL_C_EXIT - 2**32
 
 #: The ``state`` of the status a strict :func:`read_status_file` returns for a file that exists but cannot be
 #: read now (locked, or cut short while it is being written): ask again in a moment.
@@ -119,7 +128,8 @@ def parse_iso(text: Any) -> datetime | None:
 
 
 def log_tail_bytes(environ: Mapping[str, str] | None = None) -> int:
-    """The ``_run.log`` tail size: ``FLEXTOOL_RUN_LOG_MAX_BYTES`` when it is a whole number of at least 1."""
+    """The ``_run.log`` tail size: ``FLEXTOOL_RUN_LOG_MAX_BYTES`` when it is a whole number of at least 1, at most
+    :data:`LOG_TAIL_BYTES_MAX`."""
     env = os.environ if environ is None else environ
     raw = env.get(RUN_LOG_MAX_BYTES_ENV)
     if raw is None or not raw.strip():
@@ -131,6 +141,10 @@ def log_tail_bytes(environ: Mapping[str, str] | None = None) -> int:
     if value < 1:
         _logger.warning("Ignoring %s=%r (must be a whole number of at least 1).", RUN_LOG_MAX_BYTES_ENV, raw)
         return LOG_TAIL_BYTES_DEFAULT
+    if value > LOG_TAIL_BYTES_MAX:
+        _logger.warning("%s=%r is more than the largest value, %d; using %d.", RUN_LOG_MAX_BYTES_ENV, raw,
+                        LOG_TAIL_BYTES_MAX, LOG_TAIL_BYTES_MAX)
+        return LOG_TAIL_BYTES_MAX
     return value
 
 
@@ -207,6 +221,36 @@ def write_log_header(path: Path, run_id: str, started_at: str) -> None:
 
 def _omission_line(n: int) -> bytes:
     return f"[... {n} bytes of log omitted ...]\n".encode("utf-8")
+
+
+def read_log_excerpt(path: Path | str, max_bytes: int | None = None, head: int = LOG_HEAD_BYTES) -> tuple[str, int]:
+    """The text of the log at *path* for a viewer, at most about *max_bytes* (default :data:`LOG_VIEW_MAX_BYTES`)
+    of it, and the number of bytes left out.
+
+    A longer log gives its first *head* bytes (at most half of *max_bytes*) and its last bytes, both cut at a
+    newline, with one ``[... N bytes not shown here; the whole log is <path> ...]`` line between them.  Only
+    those parts are read.  Undecodable bytes are replaced.  ``OSError`` when the file cannot be read.
+    """
+    if max_bytes is None:
+        max_bytes = LOG_VIEW_MAX_BYTES
+    with open(path, "rb") as fh:
+        size = fh.seek(0, os.SEEK_END)
+        fh.seek(0)
+        if size <= max_bytes:
+            return fh.read(max_bytes).decode("utf-8", errors="replace"), 0
+        first = fh.read(max(0, min(head, max_bytes // 2)))
+        cut = first.rfind(b"\n")
+        if cut >= 0:
+            first = first[:cut + 1]
+        last_n = max(0, max_bytes - len(first))
+        # One byte more, the one before: when it is a newline, the last part starts at a whole line.
+        fh.seek(size - last_n - 1)
+        last = fh.read(last_n + 1)
+    nl = last.find(b"\n")
+    last = last[nl + 1:] if nl >= 0 else last[1:]
+    left_out = size - len(first) - len(last)
+    note = f"[... {left_out} bytes not shown here; the whole log is {path} ...]\n"
+    return first.decode("utf-8", errors="replace") + note + last.decode("utf-8", errors="replace"), left_out
 
 
 class RunLogWriter:
@@ -324,23 +368,56 @@ class RunLogWriter:
         else:
             body_start = self._body_start
         tail_from = max(body_start, self._size - self.tail)
-        fh.seek(tail_from)
-        kept = fh.read()
+        src = tail_from
         if tail_from > body_start:
-            # Start the kept tail at a line start.
-            nl = kept.find(b"\n")
-            if nl >= 0:
-                kept = kept[nl + 1:]
-        dropped = self._size - len(kept) - body_start
+            # Start the kept tail at a line start (when the tail holds a newline).
+            nl = self._find_newline(tail_from)
+            if nl is not None:
+                src = nl + 1
+        kept_len = self._size - src
+        dropped = src - body_start
         self._omitted += dropped
         omission = _omission_line(self._omitted)
-        fh.seek(self._head_end)
-        fh.write(omission)
-        fh.write(kept)
-        fh.truncate()
+        dst = self._head_end + len(omission)
+        if dst <= src:
+            # Move the tail forward in pieces: every piece is read before the writes reach it.
+            fh.seek(self._head_end)
+            fh.write(omission)
+            moved = 0
+            while moved < kept_len:
+                fh.seek(src + moved)
+                piece = fh.read(min(_COMPACT_CHUNK_BYTES, kept_len - moved))
+                if not piece:
+                    break
+                fh.seek(dst + moved)
+                fh.write(piece)
+                moved += len(piece)
+        else:
+            # A tail shorter than the omission line (a tiny FLEXTOOL_RUN_LOG_MAX_BYTES): small enough to hold.
+            fh.seek(src)
+            kept = fh.read(kept_len)
+            fh.seek(self._head_end)
+            fh.write(omission)
+            fh.write(kept)
+        fh.truncate(dst + kept_len)
         fh.flush()
-        self._body_start = self._head_end + len(omission)
-        self._size = self._body_start + len(kept)
+        self._body_start = dst
+        self._size = dst + kept_len
+
+    def _find_newline(self, start: int) -> int | None:
+        """The offset of the first newline at or after *start*, read in pieces; ``None`` when there is none."""
+        fh = self._fh
+        pos = start
+        while pos < self._size:
+            fh.seek(pos)
+            piece = fh.read(min(_COMPACT_CHUNK_BYTES, self._size - pos))
+            if not piece:
+                return None
+            nl = piece.find(b"\n")
+            if nl >= 0:
+                return pos + nl
+            pos += len(piece)
+        return None
 
     def _close_locked(self) -> None:
         if not self._closed:
@@ -715,35 +792,38 @@ def worst_verdict(solves: Iterable[Mapping[str, Any]]) -> str | None:
 # ---------------------------------------------------------------------------
 
 _env_check: ModuleType | None = None
+_env_check_loader: Callable[[], ModuleType] | None = None
+
+
+def set_env_check_loader(loader: Callable[[], ModuleType]) -> None:
+    """Have :func:`_load_env_check` get ``env_check`` from *loader* (called once, when it is first needed).
+
+    The ``flextool-run`` supervisor loads this module from its file, outside the ``flextool`` package, and passes
+    the loader that reads ``flextool/env_check.py`` from its file too: importing ``flextool.env_check`` there
+    would import ``flextool`` (and polars).
+    """
+    global _env_check_loader
+    _env_check_loader = loader
 
 
 def _load_env_check() -> ModuleType:
-    """``flextool/env_check.py`` loaded from its file (stdlib only), without importing ``flextool``.
-
-    The same pattern as ``flextool/__init__.py``'s ``_ensure_polars_runtime``, under a private name of its own;
-    the module is removed from :data:`sys.modules` after it runs (the module object is kept here).
-    """
+    """``flextool.env_check``, from the loader :func:`set_env_check_loader` gave, else imported (the package's)."""
     global _env_check
     if _env_check is None:
-        name = "flextool_run_supervisor._env_check"
-        path = Path(__file__).resolve().parent.parent / "env_check.py"
-        spec = importlib.util.spec_from_file_location(name, path)
-        if spec is None or spec.loader is None:
-            raise ImportError(f"cannot load {path}")
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module  # dataclasses look their module up while it executes
-        try:
-            spec.loader.exec_module(module)
-        finally:
-            sys.modules.pop(name, None)
-        _env_check = module
+        if _env_check_loader is not None:
+            _env_check = _env_check_loader()
+        else:
+            import importlib
+
+            _env_check = importlib.import_module("flextool.env_check")
     return _env_check
 
 
-def _signal_name(signum: int) -> str:
+def signal_name(signum: int | None) -> str:
+    """The name of signal *signum* (``SIGTERM``), or ``signal <n>`` when it has none."""
     try:
         return signal.Signals(signum).name
-    except ValueError:
+    except (TypeError, ValueError):
         return f"signal {signum}"
 
 
@@ -759,17 +839,17 @@ def classify_exit(returncode: int | None, plat: str | None = None) -> tuple[str,
     if returncode is None:
         return "crashed", "no exit code"
     windows = plat.startswith("win")
-    if windows and (returncode & 0xFFFFFFFF) == _WINDOWS_CTRL_C_EXIT:
+    if windows and (returncode & 0xFFFFFFFF) == WINDOWS_CTRL_C_EXIT:
         return "interrupted", "interrupted by Ctrl-C"
     if not windows and returncode == -9:
         return "killed", "terminated by SIGKILL (often the operating system's out-of-memory killer)"
     if not windows and returncode in (-15, -1, -2):
-        return "interrupted", f"stopped by {_signal_name(-returncode)}"
+        return "interrupted", f"stopped by {signal_name(-returncode)}"
     env_check = _load_env_check()
     if env_check.is_native_fault(returncode, plat):
         return "crashed", env_check.describe_fault(returncode, plat)
     if not windows and returncode < 0:
-        return "killed", f"terminated by {_signal_name(-returncode)}"
+        return "killed", f"terminated by {signal_name(-returncode)}"
     if returncode == 0:
         return "succeeded", "the engine exited 0 without finishing its run record"
     return "failed", f"exit code {returncode}"
