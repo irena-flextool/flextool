@@ -579,6 +579,10 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # How stochastic branches invest. none (default): one shared investment plan for all branches. recourse: each branch also invests at and after...
     ('dispatch_realization_method', 'solve'): QuantityType.DIMENSIONLESS,
     # How the committed part of a stochastic solve is realized. within_solve (default): a realized: yes branch gets a realization solve automatica...
+    ('reduce_unit_detail_method', 'solve'): QuantityType.DIMENSIONLESS,
+    # Detail of units and connections this solve leaves out (none, integers, ..., online_ramps).
+    ('reduce_system_detail_method', 'solve'): QuantityType.DIMENSIONLESS,
+    # System detail this solve leaves out (reserves, inertia, non_synchronous, dc_power_flow, combinations).
     ('storage_binding_method', 'node'): QuantityType.DIMENSIONLESS,
     # Choice how the storage state will be maintained over discontinuous timelines. Seven cycle-scope methods (the state-continuity family): 'bind...
     ('storage_nested_fix_method', 'node'): QuantityType.DIMENSIONLESS,

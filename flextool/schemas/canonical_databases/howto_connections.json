@@ -1323,7 +1323,7 @@
       "model",
       "version",
       [
-        "80.0",
+        "81.0",
         "float"
       ],
       null,
@@ -2037,6 +2037,28 @@
       null,
       "[name] Array of periods that will be realized in the solve.",
       "solve_basics"
+    ],
+    [
+      "solve",
+      "reduce_system_detail_method",
+      [
+        "\"none\"",
+        "str"
+      ],
+      "reduce_system_detail_methods",
+      "[choice] System detail that this solve leaves out, to make it faster. none (default): all detail. reserves: no reserve requirements. inertia: no inertia limits. non_synchronous: no non-synchronous share limits. dc_power_flow: the lines of dc_power_flow_with_angles groups are lossless transport limited by their capacity (no angles). A combination leaves out each named part. The capacity margin is always kept.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "reduce_unit_detail_method",
+      [
+        "\"none\"",
+        "str"
+      ],
+      "reduce_unit_detail_methods",
+      "[choice] Detail of units and connections that this solve leaves out, to make it faster (typically an investment solve). none (default): all detail. integers: binary startup_method is solved as continuous and exact connections behave as regular. integers_ramps: integers, and no ramp limits or ramp costs. integers_min_limits: integers, and no min_load, capacity_min_coeff floors or minimum up / down times. integers_ramps_min_limits: integers, no ramps and no min limits. online: everything of integers_min_limits, and no online variables: no start-up costs, user constraints that count units online are left out whole, min_load_efficiency units use their full-load efficiency, and ramp limits apply to the capacity. online_ramps: online, and no ramp limits or ramp costs. Never adds detail.",
+      "solve_advanced"
     ],
     [
       "solve",
@@ -5753,6 +5775,111 @@
       "ramp_methods",
       [
         "\"none\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "\"none\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "\"reserves\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "\"inertia\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "\"non_synchronous\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "\"inertia_non_synchronous\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "\"reserves_inertia_non_synchronous\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "\"dc_power_flow\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "\"reserves_inertia_non_synchronous_dc_power_flow\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "\"none\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "\"integers\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "\"integers_ramps\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "\"integers_min_limits\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "\"integers_ramps_min_limits\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "\"online\"",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "\"online_ramps\"",
         "str"
       ]
     ],

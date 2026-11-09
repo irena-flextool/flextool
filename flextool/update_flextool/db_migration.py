@@ -1808,6 +1808,8 @@ def migrate_database(
                 _migrate_v79_constraint_online_coeff(db)
             elif next_version == 80:
                 _migrate_v80_ramp_cost_descriptions(db)
+            elif next_version == 81:
+                _migrate_v81_reduce_detail_methods(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -5859,6 +5861,68 @@ def _migrate_v80_ramp_cost_descriptions(db) -> None:
         db.update_parameter_definition(id=pdef["id"], description=text)
     _commit_step(db, "v80: ramp_method and ramp_cost descriptions (ramp_cost is functional)")
 
+
+
+#: v81: the two solve-level detail reductions; values in the fixed word order of the design.
+REDUCE_UNIT_DETAIL_METHODS: tuple[str, ...] = (
+    "none", "integers", "integers_ramps", "integers_min_limits", "integers_ramps_min_limits", "online",
+    "online_ramps")
+REDUCE_SYSTEM_DETAIL_METHODS: tuple[str, ...] = (
+    "none", "reserves", "inertia", "non_synchronous", "inertia_non_synchronous",
+    "reserves_inertia_non_synchronous", "dc_power_flow", "reserves_inertia_non_synchronous_dc_power_flow")
+_V81_DESCRIPTIONS: dict[str, str] = {
+    "reduce_unit_detail_method": (
+        "[choice] Detail of units and connections that this solve leaves out, to make it faster (typically an "
+        "investment solve). none (default): all detail. integers: binary startup_method is solved as continuous "
+        "and exact connections behave as regular. integers_ramps: integers, and no ramp limits or ramp costs. "
+        "integers_min_limits: integers, and no min_load, capacity_min_coeff floors or minimum up / down times. "
+        "integers_ramps_min_limits: integers, no ramps and no min limits. online: everything of "
+        "integers_min_limits, and no online variables: no start-up costs, user constraints that count units "
+        "online are left out whole, min_load_efficiency units use their full-load efficiency, and ramp limits "
+        "apply to the capacity. online_ramps: online, and no ramp limits or ramp costs. Never adds detail."),
+    "reduce_system_detail_method": (
+        "[choice] System detail that this solve leaves out, to make it faster. none (default): all detail. "
+        "reserves: no reserve requirements. inertia: no inertia limits. non_synchronous: no non-synchronous "
+        "share limits. dc_power_flow: the lines of dc_power_flow_with_angles groups are lossless transport "
+        "limited by their capacity (no angles). A combination leaves out each named part. The capacity margin "
+        "is always kept."),
+}
+
+
+def _migrate_v81_reduce_detail_methods(db) -> None:
+    """``solve.reduce_unit_detail_method`` and ``solve.reduce_system_detail_method`` (v80 -> v81).
+
+    Two scalar choices with their value lists (``reduce_unit_detail_methods`` / ``reduce_system_detail_methods``),
+    default ``none``, group ``solve_advanced``.  No data is rewritten.  Idempotent: an existing definition is
+    updated to the v81 fields, and value-list entries already present are not added again.
+    """
+    if not db.get_item("entity_class", name="solve"):
+        return
+    for list_name, values in (("reduce_unit_detail_methods", REDUCE_UNIT_DETAIL_METHODS),
+                              ("reduce_system_detail_methods", REDUCE_SYSTEM_DETAIL_METHODS)):
+        if not db.get_item("parameter_value_list", name=list_name):
+            db.add_parameter_value_list(name=list_name)
+        present = {x["parsed_value"] for x in db.get_items("list_value", parameter_value_list_name=list_name)}
+        index = len(present)
+        for value in values:
+            if value in present:
+                continue
+            val, typ = to_database(value)
+            db.add_list_value(parameter_value_list_name=list_name, value=val, type=typ, index=index)
+            index += 1
+    _ensure_parameter_group(db, "solve_advanced", "b56f6f", 87)
+    default_val, default_type = to_database("none")
+    for name, list_name in (("reduce_unit_detail_method", "reduce_unit_detail_methods"),
+                            ("reduce_system_detail_method", "reduce_system_detail_methods")):
+        fields = {"default_value": default_val, "default_type": default_type,
+                  "parameter_value_list_name": list_name, "parameter_group_name": "solve_advanced",
+                  "description": _V81_DESCRIPTIONS[name]}
+        pdef = _pdef_or_none(db, "solve", name)
+        if pdef is None:
+            db.add_parameter_definition(entity_class_name="solve", name=name, **fields)
+        elif any(pdef[k] != v for k, v in fields.items()):
+            db.update_parameter_definition(id=pdef["id"], **fields)
+    _commit_step(db, "v81: solve.reduce_unit_detail_method and solve.reduce_system_detail_method")
 
 _V70_MAX_FLOW_UNCONSTRAINED_DESCRIPTION = (
     "[MW] Upper bound assigned to LP variables that have no other cap "

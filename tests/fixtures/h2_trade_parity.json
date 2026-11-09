@@ -7355,6 +7355,111 @@
       ]
     ],
     [
+      "reduce_system_detail_methods",
+      [
+        "Im5vbmUi",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "InJlc2VydmVzIg==",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "ImluZXJ0aWEi",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "Im5vbl9zeW5jaHJvbm91cyI=",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "ImluZXJ0aWFfbm9uX3N5bmNocm9ub3VzIg==",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "InJlc2VydmVzX2luZXJ0aWFfbm9uX3N5bmNocm9ub3VzIg==",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "ImRjX3Bvd2VyX2Zsb3ci",
+        "str"
+      ]
+    ],
+    [
+      "reduce_system_detail_methods",
+      [
+        "InJlc2VydmVzX2luZXJ0aWFfbm9uX3N5bmNocm9ub3VzX2RjX3Bvd2VyX2Zsb3ci",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "Im5vbmUi",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "ImludGVnZXJzIg==",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "ImludGVnZXJzX3JhbXBzIg==",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "ImludGVnZXJzX21pbl9saW1pdHMi",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "ImludGVnZXJzX3JhbXBzX21pbl9saW1pdHMi",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "Im9ubGluZSI=",
+        "str"
+      ]
+    ],
+    [
+      "reduce_unit_detail_methods",
+      [
+        "Im9ubGluZV9yYW1wcyI=",
+        "str"
+      ]
+    ],
+    [
       "reserve_methods",
       [
         "Im5vX3Jlc2VydmUi",
@@ -8958,7 +9063,7 @@
       "model",
       "version",
       [
-        "ODAuMA==",
+        "ODEuMA==",
         "float"
       ],
       null,
@@ -9822,6 +9927,28 @@
       null,
       "[name] Array of periods that will be realized in the solve.",
       "solve_basics"
+    ],
+    [
+      "solve",
+      "reduce_system_detail_method",
+      [
+        "Im5vbmUi",
+        "str"
+      ],
+      "reduce_system_detail_methods",
+      "[choice] System detail that this solve leaves out, to make it faster. none (default): all detail. reserves: no reserve requirements. inertia: no inertia limits. non_synchronous: no non-synchronous share limits. dc_power_flow: the lines of dc_power_flow_with_angles groups are lossless transport limited by their capacity (no angles). A combination leaves out each named part. The capacity margin is always kept.",
+      "solve_advanced"
+    ],
+    [
+      "solve",
+      "reduce_unit_detail_method",
+      [
+        "Im5vbmUi",
+        "str"
+      ],
+      "reduce_unit_detail_methods",
+      "[choice] Detail of units and connections that this solve leaves out, to make it faster (typically an investment solve). none (default): all detail. integers: binary startup_method is solved as continuous and exact connections behave as regular. integers_ramps: integers, and no ramp limits or ramp costs. integers_min_limits: integers, and no min_load, capacity_min_coeff floors or minimum up / down times. integers_ramps_min_limits: integers, no ramps and no min limits. online: everything of integers_min_limits, and no online variables: no start-up costs, user constraints that count units online are left out whole, min_load_efficiency units use their full-load efficiency, and ramp limits apply to the capacity. online_ramps: online, and no ramp limits or ramp costs. Never adds detail.",
+      "solve_advanced"
     ],
     [
       "solve",
