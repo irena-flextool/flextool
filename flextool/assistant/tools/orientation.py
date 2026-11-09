@@ -29,20 +29,25 @@ def _store():
 NOT_SHARED = ("The input source and scenario are the defaults this connection was started with; the tools use "
               "them when a request names none. What is selected in the FlexTool window is not shared.")
 WINDOW_CLOSED = "The FlexTool window is not open for this project; showing the startup options."
+WINDOW_BUSY = ("The FlexTool window is open for this project but has not answered for over two minutes (it may be "
+               "busy with a long operation); showing the startup options.")
 FROM_WINDOW = ("What is selected in the FlexTool window for this project and shown in its result viewer, as of "
                "written_at. The tools still use the input source and scenario this connection was started with "
                "when a request names none.")
 
 
-def _startup_options(ctx: AssistantContext, note: str) -> dict:
-    return {
+def _startup_options(ctx: AssistantContext, note: str, *, gui: str = "not running") -> dict:
+    out = {
         "front_end": ctx.front_end,
         "project": ctx.project_name,
         "input_source": ctx.default_source,
         "scenario": ctx.default_scenario,
-        "gui": "not running",
+        "gui": gui,
         "note": note,
     }
+    if gui == "running":
+        out["responding"] = False
+    return out
 
 
 def get_gui_context(ctx: AssistantContext, args: dict) -> dict:
@@ -57,6 +62,9 @@ def get_gui_context(ctx: AssistantContext, args: dict) -> dict:
         from flextool.assistant.runtime_context import read_runtime_context
 
         context, running = read_runtime_context(ctx.project_path)
+        if context is None and running == "running":
+            # A live window whose file went stale: busy (or hung), not closed (review G18 critique m4).
+            return _startup_options(ctx, WINDOW_BUSY, gui="running")
         if context is None or running != "running":
             return _startup_options(ctx, WINDOW_CLOSED)
         return {**context, "front_end": ctx.front_end, "note": FROM_WINDOW}

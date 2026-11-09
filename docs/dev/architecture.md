@@ -1152,7 +1152,7 @@ nor the chat (`tests/assistant/test_import_hygiene.py`).
   asks for an answer without tools, and sends nothing when the estimate plus the answer limit stays above 95 % of
   the window (a reported one, or the assumed local one). The free plan
   (`free_tier_on`: the setting, else on only for an OpenRouter `:free` id) lowers rounds and calls, caps results at
-  medium and, in the FlexTool window, lets the provider gate send one request at a time; the first rate-limit reply on a route with it off
+  medium and, in the FlexTool window, gives the chat's gated backend a limit of one request at a time; the first rate-limit reply on a route with it off
   shows the hint once (`settings.free_tier_suggested`).
 - **Local files** (`_files.py`, `settings.py`, `store.py`, `usage.py`, `keys.py`, `endpoint.py`), in
   `platformdirs.user_config_dir("flextool")/assistant/`: settings, conversations per project (lock file per open
@@ -1186,10 +1186,14 @@ worker, the provider gate, the Markdown parser, the window geometry, the strings
 - **Threads**: one `AssistantWorker` daemon thread per chat tab owns its `Session`, conversation and lock; the Tk
   thread never calls the network, keyring, probes, store or ledger (except reading the settings and the welcome
   flag when a window opens). Worker → Tk only through queues drained by one `after(50)` poll. The process-wide
-  `ProviderGate` (`gate.py`) lets `parallel_requests` (1–4) model requests per provider run at once and shares a
-  rate-limit cool-down between chats; tool calls run outside it, under the process-wide tool lock. A shut-down
-  worker saves a checkpoint in which a running tool call is "Not run: FlexTool was closed…", so the file is
-  always a resumable history.
+  `ProviderGate` (`gate.py`) lets `parallel_requests` (1–4) model requests per provider run at once (a free-plan
+  chat's own `limit` is 1), gives slots in arrival order and shares a rate-limit cool-down between chats; tool
+  calls run outside it, under the process-wide tool lock. A shut-down worker saves a checkpoint in which a running
+  tool call is "Not run: FlexTool was closed…", so the file is always a resumable history. A project rename or
+  deletion moves or deletes its chats on one FIFO daemon thread (`project_utils`); every store user waits for the
+  queued hooks first (`wait_project_hooks`). The Tk thread's blocking waits (project change, close) pump
+  `dooneevent(FILE_EVENTS | DONT_WAIT)`, so a worker's Tcl call (a finalizer collected on its thread) finishes;
+  closed assistant dialogs retire their Tk variables on the Tk thread.
 - **Window** (`chat_window.py`, `chat_tab.py`, `transcript.py`, `notices.py`, `settings_dialog.py`): chats as
   `ttk.Notebook` tabs with an overflow budget (the Chats menu shows the hidden ones), restored when the window
   opens again (`store.open_chats`); one data notice at a time; the size per monitor configuration in
@@ -1203,9 +1207,11 @@ worker, the provider gate, the Markdown parser, the window geometry, the strings
   snapshot (`ContextSnapshot.gui`), which the prompt renders as the context block. While a project is open,
   `ContextPublisher` polls it every second and hands a changed payload to the `RuntimeContextWriter`
   (`flextool/assistant/runtime_context.py`): one file per process,
-  `<config>/assistant/runtime/<project key>.<pid>.json`, names and selections only, rewritten every 30 s, deleted by
-  the writer thread at close. An agent's `get_gui_context` (`--mcp`, `--call`) reads the newest live file of the
-  project (`read_runtime_context`: process alive, written within 120 s).
+  `<config>/assistant/runtime/<project key>.<pid>.json`, names and selections only, rewritten every 30 s while the
+  poll ticks (a hung Tk thread's file goes stale), deleted by the writer thread at close. An agent's
+  `get_gui_context` (`--mcp`, `--call`) reads the file of the window in use (`read_runtime_context`: process alive,
+  written within 120 s; the latest focus `active_at`, then `changed_at`, then `written_at`); a live process with
+  only a stale file reads as open but not answering (`responding: false`).
 
 Tests: `tests/assistant/llm/` — no network (a socket guard refuses anything but loopback), synthetic provider
 payloads through `httpx2.MockTransport`, a scripted `FakeBackend` for the session and the chat, loopback servers

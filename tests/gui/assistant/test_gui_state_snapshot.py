@@ -116,9 +116,42 @@ def test_a_part_that_cannot_be_read_leaves_the_others(main: FakeMain) -> None:
 class RecordingWriter:
     def __init__(self) -> None:
         self.snapshots: list = []
+        self.ticks: list[bool] = []
 
     def publish_snapshot(self, snapshot) -> None:  # noqa: ANN001
         self.snapshots.append(snapshot)
+
+    def tick(self, active: bool = False) -> None:
+        self.ticks.append(active)
+
+
+def test_each_poll_ticks_the_writer_with_the_focus(main: FakeMain) -> None:
+    """Review G18, C3-m5: every poll ticks the writer (its heartbeat goes on only then), also when nothing
+    changed, and says whether FlexTool has the keyboard focus (the window in use)."""
+    from tests.gui.assistant.tk_helpers import take_focus
+
+    writer = RecordingWriter()
+    publisher = ContextPublisher(main, writer, "Project", interval_ms=20)
+    publisher.start()
+    try:
+        pump(main, lambda: len(writer.ticks) >= 5)
+        assert len(writer.snapshots) == 1                # five polls, one change
+        import time
+
+        main.geometry("300x200+40+40")
+        main.deiconify()
+        pump(main, lambda: main.winfo_viewable())
+
+        deadline = time.monotonic() + 5     # again while tests in other processes take the focus
+        while writer.ticks[-1] is not True:
+            assert time.monotonic() < deadline, "no tick with the focus"
+            take_focus(main)
+            pump(main, timeout=0.05)
+    finally:
+        publisher.stop()
+    count = len(writer.ticks)
+    pump(main, timeout=0.1)
+    assert len(writer.ticks) == count                    # stopped: no more ticks
 
 
 def test_publisher_writes_only_when_the_selections_change(main: FakeMain) -> None:

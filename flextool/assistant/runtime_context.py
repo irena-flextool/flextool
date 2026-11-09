@@ -3,16 +3,26 @@
 While a project is open in the FlexTool window (also without a chat window, P2-O1) its process keeps one file::
 
     <config>/assistant/runtime/<project key>.<pid>.json
-    {"format": 1, "pid": 4242, "written_at": "2026-11-07T10:00:00Z", "flextool_version": "4.0.0",
-     "project": {"key": "…", "name": "…"}, "context": snapshot_payload(…)}
+    {"format": 1, "pid": 4242, "written_at": "2026-11-07T10:00:00Z", "changed_at": "2026-11-07T09:58:12Z",
+     "active_at": "2026-11-07T09:59:40Z", "flextool_version": "4.0.0", "project": {"key": "…", "name": "…"},
+     "context": snapshot_payload(…)}
 
 It holds names and selections only — no paths, no data values, nothing from the chats — and reaches a provider
 only through an agent the user runs.  :class:`RuntimeContextWriter` writes it from a daemon thread (UTF-8, LF,
-temp file + replace): the newest published payload wins, a heartbeat rewrites ``written_at`` every
-``heartbeat_s`` seconds, and :meth:`RuntimeContextWriter.stop` makes the thread delete the file as its last
-action.  :func:`read_runtime_context` takes the newest file of a project whose process is alive and that was
-written within :data:`STALE_AFTER` seconds; several FlexTool windows on one project each keep their own file.
-:func:`cleanup` (at GUI start) deletes the files of processes that are gone.
+temp file + replace): the newest published payload wins (``changed_at``: when the selections last changed), and
+:meth:`RuntimeContextWriter.stop` makes the thread delete the file as its last action.  The window's 1 s poll
+calls :meth:`RuntimeContextWriter.tick` on the Tk thread, saying whether FlexTool has the keyboard focus
+(``active_at``: when it last had it — the window in use).  The heartbeat rewrites ``written_at`` every
+``heartbeat_s`` seconds only when the poll ticked since the last one (review G18, C3-m5): a Tk thread that hangs
+stops the ticks, so its file goes stale.  Tk's modal dialogs keep running ``after`` timers, so the ticks go on
+while one is open.
+
+:func:`read_runtime_context` looks at the files of the project whose process is alive.  Of those written within
+:data:`STALE_AFTER` seconds it takes the window in use: the latest ``active_at``, then ``changed_at``, then
+``written_at`` (a field a file lacks — one of an older FlexTool — counts as earliest).  When there is no fresh
+file but a live process's file is stale, the window is open but not answering (busy, or hung): ``"running"``
+with no context.  Several FlexTool windows on one project each keep their own file.  :func:`cleanup` (at GUI
+start) deletes the files of processes that are gone.
 
 Standard library, :mod:`._files` (``psutil`` when installed, for the process check) and :mod:`.redact`.
 """
@@ -21,6 +31,7 @@ from __future__ import annotations
 import contextlib
 import os
 import threading
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
@@ -29,7 +40,8 @@ from flextool.assistant import _files
 from flextool.assistant.context import ContextSnapshot, snapshot_payload
 
 RUNTIME_DIR = "runtime"
-#: A file not rewritten within this many seconds belongs to a window that hangs or is gone.
+#: A file not rewritten within this many seconds belongs to a window that is gone, hangs or is busy for longer than
+#: that (its Tk thread has not ticked): its process being alive tells the last two from the first.
 STALE_AFTER = 120.0
 HEARTBEAT = 30.0
 GuiRunning = Literal["running", "not running"]
@@ -74,7 +86,8 @@ class RuntimeContextWriter:
     """
 
     def __init__(self, project_path: Path | str, project_name: str, *, config_root: Path | None = None,
-                 heartbeat_s: float = HEARTBEAT, pid: int | None = None) -> None:
+                 heartbeat_s: float = HEARTBEAT, pid: int | None = None,
+                 clock: Callable[[], datetime] = _files.utc_now) -> None:
         from flextool.assistant.redact import Redactor
 
         self.project_path = Path(project_path)
@@ -92,11 +105,22 @@ class RuntimeContextWriter:
         self._current: dict[str, Any] = snapshot_payload(ContextSnapshot(project=project_name, front_end="gui"),
                                                          gui_running="running", redact=self._redactor.redact)
         self._thread: threading.Thread | None = None
+        self._clock = clock
+        #: Set by every :meth:`tick` (the window's poll ran): the next heartbeat may write.
+        self._alive = threading.Event()
+        self._changed_at: datetime | None = None
+        self._active_at: datetime | None = None
+        self._was_active = False
+        self._focus_gained = False
+        #: How many times the file was written, and how many heartbeats came (for the tests).
+        self.writes = 0
+        self.heartbeats = 0
 
     def start(self) -> None:
         if self._thread is not None:
             return
         self._pending = self._current
+        self._alive.set()
         self._thread = threading.Thread(target=self._run, name="flextool-assistant-runtime-context", daemon=True)
         self._thread.start()
         self._wake.set()
@@ -111,6 +135,20 @@ class RuntimeContextWriter:
             self._pending = payload
         self._wake.set()
 
+    def tick(self, active: bool = False) -> None:
+        """The window's poll ran (any thread; no I/O): the next heartbeat writes the file.  *active*: FlexTool has
+        the keyboard focus now; the moment it gains it is written at once (the window in use)."""
+        wake = False
+        with self._guard:
+            if active:
+                self._active_at = self._clock()
+                if not self._was_active:
+                    self._focus_gained = wake = True
+            self._was_active = active
+        self._alive.set()
+        if wake:
+            self._wake.set()
+
     def stop(self, wait: float = 2.0) -> bool:
         """End the writer: the thread finishes a write under way, deletes the file and ends.  Waits for it at most
         *wait* seconds; ``True`` when it has ended (the file is gone)."""
@@ -124,7 +162,11 @@ class RuntimeContextWriter:
 
     # --- the thread ---------------------------------------------------------------------------------------------
     def _record(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return {"format": _files.FORMAT, "pid": self.pid, "written_at": _files.iso(_files.utc_now()),
+        with self._guard:
+            changed, active = self._changed_at, self._active_at
+        return {"format": _files.FORMAT, "pid": self.pid, "written_at": _files.iso(self._clock()),
+                "changed_at": _files.iso(changed) if changed is not None else None,
+                "active_at": _files.iso(active) if active is not None else None,
                 "flextool_version": self._version, "project": {"key": self._key, "name": self.project_name},
                 "context": payload}
 
@@ -133,6 +175,7 @@ class RuntimeContextWriter:
             _files.write_text_atomic(self.path, _files.dumps(self._record(payload)))
         except OSError:
             pass                    # the next publish or heartbeat writes it again
+        self.writes += 1
 
     def _run(self) -> None:
         try:
@@ -141,11 +184,19 @@ class RuntimeContextWriter:
                 self._wake.clear()
                 with self._guard:
                     pending, self._pending = self._pending, None
+                    focus, self._focus_gained = self._focus_gained, False
+                    if pending is not None:
+                        self._changed_at = self._clock()       # the publisher hands over only changes
                 if pending is not None:
                     self._current = pending
                 if self._stopping.is_set():
                     break
-                if pending is not None or not woken:
+                beat = False
+                if not woken:
+                    self.heartbeats += 1
+                    beat = self._alive.is_set()     # only while the window's poll ticks
+                if pending is not None or focus or beat:
+                    self._alive.clear()
                     self._write(self._current)
         finally:
             with contextlib.suppress(OSError):
@@ -163,10 +214,13 @@ def _parse_time(value: object) -> datetime | None:
 
 def read_runtime_context(project_path: Path | str, *, config_root: Path | None = None,
                          now: datetime | None = None) -> tuple[dict[str, Any] | None, GuiRunning]:
-    """The context the FlexTool window publishes for the project, and whether a window is running.
+    """The context the FlexTool window in use publishes for the project, and whether a window is running.
 
-    The newest runtime file of the project whose process is alive and that was written at most
-    :data:`STALE_AFTER` seconds ago; others are ignored.  The context comes with its ``written_at``."""
+    Of the runtime files of the project whose process is alive and that were written at most :data:`STALE_AFTER`
+    seconds ago, the one with the latest ``active_at``, then ``changed_at``, then ``written_at``; others are
+    ignored.  The context comes with those times and ``responding: true``.  When only stale files of live processes
+    are left, the window is open but its Tk thread has not answered for that long (a long operation, or a hang):
+    ``(None, "running")``."""
     key = _files.project_key(project_path)
     folder = runtime_dir(config_root)
     moment = (now or _files.utc_now()).astimezone(timezone.utc)
@@ -174,7 +228,8 @@ def read_runtime_context(project_path: Path | str, *, config_root: Path | None =
         names = os.listdir(folder)
     except (FileNotFoundError, NotADirectoryError):
         return None, "not running"
-    best: tuple[datetime, dict[str, Any]] | None = None
+    best: tuple[tuple[datetime, datetime, datetime], dict[str, Any]] | None = None
+    stale_alive = False
     for name in names:
         parsed = _file_pid(name)
         if parsed is None or parsed[0] != key or not _files.pid_alive(parsed[1]):
@@ -186,16 +241,29 @@ def read_runtime_context(project_path: Path | str, *, config_root: Path | None =
         if not data or _files.is_newer(data) or not isinstance(data.get("context"), dict):
             continue
         written = _parse_time(data.get("written_at"))
-        if written is None or (moment - written).total_seconds() > STALE_AFTER:
+        if written is None:
             continue
-        if best is None or written > best[0]:
-            best = (written, data)
+        if (moment - written).total_seconds() > STALE_AFTER:
+            stale_alive = True
+            continue
+        order = (_parse_time(data.get("active_at")) or _EARLIEST, _parse_time(data.get("changed_at")) or _EARLIEST,
+                 written)
+        if best is None or order > best[0]:
+            best = (order, data)
     if best is None:
-        return None, "not running"
-    context = dict(best[1]["context"])
+        return None, "running" if stale_alive else "not running"
+    data = best[1]
+    context = dict(data["context"])
     context["gui"] = "running"
-    context["written_at"] = best[1]["written_at"]
+    context["responding"] = True
+    context["written_at"] = data["written_at"]
+    for field in ("changed_at", "active_at"):
+        if isinstance(data.get(field), str):
+            context[field] = data[field]
     return context, "running"
+
+
+_EARLIEST = datetime.min.replace(tzinfo=timezone.utc)
 
 
 def cleanup(config_root: Path | None = None) -> int:

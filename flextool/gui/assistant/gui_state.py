@@ -8,6 +8,8 @@ logged once, the others still come.  Reading three trees of 500 rows costs about
 
 :class:`ContextPublisher` polls the snapshot once a second while a project is open and hands it to the runtime
 context writer only when something changed (P2-D4: no hooks in the main window, no callbacks in the viewer).  Each
+poll also ticks the writer, saying whether FlexTool has the keyboard focus: the writer's heartbeat goes on only
+while the poll runs, and the focus marks the window in use.  Each
 Send takes its own snapshot through the same function (P2-D3).
 """
 from __future__ import annotations
@@ -223,10 +225,22 @@ class ContextPublisher:
         self.published += 1
         return True
 
+    def _has_focus(self) -> bool:
+        """Whether one of FlexTool's windows has the keyboard focus (the window in use; Tk thread, no I/O)."""
+        try:
+            return self.main.focus_get() is not None
+        except (tk.TclError, KeyError):   # KeyError: the focus is in a menu tkinter does not know by name
+            return True
+
     def _tick(self) -> None:
         self._after_id = None
         if not self.running:
             return
+        # The window's poll runs: the writer's heartbeat may go on (a hung Tk thread stops it, review G18 C3-m5).
+        try:
+            self.writer.tick(self._has_focus())
+        except Exception:  # noqa: BLE001 — the file then goes stale, as for a hung window
+            _log_once("focus")
         try:
             self.publish_now()
         except Exception:  # noqa: BLE001 — the file keeps its last payload; the poll goes on
