@@ -1493,3 +1493,17 @@ class TestRepGroupFlagRoundTrip:
             "explicit group.use_for_representative_periods='no' was dropped or "
             f"altered on round-trip; got {round_tripped!r}"
         )
+
+
+def test_period_only_params_name_schema_definitions_with_a_map_type() -> None:
+    """Every ``period_only_params`` entry names a parameter of the schema that can hold a map (a stale entry, e.g.
+    one left on ``group`` after a parameter moved to ``flowGroup``, would leave the real one on the time-series
+    sheets)."""
+    import json
+
+    with open(package_data_path("schemas/spinedb_schema.json"), encoding="utf-8") as f:
+        schema = json.load(f)
+    maps = {(cls, name) for cls, name, type_name, _rank in schema["parameter_types"] if type_name == "map"}
+    stale = [(cls, name) for cls, names in load_settings()["period_only_params"].items() for name in names
+             if (cls, name) not in maps]
+    assert not stale, stale

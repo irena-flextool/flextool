@@ -326,7 +326,6 @@ period_only_params:
     - cumulative_min_capacity
     - existing
     - fixed_cost
-    - interest_rate
     - invest_cost
     - invest_forced
     - invest_max_period
@@ -350,7 +349,6 @@ period_only_params:
     - cumulative_min_capacity
     - existing
     - fixed_cost
-    - interest_rate
     - invest_cost
     - invest_max_period
     - invest_min_period
@@ -371,7 +369,6 @@ period_only_params:
     - cumulative_min_capacity
     - existing
     - fixed_cost
-    - interest_rate
     - invest_cost
     - invest_max_period
     - invest_min_period
@@ -385,13 +382,14 @@ period_only_params:
     - co2_max_period
     - invest_max_period
     - invest_min_period
-    - max_cumulative_flow
-    - min_cumulative_flow
     - penalty_capacity_margin
     - penalty_inertia
     - penalty_non_synchronous
     - retire_max_period
     - retire_min_period
+  flowGroup:
+    - max_cumulative_flow
+    - min_cumulative_flow
   constraint:
     - constant
   solve:
