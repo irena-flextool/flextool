@@ -124,15 +124,27 @@ the feature is untouched. A level that finds nothing to leave out says so in the
 
 **`reduce_unit_detail_method`.** Each value leaves out the parts marked:
 
-| value | integer units online | ramps | min limits | online variables |
+| value | integer online, `exact` | ramps | min limits | online variables |
 |---|---|---|---|---|
 | `none` (default) | | | | |
 | `integers` | continuous | | | |
 | `integers_ramps` | continuous | left out | | |
 | `integers_min_limits` | continuous | | left out | |
 | `integers_ramps_min_limits` | continuous | left out | left out | |
-| `online` | (no online variables left) | kept | left out | left out |
-| `online_ramps` | (no online variables left) | left out | left out | left out |
+| `online` | — | | left out | left out |
+| `online_ramps` | — | left out | left out | left out |
+
+What each value removes:
+
+- `none` removes nothing.
+- `integers` removes: whole units online (they become continuous) and the `exact` connection method (those connections become *regular*).
+- `integers_ramps` removes: what `integers` removes, and the ramp limits and ramp costs.
+- `integers_min_limits` removes: what `integers` removes, and min load, the `capacity_min_coeff` floors and the minimum up and down times.
+- `integers_ramps_min_limits` removes: what `integers` removes, the ramp limits and ramp costs, and the min limits.
+- `online` removes: what `integers_min_limits` removes, and the online variables: units online, start-ups, shut-downs, start-up costs, the user constraints with a `constraint_online_coeff` term and the part-load curve of `min_load_efficiency` units. Ramp limits stay and apply to the capacity.
+- `online_ramps` removes: what `online` removes, and the ramp limits and ramp costs.
+
+The parts in detail:
 
 - **Integer units online.** Units and connections with `startup_method` *binary* get continuous units online.
 
@@ -172,6 +184,19 @@ the feature is untouched. A level that finds nothing to leave out says so in the
 | `dc_power_flow` | | | | lossless transport |
 | `reserves_inertia_non_synchronous_dc_power_flow` | left out | left out | left out | lossless transport |
 
+What each value removes:
+
+- `none` removes nothing.
+- `reserves` removes: the reserve requirements, the reserves that units and connections hold and the reserve shortfall penalty.
+- `inertia` removes: the inertia limits and the inertia shortfall penalty.
+- `non_synchronous` removes: the non-synchronous share limits and their shortfall penalty.
+- `inertia_non_synchronous` removes: what `inertia` and `non_synchronous` remove.
+- `reserves_inertia_non_synchronous` removes: what `reserves`, `inertia` and `non_synchronous` remove.
+- `dc_power_flow` removes: the voltage angles of `dc_power_flow_with_angles` groups; their lines become lossless transport limited by capacity.
+- `reserves_inertia_non_synchronous_dc_power_flow` removes: all of the above.
+
+The parts in detail:
+
 - **Reserves.** Every reserve requirement (`reserve__upDown__group`) and the reserve that units and connections hold, with its limits and shortfall penalty.
 
     In a stochastic solve the ties that make the forecast branches hold the same reserve go too. An investment
@@ -182,7 +207,7 @@ the feature is untouched. A level that finds nothing to leave out says so in the
 - **DC power flow.** The angles of `dc_power_flow_with_angles` groups: the lines become lossless transport connections limited by their capacity.
 
     Loop flows disappear, so a meshed network can carry more than its physics allows, and an investment solve
-    invests less in lines.
+    invests less in lines. Links with `is_DC` = *yes* keep their own method.
 
 The capacity margin (`capacity_margin_method`) is never left out.
 
@@ -200,24 +225,30 @@ curve. CO2 limits read that fuel, so they relax as well. The reduced solve is th
 the full one.
 
 **Across solves.** Every roll of a rolling solve uses the solve's levels. A nested solve uses its own levels, not
-its parent's. A realization solve (the dispatch of a stochastic solve's realized branch) uses its parent solve's
-levels, whatever is set on it, since it takes the parent's units online and reserves; a warning names a
-different value set on a declared realization solve. A solve that continues the ramp of a solve without online
-variables starts its commitment and ramps cold, with an info line. A Benders decomposition can split connections
-whose reserves, online variables or `exact` method the solve leaves out.
+its parent's. A Benders decomposition can split connections whose reserves, online variables or `exact` method
+the solve leaves out.
+
+**Realization and continuing solves.** A realization solve (the dispatch of a stochastic solve's realized branch)
+uses its parent solve's levels, whatever is set on it, since it takes the parent's units online and reserves. A
+warning names a different value set on a declared realization solve. A solve that continues the ramp of a solve
+without online variables starts its commitment and ramps cold, with an info line.
 
 **Run log and run status.** A solve with a level other than `none` writes one info line to the run log at its
 first roll: what each level left out, for how many units, connections and groups, and the interactions above.
-The entry of each roll in `_run_status.json` records `reduced`: the two levels and that line.
+The line names the entities when there are five or fewer, otherwise it gives their count. The entry of each roll
+in `_run_status.json` records `reduced`: the two levels, and on the solve's first roll that line too.
 
-**Results.** The result cells of a feature that a solve left out are empty, not 0, in the time steps that solve
+**Which cells.** The result cells of a feature that a solve left out are empty, not 0, in the time steps that solve
 realized: units online and start-ups, reserves, reserve prices and reserve shortfall, the inertia of groups,
 their largest flow and inertia shortfall, the non-synchronous shortfall, and the DC angles. "Not modelled" is not
-"zero". A per-period cell is empty when every solve that realized the period left the feature out. A period
-shared with a solve that kept the feature keeps its per-period value, in which the time steps of the solve that
-left it out count as 0. The costs stay: a left-out feature costs nothing in
-the solve. The fuel of a `min_load_efficiency` unit under `online*` is its output divided by its full-load
-efficiency. The tables of other solves that kept the feature are complete.
+"zero". The tables of other solves that kept the feature are complete. When no solve keeps a feature, its tables
+have no entity columns.
+
+**Per-period values and costs.** A per-period cell is empty when every solve that realized the period left the
+feature out. A period shared with a solve that kept the feature keeps its per-period value, in which the time
+steps of the solve that left it out count as 0. Its row is labelled with the last solve that realized the period,
+which may be the one that left the feature out. The costs stay: a left-out feature costs nothing in the solve.
+The fuel of a `min_load_efficiency` unit under `online*` is its output divided by its full-load efficiency.
 
 ### Time structure assumptions
 

@@ -83,7 +83,7 @@ warm build, the handoff and the per-roll outputs. The per-roll emit and the inpu
 
     The level strings are not fields: two sub-solves whose reduced data are identical may share a warm LP.
 
-- **Run log and run status.** The cascade prints one info line per solve at its first roll (`_reduce_detail.summary_line`: what each level left out and the interaction notes, `ReduceReport.notes`), logs the dropped user constraints as warnings, and records `reduced = {unit, system, summary}` on the run-status entry of every roll (`RunRecorder.solve_reduced`).
+- **Run log and run status.** The cascade prints one info line per solve at its first roll (`_reduce_detail.summary_line`: what each level left out and the interaction notes, `ReduceReport.notes`), logs the dropped user constraints as warnings, and records `reduced = {unit, system, summary}` on the run-status entry of every roll (`RunRecorder.solve_reduced`); `summary` is the line on the solve's first roll and None on the later ones.
 - **Outputs.** The static sets of the last sub-solve come from its pre-transform data (`output_static_view`), so a reduced last solve keeps the tables of earlier full solves.
 
     The cells of a left-out feature in a reduced solve's steps are emptied after the tables are built
