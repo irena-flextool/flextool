@@ -7,7 +7,7 @@ from pathlib import Path
 from tkinter import ttk
 
 from flextool import run_record
-from flextool.gui.data_models import ExecutedScenarioInfo, ProjectSettings, ScenarioInfo
+from flextool.gui.data_models import TIMESTAMP_FORMAT, ExecutedScenarioInfo, ProjectSettings, ScenarioInfo
 from flextool.gui.scenario_key import (
     format_key,
     parse_key,
@@ -23,9 +23,6 @@ logger = logging.getLogger(__name__)
 # than ballot box characters at the same font size.
 CHECK_ON = "\u25a0"   # ■
 CHECK_OFF = "\u25a1"  # □
-
-
-_TIMESTAMP_FORMAT = "%d.%m.%y %H:%M"
 
 
 def row_checkable(info: ExecutedScenarioInfo) -> bool:
@@ -105,7 +102,7 @@ def _folder_timestamp(folder: Path, status: dict | None) -> str:
     if status is not None:
         when = run_record.parse_iso(status.get("finished_at")) or run_record.parse_iso(status.get("started_at"))
         if when is not None:
-            return when.astimezone().strftime(_TIMESTAMP_FORMAT)
+            return when.astimezone().strftime(TIMESTAMP_FORMAT)
     try:
         file_mtimes = [
             f.stat().st_mtime
@@ -114,7 +111,7 @@ def _folder_timestamp(folder: Path, status: dict | None) -> str:
             and not f.name.startswith(run_record.STATUS_TMP_PREFIX)
         ]
         mtime = max(file_mtimes) if file_mtimes else folder.stat().st_mtime
-        return datetime.fromtimestamp(mtime).strftime(_TIMESTAMP_FORMAT)
+        return datetime.fromtimestamp(mtime).strftime(TIMESTAMP_FORMAT)
     except OSError:
         return ""
 

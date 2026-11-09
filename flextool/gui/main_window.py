@@ -2425,7 +2425,7 @@ class MainWindow(tk.Tk):
         """Show the ``_run.log`` of an executed row's folder in a log window."""
         from flextool.gui.output_log_window import OutputLogWindow
         from flextool.gui.scenario_key import resolve_subdir_for_read
-        from flextool.run_record import RUN_LOG_FILE
+        from flextool.run_record import RUN_LOG_FILE, read_log_excerpt
 
         if not self.current_project:
             return
@@ -2442,8 +2442,9 @@ class MainWindow(tk.Tk):
             window.append_line(f"# {info.unusable_reason}")
             window.append_line("")
         try:
-            # Read and closed at once: the run may still be writing it (Windows keeps no lock then).
-            text = log_path.read_text(encoding="utf-8", errors="replace")
+            # Read and closed at once: the run may still be writing it (Windows keeps no lock then).  A long log
+            # is shown as its head and tail, with a line that says how much is left out and where the whole is.
+            text, _left_out = read_log_excerpt(log_path)
         except OSError as exc:
             window.append_line(f"No run log in {log_path.parent}: {exc}")
         else:

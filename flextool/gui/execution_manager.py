@@ -19,7 +19,7 @@ from typing import Callable
 import psutil
 
 from flextool.gui.cli_format import format_cmd_for_log, terminal_command
-from flextool.gui.data_models import GlobalSettings, ProjectSettings, ScenarioInfo
+from flextool.gui.data_models import TIMESTAMP_FORMAT, GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.scenario_key import choose_output_subdir_for_write
 from flextool.run_record import (
     RUN_LOG_OWNER_ENV,
@@ -955,7 +955,7 @@ class ExecutionManager:
                 return
             now = datetime.now()
             job.end_time = now
-            job.finish_timestamp = now.strftime("%d.%m.%y %H:%M")
+            job.finish_timestamp = now.strftime(TIMESTAMP_FORMAT)
             job.status = JobStatus.SUCCESS if success else JobStatus.FAILED
         self._notify_status_change(job)
 
@@ -1322,7 +1322,7 @@ class ExecutionManager:
                     if job.status == JobStatus.KILLED:
                         return
                     job.end_time = now
-                    job.finish_timestamp = now.strftime("%d.%m.%y %H:%M")
+                    job.finish_timestamp = now.strftime(TIMESTAMP_FORMAT)
                     job.process = None
                     if return_code == 0:
                         job.status = JobStatus.SUCCESS
@@ -1373,7 +1373,7 @@ class ExecutionManager:
                     if job.status is not JobStatus.KILLED:
                         job.status = JobStatus.FAILED
                         job.end_time = datetime.now()
-                        job.finish_timestamp = job.end_time.strftime("%d.%m.%y %H:%M")
+                        job.finish_timestamp = job.end_time.strftime(TIMESTAMP_FORMAT)
                 self._notify_status_change(job)
             finally:
                 self._finish_run_record(job, proc, owner, launch)
@@ -1785,7 +1785,7 @@ class ExecutionManager:
         job.status = JobStatus.KILLED
         job.kill_reason = job.kill_reason or reason
         job.end_time = datetime.now()
-        job.finish_timestamp = job.end_time.strftime("%d.%m.%y %H:%M")
+        job.finish_timestamp = job.end_time.strftime(TIMESTAMP_FORMAT)
         if job.process is None:
             return None
         if job.stop_file is not None:

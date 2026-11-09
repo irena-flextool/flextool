@@ -8,6 +8,8 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import ttk
 
+from flextool.gui.data_models import TIMESTAMP_FORMAT
+
 logger = logging.getLogger(__name__)
 
 # Prefixes for directory/file entries in the Treeview
@@ -21,7 +23,7 @@ _FILE_PREFIX_PLAIN = "      "
 def _format_mtime(timestamp: float) -> str:
     """Format a modification timestamp as DD.MM.YY hh:mm."""
     dt = datetime.fromtimestamp(timestamp)
-    return dt.strftime("%d.%m.%y %H:%M")
+    return dt.strftime(TIMESTAMP_FORMAT)
 
 
 def _parse_extensions(pattern: str) -> set[str]:

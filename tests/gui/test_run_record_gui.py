@@ -575,6 +575,35 @@ def test_the_executed_list_unchecks_and_refuses_rows_whose_run_did_not_succeed(p
     assert "Model status: Infeasible" in text
 
 
+def test_the_gui_shows_times_in_one_format():
+    from flextool.gui.data_models import TIMESTAMP_FORMAT
+    from flextool.gui.dialogs.file_picker import _format_mtime
+
+    assert TIMESTAMP_FORMAT == "%d.%m.%y %H:%M"
+    assert _format_mtime(datetime(2026, 11, 5, 14, 2).timestamp()) == "05.11.26 14:02"
+
+
+def test_the_run_log_window_shows_a_long_log_as_its_head_and_tail(project, tk_root, monkeypatch):
+    from flextool.run_record import _owner
+
+    log_path = project / "output_parquet" / "bad_1" / RUN_LOG_FILE
+    # 2000 lines of 10 bytes (20 000 bytes); the window shows at most 1000: the first 500 (head, half of it) and
+    # the last 500, so 19 000 bytes are left out.
+    log_path.write_bytes(b"".join(f"line {i:04d}\n".encode() for i in range(2000)))
+    monkeypatch.setattr(_owner, "LOG_VIEW_MAX_BYTES", 1000)
+    host = _executed_list_host(tk_root, project, ProjectSettings())
+    mw.MainWindow._refresh_executed_scenarios(host)
+    rows = {host.executed_tree.set(iid, "scenario_name"): iid for iid in host.executed_tree.get_children()}
+    host.current_project = project.name
+    monkeypatch.setattr(mw, "get_projects_dir", lambda: project.parent)
+    mw.MainWindow._open_run_log(host, rows["bad"])
+    (window,) = [w for w in tk_root.winfo_children() if isinstance(w, tk.Toplevel)]
+    lines = window._text.get("1.0", "end").splitlines()
+    shown = [line for line in lines if line.startswith("line ")]
+    assert shown == [f"line {i:04d}" for i in (*range(50), *range(1950, 2000))]
+    assert f"[... 19000 bytes not shown here; the whole log is {log_path} ...]" in lines
+
+
 # ---------------------------------------------------------------------------
 # A run record that cannot be read now, or is damaged
 # ---------------------------------------------------------------------------

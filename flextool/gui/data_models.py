@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 # sent with every run.  2: presolve and scaling are sent only when the user picks them; the GUI sends no MIP gap.
 SOLVER_SETTINGS_REVISION = 2
 
+#: How the GUI shows a date and time (finish times of runs, file times): DD.MM.YY hh:mm.
+TIMESTAMP_FORMAT = "%d.%m.%y %H:%M"
+
 
 @dataclass
 class PlotSettings:
