@@ -2323,7 +2323,7 @@ def _eq_ramp_cost(b: _Build) -> None:
     # links to the shared predecessor; a continuation roll's first step ramps from the flow the previous roll
     # realized, so a change at a roll boundary is charged once, in the roll that realizes it.  Arcs with
     # conversion_flow_coeff = 0 have rows too (that parameter removes the ramp limits, not the cost).  Reserves are
-    # not part of the change.  A direct unit with two inputs prices each input arc's change separately.
+    # not part of the change.  An indirect unit's input and output arcs are priced separately, each by its own side.
     lhs = _ramp_flow_change(b, rows, keys)
     lhs["ramp_up"] = -Where(b.v_ramp_up, over)
     lhs["ramp_down"] = Where(b.v_ramp_down, over)

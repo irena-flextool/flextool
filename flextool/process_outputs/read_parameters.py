@@ -982,6 +982,8 @@ def _build_p_process_per_arc(
             if key in cols:
                 out.loc[row, key] = float(r["value"])
 
+    # The "ramp_cost" row stays 0 and nothing reads it: the ramp cost of an arc (both sides summed) is
+    # par.process_ramp_cost (p_ramp_cost_arc).
     _fill_row("ramp_speed_up", ramp_up)
     _fill_row("ramp_speed_down", ramp_down)
     _fill_row("inertia_constant", inertia)
