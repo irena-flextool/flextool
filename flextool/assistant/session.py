@@ -70,7 +70,7 @@ from typing import TYPE_CHECKING, Literal
 from flextool.assistant import budget as budget_module
 from flextool.assistant import caps as caps_module
 from flextool.assistant import prompt, registry
-from flextool.assistant.errors import message as tool_message
+from flextool.assistant.errors import MESSAGES as TOOL_MESSAGES
 from flextool.assistant.llm_adapter import (
     Backend,
     Continuing,
@@ -131,7 +131,6 @@ SESSION_MESSAGES: dict[str, str] = {
     "declined_call": "Not run: the provider declined this request.",
     "limit_call": "Not run: the tool limit for this question is reached.",
     "too_many_calls": "Too many tool calls in one step; at most {n}. Ask again for the rest.",
-    "bad_json": "The tool arguments were not valid JSON: {start}",
     "stopped": "Stopped by the user.",
     "closed": "Not run: FlexTool was closed before this tool call finished.",
     "limit": ("The tool limit for this question is reached. Answer with what you have, and say what is still "
@@ -142,7 +141,7 @@ SESSION_MESSAGES: dict[str, str] = {
     "summary_head": "Summary of an earlier conversation (text only, no tool results):",
     "empty_result": "The tool returned nothing.",
     "turn_limit_call": "Not run: the limit of {n} tool calls for this question is reached.",
-    "not_at_level": "The tool {name} is not available at this assistant level. Available tools: {names}.",
+    "not_at_level": TOOL_MESSAGES["not_at_level"],     # rendered by registry.error_outcome (quoted, capped)
     "fit": "Earlier tool results were removed to fit this model's context.",
     "free_plan": ("Free plan: the assistant uses at most {rounds} steps for each question to stay within the "
                   "provider's request limits."),
@@ -811,15 +810,13 @@ class Session:
         state.seen.add(call_signature(call))
         if call.arguments is None:
             start = call.raw_arguments[:BAD_JSON_START]
-            return self._result(call, SESSION_MESSAGES["bad_json"].format(start=self.ctx.redact(start)),
+            return self._result(call, registry.error_outcome(self.ctx, "bad_json", start=start).text,
                                 is_error=True, turn=turn)
         if name not in self.tool_names:
-            names = ", ".join(sorted(self.tool_names))
-            if name in registry.all_tools():
-                text = SESSION_MESSAGES["not_at_level"].format(name=name, names=names)
-            else:
-                text = tool_message("unknown_tool", name=self.ctx.redact(name), names=names)
-            return self._result(call, text, is_error=True, turn=turn)
+            names = sorted(self.tool_names)
+            key = "not_at_level" if name in registry.all_tools() else "unknown_tool"
+            return self._result(call, registry.error_outcome(self.ctx, key, name=name, names=names).text,
+                                is_error=True, turn=turn)
         arguments = self.ctx.redact(json.dumps(call.arguments, ensure_ascii=False))
         self._acquire_tool_lock(name, cancel, emit)
         try:

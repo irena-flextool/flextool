@@ -151,9 +151,9 @@ def test_filters_wildcard_time_range_and_time_of_max(rctx) -> None:
     assert out["columns"] == ["period", "unit", "node", "value", "time_of_max"]
     assert _rows(out) == [("p2020", "wind_plant", "west", 15.0, "t03"), ("p2025", "wind_plant", "west", 0.0, "t01")]
     message = _refused(rctx, "query_result", run="base_1", table="unit_outputNode_dt_ee", filters={"unit": ["oil*"]})
-    assert message.startswith("No value of the level unit of unit_outputNode_dt_ee matches the filter.")
+    assert message.startswith('No value of the level "unit" of "unit_outputNode_dt_ee" matches the filter.')
     message = _refused(rctx, "query_result", run="base_1", table="unit_outputNode_dt_ee", filters={"colour": ["x"]})
-    assert "no level 'colour'" in message and "period, time, unit, node" in message
+    assert 'no level "colour"' in message and '"period", "time", "unit", "node"' in message
 
 
 def test_sum_over_entities_with_top_n(rctx) -> None:
@@ -245,7 +245,7 @@ def test_describe_list_and_find(rctx) -> None:
     hits = _call(rctx, "find_result_tables", query="nodal energy price")["tables"]
     assert hits[0]["table"] == "node_prices_dt_e" and hits[0]["unit"] == "CUR/MWh (default convention)"
     message = _refused(rctx, "query_result", run="base_1", table="unit_outputNode_dt")
-    assert message.startswith("There is no result table 'unit_outputNode_dt' in base_1.")
+    assert message.startswith('There is no result table "unit_outputNode_dt" in "base_1".')
 
 
 def test_compare_runs_with_a_missing_key(rctx) -> None:

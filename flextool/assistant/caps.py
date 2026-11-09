@@ -7,14 +7,18 @@ smaller of the two.  ``call_tool`` clamps the
 arguments before it validates them, so the tool schemas carry no ranges (the tool descriptions state them).
 
 :func:`fit_json` turns a payload into the compact JSON text that is sent: every string redacted
-(:func:`flextool.assistant.redact.redact`), then whole trailing rows of the payload's row list dropped until the
+(:func:`flextool.assistant.redact.redact`) and cleaned of invisible characters (:func:`clean`) — once: a
+:class:`Rendered` string is already both — then whole trailing rows of the payload's row list dropped until the
 text fits ``max_chars``, with a ``truncated`` note saying how many are shown.
 """
 from __future__ import annotations
 
 import json
 import math
+import re
+import unicodedata
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Any, Callable
 
 
@@ -95,6 +99,38 @@ def cap_text(text: Any, limit: int) -> Any:
     return text
 
 
+class Rendered(str):
+    """A text that is already cleaned (:func:`clean`) and redacted: :func:`fit_json` and ``call_tool`` send it as
+    it is.  Each text is redacted exactly once: a second pass over text that holds JSON-quoted names could read an
+    escaped backslash as part of a path and take the quote's escape with it (review G7, B1)."""
+
+
+#: Variation selectors (U+FE00–FE0F, U+E0100–E01EF): invisible, used to hide bytes in a text.
+_VARIATION_SELECTORS = re.compile("[\ufe00-\ufe0f\U000e0100-\U000e01ef]")
+
+
+@lru_cache(maxsize=4096)
+def _invisible(ch: str) -> bool:
+    return unicodedata.category(ch) in ("Cc", "Cf", "Co", "Cn", "Cs") or bool(_VARIATION_SELECTORS.match(ch))
+
+
+def clean(text: str) -> str:
+    """*text* without the characters a reader cannot see: control characters (but newline and tab), format
+    characters (bidi overrides, zero-width characters, the Unicode tag characters that can spell hidden
+    instructions), private-use and unassigned code points and variation selectors.  Every string that reaches the
+    model passes it."""
+    if text.isprintable() and not _VARIATION_SELECTORS.search(text):
+        return text
+    return "".join(ch for ch in text if ch in "\n\t" or not _invisible(ch))
+
+
+def sent_text(text: str, redact: Callable[[str], str]) -> Rendered:
+    """*text* cleaned and redacted, once: a :class:`Rendered` text passes unchanged."""
+    if isinstance(text, Rendered):
+        return text
+    return Rendered(redact(clean(text)))
+
+
 def dumps(payload: Any) -> str:
     """Compact JSON, non-ASCII kept."""
     return json.dumps(payload, ensure_ascii=False, separators=(",", ":"), default=str)
@@ -118,7 +154,7 @@ def fit_json(payload: dict, max_chars: int, redact: Callable[[str], str], *, row
     are dropped and ``truncated`` says ``showing {k} of {n} {what} — {hint}``.  When the payload still does not fit
     with no rows, its strings are cut, and as a last resort only the ``truncated`` note is sent.
     """
-    data = _map_strings(payload, redact)
+    data = _map_strings(payload, lambda s: sent_text(s, redact))
     text = dumps(data)
     if len(text) <= max_chars:
         return text

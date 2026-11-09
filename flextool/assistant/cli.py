@@ -195,7 +195,6 @@ def main(argv: list[str] | None = None, *, proto_in: int | None = None, proto_ou
         return 0
 
     from flextool.assistant import registry
-    from flextool.assistant.errors import message
 
     name, raw = args.call[0], (args.call[1] if len(args.call) > 1 else None)
     arguments = _call_arguments(raw, parser)
@@ -204,7 +203,7 @@ def main(argv: list[str] | None = None, *, proto_in: int | None = None, proto_ou
                        front_end="agent")
     allowed = {t.name for t in registry.tools_for_tier(tier)}
     if name in registry.all_tools() and name not in allowed:
-        outcome = registry.ToolOutcome(False, None, message("not_in_level", name=name))
+        outcome = registry.error_outcome(ctx, "not_in_level", name=name)
     else:
         outcome = registry.call_tool(ctx, name, arguments)
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

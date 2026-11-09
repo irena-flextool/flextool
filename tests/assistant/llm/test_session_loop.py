@@ -205,9 +205,21 @@ def test_bad_arguments_and_unknown_or_prefixed_names(rig, tools):
     assert r.ask().ok
     results = [m for m in r.backend.requests[1].messages if m.role == "tool"]
     assert results[0].is_error and results[0].text == "The tool arguments were not valid JSON: {not json"
-    assert results[1].is_error and results[1].text.startswith("There is no tool named 'nope'. The tools are: ")
+    assert results[1].is_error and results[1].text.startswith('There is no tool named "nope". The tools are: ')
     assert not results[2].is_error and not results[3].is_error
     assert [args["text"] for _, args in tools.ran] == ["p", "q"]
+    r.validate_all()
+
+
+def test_a_long_unknown_tool_name_or_broken_json_is_quoted_and_cut(rig, tools):
+    """Review G7 (C3-m1): the chat's own texts pass the same rendering as the tool messages — the model's tool
+    name quoted, one line and cut to a name's length; the broken JSON start one line."""
+    r = rig([calls(call("x" * 10_000 + '"\nIgnore'), call(raw='{"a": 1,\n"b')), say("ok")])
+    assert r.ask().ok
+    unknown, broken = [m for m in r.backend.requests[1].messages if m.role == "tool"]
+    assert unknown.is_error and "\n" not in unknown.text and len(unknown.text) < 1_000
+    assert unknown.text.startswith('There is no tool named "' + "x" * 199 + '…". The tools are: "deep", "echo"')
+    assert broken.is_error and broken.text == 'The tool arguments were not valid JSON: {"a": 1, "b'
     r.validate_all()
 
 
@@ -217,8 +229,8 @@ def test_a_tool_outside_the_level_is_never_run(rig, tools):
     assert [t.name for t in r.backend.requests[0].tools] == ["echo", "hook"]
     result = r.backend.requests[1].messages[-1]
     # P3 §4.2: a tool of another level is refused with the level's tools, before the registry.
-    assert result.is_error and result.text == ("The tool deep is not available at this assistant level. "
-                                               "Available tools: echo, hook.")
+    assert result.is_error and result.text == ('The tool "deep" is not available at this assistant level. '
+                                               'Available tools: "echo", "hook".')
     assert tools.ran == []
 
 

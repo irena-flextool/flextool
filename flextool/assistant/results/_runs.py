@@ -102,7 +102,7 @@ def _summary(ctx: AssistantContext, source: project.Source) -> dict:
     except ToolError as exc:
         status = {"old_spine_format": "old_spine_format", "busy": "unreadable", "unreadable": "unreadable",
                   "not_flextool": "unreadable"}.get(exc.key)
-        out.update(version_status=status, problem=str(exc))
+        out.update(version_status=status, problem=exc.render(ctx.redact))
         if source.kind == "xlsx" and exc.key in ("not_converted", "converting") and source.path.is_file():
             from flextool.gui.input_sources import InputSourceManager
 
@@ -330,7 +330,7 @@ def resolve_run(ctx: AssistantContext, run: str) -> ResolvedRun:
             raise ToolError("run_malformed", run=run)
         if code == "no_parquet":
             methods = ((status or {}).get("output") or {}).get("write_methods") or []
-            raise ToolError("run_no_parquet", run=run, methods=", ".join(methods) or "none")
+            raise ToolError("run_no_parquet", run=run, methods=list(methods) or ["none"])
         error = found.entry["error"] or run_record.unusable_reason(status) or "no reason recorded"
         raise ToolError("run_failed", run=run, error=error)
     return ResolvedRun(found.folder, status, found.entry, run_notes(found), found)

@@ -13,8 +13,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from flextool.assistant import project
+from flextool.assistant.caps import Rendered
 from flextool.assistant.context import AssistantContext
-from flextool.assistant.errors import ToolError
+from flextool.assistant.errors import ToolError, quoted
 from flextool.assistant.results import _query, _runs
 from flextool.assistant.unit_wording import shown_unit
 from flextool.lean_parquet import to_long
@@ -76,10 +77,11 @@ def _feeding(ctx: AssistantContext, rr: _runs.ResolvedRun, nodes: list[str]) -> 
     try:
         db, _ = project.open_source(ctx, run.source)
         if scenario not in db.scenarios:
-            return None, f"The input source no longer has the scenario '{scenario}' of this run."
+            return None, Rendered(f"The input source no longer has the scenario {quoted(scenario, ctx.redact)} "
+                                  "of this run.")
         view = db.view(scenario)
     except ToolError as exc:
-        return None, f"The input data of this run could not be read: {exc}"
+        return None, Rendered(f"The input data of this run could not be read: {exc.render(ctx.redact)}")
     out: dict[str, list[dict]] = {}
     for node in nodes:
         found: set[tuple[str, tuple[str, ...]]] = set()

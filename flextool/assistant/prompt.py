@@ -131,7 +131,7 @@ def system_layers(front_end: FrontEndName, tier: str) -> tuple[str, ...]:
 
 # --- the connection's instructions -------------------------------------------------------------------------------
 MCP_PREAMBLE = (
-    'You are connected to the FlexTool tools for the project "{name}". FlexTool is an energy system optimisation '
+    "You are connected to the FlexTool tools for the project {name}. FlexTool is an energy system optimisation "
     "model. These tools only read: they show input data, results, run logs and the FlexTool documentation, and "
     "they cannot change the model."
 )
@@ -142,10 +142,14 @@ AGENT_DATA_SENTENCE = (
 )
 
 
-def instructions(project_name: str) -> str:
+def instructions(project_name: str, redact: Callable[[str], str] | None = None) -> str:
     """The instructions the connection server sends when an AI agent connects to the project *project_name*: the
-    preamble, the data sentence, the rules of layer 1 and layers 2 and 3."""
-    return "\n\n".join((MCP_PREAMBLE.format(name=project_name), AGENT_DATA_SENTENCE, RULES, LAYER_ORIENTATION,
+    preamble, the data sentence, the rules of layer 1 and layers 2 and 3.  The project's folder name is a name from
+    the user's computer: quoted, one line, redacted (*redact*) and cut, as the tool messages quote names."""
+    from flextool.assistant.errors import quoted
+
+    name = quoted(project_name, redact if redact is not None else (lambda s: s))
+    return "\n\n".join((MCP_PREAMBLE.format(name=name), AGENT_DATA_SENTENCE, RULES, LAYER_ORIENTATION,
                           LAYER_DOCUMENTS))
 
 
@@ -158,11 +162,11 @@ _CONTEXT_BLOCK = re.compile(re.escape(CONTEXT_START) + r".*?" + re.escape(CONTEX
 
 
 def _name(value: str | None, redact: Callable[[str], str] | None) -> str:
-    from flextool.assistant.caps import NAME_MAX, cap_text
+    from flextool.assistant.caps import NAME_MAX, cap_text, clean
 
     if not value:
         return NOT_CHOSEN
-    text = " ".join(str(value).split())        # one line: a name cannot end the block early
+    text = " ".join(clean(str(value)).split())  # one line, nothing invisible: a name cannot end the block early
     text = text.replace(CONTEXT_END, "(end of context)")
     if redact is not None:
         text = redact(text)

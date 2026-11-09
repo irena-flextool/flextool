@@ -226,7 +226,7 @@ def _matching(values: list[str], patterns: list[str]) -> list[str]:
 def _check_level(table: Table, level: str, what: str) -> None:
     if level not in table.levels:
         raise ToolError("unknown_level", table=table.stem, level=level, what=what,
-                        levels=", ".join(table.levels) or "(none)")
+                        levels=name_list(table.levels, 50))
 
 
 @dataclass
@@ -346,7 +346,7 @@ def _membership(table: Table, q: Query) -> Result:
     for level in q.filters:
         if level not in table.layout.idx:
             raise ToolError("unknown_level", table=table.stem, level=level, what="filters",
-                            levels=", ".join(table.layout.idx))
+                            levels=name_list(table.layout.idx, 50))
     wide = read_wide(table, [])
     for level, patterns in q.filters.items():
         values = wide[level].unique(maintain_order=True).to_list()
@@ -401,8 +401,8 @@ def _aggregate(table: Table, q: Query, keep: list[str], kept: list[str], agg: st
         group_units = {measure_of[p].unit for p in cols}
         if len(group_units) > 1:
             level = next(lv for lv in cd if _varying(keys_of[p][position[lv]] for p in cols))
-            raise ToolError("mixed_units", table=table.stem, units=", ".join(sorted(u or "no unit" for u in
-                                                                                    group_units)), level=level)
+            raise ToolError("mixed_units", table=table.stem, units=sorted(u or "no unit" for u in group_units),
+                            level=level)
     notes = check_aggregation(table.stem, semantics, over, agg)
 
     names = [f"__g{i}" for i in range(len(groups))]
@@ -544,7 +544,7 @@ def ordered(result: Result, q: Query, *, default_by: str | None = None):
         descending, absolute = q.descending, False
     if by is not None:
         if by not in frame.columns:
-            raise ToolError("bad_sort", by=by, columns=", ".join(frame.columns))
+            raise ToolError("bad_sort", by=by, columns=list(frame.columns))
         key = pl.col(by).abs() if absolute and frame.schema[by].is_numeric() else pl.col(by)
         frame = frame.sort(key, descending=descending, nulls_last=True, maintain_order=True)
     if q.top_n is not None:

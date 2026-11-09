@@ -22,7 +22,7 @@ pytestmark = pytest.mark.skipif(_MCP_MAJOR < 2, reason="needs mcp 2.x (reinstall
 #: The basic level's tools (P3 §2.2, P3-O15), written from the design, not from the registry.
 BASIC_TOOLS = ["find_result_tables", "get_entity", "get_parameter", "list_runs", "list_sources", "query_result",
                "read_doc", "search_docs"]
-REFUSED = ("The tool compare_runs is not part of the basic level. Restart the FlexTool connection without --tier "
+REFUSED = ('The tool "compare_runs" is not part of the basic level. Restart the FlexTool connection without --tier '
            "basic to use it.")
 
 

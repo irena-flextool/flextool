@@ -9,7 +9,16 @@ from typing import Any
 from flextool.assistant import project
 from flextool.assistant.caps import DESCRIPTION_MAX, NAME_MAX, CapArg, cap_text
 from flextool.assistant.context import AssistantContext
-from flextool.assistant.errors import ToolError, close_names, closest_names, did_you_mean, message, name_list, similar_text
+from flextool.assistant.errors import (
+    NameList,
+    ToolError,
+    close_names,
+    closest_names,
+    did_you_mean,
+    name_list,
+    render,
+    similar_text,
+)
 from flextool.assistant.inputs import _db, _values
 from flextool.assistant.inputs._notes import notes_for
 from flextool.assistant.inputs._schema import ranks_in_words, shipped_schema
@@ -64,8 +73,9 @@ def _description(text: str | None) -> str | None:
     return cap_text(text, DESCRIPTION_MAX) if text and text.strip() else None
 
 
-def _entity_text(byname: tuple[str, ...]) -> str:
-    return "'" + "', '".join(byname) + "'" if len(byname) > 1 else f"'{byname[0]}'"
+def _entity_text(byname: tuple[str, ...]) -> NameList:
+    """An entity's names for a message: each quoted (``"coal", "heat"``)."""
+    return NameList(tuple(byname), form="join")
 
 
 def _find(db: _db.InputDB, entity_class: str, names: list[str]) -> tuple[str, ...] | None:
@@ -86,7 +96,7 @@ def _byname(db: _db.InputDB, source: project.Source, entity_class: str, entity: 
     if found is not None:
         return found
     if len(names) == 1 and len(dims) > 1:
-        raise ToolError("entity_dimensions", entity_class=entity_class, n=len(dims), dimensions=", ".join(dims))
+        raise ToolError("entity_dimensions", entity_class=entity_class, n=len(dims), dimensions=list(dims))
     byname = tuple(names)
     if db.entity(entity_class, byname) is None:
         candidates = [", ".join(b) for b in db.entities.get(entity_class, {})]
@@ -175,7 +185,8 @@ def value_record(ctx: AssistantContext, db: _db.InputDB, view: _db.ScenarioView,
     active, reason = view.active(entity_class, byname)
     if not active:
         record["active"] = False
-        notes.append(message("inactive_entity", entity=", ".join(byname), scenario=view.scenario, reason=reason))
+        notes.append(render("inactive_entity", {"entity": _entity_text(byname), "scenario": view.scenario,
+                                                "reason": reason}, ctx.redact))
     winner = view.value(entity_class, byname, parameter)
     relation = _version_relation(db)
     value: Any = None
@@ -195,7 +206,7 @@ def value_record(ctx: AssistantContext, db: _db.InputDB, view: _db.ScenarioView,
     elif relation is not None:
         record.update(stored=False, is_default=None, value=None)
         stored = db.stored_parameters(entity_class, byname)
-        notes.append(message("older_database", relation=relation, names=name_list(stored, 40)))
+        notes.append(render("older_database", {"relation": relation, "names": name_list(stored, 40)}, ctx.redact))
     else:
         definition = db.definition(entity_class, parameter)
         default = definition.default() if definition is not None else None
@@ -205,7 +216,7 @@ def value_record(ctx: AssistantContext, db: _db.InputDB, view: _db.ScenarioView,
                                                                               time_range=time_range))
         else:
             record.update(stored=False, is_default=False, value=None)
-            notes.append(message("no_value"))
+            notes.append(render("no_value", {}))
         record["provenance"] = {"from_alternative": None, "rank_order": view.ranked, "overridden": []}
         outside = view.outside(entity_class, byname, parameter)
         if outside:
@@ -443,8 +454,8 @@ def _cell_value(value: Any, row_limit: int, time_range: tuple[str, str] | None) 
     return {k: summary[k] for k in keys if k in summary}
 
 
-def _cell(db: _db.InputDB, view: _db.ScenarioView, entity_class: str, byname: tuple[str, ...], parameter: str,
-          row_limit: int, time_range: tuple[str, str] | None) -> dict:
+def _cell(ctx: AssistantContext, db: _db.InputDB, view: _db.ScenarioView, entity_class: str,
+          byname: tuple[str, ...], parameter: str, row_limit: int, time_range: tuple[str, str] | None) -> dict:
     """One (entity, parameter) cell: value, shape, alternative, default, unit and notes (as value_record)."""
     winner = view.value(entity_class, byname, parameter)
     notes: list[str] = []
@@ -454,14 +465,15 @@ def _cell(db: _db.InputDB, view: _db.ScenarioView, entity_class: str, byname: tu
         value, alternative, is_default = winner.parsed(), winner.alternative, False
     elif _version_relation(db) is not None:
         is_default = None
-        notes.append(message("older_database", relation=_version_relation(db),
-                             names=name_list(db.stored_parameters(entity_class, byname), 40)))
+        notes.append(render("older_database", {"relation": _version_relation(db),
+                                               "names": name_list(db.stored_parameters(entity_class, byname), 40)},
+                            ctx.redact))
     else:
         definition = db.definition(entity_class, parameter)
         value = definition.default() if definition is not None else None
         is_default = value is not None
         if value is None:
-            notes.append(message("no_value"))
+            notes.append(render("no_value", {}))
     shape = None
     if value is not None:
         shape, shape_note = _values.shape_of(entity_class, parameter, ", ".join(byname), value)
@@ -478,7 +490,7 @@ def _cell(db: _db.InputDB, view: _db.ScenarioView, entity_class: str, byname: tu
         except ToolError as exc:           # a time_range bound this value lacks: no numbers, the reason in notes
             if exc.key != "bad_input_time_step":
                 raise
-            notes.append(str(exc))
+            notes.append(exc.render(ctx.redact))
     return {"value": shown, "shape": shape, "from_alternative": alternative, "is_default": is_default,
             "unit": unit, "notes": notes}
 
@@ -509,7 +521,8 @@ def _parameter_table(ctx: AssistantContext, args: dict) -> Fit:
         if names is None:
             known.append(p)
         else:
-            unknown_parameters.append({"parameter": p, "did_you_mean": closest_names(p, names)})
+            unknown_parameters.append({"parameter": cap_text(p, NAME_MAX),
+                                       "did_you_mean": [cap_text(n, NAME_MAX) for n in closest_names(p, names)]})
 
     entities: list[tuple[str, ...]] = []
     unknown_entities: list[dict] = []
@@ -522,11 +535,12 @@ def _parameter_table(ctx: AssistantContext, args: dict) -> Fit:
             byname = _find(db, entity_class, names)
             if byname is None:
                 entry: dict[str, Any] = {"entity": _names(tuple(names)),
-                                         "similar": close_names(", ".join(names) if len(names) > 1 else names[0],
-                                                                candidates)}
+                                         "similar": [cap_text(n, NAME_MAX) for n in
+                                                     close_names(", ".join(names) if len(names) > 1 else names[0],
+                                                                 candidates)]}
                 if len(names) == 1 and len(dims) > 1:
-                    entry["note"] = message("entity_dimensions", entity_class=entity_class, n=len(dims),
-                                            dimensions=", ".join(dims))
+                    entry["note"] = render("entity_dimensions", {"entity_class": entity_class, "n": len(dims),
+                                                                 "dimensions": list(dims)}, ctx.redact)
                 unknown_entities.append(entry)
                 continue
             if byname in entities:
@@ -543,7 +557,7 @@ def _parameter_table(ctx: AssistantContext, args: dict) -> Fit:
 
     n_cells = len(entities) * len(known)
     row_limit = max(1, min(args["max_rows"], max(ENTITY_TABLE_ROWS, args["max_rows"] // max(n_cells, 1))))
-    cells = [(byname, p, _cell(db, view, entity_class, byname, p, row_limit, time_range))
+    cells = [(byname, p, _cell(ctx, db, view, entity_class, byname, p, row_limit, time_range))
              for byname in entities for p in known]
 
     # What the cells of a parameter share goes in the header: its unit (the most common) and its notes.

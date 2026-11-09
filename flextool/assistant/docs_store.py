@@ -45,7 +45,12 @@ KINDS = ("docs", "formulations", "all")
 
 
 class DocsUnavailable(RuntimeError):
-    """The documentation cannot be served; ``str(exc)`` is the message for the user."""
+    """The documentation cannot be served; ``str(exc)`` is the message for the user.  *reason* is the failure
+    message of a build that failed (not FlexTool's words: the tools quote it as data), ``None`` otherwise."""
+
+    def __init__(self, text: str, reason: str | None = None) -> None:
+        super().__init__(text)
+        self.reason = reason
 
 
 # ---------------------------------------------------------------------------
@@ -286,17 +291,18 @@ def open_store(root: Path, cache: Path, package_dir: Path = PACKAGE_DIR) -> Docs
 _lock = threading.Lock()
 _store: DocsStore | None = None
 _failure: str | None = None
+_failure_reason: str | None = None
 
 
 def load() -> DocsStore:
     """The documentation for this process, loaded on the first call.  Raises :class:`DocsUnavailable` with
     the message for the user when the installation has no documentation or the index could not be built."""
-    global _store, _failure
+    global _store, _failure, _failure_reason
     with _lock:
         if _store is not None:
             return _store
         if _failure is not None:
-            raise DocsUnavailable(_failure)
+            raise DocsUnavailable(_failure, _failure_reason)
         root = markdown_root()
         if root is None:
             raise DocsUnavailable(NOT_INCLUDED)
@@ -304,15 +310,16 @@ def load() -> DocsStore:
             _store = open_store(root, cache_root())
         except Exception as exc:  # noqa: BLE001 — any failure only disables the docs tools
             traceback.print_exc(file=sys.stderr)
-            _failure = BUILD_FAILED.format(reason=str(exc).strip().splitlines()[0] if str(exc).strip()
-                                           else type(exc).__name__)
-            raise DocsUnavailable(_failure) from None
+            _failure_reason = str(exc).strip().splitlines()[0] if str(exc).strip() else type(exc).__name__
+            _failure = BUILD_FAILED.format(reason=_failure_reason)
+            raise DocsUnavailable(_failure, _failure_reason) from None
         return _store
 
 
 def reset() -> None:
     """Forget the loaded documentation and an earlier failure (as a restart does)."""
-    global _store, _failure
+    global _store, _failure, _failure_reason
     with _lock:
         _store = None
         _failure = None
+        _failure_reason = None

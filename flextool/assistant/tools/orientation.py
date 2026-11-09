@@ -5,7 +5,7 @@ import re
 
 from flextool.assistant.caps import CapArg
 from flextool.assistant.context import AssistantContext
-from flextool.assistant.errors import ToolError, close_names, name_list, similar_text
+from flextool.assistant.errors import NameList, ToolError, close_names, docs_error, name_list, similar_text
 from flextool.assistant.registry import Fit, make_tool
 
 QUERY_MAX = 200
@@ -23,7 +23,7 @@ def _store():
     try:
         return docs_store.load()
     except docs_store.DocsUnavailable as exc:
-        raise ToolError("docs_unavailable", text=str(exc)) from None
+        raise docs_error(exc) from None
 
 
 NOT_SHARED = ("The input source and scenario are the defaults this connection was started with; the tools use "
@@ -80,7 +80,7 @@ def _doc_name(store, doc: str) -> str:
     by_base = [n for n in names if n.rsplit("/", 1)[-1] in (text, f"{text}.md")]
     if len(by_base) == 1:
         return by_base[0]
-    raise ToolError("unknown_doc", doc=doc, docs=", ".join(names))
+    raise ToolError("unknown_doc", doc=doc, docs=list(names))
 
 
 def read_doc(ctx: AssistantContext, args: dict) -> Fit | dict:
@@ -130,7 +130,7 @@ def get_formulation(ctx: AssistantContext, args: dict) -> dict:
         hits = store.search(name, kind="formulations", max_results=3)
         names = [h["name"] for h in hits]
         raise ToolError("unknown_formulation", name=name,
-                        similar=f" Similar names: {', '.join(names)}." if names else
+                        similar=NameList(tuple(names), form="similar") if names else
                         similar_text(name, [r["name"] for r in store.formulations]))
     stem = _stem(record["name"])
     related = [r["name"] for r in store.formulations

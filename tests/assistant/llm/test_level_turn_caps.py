@@ -165,8 +165,9 @@ def test_a_tool_of_another_level_is_refused_before_the_registry(tmp_path, monkey
     assert ask(session, events).ok
     result = [m for m in backend.requests[1].messages if m.role == "tool"][0]
     assert result.is_error and result.text == (
-        "The tool get_slack_summary is not available at this assistant level. Available tools: find_result_tables, "
-        "get_entity, get_parameter, list_runs, list_sources, query_result, read_doc, search_docs.")
+        'The tool "get_slack_summary" is not available at this assistant level. Available tools: '
+        '"find_result_tables", "get_entity", "get_parameter", "list_runs", "list_sources", "query_result", '
+        '"read_doc", "search_docs".')
     assert asked == []
     assert [t.name for t in backend.requests[0].tools] == [
         "find_result_tables", "get_entity", "get_parameter", "list_runs", "list_sources", "query_result", "read_doc",

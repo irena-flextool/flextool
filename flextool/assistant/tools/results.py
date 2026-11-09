@@ -131,7 +131,7 @@ def list_result_tables(ctx: AssistantContext, args: dict) -> dict:
     if wanted is not None:
         match = [t for t in topics if t.lower() == str(wanted).lower()]
         if not match:
-            raise ToolError("unknown_topic", topic=wanted, run=rr.folder.name, topics=", ".join(topics))
+            raise ToolError("unknown_topic", topic=wanted, run=rr.folder.name, topics=list(topics))
         topics = match
     total = sum(len(by_topic[t]) for t in topics)
     payload: dict[str, Any] = {"run": rr.folder.name, "topics": {}, "total": total, "truncated": None,
@@ -298,7 +298,7 @@ def compare_runs(ctx: AssistantContext, args: dict) -> Fit:
             sources.append((name, table, None, rr.run_notes))
     present = [s for s in sources if s[1] is not None]
     if not present:
-        raise ToolError("table_in_no_run", table=stem, runs=", ".join(s[0] for s in sources))
+        raise ToolError("table_in_no_run", table=stem, runs=[s[0] for s in sources])
     if present[0][1].membership:
         raise ToolError("membership_table", table=stem)
 

@@ -170,7 +170,7 @@ def test_a_time_range_bound_missing_in_one_cell(ctx) -> None:
                                                                       ["t0025", 4.0]]
     two_day = cells["2day", "timeset_duration"]
     assert two_day["value"] is None
-    assert ("time_range: the value has no index 't0009' at that level. Its index runs from t0001 to t0001."
+    assert ('time_range: the value has no index "t0009" at that level. Its index runs from "t0001" to "t0001".'
             in two_day["notes"])
 
 

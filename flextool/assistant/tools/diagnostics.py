@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from flextool import run_record
-from flextool.assistant.caps import LOG_LINE_MAX, CapArg, cap_text, dumps
+from flextool.assistant.caps import LOG_LINE_MAX, CapArg, Rendered, cap_text, dumps, sent_text
 from flextool.assistant.context import AssistantContext
 from flextool.assistant.errors import ToolError, name_list
 from flextool.assistant.registry import Fit, make_tool
@@ -83,15 +83,16 @@ def _status_block(status: dict) -> dict:
     return out
 
 
-def _log_lines(folder) -> list[tuple[int, str]]:
-    """``(line number, text)`` of the run log, without the run record's marker lines."""
+def _log_lines(ctx: AssistantContext, folder) -> list[tuple[int, str]]:
+    """``(line number, text)`` of the run log, without the run record's marker lines; each line redacted, then cut
+    to :data:`LOG_LINE_MAX` (a cut first could leave part of a folder name)."""
     path = folder / run_record.RUN_LOG_FILE
     try:
         text = path.read_bytes().decode("utf-8", errors="replace")
     except OSError:
         return []
-    return [(i, cap_text(line, LOG_LINE_MAX)) for i, line in enumerate(text.splitlines(), start=1)
-            if not line.startswith(run_record.MARKER)]
+    return [(i, Rendered(cap_text(sent_text(line, ctx.redact), LOG_LINE_MAX)))
+            for i, line in enumerate(text.splitlines(), start=1) if not line.startswith(run_record.MARKER)]
 
 
 def _fit_lines(ctx: AssistantContext, lines: list[str], budget: int, *, from_end: bool) -> list[str]:
@@ -99,7 +100,7 @@ def _fit_lines(ctx: AssistantContext, lines: list[str], budget: int, *, from_end
     out: list[str] = []
     used = 0
     for line in (reversed(lines) if from_end else lines):
-        size = len(dumps(ctx.redact(line))) + 1
+        size = len(dumps(sent_text(line, ctx.redact))) + 1
         if used + size > budget:
             break
         out.append(line)
@@ -113,7 +114,7 @@ def get_run_log(ctx: AssistantContext, args: dict) -> dict:
     if status is None:
         raise ToolError("no_run_record")
     payload: dict[str, Any] = {"run": run.folder.name, "status": _status_block(status)}
-    lines = _log_lines(run.folder)
+    lines = _log_lines(ctx, run.folder)
     total = len(lines)
     tail = int(args["tail_lines"])
     grep, solve = args.get("grep"), args.get("solve")
@@ -144,7 +145,7 @@ def get_run_log(ctx: AssistantContext, args: dict) -> dict:
             notes.append(f"No log line contains '{grep}'.")
     else:
         picked, mode = lines[-tail:], "tail"
-    texts = [f"{n}: {text}" for n, text in picked]
+    texts = [Rendered(f"{n}: {text}") for n, text in picked]       # redacted already (_log_lines)
     log: dict[str, Any] = {"lines": [], "from_line": picked[0][0] if picked else None, "total_lines": total,
                            "omitted_note": None}
     payload["log"] = log
@@ -165,7 +166,7 @@ def get_run_log(ctx: AssistantContext, args: dict) -> dict:
 
 def _redacted(ctx: AssistantContext, value: Any) -> Any:
     if isinstance(value, str):
-        return ctx.redact(value)
+        return sent_text(value, ctx.redact)
     if isinstance(value, dict):
         return {k: _redacted(ctx, v) for k, v in value.items()}
     if isinstance(value, list):

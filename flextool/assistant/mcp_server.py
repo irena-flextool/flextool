@@ -26,6 +26,8 @@ from urllib.parse import quote, unquote
 DOCS_SCHEME = "flextool-docs"
 SETUP_TOOL = "flextool_setup_problem"
 SERVER_NAME = "flextool"
+#: The longest text of a protocol error (an unknown document or prompt; the documentation not available).
+PROTOCOL_ERROR_MAX = 2_000
 
 logger = logging.getLogger("flextool.assistant.mcp_server")
 
@@ -64,7 +66,8 @@ def build_server(ctx, *, tier: str | None = None):
     from mcp.shared.exceptions import MCPError
 
     from flextool.assistant import prompt, registry
-    from flextool.assistant.errors import message
+    from flextool.assistant.caps import cap_text
+    from flextool.assistant.errors import docs_error, render
 
     tools = registry.tools_for_tier(tier)
     allowed = {t.name for t in tools}
@@ -73,8 +76,15 @@ def build_server(ctx, *, tier: str | None = None):
 
     def _locked_call(name: str, arguments: dict) -> registry.ToolOutcome:
         with ctx.lock:
-            if name not in allowed and name in registry.all_tools():
-                return registry.ToolOutcome(False, None, message("not_in_level", name=name))
+            try:
+                refused = name not in allowed and name in registry.all_tools()
+            except Exception as exc:  # noqa: BLE001 — a fault is reported, never a traceback to the agent
+                import traceback
+
+                traceback.print_exc(file=sys.stderr)
+                return registry.error_outcome(ctx, "fault", type=type(exc).__name__)
+            if refused:
+                return registry.error_outcome(ctx, "not_in_level", name=name)
             return registry.call_tool(ctx, name, arguments)
 
     async def _list_tools(_ctx, _params) -> types.ListToolsResult:
@@ -89,13 +99,18 @@ def build_server(ctx, *, tier: str | None = None):
         out = await anyio.to_thread.run_sync(_locked_call, params.name, dict(params.arguments or {}))
         return types.CallToolResult(content=[types.TextContent(type="text", text=out.text)], is_error=not out.ok)
 
+    def _protocol_text(text: str) -> str:
+        """A protocol error's text (not a tool result): rendered as the tool errors are, cut to
+        :data:`PROTOCOL_ERROR_MAX`."""
+        return cap_text(text, PROTOCOL_ERROR_MAX)
+
     def _store():
         from flextool.assistant import docs_store
 
         try:
             return docs_store.load()
         except docs_store.DocsUnavailable as exc:
-            raise MCPError(types.INTERNAL_ERROR, str(exc)) from None
+            raise MCPError(types.INTERNAL_ERROR, _protocol_text(docs_error(exc).render(ctx.redact))) from None
 
     async def _list_resources(_ctx, _params) -> types.ListResourcesResult:
         store = await anyio.to_thread.run_sync(_store)
@@ -108,8 +123,8 @@ def build_server(ctx, *, tier: str | None = None):
         doc = _doc_from_uri(uri)
         store = await anyio.to_thread.run_sync(_store)
         if doc is None or doc not in store.documents:
-            raise MCPError(types.INVALID_PARAMS, message("unknown_doc", doc=doc or uri,
-                                                         docs=", ".join(store.doc_names())))
+            raise MCPError(types.INVALID_PARAMS, _protocol_text(render(
+                "unknown_doc", {"doc": doc or uri, "docs": list(store.doc_names())}, ctx.redact)))
         return types.ReadResourceResult(contents=[
             types.TextResourceContents(uri=uri, mime_type="text/markdown", text=store.documents[doc])
         ])
@@ -125,8 +140,8 @@ def build_server(ctx, *, tier: str | None = None):
     async def _get_prompt(_ctx, params: types.GetPromptRequestParams) -> types.GetPromptResult:
         level = by_prompt_name.get(params.name)
         if level is None:
-            raise MCPError(types.INVALID_PARAMS,
-                           f"There is no prompt '{params.name}'. The prompts are: {', '.join(by_prompt_name)}.")
+            raise MCPError(types.INVALID_PARAMS, _protocol_text(render(
+                "unknown_prompt", {"name": params.name, "names": list(by_prompt_name)}, ctx.redact)))
         question = (params.arguments or {}).get("question")
         text = prompt.level_prompt(level, ctx.redact(str(question)) if question else None)
         return types.GetPromptResult(description=prompt.PROMPT_DESCRIPTIONS[level], messages=[
@@ -134,7 +149,7 @@ def build_server(ctx, *, tier: str | None = None):
         ])
 
     return _new_server(
-        prompt.instructions(ctx.project_name),
+        prompt.instructions(ctx.project_name, ctx.redact),
         on_list_tools=_list_tools, on_call_tool=_call_tool,
         on_list_resources=_list_resources, on_read_resource=_read_resource,
         on_list_prompts=_list_prompts, on_get_prompt=_get_prompt,

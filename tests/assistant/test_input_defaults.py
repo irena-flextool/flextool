@@ -42,7 +42,7 @@ def test_a_default_scenario_applies_to_its_own_source_only(two_sources: Path) ->
     assert listing["source"] == "b.sqlite" and listing["scenario"] is None
     assert listing["inactive_in_scenario"] is None and listing["total"] == 10       # every unit, unfiltered
     out = call_tool(ctx, "get_parameter", {**EXISTING, "source": "b.sqlite"})
-    assert not out.ok and out.message.startswith("The input source 'b.sqlite' has 69 scenarios")
+    assert not out.ok and out.message.startswith('The input source "b.sqlite" has 69 scenarios')
     on_a = _ok(ctx, "get_parameter", **EXISTING)
     # tests.json: coal_plant existing in alternative coal is 500.
     assert (on_a["source"], on_a["scenario"], on_a["value"]) == ("a.sqlite", "coal", 500.0)

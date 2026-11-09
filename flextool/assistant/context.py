@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from flextool.assistant.caps import DEFAULT_PRESET, NAME_MAX, Caps, cap_text, preset
+from flextool.assistant.caps import DEFAULT_PRESET, NAME_MAX, Caps, Rendered, cap_text, clean, preset
 from flextool.assistant.redact import Redactor
 
 FrontEnd = Literal["agent", "terminal", "gui"]
@@ -122,12 +122,14 @@ def gui_snapshot(project: str, gui: GuiState | None, *, taken_at: str | None = N
 
 
 def _payload_text(value: object, redact: Callable[[str], str] | None) -> str | None:
+    """A name for the payload: redacted, then cut (a cut first could leave part of a folder name).  Redacted here,
+    the text is :class:`~flextool.assistant.caps.Rendered`, so ``fit_json`` does not redact it again."""
     if value is None:
         return None
-    text = str(value)
-    if redact is not None:
-        text = redact(text)
-    return cap_text(text, NAME_MAX)
+    text = clean(str(value))
+    if redact is None:
+        return cap_text(text, NAME_MAX)
+    return Rendered(cap_text(redact(text), NAME_MAX))
 
 
 def _payload_list(out: dict[str, Any], key: str, items: Iterable[Any], render: Callable[[Any], Any]) -> None:

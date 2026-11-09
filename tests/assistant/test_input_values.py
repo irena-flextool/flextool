@@ -60,7 +60,7 @@ def test_inactive_entity_in_scenario(ctx) -> None:
                 scenario="coal")
     assert rec["active"] is False
     assert rec["value"] == 1200.0 and rec["provenance"]["from_alternative"] == "coal"
-    assert any(n.startswith("'coal_chp' exists in the input data but is not active in scenario 'coal' (")
+    assert any(n.startswith('"coal_chp" exists in the input data but is not active in scenario "coal"; the reason: "')
                for n in rec["notes"])
     listing = _call(ctx, "list_entities", entity_class="unit", scenario="coal")
     # Of the ten units, only coal_plant has an entity_alternative in an alternative of coal (coal).
@@ -176,7 +176,7 @@ def test_unknown_names_answer_with_similar_ones(ctx) -> None:
     out = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameter": "existing",
                                            "entity": ["coal_plant"]})
     # tests.json has 69 scenarios.
-    assert not out.ok and out.message.startswith("The input source 'tests.sqlite' has 69 scenarios")
+    assert not out.ok and out.message.startswith('The input source "tests.sqlite" has 69 scenarios')
 
 
 def test_get_entity_gives_each_value_the_scenario_sets(ctx) -> None:
@@ -204,7 +204,7 @@ def test_get_entity_gives_each_value_the_scenario_sets(ctx) -> None:
 
 
 def test_an_unknown_parameter_name_gets_the_closest_valid_names(ctx) -> None:
-    start = "The entity class 'unit' has no parameter 'existing_capacity'. Did you mean: existing?"
+    start = 'The entity class "unit" has no parameter "existing_capacity". Did you mean: "existing"?'
     out = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameter": "existing_capacity",
                                            "entity": ["coal_plant"], "scenario": "coal"})
     assert not out.ok and out.message.startswith(start)
@@ -219,8 +219,8 @@ def test_closest_names() -> None:
     assert closest_names("existing_capacity", names)[0] == "existing"
     assert closest_names("Existing", names) == ["existing"]
     assert closest_names("zzz", names) == []
-    assert did_you_mean("existng", ["existing", "efficiency"]) == " Did you mean: existing?"
-    assert did_you_mean("zzz", names) == ""
+    assert did_you_mean("existng", ["existing", "efficiency"]).render() == ' Did you mean: "existing"?'
+    assert did_you_mean("zzz", names).render() == ""
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -275,8 +275,8 @@ def test_time_range_bounds_reversed_or_missing() -> None:
     with pytest.raises(ToolError) as caught:
         summarize(_steps(200), max_rows=100, time_range=("t1", "t999"))
     assert caught.value.key == "bad_input_time_step"
-    assert str(caught.value) == ("time_range: the value has no index 't999' at that level. Its index runs from t1 "
-                                 "to t200.")
+    assert str(caught.value) == ('time_range: the value has no index "t999" at that level. Its index runs from "t1" '
+                                 'to "t200".')
 
 
 def test_time_range_on_a_period_time_map_keeps_every_period() -> None:
