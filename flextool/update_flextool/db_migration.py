@@ -5500,7 +5500,8 @@ def _migrate_v77_schema_batch(db) -> None:
 
 # Descriptions rewritten whole: the per-time-step meaning of inflow, the
 # investment-solve adder, the bound without the stale commodity-tier use,
-# the self-discharge decay, and the solve texts that began with "Hours".
+# the self-discharge decay, the solve texts that began with "Hours", and
+# the reserve penalty (its v70 text said "per hour" after the unit too).
 _V78_DESCRIPTIONS: dict[tuple[str, str], str] = {
     ('model', 'max_flow_for_unconstrained_variables'): (
         '[MW] Upper bound for capacities and flows that have no other limit: how much capacity an entity '
@@ -5546,6 +5547,10 @@ _V78_DESCRIPTIONS: dict[tuple[str, str], str] = {
         '[-] e.g. 0.01 means 1% per hour. Loss of stored energy over time: the content shrinks by the factor '
         '1/(1 + loss) every hour (with 0.01, by about 0.99% per hour), decaying continuously at ln(1 + loss) '
         'per hour. Constant, period, time or period+time.'
+    ),
+    ('reserve__upDown__group', 'penalty_reserve'): (
+        '[CUR/MW per hour] Penalty for each MW of reserve shortfall (the reserve requirement of the group is '
+        'soft). Constant. Default 5000 - applied to every reserve group that has no value of its own.'
     ),
     ('solve', 'new_stepduration'): (
         '[hours] Creates a new `timeline` from the old for this `solve` with this timestep duration. The new '
@@ -5593,7 +5598,6 @@ _V78_BRACKET_REWRITES: dict[tuple[str, str], tuple[str, str]] = {
     ('reserve__upDown__connection__node', 'max_share'): ('[factor]', '[-]'),
     ('reserve__upDown__connection__node', 'reliability'): ('[factor]', '[-]'),
     ('reserve__upDown__group', 'increase_reserve_ratio'): ('[factor]', '[-]'),
-    ('reserve__upDown__group', 'penalty_reserve'): ('[CUR/MW]', '[CUR/MW per hour]'),
     ('reserve__upDown__group', 'reserve_duration'): ('[h]', '[hours]'),
     ('reserve__upDown__unit__node', 'increase_reserve_ratio'): ('[factor]', '[-]'),
     ('reserve__upDown__unit__node', 'large_failure_ratio'): ('[factor]', '[-]'),
@@ -5612,6 +5616,20 @@ _V78_BRACKET_REWRITES: dict[tuple[str, str], tuple[str, str]] = {
     ('unit__outputNode', 'capacity_max_coeff'): ('[factor, default 1.0]', '[-] default 1.'),
     ('unit__outputNode', 'capacity_min_coeff'): ('[factor, default 0]', '[-] default 0.'),
     ('unit__outputNode', 'conversion_flow_coeff'): ('[factor, default 1]', '[-] default 1.'),
+}
+
+# Older brackets of shipped templates that the steps before v78 left in
+# place (a database created from such a template skipped the step that
+# rewrote the text), old -> new.  Found by migrating a database made from
+# every earlier spinedb_schema.json to v78 and comparing the brackets with
+# the shipped schema: the v70-v75 templates kept capacity_min_coeff's
+# pre-v70 bracket (and its old default 1.0, now 0), the first v77
+# templates the bracket of `existing` without the unit-count reading.
+_V78_OLDER_BRACKETS: dict[tuple[str, str], tuple[tuple[str, str], ...]] = {
+    ('connection', 'existing'): (('[MW]', '[MW or count]'),),
+    ('node', 'existing'): (('[MWh]', '[MWh or count]'),),
+    ('unit', 'existing'): (('[MW]', '[MW or count]'),),
+    ('unit__outputNode', 'capacity_min_coeff'): (('[factor, default 1.0]', '[-] default 0.'),),
 }
 
 # Prepended to a description that has no bracket yet.
@@ -5728,9 +5746,9 @@ def _v78_new_description(cls: str, name: str, description: str) -> str:
     text = _V78_DESCRIPTIONS.get((cls, name))
     if text is not None:
         return text
-    rewrite = _V78_BRACKET_REWRITES.get((cls, name))
-    if rewrite is not None:
-        old, new = rewrite
+    rewrites = ((_V78_BRACKET_REWRITES[(cls, name)],) if (cls, name) in _V78_BRACKET_REWRITES else ()) \
+        + _V78_OLDER_BRACKETS.get((cls, name), ())
+    for old, new in rewrites:
         if description == old or description.startswith(old + " "):
             return new + description[len(old):]
     prefix = _V78_UNIT_PREFIXES.get((cls, name))
@@ -5745,14 +5763,16 @@ def _migrate_v78_unit_prefixes(db) -> None:
     * :data:`_V78_DESCRIPTIONS` replace the whole description.
     * :data:`_V78_BRACKET_REWRITES` replace an exact old bracket at the start
       (example-style and ``[factor…]`` brackets, the per-year and per-hour
-      prices, one spelling per unit).
+      prices, one spelling per unit); :data:`_V78_OLDER_BRACKETS` do the
+      same for the older brackets some shipped templates still had.
     * :data:`_V78_UNIT_PREFIXES` go in front of a description that does not
       start with ``[``.
 
     Definitions a database does not have are skipped.  Idempotent: a
     rerun finds every description already in its v78 form.
     """
-    keys = set(_V78_DESCRIPTIONS) | set(_V78_BRACKET_REWRITES) | set(_V78_UNIT_PREFIXES)
+    keys = (set(_V78_DESCRIPTIONS) | set(_V78_BRACKET_REWRITES) | set(_V78_OLDER_BRACKETS)
+            | set(_V78_UNIT_PREFIXES))
     for cls, name in sorted(keys):
         pdef = _pdef_or_none(db, cls, name)
         if pdef is None:

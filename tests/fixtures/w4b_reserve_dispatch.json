@@ -3310,7 +3310,7 @@
         "float"
       ],
       null,
-      "[CUR/MW per hour] Penalty for each MW of reserve shortfall per hour (the reserve requirement of the group is soft). Constant. Default 5000 - applied to every reserve group that has no value of its own.",
+      "[CUR/MW per hour] Penalty for each MW of reserve shortfall (the reserve requirement of the group is soft). Constant. Default 5000 - applied to every reserve group that has no value of its own.",
       "reserve"
     ],
     [

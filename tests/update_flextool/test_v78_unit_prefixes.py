@@ -6,9 +6,10 @@ the v78 step must handle: one definition deleted (it must stay absent), one
 description edited by the user with its own bracket (kept), one edited without
 a bracket (gets the prefix) and one starting with an old bracket followed by the
 user's own text (only the bracket is rewritten).  The seed's
-``unit__outputNode.capacity_min_coeff`` text predates the v70 one; a bracket the step
-does not know is kept.  Every other description must
-end up with the unit the shipped schema has.
+``unit__outputNode.capacity_min_coeff`` text predates the v70 one (a v70-v75 template
+skipped that rewrite): its older bracket is rewritten too, as is the older bracket of
+``existing`` (review C2-5).  Every other description must end up with the unit the
+shipped schema has.
 """
 from __future__ import annotations
 
@@ -30,7 +31,9 @@ ABSENT = ("unit", "min_load")  # deleted before the step: it must not be re-crea
 OWN_BRACKET = ("node", "penalty_up", "[EUR/MWh] My own penalty note.")
 NO_BRACKET = ("unit", "startup_method", "My own note.")
 OLD_BRACKET = ("unit", "availability", "[e.g. 0.9 means 90%] My own availability note.")
-UNKNOWN_BRACKET = ("unit__outputNode", "capacity_min_coeff")  # "[factor, default 1.0] ..." in the seed
+OLDER_TEMPLATE_BRACKET = ("unit__outputNode", "capacity_min_coeff")  # "[factor, default 1.0] ..." in the seed
+OLDER_EXISTING = ("unit", "existing", "[MW] My own existing note.")  # the bracket of the first v77 templates
+PENALTY_RESERVE = ("reserve__upDown__group", "penalty_reserve")
 
 
 def _descriptions(db) -> dict[tuple[str, str], str]:
@@ -47,7 +50,7 @@ def migrated(tmp_path_factory: pytest.TempPathFactory) -> dict:
     url = json_to_db(SEED, tmp_path_factory.mktemp("v78") / "seed.sqlite")
     migrate_database(url, up_to=77)
     with DatabaseMapping(url) as db:
-        for cls, name, text in (OWN_BRACKET, NO_BRACKET, OLD_BRACKET):
+        for cls, name, text in (OWN_BRACKET, NO_BRACKET, OLD_BRACKET, OLDER_EXISTING):
             _set(db, cls, name, text)
         db.remove_item("parameter_definition",
                        db.get_item("parameter_definition", entity_class_name=ABSENT[0], name=ABSENT[1])["id"])
@@ -79,7 +82,7 @@ def _bracket(text: str) -> str:
 def test_units_match_the_shipped_schema(migrated) -> None:
     """The seed's texts after the bracket can be older than the shipped ones; its units cannot."""
     shipped = _shipped()
-    edited = {OWN_BRACKET[:2], NO_BRACKET[:2], OLD_BRACKET[:2], UNKNOWN_BRACKET}
+    edited = {OWN_BRACKET[:2], NO_BRACKET[:2], OLD_BRACKET[:2], OLDER_EXISTING[:2]}
     for key, text in migrated["after"].items():
         if key in edited:
             continue
@@ -98,8 +101,21 @@ def test_user_edits(migrated) -> None:
     assert after[OWN_BRACKET[:2]] == OWN_BRACKET[2]
     assert after[NO_BRACKET[:2]] == "[choice] My own note."
     assert after[OLD_BRACKET[:2]] == "[-] e.g. 0.9 means 90%. My own availability note."
-    assert after[UNKNOWN_BRACKET].startswith("[factor, default 1.0] ")
-    assert after[UNKNOWN_BRACKET] == migrated["before"][UNKNOWN_BRACKET]
+    assert after[OLDER_EXISTING[:2]] == "[MW or count] My own existing note."
+
+
+def test_older_template_brackets_are_rewritten(migrated) -> None:
+    """A v70-v75 template's capacity_min_coeff kept its pre-v70 bracket and old default (C2-5)."""
+    before = migrated["before"][OLDER_TEMPLATE_BRACKET]
+    assert before.startswith("[factor, default 1.0] Fraction of the unit's capacity imposed as a lower cap")
+    assert migrated["after"][OLDER_TEMPLATE_BRACKET] == "[-] default 0. " + before[len("[factor, default 1.0] "):]
+
+
+def test_the_reserve_penalty_says_per_hour_once(migrated) -> None:
+    """The v70 text said "per hour" after a unit that now says it (C2-11)."""
+    assert migrated["after"][PENALTY_RESERVE] == (
+        "[CUR/MW per hour] Penalty for each MW of reserve shortfall (the reserve requirement of the group is soft). "
+        "Constant. Default 5000 - applied to every reserve group that has no value of its own.")
 
 
 def test_absent_definition_is_not_created(migrated) -> None:
@@ -114,5 +130,14 @@ def test_rerun_is_idempotent(migrated) -> None:
 def test_tables_are_disjoint() -> None:
     """A whole-text replacement, a bracket rewrite and a prefix never apply to the same definition."""
     texts, rewrites, prefixes = set(m._V78_DESCRIPTIONS), set(m._V78_BRACKET_REWRITES), set(m._V78_UNIT_PREFIXES)
+    older = set(m._V78_OLDER_BRACKETS)
     assert not texts & rewrites and not texts & prefixes and not rewrites & prefixes
+    assert not older & texts and not older & prefixes
+    # An older bracket is no other bracket of its key, and no new bracket starts with an old one (idempotent).
+    for key, pairs in m._V78_OLDER_BRACKETS.items():
+        known = [m._V78_BRACKET_REWRITES[key]] if key in m._V78_BRACKET_REWRITES else []
+        olds = [old for old, _ in [*known, *pairs]]
+        assert len(olds) == len(set(olds)), key
+        for _, new in [*known, *pairs]:
+            assert not any(new == old or new.startswith(old + " ") for old in olds), key
     assert all(text.startswith("[") for text in m._V78_DESCRIPTIONS.values())
