@@ -44,7 +44,7 @@ ROLL_LINE = (f"Solve {ROLL}: reduce_unit_detail_method = online: online variable
 
 def test_info_line_once_per_solve_and_run_status_on_every_roll(tmp_path_factory, capsys) -> None:
     """Three rolls of one reduced solve: the run log has the info line once, the run status entry of every roll
-    carries both levels and the line, and each roll leaves a marker for its empty online and reserve cells."""
+    carries both levels, the first roll's entry the line too (later rolls: summary None), and each roll leaves a marker for its empty online and reserve cells."""
     from flextool.engine import run_chain_from_db
     from flextool.process_outputs.reduced_cells import read_reduced_markers
     from flextool.run_record import RunRecorder, set_active
@@ -72,8 +72,8 @@ def test_info_line_once_per_solve_and_run_status_on_every_roll(tmp_path_factory,
     assert lines == [ROLL_LINE]
     solves = rec._status["solves"]
     assert len(solves) == 3, solves
-    for entry in solves:
-        assert entry["reduced"] == {"unit": "online", "system": "reserves", "summary": ROLL_LINE}, entry
+    for k, entry in enumerate(solves):
+        assert entry["reduced"] == {"unit": "online", "system": "reserves", "summary": None if k else ROLL_LINE}, entry
     assert read_reduced_markers(wf / "output_raw") == {name: frozenset({"online", "reserves"}) for name in steps}
 
 

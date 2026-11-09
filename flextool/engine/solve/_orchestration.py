@@ -3165,15 +3165,17 @@ def _drive_cascade(
                         print(f"Warning: solve {_reduce_base}: {_line}", flush=True)
             # One info line per solve (at its first roll) says what was left
             # out and how the levels interact; the run status of every roll
-            # records both levels; the outputs leave the cells of the left-out
-            # features empty for this sub-solve (process_outputs.reduced_cells).
+            # records both levels, and the first roll's entry the line too; the
+            # outputs leave the cells of the left-out features empty for this
+            # sub-solve (process_outputs.reduced_cells).
             if _reduce_report.unit != "none" or _reduce_report.system != "none":
                 from flextool.engine.preprocess._reduce_detail import output_features, summary_line
-                _summary = summary_line(_reduce_report, _unreduced, _reduce_base)
-                self.state.logger.info(_summary)
                 _info_seen = self.__dict__.setdefault("_reduce_info_printed", set())
+                _summary = None
                 if _reduce_base not in _info_seen:
                     _info_seen.add(_reduce_base)
+                    _summary = summary_line(_reduce_report, _unreduced, _reduce_base)
+                    self.state.logger.info(_summary)
                     print(_summary, flush=True)
                 run_record.active().solve_reduced(_reduce_report.unit, _reduce_report.system, _summary)
                 if data is not _unreduced:
@@ -3204,10 +3206,10 @@ def _drive_cascade(
                         f"Solve {complete_solve_name}: ramp and commitment of {', '.join(_cold)} start cold "
                         "(the solve it continues from left out online variables, "
                         "reduce_unit_detail_method).")
-                    self.state.logger.info(_cold_msg)
                     _cold_seen = self.__dict__.setdefault("_reduce_cold_printed", set())
                     if _reduce_base not in _cold_seen:
                         _cold_seen.add(_reduce_base)
+                        self.state.logger.info(_cold_msg)
                         print(_cold_msg, flush=True)
             # The online carry and the ramp carry / ramp link must agree on the
             # reduced sets (params._ramp_links): raise instead of silently
