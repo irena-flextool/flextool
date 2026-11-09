@@ -31,9 +31,10 @@ LEVELS = ("small", "medium", "large")
 #: The basic level's tool sentence (P3-O15, with list_sources since 2026-11-08), word for word.
 BASIC_TOOL_SENTENCE = ("- Use only these tools: search_docs, read_doc, get_entity, get_parameter, list_sources, "
                        "list_runs, find_result_tables and query_result.")
-#: sha256 of each level text as approved (P3 §2.1, word for word; any change goes back to the owner, P3-O9).
+#: sha256 of each level text as approved (P3 §2.1, word for word; any change goes back to the owner, P3-O9).  The
+#: basic text has said "at most three steps" since owner decision D1 (2026-11-09).
 ADDENDA_SHA256 = {
-    "small": "b1d94326a7416cbaad8eca1df18ffc07244f8bffd0dfe2433a9030f77a377ac8",
+    "small": "7972aedf2e4023a3b59be1b0b84db067369d26c237651b906de83d2bc9b89ec0",
     "medium": "e1b0aebb67e1413f3b3ee5cc7a6e3ec4fe5b5ec5d051888181cc8c19b372b9c3",
     "large": "2700bf6339a535c19f473ea18459c73887b7bfcfb397d1fd8dd09d8b76771e86",
 }
@@ -107,18 +108,19 @@ def test_the_connection_prompts_embed_the_level_texts(level):
     assert len(prompt.level_prompt(level, "x" * 3_000)) == len(text) + len("\n\nQuestion: ") + prompt.QUESTION_MAX
 
 
-def test_the_basic_planning_sentence_is_one_switch():
-    """Owner decision D1 is open (review G11, C5-10): the approved sentence (a) is in use, and each option is one
-    constant away.  Option (b)'s number of steps is the basic budget's; every option keeps the prefix within the
-    basic budget."""
-    assert prompt.BASIC_PLAN_OPTION == "a"
-    assert prompt.BASIC_PLAN_SENTENCES["a"] in prompt.ADDENDA["small"]
-    assert "at most three steps" in prompt.BASIC_PLAN_SENTENCES["b"] and LEVEL_BUDGETS["small"].max_rounds == 3
+def test_the_basic_planning_sentence_counts_steps():
+    """Owner decision D1 (2026-11-09, review G11, C5-10): the basic text plans "at most three steps", the basic
+    budget's number of steps, not three tool calls.  Each option is one constant away and keeps the prefix within
+    the basic budget."""
+    assert prompt.BASIC_PLAN_OPTION == "b"
+    basic = prompt.ADDENDA["small"]
+    assert ("- Use at most three steps for each question, so plan them: first find the right name (search_docs, "
+            "find_result_tables or list_runs), then fetch the value.\n") in basic
+    assert "tool calls" not in basic and LEVEL_BUDGETS["small"].max_rounds == 3
     assert not any(word in prompt.BASIC_PLAN_SENTENCES["c"] for word in ("three", "3"))
-    approved = prompt.ADDENDA["small"]
     for option, sentence in prompt.BASIC_PLAN_SENTENCES.items():
-        text = approved.replace(prompt.BASIC_PLAN_SENTENCES["a"], sentence)
+        text = basic.replace(prompt.BASIC_PLAN_SENTENCES["b"], sentence)
         assert text.count(sentence) == 1, option
-        layers = [text if layer == approved else layer for layer in prompt.system_layers("gui", "small")]
+        layers = [text if layer == basic else layer for layer in prompt.system_layers("gui", "small")]
         prefix = sum(approx_tokens(layer, "text") for layer in layers) + schema_tokens(tool_specs("small"))
         assert prefix <= LEVEL_BUDGETS["small"].prefix_tokens, option

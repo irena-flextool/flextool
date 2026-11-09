@@ -270,9 +270,9 @@ def last_context_block(texts: list[str]) -> str | None:
     return None
 
 
-#: The basic level's planning sentence, by the options of owner decision D1 (review G11, C5-10; WAITING FOR THE
-#: OWNER): (a) the approved text, which counts tool calls although a basic part allows three steps of up to three
-#: calls; (b) the same plan counted in steps, which matches the budget at every window; (c) no number.
+#: The basic level's planning sentence, by the options of owner decision D1 (review G11, C5-10): (a) the first
+#: approved text, which counts tool calls although a basic part allows three steps of up to three calls; (b) the
+#: same plan counted in steps, which matches the budget at every window; (c) no number.
 BASIC_PLAN_SENTENCES: dict[str, str] = {
     "a": ("- Use at most three tool calls for each question, so plan them: first find the right name (search_docs, "
           "find_result_tables or list_runs), then fetch the value.\n"),
@@ -281,9 +281,9 @@ BASIC_PLAN_SENTENCES: dict[str, str] = {
     "c": ("- Plan your lookups: first find the right name (search_docs, find_result_tables or list_runs), then "
           "fetch the value.\n"),
 }
-#: The option in use: (a), the approved text, until the owner decides D1.  Switching it changes the basic level's
-#: text, so its pinned hash (tests/assistant/test_prompt_budget.py) and P3 §4.7 change with it.
-BASIC_PLAN_OPTION = "a"
+#: The option in use: (b), "at most three steps" (owner decision D1, 2026-11-09).  Switching it changes the basic
+#: level's text, so its pinned hash (tests/assistant/test_prompt_budget.py) and P3 §4.7 change with it.
+BASIC_PLAN_OPTION = "b"
 
 #: The level texts by internal level name (P3 §2.1, owner-approved; do not edit without the owner).
 ADDENDA: dict[str, str] = {
