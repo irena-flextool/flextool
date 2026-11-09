@@ -54,6 +54,28 @@ class Fit:
 
 
 @dataclass(frozen=True)
+class BasicForm:
+    """A shorter form of a tool for the basic level (Cycle 2, C1-OD3): a condensed description and a subset of the
+    full schema's properties (in the full schema's order), optionally with a narrower enum for a shown property.
+    The basic schema is built from the full one (the same property objects), and arguments are always validated
+    against the full schema: a hidden argument still works at basic, the basic form only advertises less."""
+
+    description: str                     # without DATA_SENTENCE (make_tool appends it, as for the full form)
+    properties: tuple[str, ...]
+    enums: dict[str, tuple] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class ListedTool:
+    """A tool as a level lists it: the basic form at basic when the tool has one, else the full form."""
+
+    name: str
+    title: str
+    description: str
+    input_schema: dict
+
+
+@dataclass(frozen=True)
 class Tool:
     name: str
     title: str
@@ -65,18 +87,62 @@ class Tool:
     caps: dict[str, CapArg] = field(default_factory=dict)
     #: Turns the forgiving forms of the arguments into the schema's (one name for a list); runs before validation.
     prepare: Callable[[dict], dict] | None = None
+    #: ``(description, schema)`` of the basic form (:class:`BasicForm`), or ``None``: basic lists the full form.
+    basic: tuple[str, dict] | None = None
+
+    def listed(self, level: str | None) -> tuple[str, dict]:
+        """``(description, schema)`` the level *level* (internal name; ``None``: no level) lists."""
+        if level == "small" and self.basic is not None:
+            return self.basic
+        return self.description, self.input_schema
+
+
+def _basic_schema(name: str, schema: dict, form: BasicForm) -> dict:
+    """The basic schema of *form*: the full *schema*'s properties that *form* shows, in the full order (a shown
+    enum narrowed); refused at import when *form* is not a subset of the full schema."""
+    full = schema["properties"]
+    unknown = [p for p in form.properties if p not in full]
+    if unknown:
+        raise ValueError(f"{name}: the basic form shows properties the schema does not have: {unknown}")
+    required = [r for r in schema.get("required", []) if r not in form.properties]
+    if required:
+        raise ValueError(f"{name}: the basic form hides required properties: {required}")
+    properties: dict[str, Any] = {}
+    for key, spec in full.items():
+        if key not in form.properties:
+            continue
+        if key in form.enums:
+            wanted = tuple(form.enums[key])
+            if "enum" not in spec or not set(wanted) <= set(spec["enum"]):
+                raise ValueError(f"{name}: the basic enum of {key} is not a subset of the full one")
+            spec = {**spec, "enum": [v for v in spec["enum"] if v in wanted]}
+        properties[key] = spec
+    extra = [k for k in form.enums if k not in form.properties]
+    if extra:
+        raise ValueError(f"{name}: the basic form narrows properties it does not show: {extra}")
+    out: dict[str, Any] = {"type": "object", "properties": properties, "additionalProperties": False}
+    if schema.get("required"):
+        out["required"] = list(schema["required"])
+    return out
 
 
 def make_tool(*, name: str, title: str, description: str, properties: dict, required: tuple[str, ...] = (),
               handler: Callable[[AssistantContext, dict], "dict | Fit"], area: Area, small_tier: bool,
-              caps: dict[str, CapArg] | None = None, prepare: Callable[[dict], dict] | None = None) -> Tool:
-    """A :class:`Tool` whose description ends with :data:`DATA_SENTENCE` and whose schema is a closed object."""
+              caps: dict[str, CapArg] | None = None, prepare: Callable[[dict], dict] | None = None,
+              basic: BasicForm | None = None) -> Tool:
+    """A :class:`Tool` whose description ends with :data:`DATA_SENTENCE` and whose schema is a closed object;
+    *basic*: its shorter form for the basic level (only for a basic tool)."""
     schema: dict[str, Any] = {"type": "object", "properties": properties, "additionalProperties": False}
     if required:
         schema["required"] = list(required)
+    listed_basic = None
+    if basic is not None:
+        if not small_tier:
+            raise ValueError(f"{name}: a basic form for a tool the basic level does not have")
+        listed_basic = (f"{basic.description.rstrip()} {DATA_SENTENCE}", _basic_schema(name, schema, basic))
     return Tool(name=name, title=title, description=f"{description.rstrip()} {DATA_SENTENCE}",
                 input_schema=schema, handler=handler, area=area, small_tier=small_tier, caps=dict(caps or {}),
-                prepare=prepare)
+                prepare=prepare, basic=listed_basic)
 
 
 @dataclass
@@ -120,6 +186,16 @@ def tools_for_tier(tier: str | None) -> tuple[Tool, ...]:
     if tier == "small":
         return tuple(sorted((t for t in tools if t.small_tier), key=lambda t: t.name))
     return tuple(tools)
+
+
+def listed_tools(tier: str | None) -> tuple[ListedTool, ...]:
+    """The tools of a level (:func:`tools_for_tier`) as it lists them: the basic forms at ``small``, the full forms
+    otherwise (``None``, an agent's connection without a level, lists the full forms)."""
+    out = []
+    for tool in tools_for_tier(tier):
+        description, schema = tool.listed(tier)
+        out.append(ListedTool(tool.name, tool.title, description, schema))
+    return tuple(out)
 
 
 def _validate(tool: Tool, args: dict) -> str | None:

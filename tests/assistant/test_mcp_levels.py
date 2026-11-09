@@ -56,7 +56,40 @@ def test_without_a_level_the_agent_gets_three_prompts_and_every_tool(assistant_p
         assert text.startswith("Use these instructions for the rest of this conversation about FlexTool.\n\n")
         assert prompt.ADDENDA["small"] in text
         assert text.endswith("\n\nQuestion: What is the demand of west?")
-        assert len(conn.send("tools/list", {})["tools"]) == 18
+        tools = conn.send("tools/list", {})["tools"]
+        assert len(tools) == 18
+        # Without a level the agent may pick any prompt: every tool in its full form (the superset).
+        assert _listed(tools) == _full_forms()
+    finally:
+        _finish(conn)
+
+
+def _listed(tools: list[dict]) -> dict[str, tuple[str, dict]]:
+    return {t["name"]: (t["description"], t["inputSchema"]) for t in tools}
+
+
+def _full_forms() -> dict[str, tuple[str, dict]]:
+    from flextool.assistant import registry
+
+    return {t.name: (t.description, t.input_schema) for t in registry.all_tools().values()}
+
+
+def test_tier_basic_lists_exactly_what_the_basic_chat_sends(assistant_project: Path) -> None:
+    """Critique m2: the prefix pins measure ``tool_specs`` of each level; the connection lists its tools itself.
+    With ``--tier basic`` its tools/list (name, description, schema) is the basic chat's (the basic forms), with
+    ``--tier standard`` the full forms.  Before: the connection had no basic forms."""
+    from flextool.assistant.session import tool_specs
+
+    conn = _server(assistant_project, "--tier", "basic")
+    try:
+        basic = _listed(conn.send("tools/list", {})["tools"])
+    finally:
+        _finish(conn)
+    assert basic == {t.name: (t.description, t.input_schema) for t in tool_specs("small")}
+    assert basic["list_sources"] != _full_forms()["list_sources"]
+    conn = _server(assistant_project, "--tier", "standard")
+    try:
+        assert _listed(conn.send("tools/list", {})["tools"]) == _full_forms()
     finally:
         _finish(conn)
 

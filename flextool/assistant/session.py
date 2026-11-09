@@ -342,8 +342,9 @@ def tools_hash(tools: tuple[ToolSpec, ...]) -> str:
 
 
 def tool_specs(tier: str) -> tuple[ToolSpec, ...]:
-    """The tools a level sends, sorted by name."""
-    tools = registry.tools_for_tier(prompt.level_name(tier))
+    """The tools a level sends, sorted by name: at basic a tool's basic form when it has one
+    (:func:`~flextool.assistant.registry.listed_tools`)."""
+    tools = registry.listed_tools(prompt.level_name(tier))
     return tuple(sorted((ToolSpec(t.name, t.description, t.input_schema) for t in tools), key=lambda t: t.name))
 
 

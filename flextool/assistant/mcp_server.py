@@ -7,7 +7,8 @@ mcp 2.x's low-level ``Server`` (P0-D1): the registry owns the tool schemas, and
 fits its result into compact JSON text.  Every tool is read-only.  Tool calls run in a worker thread that takes the
 context's lock, so ``ping`` and ``tools/list`` answer while a slow call runs.
 
-* Tools: every tool, or with ``--tier basic`` only the basic set (any other tool is refused).
+* Tools: every tool in its full form, or with ``--tier basic`` only the basic set in the basic forms (any other
+  tool is refused; a hidden argument of a basic form is still accepted).
 * Resources: the Markdown pages of the documentation index as ``flextool-docs:///<page>``.
 * Prompts: the level texts (``basic``, ``standard``, ``advanced``; only ``basic`` with ``--tier basic``), each
   with an optional ``question``.
@@ -69,7 +70,7 @@ def build_server(ctx, *, tier: str | None = None):
     from flextool.assistant.caps import cap_text
     from flextool.assistant.errors import docs_error, render
 
-    tools = registry.tools_for_tier(tier)
+    tools = registry.listed_tools(tier)
     allowed = {t.name for t in tools}
     levels = ["small"] if tier == "small" else list(prompt.ADDENDA)
     by_prompt_name = {name: level for name, level in prompt.LEVELS.items() if level in levels}

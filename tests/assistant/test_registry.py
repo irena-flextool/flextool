@@ -246,3 +246,63 @@ def test_delivered_notes_match_the_redacted_note_and_restore_a_lost_one() -> Non
     first, second = restore_notes(['{"a": 1}', '{"notes": ["units_convention"]}'], redact)
     assert first == '{"a": 1}' and json.loads(second) == {"notes": [redact(UNITS_NOTE)]}
     assert restore_notes([sent, '{"notes": ["units_convention"]}'], redact)[1] == '{"notes": ["units_convention"]}'
+
+
+# --- per-level forms (Cycle 2, C1-OD3) ------------------------------------------------------------------------
+
+def _basic_tool(form, **kw):
+    return make_tool(name="b", title="b", description="The full text.", properties={
+        "a": {"type": "string"}, "b": {"type": "string", "enum": ["x", "y", "z"]}, "c": {"type": "integer"}},
+        handler=lambda c, a: {}, area="inputs", small_tier=kw.pop("small_tier", True), basic=form, **kw)
+
+
+def test_a_basic_form_is_built_from_the_full_schema() -> None:
+    """The basic schema shows a subset of the full properties, in the full order, as the same objects (a shown
+    enum narrowed); basic lists it, every other level (and an agent's connection without a level) the full form.
+    Before: make_tool had no basic form."""
+    tool = _basic_tool(registry.BasicForm("The short text.", ("c", "b"), {"b": ("y", "x")}))
+    description, schema = tool.listed("small")
+    assert description == f"The short text. {registry.DATA_SENTENCE}"
+    assert list(schema["properties"]) == ["b", "c"] and schema["additionalProperties"] is False
+    assert schema["properties"]["b"] == {"type": "string", "enum": ["x", "y"]}
+    assert schema["properties"]["c"] is tool.input_schema["properties"]["c"]
+    for level in ("medium", "large", None):
+        assert tool.listed(level) == (tool.description, tool.input_schema)
+    assert list(tool.input_schema["properties"]) == ["a", "b", "c"]
+    assert _basic_tool(None).listed("small") == (_basic_tool(None).description, _basic_tool(None).input_schema)
+
+
+def test_make_tool_refuses_a_basic_form_that_is_not_a_subset() -> None:
+    import pytest
+
+    bad = [registry.BasicForm("x", ("a", "d")),                    # a property the schema does not have
+           registry.BasicForm("x", ("a",), {"b": ("x",)}),         # narrows a property it does not show
+           registry.BasicForm("x", ("b",), {"b": ("w",)}),         # an enum value the full enum does not have
+           registry.BasicForm("x", ("a",), {"a": ("x",)})]         # an enum on a property without one
+    for form in bad:
+        with pytest.raises(ValueError):
+            _basic_tool(form)
+    with pytest.raises(ValueError):                                # hides a required property
+        _basic_tool(registry.BasicForm("x", ("b",)), required=("a",))
+    with pytest.raises(ValueError):                                # a basic form for a tool basic does not have
+        _basic_tool(registry.BasicForm("x", ("a",)), small_tier=False)
+
+
+def test_the_levels_list_their_forms_of_list_sources() -> None:
+    """list_sources: basic keeps the condensed text Cycle 1 wrote for the basic budget; standard and advanced get
+    the full text back (the database version and whether it is current, the behaviour notices).  Before: one text
+    at every level."""
+    from flextool.assistant.session import tool_specs
+
+    by_level = {level: {t.name: t for t in tool_specs(level)}["list_sources"] for level in ("basic", "standard",
+                                                                                           "advanced")}
+    assert by_level["basic"].description.startswith("The input sources (spreadsheets, databases): number")
+    for level in ("standard", "advanced"):
+        assert by_level[level].description.startswith(
+            "The input sources of the project (spreadsheets and databases) with their number (the suffix of their "
+            "result folders), scenarios, database version and whether it is current, the state of a spreadsheet's "
+            "conversion, and notices of FlexTool behaviour changes. scenario: its alternatives, highest rank first.")
+    assert all(t.input_schema["properties"] == {"scenario": {"type": "string"}} for t in by_level.values())
+    listed = {t.name: t for t in registry.listed_tools("small")}
+    assert listed["list_sources"].description == by_level["basic"].description
+    assert {t.name for t in registry.listed_tools(None)} == set(registry.all_tools())

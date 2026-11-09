@@ -195,15 +195,18 @@ class LevelBudget:
 
 
 #: Starting values that the calibration informs (P3 §4.1, §7.6).  The prefix budgets are above the estimate of
-#: the shipped instructions and tool schemas (about 4 730 / 8 550 / 8 640 tokens; P3 §4.1 drafted 3 500 / 7 500 /
-#: 8 500 before the schemas were final; basic rose from 4 500 to 4 700 when list_sources joined its tools, and to
-#: 4 850 with get_parameter's lists and the rule on asking together, standard to 8 700).
+#: the shipped instructions and tool schemas at the worst front end (the GUI; ``tests/assistant/test_prompt_budget``
+#: pins each level × front end).  P3 §4.1 drafted 3 500 / 7 500 / 8 500 before the schemas were final; basic rose
+#: to 4 700 with list_sources, to 4 850 with get_parameter's lists, standard to 8 700; Cycle 2: basic
+#: 4 920 (C2-D1: a 16 384-token window fits a part's three 2 000-character float-heavy results, 4 088 tokens, up to
+#: a prefix of 4 923; C2-OD2's 4 950 assumed 1.5 characters a token, which such results undercut),
+#: standard 9 000, advanced 9 100 (list_runs' scan and overview, list_sources' full text at standard and advanced).
 #: The history and the continuations are the owner's of 2026-11-08 (P3 §4.7).  Budgets count steps and calls:
 #: basic 3 steps, 6 calls a part, 3 calls a step (batching 2026-11-08; was 3 calls a part).
 LEVEL_BUDGETS: dict[str, LevelBudget] = {
-    "small": LevelBudget(4_850, 3, 6, 3, 4_096, 6, 12_288, max_continuations=2, history="answers", history_turns=2),
-    "medium": LevelBudget(8_700, 8, 16, 8, 8_000, 6, 32_768, max_continuations=1, history="answers"),
-    "large": LevelBudget(9_000, 12, 30, 8, 16_000, 8, 65_536, max_continuations=0, history="full"),
+    "small": LevelBudget(4_920, 3, 6, 3, 4_096, 6, 12_288, max_continuations=2, history="answers", history_turns=2),
+    "medium": LevelBudget(9_000, 8, 16, 8, 8_000, 6, 32_768, max_continuations=1, history="answers"),
+    "large": LevelBudget(9_100, 12, 30, 8, 16_000, 8, 65_536, max_continuations=0, history="full"),
 }
 #: The free plan: fewer requests per question (P3 §4.6, §4.7).  Its steps are what cost requests, so it keeps
 #: fewer steps (3 / 4 / 6) and the level's calls a step; its calls a part are the level's, at most steps × calls a

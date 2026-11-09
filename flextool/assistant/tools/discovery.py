@@ -12,7 +12,7 @@ from typing import Any
 
 from flextool.assistant.caps import fit_rows
 from flextool.assistant.context import AssistantContext
-from flextool.assistant.registry import Fit, make_tool
+from flextool.assistant.registry import BasicForm, Fit, make_tool
 from flextool.assistant.results import _runs
 
 #: A filtered set of at most this many runs is listed with full detail.
@@ -151,10 +151,16 @@ def _prepare_runs(args: dict) -> dict:
 TOOLS = [
     make_tool(
         name="list_sources", title="Input sources of the project",
-        description=("The input sources (spreadsheets, databases): number (suffix of their result folders), "
-                     "scenarios, database version, conversion state, behaviour notices. scenario: its "
+        description=("The input sources of the project (spreadsheets and databases) with their number (the "
+                     "suffix of their result folders), scenarios, database version and whether it is current, the "
+                     "state of a spreadsheet's conversion, and notices of FlexTool behaviour changes. scenario: its "
                      "alternatives, highest rank first."),
-        properties={"scenario": {"type": "string"}}, handler=list_sources, area="discovery", small_tier=True),
+        properties={"scenario": {"type": "string"}}, handler=list_sources, area="discovery", small_tier=True,
+        basic=BasicForm(
+            description=("The input sources (spreadsheets, databases): number (suffix of their result folders), "
+                         "scenarios, database version, conversion state, behaviour notices. scenario: its "
+                         "alternatives, highest rank first."),
+            properties=("scenario",))),
     make_tool(
         name="list_runs", title="Scenario runs of the project",
         description=("Result folders (scenario + source number, as S2_Dry_1): counts by state; folder, state, "

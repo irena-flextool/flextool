@@ -28,27 +28,27 @@ def _plain(c: caps.Caps) -> tuple[int, int, int, int]:
 
 
 def test_the_small_window_caps_worked_check():
-    """P3 §4.3 with the shipped basic budget (prefix 4 850, output 4 096, six planned results: a part's calls) at
-    16 384 tokens, keep 0: 16 384 − 4 850 − 4 096 − 1 638.4 − min(4 000, 2 457.6) = 3 342; per call 3 342 / 1 / 6
-    = 557.0 tokens; × 1.5 = 835.5 characters, raised to the 2 000 floor; rows max(10, round(50 × 2 000 / 6 000 =
+    """P3 §4.3 with the shipped basic budget (prefix 4 920, output 4 096, six planned results: a part's calls) at
+    16 384 tokens, keep 0: 16 384 − 4 920 − 4 096 − 1 638.4 − min(4 000, 2 457.6) = 3 272; per call 3 272 / 1 / 6
+    = 545.3 tokens; × 1.5 = 818.0 characters, raised to the 2 000 floor; rows max(10, round(50 × 2 000 / 6 000 =
     16.7)) = 17; results max(3, round(1.67)) = 3; items max(3, round(33.3)) = 33."""
     assert _plain(fit_caps(16_384, LEVEL_BUDGETS["small"], 4_096, 0)) == (17, 2_000, 3, 33)
-    # 30 000 tokens: 30 000 − 4 850 − 4 096 − 3 000 − 4 000 = 14 054; / 6 = 2 342.3; × 1.5 = 3 513.5 → 3 513
-    # characters; rows round(50 × 0.5855) = 29; results max(3, round(2.93)) = 3; items round(58.55) = 59.
-    assert _plain(fit_caps(30_000, LEVEL_BUDGETS["small"], 4_096, 0)) == (29, 3_513, 3, 59)
-    # 24 000 tokens, keep 0: 24 000 − 4 850 − 4 096 − 2 400 − 3 600 = 9 054; / 6 = 1 509; × 1.5 = 2 263.5 → 2 263;
-    # rows round(50 × 0.377) = 19; results max(3, round(1.89)) = 3; items round(37.7) = 38.
-    assert _plain(fit_caps(24_000, LEVEL_BUDGETS["small"], 4_096, 0)) == (19, 2_263, 3, 38)
+    # 30 000 tokens: 30 000 − 4 920 − 4 096 − 3 000 − 4 000 = 13 984; / 6 = 2 330.67; × 1.5 = 3 496.0 → 3 496
+    # characters; rows round(50 × 0.5827) = 29; results max(3, round(2.91)) = 3; items round(58.27) = 58.
+    assert _plain(fit_caps(30_000, LEVEL_BUDGETS["small"], 4_096, 0)) == (29, 3_496, 3, 58)
+    # 24 000 tokens, keep 0: 24 000 − 4 920 − 4 096 − 2 400 − 3 600 = 8 984; / 6 = 1 497.3; × 1.5 = 2 246.0 → 2 246;
+    # rows round(50 × 0.3743) = 19; results max(3, round(1.87)) = 3; items round(37.43) = 37.
+    assert _plain(fit_caps(24_000, LEVEL_BUDGETS["small"], 4_096, 0)) == (19, 2_246, 3, 37)
 
 
 def test_the_calls_a_part_that_fit_a_small_window():
     """Batching 2026-11-08: below 32 768 tokens a part's calls are the results at the cap that fit 95 % of the
     window with the prefix budget, the answer and the text history, each result as dense as result JSON gets
     (1.5 characters a token) — at least a step's 3 calls, at most the level's 6.
-    16 384: 0.95 × 16 384 = 15 564.8 − 4 850 − 4 096 − 2 457.6 = 4 161.2; / (2 000 / 1.5 = 1 333.3) = 3.12 → 3.
-    12 288 (output 3 072): 11 673.6 − 4 850 − 3 072 − 1 843.2 = 1 908.4; / 1 333.3 = 1.43 → 1, raised to 3.
-    20 000: 19 000 − 4 850 − 4 096 − 3 000 = 7 054; / 1 333.3 = 5.29 → 5.
-    24 000 (caps 2 263 characters): 22 800 − 4 850 − 4 096 − 3 600 = 10 254; / 1 508.7 = 6.80 → 6.
+    16 384: 0.95 × 16 384 = 15 564.8 − 4 920 − 4 096 − 2 457.6 = 4 091.2; / (2 000 / 1.5 = 1 333.3) = 3.07 → 3.
+    12 288 (output 3 072): 11 673.6 − 4 920 − 3 072 − 1 843.2 = 1 838.4; / 1 333.3 = 1.38 → 1, raised to 3.
+    20 000: 19 000 − 4 920 − 4 096 − 3 000 = 6 984; / 1 333.3 = 5.24 → 5.
+    24 000 (caps 2 246 characters): 22 800 − 4 920 − 4 096 − 3 600 = 10 184; / 1 497.3 = 6.80 → 6.
     40 000: no fitting (small caps), the level's 6."""
     got = {w: resolve_budget("small", w, "loaded", local=True).level.max_calls_per_turn
            for w in (12_288, 16_384, 20_000, 24_000, 40_000)}
