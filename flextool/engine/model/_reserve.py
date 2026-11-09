@@ -71,7 +71,8 @@ def load_data(inp: Path | str, sd: Path | str, dt: pl.DataFrame | None = None, *
     feature is off).  ``inp`` / ``sd`` are the input and solve_data directories (files are read through
     ``provider``); ``dt`` clips the reservation to the steps of the horizon (None keeps every row).
     The remaining reserve fields (prundt, process_reserve_upDown_node_active, reliability, penalty,
-    max_share, ratio values) are filled by the derived- and direct-parameter passes.
+    max_share, ratio values) are filled by the derived- and direct-parameter passes; ``group_node`` comes from
+    ``_group_slack.load_data`` (None when no group has a node).
     """
     inp = Path(inp)
     sd = Path(sd)
@@ -100,23 +101,6 @@ def load_data(inp: Path | str, sd: Path | str, dt: pl.DataFrame | None = None, *
             out[name] = (df.pipe(rename_to_axis, _PRUN).select("p", "r", "ud", "n") if df.height > 0
                          else _empty(("p", "r", "ud", "n")))
 
-    # group_node: solve_data/group_node.csv, else the raw input/group__node.csv.  The first file with
-    # rows wins; when the files exist but are empty the field is an empty frame.
-    gn = None
-    seen_any = False
-    for path in (sd / "group_node.csv", inp / "group__node.csv"):
-        df = _provider_get(provider, path)
-        if df is None:
-            continue
-        seen_any = True
-        if df.height > 0:
-            gn = df.pipe(rename_to_axis, {"group": "g", "node": "n"}).select("g", "n").unique()
-            break
-    if gn is not None:
-        out["group_node"] = gn
-    elif seen_any:
-        out["group_node"] = _empty(("g", "n"))
-
     # Reservation timeseries (r, ud, g, d, t), from the long-format pdtReserve_upDown_group.
     pdtR = _provider_get(provider, sd / "pdtReserve_upDown_group.csv")
     if pdtR is not None and pdtR.height > 0:
@@ -129,6 +113,54 @@ def load_data(inp: Path | str, sd: Path | str, dt: pl.DataFrame | None = None, *
         out["pdtReserve_upDown_group_reservation"] = Param(("r", "ud", "g", "d", "t"), res_only)
 
     return out
+
+
+# Reserve fields keyed on (r, ud, g): the requirement sets and the group parameters.
+_RUG_SETS = ("reserve_upDown_group", "reserve_upDown_group_method_timeseries",
+             "reserve_upDown_group_method_dynamic", "reserve_upDown_group_method_n_1")
+_RUG_PARAMS = ("pdtReserve_upDown_group_reservation", "p_reserve_upDown_group_penalty_reserve",
+               "p_reserve_upDown_group_reserve_duration", "p_reserve_upDown_group_increase_reserve_ratio")
+
+
+def drop_groups_without_nodes(d) -> None:
+    """Leave out the reserves of groups that have no node in the solve (no ``group__node`` row), with a warning
+    naming the groups that have a reserve_method other than no_reserve.
+
+    No node of such a group can hold its reserve, and no flow of the solve drives or fails into it, so its
+    requirement has nothing to act on; written, it would be met by shortfall only, at the reserve penalty.  The
+    requirement sets and the (r, ud, g) parameters keep the other groups; with none left the reserve fields are
+    None (the feature is off), as for a model without reserves.  Changes ``d`` in place.
+    """
+    from flextool.engine import _behaviour_changes
+
+    rug = getattr(d, "reserve_upDown_group", None)
+    if not _has_rows(rug):
+        return
+    gn = getattr(d, "group_node", None)
+    with_nodes = (set(gn.get_column("g").cast(pl.Utf8).unique().to_list()) if _has_rows(gn) else set())
+    empty = sorted(set(rug.get_column("g").cast(pl.Utf8).unique().to_list()) - with_nodes)
+    if not empty:
+        return
+    # A group with reserve_method no_reserve (the default) has no requirement to lose: left out silently.
+    required = {str(g) for name in _RUG_SETS[1:] if _has_rows(getattr(d, name, None))
+                for g in getattr(d, name).get_column("g").cast(pl.Utf8).unique().to_list()}
+    lost = [g for g in empty if g in required]
+    if lost:
+        _behaviour_changes.warn_once_each(
+            "reserve_group_without_nodes", lost,
+            lambda names: (f"Warning: reserve group(s) {', '.join(names)} have no nodes in the solve (no "
+                           "group__node row): their reserve requirements are left out."))
+    keep = pl.col("g").cast(pl.Utf8).is_in(sorted(with_nodes))
+    kept = rug.filter(keep)
+    for name in _RUG_SETS:
+        frame = getattr(d, name, None)
+        if frame is not None:
+            setattr(d, name, frame.filter(keep) if kept.height > 0 else None)
+    for name in _RUG_PARAMS:
+        param = getattr(d, name, None)
+        if param is not None:
+            setattr(d, name, Param(param.dims, param.frame.filter(keep), name=param.name)
+                    if kept.height > 0 else None)
 
 
 # ---------------------------------------------------------------------------

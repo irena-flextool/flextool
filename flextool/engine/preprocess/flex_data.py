@@ -5048,14 +5048,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # ─── Reserves (timeseries / dynamic / n_1 / per-process upper) ────────
         reserve_data = _reserve.load_data(inp=inp, sd=sd, dt=dt,
                                             provider=provider)
-        # ``group_node`` is shared between _group_slack and _reserve (both
-        # populate it from the canonical solve_data/group_node.csv).  Drop the
-        # reserve copy to avoid duplicate-kwargs at the FlexData(...) call when
-        # group_slack already provided it; reserve will read it back off d in
-        # add_constraints.  If group_slack didn't populate it, hand the
-        # reserve copy through.
-        if "group_node" in reserve_data and group_slack.get("group_node") is not None:
-            reserve_data = {k: v for k, v in reserve_data.items() if k != "group_node"}
+        # ``group_node`` comes from group_slack only (None when no group has
+        # a node); the reserve groups without nodes are left out at the end
+        # of the load (``_reserve.drop_groups_without_nodes``).
 
         # ─── Cumulative / group-invest / min-invest data ─────────────────────
         ci_data = _load_cumulative_invest(inp=inp, sd=sd, dt=dt, provider=provider)
@@ -5393,6 +5388,10 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # period's tier curve.  Runs after every producer of the ladder Params (load_data and the
         # direct-parameter pass).
         _commodity_ladder.inherit_branch_periods(flex_data, provider)
+
+        # Reserves of groups without nodes in the solve are left out (with a warning).  After every producer
+        # of the reserve sets and parameters, and of group_node.
+        _reserve.drop_groups_without_nodes(flex_data)
 
         # The minFlow_minload floor's units: min_load > 0 on some (d, t) of this solve, read from the
         # solve-resolved p_min_load (every DB path, synthetic sub-solves included, has produced it by now).

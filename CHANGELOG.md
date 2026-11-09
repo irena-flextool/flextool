@@ -7,8 +7,15 @@
   else 1000 MW), so the same row works for three entities or for one entity of three units. The count is a whole
   number with *binary* startup and continuous with *linear*; for MW online use the unit size as the coefficient. A
   constraint with an online term is written once per time step. The unit or connection needs online variables
-  (`startup_method` *linear* or *binary*, or a `minimum_time_method`); a coefficient on one without them stops the
-  run with an error naming it and the constraint. Databases are migrated automatically; nothing else changes.
+  (`startup_method` *linear* or *binary*; on a unit also a `minimum_time_method`); a coefficient on one without
+  them stops the run with an error naming it and the constraint. Databases are migrated automatically; nothing
+  else changes.
+- **Fixed: a reserve on a group without nodes no longer crashes the run.** A `reserve__upDown__group` whose group
+  has no `group__node` row in the solve stopped the run with an internal error ("multiple values for keyword
+  argument 'group_node'") when no group of the solve had a node. When another group had nodes, its requirement
+  could only be met by shortfall, at the reserve penalty. Such a reserve is now left out, with a warning naming
+  the group (none for a group with `reserve_method` *no_reserve*). Models where every reserve group has nodes are
+  unchanged.
 - **Fixed: a limit given as a period map no longer drops the periods it leaves out without a word.** A period
   the solve uses (look-ahead periods included) but a period map does not cover is now an error naming the entity,
   the parameter and the missing periods. Before, such a period got a CO2 cap of 0 (`co2_max_period`), no
