@@ -36,4 +36,4 @@ def user_cache_dir() -> Path:
         return home / "cache"
     import platformdirs
 
-    return Path(platformdirs.user_cache_dir("flextool"))
+    return Path(platformdirs.user_cache_dir("flextool", appauthor=False))

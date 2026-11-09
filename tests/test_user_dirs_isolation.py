@@ -77,3 +77,25 @@ def test_a_running_windows_runtime_file_is_left_out_and_a_finished_ones_is_not(t
     running.write_text("{}", encoding="utf-8")
     finished.write_text("{}", encoding="utf-8")
     assert user_dirs_guard.changes(before, user_dirs_guard.snapshot((tmp_path,))) == [f"added   {finished}"]
+
+
+def test_the_windows_folders_name_flextool_once(monkeypatch):
+    """On Windows the cache folder is ``…\\Local\\flextool\\Cache``, not ``…\\flextool\\flextool\\Cache`` (review
+    C3-n4: without ``appauthor=False`` platformdirs puts the app name in twice); ``FLEXTOOL_USER_HOME`` still
+    stands in for both folders."""
+    import platformdirs
+    import platformdirs.windows
+
+    from flextool import user_dirs
+
+    home = os.environ[USER_HOME_ENV]
+    monkeypatch.setattr(platformdirs.windows, "get_win_folder",
+                        lambda csidl: {"CSIDL_LOCAL_APPDATA": "C:/Users/u/AppData/Local",
+                                       "CSIDL_APPDATA": "C:/Users/u/AppData/Roaming"}[csidl])
+    monkeypatch.setattr(platformdirs, "PlatformDirs", platformdirs.windows.Windows)
+    monkeypatch.delenv(USER_HOME_ENV)
+    assert user_dirs.user_cache_dir().as_posix() == "C:/Users/u/AppData/Local/flextool/Cache"
+    assert user_dirs.user_config_dir().as_posix() == "C:/Users/u/AppData/Local/flextool"
+    monkeypatch.setenv(USER_HOME_ENV, home)
+    assert user_dirs.user_cache_dir() == Path(home) / "cache"
+    assert user_dirs.user_config_dir() == Path(home) / "config"

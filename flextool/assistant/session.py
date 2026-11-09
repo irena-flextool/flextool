@@ -44,8 +44,9 @@ known (or the assumed local one) the session estimates the request (:func:`~flex
 request_tokens`, corrected by the prompt tokens the provider reported for earlier requests).  A request that would
 not fit 95 % of the window with its answer is shortened first — earlier turns' tool results (a compaction point);
 then, for providers without replayed data, this turn's results oldest first (the newest kept), and for providers
-that replay data (Gemini, OpenRouter, custom endpoints, Anthropic thinking) an answer with what the model has; a
-request that still does not fit is never sent.  A reply from a model on this computer or the local network whose
+that replay data (Gemini, OpenRouter, custom endpoints, Anthropic thinking) an answer with what the model has
+(estimated without the tool schemas when the endpoint takes no ``tool_choice`` and so gets it without tools,
+:func:`~flextool.assistant.providers.schemas_sent`); a request that still does not fit is never sent.  A reply from a model on this computer or the local network whose
 reported prompt fills 99 % of the loaded context is treated as an overflow: the local server dropped the start of
 the prompt.  A question may use at most ``max_calls_per_turn`` tool calls; a tool outside the level is refused
 before the registry.
@@ -118,7 +119,7 @@ from flextool.assistant.llm_errors import (
 )
 from flextool.assistant.llm_retry import Pacing, RetryPolicy, call_with_retries
 from flextool.assistant.pacing import PROCESS_PACER, Pacer, pace_key
-from flextool.assistant.providers import pacing_seed
+from flextool.assistant.providers import pacing_seed, schemas_sent
 from flextool.assistant.usage import add_usage, ledger_key
 
 logger = logging.getLogger(__name__)
@@ -754,7 +755,8 @@ class Session:
             # The results of the coming request are built: which notes they carry in full is settled by the reply.
             self.ctx.notes_in_flight.clear()
             req = self._request(tool_choice)
-            text_part, tool_part = budget_module.request_parts(req, self.backend.origin)
+            text_part, tool_part = budget_module.request_parts(req, self.backend.origin,
+                                                               schemas=schemas_sent(self.preset, tool_choice))
             try:
                 reply = call_with_retries(lambda: self.backend.stream(req, emit, cancel), self.retry_policy, emit,
                                           cancel, sleep=self._sleep, clock=self._clock, rng=self._rng,
@@ -824,7 +826,9 @@ class Session:
 
     def _fits(self, tool_choice: Literal["auto", "none"]) -> bool:
         assert self.budget is not None
-        tokens = budget_module.request_tokens(self._request(tool_choice), self.correction, self.backend.origin)
+        # The tool-less request to an endpoint that takes no tool_choice goes without the schemas (FU-1).
+        tokens = budget_module.request_tokens(self._request(tool_choice), self.correction, self.backend.origin,
+                                              schemas=schemas_sent(self.preset, tool_choice))
         return budget_module.fits(tokens, self._max_output(), self.budget.window)
 
     def _replays_data(self, turn: int) -> bool:

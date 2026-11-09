@@ -171,6 +171,14 @@ PRESETS: dict[str, Preset] = {p.id: p for p in (
 )}
 
 
+def schemas_sent(preset: Preset, tool_choice: Literal["auto", "none"]) -> bool:
+    """Whether a request with tools carries their schemas to *preset*'s endpoint: always, except the tool-less
+    request (``tool_choice="none"``) to an OpenAI-style endpoint that takes no ``tool_choice``, which the backend
+    sends without the tools.  The Anthropic API needs the tools whenever the history holds tool calls, so it
+    always gets them.  The pre-send fit estimates the request the same way (review FU-1)."""
+    return not (tool_choice == "none" and preset.backend != "anthropic" and "tool_choice" not in preset.allowed_params)
+
+
 def pacing_seed(preset: Preset, free_plan: bool) -> float | None:
     """The interval the pacing starts from and never goes below (:class:`flextool.assistant.pacing.Pacer`): the
     preset's :attr:`~Preset.min_interval`, and with the free plan on also its free-plan interval (the larger);

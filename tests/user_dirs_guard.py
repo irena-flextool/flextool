@@ -38,6 +38,7 @@ def real_user_dirs() -> tuple[Path, ...]:
     return tuple(dict.fromkeys(Path(p) for p in (
         platformdirs.user_config_dir("flextool", appauthor=False),
         platformdirs.user_config_dir("flextool"),
+        platformdirs.user_cache_dir("flextool", appauthor=False),
         platformdirs.user_cache_dir("flextool"),
         platformdirs.user_data_dir("flextool"),
         platformdirs.user_state_dir("flextool"),

@@ -144,12 +144,13 @@ def schema_tokens(tools: Iterable[ToolSpec]) -> int:
     return approx_tokens(payload, "json")
 
 
-def request_parts(req: Request, origin: Origin | None = None) -> tuple[int, int]:
+def request_parts(req: Request, origin: Origin | None = None, *, schemas: bool = True) -> tuple[int, int]:
     """(text part, tool part) of a request's estimate, uncorrected: the system layers and the user and assistant
     text are text; the tool schemas, the tool calls, the tool results and the provider data replayed to *origin*
-    (the backend's model) are JSON (P3 §4.0)."""
+    (the backend's model) are JSON (P3 §4.0).  ``schemas=False``: the request goes without its tool schemas (a
+    tool-less request the backend sends without tools, :func:`~flextool.assistant.providers.schemas_sent`)."""
     text = sum(approx_tokens(layer, "text") for layer in req.system)
-    tools = schema_tokens(req.tools)
+    tools = schema_tokens(req.tools) if schemas else 0
     for m in req.messages:
         t, j = _message_parts(m, origin)
         text += t
@@ -157,9 +158,11 @@ def request_parts(req: Request, origin: Origin | None = None) -> tuple[int, int]
     return text, tools
 
 
-def request_tokens(req: Request, corr: TokenCorrection | None = None, origin: Origin | None = None) -> int:
-    """The estimate of the prompt tokens of *req* (to *origin*), multiplied by the session's correction."""
-    text, tools = request_parts(req, origin)
+def request_tokens(req: Request, corr: TokenCorrection | None = None, origin: Origin | None = None, *,
+                   schemas: bool = True) -> int:
+    """The estimate of the prompt tokens of *req* (to *origin*), multiplied by the session's correction
+    (``schemas``: as :func:`request_parts`)."""
+    text, tools = request_parts(req, origin, schemas=schemas)
     factor = corr.factor if corr is not None else 1.0
     return math.ceil((text + tools) * factor)
 

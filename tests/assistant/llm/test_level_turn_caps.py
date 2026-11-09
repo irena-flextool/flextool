@@ -84,14 +84,14 @@ def tools(monkeypatch: pytest.MonkeyPatch) -> Tools:
 
 def session_for(tmp_path: Path, script: list, *, tier: str = "small", preset_id: str = "ollama",
                 b: budget.Budget | None = None, facts: ModelFacts | None = None, every: int | None = None,
-                hint=None, caps: TurnCaps | None = None) -> tuple[Session, FakeBackend, list]:
+                hint=None, caps: TurnCaps | None = None, preset=None) -> tuple[Session, FakeBackend, list]:
     ctx = make_context(tmp_path / "project", front_end="terminal")
     clock = FakeClock()
     backend = FakeBackend(script)
     if b is not None:
         ctx.caps = b.result_caps
     conv = open_store().new_conversation(ctx, backend.origin, tier)
-    session = Session(ctx, backend, PRESETS[preset_id], conversation=conv,
+    session = Session(ctx, backend, preset or PRESETS[preset_id], conversation=conv,
                       caps=caps or (TurnCaps.from_budget(b) if b is not None else TurnCaps.for_tier(tier)),
                       tier=tier, store=None, ledger=Ledger(tmp_path / "config"), facts=facts, budget=b,
                       compaction_every=every, free_tier_hint=hint, sleep=clock.sleep, clock=clock.now,
@@ -238,6 +238,45 @@ def test_a_provider_with_replayed_data_keeps_this_turn_and_answers_with_what_it_
     assert not any(m.compacted for m in session.messages)
     # The tool-less request was not sent either, so the history ends with this turn's eight results.
     assert [m.role for m in session.messages[-8:]] == ["tool"] * 8
+
+
+def test_the_tool_less_request_without_schemas_is_sent_when_it_fits(tmp_path, tools, monkeypatch):
+    """Step 3 of the fit, reached without forcing it (FU-1): an endpoint that replays data and takes no
+    tool_choice gets the tool-less request without the tool schemas, so it is estimated without them.  The window
+    is set between the two: the request with tools does not fit, the tool-less one does and is sent."""
+    big = make_tool(name="big", title="big", description="A tool whose description is long. " * 120,
+                    properties={}, handler=lambda _ctx, _args: {"ok": True}, area="diagnostics", small_tier=False)
+    monkeypatch.setitem(registry._tools, "big", big)
+    preset = dataclasses.replace(PRESETS["gemini"], allowed_params=frozenset({"stream_options"}))
+    assert preset.capture_tool_call_keys                  # replays data: this turn is never shortened
+    base = resolve_budget("medium", 16_384, "model", local=False)
+
+    def run(window: int):
+        b = dataclasses.replace(base, window=window)
+        return session_for(tmp_path, [calls(call(seed=1)), say("With what I have.")], tier="medium", b=b,
+                           preset=preset, facts=ModelFacts(context_window=window))
+
+    # The second request of the question, measured with a window that fits everything.
+    session, backend, events = run(10_000_000)
+    assert ask(session, events).ok
+    with_tools = backend.requests[1]
+    assert with_tools.tool_choice == "auto" and "big" in {t.name for t in with_tools.tools}
+    schemas = budget.schema_tokens(with_tools.tools)
+    limit = budget.approx_tokens(LIMIT, "text")
+    assert schemas > 4 * limit
+    auto = sum(budget.request_parts(with_tools, session.backend.origin))
+    out = with_tools.max_output_tokens
+    window = int((auto - schemas // 2 + out) / 0.95)        # the request with tools is half the schemas too long
+
+    session, backend, events = run(window)
+    result = ask(session, events)
+    assert result.ok and result.text == "With what I have."
+    assert len(backend.requests) == 2
+    sent = backend.requests[1]
+    assert sent.tool_choice == "none" and sent.messages[-1].kind == "limit"
+    assert not any(m.compacted for m in sent.messages)
+    tool_less = sum(budget.request_parts(sent, session.backend.origin)) - budget.schema_tokens(sent.tools)
+    assert tool_less + out <= 0.95 * window < auto + out
 
 
 def test_the_correction_from_reported_counts_tightens_the_fit(tmp_path, tools):

@@ -51,7 +51,7 @@ from flextool.assistant.llm_errors import (
     render,
 )
 from flextool.assistant.net import build_http_client, key_header_value
-from flextool.assistant.providers import Preset, model_entries, request_fields
+from flextool.assistant.providers import Preset, model_entries, request_fields, schemas_sent
 
 #: Request fields the library takes as named arguments; any other field goes in ``extra_body``.
 _NAMED_FIELDS = frozenset({"store", "stream_options", "tool_choice", "parallel_tool_calls", "prompt_cache_key",
@@ -214,7 +214,7 @@ class OpenAIChatBackend:
         """The whole request body (what reaches the endpoint)."""
         allowed = self.preset.allowed_params
         body: dict[str, Any] = {"model": self.conn.model, "messages": self.wire_messages(req), "stream": True}
-        send_tools = bool(req.tools) and not (req.tool_choice == "none" and "tool_choice" not in allowed)
+        send_tools = bool(req.tools) and schemas_sent(self.preset, req.tool_choice)
         if send_tools:
             body["tools"] = [{"type": "function", "function": {"name": t.name, "description": t.description,
                                                                "parameters": t.input_schema}} for t in req.tools]
