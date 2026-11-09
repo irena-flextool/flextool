@@ -206,7 +206,8 @@ class AssistantContext:
     front_end: FrontEnd
     setup_problem: str | None = None
     lock: threading.Lock = field(default_factory=lambda: TOOL_LOCK)
-    notes_sent: set[str] = field(default_factory=set)       # long notes are sent once per session
+    notes_sent: set[str] = field(default_factory=set)       # long notes the model has seen (unit_wording)
+    notes_in_flight: set[str] = field(default_factory=set)  # long notes a result of the coming request carries
     gui_snapshot: ContextSnapshot | None = None              # the FlexTool window's snapshot of the current question
     redactor: Redactor = field(init=False)
 

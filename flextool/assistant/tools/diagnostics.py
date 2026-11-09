@@ -177,7 +177,7 @@ def _redacted(ctx: AssistantContext, value: Any) -> Any:
 def get_slack_summary(ctx: AssistantContext, args: dict) -> Fit:
     min_value = float(args.get("min_value", 1e-6))
     payload = _slacks.slack_summary(ctx, str(args["run"]), min_value=min_value, max_rows=int(args["max_rows"]))
-    return Fit(add_session_notes(payload, [UNITS_CONVENTION], ctx.notes_sent), rows_key="slacks", what="slacks",
+    return Fit(add_session_notes(payload, [UNITS_CONVENTION], ctx.notes_sent, ctx.notes_in_flight), rows_key="slacks", what="slacks",
                hint="lower max_rows or raise min_value")
 
 

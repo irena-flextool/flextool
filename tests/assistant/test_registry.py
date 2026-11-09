@@ -205,3 +205,44 @@ def test_every_message_placeholder_has_one_class() -> None:
     for key, template in errors.MESSAGES.items():
         for name in errors.placeholders(template):
             assert sum(name in c for c in classes) == 1, (key, name)
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Review G7 (C3-n5): a session note is sent only when it reached the model
+
+
+def test_a_note_dropped_by_the_last_resort_is_sent_again(ctx) -> None:
+    """Over the connection server: a result that fit_json cut to its last resort did not carry the note, so the
+    next result carries it in full; after that the key."""
+    from flextool.assistant.mcp_server import build_server
+    from flextool.assistant.unit_wording import UNITS_CONVENTION, UNITS_NOTE
+    from tests.assistant.test_server_stdio import _in_process
+
+    async def work(client):
+        tiny = await client.call_tool("list_result_tables", {"run": "coal_1", "max_chars": 60})
+        full = await client.call_tool("list_result_tables", {"run": "coal_1"})
+        again = await client.call_tool("list_result_tables", {"run": "coal_1"})
+        return [r.content[0].text for r in (tiny, full, again)]
+
+    tiny, full, again = _in_process(build_server(ctx), work)
+    assert "truncated" in json.loads(tiny) and UNITS_NOTE not in tiny
+    assert UNITS_NOTE in full
+    assert UNITS_NOTE not in again and UNITS_CONVENTION in json.loads(again)["notes"]
+
+
+def test_delivered_notes_match_the_redacted_note_and_restore_a_lost_one() -> None:
+    """Critique m2: a user name found in a note ("model") changes the sent note; it is still recognised.
+    Critique m1: results carried without their history get the full note back in place of its key."""
+    from pathlib import Path
+
+    from flextool.assistant.redact import Redactor
+    from flextool.assistant.unit_wording import UNITS_CONVENTION, UNITS_NOTE, delivered_notes, restore_notes
+
+    redact = Redactor(None, home=Path("/home/nobody"), host="hostzz", user="model").redact
+    assert redact(UNITS_NOTE) != UNITS_NOTE
+    sent = json.dumps({"notes": [redact(UNITS_NOTE)]}, ensure_ascii=False)
+    assert delivered_notes([sent], redact) == {UNITS_CONVENTION}
+    assert delivered_notes(['{"notes": ["units_convention"]}'], redact) == set()
+    first, second = restore_notes(['{"a": 1}', '{"notes": ["units_convention"]}'], redact)
+    assert first == '{"a": 1}' and json.loads(second) == {"notes": [redact(UNITS_NOTE)]}
+    assert restore_notes([sent, '{"notes": ["units_convention"]}'], redact)[1] == '{"notes": ["units_convention"]}'

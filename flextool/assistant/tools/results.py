@@ -47,7 +47,7 @@ def _semantics_payload(semantics: set[str]) -> Any:
 
 
 def _with_units_note(ctx: AssistantContext, payload: dict) -> dict:
-    return add_session_notes(payload, [UNITS_CONVENTION], ctx.notes_sent)
+    return add_session_notes(payload, [UNITS_CONVENTION], ctx.notes_sent, ctx.notes_in_flight)
 
 
 def _record_units(rec: dict) -> tuple[Any, Any]:

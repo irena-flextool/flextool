@@ -329,6 +329,54 @@ def test_cancel_between_calls(rig, tools):
     r.validate_all()
 
 
+def _noted_tool(monkeypatch, on_run: Callable[[], None] = lambda: None) -> None:
+    """``noted``: a result that needs the units note (as the result tools add it)."""
+    from flextool.assistant.unit_wording import UNITS_CONVENTION, add_session_notes
+
+    def run(ctx, _args: dict) -> dict:
+        on_run()
+        return add_session_notes({"items": [1]}, [UNITS_CONVENTION], ctx.notes_sent, ctx.notes_in_flight)
+    tools = dict(registry.all_tools())
+    tools["noted"] = make_tool(name="noted", title="noted", description="A noted tool.",
+                               properties={"text": {"type": "string", "description": "a text"}},
+                               handler=run, area="orientation", small_tier=True)
+    monkeypatch.setattr(registry, "_tools", tools)
+
+
+def test_a_note_is_sent_only_when_a_request_carried_it(rig, tools, monkeypatch):
+    """Review G7 (C3-n5): a note counts as sent only after an answered request carried it in full.  A question
+    stopped after its tool ran sent nothing, so the next question's first result carries the full note again
+    (answers-only history: the stopped result is not replayed).  In one round only the first result carries it
+    (critique m3); after the answer the later results carry the key."""
+    from flextool.assistant.unit_wording import UNITS_CONVENTION, UNITS_NOTE
+
+    cancel = threading.Event()
+    _noted_tool(monkeypatch, cancel.set)
+    r = rig([calls(call("noted")), calls(call("noted"), call("noted")), calls(call("noted")), say("done")])
+    assert isinstance(r.ask(cancel=cancel).error, Cancelled)
+    assert r.ctx.notes_sent == set()
+    cancel.clear()
+    _noted_tool(monkeypatch)
+    assert r.ask("again").ok
+    first, second = [m for m in r.backend.requests[2].messages if m.role == "tool"]
+    assert UNITS_NOTE in first.text and UNITS_NOTE not in second.text and f'"{UNITS_CONVENTION}"' in second.text
+    later = [m for m in r.backend.requests[3].messages if m.role == "tool"][-1]
+    assert UNITS_NOTE not in later.text and f'"{UNITS_CONVENTION}"' in later.text
+    assert r.ctx.notes_sent == {UNITS_CONVENTION}
+    r.validate_all()
+
+
+def test_a_compacted_result_keeps_its_session_notes(rig, tools):
+    """G7-D3: the short note of a compacted result keeps the full session notes the result held, so a later
+    result that names the note by its key never loses it."""
+    from flextool.assistant.unit_wording import UNITS_NOTE
+
+    r = rig([say("x")])
+    kept = r.session._keep_notes("[removed]", json.dumps({"items": [], "notes": [UNITS_NOTE]}))
+    assert kept == f"[removed] {UNITS_NOTE}"
+    assert r.session._keep_notes("[removed]", '{"items": []}') == "[removed]"
+
+
 def test_cancel_while_waiting_for_the_tool_lock(rig, tools):
     r = rig([calls(call(), call()), say("Next.")])
     waiting = threading.Event()

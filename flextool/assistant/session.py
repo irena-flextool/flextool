@@ -69,7 +69,7 @@ from typing import TYPE_CHECKING, Literal
 
 from flextool.assistant import budget as budget_module
 from flextool.assistant import caps as caps_module
-from flextool.assistant import prompt, registry
+from flextool.assistant import prompt, registry, unit_wording
 from flextool.assistant.errors import MESSAGES as TOOL_MESSAGES
 from flextool.assistant.llm_adapter import (
     Backend,
@@ -550,7 +550,7 @@ class Session:
                                             COMPACTED_ARGS_MAX)
                 note = SESSION_MESSAGES["compacted"].format(tool=m.tool_name or (call.name if call else "tool"),
                                                             args=args)
-                m = dataclasses.replace(m, text=note, compacted=True)
+                m = dataclasses.replace(m, text=self._keep_notes(note, m.text), compacted=True)
             out.append(m)
         self.conversation.messages = out
 
@@ -636,6 +636,8 @@ class Session:
         pacing = Pacing(self.pace_key, self.pacer, here=not self._paced_by_backend, label=self.route.label,
                         free_plan=self.budget is not None and self.budget.free_tier, headers=self._rate_headers)
         while True:
+            # The results of the coming request are built: which notes they carry in full is settled by the reply.
+            self.ctx.notes_in_flight.clear()
             req = self._request(tool_choice)
             text_part, tool_part = budget_module.request_parts(req)
             try:
@@ -662,6 +664,9 @@ class Session:
                     raise self._still_too_long(err) from err
                 raise
             self._record(reply.usage, turn_usage, emit)
+            # A note reached the model when an answered request carried it in full (review G7, C3-n5): assigned,
+            # so a note that has left the history (answers-only history, a fresh part) is sent in full again.
+            self.ctx.notes_sent = unit_wording.delivered_notes((m.text for m in req.messages), self.ctx.redact)
             reported = budget_module.reported_prompt_tokens(reply.usage)
             state.requests.append(RequestTokens(text_part, tool_part, reported))
             self.correction.update(reported, text_part + tool_part)
@@ -760,7 +765,13 @@ class Session:
                      if c.id == m.tool_call_id), None)
         args = caps_module.cap_text(" ".join((call.raw_arguments if call else "").split()), COMPACTED_ARGS_MAX)
         note = SESSION_MESSAGES["compacted"].format(tool=m.tool_name or (call.name if call else "tool"), args=args)
-        self.messages[index] = dataclasses.replace(m, text=note, compacted=True)
+        self.messages[index] = dataclasses.replace(m, text=self._keep_notes(note, m.text), compacted=True)
+
+    def _keep_notes(self, placeholder: str, text: str) -> str:
+        """The short note of a compacted result, followed by the session notes the result held in full: a later
+        result that names a note by its key only never loses the note (review G7, G7-D3)."""
+        kept = unit_wording.notes_in(text, self.ctx.redact)
+        return " ".join([placeholder, *kept])
 
     def _overflow(self, turn: int, emit: OnEvent) -> None:
         self._compact(keep_after=turn - 1)
@@ -1056,8 +1067,10 @@ class Session:
                 SESSION_MESSAGES["continuation_note"], text or SESSION_MESSAGES["note_empty"]]
         if kept:
             body += ["", SESSION_MESSAGES["continuation_results"]]
-            for i, c in enumerate(kept, start=1):
-                body.append(f"[{i}] {c.label}{'' if c.ok else SESSION_MESSAGES['note_failed']}:\n{c.text}")
+            # A kept result may name a session note by its key while the full note was in a result not kept.
+            texts = unit_wording.restore_notes([c.text for c in kept], self.ctx.redact)
+            for i, (c, text) in enumerate(zip(kept, texts), start=1):
+                body.append(f"[{i}] {c.label}{'' if c.ok else SESSION_MESSAGES['note_failed']}:\n{text}")
         if state.tried:
             body += ["", SESSION_MESSAGES["continuation_tried"], *(c.tried() for c in state.tried)]
         body += ["", SESSION_MESSAGES["continuation_go_on"]]

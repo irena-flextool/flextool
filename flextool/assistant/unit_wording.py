@@ -5,13 +5,17 @@ convention, and a model may use others consistently (kg/h and kg for a hydrogen 
 convention units is shown as ``"MW (default convention)"``; units that are fixed by FlexTool (hours, years,
 fractions, counts) are shown plain.
 
-The longer notes (:data:`UNITS_NOTE`, :data:`STORED_VALUES_NOTE`) are sent in full in the first result of a session
-that needs them, and after that by their key only (:func:`add_session_notes`).
+The longer notes (:data:`UNITS_NOTE`, :data:`STORED_VALUES_NOTE`) are sent in full in a result until a request
+that carried the full note was answered, and after that by their key only (:func:`add_session_notes`).  A note
+counts as sent only when it reached the model (review G7, C3-n5): ``fit_json``'s last resort may drop it, a chat
+result may be compacted, a question may be stopped before any request carried it.  The front ends settle it with
+:func:`delivered_notes`: the chat from each answered request, the connection server from each result it returns.
 """
 from __future__ import annotations
 
+import json
 import re
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 CONVENTION_SUFFIX = " (default convention)"
@@ -53,17 +57,54 @@ def shown_unit(unit: str | None) -> str | None:
     return unit + CONVENTION_SUFFIX if is_convention_unit(unit) else unit
 
 
-def add_session_notes(payload: dict, keys: Iterable[str], sent: set[str]) -> dict:
-    """Append the session notes *keys* to ``payload["notes"]``: the full text the first time in a session
-    (*sent* records which were sent), the key after that."""
+def add_session_notes(payload: dict, keys: Iterable[str], sent: set[str], in_flight: set[str] | None = None) -> dict:
+    """Append the session notes *keys* to ``payload["notes"]``: the key when the note reached the model already
+    (*sent*) or an earlier result of the same request carries it in full (*in_flight*, which this records), else
+    the full text.  *sent* is only read: :func:`delivered_notes` settles it."""
     notes: list[Any] = list(payload.get("notes") or [])
     for key in keys:
-        if key in sent:
+        if key in sent or (in_flight is not None and key in in_flight):
             entry = key
         else:
             entry = SESSION_NOTES[key]
-            sent.add(key)
+            if in_flight is not None:
+                in_flight.add(key)
         if entry not in notes:
             notes.append(entry)
     payload["notes"] = notes
     return payload
+
+
+def _sent_form(note: str, redact: Callable[[str], str]) -> str:
+    """A note as it appears in a result's JSON text: redacted, JSON-escaped, without its quotes."""
+    return json.dumps(redact(note), ensure_ascii=False)[1:-1]
+
+
+def notes_in(text: str, redact: Callable[[str], str]) -> list[str]:
+    """The session notes *text* holds in full, as sent (redacted)."""
+    return [redact(note) for key, note in SESSION_NOTES.items() if _sent_form(note, redact) in text]
+
+
+def delivered_notes(texts: Iterable[str], redact: Callable[[str], str]) -> set[str]:
+    """The keys of the session notes that one of *texts* (what a request carried) holds in full."""
+    found: set[str] = set()
+    for text in texts:
+        for key, note in SESSION_NOTES.items():
+            if key not in found and _sent_form(note, redact) in text:
+                found.add(key)
+    return found
+
+
+def restore_notes(texts: list[str], redact: Callable[[str], str]) -> list[str]:
+    """*texts* (results carried together without their history) with the full note in place of the first key of a
+    note that none of them holds in full, so a key never points to a note the model has not seen."""
+    out = list(texts)
+    delivered = delivered_notes(out, redact)
+    for key, note in SESSION_NOTES.items():
+        if key in delivered:
+            continue
+        token = json.dumps(key)
+        at = next((i for i, t in enumerate(out) if token in t), None)
+        if at is not None:
+            out[at] = out[at].replace(token, json.dumps(redact(note), ensure_ascii=False), 1)
+    return out

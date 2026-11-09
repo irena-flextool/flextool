@@ -65,7 +65,7 @@ def build_server(ctx, *, tier: str | None = None):
     import mcp.types as types
     from mcp.shared.exceptions import MCPError
 
-    from flextool.assistant import prompt, registry
+    from flextool.assistant import prompt, registry, unit_wording
     from flextool.assistant.caps import cap_text
     from flextool.assistant.errors import docs_error, render
 
@@ -85,7 +85,11 @@ def build_server(ctx, *, tier: str | None = None):
                 return registry.error_outcome(ctx, "fault", type=type(exc).__name__)
             if refused:
                 return registry.error_outcome(ctx, "not_in_level", name=name)
-            return registry.call_tool(ctx, name, arguments)
+            out = registry.call_tool(ctx, name, arguments)
+            # The result goes to the agent whole: a note in it reached the agent (review G7, C3-n5).
+            ctx.notes_sent |= unit_wording.delivered_notes([out.text], ctx.redact)
+            ctx.notes_in_flight.clear()
+            return out
 
     async def _list_tools(_ctx, _params) -> types.ListToolsResult:
         annotations = types.ToolAnnotations(read_only_hint=True, open_world_hint=False)

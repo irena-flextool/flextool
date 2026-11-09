@@ -146,7 +146,7 @@ def _unit(view: _db.ScenarioView | None, entity_class: str, parameter: str,
 
 def _session_notes(ctx: AssistantContext, payload: dict, *, units: bool, stored: bool) -> dict:
     keys = ([UNITS_CONVENTION] if units else []) + ([STORED_VALUES] if stored else [])
-    return add_session_notes(payload, keys, ctx.notes_sent) if keys else payload
+    return add_session_notes(payload, keys, ctx.notes_sent, ctx.notes_in_flight) if keys else payload
 
 
 def _version_relation(db: _db.InputDB) -> str | None:
