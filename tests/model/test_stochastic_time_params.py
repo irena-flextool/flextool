@@ -1,7 +1,7 @@
 """Stochastic-time maps of availability, efficiency, min_load, other operational costs, reservation and penalties
 (#78).
 
-``docs/how_to.md``: "The tool recognizes a stochastic timeseries from the dimensions of the data" — a three-level
+``docs/how_to/stochastics.md``: "The tool recognizes a stochastic timeseries from the dimensions of the data" — a three-level
 map ``branch → analysis_time → time``.  For the parameters whose schema allows it (``node.availability``,
 ``node.penalty_up`` / ``penalty_down``, ``unit.availability`` / ``efficiency`` / ``min_load``, the unit arcs'
 ``other_operational_cost``, ``reserve__upDown__group.reservation``):
@@ -448,7 +448,7 @@ def test_rank3_constant_equals_scalar_rolling(tmp_path_factory) -> None:
 
 def test_rank3_outside_stochastic_group_reads_realized_branch(tmp_path_factory) -> None:
     """``gas_plant`` (in no ``include_stochastics`` group) authors a rank-3 availability.  Outside such a group
-    every branch period reads the single value of the realized branch (docs/how_to.md "Single solve
+    every branch period reads the single value of the realized branch (docs/how_to/stochastics.md "Single solve
     stochastics"): ``1_week_rolling_wind`` designates branch ``realized`` (0.9) ``realized: yes`` in every
     roll, so every cell of every stochastic roll is 0.9."""
     steps = _run(tmp_path_factory, ROLLING, [["unit", "gas_plant", "availability", _r3(1.0, AT_ROLL, True)]], [])

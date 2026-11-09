@@ -258,7 +258,7 @@ _SEQ_FORWARD = [["node", "battery", "storage_binding_method", _s("bind_forward_o
 def test_sequence_forward_carries_realized_state(tmp_path_factory):
     """Manual 4-solve sequence (y2020 → y2035, one realised period each), battery bind_forward_only + fix_start 0.1,
     horizon free, no self-discharge.  Each later solve starts from the state its predecessor realised at its last
-    realised step (fix_start is for the first step of the whole model only, reference.md).  Before, each solve was
+    realised step (fix_start is for the first step of the whole model only, reference/nodes.md).  Before, each solve was
     re-pinned to 0.1·(50 + invested) = 85 MWh: the first-step row carried the invest column and bound −5."""
     steps = list(_shared(tmp_path_factory, alt="sse_seq_fo", base_chain=SEQ, values=_SEQ_FORWARD).values())
     assert [s.solve_name for s in steps] == ["y2020_5week", "y2025_5week", "y2030_5week", "y2035_5week"]
@@ -773,12 +773,12 @@ def test_fix_end_stochastic(tmp_path_factory):
 def test_reference_value_yields_to_a_nested_fix(tmp_path_factory, method):
     """Nested invest → storage → dispatch (36 h / 24 h), battery bind_forward_only + use_reference_value 0.4 and the
     given nested fix method.  The storage solve fixes (or prices) every dispatch roll's end step, so with a nested fix
-    no dispatch roll has the reference row (how_to.md: the fixed storage value overrides the horizon end value); the
+    no dispatch roll has the reference row (how_to/solve_sequences.md: the fixed storage value overrides the horizon end value); the
     fix sits at each roll end instead.  Without a nested fix (control) every roll end has the reference row.  The
     invest and storage solves have no upper fix and keep their reference rows; every solve is optimal.  Before, roll 0
     had both the fix row and the reference row on v_state[t0036] (20 vs the storage state) and was infeasible.  With
     fix_usage the storage solve leaves the battery idle in some windows (early p2025); those rolls still get the usage
-    row, capped at 0 (how_to.md: the summed usage equals the storage solve's over the same span) — before item 150 the
+    row, capped at 0 (how_to/solve_sequences.md: the summed usage equals the storage solve's over the same span) — before item 150 the
     handoff dropped zero usages, so those rolls had no cap and kept the reference row."""
     url, scen = make_db(tmp_path_factory, alt=f"sse_ref_{method}", base_chain=NESTED, values=[
         ["solve", "dispatch_fullYear_roll", "rolling_solve_horizon", _f(36.0)],
@@ -997,7 +997,7 @@ def test_fix_start_end_cyclic_chains_forward(tmp_path_factory, method):
     """y2020_5week (p2020, p2025; steps t0001–t0004, t0009–t0016, t0025–t0028, t0037–t0040 in each), battery
     fix_start_end with storage_state_start 0.25 and storage_state_end 0.5, existing 40 MWh in p2020 and 60 MWh in
     p2025, no self-discharge, inverter capacity 0 (no flows), inflow +10 MWh at t0003 of each period.  With
-    fix_start_end the binding method is ignored (reference.md), so the chain runs forward through both periods: it
+    fix_start_end the binding method is ignored (reference/nodes.md), so the chain runs forward through both periods: it
     starts from 0.25·40 = 10 MWh, holds 10 + 10 = 20 from t0003 of p2020, continues into p2025 at 20, holds
     20 + 10 = 30 from its t0003 and ends at 30 = 0.5·60 MWh, the end pin, with no slack (_n12_state).  Both periods
     end at t0040, but only the solve's last period is last (#37): p2020's end (20 MWh) is not pinned.  A

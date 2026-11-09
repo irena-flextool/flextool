@@ -659,7 +659,7 @@ def _patch_stoch_na_reserve(data: dict) -> dict:
 def _stoch_rank3(values: dict) -> dict:
     """3-level ``branch -> analysis_time -> time`` map, constant per branch over the fixture's
     48 hourly timesteps (``t0001``..``t0048``), analysis time ``t0001`` -- the stochastic-time
-    (rank-3) shape ``docs/how_to.md`` "Single solve stochastics" describes.  Every nested level
+    (rank-3) shape ``docs/how_to/stochastics.md`` "Single solve stochastics" describes.  Every nested level
     needs its own explicit ``"type": "map"`` (unlike :func:`_pmap`'s single, unnested level)."""
     def level(name: str, data: list) -> dict:
         return {"type": "map", "index_type": "str", "index_name": name, "data": data}

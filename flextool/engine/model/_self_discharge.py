@@ -334,7 +334,7 @@ def node_union(frames) -> "pl.DataFrame | None":
 
 def block_forward_nodes(d) -> "pl.DataFrame | None":
     """bind_intraperiod_blocks nodes (n) with storage_start_end_method fix_start_end: the binding method's loop is
-    ignored (reference.md), so their blocks chain forward in every period of the solve (:func:`block_forward_lag`).
+    ignored (reference/nodes.md), so their blocks chain forward in every period of the solve (:func:`block_forward_lag`).
     A node has one storage_start_end_method, so storage_fix_start ∩ storage_fix_end is the fix_start_end set.  None
     when there are none."""
     nsb = getattr(d, "nodeStateBlock", None)

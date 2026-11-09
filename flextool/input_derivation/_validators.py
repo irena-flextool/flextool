@@ -159,7 +159,7 @@ def validate_node_inflow_not_period(src) -> None:
     """Raise FlexToolConfigError when a node's ``inflow`` is keyed by period.
 
     ``inflow`` is a constant, a time series (1-D map over time) or a stochastic 3-D map (branch, analysis time,
-    time); it cannot be period-based (docs/reference.md, 'Timesteps and periods').  A period-keyed value is not
+    time); it cannot be period-based (docs/reference/entities_and_time.md, 'Timesteps and periods').  A period-keyed value is not
     read by any path: before this check it silently became inflow 0.  Flagged:
       * a 1-D map with index_name 'period';
       * any 2-D map (the schema has no rank-2 inflow; a period x time map is the usual intent);

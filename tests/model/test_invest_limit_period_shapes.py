@@ -1,6 +1,6 @@
 """Per-period invest / retire limits: a constant means the same as the equivalent period map (#66).
 
-``cumulative_max_capacity`` / ``cumulative_min_capacity`` are "constant or period" (docs/reference.md), and the
+``cumulative_max_capacity`` / ``cumulative_min_capacity`` are "constant or period" (docs/reference/), and the
 engine reads every ``{invest,retire}_{max,min}_period`` limit through the shape resolver, so a constant applies to
 every period:
 

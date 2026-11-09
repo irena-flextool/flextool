@@ -5,8 +5,8 @@ or a deeper one (owner decision Q-c15e-B, with the nested clarification of 2026-
 
 * a later roll of a rolling solve continues from the previous roll;
 * a later solve of a sequence continues from the previous solve (``storage_start_end_method`` affects only the start
-  of the whole model, reference.md);
-* an upper-level solve continues from the dispatch solved below it (the upward feedback of how_to.md: "the dispatch
+  of the whole model, reference/nodes.md);
+* an upper-level solve continues from the dispatch solved below it (the upward feedback of how_to/solve_sequences.md: "the dispatch
   solves can then send the end storage values to the investment and long-term storage solves as start values");
 * a lower nested level starts from ``fix_start`` at its first appearance (no realised state exists at its level or
   below), and later instances of the level continue from the latest realised state at that level or below; the

@@ -786,7 +786,7 @@ def _derive_process_time_param_in_use(
     """The ``(process, param)`` pairs ``pdtProcess`` resolves on every step.
 
     ``min_load`` is in use for the ``min_load_efficiency`` units (the conversion curve) and for every online
-    unit (the ``minFlow_minload`` floor applies to any unit with an online variable, docs/reference.md);
+    unit (the ``minFlow_minload`` floor applies to any unit with an online variable, docs/reference/units.md);
     ``efficiency_at_min_load`` for the ``min_load_efficiency`` units only.  The DB-direct readers take the
     values of a stochastic-time ``min_load`` from these rows (``_param_shapes.STOCHASTIC_TIME_PARAMS``).
     """

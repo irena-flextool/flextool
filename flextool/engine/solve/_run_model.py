@@ -306,7 +306,7 @@ def _downgrade_rp_methods_for_non_rp_solve(
 
 
 # With storage_start_end_method fix_start_end the storage_binding_method is ignored, except bind_forward_only
-# (reference.md, "Meaning"): a cyclic method chains forward instead.  Used by :func:`_fix_start_end_chains_forward`.
+# (reference/nodes.md, "Meaning"): a cyclic method chains forward instead.  Used by :func:`_fix_start_end_chains_forward`.
 _FIX_START_END_FORWARD: dict[str, str] = {
     "bind_within_timeblock":              "bind_forward_only",
     "bind_within_period":                 "bind_forward_only",
@@ -321,7 +321,7 @@ def _fix_start_end_chains_forward(*, solve: str, provider, logger, complete_solv
     """Map the cyclic storage_binding_method of fix_start_end nodes to its forward-only equivalent, per solve.
 
     With ``storage_start_end_method`` *fix_start_end* the binding method is ignored (exception bind_forward_only,
-    reference.md): the start and the end are pinned separately, so the chain must not close on itself (a cycle's
+    reference/nodes.md): the start and the end are pinned separately, so the chain must not close on itself (a cycle's
     start is its end, and with storage_state_start ≠ storage_state_end the two pins would conflict).  Rewrites the
     per-solve ``input/node__storage_binding_method`` frame in place (see :data:`_FIX_START_END_FORWARD`), like
     :func:`_downgrade_rp_methods_for_non_rp_solve`, after it (a blended node of a solve without representative

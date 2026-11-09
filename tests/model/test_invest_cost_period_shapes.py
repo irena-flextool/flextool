@@ -1,7 +1,7 @@
 """``invest_cost`` / ``salvage_value`` shapes in the ed_invest / ed_divest predicate.
 
 ``unit/node/connection.invest_cost`` and ``.salvage_value`` are "constant or period"
-(docs/reference.md).  The predicate that decides which ``(entity, period)`` pairs get an
+(docs/reference/).  The predicate that decides which ``(entity, period)`` pairs get an
 invest / divest variable (``_per_entity_period_cost``) must read them through the shape
 resolver (CLAUDE.md invariant #2):
 

@@ -302,7 +302,7 @@ def _read_singles(path: Path,
 # branch's value; the period label (the reveal / continuation self-row) has no
 # dispatch, so it needs no value of its own and a forecasts-only fan is valid.
 # A stochastic-time value that authors only part of a fan's forecasts is an
-# input error (never a silent class default).  See docs/how_to.md
+# input error (never a silent class default).  See docs/how_to/stochastics.md
 # "Stochastics over multiple periods".
 # ---------------------------------------------------------------------------
 

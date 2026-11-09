@@ -509,7 +509,7 @@ PERIOD_TIME_PARAMS: "frozenset[tuple[str, str]]" = frozenset(
 # ---------------------------------------------------------------------------
 #
 # The PERIOD_TIME_PARAMS keys whose schema type list has map rank 3 (stochastic time: branch,
-# analysis_time, time; ``spinedb_schema.json`` ``parameter_types``, docs/reference.md "stochastic time").
+# analysis_time, time; ``spinedb_schema.json`` ``parameter_types``, docs/reference/ "stochastic time").
 # An entity authoring such a map gets its values from the per-solve emit, which folds ``pbt_*`` onto the
 # solve's (d, t) (emit ``_pdt_params`` PdtLookup / ``_reserve_sets._resolve_pdtReserve``).  Value: (emit
 # provider key, emit entity columns in class-dim order).  Pinned against the schema and the pbt specs by

@@ -1134,7 +1134,7 @@ def migrate_database(
                 # populated.  This migration is a deliberately narrow
                 # foothold: future parameter additions should categorise
                 # themselves using the same mechanism (see
-                # docs/reference.md, "Parameter groups (metadata)").
+                # docs/reference/parameter_groups.md, "Parameter groups (metadata)").
                 db.add_update_item(
                     "parameter_group",
                     name="Outputs",

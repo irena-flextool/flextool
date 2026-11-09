@@ -10,7 +10,7 @@
 # - _d_ energy tables are annualised: sample total / period_share_of_year, period_share = 48 / 8760, so
 #   x 182.5 (_output_meta ENERGY_ANNUAL, docs/advanced_concepts.md); _dt_ tables are MW per step; costs_dt_p is
 #   CUR per step (not annualised); annualized_costs_d_p is M CUR/a;
-# - units are the default convention (docs/reference.md "Units of measure"); [CUR/kW] inputs are x 1000;
+# - units are the default convention (docs/reference/entities_and_time.md "Units of measure"); [CUR/kW] inputs are x 1000;
 # - LP optima from the balance and the costs: coal_plant (500 MW, efficiency 0.4, coal 20 CUR/MWh) costs
 #   50 CUR/MWh of electricity, far below penalty_up 900 CUR/MWh at west, so it runs at
 #   min(demand, 500) and the upward slack is max(0, demand - 500) in every hour.
@@ -22,7 +22,7 @@ sources:
   - tests/fixtures/tests.json
   - tests/assistant/grounding_projects.py (GROUNDING_OVERRIDES, DEMAND_UPDATE_REWRITE)
   - tests/engine/_unit_db.py (add_override_alternative: how an override alternative and scenario are added)
-  - docs/reference.md
+  - docs/reference/
   - docs/results.md
   - docs/advanced_concepts.md
   - docs/ai_assistant.md
@@ -63,7 +63,7 @@ questions:
         kind: statement
         critical: false
         criterion: "Presents 500 as a capacity in MW (default convention), not as a number of units."
-        derivation: "reference.md: existing is a count only with virtual_unitsize; coal_plant has none in scenario coal"
+        derivation: "reference/units.md: existing is a count only with virtual_unitsize; coal_plant has none in scenario coal"
     allowed_derived:
       - {value: 40, note: "efficiency written as 40 %"}
     tools_any: [[get_entity, get_parameter]]
@@ -238,7 +238,7 @@ questions:
         critical: false
         criterion: "Says what would be needed: a 2030 period (e.g. p2030) in the solve's period_timeset and
           realized_periods, with its data, and a new run."
-        derivation: "reference.md solve parameters period_timeset / realized_periods"
+        derivation: "reference/entities_and_time.md solve parameters period_timeset / realized_periods"
     expect_unknown: true
     unknown_units: ["CUR/MWh"]
     tools_any: [[list_runs, find_result_tables, query_result, get_parameter]]

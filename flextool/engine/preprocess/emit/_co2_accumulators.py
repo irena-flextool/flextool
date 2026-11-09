@@ -4,7 +4,7 @@ For each realized ``(d, t)`` (``flex_data.realized_dispatch``), per ``v_flow[p, 
 whose ``source`` is a CO2 commodity node — add ``content * value * us * dur * rpw`` (noEff) or that ×
 ``slope`` (eff — ``slope`` already carries a direct unit's conversion_flow_coeff ratio, #10 / Q12); per
 row whose ``sink`` is a CO2 node — subtract the same flow piece (no slope).  No further unit conversion:
-``co2_content`` is already CO2 tons per MWh (``docs/reference.md``), the same measure core.py's
+``co2_content`` is already CO2 tons per MWh (``docs/reference/commodities.md``), the same measure core.py's
 ``co2_max_period`` / ``co2_max_total`` / ``co2_price_eff`` rows use directly — an extra ``/1000`` here
 would silently undercount the carried realized total a thousandfold against what the LP itself counts.
 Attribute to groups via ``group_node``; combine with the prior roll's

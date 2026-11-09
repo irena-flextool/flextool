@@ -1,6 +1,6 @@
 """Cyclic storage binding methods in the rolls of a rolling solve take no roll carry (#119).
 
-how_to.md (rolling notes): *bind_within_timeblock* "will bind the first step of the roll (whatever it is) to the
+how_to/solve_sequences.md (rolling notes): *bind_within_timeblock* "will bind the first step of the roll (whatever it is) to the
 end of the timeblock", the same for *bind_within_period*, and *bind_within_solve* "binds the start state to the end
 state of each roll".  So a cyclic node cycles within each roll: its first-step row holds the wrap
 (v_state[wrap] − v_state[first])·su and nothing else.  Before the fix the roll carry (−v_state[first]·su +

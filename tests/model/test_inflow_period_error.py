@@ -1,6 +1,6 @@
 """A period-keyed ``inflow`` is a configuration error (#68).
 
-``inflow`` is a constant, a time series or a stochastic 3-D map; it cannot be period-based (docs/reference.md,
+``inflow`` is a constant, a time series or a stochastic 3-D map; it cannot be period-based (docs/reference/entities_and_time.md,
 "Timesteps and periods").  No reader picks up a period-keyed value: before the check it silently became inflow 0 on
 every solve type, so the demand disappeared.  ``validate_node_inflow_not_period`` now stops the run in
 ``input_derivation.run``, before any solve, for:

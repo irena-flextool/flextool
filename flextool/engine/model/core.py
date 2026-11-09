@@ -1564,7 +1564,7 @@ def _roll_continue_terms(b: _Build) -> dict:
     # A node continues from the latest state realised before this solve at its own or a lower nesting level (the
     # previous roll, the previous solve of a sequence, the dispatch below a storage solve; roll_continue_state, MWh,
     # routed by the cascade: solve._carry_routing).  α, β: the self-discharge weights of an open-start node
-    # (_self_discharge).  A cyclic node (_cyclic_nodes) cycles within the solve and takes no carry (how_to.md
+    # (_self_discharge).  A cyclic node (_cyclic_nodes) cycles within the solve and takes no carry (how_to/solve_sequences.md
     # rolling notes); a representative-period node starts each block from v_state_rp_start (no carry).  Nodes of
     # neither kind outside the open-start set take the unweighted form.
     d = b.d
@@ -4085,7 +4085,7 @@ def _eq_storage_reference_value(b: _Build) -> None:
         is_block = pl.col("n").cast(pl.Utf8).is_in([str(x) for x in d.nodeStateBlock["n"].to_list()])
         over = over.filter(~is_block | pl.col("d").cast(pl.Utf8).is_in(chain))
     # An upper-level storage fix at the step (fix_quantity, fix_usage or fix_price) overrides the horizon-end
-    # reference value (how_to.md, nested solves); the reference stays at every other roll end.
+    # reference value (how_to/solve_sequences.md, nested solves); the reference stays at every other roll end.
     over = _without_steps(over, _nested_fixed_end(b, with_price=True))
     if over.height == 0:
         return
