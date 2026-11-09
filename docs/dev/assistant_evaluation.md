@@ -50,6 +50,11 @@ project without a valid marker, and one that has changed since it was built: ano
 source, results of another run, or a run of its own made again. It also refuses a project built without its runs.
 Data from a real project therefore never reaches a calibration model.
 
+Two builds are never the same project. The source database differs in its hash from build to build (the database
+records its own times), and every run gets a new run id. A rebuild therefore starts a new matrix: results folders
+made on an earlier build cannot be continued with `--resume` on the new one, nor summarised or sampled together
+with results of the new one. Keep the build for as long as its results are being run and graded.
+
 ## Running the models
 
 ```

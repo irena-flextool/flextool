@@ -40,7 +40,6 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -51,6 +50,8 @@ for _path in (ROOT, TOOLS):
         sys.path.insert(0, str(_path))
 
 import assistant_eval_scoring as scoring  # noqa: E402  (after the repository root is on the path)
+
+from flextool.assistant._files import iso, utc_now  # noqa: E402  (the store's own; tests patch utc_now here)
 
 RECORD_FORMAT = 1
 RUN_FILE = "run.json"
@@ -125,14 +126,6 @@ class DailyBudgetUsed(CellStopped):
 
 
 # --- small helpers --------------------------------------------------------------------------------------------
-def utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def iso(moment: datetime) -> str:
-    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
 def write_json(path: Path, data: Any) -> None:
     """*data* as UTF-8 JSON at *path*, through a temp file and ``os.replace``."""
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -214,6 +207,21 @@ def cmd_build(args: argparse.Namespace) -> int:
         return 1
     print(f"Built {built.path} in {time.monotonic() - started:.0f} s (fingerprint {built.fingerprint[:12]}).")
     return 0
+
+
+def _key_or_refuse(preset: Any, base_url: str, model: str, route: Any) -> tuple[str, str]:
+    """The key of *preset* (keyring or environment, never the command line) and where it came from, for ``run``
+    and ``dual grade-ai``; :class:`Refused` with the chat's "no key" message when the preset needs one."""
+    from flextool.assistant import keys
+    from flextool.assistant.backends._common import error_context
+    from flextool.assistant.llm_adapter import Connection
+    from flextool.assistant.llm_errors import render
+
+    key, source, note = keys.resolve_key(preset, base_url)
+    if preset.key_required and not key:
+        conn = Connection(base_url=base_url, model=model, api_key="", key_source="", knobs={}, route=route)
+        raise Refused(render("no_key", error_context(preset, conn)) + (f" ({note})" if note else ""))
+    return key or "", source.describe(preset) if key else ""
 
 
 def check_marker(project: Path, *, allow_unsolved: bool = False) -> dict[str, Any]:
@@ -578,10 +586,9 @@ def cmd_run(args: argparse.Namespace, *, backend_factory: BackendFactory | None 
 
 def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prober, info: OllamaInfo,
          say: Callable[[str], None], *, allow_unsolved: bool = False) -> int:
-    from flextool.assistant import budget, endpoint, keys, net, providers
-    from flextool.assistant.backends._common import error_context
+    from flextool.assistant import budget, endpoint, net, providers
+    from flextool.assistant.chat_cli import FREE_TIER_FLAG
     from flextool.assistant.llm_adapter import Connection
-    from flextool.assistant.llm_errors import render
     from flextool.assistant.settings import DEFAULT_KNOBS
     from flextool.assistant.usage import Ledger
 
@@ -617,26 +624,21 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     what = "the synthetic grounding project"
     accept_route(preset, base_url, route, accepted, accept=args.accept_data_notice,
                  again="--resume --accept-data-notice" if args.resume else "--accept-data-notice", what=what)
-    free_setting = {"on": True, "off": False, "auto": None}[args.free_tier]
-    free = budget.free_tier_on(preset.id, args.model, free_setting)
+    free = budget.free_tier_on(preset.id, args.model, FREE_TIER_FLAG[args.free_tier])
     identity = {"provider": preset.id, "model": args.model, "base_url": base_url, "free_tier": free,
                 "ollama_context": contexts, "knobs_relaxed": bool(args.relax_data_collection),
                 "project_fingerprint": marker["fingerprint"], "set_version": qset.set_version}
     _open_results(out, identity, args.resume)
 
-    key, source, note = keys.resolve_key(preset, base_url)
+    key, source = _key_or_refuse(preset, base_url, args.model, endpoint.route_for(preset, base_url, model=args.model))
     knobs = dict(DEFAULT_KNOBS)
     if args.relax_data_collection:
         knobs["openrouter.data_collection"] = "allow"
     knobs_sent = providers.request_fields(preset, knobs)
 
     def conn_for(model: str, route: Any) -> Connection:
-        return Connection(base_url=base_url, model=model, api_key=key or "",
-                          key_source=source.describe(preset) if key else "", knobs=knobs, route=route)
+        return Connection(base_url=base_url, model=model, api_key=key, key_source=source, knobs=knobs, route=route)
 
-    if preset.key_required and not key:
-        conn = conn_for(args.model, endpoint.route_for(preset, base_url, model=args.model))
-        raise Refused(render("no_key", error_context(preset, conn)) + (f" ({note})" if note else ""))
     daily = daily_budget(preset.id, args.model, args.max_requests_per_day)
     ledger = CalibrationLedger(Ledger())
     git = git_state()
@@ -1194,10 +1196,9 @@ def dual_sample(args: argparse.Namespace, say: Callable[[str], None]) -> int:
 
 def dual_grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say: Callable[[str], None]) -> int:
     import assistant_eval_analysis as analysis
-    from flextool.assistant import endpoint, keys, providers
-    from flextool.assistant.backends._common import error_context
+    from flextool.assistant import endpoint, providers
     from flextool.assistant.llm_adapter import Connection
-    from flextool.assistant.llm_errors import LLMError, message_for, render
+    from flextool.assistant.llm_errors import LLMError, message_for
     from flextool.assistant.usage import Ledger
 
     folder = Path(args.dir)
@@ -1224,12 +1225,10 @@ def dual_grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say
             raise Refused(f"Sampled cell {n}: the grader material reveals {found[0]}; nothing was sent.")
     preset = providers.PRESETS[analysis.GRADER_PROVIDER]
     base_url = preset.base_url or ""
-    api_key, source, note = keys.resolve_key(preset, base_url)
     route = endpoint.route_for(preset, base_url, model=analysis.GRADER_MODEL)
-    conn = Connection(base_url=base_url, model=analysis.GRADER_MODEL, api_key=api_key or "",
-                      key_source=source.describe(preset) if api_key else "", knobs={}, route=route)
-    if not api_key:
-        raise Refused(render("no_key", error_context(preset, conn)) + (f" ({note})" if note else ""))
+    api_key, source = _key_or_refuse(preset, base_url, analysis.GRADER_MODEL, route)
+    conn = Connection(base_url=base_url, model=analysis.GRADER_MODEL, api_key=api_key, key_source=source, knobs={},
+                      route=route)
     accept_route(preset, base_url, route, set(), accept=args.accept_data_notice, again="--accept-data-notice",
                  what="the synthetic grounding answers")
     ledger = CalibrationLedger(Ledger())

@@ -1298,3 +1298,18 @@ def test_marker_checks(evaluator, tmp_path: Path, capsys) -> None:
     assert evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
                              say=lambda _t: None) == 2
     assert harness.requests == 0 and harness.probes == 0
+
+
+def test_reuse(evaluator, analysis, scoring) -> None:
+    """C6-n4: the time helpers are the store's own, and both graders' renderers fold a long result alike."""
+    from flextool.assistant import _files
+
+    assert evaluator.iso is _files.iso and evaluator.utc_now is _files.utc_now
+    qset, key = _g01_set(scoring)
+    record = _lookup_record(scoring, evaluator, "small", 6)
+    long = "x" * 5_000
+    record["turns"][0]["tool_calls"][0]["result"] = long
+    folded = "x" * scoring.FOLD_CHARS + " … [1000 more characters]"
+    view = evaluator.grader_view(record, *_g01(scoring), evaluator.auto_check(record, qset, key))
+    part = analysis.grader_user_part(record, qset.questions["G01"], key.questions["G01"])
+    assert folded in view and folded in part and long not in view and long not in part
