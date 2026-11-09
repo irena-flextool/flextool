@@ -553,7 +553,8 @@ def _group_period_limit_online(b: _Build, name: str, axis: str, var, unitsize, m
 
 
 def _eq_group_invest_total(b: _Build) -> None:
-    """{max,min}InvestGroup_entity_total[_path]_{p,n}: capacity a group has invested over the chain."""
+    """maxInvestGroup_entity_total[_path]_{p,n} / minInvestGroup_entity_total_path_{p,n}: capacity a group has
+    invested over the chain."""
     d = b.d
     group_entity, g_set = d.group_entity, d.g_invest_total
     if not _has_rows(group_entity) or not _has_rows(g_set):
@@ -614,7 +615,8 @@ def _eq_group_invest_total(b: _Build) -> None:
 
 
 def _eq_group_divest_total(b: _Build) -> None:
-    """{max,min}DivestGroup_entity_total[_path]_{p,n}: capacity a group retires over the chain."""
+    """maxDivestGroup_entity_total[_path]_{p,n} / minDivestGroup_entity_total_path_{p,n}: capacity a group
+    retires over the chain."""
     d = b.d
     group_entity, g_set = d.group_entity, d.g_divest_total
     if not _has_rows(group_entity) or not _has_rows(g_set):

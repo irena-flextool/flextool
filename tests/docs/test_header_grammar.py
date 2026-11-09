@@ -7,6 +7,7 @@ objective step has an OBJ. header; the formulation page renders.
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -169,29 +170,101 @@ def _row_calls(module: str, tree: ast.AST):
             yield node, ("EQ" if fn.attr == "add_cstr" else "VAR"), None
 
 
+def _literal_name(call: ast.Call, helper: tuple[str, str] | None) -> str | None:
+    """The row / column name a call passes as a string literal (``add_cstr`` / ``add_var``: the first positional
+    argument; a row helper: the one after the builder; either: ``name=``), ``None`` when it is computed."""
+    position = 0 if helper is None else 1
+    node = call.args[position] if len(call.args) > position else next(
+        (k.value for k in call.keywords if k.arg == "name"), None)
+    return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
+
+
+def _row_issues(module: str, file: str, source: str) -> tuple[list[str], list[str], dict[tuple[str, str], int]]:
+    """(rows without a header, literal names that are no header name, row-helper call counts) of one source.
+
+    A row needs an EQ. / VAR. header earlier in its function (or sits in a row helper).  Its literal name must be
+    one of the names of those headers (an ``add_twin`` name, written without ``_coarse``, as is)."""
+    lines = source.splitlines()
+    tree = ast.parse(source)
+    funcs = _functions(tree)
+    headers = parse_headers(source, file, module)
+    missing: list[str] = []
+    unnamed: list[str] = []
+    helper_calls: dict[tuple[str, str], int] = {h: 0 for h in ROW_HELPERS}
+    for call, kind, helper in _row_calls(module, tree):
+        if helper is not None:
+            helper_calls[helper] += 1
+        fn = _innermost(funcs, call.lineno)
+        if fn is not None and (module, fn.name) in ROW_HELPERS:
+            continue
+        start = fn.lineno if fn is not None else 1
+        above = [h for h in headers if h.kind == kind and start <= h.line < call.lineno]
+        where = f"{file}:{call.lineno} {lines[call.lineno - 1].strip()[:80]}"
+        if not above:
+            missing.append(where)
+            continue
+        name = _literal_name(call, helper)
+        if name is not None and not any(name in h.names for h in above):
+            unnamed.append(f"{where}: {name!r} is not named by the {kind}. header(s) above it in the function")
+    return missing, unnamed, helper_calls
+
+
 def test_every_row_and_column_has_a_header() -> None:
     """Ratchet (a): an add_cstr / add_var has an EQ. / VAR. header earlier in its function, or sits in a row
-    helper whose every call site has one."""
+    helper whose every call site has one; every literal row / column name is a name of such a header (review
+    C2-7: one header used to cover every later call of its function, whatever the call's name)."""
     missing: list[str] = []
+    unnamed: list[str] = []
     helper_calls: dict[tuple[str, str], int] = {h: 0 for h in ROW_HELPERS}
     for module, path in _sources():
-        source = path.read_text(encoding="utf-8")
-        lines = source.splitlines()
-        tree = ast.parse(source)
-        funcs = _functions(tree)
-        headers = parse_headers(source, path.name, module)
-        for call, kind, helper in _row_calls(module, tree):
-            if helper is not None:
-                helper_calls[helper] += 1
-            fn = _innermost(funcs, call.lineno)
-            if fn is not None and (module, fn.name) in ROW_HELPERS:
-                continue
-            start = fn.lineno if fn is not None else 1
-            if not any(h.kind == kind and start <= h.line < call.lineno for h in headers):
-                missing.append(f"{path.name}:{call.lineno} {lines[call.lineno - 1].strip()[:80]}")
+        m, u, calls = _row_issues(module, path.name, path.read_text(encoding="utf-8"))
+        missing += m
+        unnamed += u
+        for helper, n in calls.items():
+            helper_calls[helper] += n
     assert not missing, "LP rows / columns without an EQ. / VAR. header in their function:\n" + "\n".join(missing)
+    assert not unnamed, "LP row / column names that their header does not name:\n" + "\n".join(unnamed)
     unused = sorted(f"{m}.{f}" for (m, f), n in helper_calls.items() if n == 0)
     assert not unused, f"ROW_HELPERS entries with no call site (stale): {unused}"
+
+
+def test_a_row_named_by_no_header_above_it_is_reported() -> None:
+    """A new family added to a function that already has a header, without a header of its own (C2-7)."""
+    snippet = (
+        "def eqs(m):\n"
+        "    # ─── EQ. ─── maxFlow ───\n"
+        "    # v_flow ≤ cap\n"
+        "    m.add_cstr('maxFlow', over=None)\n"
+        "    m.add_cstr(name='newFamily', over=None)\n"
+        "    _coarse_flows.add_cstr(b, 'otherFamily', over=None)\n"
+        "    m.add_cstr(f'maxFlow{sfx}', over=None)\n"
+    )
+    missing, unnamed, _ = _row_issues("snippet", "snippet.py", snippet)
+    assert missing == []
+    assert [u.split(" ", 1)[0] for u in unnamed] == ["snippet.py:5", "snippet.py:6"]
+    assert "'newFamily'" in unnamed[0] and "'otherFamily'" in unnamed[1]
+
+
+# A docstring that starts with a names list (``name, {a,b}_c[_d]: what it does``).
+_DOC_NAMES = re.compile(r"^([\w{}\[\],]+(?:\s*/\s*[\w{}\[\],]+)*):\s")
+
+
+def test_a_docstring_names_only_its_functions_header_names() -> None:
+    """A function with EQ. / VAR. headers whose docstring starts with a names list names nothing its headers do
+    not (review C2-11: two docstrings still named minInvestGroup_entity_total_{p,n})."""
+    stale: list[str] = []
+    for module, path in _sources():
+        source = path.read_text(encoding="utf-8")
+        headers = parse_headers(source, path.name, module)
+        for fn in _functions(ast.parse(source)):
+            names = {n for h in headers if h.kind in ("EQ", "VAR") and fn.lineno <= h.line <= (fn.end_lineno or 0)
+                     for n in h.names}
+            match = _DOC_NAMES.match(ast.get_docstring(fn) or "")
+            if names and match:
+                extra = sorted(set(expand_names(match.group(1))) - names)
+                if extra:
+                    stale.append(f"{path.name}:{fn.lineno} {fn.name}: {extra}")
+    assert not stale, "docstrings naming what no header of their function names:\n" + "\n".join(stale)
 
 
 def test_every_autoscale_family_is_a_header_name() -> None:
