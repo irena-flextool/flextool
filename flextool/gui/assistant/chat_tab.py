@@ -13,6 +13,7 @@ selects all, Escape stops, and the window's tab commands (Ctrl+Tab, Ctrl+Shift+T
 """
 from __future__ import annotations
 
+import enum
 import itertools
 import logging
 import queue
@@ -37,6 +38,26 @@ _job_ids = itertools.count(1)
 WORKING, WAITING, NOTICE, ERROR, UNSEEN, IDLE = "working", "waiting", "notice", "error", "unseen", "idle"
 PREFIXES = {WORKING: strings.PREFIX_WORKING, WAITING: strings.PREFIX_WAITING, NOTICE: strings.PREFIX_NOTICE,
             ERROR: strings.PREFIX_ERROR, UNSEEN: strings.PREFIX_UNSEEN, IDLE: ""}
+
+
+class Phase(enum.Enum):
+    """Where the tab is in its life (G17-D2); the state prefix above is only what it shows.
+
+    ``NEW`` the "New chat" tab (no worker) → Send → ``ANSWERING``.  A reopened chat is ``LOADING`` (Send keeps the
+    text in the box, the status says so) → ``ConversationLoaded`` → ``IDLE`` (Send enabled again), or
+    ``OpenRefused`` → ``CLOSED`` (the tab goes).  ``IDLE`` → Send → ``ANSWERING`` → the worker's ``Idle`` →
+    ``IDLE``; a Stop keeps ``ANSWERING`` until then (the question's line waits for the worker's word).  Close in
+    any phase → ``CLOSING``: the worker is told which job to stop, also one it has not taken yet, and no handler
+    runs for the tab again."""
+
+    NEW = "new"
+    LOADING = "loading"
+    IDLE = "idle"
+    ANSWERING = "answering"
+    CLOSING = "closing"
+    CLOSED = "closed"
+
+
 #: P1 error codes whose fix is in the settings (P2 §5.6).
 SETTINGS_ERRORS = frozenset({"auth", "no_key", "model", "permission", "quota", "credit", "routing"})
 
@@ -56,7 +77,8 @@ class ChatTab(ttk.Frame):
         self.has_messages = False
         self.worker: AssistantWorker | None = None
         self.active_job: TurnJob | None = None
-        self.busy = False
+        self.phase = Phase.NEW if new else Phase.IDLE
+        self._stopped_job: TurnJob | None = None      # stopped in the window, the worker not done with it yet
         self.state = IDLE
         self.unseen = False
         self.status_text = ""
@@ -64,8 +86,7 @@ class ChatTab(ttk.Frame):
         self.seed = seed
         self.first_question = ""
         self.created = ""                       # UTC creation time of the saved conversation, when known
-        self.closed = False
-        self._phase = "prepare"
+        self._step = "prepare"                  # of the active question: "prepare" until TurnStarted, "answer"
         self._job_lines: dict[int, tuple[int, str]] = {}
         self._tool_lines: list[int] = []
         self._pending_name: str | None = None
@@ -237,6 +258,15 @@ class ChatTab(ttk.Frame):
         self.totals.configure(text=format_token_line(self._question_usage, self._totals, self.provider))
 
     @property
+    def busy(self) -> bool:
+        """Send is unavailable: the chat is opening or answering."""
+        return self.phase in (Phase.LOADING, Phase.ANSWERING)
+
+    @property
+    def closed(self) -> bool:
+        return self.phase in (Phase.CLOSING, Phase.CLOSED)
+
+    @property
     def provider(self) -> str:
         if self.prepared is not None:
             return self.prepared.provider
@@ -255,8 +285,10 @@ class ChatTab(ttk.Frame):
 
         self.conversation_id = conversation_id
         self.answered = True
+        self.phase = Phase.LOADING
+        self.send_button.state(["disabled"])
         self.ensure_worker().submit(OpenConversation(conversation_id))
-        self._set_state(WORKING)
+        self._set_state(WORKING, strings.OPENING_CHAT)
 
     def consent_answer(self, job_id: int, accepted: bool) -> None:
         from flextool.gui.assistant.worker import ConsentAnswer
@@ -281,16 +313,22 @@ class ChatTab(ttk.Frame):
             self.worker.submit(SettingsChanged())
 
     def shutdown(self) -> None:
-        """Stop and let the worker finish on its own (never waits)."""
-        self.closed = True
+        """Stop and let the worker finish on its own (never waits): the question it has not taken yet, too."""
+        if self.phase is not Phase.CLOSED:
+            self.phase = Phase.CLOSING
         if self.worker is not None:
-            self.worker.shutdown()
+            self.worker.shutdown(self.active_job or self._stopped_job)
 
     # --- user actions ---------------------------------------------------------------------------------------
     def send(self) -> None:
         from flextool.gui.assistant.worker import TurnJob
 
-        if self.busy:
+        if self.closed:
+            return
+        if self.phase is Phase.LOADING:
+            self._set_status(strings.SEND_WHEN_OPEN)          # the text stays in the box (P2-O9, G17-D3)
+            return
+        if self.phase is Phase.ANSWERING:
             self._set_status(strings.SEND_WHEN_DONE)
             return
         text = self.input.get("1.0", "end-1c").strip()
@@ -309,8 +347,8 @@ class ChatTab(ttk.Frame):
         job = TurnJob(next(_job_ids), sent, self.window.take_snapshot())
         self._job_lines[job.job_id] = (line, text)
         self.active_job = job
-        self.busy = True
-        self._phase = "prepare"
+        self.phase = Phase.ANSWERING
+        self._step = "prepare"
         self._tool_lines.clear()
         self.send_button.state(["disabled"])
         self.stop_button.state(["!disabled"])
@@ -318,17 +356,17 @@ class ChatTab(ttk.Frame):
         self.ensure_worker().submit(job)
 
     def stop(self) -> None:
+        """Stop the answer at once in the window; whether the question was sent is the worker's word (its
+        ``TurnStarted`` or ``TurnRefused`` of the stopped job, G17-D4)."""
         job = self.active_job
-        if not self.busy or job is None:
+        if self.phase is not Phase.ANSWERING or job is None:
             return
         self.window.consents.remove(self, job.job_id)
         if self.worker is not None:
             self.worker.stop_turn(job)
         self.active_job = None
-        if self._phase == "prepare":
-            self._not_sent(job.job_id)
-        else:
-            self.transcript.end_answer()
+        self._stopped_job = job
+        self.transcript.end_answer()
         self.transcript.notice(strings.STOPPED)
         self.stop_button.state(["disabled"])
         self._set_state(WORKING, "")
@@ -387,6 +425,8 @@ class ChatTab(ttk.Frame):
             self.answered = self.answered or bool(event.result.rounds)
             return
         if job_id is not None and not active:
+            if self._stopped_job is not None and job_id == self._stopped_job.job_id:
+                self._stopped_event(event)
             return
         if isinstance(event, w.ConsentNeeded):
             self.window.consents.request(self, event)
@@ -394,7 +434,7 @@ class ChatTab(ttk.Frame):
             entry = self._job_lines.pop(event.job_id, None)
             if entry is not None:
                 self.transcript.mark_user(entry[0], "sent")
-            self._phase = "answer"
+            self._step = "answer"
             self._set_state(WORKING, strings.STATUS_THINKING)
         elif isinstance(event, w.TurnRefused):
             self._not_sent(event.job_id)
@@ -417,7 +457,7 @@ class ChatTab(ttk.Frame):
         elif isinstance(event, la.Thinking):
             self._set_status(strings.STATUS_THINKING)
         elif isinstance(event, la.Waiting):
-            text = strings.STATUS_LOADING if self._phase == "prepare" else strings.STATUS_WAITING_MODEL
+            text = strings.STATUS_LOADING if self._step == "prepare" else strings.STATUS_WAITING_MODEL
             self._set_state(WORKING, text.format(s=event.seconds))
         elif isinstance(event, la.RetryWait):
             self._set_state(WAITING, event.reason)
@@ -453,6 +493,22 @@ class ChatTab(ttk.Frame):
         if self.provider != before and self.window.current_tab() is self:
             self.window.refresh_footer()
 
+    def _stopped_event(self, event: object) -> None:
+        """An event of the job stopped in the window: only what settles its lines (G17-D4) — the question was
+        sent (``TurnStarted``) or not (``TurnRefused``), and a tool line that was running resolves."""
+        from flextool.assistant import llm_adapter as la
+        from flextool.gui.assistant import worker as w
+
+        if isinstance(event, w.TurnStarted):
+            entry = self._job_lines.pop(event.job_id, None)
+            if entry is not None:
+                self.transcript.mark_user(entry[0], "sent")
+        elif isinstance(event, w.TurnRefused):
+            self._not_sent(event.job_id)
+        elif isinstance(event, la.ToolDone) and self._tool_lines:
+            self.transcript.tool_done(self._tool_lines.pop(0), event.ok, event.summary, event.seconds,
+                                      event.arguments, event.result_preview, self.provider)
+
     def _chat_ready(self, event: Any) -> None:
         self.conversation_id = event.conversation_id
         self.number = event.number
@@ -463,22 +519,31 @@ class ChatTab(ttk.Frame):
         self.window.tab_changed(self)
 
     def _loaded(self, event: Any) -> None:
+        """The chat is open: the tab is idle and Send is back first, so a history that does not render still
+        leaves a usable chat, and the window always hears of it (a restore waiting for it resolves)."""
         self.conversation_id = event.conversation_id
         self.number = event.number
         self.name = event.title
         self.answered = True
         self.has_messages = bool(event.messages)
-        from flextool.assistant.store import first_question
+        if self.phase is Phase.LOADING:
+            self.phase = Phase.IDLE
+        self.send_button.state(["!disabled"])
+        self.state = IDLE
+        self.status_text = ""
+        self.status.configure(text="")
+        try:
+            from flextool.assistant.store import first_question
 
-        self.first_question = first_question(list(event.messages))
-        self.transcript.render_history(list(event.messages), self.provider)
-        if event.notice:
-            self.transcript.notice(event.notice)
-        self._totals = dict(event.totals)
-        self._show_totals()
-        self.refresh_placeholder()
-        self._set_state(IDLE, "")
-        self.window.chat_loaded(self)
+            self.first_question = first_question(list(event.messages))
+            self.transcript.render_history(list(event.messages), self.provider)
+            if event.notice:
+                self.transcript.notice(event.notice)
+            self._totals = dict(event.totals)
+            self._show_totals()
+            self.refresh_placeholder()
+        finally:
+            self.window.chat_loaded(self)
 
     def _finished(self, event: Any) -> None:
         from flextool.assistant.llm_errors import message_for
@@ -504,10 +569,14 @@ class ChatTab(ttk.Frame):
         self.active_job = None
 
     def _idle(self) -> None:
-        self.busy = False
+        if self.phase is Phase.ANSWERING:
+            self.phase = Phase.IDLE
         self.active_job = None
+        self._stopped_job = None
         self.send_button.state(["!disabled"])
         self.stop_button.state(["disabled"])
+        for job_id in list(self._job_lines):
+            self._not_sent(job_id)          # the worker is done and never started it (a fault before the turn)
         state = ERROR if self.state == ERROR else IDLE
         if not self.window.is_shown(self) and state == IDLE and self.has_messages:
             self.unseen = True
@@ -561,6 +630,8 @@ class ChatTab(ttk.Frame):
         except tk.TclError:
             if not self.closed:
                 logger.exception("The chat tab could not show an event")
+        except Exception:  # noqa: BLE001 — one event that cannot be shown must not stop the window's poll
+            logger.exception("The chat tab could not show an event")
 
 
 def run_in_thread(fn: Callable[[], Any], name: str = "flextool-assistant-store") -> threading.Thread:

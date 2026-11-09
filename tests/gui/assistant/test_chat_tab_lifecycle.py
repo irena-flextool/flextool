@@ -1,7 +1,10 @@
-"""A chat tab's header (review G17: C7-M1, n3; G17-D1).
+"""A chat tab's life and its header (review G17: C7-M1, m1, m2, m3, m11, n1, n2, n3; G17-D1..D4).
 
 The header shows what the chat's worker says it goes with (also when the settings are saved during the first answer
-or while the first question waits for the data notice); the footer names the selected chat's provider.
+or while the first question waits for the data notice); a chat that opens takes no question; a chat closed before
+its worker took the question sends nothing; a handler that fails never stops the window's poll and never leaves a
+tab opening for good; a restore always resolves; a stopped job's lines settle by the worker's word; the footer
+names the selected chat's provider.
 
 The only synchronisation is ``threading.Event`` gates and ``pump(until)``.
 
@@ -15,11 +18,14 @@ from pathlib import Path
 
 import pytest
 
-from flextool.assistant.llm_errors import AuthFailed, ErrorContext, make_error
+from flextool.assistant.llm_errors import AuthFailed, ErrorContext, internal_fault_message, make_error
 from flextool.assistant.probes import ModelFacts
 from flextool.assistant.settings import ProviderSettings
+from flextool.assistant.store import ConversationLocked, Store, open_store
 from flextool.gui.assistant import chat_window as chat_window_module
 from flextool.gui.assistant import strings
+from flextool.gui.assistant.chat_tab import ChatTab
+from flextool.gui.assistant.transcript import Transcript
 from flextool.gui.assistant.worker import AssistantWorker
 from tests.assistant.gui_support.worker_rig import (
     LOCAL,
@@ -28,6 +34,7 @@ from tests.assistant.gui_support.worker_rig import (
     conversation_file,
     save_provider,
     say,
+    tool_call,
 )
 from tests.assistant.llm.fake_backend import Block
 from tests.gui.assistant.tk_helpers import pump
@@ -246,6 +253,212 @@ def test_a_reopened_chat_on_another_provider_names_it_in_the_footer(windows, bac
     assert _header(window)[0].startswith("Anthropic · claude-opus-5-5")
     pump(window, lambda: str(window.footer_label.cget("text")) == "Anthropic this month: nothing used yet",
          timeout=3)
+
+
+# --- a chat that opens (C7-m1) --------------------------------------------------------------------------------------
+def test_send_while_a_reopened_chat_opens_keeps_the_question(windows, backends, monkeypatch):
+    (conversation_id,) = _saved_chats(windows, backends, 1)
+    gate = _gate_open(monkeypatch)
+    made = len(backends.made)
+    window = windows.open(restore=False)
+    window.reopen(conversation_id)
+    tab = window.tab_for(conversation_id)
+    assert tab is not None
+    tab.input.insert("1.0", "second question")
+    tab.send()
+    assert tab.input.get("1.0", "end-1c") == "second question"
+    assert tab.status_text == strings.SEND_WHEN_OPEN
+    assert _header(window)[1] == strings.OPENING_CHAT
+    assert "disabled" in tab.send_button.state()
+    assert len(backends.made) == made
+    gate.set()
+    pump(window, lambda: not tab.busy and tab.has_messages, timeout=5)
+    assert "disabled" not in tab.send_button.state()
+    assert _header(window)[0] == LOCAL_MODEL_LINE
+    backends.add([say("Answer two.")])
+    tab.send()
+    wait_idle(window, tab)
+    contents = tab.transcript.contents()
+    assert contents.count("second question") == 1
+    assert contents.index("Saved 1.") < contents.index("second question") < contents.index("Answer two.")
+
+
+# --- closing (C7-m2, critique m3) -------------------------------------------------------------------------------------
+def test_closing_a_chat_before_its_worker_takes_the_question_sends_nothing(windows, backends):
+    save_provider(LOCAL)
+    backends.add([say("Never.")])
+    window = windows.open()
+    made = _deferred_workers(window)
+    tab = ask(window, "regretted question")
+    window.close_chat(tab, ask=False)
+    (worker,) = made
+    worker.start_now()
+    assert worker.exited.wait(5)
+    assert backends.made == []
+    assert open_store().list_conversations(windows.project) == []
+
+
+def test_a_stop_before_the_worker_takes_the_question_still_numbers_the_chat(windows, backends):
+    """G17 critique m3, decided in G17-D2 (passes before the fix too): a Stop is not a Close — the worker still
+    gives the chat its number, the question is "Not sent." and comes back to the box."""
+    save_provider(LOCAL)
+    window = windows.open()
+    made = _deferred_workers(window)
+    tab = ask(window, "stopped question")
+    tab.stop()
+    made[0].start_now()
+    wait_idle(window, tab)
+    assert tab.number == 1 and tab.tab_text() == "1"
+    assert "Not sent." in tab.transcript.contents()
+    assert tab.input.get("1.0", "end-1c") == "stopped question"
+    assert backends.made == []
+
+
+# --- robustness (C7-m3, m11, critique M1, M2) -------------------------------------------------------------------------
+def test_a_handler_error_does_not_stop_the_poll(windows, backends, monkeypatch):
+    save_provider(LOCAL, parallel=2)
+    backends.add([say("one")], [say("two")])
+    original = ChatTab._finished
+    raised = []
+
+    def finished_once(self, event) -> None:
+        if not raised:
+            raised.append(True)
+            raise ValueError("a handler fault")
+        original(self, event)
+
+    monkeypatch.setattr(ChatTab, "_finished", finished_once)
+    window = windows.open()
+    first = ask(window, "first")
+    wait_idle(window, first)
+    window.go_to_new_chat()
+    second = ask(window, "second")
+    wait_idle(window, second)
+    assert raised == [True]
+    assert window._poll_id is not None
+    assert "two" in second.transcript.contents()
+
+
+def test_a_restore_that_faults_still_resolves(windows, backends, monkeypatch):
+    ok_id, faulty_id, elsewhere_id = _saved_chats(windows, backends, 3)
+    original = Store.open
+
+    def open_(self, project_path, conversation_id=None, **kwargs):
+        if conversation_id == faulty_id:
+            raise PermissionError("denied")
+        if conversation_id == elsewhere_id:
+            raise ConversationLocked("other_process")
+        return original(self, project_path, conversation_id, **kwargs)
+
+    monkeypatch.setattr(Store, "open", open_)
+    window = windows.open()
+    pump(window, lambda: strings.NOT_RESTORED_ONE in window.new_tab.transcript.contents(), timeout=5)
+    assert window._restoring == set()
+    assert [t.conversation_id for t in window.tabs] == [ok_id]
+    assert str(window.note_label.cget("text")) == internal_fault_message("PermissionError")
+    pump(window, lambda: not window.tabs[0].busy, timeout=5)
+    window.close_chat(window.tabs[0], ask=False)
+    store = open_store()
+    pump(window, lambda: store.open_chats(windows.project)["ids"] == [], timeout=5)
+
+
+def test_closing_a_chat_while_it_is_restored_resolves_the_restore(windows, backends, monkeypatch):
+    (conversation_id,) = _saved_chats(windows, backends, 1)
+    gate = _gate_open(monkeypatch)
+    window = windows.open()
+    pump(window, lambda: window.tab_for(conversation_id) is not None, timeout=5)
+    tab = window.tab_for(conversation_id)
+    worker = tab.worker
+    window.close_chat(tab, ask=False)
+    gate.set()
+    assert worker.exited.wait(5)
+    assert window._restoring == set()
+    store = open_store()
+    pump(window, lambda: store.open_chats(windows.project)["ids"] == [], timeout=5)
+
+
+def test_a_history_that_does_not_render_still_opens_the_chat(windows, backends, monkeypatch):
+    """G17 critique M2: the tab is idle with Send back and the restore resolves, whatever the rendering does."""
+    (conversation_id,) = _saved_chats(windows, backends, 1)
+    original = Transcript.render_history
+    raised = []
+
+    def render_once(self, messages, provider) -> None:
+        if not raised:
+            raised.append(True)
+            raise ValueError("an odd stored message")
+        original(self, messages, provider)
+
+    monkeypatch.setattr(Transcript, "render_history", render_once)
+    window = windows.open()
+    pump(window, lambda: window.tab_for(conversation_id) is not None and not window._restoring, timeout=5)
+    tab = window.tab_for(conversation_id)
+    assert raised == [True]
+    assert not tab.busy and "disabled" not in tab.send_button.state()
+    assert _header(window)[1] != strings.OPENING_CHAT
+    backends.add([say("Still answers.")])
+    ask(window, "next question", tab)
+    wait_idle(window, tab)
+    assert "Still answers." in tab.transcript.contents()
+
+
+# --- a stopped job's lines (C7-n1, n2, G17-D4) ------------------------------------------------------------------------
+def test_a_stopped_tool_call_line_resolves(windows, backends, tools):
+    save_provider(LOCAL)
+    backends.add([tool_call("slow"), say("after the tool")])
+    window = windows.open()
+    tab = ask(window, "use the tool")
+    assert tools.slow_running.wait(5)
+    pump(window, lambda: "▸ slow" in tab.transcript.contents(), timeout=5)
+    tab.stop()
+    tools.release.set()
+    wait_idle(window, tab)
+    (line,) = [ln for ln in tab.transcript.contents().splitlines() if ln.startswith("▸ slow")]
+    assert " → " in line and not line.endswith("…")
+
+
+def test_stop_after_the_question_started_does_not_mark_it_not_sent(windows, backends, monkeypatch):
+    from flextool.assistant.session import Session
+
+    save_provider(LOCAL)
+    backends.add([say("never")])
+    started, go = threading.Event(), threading.Event()
+    original = Session.run_turn
+
+    def run_turn(self, text, on_event, cancel):
+        started.set()
+        assert go.wait(10)
+        return original(self, text, on_event, cancel)
+
+    monkeypatch.setattr(Session, "run_turn", run_turn)
+    window = windows.open()
+    tab = ask(window, "started question")
+    assert started.wait(5)                              # TurnStarted is queued, not yet drained
+    tab.stop()
+    go.set()
+    wait_idle(window, tab)
+    assert tab.transcript.text.tag_ranges("user_pending") == ()
+    assert strings.NOT_SENT not in tab.transcript.contents()
+    assert tab.input.get("1.0", "end-1c") == ""
+    session = tab.worker.session
+    asked = [m.text for m in session.conversation.messages if m.role == "user"]
+    assert len(asked) == 1 and asked[0].endswith("\n\nstarted question")
+
+
+def test_a_question_the_worker_faulted_on_before_its_turn_is_not_sent(windows, backends, monkeypatch):
+    """G17-D4: at the worker's Idle, a question it never started is "Not sent." and back in the box."""
+    def setup_fails(self, job):
+        raise RuntimeError("a fault of FlexTool before the turn")
+
+    monkeypatch.setattr(AssistantWorker, "_setup", setup_fails)
+    save_provider(LOCAL)
+    window = windows.open()
+    tab = ask(window, "faulted question")
+    wait_idle(window, tab)
+    assert tab.transcript.text.tag_ranges("user_pending") == ()
+    assert "faulted question  Not sent." in tab.transcript.contents()
+    assert tab.input.get("1.0", "end-1c") == "faulted question"
+    assert backends.made == []
 
 
 # --- the footer (C7-n3, critique m4, m5) ------------------------------------------------------------------------------

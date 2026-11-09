@@ -332,13 +332,14 @@ class AssistantWorker:
             threading.Thread(target=_abort_quietly, args=(session,), name="flextool-assistant-abort",
                              daemon=True).start()
 
-    def shutdown(self) -> None:
-        """Stop the answer and end the worker; never waits."""
+    def shutdown(self, job: TurnJob | None = None) -> None:
+        """Stop the answer (*job*, default the running one: a job still in the inbox is never taken then) and
+        end the worker; never waits."""
         self._shutting_down = True
         if self.conversation_id is not None and not self.exited.is_set():
             with _FINISHING_GUARD:
                 _FINISHING[self.conversation_id] = self
-        self.stop_turn()
+        self.stop_turn(job)
         self._inbox.put(Shutdown())
 
     def is_alive(self) -> bool:
@@ -363,6 +364,11 @@ class AssistantWorker:
 
     def _handle(self, item: object) -> None:
         if isinstance(item, TurnJob):
+            if self._shutting_down:
+                # The tab was closed before this question was taken: nothing is sent, no chat is made.
+                self._emit(item.job_id, TurnRefused(item.job_id, strings.STOPPED))
+                self._idle()
+                return
             if self._parked is not None:
                 # A question while one waits for the notice cannot come from the tab (Send is unavailable).
                 self._emit(item.job_id, TurnRefused(item.job_id, strings.NOT_SENT))
@@ -375,7 +381,8 @@ class AssistantWorker:
                 self._parked = None
                 self._advance(job, flow, item.accepted)
         elif isinstance(item, OpenConversation):
-            self._open(item.conversation_id)
+            if not self._shutting_down:
+                self._open(item.conversation_id)
         elif isinstance(item, DeleteConversation):
             self._delete()
         elif isinstance(item, SettingsChanged):
@@ -491,30 +498,47 @@ class AssistantWorker:
         return self._conversation
 
     def _open(self, conversation_id: str) -> None:
+        """Open a saved chat: always ends with :class:`ConversationLoaded` or :class:`OpenRefused` (a fault is
+        refused as damaged, so a restore waiting for the chat resolves)."""
+        from flextool.assistant.llm_errors import internal_fault_message
         from flextool.assistant.store import ConversationDamaged, ConversationLocked, ConversationNotFound
 
         if self._conversation is not None:
             self._emit(None, OpenRefused(conversation_id, "this_process", strings.STILL_FINISHING))
             return
-        store = self._store_open()
+        conv = None
         try:
-            conv = store.open(self.project_path, conversation_id, if_locked="raise")
-        except ConversationLocked as exc:
-            message = strings.STILL_FINISHING if exc.owner == "this_process" else strings.OPEN_ELSEWHERE
-            self._emit(None, OpenRefused(conversation_id, str(exc.owner), message))
+            store = self._store_open()
+            try:
+                conv = store.open(self.project_path, conversation_id, if_locked="raise")
+            except ConversationLocked as exc:
+                message = strings.STILL_FINISHING if exc.owner == "this_process" else strings.OPEN_ELSEWHERE
+                self._emit(None, OpenRefused(conversation_id, str(exc.owner), message))
+                return
+            except ConversationNotFound:
+                self._emit(None, OpenRefused(conversation_id, "missing", strings.OPEN_MISSING))
+                return
+            except ConversationDamaged as exc:
+                self._emit(None, OpenRefused(conversation_id, "damaged", str(exc)))
+                return
+            conv.project_name = self.project_name
+            if conv.number is None:
+                conv.number = store.allocate_chat_number(self.project_path)
+            self._conversation = conv
+            self.conversation_id = conv.id
+            shown = self._bound_event()
+        except Exception as exc:  # noqa: BLE001 — the tab goes and the window says why
+            logger.exception("A saved chat could not be opened")
+            if conv is not None and self._store is not None:
+                try:
+                    self._store.close(conv)
+                except Exception:  # noqa: BLE001 — the lock is released when the process ends
+                    logger.exception("The chat that could not be opened could not be released")
+            self._conversation = None
+            self.conversation_id = None
+            self._emit(None, OpenRefused(conversation_id, "damaged", internal_fault_message(type(exc).__name__)))
             return
-        except ConversationNotFound:
-            self._emit(None, OpenRefused(conversation_id, "missing", strings.OPEN_MISSING))
-            return
-        except ConversationDamaged as exc:
-            self._emit(None, OpenRefused(conversation_id, "damaged", str(exc)))
-            return
-        conv.project_name = self.project_name
-        if conv.number is None:
-            conv.number = store.allocate_chat_number(self.project_path)
-        self._conversation = conv
-        self.conversation_id = conv.id
-        self._show(self._bound_event())
+        self._show(shown)
         self._emit(None, ConversationLoaded(conv.id, conv.number, conv.title, tuple(conv.messages), conv.notice,
                                             dict(conv.usage)))
 

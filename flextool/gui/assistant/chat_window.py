@@ -527,13 +527,18 @@ class ChatWindow(tk.Toplevel):
 
     # --- the header and the footer ---------------------------------------------------------------------------
     def _refresh_header(self) -> None:
-        """The selected chat's provider, model and level, and where its data goes: what its worker says the chat
-        goes with (G17-D1); for a chat the worker names nothing for, what the settings give a new chat — which is
-        what its next question takes."""
+        """The selected chat's provider, model and level, and where its data goes: nothing yet while a chat
+        opens; then what its worker says the chat goes with (G17-D1); for a chat the worker names nothing for, what
+        the settings give a new chat — which is what its next question takes."""
         from flextool.assistant import endpoint
+        from flextool.gui.assistant.chat_tab import Phase
 
         tab = self.current_tab()
-        if tab.prepared is not None:
+        if tab.phase is Phase.LOADING:
+            model_text = ""
+            route_text = strings.OPENING_CHAT
+            relaxed = ()
+        elif tab.prepared is not None:
             prepared = tab.prepared
             line = strings.MODEL_LINE if prepared.level else strings.MODEL_LINE_NO_LEVEL
             model_text = line.format(provider=prepared.provider, model=prepared.model, level=prepared.level)
@@ -633,6 +638,18 @@ class ChatWindow(tk.Toplevel):
         self._poll_id = None
         if self.closing:
             return
+        try:
+            self._poll_once()
+        except Exception:  # noqa: BLE001 — one failed update must not stop the window
+            logger.exception("A chat window update failed")
+        finally:
+            if not self.closing:
+                try:
+                    self._poll_id = self.after(POLL_MS, self._poll)
+                except tk.TclError:
+                    self._poll_id = None
+
+    def _poll_once(self) -> None:
         while True:
             try:
                 fn, args = self._calls.get_nowait()
@@ -655,7 +672,6 @@ class ChatWindow(tk.Toplevel):
                 tab.drain(deadline, time.perf_counter)
                 if self.closing:
                     return
-        self._poll_id = self.after(POLL_MS, self._poll)
 
     # --- chats --------------------------------------------------------------------------------------------
     def promote(self, tab: ChatTab) -> None:
@@ -737,8 +753,17 @@ class ChatWindow(tk.Toplevel):
         self.schedule_open_chats()
 
     def open_refused(self, tab: ChatTab, event: OpenRefused) -> None:
-        """A saved chat could not be opened in *tab*: the tab goes, the window says why."""
+        """A saved chat could not be opened in *tab*: the tab goes (a question typed meanwhile moves to an empty
+        "New chat" box), the window says why — or, for a chat restored while it is open elsewhere, counts it."""
+        from flextool.gui.assistant.chat_tab import Phase
+
         restoring = event.conversation_id in self._restoring
+        text = tab.input.get("1.0", "end-1c")
+        box = self.new_tab.input
+        if text.strip() and box.get("1.0", "end-1c") == "":
+            box.insert("1.0", text)
+            self.new_tab.refresh_placeholder()
+        tab.phase = Phase.CLOSED            # not LOADING: _remove_tab leaves the restore to this method
         self._remove_tab(tab)
         if restoring and event.reason == "other_process":
             self._restore_resolved(event.conversation_id, refused=True)
@@ -806,7 +831,10 @@ class ChatWindow(tk.Toplevel):
         self._confirm_close(others, close_all)
 
     def _remove_tab(self, tab: ChatTab) -> None:
+        from flextool.gui.assistant.chat_tab import Phase
+
         was_current = self.current_tab() is tab
+        loading = tab.phase is Phase.LOADING
         self.consents.remove(tab)
         tab.shutdown()
         if tab in self.tabs:
@@ -825,6 +853,9 @@ class ChatWindow(tk.Toplevel):
             following = next((t for t in self._recent if t in self.tabs), None)
             self.select(following or self.new_tab)
             self.focus_input()
+        if loading:
+            # Its ConversationLoaded is never handled now: a restore waiting for it must not freeze the list.
+            self._restore_resolved(tab.conversation_id, refused=False)
         self.schedule_fit()
 
     # --- saved chats (the Chats menu) -------------------------------------------------------------------------
