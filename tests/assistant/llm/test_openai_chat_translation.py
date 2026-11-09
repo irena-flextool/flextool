@@ -321,7 +321,8 @@ def test_the_model_list_is_filtered():
         {"id": "text-embedding-example", "object": "model", "created": 1, "owned_by": "x"},
         {"id": "example-tts", "object": "model", "created": 1, "owned_by": "x"}]}
     backend, recorder = backend_for("openai", [json_response(200, models)])
-    assert [m.id for m in backend.list_models()] == ["example-chat"]
+    # The saved list keeps every id; the shown list hides the non-chat models (test_providers, RF-D12).
+    assert [m.id for m in backend.list_models()] == ["example-chat", "example-tts", "text-embedding-example"]
     assert recorder.last.url == "https://api.openai.com/v1/models"
     routed = {"data": [{"id": "a/with-tools", "context_length": 32768, "supported_parameters": ["tools"]},
                        {"id": "b/no-tools", "context_length": 8192, "supported_parameters": ["temperature"]}]}

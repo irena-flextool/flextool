@@ -8,10 +8,13 @@ import pytest
 
 from flextool.assistant.providers import (
     PRESETS,
+    hidden_reason,
     knob_on,
     knob_reports,
+    model_entries,
     relaxed_knobs,
     request_fields,
+    shown_models,
 )
 
 
@@ -58,3 +61,15 @@ def test_openai_sends_store_false_by_default():
     assert request_fields(openai, {}) == {"store": False}
     assert request_fields(openai, {"openai.store": False}) == {}
     assert knob_reports(openai, {}) == ["request sent with `store: false`"]
+
+
+def test_openai_list_keeps_every_id():
+    """C4-n2: the saved list keeps every id (RF-D12); the shown list hides the non-chat kinds by whole words, and
+    ``audio`` is not one of them."""
+    ids = ["gpt-4o-audio-preview", "gpt-image-1", "text-embedding-3-small", "gpt-4o", "gpt-audio"]
+    saved = [e.id for e in model_entries("openai", [{"id": i, "object": "model"} for i in ids])]
+    assert saved == ["gpt-4o", "gpt-4o-audio-preview", "gpt-audio", "gpt-image-1", "text-embedding-3-small"]
+    assert shown_models(PRESETS["openai"], saved) == ["gpt-4o", "gpt-audio"]
+    assert hidden_reason("gpt-4o-audio-preview") == "pre-release"
+    assert hidden_reason("gpt-image-1") == hidden_reason("text-embedding-3-small") == "not-chat"
+    assert shown_models(PRESETS["openai"], saved, show_all=True) == saved

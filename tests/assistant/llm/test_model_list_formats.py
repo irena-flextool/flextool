@@ -50,7 +50,7 @@ LISTS: dict[str, tuple[dict, list[str]]] = {
     "openai": ({"object": "list", "data": [
         {"id": "gpt-4.1", "object": "model", "created": 1, "owned_by": "system"},
         {"id": "text-embedding-3-small", "object": "model", "created": 1, "owned_by": "system"}]},
-        ["gpt-4.1"]),
+        ["gpt-4.1", "text-embedding-3-small"]),          # every id is saved; the shown list hides embeddings
     "ollama": ({"object": "list", "data": [
         {"id": "llama3.2:latest", "object": "model", "created": 1, "owned_by": "library"},
         {"id": "gpt-oss:120b-cloud", "object": "model", "created": 1, "owned_by": "library"}]},

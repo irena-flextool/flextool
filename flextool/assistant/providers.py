@@ -241,9 +241,6 @@ def tier_from_model(preset_id: str, model: str) -> Tier:
 
 
 # --- the live model list ------------------------------------------------------------------------------------------
-_NOT_CHAT = re.compile(r"embed|audio|image|moderation|realtime|transcribe|tts", re.IGNORECASE)
-
-
 def is_cloud_name(model: str) -> bool:
     """Whether an Ollama model name marks a cloud model (``:cloud`` or ``-cloud`` at the end)."""
     return model.endswith((":cloud", "-cloud"))
@@ -261,9 +258,10 @@ def model_id(preset_id: str, name: str) -> str:
 
 
 def model_entries(preset_id: str, items: Iterable[Mapping[str, Any]]) -> list[ModelEntry]:
-    """The usable chat models of a service's model list (the raw items of its list endpoint), sorted by id.
-    Anthropic's retired models (``lifecycle``) are left out and its deprecated ones noted: they are closed to new
-    accounts."""
+    """The usable models of a service's model list (the raw items of its list endpoint), sorted by id.  Every id
+    is kept, whatever kind of model it names: :func:`shown_models` hides the models for something other than a chat
+    when the list is shown (RF-D12).  Anthropic's retired models (``lifecycle``) are left out and its deprecated
+    ones noted: they are closed to new accounts; OpenRouter's models without tool calls are left out."""
     out: dict[str, ModelEntry] = {}
     for item in items:
         model_id_ = model_id(preset_id, str(item.get("id") or item.get("name") or ""))
@@ -277,8 +275,6 @@ def model_entries(preset_id: str, items: Iterable[Mapping[str, Any]]) -> list[Mo
             note = "deprecated: closed to new accounts"
         context = next((item[k] for k in ("context_length", "max_input_tokens", "max_context_length")
                         if isinstance(item.get(k), int) and not isinstance(item.get(k), bool) and item[k] > 0), None)
-        if preset_id == "openai" and _NOT_CHAT.search(model_id_):
-            continue
         if preset_id == "openrouter" and "tools" not in (item.get("supported_parameters") or []):
             continue
         if preset_id == "ollama" and is_cloud_name(model_id_):
