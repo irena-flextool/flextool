@@ -241,17 +241,26 @@ def _level_names(names: list, prefix: str) -> tuple[str, ...]:
     return tuple(str(n) if n is not None else f"{prefix}_{i}" for i, n in enumerate(names))
 
 
-def _key_of(physical: str, n_levels: int) -> tuple[str, ...]:
-    """The column key of a physical column name (arrow's text of the tuple; the bare name for one level)."""
-    if n_levels <= 1:
-        return (physical,)
+def _tuple_of(physical: str, n_levels: int) -> tuple[str, ...] | None:
+    """The key in arrow's tuple text *physical* when it is a tuple of *n_levels* values, else ``None``."""
     try:
         value = ast.literal_eval(physical)
     except (ValueError, SyntaxError):
-        value = None
+        return None
     if not isinstance(value, tuple) or len(value) != n_levels:
-        raise ValueError(f"the column {physical!r} is not a key of {n_levels} levels")
+        return None
     return tuple(str(v) for v in value)
+
+
+def _key_of(physical: str, n_levels: int, *, tuple_text: bool) -> tuple[str, ...]:
+    """The column key of a physical column name: arrow's text of the key tuple when *tuple_text* (a
+    ``MultiIndex`` column axis, one level included: ``"('s1',)"``), else the bare name of a single level."""
+    if not tuple_text:
+        return (physical,)
+    key = _tuple_of(physical, n_levels)
+    if key is None:
+        raise ValueError(f"the column {physical!r} is not a key of {n_levels} levels")
+    return key
 
 
 def _open_source(path: Path) -> "pa.BufferReader | str":
@@ -281,6 +290,7 @@ def lean_parquet_layout(path: str | Path) -> LeanLayout:
         raw_idx = list(info.get("idx") or [])
         index_physical = [n if n is not None else f"__index_level_{i}__" for i, n in enumerate(raw_idx)]
         idx = _level_names(raw_idx, "level")
+        tuple_text = bool(info.get("col"))                # written from a MultiIndex column axis
         if info.get("col"):
             col = _level_names(list(info["col"]), "column_level")
         elif info.get("col_name") is not None:
@@ -298,15 +308,20 @@ def lean_parquet_layout(path: str | Path) -> LeanLayout:
         col = _level_names([c.get("name") for c in pandas_meta.get("column_indexes", [])], "column_level")
         if not col:
             col = ("column",)
+        tuple_text = None                                 # decided from the column names below
         lean = False
     else:
-        index_physical, idx, col, lean = [], (), (), False
+        index_physical, idx, col, lean, tuple_text = [], (), (), False, False
     present = [p for p in index_physical if p in names]
     idx = tuple(level for level, p in zip(idx, index_physical) if p in names)
     if not col:                                       # a flat table: every column is a row level
         return LeanLayout(tuple(names), tuple(names), (), (), (), column_meta, num_rows, lean, _write_id_of(meta))
     data = [n for n in names if n not in set(present)]
-    columns = tuple(_key_of(n, len(col)) for n in data)
+    if tuple_text is None:
+        # pandas metadata cannot tell a one-level MultiIndex from a plain Index: the names decide, for the whole
+        # file at once (every data column the tuple text of one key, or none of them), so the keys never mix.
+        tuple_text = len(col) > 1 or (bool(data) and all(_tuple_of(n, len(col)) is not None for n in data))
+    columns = tuple(_key_of(n, len(col), tuple_text=tuple_text) for n in data)
     return LeanLayout(idx, tuple(present), col, columns, tuple(data), column_meta, num_rows, lean,
                       _write_id_of(meta))
 
@@ -331,10 +346,26 @@ def read_lean_parquet_wide(path: str | Path, *, keep: "list[str] | None" = None,
     return frame.rename(renames) if renames else frame
 
 
+def _value_kind(dtype) -> str | None:
+    """What kind of values a data column of *dtype* holds: ``numbers``, ``text``, the dtype's name for any other,
+    ``None`` for a column with no values (``Null``)."""
+    import polars as pl
+
+    if dtype == pl.Null:
+        return None
+    if dtype.is_numeric():
+        return "numbers"
+    if dtype == pl.String:
+        return "text"
+    return str(dtype.base_type())
+
+
 def to_long(wide: "pl.DataFrame", layout: LeanLayout, *, value_name: str = "value") -> "pl.DataFrame":
     """*wide* (columns from :func:`read_lean_parquet_wide`, possibly reduced) with one row per (row, data column):
     its row levels, one column per column level, and *value_name*.  Meant for frames already reduced or
-    filtered: a large table's long form has rows × columns rows."""
+    filtered: a large table's long form has rows × columns rows.  Numbers come out as ``Float64``, text as
+    text; data columns that mix kinds (numbers and text) or a level that is both a row and a column level raise
+    ``ValueError``."""
     import polars as pl
 
     if not layout.col:
@@ -342,7 +373,18 @@ def to_long(wide: "pl.DataFrame", layout: LeanLayout, *, value_name: str = "valu
     keys = dict(zip(layout.physical, layout.columns))
     data = [c for c in wide.columns if c in keys]
     index = [c for c in wide.columns if c not in keys]
-    if data and all(wide.schema[c].is_numeric() or wide.schema[c] == pl.Null for c in data):
+    clash = [level for level in layout.col if level in index]
+    if clash:
+        raise ValueError(f"the level {clash[0]!r} is both a row level and a column level")
+    kinds: dict[str, list[str]] = {}
+    for c in data:
+        kind = _value_kind(wide.schema[c])
+        if kind is not None:
+            kinds.setdefault(kind, []).append(c)
+    if len(kinds) > 1:
+        parts = "; ".join(f"{kind}: {', '.join(names[:3])}" for kind, names in kinds.items())
+        raise ValueError(f"the data columns mix {' and '.join(kinds)} ({parts}); select columns of one kind")
+    if data and set(kinds) <= {"numbers"}:
         wide = wide.with_columns(pl.col(data).cast(pl.Float64))
     long = wide.unpivot(index=index, on=data, variable_name="__column", value_name=value_name)
     mapping = pl.DataFrame(

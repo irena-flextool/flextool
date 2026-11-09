@@ -120,3 +120,40 @@ def test_a_partly_written_file_raises_arrow_invalid(tmp_path: Path) -> None:
     path.write_bytes(path.read_bytes()[:100])
     with pytest.raises(pa.ArrowInvalid):
         lean_parquet_layout(path)
+
+
+def test_a_one_level_multiindex_column_axis_keys_by_value(tmp_path: Path) -> None:
+    """Arrow names a 1-tuple column "('s1',)"; its key is ("s1",), not the tuple text (before: "('s1',)")."""
+    frame = pd.DataFrame([[1.0, 2.0]], index=pd.Index(["p2020"], name="period"),
+                         columns=pd.MultiIndex.from_tuples([("s1",), ("s2",)], names=["scenario"]))
+    for name, write in (("lean", lambda path: write_lean_parquet(frame, path)), ("pandas", frame.to_parquet)):
+        path = tmp_path / f"{name}.parquet"
+        write(path)
+        layout = lean_parquet_layout(path)
+        assert layout.columns == (("s1",), ("s2",)), name
+        assert to_long(read_lean_parquet_wide(path, layout=layout), layout)["scenario"].to_list() == ["s1", "s2"]
+    plain = frame.copy()
+    plain.columns = pd.Index(["s1", "s2"], name="scenario")
+    write_lean_parquet(plain, tmp_path / "plain.parquet")
+    assert lean_parquet_layout(tmp_path / "plain.parquet").columns == (("s1",), ("s2",))
+
+
+def test_to_long_keeps_numbers_and_refuses_mixed_kinds(tmp_path: Path) -> None:
+    layout = lean_parquet.LeanLayout(("period",), ("period",), ("x",), (("a",), ("b",)), ("a", "b"), None, 1, True)
+    mixed = pl.DataFrame({"period": ["p2020"], "a": [1.0], "b": ["x"]})
+    with pytest.raises(ValueError, match=r"mix numbers and text \(numbers: a; text: b\)"):
+        to_long(mixed, layout)                     # before: value ["1.0", "x"] as text
+    numbers = pl.DataFrame({"period": ["p2020"], "a": [1.0], "b": [2]})
+    long = to_long(numbers, layout)
+    assert long.schema["value"] == pl.Float64 and long["value"].to_list() == [1.0, 2.0]
+    text = pl.DataFrame({"period": ["p2020"], "a": ["x"], "b": [None]})
+    assert to_long(text, layout)["value"].to_list() == ["x", None]
+    flags = pl.DataFrame({"period": ["p2020"], "a": [True], "b": [False]})
+    assert to_long(flags, layout)["value"].to_list() == [True, False]
+
+
+def test_to_long_refuses_a_level_that_is_a_row_and_a_column_level() -> None:
+    layout = lean_parquet.LeanLayout(("node",), ("node",), ("node",), (("west",),), ("west",), None, 1, True)
+    wide = pl.DataFrame({"node": ["east"], "west": [1.0]})
+    with pytest.raises(ValueError, match="'node' is both a row level and a column level"):
+        to_long(wide, layout)                      # before: polars DuplicateError

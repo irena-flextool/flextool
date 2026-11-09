@@ -187,7 +187,9 @@ def render_catalogue(markdown_root: Path) -> str:
         "Every result table FlexTool writes, generated from the code. A table is written to",
         "`output_parquet/<scenario>/<table>.parquet`, and with CSV output to `output_csv/<scenario>/` under the",
         "CSV name of the default output settings. The parquet's top column level is `scenario`; the levels",
-        "below it are listed as column levels. Units are the default convention of FlexTool (MW, MWh, CUR);",
+        "below it are listed as column levels. Membership sets are flat tables whose first column is",
+        "`scenario`, followed by the listed row levels; `timeline_breaks` is a flat `(period, time)` table.",
+        "Units are the default convention of FlexTool (MW, MWh, CUR);",
         "see [Model outputs](results.md) for what the results mean and how they are computed.",
         "",
     ]

@@ -44,6 +44,8 @@ def test_pages_render_and_are_written_utf8_lf(tmp_path: Path) -> None:
     assert "### `unit_outputNode_dt_ee`" in catalogue
     assert "- Results database: `unit__node` entity `flow_t` parameter" in catalogue
     assert "- Counterpart at the other time resolution: `unit_outputNode_d_ee`" in catalogue
+    assert ("Membership sets are flat tables whose first column is\n`scenario`, followed by the listed row levels; "
+            "`timeline_breaks` is a flat `(period, time)` table.") in catalogue
 
 
 def test_pages_do_not_depend_on_the_locale_encoding(tmp_path: Path) -> None:
