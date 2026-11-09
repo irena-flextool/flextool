@@ -13,7 +13,7 @@
   overflow-wrap: anywhere;
 }
 
-/* Coefficient patterns table in reference.md: column widths follow the
+/* Coefficient patterns table in reference/units.md: column widths follow the
    content. Column 2 is narrowest, column 3 next; columns 1 and 4 share
    the rest equally. */
 .md-typeset .coeff-patterns .md-typeset__scrollwrap,

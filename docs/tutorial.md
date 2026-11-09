@@ -31,7 +31,7 @@ The model grows one **alternative** at a time. Each alternative is a self-contai
 
 2. **Create a new project.** From the **Project** menu choose *New project*, name it `tutorial`, and pick a location. The GUI creates `projects/tutorial/` with an empty `input_sources/` folder and a `settings.yaml`.
 
-3. **Add the seed input source.** Click **Add** in the **Input sources** panel and pick `templates/time_settings_only.sqlite` from the FlexTool installation directory. The GUI copies the file into your project's `input_sources/` (migrating it to the current schema version if needed) and renames it to whatever you typed in the dialog — `tutorial.sqlite` is a good name. This seed database already contains the basic time settings (`init` and `init_2day-test` alternatives) that every FlexTool model needs. See [How to create basic time settings](how_to.md) if you want to know how those were built.
+3. **Add the seed input source.** Click **Add** in the **Input sources** panel and pick `templates/time_settings_only.sqlite` from the FlexTool installation directory. The GUI copies the file into your project's `input_sources/` (migrating it to the current schema version if needed) and renames it to whatever you typed in the dialog — `tutorial.sqlite` is a good name. This seed database already contains the basic time settings (`init` and `init_2day-test` alternatives) that every FlexTool model needs. See [How to create basic time settings](how_to/index.md) if you want to know how those were built.
 
 4. **Open the input source in the Spine database editor.** Double-click the `tutorial.sqlite` row in **Input sources** (or select it and press **Edit**). The Spine database editor opens in its own window — that is where the rest of the modelling steps happen. It comes with the recommended install (`flextool[toolbox]`); the lighter install without Spine Toolbox does not have it.
 
@@ -240,8 +240,8 @@ After many iterations the database accumulates committed alternatives and scenar
 
 You now have the building blocks: alternatives, scenarios, units, profiles, connections, commodities, and the FlexTool GUI's execute / inspect loop.
 
-- [How-to recipes](how_to.md) — small focused examples (storage, investments, reserves, CHP, hydro, …).
-- [Model parameters](reference.md) — every entity class and parameter, organised by topic.
+- [How-to recipes](how_to/index.md) — small focused examples (storage, investments, reserves, CHP, hydro, …).
+- [Model parameters](reference/index.md) — every entity class and parameter, organised by topic.
 - [Model outputs](results.md) — what every parquet column means.
 - [Advanced concepts](advanced_concepts.md) — stochastics, representative periods, multi-year solves.
 - [FlexTool GUI](flextool_gui_interface.md) — full reference for the GUI used here.

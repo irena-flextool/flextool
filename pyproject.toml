@@ -323,4 +323,6 @@ flextool = [
     "assistant/_docs/md/*.md",
     "assistant/_docs/md/dev/*.md",
     "assistant/_docs/md/solvers/*.md",
+    "assistant/_docs/md/reference/*.md",
+    "assistant/_docs/md/how_to/*.md",
 ]

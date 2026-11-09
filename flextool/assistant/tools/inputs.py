@@ -677,7 +677,7 @@ def describe_parameter(ctx: AssistantContext, args: dict) -> Fit | dict:
 
 
 def _reference_sections(parameter: str) -> list[dict]:
-    """The reference.md sections that best match the parameter name (none when the documentation is not
+    """The reference/*.md sections that best match the parameter name (none when the documentation is not
     available)."""
     from flextool.assistant import docs_store
 
@@ -685,7 +685,7 @@ def _reference_sections(parameter: str) -> list[dict]:
         store = docs_store.load()
     except docs_store.DocsUnavailable:
         return []
-    hits = [h for h in store.search(parameter, kind="docs", max_results=8) if h["doc"] == "reference.md"]
+    hits = [h for h in store.search(parameter, kind="docs", max_results=8) if h["doc"].startswith("reference/")]
     return [{"doc": h["doc"], "section": h["section"], "anchor": h["anchor"]} for h in hits[:2]]
 
 

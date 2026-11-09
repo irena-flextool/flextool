@@ -12,6 +12,7 @@ theme:
   favicon: img/irena_flextool_favicon.png
   features:
     - content.code.copy
+    - navigation.indexes
 
 extra_css:
   - stylesheets/extra.css
@@ -19,6 +20,7 @@ extra_css:
 extra_javascript:
   - https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML
   - assets/mathjaxhelper.js
+  - assets/moved_doc_anchors.js
 
 plugins:
   - search
@@ -54,12 +56,33 @@ nav:
     - 'Install with FlexTool GUI': install_gui.md
     - 'Install with Spine Toolbox': install_toolbox.md
   - Tutorial: tutorial.md
+  - 'Model parameters':
+    - reference/index.md
+    - 'Entities and time structure': reference/entities_and_time.md
+    - 'Nodes': reference/nodes.md
+    - 'Units': reference/units.md
+    - 'Connections': reference/connections.md
+    - 'Commodities': reference/commodities.md
+    - 'Groups': reference/groups.md
+    - 'Flow groups': reference/flow_groups.md
+    - 'Reserves': reference/reserves.md
+    - 'User constraints': reference/user_constraints.md
+    - 'Parameter groups and conventions': reference/parameter_groups.md
+  - 'How-to recipes':
+    - how_to/index.md
+    - 'Basics: time, VRE, network and demand': how_to/basics.md
+    - 'Storage and hydro': how_to/storage_hydro.md
+    - 'Thermal, CHP and reserves': how_to/thermal_chp.md
+    - 'Investment and multi-year models': how_to/investment.md
+    - 'Solve sequences, rolling and nested solves': how_to/solve_sequences.md
+    - 'Stochastics': how_to/stochastics.md
+    - 'Emissions and system limits': how_to/emissions.md
+    - 'Outputs, diagnostics and Excel templates': how_to/outputs.md
+    - 'Performance and solvers': how_to/performance.md
   - Concepts:
-    - 'Model parameters': reference.md
     - 'Model outputs': results.md
     - 'Results catalogue': results_catalogue.md
     - 'Model formulation': formulation.md
-    - 'How-to recipes': how_to.md
     - 'Advanced concepts': advanced_concepts.md
   - Interfaces:
     - 'FlexTool GUI': flextool_gui_interface.md

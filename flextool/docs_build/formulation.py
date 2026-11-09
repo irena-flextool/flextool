@@ -334,7 +334,7 @@ def render_formulation(markdown_root: Path) -> str:
         "Names in braces expand: `maxOnline_{linear,integer}` is `maxOnline_linear` and `maxOnline_integer`,",
         "`{sfx}` is `_linear` / `_integer`, and a part in square brackets is optional (`co2_max_total[_path]`).",
         "Capacities are in MW (MWh for storage) and costs in CUR, the default units of FlexTool",
-        "(see [Model parameters](reference.md)).",
+        "(see [Model parameters](reference/index.md)).",
         "",
         f"## {scope.FORMULATION_PREAMBLE_SECTION}",
         "",

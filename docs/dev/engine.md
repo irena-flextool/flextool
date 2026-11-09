@@ -916,7 +916,7 @@ for `fix_price` (an objective term).  The horizon-end reference value
 `fix_price` included (`ndt_fix_storage_price`, the steps of
 `handoff/fix_storage_price`).
 
-A `fix_start_end` node ignores its `storage_binding_method` (reference.md,
+A `fix_start_end` node ignores its `storage_binding_method` (reference/nodes.md,
 exception `bind_forward_only`): `_run_model._fix_start_end_chains_forward`
 rewrites the per-solve `input/node__storage_binding_method` frame right
 after `_downgrade_rp_methods_for_non_rp_solve` (so a blended node of a

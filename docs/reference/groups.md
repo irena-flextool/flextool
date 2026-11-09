@@ -1,0 +1,108 @@
+# Groups
+
+Groups are used to make constraints that apply to a group of nodes, units and/or connections. A group is defined by creating a group entity and then creating an entity between the group and its members. The membership entity classes are `group__node`, `group__unit`, `group__connection` and `reserve__upDown__group`. The choice of group members depends on what the group is trying to achieve. For instance a group that limits investments could have a set of `units` included in the group.
+
+Flow aggregation (flow limits and aggregated flow outputs) lives on a separate [`flowGroup`](flow_groups.md) class with its own 3-dim membership classes `flowGroup__unit__node` and `flowGroup__connection__node`; see that section below.
+
+## Capacity limits for nodes, units and connections
+
+- `invest_method` - How the group limits investment and retirement of its members (a value list of its own, `group_invest_methods`). *not_active* (default): the group sets no limits. *invest* / *retire* / *invest_retire*: which decisions the limits apply to; *_period* uses the `…_period` limits, *_total* the `…_total` limits, *_period_total* both; *no_limit*: no limits even if values are set; *cumulative_limits* uses the cumulative capacity limits. Before database version 77 *not_active* was called *not_allowed*; the upgrade renames stored values, and a database that still holds *not_allowed* for a group stops the run with an error.
+- `invest_max_total` / `invest_min_total` - [MW or MWh] Largest allowed / smallest required total investment of the group over all solves, summed over its units and connections (MW) and storage nodes (MWh). Every investment decision counts; retirements do not reduce it. Constant.
+- `invest_max_period` / `invest_min_period` - [MW or MWh] Largest allowed / smallest required capacity coming online in each period, summed over the group's members. With a construction lead time, the investment is decided earlier. Constant or period.
+- `retire_max_period` / `retire_min_period` - [MW or MWh] Largest allowed / smallest required retirement in each period, summed over the group's members. Needs a *retire …_period* option in the group's `invest_method`. Constant or period.
+- `retire_max_total` / `retire_min_total` - [MW or MWh] Largest allowed / smallest required total retirement of the group over all solves. Needs a *retire …_total* option in the group's `invest_method`. Constant.
+- `cumulative_max_capacity` - [MW or MWh] Maximum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period. Only applies when `invest_method` is `cumulative_limits`.
+- `cumulative_min_capacity` - [MW or MWh] Minimum cumulative capacity for a group of entities (considers existing, invested and retired capacity). Constant or period. Only applies when `invest_method` is `cumulative_limits`.
+
+## Transfer method override for connections in a group
+
+- `transfer_method` - Overrides the `transfer_method` chosen on each individual `connection` whose both endpoints belong to this group (`group__node`). Options: *use_connection_transfer_methods* (default, no override), *no_losses_no_variable_cost*, *regular*, *exact*, *variable_cost_only*, *unidirectional*, *dc_power_flow_with_angles*. The connection-level options work exactly as in the [connection reference](connections.md#defining-how-the-connection-functions); *dc_power_flow_with_angles* activates B-theta DC power flow on the subnet and requires each member connection to have `reactance`; `is_DC` connections are not overridden and need no `reactance`. A connection with both endpoints in several groups that set different overrides is an error.
+- `base_MVA` - [MVA] Base power for the per-unit system used in DC power flow. Default 100. Only relevant when this group's `transfer_method = dc_power_flow_with_angles`.
+- `reference_node` - Name of the reference bus node (angle fixed to zero) for DC power flow. Optional; if not set the engine picks one deterministically.
+- `candidate_precapacity_to_avoid_big_m` - [MW] Small pre-existing capacity assigned to investment-candidate connections in DC power-flow subnets to avoid big-M angle constraints. Tuning parameter for numerical stability of the angle formulation.
+
+## Limits for nodes
+
+- `has_inertia` - A flag whether the group of nodes has an inertia constraint active. Default *no*. Without *yes* the group has no inertia constraint, even if `inertia_limit` is given.
+- `inertia_limit` - [MWs] Minimum for synchronous inertia in the group of nodes. Used only when `has_inertia` is *yes*; no value (or 0) means no requirement. Constant or period.
+- `penalty_inertia` - [CUR/MWs per hour] Penalty for violating the inertia constraint. The cost scales with the duration of the violation. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. Constant or period.
+- `has_non_synchronous` - A flag whether the group of nodes has the non-synchronous share constraint active. Default *no*. Without *yes* the group has no non-synchronous constraint, even if `non_synchronous_limit` is given.
+- `non_synchronous_limit` - [share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group, of the group's supply measured with the real demand (without an energy margin). Flows between the group's nodes are excluded. Used only when `has_non_synchronous` is *yes*; with the flag and no value (or 0), no non-synchronous infeed is allowed (violations are penalised). Constant or period.
+- `penalty_non_synchronous` - [CUR/MWh] Penalty for violating the non synchronous constraint. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. Constant or period.
+- `capacity_margin_method` - How the group of nodes enforces a capacity margin constraint in the investment mode. Options: *none* (default, no constraint) and *manual* (require the group to have `capacity_margin` MW of capacity above the peak net load of the real demand; an energy margin does not count). The constraint applies in the investment periods of each solve (and their stochastic branch periods); a solve without `invest_periods` (dispatch, rolling dispatch) has none.
+- `capacity_margin` - [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode when `capacity_margin_method = manual`, in the investment periods of a solve; without that method the value is ignored. No value (or 0) requires capacity to cover the peak net load. Constant or period.
+- `penalty_capacity_margin` - [CUR/kW/a] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over lifetime like investment costs), so a penalty of e.g. 1000 CUR/kW is not comparable to an investment cost of 1000 CUR/kW which would be annualized to a much lower annual cost. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. In a stochastic fan each forecast branch period has its own shortfall, and its penalty is weighted by the forecast's probability. Constant or period.
+- `share_loss_of_load` - Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted
+
+## CO2 costs and limits
+
+- `co2_method` - Choice of the CO2 method or a combination of methods: no_method, price, period, total, price_period, price_total, period_total, price_period_total.
+- `co2_price` [CUR/tCO2] CO2 price for a group of nodes. Constant or period. A period-indexed Map may cover *more* periods than the current solve realises — extra entries are silently ignored, so the same shared CO2-price dataset can drive solves with different period subsets. If the active solve activates `co2_price` topology (a priced commodity is wired up) but no `co2_price` or `co2_content` value is supplied for a needed period, the engine logs a warning and skips the CO2 cost term for that period rather than raising an error.
+- `co2_max_period` [tCO2/a] Annualized maximum limit for emitted CO2 in each period (tonnes per year of the period). Constant or period. In a rolling solve each roll applies the limit to its own window (realized part and look-ahead): its emissions are annualised over the window's hours of each period. The limit is carried across the rolls: each roll may emit the share of the period's limit reached by the end of its horizon, minus the emissions earlier rolls already realized in the period, so the realized emissions of a period stay within the limit. In a rolling solve the reported CO2 price of a period is the shadow price of the last roll that covers the period.
+- `co2_max_total` [tCO2] Cumulative limit for emitted CO2 over the whole solve horizon: each period's annualized emissions times the years it represents (`years_represented`), summed over the periods, so the model chooses when to emit. In a rolling solve or a chain of solves the limit is carried: each roll or solve may emit the part of the limit allotted to the periods it reaches (in a rolling solve, the `years_represented`-weighted share of the solve's periods reached by the end of the roll's horizon; a solve of a chain reaches all of its own periods) minus what earlier rolls and solves already realized, counted the same way (annualized and times `years_represented`). The realized emissions of the whole chain therefore stay within the limit, but an early solve of a chain may use up what later solves would have needed. In a stochastic solve each forecast path gets the whole remaining limit.
+
+The emissions that the CO2 price and the limits apply to are the fuel drawn from the group's nodes times the commodity's `co2_content`, including the extra fuel that `min_load_efficiency` units burn at part load.
+
+## Stochastics
+
+- `include_stochastics` Flag to choose if stochastic timeseries are to be used for the units/nodes/connections of this group 
+
+## Decomposition (spatial Benders)
+
+- `decomposition_method` (on `group`) - Decomposition strategy to apply to this group. Currently supported: `none` (no decomposition; default) and `benders_regional` (the group becomes a spatial region when a solve sets `decomposition = benders` — the `_region` suffix emphasises that this is the *geographic* flavour, distinct from any future temporal variant). See [dev/decomposition.md](../dev/decomposition.md) for the algorithm, gap tolerances, and the membership classes the decomposer expects.
+- `decomposition` (on `solve`) - Whether *this solve* decomposes. `none` (default) solves monolithically; `benders` routes the solve through the spatial Benders coordinator (master trade flows + trade invest + per-region recourse, optimality cuts) over the `benders_regional` groups. Chosen per solve, so one chain can mix schemes. The optional knobs `benders_max_iter` (default `50`) and `benders_tolerance` (default `1e-3`) cap the cut loop and set the relative optimality-gap threshold.
+
+## Flex-temporal decomposition (per-group step duration)
+
+- `new_stepduration` - Hours. Balances the nodes of this group once per coarse step of this length, while the rest of the model keeps the solve's time step.
+
+    **What it does.** The balance and storage nodes of this group are balanced once per coarse step when the step is longer than the solve's time step. An example is hourly electricity nodes next to daily hydrogen nodes. The energy over each coarse step balances, so the node may shift energy freely within the step. A storage node's state is constant within the step.
+
+    **Which units and connections go coarse.** A unit or connection with a node outside the coarse groups keeps the solve's time step. A coarse node sums its flows over the step, so an arc between an hourly and a daily node conserves energy at both ends. A unit or connection whose balance nodes are all coarse uses the coarse step: it has one flow per coarse step, a rate that stays the same over the step. If its nodes have different coarse steps, it takes the shortest one when that step divides the others; otherwise it keeps the solve's step. Listing a unit or connection in the group has no effect (a warning names those that touch a node outside the group).
+
+    **Nodes without a balance.** Commodity and price nodes and `balance_within_period` nodes do not count. A unit that also buys fuel can therefore be coarse; it pays the average price of the step.
+
+    **Averaged limits.** The capacity, availability, profile, efficiency and input-share limits of a coarse unit or connection apply to the average over each coarse step. This gives the same result as hourly flows when each arc has at most one limit that varies within the step, and its cost, efficiency and prices do not vary within the step. Otherwise the result can differ. With a cost or efficiency that varies, hourly flows could use the cheapest or most efficient hours. With two or more varying limits, the averaged limits are looser.
+
+    **Ramps.** Ramp limits apply between consecutive coarse steps, with the average duration of the two steps (see `ramp_speed_up`). Inside a coarse step the flow does not change.
+
+    **Online units.** A unit or connection with online variables uses the coarse step too. Its units online, start-ups and shut-downs are decided once per coarse step; it starts or stops at the start of the step. Its minimum load and online capacity apply to the average over the step. A minimum up or down time counts whole coarse steps: a start-up counts while the steps since its start last less than `min_uptime`. On daily steps a `min_uptime` of at most 24 h adds nothing.
+
+    **Online units with ramp limits.** The start-up and shut-down capacity reduction uses the coarse step. While the ramp does not reach full output within the step, a unit started at the start of a step reaches on average `min_load + ½ × ramp_speed_up × 60 × step duration` of its capacity over the step. When the ramp does reach full output (full output for the rest of the step), the average is `1 − (1 − min_load)² / (2 × ramp_speed_up × 60 × step duration)`. The same holds with `ramp_speed_down` before a shut-down. Its units online ramp between coarse steps.
+
+    **Reserves.** A unit or connection whose balance nodes are all coarse and that provides reserves holds one reserve per coarse step. Its reserve limits apply to the average over the step, with the average availability or profile. These limits are the reserve share of its capacity, a connection's net position, the floor of its flow, and the storage energy for the reserve duration when the storage node and every provider are coarse. The room its ramp limit leaves for reserve is the smallest of the step's time steps, each with its own capacity factor. The reserve requirement is still checked at every time step of the solve, and nodes of a coarse group may belong to reserve groups.
+
+    **Exact connections and DC power flow.** An `exact` connection whose nodes are all coarse chooses its direction once per coarse step; its direction limits apply to the average over the step. A DC power-flow line whose nodes are all coarse has one flow per coarse step. When every line of a DC network uses the coarse step (all its nodes with the same coarse step), its nodes have one voltage angle per coarse step. In a DC network with a line at the solve's step, every angle stays at the solve's step, so that line keeps its per-step physics.
+
+    **Rows that combine several entities.** These rows follow one rule: the capacity-margin, inertia and non-synchronous rows of a group, the instant flow limits of a flow group, a user `constraint` with flow or storage terms (`constraint_flow_coeff`, `constraint_state_coeff`), the DC power-flow row of a line, and the stochastic storage-use tie of a node. Such a row becomes one row per coarse step, the average of the row over the step, when every unit and connection in it uses the coarse step. In a user constraint, every storage node in it must also be coarse.
+
+    **Averaged rows.** An averaged row uses the step mean of the demand, inflow, profile, limit or constant in it. An averaged capacity margin therefore covers the mean net demand of the step, not its peak hour. A row given on only part of a coarse step (e.g. a `max_instant_flow` map without values for some hours) stays at the time steps it covers. The inertia and non-synchronous shortfalls are then one value per coarse step.
+
+    **Mixed rows.** A row that mixes units or connections on the coarse step with others on the solve's step is checked at every time step of the solve. It sees the coarse flows as constant through their step. A coarse DC line in a DC network with a line at the solve's step keeps the angle difference across it constant through the coarse step, while the angles stay per time step.
+
+    **Exceptions.** Units and connections with a delay keep the solve's time step. In a Benders decomposition, flows that cross regions and every flow in the master keep the solve's step. In a stochastic solve, a unit or connection at a stochastic node, with online variables or providing reserves, keeps the solve's step when the forecasts are tied over only part of one of its coarse steps. In a realization solve, the same applies to one whose committed units online or reserve change within a coarse step or are pinned on only part of it.
+
+    **Messages.** An info line lists the units and connections that use a coarse step, and those that keep the solve's step with the reason. A database upgraded from an earlier FlexTool version prints a notice naming the coarse units and connections whose results can differ from flows at the solve's step, and why.
+
+    **Outputs.** Flows, units online, reserves, voltage angles and the shortfalls of averaged rows are written at every time step of the solve, with the same value through each coarse step. Start-ups and shut-downs are written whole at the first time step of their coarse step and as 0 at the others. A coarse node's price is the dual of its coarse-step balance, the same at every time step of the step.
+
+    **Rules for the step.** The group step must be a multiple of the solve's time step; a shorter group step is ignored with a warning. Coarse steps start from the start of each timeset block. They restart after a gap in the timeline, at each representative period and at the end of the realized part of a roll. A block that is not a multiple of the step ends with a shorter step; with representative periods the step must divide the representative period.
+
+    **Storage.** Storage binding methods, `fix_start`, `storage_solve_horizon_method`, nested fix methods and the roll carry apply to coarse nodes as to others. `bind_intraperiod_blocks` cannot be combined with a coarse group.
+
+## Controlling outputs
+
+Two `group`-level flags drive the extra outputs computed from a node `group`, and the `flow_aggregator` method (on the [`flowGroup`](flow_groups.md) class) drives the flow-aggregation outputs. Each has a specific intent and requires a matching membership class; setting it without the right members yields an empty result (the runner will log a warning).
+
+| You want … | Set this on … | Must contain |
+|---|---|---|
+| Summary metrics (loss of load, VRE share, curtailment, excess load, annualised inflow) for a collection of nodes | `print_indicators: yes` on `group` | `group__node` rows |
+| A per-timestep in/out decomposition (`group_flow_t`) of a node collection, one column per contributing process/connection | `print_dispatch: yes` on `group` | `group__node` rows |
+| Member flows shown as aggregated bands inside a node group's dispatch table | `flow_aggregator: dispatch_plots_only` on `flowGroup` | `flowGroup__unit__node` or `flowGroup__connection__node` rows |
+| The flowGroup's own aggregated outputs (per-period `cumulative_flow`/`average_flow` plus a signed net-flow timewise series) | `flow_aggregator: standalone_aggregator_only` on `flowGroup` | `flowGroup__unit__node` or `flowGroup__connection__node` rows |
+| Both of the above | `flow_aggregator: both` on `flowGroup` | `flowGroup__unit__node` or `flowGroup__connection__node` rows |
+
+- `print_indicators` (on `group`) — emits aggregate indicator metrics (loss-of-load share, VRE share, curtailment share, excess-load share and annualised inflow) over the node members. Acts as a *summary* of the node group. Requires `group__node` members.
+- `print_dispatch` (on `group`) — emits the per-timestep in/out *decomposition* of the node group, with one column per contributing process or connection (units feeding the group, connections crossing its boundary, storage, slacks). Requires `group__node` members. If any of those contributing flows belong to a `flowGroup` whose `flow_aggregator` is `dispatch_plots_only` or `both`, their columns are replaced by a single aggregated band named after the flowGroup.
+
+See [Flow groups (`flowGroup`)](flow_groups.md) for the `flow_aggregator` method values and the flow-limit parameters.

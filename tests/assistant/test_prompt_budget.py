@@ -48,9 +48,9 @@ PREFIX_BUDGETS = {"small": 5_000, "medium": 9_350, "large": 9_450}
 #: text or a tool description moves one of them on purpose: update the pin, and the budget table in
 #: ``specs/ai_assistant_autonomous_decisions.md`` (Cycle 2 C2-D2), in the same commit.
 PREFIX_PINS = {
-    ("small", "gui"): 4_975, ("small", "terminal"): 4_955, ("small", "agent"): 4_895,
-    ("medium", "gui"): 9_263, ("medium", "terminal"): 9_243, ("medium", "agent"): 9_183,
-    ("large", "gui"): 9_362, ("large", "terminal"): 9_342, ("large", "agent"): 9_282,
+    ("small", "gui"): 4_979, ("small", "terminal"): 4_959, ("small", "agent"): 4_899,
+    ("medium", "gui"): 9_266, ("medium", "terminal"): 9_246, ("medium", "agent"): 9_186,
+    ("large", "gui"): 9_365, ("large", "terminal"): 9_345, ("large", "agent"): 9_285,
 }
 
 

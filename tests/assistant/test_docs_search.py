@@ -26,7 +26,7 @@ def store(tmp_path_factory: pytest.TempPathFactory) -> docs_store.DocsStore:
 def test_a_parameter_name_finds_its_reference_entry(store: docs_store.DocsStore) -> None:
     hits = store.search("penalty_up", kind="docs", max_results=3)
     assert [h["kind"] for h in hits] == ["docs"] * 3
-    ref = [h for h in hits if h["doc"] == "reference.md"]
+    ref = [h for h in hits if h["doc"] == "reference/nodes.md"]
     assert ref, hits
     assert "`penalty_up`" in ref[0]["snippet"] and len(ref[0]["snippet"]) <= docs_store.SNIPPET_MAX
     assert ref[0]["anchor"] == "data-for-nodes"
@@ -56,7 +56,7 @@ def test_documents_are_the_scope_and_engine_md_only_its_shipped_sections(store: 
     assert "Equation headers" not in engine_sections and "Fix-storage semantics (Deferred-B wiring)" in \
         engine_sections
     assert store.result_table("unit_outputNode_dt_ee")["topic"] == "Energy flows"
-    assert max(len(c["text"]) for c in store.chunks if c["doc"] == "reference.md") <= 2 * docs_index.CHUNK_MAX
+    assert max(len(c["text"]) for c in store.chunks if c["doc"].startswith("reference/")) <= 2 * docs_index.CHUNK_MAX
 
 
 def test_anchors_are_those_of_the_web_docs() -> None:
@@ -148,7 +148,7 @@ def test_the_cache_key_follows_the_model_code(tmp_path: Path) -> None:
     assert changed != key and changed.startswith("9.9-")
     assert docs_store.cache_key(DOCS, package, version="10.0") != changed
     labels = [label for label, _ in docs_store.source_files(DOCS)]
-    for expected in ("md/reference.md", "pkg/engine/model/core.py", "pkg/engine/solve/_benders.py",
+    for expected in ("md/reference/nodes.md", "pkg/engine/model/core.py", "pkg/engine/solve/_benders.py",
                      "pkg/process_outputs/_output_meta.py", "pkg/process_outputs/write_spinedb.py",
                      "pkg/docs_build/index.py", "pkg/assistant/textsearch.py"):
         assert expected in labels

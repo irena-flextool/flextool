@@ -35,7 +35,7 @@ Spine's `parameter_definition` table carries an optional `parameter_group_name` 
 
 The full list of groups, the rules for adding new parameters, and the migration mechanics are documented in:
 
-- [Model parameters](reference.md#parameter-groups-metadata) — the user-facing list with one-line descriptions per group.
+- [Model parameters](reference/parameter_groups.md#parameter-groups-metadata) — the user-facing list with one-line descriptions per group.
 - [Database schema and migration](dev/db_schema.md) — how the field is populated and verified.
 
 The FlexTool GUI's *parameter-group picker* (see [FlexTool GUI → Add empty FlexTool input Excel](flextool_gui_interface.md)) uses these groups to let users assemble a partial input Excel by ticking only the groups they need.

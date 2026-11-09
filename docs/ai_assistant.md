@@ -601,7 +601,7 @@ wait.
 ## Units
 
 FlexTool does not check units. Its documented default units are MW for power, MWh for energy and CUR for the model's
-currency (see [Units of measure](reference.md#units-of-measure)), and the result labels always use them. A model may
+currency (see [Units of measure](reference/entities_and_time.md#units-of-measure)), and the result labels always use them. A model may
 use other units consistently, for example kg/h and kg for a hydrogen node. The tools therefore word every unit as the
 default convention ("MW (default convention)"), and the agent is told to ask, or to say that values are in the
 model's own units, when the description of a node, carrier or parameter suggests other units. Describing such

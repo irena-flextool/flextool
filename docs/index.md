@@ -10,8 +10,8 @@ New to FlexTool? Pick the row that matches what you want to do next — each lin
 | --- | --- |
 | Install FlexTool and run my first model | [Install with FlexTool GUI](install_gui.md) then [Tutorial](tutorial.md) |
 | Compare my model needs to the available interfaces | [Choosing an interface](interface_overview.md) |
-| Look up a parameter or output | [Model parameters](reference.md) · [Model outputs](results.md) |
-| Find an example for a specific feature | [How-to recipes](how_to.md) |
+| Look up a parameter or output | [Model parameters](reference/index.md) · [Model outputs](results.md) |
+| Find an example for a specific feature | [How-to recipes](how_to/index.md) |
 | Understand the solver internals or contribute | [Developer guide → Architecture overview](dev/architecture.md) |
 
 # Two interfaces

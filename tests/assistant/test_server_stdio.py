@@ -268,12 +268,12 @@ def test_documentation_pages_are_resources(ctx) -> None:
 
     async def work(client):
         listed = (await client.list_resources()).resources
-        read = await client.read_resource("flextool-docs:///reference.md")
+        read = await client.read_resource("flextool-docs:///reference/entities_and_time.md")
         return listed, read
 
     listed, read = _in_process(build_server(ctx), work)
     uris = {str(r.uri) for r in listed}
-    assert {"flextool-docs:///reference.md", "flextool-docs:///formulation.md"} <= uris
+    assert {"flextool-docs:///reference/entities_and_time.md", "flextool-docs:///formulation.md"} <= uris
     (contents,) = read.contents
     assert contents.mime_type == "text/markdown" and "Units of measure" in contents.text
 

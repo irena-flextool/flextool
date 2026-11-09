@@ -190,9 +190,9 @@ TOOLS = [
         caps={"max_results": CapArg("max_results", maximum=10)}),
     make_tool(
         name="read_doc", title="Read a FlexTool document",
-        description=("Read a document of the FlexTool documentation, for example reference.md. Without section it "
-                     "returns the outline (headings and anchors); with section (a heading or an anchor) that section "
-                     "with its subsections. max_chars limits the text."),
+        description=("Read a document of the FlexTool documentation, for example reference/units.md. Without "
+                     "section it returns the outline (headings and anchors); with section (a heading or an anchor) "
+                     "that section with its subsections. max_chars limits the text."),
         properties={"doc": {"type": "string"}, "section": {"type": "string"}, "max_chars": {"type": "integer"}},
         required=("doc",), handler=read_doc, area="orientation", small_tier=True,
         caps={"max_chars": CapArg("max_chars")}),

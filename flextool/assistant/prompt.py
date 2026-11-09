@@ -87,8 +87,8 @@ LAYER_ORIENTATION = (
 
 # --- layer 3: documentation map ------------------------------------------------------------------------------------
 LAYER_DOCUMENTS = (
-    "Documents to fetch with search_docs and read_doc (do not rely on memory): reference.md for parameters and "
-    '"Units of measure"; results.md and results_catalogue.md for outputs; how_to.md for modelling methods; '
+    "Documents to fetch with search_docs and read_doc (do not rely on memory): reference/*.md for parameters and "
+    '"Units of measure"; results.md and results_catalogue.md for outputs; how_to/*.md for modelling methods; '
     'formulation.md, or search_docs with kind "formulations", for equations; env_vars.md for run options, flags, '
     "environment variables and their precedence."
 )

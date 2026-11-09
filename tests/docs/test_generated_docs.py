@@ -168,7 +168,7 @@ def test_the_build_step_fails_on_a_scope_file_missing_from_docs(tmp_path: Path) 
     (project / _flextool_build.SCOPE_FILE).write_bytes((REPO / _flextool_build.SCOPE_FILE).read_bytes())
     (project / "docs").mkdir()
     (project / "docs" / "index.md").write_text("# FlexTool\n", encoding="utf-8")
-    with pytest.raises(FileNotFoundError, match=r"reference\.md"):
+    with pytest.raises(FileNotFoundError, match=r"reference/index\.md"):
         _flextool_build.copy_docs(tmp_path / "build", project_root=project)
 
 
