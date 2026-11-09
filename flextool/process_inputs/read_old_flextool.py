@@ -1053,6 +1053,30 @@ def _read_time_steps(wb: openpyxl.Workbook) -> list[TimeStep]:
 # Main entry point
 # ---------------------------------------------------------------------------
 
+def _require_input_data_workbook(wb: openpyxl.Workbook, file_path: str) -> None:
+    """Raise ``ValueError`` unless *wb* is a FlexTool 2 input data workbook.
+
+    An input data workbook has a ``master`` sheet (the same rule as
+    ``detect_excel_format``).  The FlexTool 2 *master* workbook (the one with
+    the run buttons and the ``Sensitivity definitions`` sheet) has none of the
+    data sheets; reading it would give an empty model, so it is refused with a
+    hint to the right files.
+    """
+    if "master" in wb.sheetnames:
+        return
+    if "Sensitivity definitions" in wb.sheetnames:
+        raise ValueError(
+            f"'{file_path}' is the FlexTool 2 master workbook (it has the "
+            "'Sensitivity definitions' sheet), not an input data workbook. "
+            "Give one of its InputData/*.xlsm files as the input file, and "
+            "this master workbook with --master to import its sensitivities."
+        )
+    raise ValueError(
+        f"'{file_path}' has no 'master' sheet, so it is not a FlexTool 2 "
+        "input data workbook."
+    )
+
+
 def read_old_flextool(file_path: str) -> OldFlexToolData:
     """Read an old-format FlexTool Excel file and return structured data.
 
@@ -1061,11 +1085,16 @@ def read_old_flextool(file_path: str) -> OldFlexToolData:
 
     Returns:
         An OldFlexToolData instance with all parsed sheets.
+
+    Raises:
+        ValueError: the workbook has no ``master`` sheet (for example the
+            FlexTool 2 master workbook was given instead of an input file).
     """
     logger.info("Reading old FlexTool file: %s", file_path)
     wb = openpyxl.load_workbook(file_path, read_only=True, data_only=True)
 
     try:
+        _require_input_data_workbook(wb, file_path)
         # Log which sheets are present and which will be skipped
         for name in wb.sheetnames:
             if name in _SKIP_SHEETS:

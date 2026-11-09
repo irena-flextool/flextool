@@ -2813,31 +2813,6 @@ class MainWindow(tk.Tk):
         # 5. Persist the updated check states
         self._save_checked_available_scenarios()
 
-    def _refresh_and_check_new_scenarios(self) -> None:
-        """Refresh input sources and check any newly appeared scenarios.
-
-        Called after sensitivity import completes — the source already exists
-        but new scenarios have been added to it.
-        """
-        # Remember which scenarios are currently shown
-        old_scenarios: set[str] = set()
-        for item in self.available_tree.get_children():
-            values = self.available_tree.item(item, "values")
-            if values:
-                old_scenarios.add(str(values[0]))  # scenario name
-
-        self._refresh_input_sources()
-
-        # Check any scenarios that weren't there before
-        for item in self.available_tree.get_children():
-            values = self.available_tree.item(item, "values")
-            if values and str(values[0]) not in old_scenarios:
-                self.available_tree.set(item, "check", CHECK_ON)
-
-        self._save_checked_available_scenarios()
-        self._update_add_to_execution_style()
-        self._update_add_to_execution_style()
-
     def _on_refresh_sources(self) -> None:
         """Refresh input sources by re-scanning the directory."""
         if not self.input_source_mgr:
@@ -3773,12 +3748,24 @@ class MainWindow(tk.Tk):
                 "--migration-follows",
             ]
         elif info.format == ExcelFormat.OLD_V2:
+            # The sensitivities must be written before the migration, inside
+            # the same import, so the optional master workbook is asked now.
+            from flextool.gui.dialogs.add_dialog import ask_old_flextool_master
+            master_path = ask_old_flextool_master(
+                self, xlsx_path.parent, self.winfo_width(),
+                self.winfo_screenheight(),
+            )
+            if master_path is False:
+                work_sqlite.unlink(missing_ok=True)
+                return
             cmd = [
                 sys.executable, "-m",
                 "flextool.cli.cmd_read_old_flextool",
                 str(xlsx_path),
                 target_db_url,
             ]
+            if master_path is not None:
+                cmd += ["--master", str(master_path)]
         else:
             messagebox.showerror(
                 "Unknown format",

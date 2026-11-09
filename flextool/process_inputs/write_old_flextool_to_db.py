@@ -16,6 +16,7 @@ Usage::
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass, field
 from typing import Any
 
 import spinedb_api as api
@@ -40,20 +41,71 @@ logger = logging.getLogger(__name__)
 # Counters for summary logging
 # ---------------------------------------------------------------------------
 
-class _Counters:
-    """Simple counters for tracking what was written."""
+@dataclass
+class UnmappedItem:
+    """A FlexTool 2 input the importer could not translate."""
+    sheet: str
+    column: str
+    entities: list[str]
+    reason: str
 
-    def __init__(self) -> None:
+    def line(self) -> str:
+        where = f" ({', '.join(self.entities)})" if self.entities else ""
+        return f"{self.sheet} '{self.column}'{where}: {self.reason}"
+
+
+class ImportStrictError(RuntimeError):
+    """Raised by a ``strict`` import when a parameter value could not be written."""
+
+
+class _Counters:
+    """What was written, what failed and what could not be translated."""
+
+    def __init__(self, strict: bool = False) -> None:
         self.entities: int = 0
         self.relationships: int = 0
         self.parameters: int = 0
         self.entity_alternatives: int = 0
+        self.strict = strict
+        #: Every ``_add_param`` write the database refused.
+        self.failed: list[str] = []
+        #: Inputs that have no FlexTool 4 counterpart (or lack their data).
+        self.unmapped: list[UnmappedItem] = []
+        #: How an input was interpreted where FlexTool 2 and 4 differ.
+        self.assumptions: list[str] = []
 
     def summary(self) -> str:
         return (
             f"entities={self.entities}, relationships={self.relationships}, "
             f"parameters={self.parameters}, entity_alternatives={self.entity_alternatives}"
         )
+
+
+@dataclass
+class ImportReport:
+    """End-of-import summary: what was written, failed and not translated."""
+    written: list[str] = field(default_factory=list)
+    failed: list[str] = field(default_factory=list)
+    unmapped: list[UnmappedItem] = field(default_factory=list)
+    assumptions: list[str] = field(default_factory=list)
+
+    def add(self, label: str, counters: _Counters) -> None:
+        self.written.append(f"{label}: {counters.summary()}")
+        self.failed.extend(counters.failed)
+        self.unmapped.extend(counters.unmapped)
+        self.assumptions.extend(counters.assumptions)
+
+    def format(self) -> str:
+        lines = ["FlexTool 2 import report", "Written:"]
+        lines += [f"  {w}" for w in self.written]
+        lines.append(f"Failed writes: {len(self.failed)}")
+        lines += [f"  {f}" for f in self.failed]
+        lines.append(f"Not translated: {len(self.unmapped)}")
+        lines += [f"  {u.line()}" for u in self.unmapped]
+        if self.assumptions:
+            lines.append("Interpretation (FlexTool 2 and 4 differ):")
+            lines += [f"  {a}" for a in self.assumptions]
+        return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -161,10 +213,14 @@ def _add_param(
         )
         counters.parameters += 1
     except SpineDBAPIError as exc:
-        logger.warning(
-            "Could not add param %s.%s %s: %s",
-            class_name, param_name, entity_byname, exc,
+        message = (
+            f"{class_name}.{param_name} {'/'.join(entity_byname)} "
+            f"[{alt_name}]: {exc}"
         )
+        if counters.strict:
+            raise ImportStrictError(f"Could not add param {message}") from exc
+        logger.warning("Could not add param %s", message)
+        counters.failed.append(message)
 
 
 def _add_param_if_set(
@@ -306,6 +362,284 @@ def _find_unit_ts(
 def _fuel_market_name(fuel_name: str) -> str:
     """Return the market node name for a fuel."""
     return f"{fuel_name}_market"
+
+
+#: FT2 ``units`` flag column → (``ts_unit`` parameter, FT4 ``profile_method``).
+#: FT2 ``flexModel.mod`` (``fix_unit_generation``, ``min_generation_ts``,
+#: ``upwardLimitNotOnline``) bounds the generation by the ts value times the
+#: unit's capacity (existing + invested), and the IRENA FlexTool methodology
+#: guide says so too: "fix_generation, min generation, max_generation (these
+#: fix or limit the generation. Use values from 0-1 as a share of max
+#: generation)".  An FT4 profile on ``unit__node__profile`` is the same bound:
+#: profile × capacity on the flow to the node.
+_GENERATION_LIMITS: tuple[tuple[str, str, str], ...] = (
+    ("fix unit generation", "fix_generation", "fixed"),
+    ("use min generation", "min_generation", "lower_limit"),
+    ("use max generation", "max_generation", "upper_limit"),
+)
+
+
+def _unit_flag(unit: UnitInstance, column: str) -> float | None:
+    """Value of a ``units`` column kept in ``extra_params`` (header case-insensitive)."""
+    for header, value in unit.extra_params.items():
+        if _norm_key(header) == column:
+            return value
+    return None
+
+
+def _norm_key(key: str) -> str:
+    """FT2 header normalisation: lower case, underscores as spaces."""
+    return " ".join(str(key).strip().lower().replace("_", " ").split())
+
+
+def _write_generation_limits(
+    data: OldFlexToolData,
+    db: DatabaseMapping,
+    unit: UnitInstance,
+    process: str,
+    alt_name: str,
+    counters: _Counters,
+    entities_added: set[tuple[str, tuple[str, ...]]],
+    entity_alts_added: set[tuple[str, tuple[str, ...], str]],
+) -> None:
+    """FT2 fix / min / max generation → a profile on the primary output.
+
+    A flag of 1 in ``units`` uses the ``ts_unit`` series of the same
+    grid/node/unit; the profile ``<process>_<param>`` gets that series and
+    ``unit__node__profile(process, output node, profile)`` gets the method
+    (see :data:`_GENERATION_LIMITS`).  Only the primary output: an output2
+    follows through the CHP eq / gt / lt constraints.  A flag of 0 ignores
+    the series, as FT2 does; a flag of 1 without a series is reported.
+    """
+    output_node = unit.output_node
+    for column, ts_param, method in _GENERATION_LIMITS:
+        if not _unit_flag(unit, column):
+            continue
+        if unit.input_grid and unit.input_node:
+            # FT2 bounds v_convert, the INPUT flow of a conversion unit, and
+            # its capacity is on the input side; fix_unit_generation is not
+            # defined for conversion units at all.
+            counters.unmapped.append(UnmappedItem(
+                "units", column, [process],
+                "on a conversion unit (input from a node) FT2 bounds the input "
+                "flow (fix unit generation: ignored); not mapped",
+            ))
+            continue
+        if method == "upper_limit" and unit.cf_profile:
+            counters.unmapped.append(UnmappedItem(
+                "units", column, [process],
+                "FT2 ignores max_generation when the unit has a cf profile "
+                "(the cf profile is the upper limit); not mapped",
+            ))
+            continue
+        uts = _find_unit_ts(data, unit, ts_param)
+        if uts is None or not uts.data:
+            counters.unmapped.append(UnmappedItem(
+                "units", column, [process],
+                f"the flag is set but ts_unit has no '{ts_param}' series for "
+                f"{unit.output_grid}/{output_node}/{unit.unit_type}; no limit "
+                "was written",
+            ))
+            continue
+        profile = f"{process}_{ts_param}"
+        _add_entity(db, "profile", profile, alt_name, counters,
+                    entities_added, entity_alts_added)
+        _add_param(db, "profile", (profile,), "profile",
+                   _make_time_map(uts.data), alt_name, counters)
+        link = (process, output_node, profile)
+        _add_relationship(db, "unit__node__profile", link, alt_name, counters,
+                          entities_added, entity_alts_added)
+        _add_param(db, "unit__node__profile", link, "profile_method", method,
+                   alt_name, counters)
+        avail = _get_unit_type_param(data, unit, "availability")
+        if avail is not None and avail < 1.0:
+            counters.assumptions.append(
+                f"{process}: FT4 multiplies the {ts_param} profile by the "
+                f"availability ({avail:g}); FT2 did not"
+            )
+
+
+# ---------------------------------------------------------------------------
+# Inputs the importer does not translate (reported, never silently dropped)
+# ---------------------------------------------------------------------------
+
+#: master parameters the importer reads (normalised names).
+_MASTER_MAPPED = frozenset({
+    "co2 cost", "loss of load penalty", "loss of reserves penalty",
+    "lack of inertia penalty", "lack of capacity penalty",
+    "time period duration", "use capacity margin", "use online", "use ramps",
+    "use non synchronous", "use inertia limit", "mode invest", "mode dispatch",
+})
+
+#: unit_type parameters the importer reads, or need not read (annuity: FT4
+#: computes it from interest and lifetime).
+_UNIT_TYPE_MAPPED = frozenset({
+    "efficiency", "min load", "eff at min load", "ramp up (p.u. per min)",
+    "ramp down (p.u. per min)", "o&m cost/mwh", "availability", "max reserve",
+    "inertia constant (mws/mw)", "fixed cost/kw/year", "inv.cost/kw",
+    "inv.cost/kwh", "fixed kw/kwh ratio", "startup cost", "min uptime (h)",
+    "min downtime (h)", "eff charge", "self discharge loss", "lifetime",
+    "interest", "annuity", "non synchronous",
+})
+
+#: ``units`` columns kept in ``extra_params`` that the importer reads.
+_UNITS_EXTRA_MAPPED = frozenset(column for column, _, _ in _GENERATION_LIMITS)
+
+#: ``ts_unit`` parameters the importer reads.
+_TS_UNIT_MAPPED = frozenset({"efficiency"} | {p for _, p, _ in _GENERATION_LIMITS})
+
+#: Known FT2 inputs without an FT4 counterpart the v56 importer can write.
+#: (sheet, normalised column) → reason.
+_UNMAPPED: dict[tuple[str, str], str] = {
+    ("master", "time in years"): (
+        "FT2 treats the whole time series as this many years and scales every "
+        "annual cost (and the cf / inflow scaling) by it. FT4 has no such "
+        "input: it annualises from the timeline itself. Costs, and so "
+        "investments, will not match FT2; set the period weighting by hand "
+        "(solve years_represented) before comparing"
+    ),
+    ("master", "curtailment penalty"): (
+        "FT2 charges this per MWh of curtailed cf / inflow generation; FT4 has "
+        "no curtailment cost, so curtailment is free"
+    ),
+    ("master", "reserve duration"): (
+        "FT2 limits the reserve of a storage by its state / reserve_duration. "
+        "FT4 has reserve__upDown__group.reserve_duration, which the v56 "
+        "importer cannot write; set it by hand after the import"
+    ),
+    ("unit_type", "conversion eff"): (
+        "FT2 uses it as the output / input ratio of a unit that takes its "
+        "input from a node (e.g. a heat pump COP). Not mapped: set the FT4 "
+        "unit efficiency to it where the unit has no efficiency time series"
+    ),
+    ("units", "use min online"): (
+        "FT2 sets a floor on the online capacity from ts_unit min_online; "
+        "FT4 has no time series floor on online units"
+    ),
+    ("units", "fueluse increase eq x output2"): (
+        "FT2 adds this fuel use per MWh of output2; FT4 has no such term, so "
+        "the CHP fuel use is lower"
+    ),
+    ("gridNode", "import (MWh)"): (
+        "FT2 adds the ts_import series, scaled to this annual energy, to the "
+        "node; FT4 gets no import"
+    ),
+}
+
+_GENERIC_REASON = "not read by the importer"
+
+
+def _is_cosmetic(column: str) -> bool:
+    """Output-only FT2 columns (printing, colours): nothing to translate."""
+    return column.startswith("print") or column.startswith("color")
+
+
+def _nonzero(value: Any) -> bool:
+    return value is not None and value != 0 and value != ""
+
+
+def _collect_unmapped(data: OldFlexToolData) -> list[UnmappedItem]:
+    """Every non-empty FT2 input the importer does not translate, by entity."""
+    found: dict[tuple[str, str], UnmappedItem] = {}
+
+    def note(sheet: str, column: str, entity: str | None,
+             label: str | None = None) -> None:
+        item = found.get((sheet, column))
+        if item is None:
+            item = found[(sheet, column)] = UnmappedItem(
+                sheet, label or column, [],
+                _UNMAPPED.get((sheet, column), _GENERIC_REASON))
+        if entity is not None and entity not in item.entities:
+            item.entities.append(entity)
+
+    for key, value in data.master.params.items():
+        column = _norm_key(key)
+        if column in _MASTER_MAPPED or _is_cosmetic(column):
+            continue
+        if column == "time in years":
+            if value is not None and value != 1:
+                note("master", column, None, label=f"{key} = {value:g}")
+            continue
+        if _nonzero(value):
+            note("master", column, None)
+
+    for ut in data.unit_types:
+        for key, value in ut.params.items():
+            column = _norm_key(key)
+            if column in _UNIT_TYPE_MAPPED or _is_cosmetic(column):
+                continue
+            if _nonzero(value):
+                note("unit_type", column, ut.name)
+
+    for unit in data.units:
+        name = _get_unit_name(unit)
+        for key, value in unit.extra_params.items():
+            column = _norm_key(key)
+            if column in _UNITS_EXTRA_MAPPED or _is_cosmetic(column):
+                continue
+            if _nonzero(value):
+                note("units", column, name)
+        if _nonzero(unit.fueluse_increase_eq):
+            note("units", "fueluse increase eq x output2", name)
+
+    for uts in data.unit_ts:
+        param = _norm_key(uts.param_name).replace(" ", "_")
+        if param in _TS_UNIT_MAPPED:
+            continue
+        if any(_nonzero(v) for v in uts.data.values()):
+            note("ts_unit", uts.param_name,
+                 f"{uts.grid}/{uts.node}/{uts.unit}")
+
+    for gn in data.grid_nodes:
+        if _nonzero(gn.import_mwh):
+            note("gridNode", "import (MWh)", gn.node)
+
+    # time_in_years first: it changes every cost.
+    return sorted(found.values(),
+                  key=lambda u: _norm_key(u.column.split("=")[0]) != "time in years")
+
+
+def _write_storage_start_end(
+    db: DatabaseMapping,
+    node: str,
+    unit: UnitInstance,
+    alt_name: str,
+    counters: _Counters,
+) -> None:
+    """Storage start / finish of an FT2 unit → the FT4 storage node's methods.
+
+    FlexTool 2 (``flexModel.mod``: ``stateStart``, ``stateEnd``,
+    ``storageBalance``): a non-zero ``storage start`` / ``storage finish``
+    fixes the state at the first / last step to that share of the storage
+    capacity; 0 or empty fixes nothing.  The storage balance wraps from the
+    last step to the first, except when both are set.  So:
+
+    * both set → ``fix_start_end``, no wrap (``bind_forward_only``);
+    * one set → ``fix_start`` / ``fix_end``, wrap (``bind_within_solve``);
+    * none → ``fix_nothing``, wrap (``bind_within_solve``).
+
+    The method is always written: the v56 default (``fix_start``) became
+    ``fix_nothing`` at v77, so leaving it to the default would change what
+    the FT2 input means after migration.
+    """
+    start = unit.storage_start if unit.storage_start else None
+    finish = unit.storage_finish if unit.storage_finish else None
+    if start is not None and finish is not None:
+        method, binding = "fix_start_end", "bind_forward_only"
+    elif start is not None:
+        method, binding = "fix_start", "bind_within_solve"
+    elif finish is not None:
+        method, binding = "fix_end", "bind_within_solve"
+    else:
+        method, binding = "fix_nothing", "bind_within_solve"
+    _add_param(db, "node", (node,), "storage_binding_method", binding,
+               alt_name, counters)
+    _add_param(db, "node", (node,), "storage_start_end_method", method,
+               alt_name, counters)
+    _add_param(db, "node", (node,), "storage_state_start", start,
+               alt_name, counters)
+    _add_param(db, "node", (node,), "storage_state_end", finish,
+               alt_name, counters)
 
 
 # ---------------------------------------------------------------------------
@@ -463,8 +797,7 @@ def _write_storage_units(
                    alt_name, counters)
         _add_param_if_set(db, "node", (storage_node,), "existing",
                           unit.storage_mwh, alt_name, counters, skip_zero=False)
-        _add_param(db, "node", (storage_node,), "storage_binding_method",
-                   "bind_within_solve", alt_name, counters)
+        _write_storage_start_end(db, storage_node, unit, alt_name, counters)
 
         if lolp > 0:
             _add_param(db, "node", (storage_node,), "penalty_up", lolp,
@@ -475,18 +808,14 @@ def _write_storage_units(
         self_discharge = _get_unit_type_param(data, unit, "self discharge loss")
         _add_param_if_set(db, "node", (storage_node,), "self_discharge_loss",
                           self_discharge, alt_name, counters)
-        _add_param_if_set(db, "node", (storage_node,), "storage_state_start",
-                          unit.storage_start, alt_name, counters, skip_zero=False)
 
         # Storage node investment (inv.cost/kWh)
         inv_cost_kwh = _get_unit_type_param(data, unit, "inv.cost/kwh")
         _add_param_if_set(db, "node", (storage_node,), "invest_cost",
                           inv_cost_kwh, alt_name, counters)
-        if unit.max_invest_mwh is not None and unit.max_invest_mwh > 0:
-            _add_param(db, "node", (storage_node,), "invest_max_total",
-                       unit.max_invest_mwh, alt_name, counters)
-            _add_param(db, "node", (storage_node,), "invest_method",
-                       "invest_total", alt_name, counters)
+        # invest_method / invest_max_total / invest_min_total of the storage
+        # node are written once, below with the unit's investment (a forced
+        # 'invested storage (MWh)' wins over 'max invest (MWh)').
 
         # Inflow on storage node (pumped hydro pattern)
         if unit.inflow_profile:
@@ -607,6 +936,8 @@ def _write_storage_units(
                           alt_name, counters, entities_added, entity_alts_added)
         _add_relationship(db, "unit__outputNode", (discharger_name, output_node),
                           alt_name, counters, entities_added, entity_alts_added)
+        _write_generation_limits(data, db, unit, discharger_name, alt_name,
+                                 counters, entities_added, entity_alts_added)
 
         # Discharger O&M cost (only on discharger output)
         om_cost = _get_unit_type_param(data, unit, "o&m cost/mwh")
@@ -919,6 +1250,8 @@ def _write_units(
         # c) Primary output
         _add_relationship(db, "unit__outputNode", (unit_name, unit.output_node),
                           alt_name, counters, entities_added, entity_alts_added)
+        _write_generation_limits(data, db, unit, unit_name, alt_name, counters,
+                                 entities_added, entity_alts_added)
 
         # d) Secondary output (CHP, output2)
         if unit.output2_node:
@@ -1067,15 +1400,11 @@ def _write_inflow_units(
                    alt_name, counters)
         _add_param_if_set(db, "node", (inflow_node,), "existing",
                           unit.storage_mwh, alt_name, counters, skip_zero=False)
-        _add_param(db, "node", (inflow_node,), "storage_binding_method",
-                   "bind_within_solve", alt_name, counters)
+        _write_storage_start_end(db, inflow_node, unit, alt_name, counters)
         # Self-discharge loss from unit_type
         self_discharge = _get_unit_type_param(data, unit, "self discharge loss")
         _add_param_if_set(db, "node", (inflow_node,), "self_discharge_loss",
                           self_discharge, alt_name, counters)
-        # Storage state start
-        _add_param_if_set(db, "node", (inflow_node,), "storage_state_start",
-                          unit.storage_start, alt_name, counters, skip_zero=False)
 
         # Set inflow time series on the node
         _add_param(db, "node", (inflow_node,), "inflow", inflow_map,
@@ -1882,16 +2211,27 @@ def write_old_flextool_to_db(
     db_url: str,
     alternative_name: str = "base",
     purge: bool = True,
-) -> None:
+    *,
+    strict: bool = False,
+) -> _Counters:
     """Write old FlexTool data to a Spine database.
 
     Args:
         data: Parsed old FlexTool data from read_old_flextool().
         db_url: Spine database URL (e.g., "sqlite:///path/to/db.sqlite").
+            Must be a FlexTool database at the import schema version (56);
+            see :func:`import_old_flextool_xlsm` for the full pipeline.
         alternative_name: Name of the alternative to create for this data.
         purge: If True, purge existing data before import.
+        strict: Raise :class:`ImportStrictError` on the first parameter value
+            the database refuses (otherwise it is collected and reported).
+
+    Returns:
+        The counters: what was written, failed writes and the inputs that
+        were not translated.
     """
     logger.info("Opening database: %s", db_url)
+    _require_import_version(db_url)
 
     with open_database_mapping(db_url, create=False, upgrade=True) as db:
         if purge:
@@ -1901,7 +2241,8 @@ def write_old_flextool_to_db(
         # Tracking sets to avoid duplicate add calls
         entities_added: set[tuple[str, tuple[str, ...]]] = set()
         entity_alts_added: set[tuple[str, tuple[str, ...], str]] = set()
-        counters = _Counters()
+        counters = _Counters(strict=strict)
+        counters.unmapped.extend(_collect_unmapped(data))
 
         # Add the alternative
         try:
@@ -1971,11 +2312,31 @@ def write_old_flextool_to_db(
             logger.info("No new data to commit.")
         except SpineDBAPIError as exc:
             raise RuntimeError(f"Failed to commit imported data: {exc}") from exc
+    return counters
 
 
 # ---------------------------------------------------------------------------
 # Sensitivity import
 # ---------------------------------------------------------------------------
+
+
+def _unknown_sensitivity(
+    counters: _Counters,
+    scenario: str,
+    section: str,
+    param: str,
+    entity: str | None,
+) -> None:
+    """Report a sensitivity override the importer does not translate."""
+    if _is_cosmetic(_norm_key(param)):
+        return
+    entities = [f"{entity} [{scenario}]" if entity else f"[{scenario}]"]
+    logger.warning("Sensitivity %s: %s '%s' is not translated", scenario,
+                   section, param)
+    counters.unmapped.append(UnmappedItem(
+        f"Sensitivity definitions / {section}", param, entities,
+        _UNMAPPED.get((section, _norm_key(param)), _GENERIC_REASON),
+    ))
 
 
 def _build_existing_entity_set(db: DatabaseMapping) -> set[tuple[str, tuple[str, ...]]]:
@@ -2149,7 +2510,7 @@ def _apply_master_override(
         pass
 
     else:
-        logger.warning("Unknown master sensitivity param: '%s'", ov.param_name)
+        _unknown_sensitivity(counters, alt_name, "master", ov.param_name, None)
 
 
 def _apply_mode_overrides(
@@ -2231,7 +2592,8 @@ def _apply_node_group_override(
                 _add_param(db, "reserve__upDown__group", rel,
                            "reserve_method", reserve_method, alt_name, counters)
     else:
-        logger.warning("Unknown nodeGroup sensitivity param: '%s'", ov.param_name)
+        _unknown_sensitivity(counters, alt_name, "nodeGroup", ov.param_name,
+                             ov.entity_ids.get("nodeGroup"))
 
 
 def _apply_unit_type_override(
@@ -2371,10 +2733,8 @@ def _apply_unit_type_override(
                     _add_param(db, "unit__outputNode", rel,
                                "inertia_constant", value, alt_name, counters)
         else:
-            logger.warning(
-                "Unknown unit_type sensitivity param: '%s' for type '%s'",
-                ov.param_name, type_name,
-            )
+            _unknown_sensitivity(counters, alt_name, "unit_type", ov.param_name,
+                                 type_name)
 
 
 def _apply_fuel_override(
@@ -2402,7 +2762,8 @@ def _apply_fuel_override(
     elif "co2" in param_lower:
         _add_param(db, "commodity", (fuel_name,), "co2_content", value, alt_name, counters)
     else:
-        logger.warning("Unknown fuel sensitivity param: '%s'", ov.param_name)
+        _unknown_sensitivity(counters, alt_name, "fuel", ov.param_name,
+                             ov.entity_ids.get("fuel"))
 
 
 def _apply_unit_group_override(
@@ -2433,7 +2794,8 @@ def _apply_unit_group_override(
     elif "min invest" in param_lower:
         _add_param(db, "group", (group_name,), "invest_min_total", value, alt_name, counters)
     else:
-        logger.warning("Unknown unitGroup sensitivity param: '%s'", ov.param_name)
+        _unknown_sensitivity(counters, alt_name, "unitGroup", ov.param_name,
+                             ov.entity_ids.get("unitGroup"))
 
 
 
@@ -2593,8 +2955,8 @@ def _apply_units_override(
                 unit_name,
             )
     else:
-        logger.warning("Unknown units sensitivity param: '%s' for unit '%s'",
-                       ov.param_name, unit_name)
+        _unknown_sensitivity(counters, alt_name, "units", ov.param_name,
+                             unit_name)
 
 
 def _apply_grid_node_override(
@@ -2657,7 +3019,8 @@ def _apply_grid_node_override(
                             _add_param(db, "reserve__upDown__group", rel,
                                        "reserve_method", reserve_method, alt_name, counters)
     else:
-        logger.warning("Unknown gridNode sensitivity param: '%s'", ov.param_name)
+        _unknown_sensitivity(counters, alt_name, "gridNode", ov.param_name,
+                             ov.entity_ids.get("node"))
 
 
 def _apply_node_node_override(
@@ -2706,8 +3069,8 @@ def _apply_node_node_override(
     elif "interest" == param_lower:
         _add_param(db, "connection", (conn_name,), "discount_rate", value, alt_name, counters)
     else:
-        logger.warning("Unknown nodeNode sensitivity param: '%s' for connection '%s'",
-                       ov.param_name, conn_name)
+        _unknown_sensitivity(counters, alt_name, "nodeNode", ov.param_name,
+                             conn_name)
 
 
 def write_sensitivities_to_db(
@@ -2715,21 +3078,35 @@ def write_sensitivities_to_db(
     data: OldFlexToolData,
     db_url: str,
     base_alternative: str = "base",
-) -> None:
+    *,
+    strict: bool = False,
+) -> _Counters:
     """Write sensitivity alternatives and scenarios on top of an already-imported DB.
 
     This does NOT purge the database. It layers sensitivity alternatives on top
-    of the base import.
+    of the base import.  The database must still be at the import schema
+    version (56): the overrides use v56 names and values, and only migration
+    may carry them forward (:func:`import_old_flextool_xlsm` with ``master=``
+    does both in order).
 
     Args:
         sensitivities: Dict mapping scenario_name -> list of SensitivityOverride.
         data: The base OldFlexToolData (needed for unit_type->unit mapping, etc.).
         db_url: Spine database URL.
         base_alternative: Name of the base alternative already in the DB.
+        strict: Raise on the first parameter value the database refuses.
+
+    Returns:
+        The counters (written, failed writes, untranslated overrides).
+
+    Raises:
+        ValueError: the database is not at the import schema version.
     """
+    counters = _Counters(strict=strict)
+    _require_import_version(db_url)
     if not sensitivities:
         logger.info("No sensitivities to write.")
-        return
+        return counters
 
     logger.info(
         "Writing %d sensitivity scenarios to: %s",
@@ -2737,7 +3114,6 @@ def write_sensitivities_to_db(
     )
 
     with open_database_mapping(db_url, create=False, upgrade=True) as db:
-        counters = _Counters()
         entity_alts_added: set[tuple[str, tuple[str, ...], str]] = set()
 
         # Build entity existence lookup from DB
@@ -2825,7 +3201,8 @@ def write_sensitivities_to_db(
                         ov, db, scenario_name, counters, existing_entities,
                     )
                 else:
-                    logger.warning("Unknown sensitivity section: '%s'", ov.section)
+                    _unknown_sensitivity(counters, scenario_name, ov.section,
+                                         ov.param_name, None)
 
             # 4b. Handle storage_link constraint activation/deactivation.
             #     The charger_link (charger ↔ discharger) always stays active.
@@ -2971,6 +3348,7 @@ def write_sensitivities_to_db(
             raise RuntimeError(
                 f"Failed to commit sensitivity data: {exc}"
             ) from exc
+    return counters
 
 
 # ---------------------------------------------------------------------------
@@ -3011,15 +3389,66 @@ def _sqlite_path_from_url(db_url: str) -> str | None:
     return None
 
 
-def _db_is_initialized(db_url: str) -> bool:
-    """True if the DB already carries the FlexTool schema (``model.version``)."""
+def _db_version(db_url: str) -> int | None:
+    """``model.version`` of a FlexTool DB, or ``None`` if it is not one.
+
+    A missing file, an empty file or a database without the FlexTool schema
+    all give ``None``.
+    """
+    path = _sqlite_path_from_url(db_url)
+    if path is not None:
+        from pathlib import Path
+
+        if not Path(path).exists() or Path(path).stat().st_size == 0:
+            return None
     try:
         with open_database_mapping(db_url) as db:
-            return db.get_parameter_definition_item(
+            pdef = db.get_parameter_definition_item(
                 entity_class_name="model", name="version"
-            ) is not None
-    except Exception:
-        return False
+            )
+            if not pdef:
+                return None
+            return int(api.from_database(pdef["default_value"], pdef["default_type"]))
+    except SpineDBAPIError:
+        return None
+
+
+def _require_import_version(db_url: str) -> None:
+    """Refuse a FlexTool DB that is not at the import schema version (56).
+
+    The importer writes v56 names and values; only ``migrate_database`` may
+    carry them to a later version (it renames parameters *and* rewrites
+    values, e.g. v65 ``has_capacity_margin`` → ``capacity_margin_method``,
+    v77 ``not_allowed`` → ``not_active``).  Writing v56 data into a later
+    database would lose every renamed value with only a log line, so it is a
+    hard error.
+    """
+    version = _db_version(db_url)
+    if version is None or version == OLD_FLEXTOOL_IMPORT_SCHEMA_VERSION:
+        return
+    raise ValueError(
+        f"{db_url} is a FlexTool database at version {version}. The FlexTool 2 "
+        f"importer writes version {OLD_FLEXTOOL_IMPORT_SCHEMA_VERSION} data, "
+        "which is then migrated, so it cannot write into a database at "
+        "another version. Import into a new database instead "
+        "(flextool-read-old BASE.xlsm sqlite:///new.sqlite "
+        "--master MASTER.xlsm imports the sensitivities too)."
+    )
+
+
+def _require_master_workbook(master: str) -> None:
+    """Refuse a ``master`` file without a ``Sensitivity definitions`` sheet."""
+    import openpyxl
+
+    wb = openpyxl.load_workbook(master, read_only=True)
+    try:
+        if "Sensitivity definitions" not in wb.sheetnames:
+            raise ValueError(
+                f"'{master}' has no 'Sensitivity definitions' sheet, so it is "
+                "not a FlexTool 2 master workbook."
+            )
+    finally:
+        wb.close()
 
 
 def import_old_flextool_xlsm(
@@ -3029,35 +3458,59 @@ def import_old_flextool_xlsm(
     alternative_name: str = "base",
     purge: bool = True,
     migrate: bool = True,
-) -> None:
+    master: str | None = None,
+    strict: bool = False,
+) -> ImportReport:
     """Import an old-format FlexTool ``.xlsm`` into ``target_db_url``.
 
     The complete, single-source pipeline used by both the CLI and the GUI:
 
-    1. Initialise the target from the **frozen** v56 import template
-       (``OLD_FLEXTOOL_IMPORT_SCHEMA``) unless it is already a FlexTool DB.
+    1. Refuse a target that is a FlexTool DB at another version than the
+       import schema (v56); initialise a new target from the **frozen** v56
+       import template (``OLD_FLEXTOOL_IMPORT_SCHEMA``).
     2. Parse the workbook and write its data (this importer targets v56).
-    3. ``migrate_database`` the result forward to the current
-       ``FLEXTOOL_DB_VERSION`` — a no-op while the schema is at 56, and the
-       thing that absorbs every future schema change automatically.
+    3. With ``master``: write the sensitivities of the FT2 master workbook
+       (its ``Sensitivity definitions`` sheet), still at v56.
+    4. ``migrate_database`` the result forward to the current
+       ``FLEXTOOL_DB_VERSION``, which absorbs every later schema change.
+    5. Remove the behaviour-change markers the migration wrote: they describe
+       changes between FlexTool 4 versions, and an FT2 import never ran on
+       the old ones.  Only when the import owns the whole database (it
+       initialised it, or purged it).
 
-    Callers that pre-create the DB (the GUI) get step 1 skipped; standalone
-    callers (the CLI) get a fresh DB initialised here.
+    ``migrate=False`` stops after step 3 (the database stays at v56).
 
-    Set ``migrate=False`` to skip step 3 — the GUI uses this so it can run the
-    migration as its own, separately-visible execution job (via
-    ``cmd_migrate_database``) rather than burying it in the conversion job.
+    Returns:
+        The :class:`ImportReport` (written, failed writes, inputs not
+        translated, interpretation notes).
     """
     # Lazy imports: avoid an import-time cycle with ``update_flextool`` (which
     # imports back into ``process_inputs`` during migration) and keep the
     # heavyweight Excel reader off this module's import path.
     from flextool._resources import package_data_path
-    from flextool.process_inputs.read_old_flextool import read_old_flextool
-    from flextool.update_flextool.db_migration import migrate_database
+    from flextool.process_inputs.read_old_flextool import (
+        read_old_flextool,
+        read_old_flextool_sensitivities,
+    )
+    from flextool.update_flextool.db_migration import (
+        migrate_database,
+        remove_behaviour_change_markers,
+    )
     from flextool.update_flextool.initialize_database import initialize_database
 
-    if not _db_is_initialized(target_db_url):
-        sqlite_path = _sqlite_path_from_url(target_db_url)
+    _require_import_version(target_db_url)
+
+    # Read everything before creating or writing anything: a wrong file
+    # (e.g. the master workbook as the input) fails here and leaves no DB.
+    data = read_old_flextool(xlsm_path)
+    sensitivities: dict[str, list[SensitivityOverride]] = {}
+    if master:
+        _require_master_workbook(master)
+        sensitivities = read_old_flextool_sensitivities(master)
+
+    initialised_here = False
+    sqlite_path = _sqlite_path_from_url(target_db_url)
+    if _db_version(target_db_url) is None:
         if sqlite_path is None:
             raise ValueError(
                 "Cannot auto-initialise a non-sqlite target; create the "
@@ -3067,12 +3520,34 @@ def import_old_flextool_xlsm(
         logger.info("Initialising %s from frozen import template (v%d)",
                     target_db_url, OLD_FLEXTOOL_IMPORT_SCHEMA_VERSION)
         initialize_database(str(template), sqlite_path)
+        initialised_here = True
 
-    data = read_old_flextool(xlsm_path)
-    write_old_flextool_to_db(
-        data, target_db_url, alternative_name=alternative_name, purge=purge,
-    )
+    try:
+        report = ImportReport()
+        report.add("base", write_old_flextool_to_db(
+            data, target_db_url, alternative_name=alternative_name, purge=purge,
+            strict=strict,
+        ))
+        if master:
+            report.add("sensitivities", write_sensitivities_to_db(
+                sensitivities, data, target_db_url,
+                base_alternative=alternative_name, strict=strict,
+            ))
 
-    if migrate:
-        logger.info("Migrating %s to the current schema version", target_db_url)
-        migrate_database(target_db_url)
+        if migrate:
+            logger.info("Migrating %s to the current schema version", target_db_url)
+            migrate_database(target_db_url)
+            if initialised_here or purge:
+                with open_database_mapping(target_db_url) as db:
+                    if remove_behaviour_change_markers(db):
+                        db.commit_session(
+                            "Removed behaviour-change markers (new FlexTool 2 import)"
+                        )
+    except BaseException:
+        if initialised_here and sqlite_path is not None:
+            # A half-written database created here is worse than none.
+            from pathlib import Path
+
+            Path(sqlite_path).unlink(missing_ok=True)
+        raise
+    return report
