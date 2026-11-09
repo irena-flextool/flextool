@@ -1259,3 +1259,15 @@ Regenerated with `pytest tests/test_scenarios.py --regenerate coal_wind_inertia`
 regeneration rewrote (`costs__dt.csv`, `unit__outputNode__dt.csv`) had the same values (header spelling only) and
 were put back.  `all`, `test_a_lot` and `online_bin_lin` also have an inertia group but no inertia golden; their
 goldens still match.
+
+## 2026-11-09 — `coal_wind_inertia/group__unit__node_inertia__dt.csv` (new golden)
+
+**Context.** A regression guard for the inertia output fix above: the per-unit table is now populated, and the
+scenario gets it as a golden (`tests/scenarios.yaml`).
+
+- One column (electricity, coal_plant, west) = coal_plant's output flow in `unit__outputNode__dt.csv` × its
+  `inertia_constant` 5, checked in every hour (48 rows): t0001 209 × 5 = 1045 MWs, t0004 40 × 5 = 200 MWs.
+- No other golden changed.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate coal_wind_inertia`; the other two files the
+regeneration rewrote (`costs__dt.csv`, `unit__outputNode__dt.csv`, header spelling only) were put back.

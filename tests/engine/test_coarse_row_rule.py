@@ -376,16 +376,36 @@ def test_inertia_limit_varying_within_a_day_uses_its_step_mean(tmp_path_factory)
 
 def test_non_synchronous_limit_varying_within_a_day_is_named(tmp_path_factory) -> None:
     """lh2_ns's non_synchronous_limit as a time map (1 % then 3 % within each day): the averaged row uses its step
-    mean, which the coarse-flow behaviour notice names for the liquefiers; a constant limit is not named."""
+    mean, which the coarse-flow behaviour notice names for the liquefiers; a constant limit is not named.
+
+    Hand derivation (EQ. non_sync_constraint_coarse, w = Δt/Δ_b = 1/24): every right-hand-side term is × ns_limit
+    and the rest of each term is constant within the day (the coarse flows are one column per day, the inflows a
+    constant −60 MW), so the row's coefficients and bound take the limit's step mean (12·0.01 + 12·0.03)/24 = 0.02:
+    the row of the constant 2 %, coefficient by coefficient."""
     from flextool.engine.preprocess.flex_data import coarse_process_reasons
 
     lim = _tmap_lh2(lambda h: 0.01 if h % 24 < 12 else 0.03)
     vals = _with_limit(_NONSYNC, "lh2_ns", "non_synchronous_limit", lim)
     fd = last_stochastic(_case(tmp_path_factory, "rr_nonsync_tmap", vals, _NONSYNC_ENTS)).flex_data
-    assert row_terms(build(fd), "non_sync_constraint_coarse", "lh2_ns,")
+    pb = build(fd)
+    terms = row_terms(pb, "non_sync_constraint_coarse", "lh2_ns,")
+    assert _steps_of(terms) == _DAYS
     why = coarse_process_reasons(fd, fd.process_coarse_step)["liquefier_A"]
     assert any("non-synchronous row of 'lh2_ns' uses the step mean" in w for w in why)
     const = last_stochastic(_case(tmp_path_factory, "rr_nonsync_const", _NONSYNC, _NONSYNC_ENTS)).flex_data
+    pb_const = build(const)
+    terms_const = row_terms(pb_const, "non_sync_constraint_coarse", "lh2_ns,")
+    assert terms.keys() == terms_const.keys()
+    for row, cols in terms_const.items():
+        assert terms[row].keys() == cols.keys(), row
+        for col, v in cols.items():
+            assert terms[row][col] == pytest.approx(v, rel=1e-12), (row, col)
+    assert any(not c.startswith(("vq_", "v_flow[liquefier_A,")) for cols in terms.values() for c in cols), (
+        "no right-hand-side (× ns_limit) column in the coarse row")
+    bounds, bounds_const = (row_bounds(x, "non_sync_constraint_coarse", "lh2_ns,") for x in (pb, pb_const))
+    assert bounds.keys() == bounds_const.keys()
+    for row, (lo, hi) in bounds_const.items():
+        assert bounds[row] == (lo, pytest.approx(hi, rel=1e-12)), row
     why = coarse_process_reasons(const, const.process_coarse_step).get("liquefier_A", [])
     assert not any("non-synchronous row of 'lh2_ns' uses the step mean" in w for w in why)
 

@@ -198,6 +198,7 @@
   csvs:
     - unit__outputNode__dt.csv
     - group_inertia__dt.csv
+    - group__unit__node_inertia__dt.csv
     - costs__dt.csv
   time_budget_seconds: 10.0
 
