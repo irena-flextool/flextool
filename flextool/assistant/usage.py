@@ -12,12 +12,15 @@ or output count is missing adds one to ``not_reported``.  ``rejected_attempts`` 
 before any output.  ``cost`` is summed only from values the provider reported (OpenRouter's credits) and stays
 ``null`` otherwise.  No conversation content is written here; the ledger survives the conversation expiry,
 including expiry 0.  Every update is a read-modify-replace under the file's lock; a failing update is a warning on
-stderr, never a failed answer.
+stderr, never a failed answer.  A ledger that is not JSON, or not of the form above, is moved aside
+(``usage.json.damaged-<time>-<hex>``, kept 30 days) once two reads in a row agree; the counts of the known form are
+carried into the new ledger.
 """
 from __future__ import annotations
 
+import json
+import math
 import sys
-import time
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from pathlib import Path
@@ -35,6 +38,73 @@ def empty_counts() -> dict[str, Any]:
     counts: dict[str, Any] = {name: 0 for name in COUNT_FIELDS}
     counts["cost"] = None
     return counts
+
+
+def _count(value: object) -> bool:
+    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
+
+
+def _cost_ok(value: object) -> bool:
+    return value is None or (isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value))
+
+
+def counts_ok(raw: object) -> bool:
+    """Whether *raw* is a counts object of the known form: every count present is an integer of 0 or more, the
+    cost a finite number or ``null``."""
+    return (isinstance(raw, dict) and all(_count(raw[name]) for name in COUNT_FIELDS if name in raw)
+            and _cost_ok(raw.get("cost")))
+
+
+def clean_counts(raw: object) -> dict[str, Any]:
+    """*raw* as counts of the known form: a count that is not an integer of 0 or more is 0, a cost that is not a
+    finite number is ``None``."""
+    data = raw if isinstance(raw, dict) else {}
+    counts: dict[str, Any] = {name: data[name] if _count(data.get(name)) else 0 for name in COUNT_FIELDS}
+    cost = data.get("cost")
+    counts["cost"] = float(cost) if cost is not None and _cost_ok(cost) else None
+    return counts
+
+
+def _salvage(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """The ledger *data* with only the cells of the known form; and whether it was of that form throughout."""
+    whole = True
+    months_out: dict[str, Any] = {}
+    months = data.get("months")
+    if not isinstance(months, dict):
+        return {"format": _files.FORMAT, "months": {}}, False
+    for month, providers in months.items():
+        if not isinstance(providers, dict):
+            whole = False
+            continue
+        for key, provider in providers.items():
+            models = provider.get("models") if isinstance(provider, dict) else None
+            if not isinstance(models, dict) or not isinstance(provider.get("label", ""), str):
+                whole = False
+                continue
+            kept = {}
+            for model, counts in models.items():
+                if counts_ok(counts):
+                    kept[model] = counts
+                else:
+                    whole = False
+            if kept:
+                months_out.setdefault(month, {})[key] = {"label": provider.get("label") or key, "models": kept}
+            elif models:
+                whole = False
+    return {**data, "format": data.get("format", _files.FORMAT), "months": months_out}, whole
+
+
+def ledger_ok(data: object) -> bool:
+    """Whether *data* is a ledger of the known form throughout."""
+    return isinstance(data, dict) and _salvage(data)[1]
+
+
+def _ledger_damaged(raw: bytes) -> bool:
+    try:
+        data = json.loads(raw.decode("utf-8"))
+    except ValueError:
+        return True
+    return not isinstance(data, dict) or (not _files.is_newer(data) and not ledger_ok(data))
 
 
 def is_partial(usage: Usage) -> bool:
@@ -86,14 +156,20 @@ class Ledger:
         self.path = (config_root or _files.config_root()) / FILE_NAME
 
     def read(self) -> dict[str, Any]:
-        """The ledger's data (an empty ledger when there is none or it cannot be read)."""
+        """The ledger's data (an empty ledger when there is none or it cannot be read; only the counts of the known
+        form when part of it is not)."""
         try:
             data = _files.read_json(self.path)
         except (OSError, _files.UnreadableFile):
             data = None
-        if not data or not isinstance(data.get("months"), dict):
+        if not data:
             return {"format": _files.FORMAT, "months": {}}
-        return data
+        return _salvage(data)[0]
+
+    def _set_aside(self, problem: str) -> None:
+        aside = _files.quarantine(self.path, _ledger_damaged)
+        print(f"Warning: {problem}. It was kept as {aside.name}; the new usage record carries the counts that "
+              "could be read.", file=sys.stderr)
 
     def _update(self, provider_key: str, label: str, model: str, now: datetime | None, change) -> bool:
         try:
@@ -101,22 +177,27 @@ class Ledger:
                 try:
                     data = _files.read_json(self.path) or {"format": _files.FORMAT, "months": {}}
                 except _files.UnreadableFile as exc:
-                    aside = self.path.with_name(f"{self.path.name}.damaged-{int(time.time())}")
-                    self.path.replace(aside)
-                    print(f"Warning: {exc} It was kept as {aside.name} and a new usage record started.",
-                          file=sys.stderr)
+                    self._set_aside(str(exc))
                     data = {"format": _files.FORMAT, "months": {}}
                 if _files.is_newer(data):
                     raise _files.NewerFormat(self.path, data.get("format"))
+                salvaged, whole = _salvage(data)
+                if not whole:
+                    self._set_aside(f"{self.path.name} is not a usage record of the known form")
+                    data = salvaged
                 months = data.setdefault("months", {})
                 provider = months.setdefault(_month(now), {}).setdefault(provider_key, {"label": label, "models": {}})
                 provider["label"] = label
                 counts = provider.setdefault("models", {}).setdefault(model or "(no model)", empty_counts())
                 change(counts)
-                _files.write_json_atomic(self.path, data)
+                # Read and checked just now under the lock (a damaged file was set aside): not parsed again.
+                _files.write_json_atomic(self.path, data, format_checked=True)
             return True
         except (OSError, _files.LockTimeout, _files.NewerFormat) as exc:
             print(f"Warning: the usage record could not be updated: {exc}", file=sys.stderr)
+            return False
+        except Exception as exc:        # noqa: BLE001  (the ledger never fails an answer: module docstring)
+            print(f"Warning: the usage record could not be updated: {type(exc).__name__}: {exc}", file=sys.stderr)
             return False
 
     def record(self, provider_key: str, label: str, model: str, usage: Usage | None, *,

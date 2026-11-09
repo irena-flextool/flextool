@@ -17,13 +17,15 @@ import subprocess
 import sys
 import threading
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
 
 from flextool.assistant import _files, settings, store as store_module
-from flextool.assistant.llm_adapter import Message
+from flextool.assistant.llm_adapter import Message, Usage
 from flextool.assistant.store import Store
+from flextool.assistant.usage import Ledger, add_usage
 from tests.assistant import store_workers
 
 ORIGIN = ("gemini", "https://generativelanguage.googleapis.com/v1beta/openai/", "model-a")
@@ -318,3 +320,141 @@ def test_an_opener_waits_for_a_released_lock_that_windows_has_not_deleted_yet(st
     assert lock_data(lock_path)["pid"] == os.getpid()
     st.close(opened)
 
+
+
+# --- C5-4: files of the wrong shape; damage decided on stable evidence ---------------------------------------------
+@pytest.fixture
+def no_wait(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """``_files._sleep`` records instead of sleeping (the quarantine's second look)."""
+    waits: list[float] = []
+    monkeypatch.setattr(_files, "_sleep", waits.append, raising=False)
+    return waits
+
+
+def damaged_copies(folder: Path, name: str) -> list[str]:
+    return sorted(n for n in os.listdir(folder) if n.startswith(f"{name}.damaged-"))
+
+
+NOV = datetime(2026, 11, 7, 12, tzinfo=timezone.utc)
+
+
+def test_a_ledger_of_the_wrong_shape_is_set_aside_and_its_good_counts_carried(root, no_wait, capsys):
+    good = {"requests": 2, "input_uncached": 20, "cache_read": 0, "cache_write": 0, "output": 4, "not_reported": 0,
+            "rejected_attempts": 0, "cost": None}
+    path = root / "usage.json"
+    root.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"format": 1, "months": {"2026-10": {"p": {"label": "P", "models": {
+        "bad": {"requests": "7"}, "good": good}}}}}), encoding="utf-8")
+    assert Ledger(root).read()["months"] == {"2026-10": {"p": {"label": "P", "models": {"good": good}}}}
+    assert Ledger(root).record("gemini", "Google Gemini", "m", Usage(5, 0, 0, 1), now=NOV) is True
+    assert len(damaged_copies(root, "usage.json")) == 1
+    months = json.loads(path.read_text(encoding="utf-8"))["months"]
+    assert months["2026-10"] == {"p": {"label": "P", "models": {"good": good}}}
+    assert months["2026-11"]["gemini"]["models"]["m"]["requests"] == 1
+    assert "not a usage record of the known form" in capsys.readouterr().err
+    path.write_text(json.dumps({"format": 1, "months": []}), encoding="utf-8")
+    assert Ledger(root).record("gemini", "Google Gemini", "m", Usage(5, 0, 0, 1), now=NOV) is True
+    assert len(damaged_copies(root, "usage.json")) == 2
+    assert list(json.loads(path.read_text(encoding="utf-8"))["months"]) == ["2026-11"]
+    path.write_text(json.dumps({"format": 1, "months": {"2026-10": {"p": {"models": {"m": {"output": -1}}}}}}),
+                    encoding="utf-8")
+    assert Ledger(root).read()["months"] == {}
+
+
+def test_a_ledger_read_that_looks_damaged_once_is_not_set_aside(root, no_wait, monkeypatch, capsys):
+    path = root / "usage.json"
+    root.mkdir(parents=True, exist_ok=True)
+    Ledger(root).record("gemini", "Google Gemini", "m", Usage(5, 0, 0, 1), now=NOV)
+    before = path.read_bytes()
+    real = Path.read_text
+    first = [True]
+
+    def half_read(self, *args, **kwargs):           # the first read meets a file another program is writing
+        if self == path and first[0]:
+            first[0] = False
+            return before.decode("utf-8")[:12]
+        return real(self, *args, **kwargs)
+    monkeypatch.setattr(Path, "read_text", half_read)
+    assert Ledger(root).record("gemini", "Google Gemini", "m", Usage(5, 0, 0, 1), now=NOV) is False
+    assert damaged_copies(root, "usage.json") == []
+    assert path.read_bytes() == before
+    assert "left as it is" in capsys.readouterr().err
+
+
+def test_projects_json_is_set_aside_only_on_a_second_identical_read(st, root, no_wait, monkeypatch):
+    path = root / "projects.json"
+    root.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"format": 1, "projects": {}}), encoding="utf-8")
+    before = path.read_bytes()
+    real = Path.read_text
+    first = [True]
+
+    def half_read(self, *args, **kwargs):
+        if self == path and first[0]:
+            first[0] = False
+            return '{"format": 1, "proj'
+        return real(self, *args, **kwargs)
+    monkeypatch.setattr(Path, "read_text", half_read)
+    with pytest.raises(OSError):
+        st._change_projects(lambda rows: rows.setdefault("k", {}))
+    assert damaged_copies(root, "projects.json") == [] and path.read_bytes() == before
+    monkeypatch.setattr(Path, "read_text", real)
+    # Damaged for real, twice within one second: two copies (they used to share one name), no write over either.
+    for text in ("{", "[1]"):
+        path.write_text(text, encoding="utf-8")
+        st._change_projects(lambda rows: rows.setdefault("k", {}))
+    copies = damaged_copies(root, "projects.json")
+    assert len(copies) == 2 and all(_files.DAMAGED.match(c) for c in copies)
+    assert sorted((root / c).read_text(encoding="utf-8") for c in copies) == ["[1]", "{"]
+
+
+def test_a_conversation_of_the_wrong_shape_is_damaged_keeps_no_lock_and_stays_put(st, project):
+    older = saved(st, project, "the older one")
+    st.close(older)
+    bad = saved(st, project, "the newer one")
+    st.close(bad)
+    file = st.project_dir(bad.project_key) / f"{bad.id}.json"
+    data = json.loads(file.read_text(encoding="utf-8"))
+    data["messages"] = ["oops"]
+    file.write_text(json.dumps(data), encoding="utf-8")
+    os.utime(file, (time.time() + 60, time.time() + 60))           # surely the newest
+    for _ in range(2):
+        with pytest.raises(store_module.ConversationDamaged):
+            st.open(project, bad.id, if_locked="raise")
+        assert not (file.parent / f"{bad.id}.json.lock").exists()
+    assert file.exists()
+    opened = st.open(project)                       # the newest that can be read
+    assert opened.id == older.id
+    st.close(opened)
+    data["messages"] = 5
+    file.write_text(json.dumps(data), encoding="utf-8")
+    assert [i.id for i in st.list_conversations(project)] == [older.id]
+
+
+def test_stored_usage_counts_that_are_not_numbers_read_as_zero(st, project):
+    conv = saved(st, project)
+    st.close(conv)
+    file = st.project_dir(conv.project_key) / f"{conv.id}.json"
+    data = json.loads(file.read_text(encoding="utf-8"))
+    data["usage"] = {"output": "12", "input_uncached": 30, "cost": "x"}
+    file.write_text(json.dumps(data), encoding="utf-8")
+    opened = st.open(project, conv.id)
+    assert (opened.usage["output"], opened.usage["input_uncached"], opened.usage["cost"]) == (0, 30, None)
+    add_usage(opened.usage, Usage(5, 0, 0, 2))
+    assert (opened.usage["output"], opened.usage["input_uncached"]) == (2, 35)
+    st.close(opened)
+
+
+def test_a_conversation_of_a_newer_flextool_opens_read_only_with_unknown_messages_skipped(st, project):
+    conv = saved(st, project, "first")
+    st.close(conv)
+    file = st.project_dir(conv.project_key) / f"{conv.id}.json"
+    data = json.loads(file.read_text(encoding="utf-8"))
+    data["format"] = 2
+    data["messages"].append({"role": "planner", "text": "a newer kind"})
+    file.write_text(json.dumps(data), encoding="utf-8")
+    before = file.read_bytes()
+    opened = st.open(project, conv.id)
+    assert opened.read_only and [m.text for m in opened.messages] == ["first"]
+    assert not (file.parent / f"{conv.id}.json.lock").exists()
+    assert file.read_bytes() == before and damaged_copies(file.parent, f"{conv.id}.json") == []

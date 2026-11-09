@@ -201,13 +201,18 @@ def message_to_json(m: Message) -> dict[str, Any]:
 
 
 def message_from_json(d: dict[str, Any]) -> Message:
+    if not isinstance(d, dict):
+        raise ValueError("a message is not an object")
     role = d.get("role")
     if role not in ("user", "assistant", "tool"):
         raise ValueError(f"a message has the role {role!r}")
+    raw_calls = d.get("tool_calls") or []
+    if not isinstance(raw_calls, list) or not all(isinstance(c, dict) for c in raw_calls):
+        raise ValueError("the tool calls of a message are not a list of objects")
     calls = [ToolCall(id=str(c["id"]), name=str(c["name"]),
                       arguments=c.get("arguments") if isinstance(c.get("arguments"), dict) else None,
                       raw_arguments=str(c.get("raw_arguments", "")), provider_extra=dict(c.get("provider_extra") or {}))
-             for c in d.get("tool_calls") or []]
+             for c in raw_calls]
     return Message(role=role, text=str(d.get("text", "")), tool_calls=calls, tool_call_id=d.get("tool_call_id"),
                    tool_name=d.get("tool_name"), is_error=bool(d.get("is_error", False)),
                    provider_extra=dict(d.get("provider_extra") or {}), origin=_origin(d.get("origin")),
@@ -310,8 +315,9 @@ class Store:
             try:
                 data = _files.read_json(path) or {"format": _files.FORMAT, "projects": {}}
             except _files.UnreadableFile as exc:
-                aside = path.with_name(f"{path.name}.damaged-{int(time.time())}")
-                path.replace(aside)
+                # Set aside only when a second read gives the same bytes (TransientRead, an OSError, otherwise:
+                # nothing is written this time); a move that fails leaves the file and writes nothing either.
+                aside = _files.quarantine(path, _files.not_a_json_object)
                 _warn(f"{exc} It was kept as {aside.name}.")
                 data = {"format": _files.FORMAT, "projects": {}}
             newer = _files.is_newer(data)
@@ -323,7 +329,8 @@ class Store:
             if _files.dumps(data) != before:
                 if newer:
                     raise _files.NewerFormat(path, data.get("format"))
-                _files.write_json_atomic(path, data)
+                # Read and checked just now under the lock (an unreadable file was set aside): not parsed again.
+                _files.write_json_atomic(path, data, format_checked=True)
             return result
 
     def _touch_project(self, path: Path, name: str, key: str) -> None:
@@ -391,12 +398,6 @@ class Store:
             times.append(path.stat().st_mtime)
         return max(times) if times else 0.0
 
-    def _newest_id(self, key: str) -> str | None:
-        files = self._conversation_files(key)
-        if not files:
-            return None
-        return max(files, key=lambda item: (self._last_change(*item), item[0]))[0]
-
     def _locked_by(self, key: str, conversation_id: str) -> LockedBy | None:
         conv = self._registered(key, conversation_id)
         if conv is not None and not conv.closed:
@@ -432,16 +433,30 @@ class Store:
 
     def open(self, project_path: Any, conversation_id: str | None = None, *,
              if_locked: Literal["new", "raise"] = "new") -> Conversation:
-        """The saved conversation *conversation_id* of the project (the newest when ``None``), open in this
-        process.  Open elsewhere: with ``if_locked="new"`` a new conversation with :data:`LOCKED_NEW` as its
-        ``notice``; with ``"raise"`` :class:`ConversationLocked`.  Raises :class:`ConversationNotFound` when there
-        is no such conversation (or none at all), and :class:`ConversationDamaged` for a file it cannot read."""
+        """The saved conversation *conversation_id* of the project (the newest that can be read when ``None``),
+        open in this process.  Open elsewhere: with ``if_locked="new"`` a new conversation with :data:`LOCKED_NEW`
+        as its ``notice``; with ``"raise"`` :class:`ConversationLocked`.  Raises :class:`ConversationNotFound` when
+        there is no such conversation (or none at all), and :class:`ConversationDamaged` for a file it cannot read
+        (which is left where it is, with its lock released)."""
         path, name, key = self._project(project_path)
-        if conversation_id is None:
-            conversation_id = self._newest_id(key)
-            if conversation_id is None:
-                raise ConversationNotFound(None)
-        _check_id(conversation_id)
+        if conversation_id is not None:
+            return self._open_one(project_path, path, name, key, _check_id(conversation_id), if_locked)
+        files = sorted(self._conversation_files(key), key=lambda item: (self._last_change(*item), item[0]),
+                       reverse=True)
+        damaged: ConversationDamaged | None = None
+        for candidate, _file in files:
+            try:
+                return self._open_one(project_path, path, name, key, candidate, if_locked)
+            except ConversationDamaged as exc:
+                damaged = damaged or exc
+            except ConversationNotFound:
+                continue            # deleted in between
+        if damaged is not None:
+            raise damaged
+        raise ConversationNotFound(None)
+
+    def _open_one(self, project_path: Any, path: Path, name: str, key: str, conversation_id: str,
+                  if_locked: Literal["new", "raise"]) -> Conversation:
         file, _lock_path, title_file = self._paths(key, conversation_id)
         if not file.exists():
             raise ConversationNotFound(conversation_id)
@@ -458,28 +473,35 @@ class Store:
                 return self.new_conversation(project_path, _origin((data or {}).get("origin")),
                                              (data or {}).get("level"), notice=LOCKED_NEW)
             try:
-                data = _files.read_json(file)
-            except (OSError, _files.UnreadableFile) as exc:
+                conv = self._read_conversation(file, path, name, key, conversation_id)
+                conv.title = self._read_title(title_file)
+                if conv.read_only:
+                    held.release()
+                    return conv
+                conv._lock = held
+                self._register(conv)
+            except BaseException:
                 held.release()
-                raise ConversationDamaged(f"The saved conversation {conversation_id} could not be read: {exc}") \
-                    from None
-            if data is None:
-                held.release()
-                raise ConversationNotFound(conversation_id)
-            try:
-                conv = self._from_json(data, path, name, key, conversation_id)
-            except (KeyError, TypeError, ValueError) as exc:
-                held.release()
-                raise ConversationDamaged(f"The saved conversation {conversation_id} could not be read: {exc}") \
-                    from None
-            conv.title = self._read_title(title_file)
-            if conv.read_only:
-                held.release()
-                conv.notice = str(_files.NewerFormat(file, data.get("format")))
-                return conv
-            conv._lock = held
-            self._register(conv)
+                raise
         self._touch_project(path, name, key)
+        return conv
+
+    def _read_conversation(self, file: Path, path: Path, name: str, key: str, conversation_id: str
+                           ) -> Conversation:
+        try:
+            data = _files.read_json(file)
+        except (OSError, _files.UnreadableFile) as exc:
+            raise ConversationDamaged(f"The saved conversation {conversation_id} could not be read: {exc}") \
+                from None
+        if data is None:
+            raise ConversationNotFound(conversation_id)
+        try:
+            conv = self._from_json(data, path, name, key, conversation_id)
+        except Exception as exc:        # noqa: BLE001  (any shape this FlexTool does not know: not opened)
+            raise ConversationDamaged(f"The saved conversation {conversation_id} could not be read: {exc}") \
+                from None
+        if conv.read_only:
+            conv.notice = str(_files.NewerFormat(file, data.get("format")))
         return conv
 
     @staticmethod
@@ -500,9 +522,23 @@ class Store:
 
     @staticmethod
     def _from_json(data: dict[str, Any], path: Path, name: str, key: str, conversation_id: str) -> Conversation:
+        from flextool.assistant.usage import clean_counts
+
         usage = _empty_usage()
-        if isinstance(data.get("usage"), dict):
-            usage.update(data["usage"])
+        usage.update({k: v for k, v in clean_counts(data.get("usage")).items() if k in usage})
+        newer = _files.is_newer(data)
+        raw_messages = data.get("messages") or []
+        if not isinstance(raw_messages, list):
+            if not newer:
+                raise ValueError("its messages are not a list")
+            raw_messages = []
+        messages = []
+        for raw in raw_messages:
+            try:
+                messages.append(message_from_json(raw))
+            except Exception:       # noqa: BLE001  (a newer FlexTool's message this one does not know: skipped)
+                if not newer:
+                    raise
         number = data.get("number")
         return Conversation(
             id=conversation_id, project_key=key, project_name=name, project_path=path,
@@ -511,9 +547,9 @@ class Store:
             # at their last question, never a choice, so it is not read (those chats are at the automatic level).
             origin=_origin(data.get("origin")), level=_level(data.get("level")),
             system_hash=str(data.get("system_hash", "")), tools_hash=str(data.get("tools_hash", "")),
-            messages=[message_from_json(m) for m in data.get("messages") or []], usage=usage,
+            messages=messages, usage=usage,
             number=number if isinstance(number, int) and not isinstance(number, bool) else None,
-            read_only=_files.is_newer(data))
+            read_only=newer)
 
     def save(self, conv: Conversation) -> bool:
         """Write *conv* (temp file + replace); ``True`` when written.  Nothing is written for a deleted, closed or
@@ -555,7 +591,7 @@ class Store:
         out = []
         for conversation_id, file in self._conversation_files(key):
             data = self._peek(file)
-            if data is None:
+            if data is None or not isinstance(data.get("messages") or [], list):
                 continue
             messages = [m for m in data.get("messages") or [] if isinstance(m, dict)]
             question = first_question(messages)
