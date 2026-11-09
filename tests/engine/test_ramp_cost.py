@@ -19,7 +19,7 @@ import pytest
 
 from flextool.engine.input._solve_state import FlexToolConfigError
 from tests.engine._lp_rows import row_terms, step_of
-from tests.engine._unit_db import PLANT, RunCache, b64, build, flow, make_db, run, time_map, utf8
+from tests.engine._unit_db import CHP, CHP_CHAIN, COAL, PLANT, RunCache, b64, build, flow, make_db, run, time_map, utf8
 
 pytestmark = [pytest.mark.solver]
 
@@ -66,6 +66,19 @@ def _last(steps: dict):
 def _ramps_dt(tmp_path_factory, alt: str, values: list, chain=("init", "west", "coal"), entities=None
               ) -> tuple[dict, dict[tuple[str, str], float]]:
     """Solve with the CSV outputs; ``(steps, {(period, time): ramps})`` from ``costs__dt.csv``."""
+    steps, out = _csv_outputs(tmp_path_factory, alt, values, chain, entities)
+    return steps, _read_ramps(out)
+
+
+def _read_ramps(out) -> dict[tuple[str, str], float]:
+    """``{(period, time): ramps}`` from ``costs__dt.csv`` in the CSV folder ``out``."""
+    with open(out / "costs__dt.csv", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    return {(r["period"], r["time"]): float(r["ramps"]) for r in rows}
+
+
+def _csv_outputs(tmp_path_factory, alt: str, values: list, chain=("init", "west", "coal"), entities=None):
+    """Solve and write the CSV outputs; ``(steps, folder of the CSV files)``."""
     from flextool.engine import run_chain_from_db
     from flextool.process_outputs.write_outputs import write_outputs
 
@@ -78,9 +91,7 @@ def _ramps_dt(tmp_path_factory, alt: str, values: list, chain=("init", "west", "
                   solution=last.solution, solve_name=last.solve_name,
                   solve_steps=[(s.solve_name, s.flex_data, s.effective_solution) for s in steps.values()],
                   flex_data_provider=last.flex_data_provider)
-    with open(work / "output_csv" / scen / "costs__dt.csv", newline="") as fh:
-        rows = list(csv.DictReader(fh))
-    return steps, {(r["period"], r["time"]): float(r["ramps"]) for r in rows}
+    return steps, work / "output_csv" / scen
 
 
 def _rows(step) -> dict:
@@ -112,8 +123,10 @@ def test_both_directions_charged_first_step_free(tmp_path_factory) -> None:
     """Demand X, X, 0, X (then X) on 1-h steps, ramp_cost 2 CUR/MW on the coal output: the flow follows the demand,
     Δ = 0, −300, +300 at t2–t4, so ramps = 2·300 = 600 at t3 and at t4, 0 elsewhere (also at t1, which has no
     predecessor and no row).  The objective rises by 1200 · inflation_op / period_share over the model without the
-    cost."""
-    steps, ramps = _ramps_dt(tmp_path_factory, "rc_both", _cost() + _demand({"t0003": 0.0}))
+    cost.  The per-unit discounted table shows the same ramps as the system one: 1200 · inflation_op / period_share
+    · the discount factor (total discounted cost / objective) / 1e6."""
+    steps, out = _csv_outputs(tmp_path_factory, "rc_both", _cost() + _demand({"t0003": 0.0}))
+    ramps = _read_ramps(out)
     step = _last(steps)
     assert flow(step, PLANT, "coal_market", "west").to_list()[:4] == pytest.approx([X, X, 0.0, X], abs=TOL)
     assert ramps[("p2020", "t0003")] == pytest.approx(600.0, abs=1e-4)
@@ -127,6 +140,15 @@ def test_both_directions_charged_first_step_free(tmp_path_factory) -> None:
     infl = float(utf8(fd.p_inflation_op.frame).filter(pl.col("d") == "p2020")["value"][0])
     share = float(utf8(fd.p_period_share.frame).filter(pl.col("d") == "p2020")["value"][0])
     assert step.solution.obj - without.solution.obj == pytest.approx(1200.0 * infl / share, rel=1e-6)
+    with open(out / "costs_discounted.csv", newline="") as fh:
+        system = {r["category"]: float(r["0"]) for r in csv.DictReader(fh)}
+    with open(out / "cost_unit_discounted__d.csv", newline="") as fh:
+        unit = [r for r in csv.DictReader(fh) if r["unit"] == PLANT]
+    discount = sum(system.values()) * 1e6 / step.solution.obj
+    expected = 1200.0 * infl / share * discount / 1e6
+    assert expected > 0.0
+    assert system["ramps"] == pytest.approx(expected, rel=1e-3)
+    assert [float(r["ramps"]) for r in unit] == pytest.approx([expected], rel=1e-3)
 
 
 # ---------------------------------------------------------------------------
@@ -169,6 +191,48 @@ def test_negative_cost_is_an_error(tmp_path_factory) -> None:
                         base_chain=["init", "west", "coal"])
     with pytest.raises(FlexToolConfigError, match="ramp_cost is negative"):
         run(tmp_path_factory, url, scen)
+
+
+# ---------------------------------------------------------------------------
+# 2b. the cost of an arc sums its sides, each gated by its own ramp_method
+
+IN = "unit__inputNode"
+IN_REL = [PLANT, COAL]
+
+
+def _arc_cost(step) -> dict[tuple[str, str, str], float]:
+    return {(p, s_, k): v for p, s_, k, v in utf8(step.flex_data.p_ramp_cost_arc.frame)
+            .select("p", "source", "sink", "value").iter_rows()}
+
+
+def test_input_and_output_costs_add_up(tmp_path_factory) -> None:
+    """Direct coal_plant (one flow, coal_market -> west) with input ramp_cost 1 and output ramp_cost 2, both
+    ramp_method ramp_cost: the arc's cost is 1 + 2 = 3, so with the demand of test 1 (Δ = −300, +300 at t3, t4)
+    ramps = 3·300 = 900 at t3 and at t4."""
+    vals = _cost() + _cost(rc=1.0, cls=IN, rel=IN_REL) + _demand({"t0003": 0.0})
+    steps, ramps = _ramps_dt(tmp_path_factory, "rc_two_sides", vals)
+    assert _arc_cost(_last(steps)) == pytest.approx({(PLANT, COAL, "west"): 3.0})
+    assert ramps[("p2020", "t0003")] == pytest.approx(900.0, abs=1e-4)
+    assert ramps[("p2020", "t0004")] == pytest.approx(900.0, abs=1e-4)
+    assert sum(ramps.values()) == pytest.approx(1800.0, abs=1e-4)
+
+
+def test_side_gated_by_its_own_method(tmp_path_factory) -> None:
+    """As above, but the input side has ramp_method ramp_limit: its ramp_cost 1 is ignored and the arc's cost is
+    the output side's 2 alone."""
+    vals = _cost() + _cost("ramp_limit", rc=1.0, cls=IN, rel=IN_REL)
+    step = _last(_solve(tmp_path_factory, "rc_side_gate", vals))
+    assert _arc_cost(step) == pytest.approx({(PLANT, COAL, "west"): 2.0})
+
+
+def test_indirect_unit_input_cost_on_its_input_arc(tmp_path_factory) -> None:
+    """Indirect coal_chp (coal_market -> west + heat) with an input-side ramp_cost 2: the cost sits on the input
+    arc (coal_chp, coal_market, coal_chp) alone, not on the output arcs."""
+    vals = _cost(cls=IN, rel=[CHP, COAL])
+    step = _last(_solve(tmp_path_factory, "rc_chp_input", vals, chain=tuple(CHP_CHAIN)))
+    assert _arc_cost(step) == pytest.approx({(CHP, COAL, CHP): 2.0})
+    rows = row_terms(build(step.flex_data), "ramp_change_eq")
+    assert rows and all(r.startswith(f"ramp_change_eq[{CHP},{COAL},{CHP},") for r in rows)
 
 
 # ---------------------------------------------------------------------------
