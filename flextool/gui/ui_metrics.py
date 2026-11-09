@@ -588,6 +588,14 @@ def monitor_dpi(widget: tk.Misc) -> float:
         return 96.0
 
 
+def scaled_px(widget: tk.Misc, px: int) -> int:
+    """*px*, a size in pixels chosen at 96 DPI, at the DPI Tk uses now
+    (:func:`monitor_dpi`): twice as many at 192 DPI.  Never below *px*
+    (macOS's logical 72 DPI and a lowered ``tk scaling`` keep the 96-DPI
+    size)."""
+    return max(px, round(px * monitor_dpi(widget) / 96.0))
+
+
 def get_metrics(root: tk.Misc | None = None) -> FontMetrics:
     """Compute current font metrics from TkDefaultFont. Safe to call any time."""
     default = tkfont.nametofont("TkDefaultFont")

@@ -63,8 +63,10 @@ logger = logging.getLogger(__name__)
 
 POLL_MS = 50
 POLL_BUDGET_S = 0.030
-#: A tab's width beyond its text (N2).
+#: A tab's width beyond its text (N2), in pixels at 96 DPI (:meth:`ChatWindow._tab_pad` scales it).
 TAB_PAD = 34
+#: The scroll bar, paddings and borders around the transcript beyond four character widths, at 96 DPI.
+CHROME_PAD = 40
 #: Saved chats listed in the Reopen and Delete menus.
 MENU_CHATS = 30
 #: How long a reopen waits for the closed chat's worker, and how often it looks.
@@ -499,6 +501,12 @@ class ChatWindow(tk.Toplevel):
         except tk.TclError:
             return tkfont.nametofont("TkDefaultFont")
 
+    def _tab_pad(self) -> int:
+        """:data:`TAB_PAD` at the screen's DPI (review G19, C7-n6)."""
+        from flextool.gui.ui_metrics import scaled_px
+
+        return scaled_px(self, TAB_PAD)
+
     def _fit_tabs(self) -> None:
         self._fit_scheduled = False
         if self.closing:
@@ -511,7 +519,8 @@ class ChatWindow(tk.Toplevel):
         except tk.TclError:
             return
         font = self._tab_font()
-        budget = width - (font.measure(strings.NEW_CHAT) + TAB_PAD)
+        pad = self._tab_pad()
+        budget = width - (font.measure(strings.NEW_CHAT) + pad)
         current = self.current_tab()
         order = [t for t in self._recent if t in self.tabs]
         order += [t for t in self.tabs if t not in order]
@@ -521,7 +530,7 @@ class ChatWindow(tk.Toplevel):
         shown: set[ChatTab] = set()
         used = 0
         for tab in order:
-            needed = font.measure(tab.tab_text()) + TAB_PAD
+            needed = font.measure(tab.tab_text()) + pad
             if (tab is current) or used + needed <= budget:
                 shown.add(tab)
                 used += needed
@@ -1207,7 +1216,9 @@ class ChatWindow(tk.Toplevel):
         fonts = sync_fonts(self)                # the transcript's text and tables, in the chat's fonts
         avg = average_char_px(fonts["base"].measure(SAMPLE))
         fixed = fonts["code"].measure("0")
-        chrome = 4 * cw + 40                    # scroll bar, paddings and borders around the transcript
+        from flextool.gui.ui_metrics import scaled_px
+
+        chrome = 4 * cw + scaled_px(self, CHROME_PAD)   # scroll bar, paddings and borders around the transcript
         exec_rect = self._exec_rect() if self._exec_rect is not None else None
         self._placement = (area, avg, fixed, exec_rect, chrome, min_size)
         self._placed = chat_window_geometry(area, Decoration(), avg, fixed, exec_rect, chrome_px=chrome,

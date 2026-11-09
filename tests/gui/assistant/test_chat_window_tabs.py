@@ -476,6 +476,20 @@ def test_the_window_takes_the_work_area_height_beside_the_execution_window(windo
     assert w + 2 * decoration.border <= 1600
 
 
+def test_the_tab_and_transcript_paddings_follow_the_dpi(windows, monkeypatch):
+    """The tab-fit padding and the transcript's chrome are pixels at 96 DPI, scaled at the screen's DPI and never
+    below the 96-DPI value (review G19, C7-n6)."""
+    from flextool.gui import ui_metrics
+
+    save_provider(LOCAL)
+    monkeypatch.setattr(ui_metrics, "monitor_dpi", lambda _widget: 192.0)
+    window = windows.open(work_area=lambda _m: (0, 0, 1600, 900))
+    assert window._placement[4] == 4 * window._cw + 80
+    assert window._tab_pad() == 2 * chat_window_module.TAB_PAD
+    monkeypatch.setattr(ui_metrics, "monitor_dpi", lambda _widget: 72.0)
+    assert window._tab_pad() == chat_window_module.TAB_PAD
+
+
 def test_a_resize_is_remembered_per_monitor_configuration(windows):
     from types import SimpleNamespace
 
