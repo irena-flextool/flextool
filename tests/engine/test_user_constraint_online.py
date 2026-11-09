@@ -14,8 +14,8 @@ section 0.5 · (1/0.4 − 1/0.5) / (1 − 0.5) = 0.5 MW per MW online and slope 
 output and N units of 100 MW online the fuel is 1.5 · 100 + 0.5 · 100 · N = 150 + 50 · N MW (check: 100 MW from one
 unit → 200 MW of fuel, η 0.5; 50 MW → 125, η 0.4).  The cost is fuel only, so the objective ratio to the
 unconstrained model is free of annualisation.  The units are direct (one input, one output): their v_flow is the
-output (100 MW in total per step) and the fuel enters the cost only, so the fuel is read as 200 MW times the
-objective ratio:
+output (100 MW in total per step) and the fuel enters the cost only, so the fuel is computed from the solution as
+Σ (1.5 · output + 0.5 · unitsize · online) per step:
 
     case                    startup  Σ online ≥  N    fuel   ratio
     control (no constraint) binary   —          1    200    1
@@ -28,7 +28,10 @@ objective ratio:
 A′: one entity ``g`` with existing 3 units of virtual_unitsize 100 (existing is the unit count with a
 virtual_unitsize) — the same numbers as A (count semantics).  D: A with a 2-h ``new_stepduration`` group on
 ``elec``: the units are coarse (``fuel`` is a commodity node, so their every balance node is coarse), the constraint
-is one ``process_constraint_greater_than_coarse`` row for the 2-h step, the same objective.
+is one ``process_constraint_greater_than_coarse`` row for the 2-h step, the same objective.  G: B with
+startup_method unset and a ``minimum_time_method`` instead (promoted to linear online variables).  H: a connection
+``c1`` (elec -> elec2, linear startup) carries the term; without online variables it is an error that names the
+connection, and a coefficient pointing to a constraint the solve does not write (``is_enabled`` no) is ignored.
 """
 from __future__ import annotations
 
@@ -124,6 +127,24 @@ def _per_step(step, var: str, *, source: str | None = None, scale: bool) -> list
     return out["value"].to_list()
 
 
+def _output(step) -> list[float]:
+    """Σ of the units' output (MW) per step: the units are direct, so their one v_flow arc fuel -> elec is the
+    output."""
+    return _per_step(step, "v_flow", source="fuel", scale=True)
+
+
+def _fuel(step) -> list[float]:
+    """Σ of the units' fuel (MW) per step from the solution: 1.5 · output + 0.5 · unitsize · online."""
+    online_mw = [0.0, 0.0]
+    for kind in ("linear", "integer"):
+        try:
+            vals = _per_step(step, f"v_online_{kind}", scale=True)
+        except KeyError:
+            continue
+        online_mw = [a + b for a, b in zip(online_mw, vals)]
+    return [1.5 * f + 0.5 * o for f, o in zip(_output(step), online_mw)]
+
+
 def _online(step) -> list[float]:
     """Σ of the units online (count) per step, over both UC classes."""
     total = [0.0, 0.0]
@@ -149,14 +170,15 @@ def test_units_online_floor(tmp_path_factory, case, startup, constant, n_online,
     """Σ online ≥ constant: fuel 150 + 50·N MW per step, N the units online (integer with binary startup, so
     1.5 needs 2; continuous with linear)."""
     control = _control(tmp_path_factory)
-    assert _per_step(control, "v_flow", source="fuel", scale=True) == pytest.approx([100.0, 100.0], rel=1e-7)
+    assert _output(control) == pytest.approx([100.0, 100.0], rel=1e-7)
     assert _online(control) == pytest.approx([1.0, 1.0], abs=1e-7)
     step = _solve(tmp_path_factory, f"uco_{case}", _values(dict.fromkeys(UNITS, startup), constant=constant),
                   _entities())
     assert _online(step) == pytest.approx([n_online, n_online], abs=1e-7)
-    assert _per_step(step, "v_flow", source="fuel", scale=True) == pytest.approx([100.0, 100.0], rel=1e-7)
+    assert _output(step) == pytest.approx([100.0, 100.0], rel=1e-7)
+    assert _fuel(control) == pytest.approx([200.0, 200.0], rel=1e-7)
+    assert _fuel(step) == pytest.approx([fuel, fuel], rel=1e-7)
     assert float(step.obj) / float(control.obj) == pytest.approx(ratio, rel=1e-7)
-    assert 200.0 * float(step.obj) / float(control.obj) == pytest.approx(fuel, rel=1e-7)
     rows = row_terms(build(step.flex_data), GE, "c_online,")
     assert sorted(rows) == [f"{GE}[c_online,p2020,t0001]", f"{GE}[c_online,p2020,t0002]"]
     kind = "integer" if startup == "binary" else "linear"
@@ -171,7 +193,7 @@ def test_count_of_virtual_units(tmp_path_factory) -> None:
                   _values({"g": "binary"}, existing=3.0, virtual_unitsize=100.0, constant=2.0),
                   _entities(("g",)))
     assert _online(step) == pytest.approx([2.0, 2.0], abs=1e-7)
-    assert _per_step(step, "v_flow", source="fuel", scale=True) == pytest.approx([100.0, 100.0], rel=1e-7)
+    assert _output(step) == pytest.approx([100.0, 100.0], rel=1e-7)
     assert float(step.obj) / float(control.obj) == pytest.approx(1.25, rel=1e-7)
 
 
@@ -182,7 +204,7 @@ def test_linear_and_binary_in_one_row(tmp_path_factory) -> None:
     step = _solve(tmp_path_factory, "uco_mixed",
                   _values({"g1": "linear", "g2": "binary", "g3": "binary"}, constant=1.5), _entities())
     assert _online(step) == pytest.approx([1.5, 1.5], abs=1e-7)
-    assert _per_step(step, "v_flow", source="fuel", scale=True) == pytest.approx([100.0, 100.0], rel=1e-7)
+    assert _output(step) == pytest.approx([100.0, 100.0], rel=1e-7)
     assert float(step.obj) / float(control.obj) == pytest.approx(1.125, rel=1e-7)
     rows = row_terms(build(step.flex_data), GE, "c_online,")
     assert rows[f"{GE}[c_online,p2020,t0002]"] == pytest.approx(
@@ -215,7 +237,8 @@ def test_coefficient_without_online_variables_is_an_error(tmp_path_factory) -> N
     with pytest.raises(FlexToolConfigError) as err:
         run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("uco_E_w"))
     message = str(err.value)
-    for name in ("unit 'g1' in constraint 'c_online'", "unit 'g2'", "unit 'g3'", "startup_method"):
+    for name in ("unit 'g1' in constraint 'c_online'", "unit 'g2'", "unit 'g3'", "startup_method",
+                 "minimum_time_method"):
         assert name in message, message
 
 
@@ -243,3 +266,59 @@ def test_online_term_makes_a_capacity_constraint_per_step(tmp_path_factory) -> N
         terms = rows[f"{GE}[c_cap,p2020,{t}]"]
         assert terms[f"v_online_integer[g1,p2020,{t}]"] == pytest.approx(1.0)
         assert [c for c in terms if c.startswith("v_invest_p[g3,")] == ["v_invest_p[g3,p2020]"]
+
+
+def test_minimum_time_method_gives_online_variables(tmp_path_factory) -> None:
+    """G: B with startup_method unset and minimum_time_method min_uptime (1 h): the units get linear online
+    variables, so the coefficient passes the check and the result is B's (online 1.5, ratio 1.125)."""
+    control = _control(tmp_path_factory)
+    values = _values(dict.fromkeys(UNITS, None), constant=1.5)
+    for u in UNITS:
+        values += [["unit", u, "minimum_time_method", _s("min_uptime")], ["unit", u, "min_uptime", _f(1.0)]]
+    step = _solve(tmp_path_factory, "uco_G", values, _entities())
+    assert _online(step) == pytest.approx([1.5, 1.5], abs=1e-7)
+    assert _fuel(step) == pytest.approx([225.0, 225.0], rel=1e-7)
+    assert float(step.obj) / float(control.obj) == pytest.approx(1.125, rel=1e-7)
+    rows = row_terms(build(step.flex_data), GE, "c_online,")
+    assert rows[f"{GE}[c_online,p2020,t0001]"] == pytest.approx(
+        {f"v_online_linear[{u},p2020,t0001]": 1.0 for u in UNITS})
+
+
+def _with_connection(startup: str | None, coeff: dict[str, float]) -> tuple[list, list]:
+    """A plus connection c1 elec -> elec2 (existing 100 MW, ``startup`` as its startup_method) with the
+    coefficients ``coeff``; ``c_free`` is a disabled constraint (``is_enabled`` no)."""
+    entities = _entities(constraints=("c_online", "c_free")) + [
+        ["node", "elec2", None], ["group__node", ["electricity", "elec2"], None],
+        ["connection", "c1", None], ["connection__node__node", ["c1", "elec", "elec2"], None]]
+    values = _values(dict.fromkeys(UNITS, "binary"), constant=2.0) + [
+        ["node", "elec2", "node_type", _s("balance")], ["constraint", "c_free", "is_enabled", _s("no")],
+        ["connection", "c1", "existing", _f(100.0)],
+        ["connection", "c1", "constraint_online_coeff", _map(coeff)]]
+    if startup is not None:
+        values.append(["connection", "c1", "startup_method", _s(startup)])
+    return entities, values
+
+
+def test_connection_online_term(tmp_path_factory) -> None:
+    """H: a connection with linear startup carries the term: one v_online_linear[c1] in each c_online row."""
+    entities, values = _with_connection("linear", {"c_online": 1.0})
+    step = _solve(tmp_path_factory, "uco_H", values, entities)
+    rows = row_terms(build(step.flex_data), GE, "c_online,")
+    assert rows[f"{GE}[c_online,p2020,t0001]"] == pytest.approx(
+        {"v_online_linear[c1,p2020,t0001]": 1.0} | {f"v_online_integer[{u},p2020,t0001]": 1.0 for u in UNITS})
+
+
+def test_connection_without_online_variables_is_an_error(tmp_path_factory) -> None:
+    """H: c1 without startup_method: the error names the connection and the written constraint only (c_free is
+    disabled), and does not offer minimum_time_method, which connections do not have."""
+    from flextool.engine import run_chain_from_db
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    entities, values = _with_connection(None, {"c_online": 1.0, "c_free": 1.0})
+    url, scen = make_db(tmp_path_factory, alt="uco_H_err", values=values, base_chain=["init"], entities=entities)
+    with pytest.raises(FlexToolConfigError) as err:
+        run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("uco_H_err_w"))
+    message = str(err.value)
+    assert "connection 'c1' in constraint 'c_online'" in message, message
+    assert "c_free" not in message, message
+    assert "minimum_time_method" not in message, message

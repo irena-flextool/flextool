@@ -36,7 +36,7 @@ def migrated(tmp_path_factory: pytest.TempPathFactory) -> dict:
     migrate_database(url, up_to=78)
     with DatabaseMapping(url) as db:
         before = _defs(db)
-    migrate_database(url)
+    migrate_database(url, up_to=79)
     with DatabaseMapping(url) as db:
         after = _defs(db)
     return {"url": url, "before": before, "after": after}
