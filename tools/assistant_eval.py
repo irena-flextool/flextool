@@ -1120,6 +1120,21 @@ def dual_grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say
     key = _key_for(args, {f"{c.folder}::{c.cell}": records[(c.folder, c.cell)] for c in sample})
     if key.placeholder:
         raise Refused("The answer key is a placeholder: the second grader needs the oracle's key.")
+    sealed_path = folder / analysis.SEALED_FILE
+    sealed = read_json(sealed_path) if sealed_path.is_file() else {}
+    runs = [(f, read_json(Path(f) / RUN_FILE)) for f in sorted({c.folder for c in sample})]
+    names = scoring.identity_names(runs, records.values())
+    scan_names = scoring.identity_names(runs, records.values(), folders=False)
+    stamps = _stamps(records.values())
+    # The blinding self-test of every request this run would send, before anything is sent.
+    for n, c in enumerate(sample, 1):
+        if f"{c.folder}::{c.cell}" in sealed:
+            continue
+        record = records[(c.folder, c.cell)]
+        text = analysis.grader_user_part(record, qset.questions[c.question], key.questions[c.question], names)
+        found = scoring.leak_scan(text, names=scan_names, stamps=stamps, sources=_tool_text(record))
+        if found:
+            raise Refused(f"Sampled cell {n}: the grader material reveals {found[0]}; nothing was sent.")
     preset = providers.PRESETS[analysis.GRADER_PROVIDER]
     base_url = preset.base_url or ""
     api_key, source, note = keys.resolve_key(preset, base_url)
@@ -1130,8 +1145,6 @@ def dual_grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say
         raise Refused(render("no_key", error_context(preset, conn)) + (f" ({note})" if note else ""))
     accept_route(preset, base_url, route, set(), accept=args.accept_data_notice, again="--accept-data-notice",
                  what="the synthetic grounding answers")
-    sealed_path = folder / analysis.SEALED_FILE
-    sealed = read_json(sealed_path) if sealed_path.is_file() else {}
     ledger = CalibrationLedger(Ledger())
     backend = backend_factory(preset, conn)
     try:
@@ -1145,7 +1158,7 @@ def dual_grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say
                               f"{key.key_version}: run grade first.")
             question = qset.questions[c.question]
             try:
-                result = analysis.grade_with_ai(record, question, key.questions[c.question], backend)
+                result = analysis.grade_with_ai(record, question, key.questions[c.question], backend, names)
             except LLMError as exc:
                 write_json(sealed_path, sealed)
                 say(f"Stopped at cell {n} of {len(sample)}: {message_for(exc, 'terminal')} Run again to continue.")

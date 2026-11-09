@@ -46,6 +46,8 @@ DUAL_WEIGHTED = 24
 DUAL_GRADER_CELLS = 15
 BOOTSTRAP_REPS = 2_000
 RARE_SHARE = 0.10
+#: Above this share of undefined bootstrap resamples the interval is called unreliable.
+UNDEFINED_SHARE = 0.05
 REASON_MAX = 200
 SAMPLE_FILE = "sample.json"
 SEALED_FILE = "grader_verdicts.sealed.json"
@@ -104,12 +106,23 @@ def kappa(pairs: Sequence[tuple[str, str]]) -> tuple[float, float, float | None]
     return observed, expected, (observed - expected) / (1 - expected)
 
 
+@dataclass(frozen=True)
+class Bootstrap:
+    """A bootstrap of kappa: the 95 % percentile interval of the defined resamples (``None`` when none), and how
+    many of the *reps* resamples had no kappa (all their verdicts alike)."""
+
+    interval: tuple[float, float] | None
+    undefined: int
+    reps: int
+
+
 def bootstrap_kappa(clusters: Mapping[str, Sequence[tuple[str, str]]], *, reps: int = BOOTSTRAP_REPS,
-                    seed: int = 0) -> tuple[float, float] | None:
-    """A 95 % percentile interval of kappa, resampling whole clusters (questions) with replacement."""
+                    seed: int = 0) -> Bootstrap:
+    """A 95 % percentile interval of kappa, resampling whole clusters (questions) with replacement; a resample
+    without a kappa is counted, not dropped silently.  Fewer than two clusters: no resampling (``reps`` 0)."""
     keys = sorted(clusters)
     if len(keys) < 2:
-        return None
+        return Bootstrap(None, 0, 0)
     rng = random.Random(seed)
     values = []
     for _ in range(reps):
@@ -117,10 +130,20 @@ def bootstrap_kappa(clusters: Mapping[str, Sequence[tuple[str, str]]], *, reps: 
         value = kappa(pairs)[2]
         if value is not None:
             values.append(value)
+    undefined = reps - len(values)
     if not values:
-        return None
+        return Bootstrap(None, undefined, reps)
     values.sort()
-    return values[int(0.025 * (len(values) - 1))], values[int(math.ceil(0.975 * (len(values) - 1)))]
+    return Bootstrap((values[int(0.025 * (len(values) - 1))], values[int(math.ceil(0.975 * (len(values) - 1)))]),
+                     undefined, reps)
+
+
+def bootstrap_note(boot: Bootstrap) -> str:
+    """The report's words on the undefined resamples ("" when there are none)."""
+    if not boot.undefined:
+        return ""
+    note = f"; {boot.undefined} of {boot.reps} resamples undefined (all verdicts alike)"
+    return note + (", interval unreliable" if boot.undefined > UNDEFINED_SHARE * boot.reps else "")
 
 
 # --- calibrate ------------------------------------------------------------------------------------------------
@@ -259,19 +282,20 @@ def task_support(models: Sequence[ModelEvidence]) -> list[str]:
         for cls in [c for c in scoring.CLASSES if scoring.CLASS_RANK[c] <= scoring.LEVEL_RANK[level]]:
             answered = [m.answered.get((level, cls)) for m in at]
             answered = [r for r in answered if r is not None and r.n]
-            escalated = [m.escalated.get((m.automatic_level, cls)) for m in below
-                         if scoring.CLASS_RANK[cls] > scoring.LEVEL_RANK[m.automatic_level]]
-            escalated = [r for r in escalated if r is not None and r.n]
+            # each rate with its own model's level, so its bar does not depend on the order of the lines
+            escalated = [(r, m.automatic_level) for m in below
+                         if scoring.CLASS_RANK[cls] > scoring.LEVEL_RANK[m.automatic_level]
+                         for r in [m.escalated.get((m.automatic_level, cls))] if r is not None and r.n]
             if not answered:
                 out.append(f"  {level} / {cls}: no model placed at {level} answered it at {level}; read the "
                            "transcripts")
                 continue
             ok_at = all(r.rate >= BARS[level] for r in answered)
-            ok_below = all(r.rate >= BARS[m] for r, m in zip(escalated, [b.automatic_level for b in below]))
+            ok_below = all(r.rate >= BARS[own] for r, own in escalated)
             text = "supports the level text as drafted" if ok_at and ok_below else \
                 "read the transcripts and propose a revised level text to the owner"
             out.append(f"  {level} / {cls}: answered " + ", ".join(_pct(r) for r in answered)
-                       + (("; escalated below " + ", ".join(_pct(r) for r in escalated)) if escalated else "")
+                       + (("; escalated below " + ", ".join(_pct(r) for r, _own in escalated)) if escalated else "")
                        + f" → {text}")
     return out
 
@@ -378,14 +402,15 @@ class DualCell:
 
 
 def eligible(folder: Path, run: Mapping[str, Any], cells: Mapping[str, dict]) -> list[DualCell]:
-    """The cells of a results folder whose outcome depends on a manual item: checked, with a review or manual item,
-    and no automatic critical failure (P3 §7.5, critique M7)."""
+    """The cells of a results folder whose outcome depends on a manual item: checked, with an item for the second
+    grader, and an outcome that a grader's verdicts can change (``outcome()``'s own rule: an escalation cell
+    whose facts fail stays in; P3 §7.5, critique M7)."""
     out = []
     for cid, record in sorted(cells.items()):
         if record.get("not_applicable") or record.get("checks") is None:
             continue
         items = [scoring.Item.from_json(i) for i in record["checks"]]
-        if not manual_items(record) or any(i.critical and i.state == "fail" for i in items):
+        if not manual_items(record) or scoring.outcome_fixed(items):
             continue
         out.append(DualCell(folder=str(folder), cell=cid, provider=run["provider"], model=run["model"],
                             level=record["cell"]["level_setting"], cls=record["cell"]["class"],
@@ -506,8 +531,8 @@ def parse_verdicts(text: str, ids: Sequence[str]) -> dict[str, Any] | None:
     return {"items": verdicts, "confidence": data["confidence"]}
 
 
-def grade_with_ai(record: Mapping[str, Any], question: scoring.Question, entry: scoring.KeyEntry, backend: Any
-                  ) -> dict[str, Any]:
+def grade_with_ai(record: Mapping[str, Any], question: scoring.Question, entry: scoring.KeyEntry, backend: Any,
+                  names: Iterable[str] = ()) -> dict[str, Any]:
     """One grading request (and at most one retry): ``{"items", "confidence"}`` or ``{"unparsed": text}``;
     ``usage`` lists the reported usage of each request."""
     import threading
@@ -515,7 +540,7 @@ def grade_with_ai(record: Mapping[str, Any], question: scoring.Question, entry: 
     from flextool.assistant.llm_adapter import Message, Request
 
     ids = [i.id for i in manual_items(record)]
-    messages = [Message("user", grader_user_part(record, question, entry))]
+    messages = [Message("user", grader_user_part(record, question, entry, names))]
     usage = []
     last = ""
     for attempt in range(2):
@@ -586,7 +611,7 @@ def criterion_summary(rows: Sequence[Mapping[str, Any]], *, seed: int) -> dict[s
     owner_sides = [_side(r["owner"]) for r in rows]
     passes = sum(1 for side in owner_sides if side == "pass")
     rare = min(passes, n - passes) / n < RARE_SHARE
-    return {"n": n, "agreement": observed, "kappa": k, "interval": bootstrap_kappa(clusters, seed=seed),
+    return {"n": n, "agreement": observed, "kappa": k, "bootstrap": bootstrap_kappa(clusters, seed=seed),
             "rare": rare,
             "lenient": sum(1 for r in rows if _side(r["owner"]) == "fail" and _side(r["grader"]) == "pass"),
             "strict": sum(1 for r in rows if _side(r["owner"]) == "pass" and _side(r["grader"]) != "pass")}
@@ -603,7 +628,8 @@ def decision_rule(rows: Mapping[str, Sequence[Mapping[str, Any]]], summaries: Ma
         (f"cell-outcome agreement at least 90 % ({_share(outcome.get('agreement'))})",
          (outcome.get("agreement") or 0) >= 0.90),
         (f"cell-outcome kappa at least 0.75 ({_num(outcome.get('kappa'))}, interval "
-         f"{_interval(outcome.get('interval'))})", (outcome.get("kappa") or 0) >= 0.75),
+         f"{_interval(outcome['bootstrap'].interval if 'bootstrap' in outcome else None)})",
+         (outcome.get("kappa") or 0) >= 0.75),
         (f"review-number agreement at least 95 % ({_share(review.get('agreement'))}, n {review.get('n', 0)})",
          (review.get("agreement") or 0) >= 0.95 and review.get("n", 0) > 0),
         (f"no number the owner judged invented passed by the grader ({passed_invented})", passed_invented == 0),
@@ -635,7 +661,8 @@ def dual_report(sample: Sequence[DualCell], records: Mapping[tuple[str, str], di
             out.append(f"{name}: no items")
             continue
         out.append(f"{name}: n {s['n']}, agreement {_share(s['agreement'])}, kappa {_num(s['kappa'])} "
-                   f"(bootstrap by question {_interval(s['interval'])}); lenient (owner fail, grader pass) "
+                   f"(bootstrap by question {_interval(s['bootstrap'].interval)}"
+                   f"{bootstrap_note(s['bootstrap'])}); lenient (owner fail, grader pass) "
                    f"{s['lenient']}, strict (owner pass, grader fail) {s['strict']}"
                    + ("; one verdict is rarer than 10 %, kappa is unstable" if s["rare"] else ""))
     for authored, label in ((True, "cells written by the grader's own model"), (False, "other cells")):

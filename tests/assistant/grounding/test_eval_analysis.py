@@ -921,3 +921,135 @@ def test_grade_interrupt_keeps_given_verdicts(evaluator, grounding: Path, tmp_pa
     assert grade("--regrade", "#1") == 0
     record = json.loads(first.read_text(encoding="utf-8"))
     assert record["outcome"] == "answered" and record["regrades"][0]["outcome"] == "failed"
+
+
+# --- G14: dual pool, task support and statistics (C6-m3, m6, n1, m2) ----------------------------------------
+def _items(scoring, *specs):
+    return [scoring.Item(id=i, check=c, state=st, critical=cr) for i, c, st, cr in specs]
+
+
+def test_dual_pool_keeps_escalations(analysis, scoring) -> None:
+    """C6-m3: an escalation cell whose critical facts fail as expected is still in the pool; cells that no
+    verdict can change are not."""
+    import itertools
+
+    def record(*items):
+        return {"not_applicable": None, "checks": [i.to_json() for i in items],
+                "cell": {"level_setting": "small", "class": "diagnose", "question": "G08"}}
+
+    fact_fail = ("fact:x", "facts", "fail", True)
+    number = ("number:1:0", "tool_sourced", "review", True)
+    escalation = ("escalation", "escalation", "pass", True)
+    fva = ("facts_vs_assumptions", "manual", "manual", False)
+    forbidden = ("forbidden:0", "forbidden", "fail", True)
+    cells = {"esc": record(*_items(scoring, fact_fail, number, escalation, fva)),
+             "esc_forbidden": record(*_items(scoring, fact_fail, number, escalation, fva, forbidden)),
+             "fact_fail": record(*_items(scoring, fact_fail, number, fva))}
+    got = [c.cell for c in analysis.eligible(Path("/r"), {"provider": "ollama", "model": "m1"}, cells)]
+    assert got == ["esc"]
+    # outcome_fixed is outcome()'s own rule: brute force over every verdict of up to three graded items
+    pool = [fact_fail, number, escalation, fva, forbidden, ("tool_sourced", "tool_sourced", "pass", True),
+            ("number:1:1", "tool_sourced", "review", True), ("units", "units", "pass", False),
+            ("escalation", "escalation", "review", True), ("fact:s", "facts", "manual", True),
+            ("tools", "tools", "fail", False)]
+    checked = 0
+    for size in range(1, 5):
+        for combo in itertools.combinations(pool, size):
+            if len({c[0] for c in combo}) < size:
+                continue
+            items = _items(scoring, *combo)
+            graded = [i for i in items if i.state in ("review", "manual")]
+            if len(graded) > 3:
+                continue
+            outcomes = set()
+            for verdicts in itertools.product(("pass", "fail"), repeat=len(graded)):
+                for i, v in zip(graded, verdicts):
+                    i.verdict = v
+                outcomes.add(scoring.outcome(items))
+            for i in graded:
+                i.verdict = None
+            assert scoring.outcome_fixed(items) == (len(outcomes) == 1), combo
+            checked += 1
+    assert checked > 100
+
+
+def test_task_support_order_independent(analysis) -> None:
+    """C6-m6: each escalation rate is held to its own model's bar, whatever the order of the lines."""
+    def lines(model: str, auto: str, level: str, cls: str, outcome: str, k: int, n: int) -> list[dict]:
+        return [_line(provider="ollama", model=model, automatic_level=auto, level_setting=level, question=f"Q{i}",
+                      outcome=outcome if i < k else "failed", **{"class": cls}) for i in range(n)]
+
+    a = lines("A", "small", "small", "interpret", "escalated", 13, 20)          # 65 %: basic bar 60 %
+    b = lines("B", "medium", "medium", "lookup", "answered", 20, 20)
+    big = lines("L", "large", "large", "interpret", "answered", 16, 20)         # 80 %: advanced bar 75 %
+    for order in ([b, a, big], [a, b, big]):
+        models = list(analysis.evidence([x for part in order for x in part]).values())
+        (row,) = [t for t in analysis.task_support(models) if t.startswith("  large / interpret")]
+        assert row.endswith("supports the level text as drafted"), row
+        assert "escalated below 13/20 65%" in row
+
+
+def test_bootstrap_counts_undefined(analysis) -> None:
+    """C6-n1: resamples without a kappa are counted and reported."""
+    p, f = "pass", "fail"
+    boot = analysis.bootstrap_kappa({"q1": [(p, p)], "q2": [(f, f)]}, reps=2000, seed=3)
+    assert boot.interval == (1.0, 1.0) and boot.reps == 2000
+    # a resample is undefined when both draws are the same question: P = 1/2, sd = sqrt(2000 / 4) ≈ 22
+    assert 900 <= boot.undefined <= 1100
+    note = analysis.bootstrap_note(boot)
+    assert f"; {boot.undefined} of 2000 resamples undefined (all verdicts alike), interval unreliable" == note
+    mixed = analysis.bootstrap_kappa({"q1": [(p, p), (f, f)], "q2": [(p, p), (f, f)]}, reps=500)
+    assert mixed.undefined == 0 and mixed.interval == (1.0, 1.0) and analysis.bootstrap_note(mixed) == ""
+    alike = analysis.bootstrap_kappa({"q1": [(p, p)], "q2": [(p, p)]}, reps=300)
+    assert alike.interval is None and alike.undefined == 300
+    rows = [{"owner": o, "grader": g, "question": q} for q, (o, g) in (("q1", (p, p)), ("q2", (f, f)))]
+    summary = analysis.criterion_summary(rows, seed=3)
+    assert summary["bootstrap"].undefined == boot.undefined
+
+
+def test_statistics_by_hand(analysis) -> None:
+    """Wilson 13/20: z² = 3.8415, centre (0.65 + 0.0960) / 1.1921 = 0.6258, half 1.6442 · 0.11737 = 0.1930.
+    Kappa of (p,p), (f,f), (p,unparsed), (f,f): observed 3/4 = 0.75; expected 0.5·0.25 (pass) + 0.5·0.5 (fail)
+    + 0·0.25 (unparsed) = 0.375; kappa (0.75 − 0.375) / 0.625 = 0.6."""
+    assert analysis.wilson(13, 20) == pytest.approx((0.4329, 0.8188), abs=5e-5)
+    pairs = [("pass", "pass"), ("fail", "fail"), ("pass", "unparsed"), ("fail", "fail")]
+    assert analysis.kappa(pairs) == pytest.approx((0.75, 0.375, 0.6), abs=1e-12)
+
+
+def test_dual_grade_ai_leak_scan_sends_nothing(analysis, scoring, evaluator, tmp_path: Path,
+                                               monkeypatch: pytest.MonkeyPatch, capsys) -> None:
+    """C6-m2: a sampled cell whose material the blinding cannot clean stops grade-ai before any request."""
+    import yaml
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+    key_path = tmp_path / "key.yaml"
+    key_path.write_text(yaml.safe_dump({"format": 1, "set_version": 3, "key_version": 1, "derived_by": "test",
+                                        "questions": {"G01": {"manual": ["facts_vs_assumptions"]}}}),
+                        encoding="utf-8")
+    key = scoring.load_key(key_path)
+    results = tmp_path / "results_m1"
+    evaluator.write_json(results / evaluator.RUN_FILE, {"provider": "ollama", "model": "gamma-three:14b",
+                                                        "project_fingerprint": "f" * 64, "set_version": 3})
+    record = _graded_record(scoring, evaluator, "G01", "pass", answer="Written by gamma-three-like me.")
+    evaluator.auto_check(record, scoring.load_set(), key)
+    evaluator.write_json(evaluator.cell_path(results, "G01__large__r1"), record)
+    dual = tmp_path / "dual"
+    argv = ["--dir", str(dual), "--key", str(key_path), "--results-file", str(tmp_path / "r.jsonl")]
+    assert evaluator.cmd_dual(evaluator.build_parser().parse_args(["dual", "sample", str(results), *argv,
+                                                                   "--seed", "1"]), say=lambda _t: None) == 0
+    backends: list[FakeBackend] = []
+
+    def factory(preset, conn):
+        backends.append(FakeBackend([]))
+        return backends[-1]
+
+    blinded = analysis.grader_user_part(record, scoring.load_set().questions["G01"], key.questions["G01"],
+                                        ["gamma-three"])
+    assert "gamma-three" not in blinded                       # the token itself is blinded ...
+    record["turns"][0]["answer"] = "Written by gamma-threelike me."    # ... a glued one is not: the scan stops it
+    evaluator.write_json(evaluator.cell_path(results, "G01__large__r1"), record)
+    args = evaluator.build_parser().parse_args(["dual", "grade-ai", "--accept-data-notice", *argv])
+    assert evaluator.cmd_dual(args, backend_factory=factory, say=lambda _t: None) == 2
+    err = capsys.readouterr().err
+    assert "the grader material reveals the model's name; nothing was sent" in err
+    assert backends == [] and not (dual / analysis.SEALED_FILE).exists()

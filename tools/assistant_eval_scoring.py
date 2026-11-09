@@ -798,6 +798,19 @@ def outcome(items: Sequence[Item]) -> str | None:
     return "answered"
 
 
+def outcome_fixed(items: Sequence[Item]) -> bool:
+    """Whether the cell's outcome is the same whatever a grader says on its review and manual items (stored
+    verdicts are ignored).  :func:`outcome` is monotone in the verdicts, so the two extremes decide: every such
+    item passed and every one failed."""
+    import dataclasses
+
+    def every(verdict: str) -> str | None:
+        return outcome([dataclasses.replace(i, verdict=verdict) if i.state in ("review", "manual") else i
+                        for i in items])
+
+    return every("pass") == every("fail")
+
+
 def invented_numbers(items: Iterable[Item]) -> int:
     """Numbers without a tool source that the grader judged invented."""
     return sum(1 for i in items if i.check == "tool_sourced" and i.state == "review" and i.verdict == "fail")
