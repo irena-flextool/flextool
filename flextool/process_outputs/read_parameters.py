@@ -1518,7 +1518,7 @@ def read_parameters(
     )
 
     # group_penalty_inertia / group_penalty_non_synchronous /
-    # group_penalty_capacity_margin / group_inertia_limit / group_capacity_margin.
+    # group_penalty_capacity_margin / group_inertia_limit (per time step) / group_capacity_margin.
     #
     # SCEN-6: ``calc_slacks.py`` indexes ``par.group_penalty_capacity_margin
     # [s.groupCapacityMargin]`` and raises ``KeyError`` on a group of
@@ -1549,8 +1549,9 @@ def read_parameters(
         entity_dim="g", col_name="group", flex_data=flex_data,
         densify_entities=_group_cap_margin_universe,
     )
-    p.group_inertia_limit = _pdX_per_entity(
-        flex_data.pdGroup_inertia_limit, solve_name=solve_name,
+    # The inertia limit is per (period, time step): constant, period, time or period + time map.
+    p.group_inertia_limit = _pdtX_per_entity(
+        flex_data.pdtGroup_inertia_limit, solve_name=solve_name,
         entity_dim="g", col_name="group", flex_data=flex_data,
     )
     p.group_capacity_margin = _pdX_per_entity(

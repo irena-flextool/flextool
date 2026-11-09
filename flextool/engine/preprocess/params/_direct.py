@@ -1010,20 +1010,22 @@ def pdGroup_penalty_capacity_margin_from_source(source: "InputSource",
     return _group_penalty_from_source(source, "penalty_capacity_margin", period_filter)
 
 
-def pdGroup_inertia_limit_from_source(source: "InputSource",
-                                       period_filter: pl.DataFrame | None = None,
-                                       *,
-                                       need_periods: "PeriodNeed | None" = None,
-                                       ) -> Param | None:
-    """``group.inertia_limit`` → ``Param(("g","d"))``.
-    Δ.17c-Tier1 — uses ``resolve_param_shape`` + ``broadcast_to_period``.
-    A period map of a group with ``has_inertia = yes`` must cover
-    ``need_periods`` (:func:`require_period_coverage`).
+def pdtGroup_inertia_limit_from_source(source: "InputSource",
+                                        period_filter: pl.DataFrame | None = None,
+                                        *,
+                                        need_periods: "PeriodNeed | None" = None,
+                                        ) -> Param | None:
+    """``group.inertia_limit`` → ``Param`` with the authored dims ⊆ ``(g, d, t)``.
+
+    Constant, period, time or period + time map (:func:`resolve_param_shape` →
+    :func:`broadcast_to_period_time`); zero rows dropped (no requirement there).  A period map, or the period
+    level of a period + time map, of a group with ``has_inertia = yes`` must cover ``need_periods``
+    (:func:`require_period_coverage_time`).
     """
     resolved = resolve_param_shape(
         source, "group", "inertia_limit", period_filter=period_filter)
     active = _group_names(groupInertia(source)) if _gate_needed(need_periods, resolved) else None
-    return require_period_coverage(
+    return require_period_coverage_time(
         resolved, "g", period_filter, entity_class="group", parameter_name="inertia_limit",
         need_periods=need_periods, active=active, filter_zero=True)
 
@@ -1037,21 +1039,23 @@ def pdGroup_penalty_inertia_from_source(source: "InputSource",
     return _group_penalty_from_source(source, "penalty_inertia", period_filter)
 
 
-def pdGroup_non_synchronous_limit_from_source(source: "InputSource",
-                                               period_filter: pl.DataFrame | None = None,
-                                               *,
-                                               need_periods: "PeriodNeed | None" = None,
-                                               ) -> Param | None:
-    """``group.non_synchronous_limit`` → ``Param(("g","d"))``.
-    Δ.17c-Tier1 — uses ``resolve_param_shape`` + ``broadcast_to_period``.
-    A period map of a group with ``has_non_synchronous = yes`` must cover
-    ``need_periods`` (:func:`require_period_coverage`).
+def pdtGroup_non_synchronous_limit_from_source(source: "InputSource",
+                                                period_filter: pl.DataFrame | None = None,
+                                                *,
+                                                need_periods: "PeriodNeed | None" = None,
+                                                ) -> Param | None:
+    """``group.non_synchronous_limit`` → ``Param`` with the authored dims ⊆ ``(g, d, t)``.
+
+    Constant, period, time or period + time map (:func:`resolve_param_shape` →
+    :func:`broadcast_to_period_time`); zero rows dropped (the limit reads as 0).  A period map, or the period
+    level of a period + time map, of a group with ``has_non_synchronous = yes`` must cover ``need_periods``
+    (:func:`require_period_coverage_time`).
     """
     resolved = resolve_param_shape(
         source, "group", "non_synchronous_limit",
         period_filter=period_filter)
     active = _group_names(groupNonSync(source)) if _gate_needed(need_periods, resolved) else None
-    return require_period_coverage(
+    return require_period_coverage_time(
         resolved, "g", period_filter, entity_class="group", parameter_name="non_synchronous_limit",
         need_periods=need_periods, active=active, filter_zero=True)
 
@@ -2592,17 +2596,15 @@ def apply_direct_params_b(source: "InputSource",
     need_margin = PeriodNeed(need_invest.periods & need_dispatch.periods, "invest", active_solve)
     need_online = None if _construction_lag_configured(source) else need_invest
 
-    # ─── Δ.4b — group 1d_map(period) (capacity_margin / inertia / nonSync) ─
-    # Δ.12b: unconditional — _entity_period_scalar handles 1d_map(period)
-    # natively (this is the only Spine shape for these parameters).
-    # Δ.12c-fix gap #3: pass ``dt`` as ``period_filter`` so scalar values
-    # (single ``[name, value]`` row) broadcast across the active solve's
-    # periods, matching flextool's pdGroup.csv preprocessing.
+    # ─── Δ.4b — group capacity_margin (period) and the inertia / nonSync limits (period + time) ─
+    # Δ.12c-fix gap #3: pass ``dt`` as ``period_filter`` so the values restrict to the active solve's
+    # periods (capacity_margin: (g, d)); the inertia / non-synchronous limits keep their authored dims
+    # ⊆ (g, d, t) (broadcast_to_period_time).
     for fn, field, need in (
         (pdGroup_capacity_margin_from_source, "pdGroup_capacity_margin", need_margin),
-        (pdGroup_inertia_limit_from_source, "pdGroup_inertia_limit", need_dispatch),
-        (pdGroup_non_synchronous_limit_from_source,
-            "pdGroup_non_synchronous_limit", need_dispatch),
+        (pdtGroup_inertia_limit_from_source, "pdtGroup_inertia_limit", need_dispatch),
+        (pdtGroup_non_synchronous_limit_from_source,
+            "pdtGroup_non_synchronous_limit", need_dispatch),
     ):
         setattr(flex_data, field,
                 _filter_param_by_periods(fn(source, period_filter=dt, need_periods=need), dt))

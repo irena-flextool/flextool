@@ -1810,6 +1810,8 @@ def migrate_database(
                 _migrate_v80_ramp_cost_descriptions(db)
             elif next_version == 81:
                 _migrate_v81_reduce_detail_methods(db)
+            elif next_version == 82:
+                _migrate_v82_group_limits_by_time(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -5924,6 +5926,43 @@ def _migrate_v81_reduce_detail_methods(db) -> None:
         elif any(pdef[k] != v for k, v in fields.items()):
             db.update_parameter_definition(id=pdef["id"], **fields)
     _commit_step(db, "v81: solve.reduce_unit_detail_method and solve.reduce_system_detail_method")
+
+
+#: v82: ``group.inertia_limit`` and ``group.non_synchronous_limit`` also take a time or period + time map.
+_V82_TYPES: tuple[str, ...] = ("float", "1d_map", "2d_map")
+_V82_DESCRIPTIONS: dict[tuple[str, str], str] = {
+    ("group", "inertia_limit"): (
+        "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value means no "
+        "requirement. Constant, period, time or period+time. Over a coarse time step the row uses the step mean "
+        "(a time step without a value counts as 0)."),
+    ("group", "non_synchronous_limit"): (
+        "[-] e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real "
+        "demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no "
+        "value means 0. Constant, period, time or period+time. Over a coarse time step the row uses the step "
+        "mean (a time step without a value counts as 0)."),
+}
+
+
+def _migrate_v82_group_limits_by_time(db) -> None:
+    """``group.inertia_limit`` and ``group.non_synchronous_limit`` per time step (v81 -> v82).
+
+    Each type list is widened to its union with ``float`` / ``1d_map`` / ``2d_map`` (:func:`_v77_union_types`) and
+    the description written.  No value is rewritten: a constant or period map stays valid.  Definitions a database
+    does not have are skipped.  Idempotent: a rerun finds every definition already in its v82 form.
+    """
+    for (cls, name), text in sorted(_V82_DESCRIPTIONS.items()):
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is None:
+            continue
+        fields: dict = {}
+        union = _v77_union_types(pdef["parameter_type_list"], _V82_TYPES)
+        if tuple(pdef["parameter_type_list"] or ()) != union:
+            fields["parameter_type_list"] = union
+        if (pdef["description"] or "") != text:
+            fields["description"] = text
+        if fields:
+            db.update_parameter_definition(id=pdef["id"], **fields)
+    _commit_step(db, "v82: group inertia_limit and non_synchronous_limit per time step")
 
 
 _V70_MAX_FLOW_UNCONSTRAINED_DESCRIPTION = (

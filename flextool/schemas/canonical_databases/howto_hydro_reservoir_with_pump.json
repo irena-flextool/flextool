@@ -1074,7 +1074,7 @@
       "inertia_limit",
       null,
       null,
-      "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value means no requirement. Constant or period.",
+      "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value means no requirement. Constant, period, time or period+time. Over a coarse time step the row uses the step mean (a time step without a value counts as 0).",
       "network"
     ],
     [
@@ -1133,7 +1133,7 @@
       "non_synchronous_limit",
       null,
       null,
-      "[-] e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means 0. Constant or period.",
+      "[-] e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no value means 0. Constant, period, time or period+time. Over a coarse time step the row uses the step mean (a time step without a value counts as 0).",
       "network"
     ],
     [
@@ -1341,7 +1341,7 @@
       "model",
       "version",
       [
-        "81.0",
+        "82.0",
         "float"
       ],
       null,
@@ -3500,6 +3500,12 @@
     ],
     [
       "group",
+      "inertia_limit",
+      "map",
+      2
+    ],
+    [
+      "group",
       "invest_max_period",
       "float",
       0
@@ -3557,6 +3563,12 @@
       "non_synchronous_limit",
       "map",
       1
+    ],
+    [
+      "group",
+      "non_synchronous_limit",
+      "map",
+      2
     ],
     [
       "group",

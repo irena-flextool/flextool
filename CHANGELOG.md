@@ -1,5 +1,15 @@
 ## Unreleased
 
+- **New: `inertia_limit` and `non_synchronous_limit` per time step (database version 82).** Both group limits now
+  take a constant, a period map, a time map or a period+time map (before: constant or period), e.g. a
+  non-synchronous share that steps up by hour or season, or an inertia requirement that is higher in some hours.
+  A time step that a time map leaves out has no inertia requirement and a non-synchronous limit of 0. Over a coarse
+  time step (group `new_stepduration`) the averaged row uses the step mean of the limit, and the coarse-flow info
+  line names a limit that varies within a coarse step. The hourly inertia shortfall table shows 0 instead of an
+  empty cell in a time step without a requirement. The Excel export puts both limits also on the time sheets.
+  Databases are migrated automatically; constant and period values are unchanged and give the same model.
+  Known limitation, shared with `co2_price` and the other time maps that are not profiles or inflows: a solve with
+  its own `new_stepduration` takes a time map's value at the first time step of each new step, not the step mean.
 - **New: a solve can leave out unit detail (`reduce_unit_detail_method`, database version 81).** Set it on a
   `solve` to make that solve faster, typically an investment solve followed by a full dispatch. *none* (default)
   keeps everything. *integers*: units with `startup_method` *binary* get continuous units online and `exact`

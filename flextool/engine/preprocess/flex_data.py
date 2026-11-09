@@ -561,6 +561,18 @@ def _node_param_by_group(gn: "pl.DataFrame | None", param: "Param | None") -> "p
     return gn.join(f, on="n", how="inner").select("g", "n", "d", "t", "value")
 
 
+def _time_varying_groups(part: pl.DataFrame, param: "Param | None") -> set[str]:
+    """The groups of ``part`` ``(g, d, b_first, t)`` whose group limit ``param`` (authored dims ⊆ ``(g, d, t)``)
+    takes more than one value within a coarse step; a limit without a time axis never does.  A time step the
+    limit leaves out (a dropped zero) is not counted."""
+    cap = _param_frame(param)
+    if cap is None or "t" not in cap.columns:
+        return set()
+    keys = [c for c in ("g", "d", "t") if c in cap.columns]
+    return _spread_keys(part, cap.select(*(pl.col(c).cast(pl.Utf8) for c in keys),
+                                         pl.col("value").cast(pl.Float64)), "g")
+
+
 def _row_rule_reasons(flex_data: "FlexData", coarse: set[str]) -> list[tuple[str, str]]:
     """``(p, reason)`` of the coarse processes ``coarse`` in rows under the row rule (:func:`coarse_process_reasons`):
     a row mixing coarse and fine members (per solve step, the coarse flow constant over its step), and an averaged
@@ -611,13 +623,12 @@ def _row_rule_reasons(flex_data: "FlexData", coarse: set[str]) -> list[tuple[str
         elif family == "non_sync":
             for name in ("p_positive_inflow", "p_negative_inflow"):
                 varying |= _spread_keys(part, _node_param_by_group(gn, getattr(d, name, None)), "g")
+            varying |= _time_varying_groups(part, d.pdtGroup_non_synchronous_limit)
+        elif family == "inertia":
+            varying |= _time_varying_groups(part, d.pdtGroup_inertia_limit)
         elif family == "instant_flow":
             for name in ("pdt_max_instant_flow", "pdt_min_instant_flow"):
-                cap = _param_frame(getattr(d, name, None))
-                if cap is not None and "t" in cap.columns:
-                    keys = [c for c in ("g", "d", "t") if c in cap.columns]
-                    varying |= _spread_keys(part, cap.select(*(pl.col(c).cast(pl.Utf8) for c in keys),
-                                                             pl.col("value").cast(pl.Float64)), "g")
+                varying |= _time_varying_groups(part, getattr(d, name, None))
         varying_rows = procs.filter(pl.col(key).is_in(sorted(varying))).select(key, "e").unique().sort(key, "e")
         for k, p in varying_rows.iter_rows():
             out.append((p, f"the {what} row of {k!r} uses the step mean of a demand, inflow, profile or limit that "
@@ -1543,9 +1554,9 @@ class FlexData:
     p_group_capacity_for_scaling: Param | None = None    # (g, d)
     pdGroup_capacity_margin: Param | None = None         # (g, d)
     pdGroup_penalty_capacity_margin: Param | None = None # (g, d)
-    pdGroup_inertia_limit: Param | None = None           # (g, d)
+    pdtGroup_inertia_limit: Param | None = None          # authored dims ⊆ (g, d, t)
     pdGroup_penalty_inertia: Param | None = None         # (g, d)
-    pdGroup_non_synchronous_limit: Param | None = None   # (g, d)
+    pdtGroup_non_synchronous_limit: Param | None = None  # authored dims ⊆ (g, d, t)
     pdGroup_penalty_non_synchronous: Param | None = None # (g, d)
     p_process_sink_inertia_constant: Param | None = None    # (p, sink)
     p_process_source_inertia_constant: Param | None = None  # (p, source)

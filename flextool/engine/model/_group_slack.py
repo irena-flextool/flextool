@@ -24,6 +24,7 @@ from polar_high import Param, Sum, Where
 from polar_high.engine import Expr
 
 from flextool.engine.input._axis_enums import align_join_dtypes, join_aligned
+from flextool.engine.input._param_shapes import promote_param_to_dt
 from flextool.engine.preprocess._provider_io import _provider_key
 from flextool.engine.model import _coarse_flows
 from flextool.engine.model._common import _has_rows, _var_view
@@ -55,8 +56,8 @@ _FIELDS: tuple[str, ...] = (
     "process_sink_nonSync", "process_group_inside_nonSync",
     "p_inv_group_cap", "p_group_capacity_for_scaling",
     "pdGroup_capacity_margin", "pdGroup_penalty_capacity_margin",
-    "pdGroup_inertia_limit", "pdGroup_penalty_inertia",
-    "pdGroup_non_synchronous_limit", "pdGroup_penalty_non_synchronous",
+    "pdtGroup_inertia_limit", "pdGroup_penalty_inertia",
+    "pdtGroup_non_synchronous_limit", "pdGroup_penalty_non_synchronous",
     "p_process_sink_inertia_constant", "p_process_source_inertia_constant",
     "p_positive_inflow", "p_negative_inflow",
     "pdtNodeInflow_per_step",
@@ -204,7 +205,7 @@ def has_inertia(d) -> bool:
     """True when some group has has_inertia = yes, some group has an inertia limit, and the data to build
     the row is populated.  A flagged group without a limit has no requirement (its row is Σ … ≥ 0)."""
     return (_has_rows(getattr(d, "groupInertia", None))
-            and d.pdGroup_inertia_limit is not None and d.group_node is not None
+            and d.pdtGroup_inertia_limit is not None and d.group_node is not None
             and d.process_source_sink is not None and d.p_unitsize is not None)
 
 
@@ -244,7 +245,7 @@ def add_variables(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # vq_inertia[g,d,t] ≥ 0   ∀ g ∈ groupInertia, (d,t) ∈ dt
     # Inertia shortfall of group g, as a fraction of its inertia limit:
-    # MWs = vq_inertia · inertia_limit[g,d].
+    # MWs = vq_inertia · inertia_limit[g,d,t].
     # ─── VAR. ─── vq_inertia, vq_non_synchronous (coarse rows) ───────────────
     # vq[g,d,b] ≥ 0   ∀ g whose inertia / non-synchronous row is averaged over coarse steps (the row rule), (d,b)
     #   the coarse steps of its row (b = the step's first fine step)
@@ -503,11 +504,12 @@ def _eq_inertia(b: _Build) -> None:
     # ─── EQ. ─── inertia_constraint ──────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{side ∈ {source, sink}} Σ_{(p,s,k) ∈ arcs_side(g)} x[p,·,d,t] · inertia_constant[p,side] · unitsize[p]
-    #   + vq_inertia[g,d,t] · inertia_limit[g,d]
-    #   ≥ inertia_limit[g,d]
+    #   + vq_inertia[g,d,t] · inertia_limit[g,d,t]
+    #   ≥ inertia_limit[g,d,t]
     #   ∀ g ∈ groupInertia, (d,t) ∈ dt
-    #   groupInertia = groups with has_inertia = yes;  inertia_limit[g,d] = 0 where not authored (no requirement:
-    #   the row reads Σ … ≥ 0 and its slack is in no row)
+    #   groupInertia = groups with has_inertia = yes;  inertia_limit[g,d,t] = the authored constant, period, time
+    #   or period + time value, 0 where not authored or authored 0 (no requirement: the row reads Σ … ≥ 0 and its
+    #   slack is in no row)
     #   arcs_side(g) = arcs whose side node is in g and that carry an inertia constant on that side
     #   x = v_online[p,d,t] for p ∈ process_online (linear or integer), else v_flow[p,s,k,d,t]
     # Synchronous machines connected to the group's nodes supply inertia (MWs)
@@ -516,8 +518,10 @@ def _eq_inertia(b: _Build) -> None:
     # the limit.
     # Row rule (coarse steps): a group whose inertia providers are all coarse processes gets one row per coarse
     # step, inertia_constraint_coarse = the row's mean over the step (_coarse_flows.add_cstr), on one slack per
-    # step; with constant inertia constants and limit it is the per-step row itself.  Otherwise per solve step.
-    lhs: dict = {"slack": b.vq_inertia * d.pdGroup_inertia_limit}
+    # step; the limit enters as its Δt-weighted step mean (a time step the limit leaves out counts as 0), and a
+    # limit that varies within a coarse step is named in the coarse-flow behaviour notice.  Otherwise per solve
+    # step.
+    lhs: dict = {"slack": b.vq_inertia * d.pdtGroup_inertia_limit}
     for side in ("source", "sink"):
         side_idx = getattr(d, f"process_{side}_inertia", None)
         const_param = getattr(d, f"p_process_{side}_inertia_constant", None)
@@ -542,7 +546,7 @@ def _eq_inertia(b: _Build) -> None:
 
     over = d.groupInertia.join(d.dt, how="cross")
     _coarse_flows.add_row_rule_cstr(b, "inertia_constraint", over=over, sense=">=", lhs_terms=lhs,
-                                    rhs_terms={"floor": d.pdGroup_inertia_limit},
+                                    rhs_terms={"floor": d.pdtGroup_inertia_limit},
                                     partition=_row_partition(b, "inertia", over))
 
 
@@ -554,7 +558,7 @@ def _eq_non_sync(b: _Build) -> None:
     pss = d.process_source_sink
     p_us = d.p_unitsize
     invc = d.p_inv_group_cap
-    pgns = d.pdGroup_non_synchronous_limit
+    pgns = d.pdtGroup_non_synchronous_limit
     gn_in_gns = d.group_node.join(d.groupNonSync, on="g", how="inner")
     proc_inside = d.process_group_inside_nonSync          # (p, g) | None
     sink_ns = d.process_sink_nonSync                      # (p, sink) | None
@@ -570,7 +574,7 @@ def _eq_non_sync(b: _Build) -> None:
     #   + Σ_{(p,s,k) ∈ back_in_ns(g)} v_flow_back[p,s,k,d,t] · unitsize[p] · Δt[d,t] · icap[g,d]
     #   + Σ_{n ∈ N(g)} positive_inflow[n,d,t] · icap[g,d]
     #   − vq_non_synchronous[g,d,t] · Δt[d,t]
-    #   ≤ ns_limit[g,d] · icap[g,d] · ( Σ_{(p,s,k) ∈ out_noEff(g)} v_flow[p,s,k,d,t] · unitsize[p] · Δt[d,t]
+    #   ≤ ns_limit[g,d,t] · icap[g,d] · ( Σ_{(p,s,k) ∈ out_noEff(g)} v_flow[p,s,k,d,t] · unitsize[p] · Δt[d,t]
     #                                 + Σ_{(p,s,k) ∈ out_eff(g)} v_flow[p,s,k,d,t] · slope[p,d,t] · unitsize[p]
     #                                                            · Δt[d,t]
     #                                 + Σ_{(p,s,k) ∈ out_eff(g), p ∈ process_min_load_eff}
@@ -579,8 +583,9 @@ def _eq_non_sync(b: _Build) -> None:
     #                                 − Σ_{n ∈ N(g)} negative_inflow[n,d,t] )
     #   ∀ g ∈ groupNonSync, (d,t) ∈ dt
     #   groupNonSync = groups with has_non_synchronous = yes
-    #   N(g) = nodes of g;  icap = inv_group_cap;  ns_limit = non_synchronous_limit, 0 where not authored (the
-    #   right-hand side then vanishes: no non-synchronous infeed without the penalised slack)
+    #   N(g) = nodes of g;  icap = inv_group_cap;  ns_limit = non_synchronous_limit (constant, period, time or
+    #   period + time), 0 where not authored (the right-hand side then vanishes: no non-synchronous infeed without
+    #   the penalised slack)
     #   in_ns(g)      = arcs (p,s,k), k ∈ N(g), (p,k) ∈ process_sink_nonSync, (p,g) ∉ inside
     #   back_in_ns(g) = twoway1var_arcs (p,s,k), s ∈ N(g), (p,s) ∈ process_sink_nonSync, (p,g) ∉ inside
     #   out_*(g)      = arcs (p,s,k), s ∈ N(g), (p,g) ∉ inside
@@ -600,8 +605,8 @@ def _eq_non_sync(b: _Build) -> None:
     # sink/source coefficient ratio of multi-arc processes.
     # Row rule (coarse steps): a group whose processes are all coarse gets one row per coarse step,
     # non_sync_constraint_coarse = the row's Δt-weighted mean over the step (_coarse_flows.add_cstr), on one slack
-    # per step: the non-synchronous share then holds for the step's energy, with the inflow and the slope through
-    # their step means (named in the coarse-flow behaviour notice).  Otherwise per solve step.
+    # per step: the non-synchronous share then holds for the step's energy, with the inflow, the slope and the
+    # limit through their step means (named in the coarse-flow behaviour notice).  Otherwise per solve step.
     lhs: dict = {"slack_neg": -(b.vq_non_synchronous * d.p_step_duration)}
     if sink_ns is not None and sink_ns.height > 0 and b.v_flow is not None:
         pss_in_g = _not_inside(_arcs_at_group(pss.join(sink_ns, on=["p", "sink"], how="inner"), "sink", gn_in_gns))
@@ -672,9 +677,11 @@ def _eq_non_sync(b: _Build) -> None:
             rhs["out_back"] = Sum(Where(b.v_flow_back, back_out) * out_factor(back_out), over=("p", "source", "sink"))
     p_neg = d.p_negative_inflow
     if p_neg is not None and pgns is not None and gn_in_gns.height > 0:
+        # The limit keeps its authored dims ⊆ (g, d, t): promoted onto the solve's (d, t) for the eager join.
+        lim = promote_param_to_dt(pgns, d.dt).rename({"value": "lim"}).collect()
         exo_out = (gn_in_gns.join(p_neg.frame.rename({"value": "v"}), on="n", how="inner")
                    .join(invc.frame.rename({"value": "iv"}), on=["g", "d"], how="inner")
-                   .join(pgns.frame.rename({"value": "lim"}), on=["g", "d"], how="inner")
+                   .join(lim.select("g", "d", "t", "lim"), on=["g", "d", "t"], how="inner")
                    .with_columns(value=-pl.col("v") * pl.col("iv") * pl.col("lim"))
                    .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
                    .select("g", "d", "t", "value"))
@@ -699,7 +706,7 @@ def objective_terms(b: _Build) -> Expr | None:
     # ─── OBJ. ─── inertia / non-synchronous / capacity margin slack ──────────
     # names: inertia_penalty, non_synchronous_penalty, capacity_margin_penalty
     # ─────────────────────────────────────────────────────────────────────────
-    # + Σ_{(g,d,t)} vq_inertia[g,d,t] · inertia_limit[g,d] · penalty_inertia[g,d] · w_op[d,t]
+    # + Σ_{(g,d,t)} vq_inertia[g,d,t] · inertia_limit[g,d,t] · penalty_inertia[g,d] · w_op[d,t]
     # + Σ_{(g,d,t)} vq_non_synchronous[g,d,t] · gcs[g,d] · penalty_non_synchronous[g,d] · w_op[d,t]
     # + Σ_{g ∈ groupCapacityMargin, d ∈ D_inv} vq_capacity_margin[g,d] · gcs[g,d] · penalty_capacity_margin[g,d]
     #                                                         · inflation_op[d] · bw[d] · 1000
@@ -713,9 +720,9 @@ def objective_terms(b: _Build) -> Expr | None:
     # probability.  The output layer (calc_slacks) reports the same costs for
     # the realized periods (weight 1).
     pieces: list[Expr] = []
-    if (b.vq_inertia is not None and d.pdGroup_inertia_limit is not None
+    if (b.vq_inertia is not None and d.pdtGroup_inertia_limit is not None
             and d.pdGroup_penalty_inertia is not None):
-        pieces.append(Sum(b.vq_inertia * d.pdGroup_inertia_limit * d.pdGroup_penalty_inertia * b.op_factor))
+        pieces.append(Sum(b.vq_inertia * d.pdtGroup_inertia_limit * d.pdGroup_penalty_inertia * b.op_factor))
     if (b.vq_non_synchronous is not None and d.p_group_capacity_for_scaling is not None
             and d.pdGroup_penalty_non_synchronous is not None):
         pieces.append(Sum(b.vq_non_synchronous * d.p_group_capacity_for_scaling

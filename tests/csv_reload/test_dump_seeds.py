@@ -394,7 +394,7 @@ def test_limits_without_flag_files_give_no_group_sets(tmp_path: Path):
     """Limit values without the flag files give None sets (#69); a header-only flag file is the same as none."""
     fd = _seeds(tmp_path, {
         "pdGroup_capacity_margin.csv": "period,g1,g2\nd1,0.0,0.5\n",
-        "pdGroup_inertia_limit.csv": "period,g1\nd1,5.0\n",
+        "pdtGroup_inertia_limit.csv": "period,g1\nd1,5.0\n",
         "pdGroup.csv": "group,param,period,value\ng_other,non_synchronous_limit,d1,0.3\n",
     }, inputs={"groupInertia.csv": "groupInertia\n"})
     assert (fd.groupCapacityMargin, fd.groupInertia, fd.groupNonSync) == (None, None, None)

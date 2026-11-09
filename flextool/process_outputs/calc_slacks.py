@@ -69,7 +69,10 @@ def compute_slacks(par, s, v, r) -> None:
 
     # Inertia penalty: mod uses × step_duration × timestep_weight (objective line ~2380).
     # Per-step cost = q × inertia_limit × penalty × step_duration × timestep_weight.
-    r.q_inertia_dt = v.q_inertia.mul(par.group_inertia_limit)
+    # inertia_limit is per (period, time); a step without a limit (not authored, or authored 0) has no
+    # requirement, so its slack is 0 MWs rather than a blank cell.
+    inertia_limit = par.group_inertia_limit.reindex(index=v.q_inertia.index, columns=v.q_inertia.columns)
+    r.q_inertia_dt = v.q_inertia.mul(inertia_limit.fillna(0.0))
     r.q_inertia_d_not_annualized = r.q_inertia_dt.mul(par.step_duration, axis=0).groupby('period').sum()
     r.q_inertia_d = annualize_dt_to_d(r.q_inertia_dt, par.timestep_weight, par.complete_period_share_of_year, par.step_duration)
     r.costPenalty_inertia_dt = r.q_inertia_dt.mul(par.group_penalty_inertia).mul(step_x_rp, axis=0)

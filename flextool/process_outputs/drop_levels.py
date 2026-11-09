@@ -57,7 +57,7 @@ _PAR_DROP = [
     'process_availability', 'process_source_sink_varCost',
     'process_slope', 'process_section',
     'node_self_discharge_loss', 'node_penalty_up', 'node_penalty_down',
-    'node_inflow', 'commodity_price', 'group_co2_price',
+    'node_inflow', 'commodity_price', 'group_co2_price', 'group_inertia_limit',
     # ladder_price_ann (commodity price ladder, #57): authored per period, invariant across rolls that
     # touch the same period — same keep='last' bucket as commodity_price for symmetry.
     'ladder_price_ann',
@@ -111,7 +111,6 @@ _PAR_DEDUP = [
     'entity_fixed_cost', 'entity_lifetime_fixed_cost', 'entity_lifetime_fixed_cost_divest',
     'node_annual_flow',
     'group_penalty_inertia', 'group_penalty_non_synchronous',
-    'group_inertia_limit',
     'node_capacity_for_scaling', 'group_capacity_for_scaling',
 ]
 

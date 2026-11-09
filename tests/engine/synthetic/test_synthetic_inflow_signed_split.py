@@ -51,6 +51,8 @@ import shutil
 import polars as pl
 import pytest
 
+from flextool.engine.input._param_shapes import promote_param_to_dt
+
 pytestmark = pytest.mark.solver
 
 SCENARIO = "multi_fullYear_battery_nested_multi_invest"
@@ -192,7 +194,7 @@ def test_synthetic_solve_non_sync_budget_restored(_synthetic_step_flex_data):
 
     fd.group_node = pl.DataFrame({"g": [g], "n": [node]})
     fd.groupNonSync = pl.DataFrame({"g": [g]})
-    fd.pdGroup_non_synchronous_limit = Param(
+    fd.pdtGroup_non_synchronous_limit = Param(
         ("g", "d"),
         ds.with_columns(g=pl.lit(g), value=pl.lit(0.8)).select("g", "d", "value"),
     )
@@ -222,8 +224,9 @@ def test_synthetic_solve_non_sync_budget_restored(_synthetic_step_flex_data):
                 on="n", how="inner")
           .join(fd.p_inv_group_cap.frame.rename({"value": "iv"}),
                 on=["g", "d"], how="inner")
-          .join(fd.pdGroup_non_synchronous_limit.frame.rename({"value": "lim"}),
-                on=["g", "d"], how="inner")
+          .join(promote_param_to_dt(fd.pdtGroup_non_synchronous_limit, fd.dt)
+                .rename({"value": "lim"}).collect(),
+                on=["g", "d", "t"], how="inner")
           .with_columns(value=-pl.col("v") * pl.col("iv") * pl.col("lim"))
           .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
     )

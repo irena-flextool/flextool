@@ -106,11 +106,11 @@ RESERVE_FIELDS: tuple[str, ...] = (
     "p_process_reserve_upDown_node_increase_reserve_ratio_value",
 )
 INERTIA_FIELDS: tuple[str, ...] = (
-    "groupInertia", "process_sink_inertia", "process_source_inertia", "pdGroup_inertia_limit",
+    "groupInertia", "process_sink_inertia", "process_source_inertia", "pdtGroup_inertia_limit",
     "pdGroup_penalty_inertia", "p_process_sink_inertia_constant", "p_process_source_inertia_constant",
 )
 NON_SYNC_FIELDS: tuple[str, ...] = (
-    "groupNonSync", "process_sink_nonSync", "process_group_inside_nonSync", "pdGroup_non_synchronous_limit",
+    "groupNonSync", "process_sink_nonSync", "process_group_inside_nonSync", "pdtGroup_non_synchronous_limit",
     "pdGroup_penalty_non_synchronous",
 )
 DC_FIELDS: tuple[str, ...] = (

@@ -253,6 +253,14 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("group", "co2_price"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
+    # The inertia and non-synchronous limits apply per time step: constant, period, time or period + time
+    # (read by broadcast_to_period_time; the Param keeps the authored dims ⊆ (g, d, t)).
+    ("group", "inertia_limit"): {
+        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
+    },
+    ("group", "non_synchronous_limit"): {
+        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
+    },
     # v58: the four flow-limit params live on the ``flowGroup`` class.
     ("flowGroup", "max_instant_flow"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
@@ -276,9 +284,7 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     # — same as ``co2_max_period``).
     ("group", "capacity_margin"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "penalty_capacity_margin"): {Shape.SCALAR, Shape.MAP_PERIOD},
-    ("group", "inertia_limit"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "penalty_inertia"): {Shape.SCALAR, Shape.MAP_PERIOD},
-    ("group", "non_synchronous_limit"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "penalty_non_synchronous"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "invest_max_period"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("group", "invest_min_period"): {Shape.SCALAR, Shape.MAP_PERIOD},
@@ -2185,7 +2191,7 @@ def _resolve_param_shape(
             # of the parameter is re-resolved without it; when the remaining silent entities split across
             # both axes (only reachable without the reader's own axis Enums — see
             # :func:`_per_entity_resolved`), the frame is built directly.  Runs only for the parameters
-            # whose allow-list admits both ``MAP_PERIOD`` and ``MAP_TIME`` at depth 1 (the 19 keys of
+            # whose allow-list admits both ``MAP_PERIOD`` and ``MAP_TIME`` at depth 1 (the 21 keys of
             # :data:`PARAM_ALLOWED_SHAPES` that can reach this branch — Δ.17c-silent-per-entity) and only
             # with an active *period_filter* (the probe above already requires one; spelled out again here
             # because this is where the fallback actually changes behaviour).

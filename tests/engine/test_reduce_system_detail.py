@@ -209,6 +209,32 @@ def test_system_level_from_the_database(tmp_path_factory) -> None:
     assert "capacityMargin" in rows
 
 
+def _time_limits(vals: list) -> list:
+    """``vals`` with the inertia and non-synchronous limits of electricity as time maps over the two steps."""
+    def tmap(a: float, b: float) -> list:
+        return b64({"index_type": "str", "index_name": "time", "data": [["t0001", a], ["t0002", b]]}, "map")
+    keep = [v for v in vals if not (v[1] == "electricity" and v[2] in ("inertia_limit", "non_synchronous_limit"))]
+    return keep + [["group", "electricity", "inertia_limit", tmap(100.0, 150.0)],
+                   ["group", "electricity", "non_synchronous_limit", tmap(0.5, 0.3)]]
+
+
+def test_time_indexed_limits_are_cleared(tmp_path_factory) -> None:
+    """The inertia and non-synchronous limits authored per time step (dims (g, t)) are in the solved data without a
+    reduction and cleared, with their rows, by reduce_system_detail_method inertia_non_synchronous."""
+    ents, vals = _sys_full()
+    full = _solve(tmp_path_factory, "rs_tmap_full", ents, _time_limits(vals)).flex_data
+    for name in ("pdtGroup_inertia_limit", "pdtGroup_non_synchronous_limit"):
+        assert getattr(full, name).dims == ("g", "t"), name
+    rows, _ = _families(build(full))
+    assert {"inertia_constraint", "non_sync_constraint"} <= rows
+    _e, vals = _sys_full("inertia_non_synchronous")
+    fd = _solve(tmp_path_factory, "rs_tmap_reduced", ents, _time_limits(vals)).flex_data
+    for name in INERTIA_FIELDS + NON_SYNC_FIELDS:
+        assert getattr(fd, name) is None, name
+    rows, _ = _families(build(fd))
+    assert not any(r.startswith(("inertia", "non_sync")) for r in rows)
+
+
 def test_field_lists_cover_the_system_fields(tmp_path_factory) -> None:
     """Every FlexData field of the system features is cleared by its part (none is kept): a new field of these
     features must be added to its list."""

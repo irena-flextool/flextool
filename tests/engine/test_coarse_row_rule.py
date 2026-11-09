@@ -348,6 +348,48 @@ def test_group_row_equals_tied_fine_model(tmp_path_factory, monkeypatch, family,
     assert vc["value"].sum() > 1e-6
 
 
+def _with_limit(vals: list, group: str, name: str, value: list) -> list:
+    """``vals`` with ``group.name`` replaced by ``value``."""
+    return [v for v in vals if not (v[1] == group and v[2] == name)] + [["group", group, name, value]]
+
+
+def test_inertia_limit_varying_within_a_day_uses_its_step_mean(tmp_path_factory) -> None:
+    """lh2_in's inertia_limit as a time map, 4000 MWs in the first 12 hours of each day and 6000 MWs in the last
+    12.  Hand derivation (EQ. inertia_constraint_coarse, w = Δt/Δ_b = 1/24): the row's right-hand side is the step
+    mean of the limit, (12·4000 + 12·6000)/24 = 5000 MWs, and so is the coefficient of the day's one slack column
+    (vq · mean(L)).  The coarse-flow behaviour notice names the varying limit for the liquefiers."""
+    from flextool.engine.preprocess.flex_data import coarse_process_reasons
+
+    lim = _tmap_lh2(lambda h: 4000.0 if h % 24 < 12 else 6000.0)
+    vals = _with_limit(_INERTIA, "lh2_in", "inertia_limit", lim)
+    fd = last_stochastic(_case(tmp_path_factory, "rr_inertia_tmap", vals, _INERTIA_ENTS)).flex_data
+    pb = build(fd)
+    bounds = row_bounds(pb, "inertia_constraint_coarse", "lh2_in,")
+    assert _steps_of(bounds) == _DAYS
+    assert all(lo == pytest.approx(5000.0, rel=1e-12) for lo, _ in bounds.values())
+    terms = row_terms(pb, "inertia_constraint_coarse", "lh2_in,y2030,t0025")
+    assert terms["inertia_constraint_coarse[lh2_in,y2030,t0025]"]["vq_inertia[lh2_in,y2030,t0025]"] == (
+        pytest.approx(5000.0, rel=1e-12))
+    why = coarse_process_reasons(fd, fd.process_coarse_step)["liquefier_A"]
+    assert any("inertia row of 'lh2_in' uses the step mean" in w for w in why)
+
+
+def test_non_synchronous_limit_varying_within_a_day_is_named(tmp_path_factory) -> None:
+    """lh2_ns's non_synchronous_limit as a time map (1 % then 3 % within each day): the averaged row uses its step
+    mean, which the coarse-flow behaviour notice names for the liquefiers; a constant limit is not named."""
+    from flextool.engine.preprocess.flex_data import coarse_process_reasons
+
+    lim = _tmap_lh2(lambda h: 0.01 if h % 24 < 12 else 0.03)
+    vals = _with_limit(_NONSYNC, "lh2_ns", "non_synchronous_limit", lim)
+    fd = last_stochastic(_case(tmp_path_factory, "rr_nonsync_tmap", vals, _NONSYNC_ENTS)).flex_data
+    assert row_terms(build(fd), "non_sync_constraint_coarse", "lh2_ns,")
+    why = coarse_process_reasons(fd, fd.process_coarse_step)["liquefier_A"]
+    assert any("non-synchronous row of 'lh2_ns' uses the step mean" in w for w in why)
+    const = last_stochastic(_case(tmp_path_factory, "rr_nonsync_const", _NONSYNC, _NONSYNC_ENTS)).flex_data
+    why = coarse_process_reasons(const, const.process_coarse_step).get("liquefier_A", [])
+    assert not any("non-synchronous row of 'lh2_ns' uses the step mean" in w for w in why)
+
+
 _FG_ENTS = [["flowGroup", "fg_pipe", None], ["flowGroup__connection__node", ["fg_pipe", "pipe_AB", "lh2_B"], None]]
 
 

@@ -16,7 +16,7 @@ Topology
 * Demand at ``elec`` = 100 MW each of 2 timesteps (=> v_flow = 1.0
   in unitsize units; the unit dispatches at full capacity).
 * 1 group ``g``: ``group_node = {(g, elec)}``;
-  ``pdGroup_inertia_limit[g, p2020] = 200`` MJ;
+  ``pdtGroup_inertia_limit[g, p2020] = 200`` MJ;
   ``pdGroup_penalty_inertia[g, p2020] = 1e6`` €/(MJ·s).
 * ``process_sink_inertia = {(u, elec)}``;
   ``p_process_sink_inertia_constant[u, elec] = 5`` MJ/MW.
@@ -25,8 +25,8 @@ Closed-form expected obj
 ------------------------
 The inertia constraint per (g, d, t):
     LHS  = v_flow[u, gas, elec, d, t] · inertia_constant · unitsize
-         + vq_inertia[g, d, t] · pdGroup_inertia_limit
-    RHS  = pdGroup_inertia_limit (=200)
+         + vq_inertia[g, d, t] · pdtGroup_inertia_limit
+    RHS  = pdtGroup_inertia_limit (=200)
 
 With v_flow forced to 1.0 by the demand and unitsize=100,
 inertia_constant=5: LHS_first_term = 1.0 · 5 · 100 = 500 ≥ 200, so
@@ -109,7 +109,7 @@ def data() -> FlexData:
     process_sink_inertia = pl.DataFrame({"p": ["u"], "sink": ["elec"]})
     p_process_sink_inertia_constant = Param(("p", "sink"),
         pl.DataFrame({"p": ["u"], "sink": ["elec"], "value": [5.0]}))
-    pdGroup_inertia_limit = Param(("g", "d"),
+    pdtGroup_inertia_limit = Param(("g", "d"),
         pl.DataFrame({"g": ["g"], "d": ["p2020"], "value": [200.0]}))
     pdGroup_penalty_inertia = Param(("g", "d"),
         pl.DataFrame({"g": ["g"], "d": ["p2020"], "value": [1.0e6]}))
@@ -141,7 +141,7 @@ def data() -> FlexData:
         group_node=group_node,
         process_sink_inertia=process_sink_inertia,
         p_process_sink_inertia_constant=p_process_sink_inertia_constant,
-        pdGroup_inertia_limit=pdGroup_inertia_limit,
+        pdtGroup_inertia_limit=pdtGroup_inertia_limit,
         pdGroup_penalty_inertia=pdGroup_penalty_inertia,
     )
 

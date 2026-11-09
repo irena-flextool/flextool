@@ -383,14 +383,10 @@ period_only_params:
     - startup_cost
   group:
     - co2_max_period
-    - inertia_limit
     - invest_max_period
     - invest_min_period
     - max_cumulative_flow
-    - max_instant_flow
     - min_cumulative_flow
-    - min_instant_flow
-    - non_synchronous_limit
     - penalty_capacity_margin
     - penalty_inertia
     - penalty_non_synchronous
