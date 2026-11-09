@@ -3163,6 +3163,22 @@ def _drive_cascade(
                     for _line in _reduce_report.warnings:
                         self.state.logger.warning("Solve %s: %s", _reduce_base, _line)
                         print(f"Warning: solve {_reduce_base}: {_line}", flush=True)
+            # One info line per solve (at its first roll) says what was left
+            # out and how the levels interact; the run status of every roll
+            # records both levels; the outputs leave the cells of the left-out
+            # features empty for this sub-solve (process_outputs.reduced_cells).
+            if _reduce_report.unit != "none" or _reduce_report.system != "none":
+                from flextool.engine.preprocess._reduce_detail import output_features, summary_line
+                _summary = summary_line(_reduce_report, _unreduced, _reduce_base)
+                self.state.logger.info(_summary)
+                _info_seen = self.__dict__.setdefault("_reduce_info_printed", set())
+                if _reduce_base not in _info_seen:
+                    _info_seen.add(_reduce_base)
+                    print(_summary, flush=True)
+                run_record.active().solve_reduced(_reduce_report.unit, _reduce_report.system, _summary)
+                if data is not _unreduced:
+                    # Written with this sub-solve's outputs (output._writer).
+                    data.reduced_output_features = output_features(_reduce_report, _unreduced)
             # The outputs read static sets from the last sub-solve: give
             # them the pre-transform data, except the fields every
             # sub-solve so far reduced, so a reduced solve never erases the

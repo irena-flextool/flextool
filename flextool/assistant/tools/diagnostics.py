@@ -44,9 +44,11 @@ def _options(status: dict) -> Any:
 
 def _solve(entry: dict) -> dict:
     keys = ("name", "parent", "kind", "state", "model_status", "acceptance", "message", "objective", "wall_s",
-            "warm_used", "benders", "log_anchor")
+            "warm_used", "benders", "reduced", "log_anchor")
     out = {k: entry.get(k) for k in keys}
     out["message"] = cap_text(out["message"], MESSAGE_MAX)
+    if isinstance(out["reduced"], dict):
+        out["reduced"] = {**out["reduced"], "summary": cap_text(out["reduced"].get("summary"), MESSAGE_MAX)}
     return out
 
 

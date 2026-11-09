@@ -132,8 +132,8 @@ class ReduceReport:
     (binary units / connections now continuous), ``exact`` (exact connections now regular), ``ramp_limits``,
     ``ramp_costs``, ``min_load``, ``capacity_min_coeff``, ``min_up_down``, ``online``, ``min_load_efficiency``
     (folded to full-load efficiency), ``user_constraints`` (left out whole); system keys ``reserves`` (the reserve
-    groups as ``reserve__upDown__group``), ``inertia`` / ``non_synchronous`` (the groups), ``dc_power_flow`` (the
-    connections now lossless transport).  ``notes``: interaction facts for the run log, each present only when both
+    groups with a requirement as ``reserve__upDown__group``, or every reserve group when none has one),
+    ``inertia`` / ``non_synchronous`` (the groups), ``dc_power_flow`` (the connections now lossless transport).  ``notes``: interaction facts for the run log, each present only when both
     sides are in the solve: ``fractional_online_constraints`` (user constraints that now count fractional units
     online), ``reserves_from_capacity`` (units / connections left without online variables that keep a reserve:
     it now comes from built capacity, not online capacity), ``inertia_from_flows`` (inertia groups whose providers
@@ -151,8 +151,8 @@ class ReduceReport:
 
     @property
     def changed(self) -> bool:
-        """True when the data was reduced (something was left out or relaxed)."""
-        return bool(self.removed)
+        """True when the data was reduced (something was left out or relaxed, or a field was cleared)."""
+        return bool(self.fields) or bool(self.removed)
 
 
 def unit_parts(value: str) -> frozenset[str]:
@@ -366,10 +366,11 @@ def _reduce_system(d: "FlexData", parts: frozenset[str], report: ReduceReport) -
     """The changed fields of the system parts ``parts`` (field -> None); fills ``report.removed``."""
     removed = report.removed
     if "reserves" in parts and _has_rows(d.reserve_upDown_group):
-        # The groups with a requirement (a reserve method); the gate also lists groups without one.
-        groups = {"__".join(row) for f in (d.reserve_upDown_group_method_timeseries,
-                                           d.reserve_upDown_group_method_dynamic, d.reserve_upDown_group_method_n_1)
-                  if _has_rows(f)
+        # The groups with a requirement (a reserve method); without any, the groups of the gate (their providers
+        # still have reserve variables, which go).
+        frames = [f for f in (d.reserve_upDown_group_method_timeseries, d.reserve_upDown_group_method_dynamic,
+                              d.reserve_upDown_group_method_n_1) if _has_rows(f)] or [d.reserve_upDown_group]
+        groups = {"__".join(row) for f in frames
                   for row in _frame(f).select(*(pl.col(c).cast(pl.Utf8) for c in ("r", "ud", "g"))).iter_rows()}
         if groups:
             removed["reserves"] = sorted(groups)
@@ -435,6 +436,119 @@ def apply_reduce_detail(d: "FlexData", unit: str = "none", system: str = "none")
         setattr(out, f, v)
     report.fields = frozenset(new)
     return out, report
+
+
+# ---------------------------------------------------------------------------
+# the run-log line
+
+
+#: How :func:`summary_line` words each key of ``ReduceReport.removed`` (unit keys, then system keys) and of
+#: ``ReduceReport.notes``; a ``{}`` takes the entities.  Kept in this order in the line.
+_REMOVED_TEXT: dict[str, str] = {
+    "online": "online variables and start-up costs left out for {}",
+    "integer_online": "integer units online made continuous for {}",
+    "exact": "exact connections behave as regular for {}",
+    "ramp_limits": "ramp limits left out for {}",
+    "ramp_costs": "ramp costs left out for {}",
+    "min_load": "min load left out for {}",
+    "capacity_min_coeff": "capacity_min_coeff floors left out for {}",
+    "min_up_down": "min up / down times left out for {}",
+    "min_load_efficiency": "full-load efficiency (no part-load curve) for {}",
+    "user_constraints": "{} left out (they count units online)",
+    "reserves": "reserves left out for {}",
+    "inertia": "inertia limits left out for {}",
+    "non_synchronous": "non-synchronous limits left out for {}",
+    "dc_power_flow": "DC power flow left out: lossless transport limited by capacity for {}",
+}
+_UNIT_KEYS = ("online", "integer_online", "exact", "ramp_limits", "ramp_costs", "min_load", "capacity_min_coeff",
+              "min_up_down", "min_load_efficiency", "user_constraints")
+_SYSTEM_KEYS = ("reserves", "inertia", "non_synchronous", "dc_power_flow")
+_NOTE_TEXT: dict[str, str] = {
+    "reserves_from_capacity": "the reserves of {} now come from built capacity, not online capacity",
+    "inertia_from_flows": "inertia of {} is now counted from flows, not from units online",
+    "downward_reserve_to_zero": "the downward reserve of {} now reaches down to zero flow, not to min load",
+    "fractional_online_constraints": "{} now count fractional units online",
+}
+#: Names listed in full up to this count; above it the line gives the count only.
+_NAMES_MAX = 5
+
+
+def _counted(names: list[str], one: str, many: str) -> str:
+    n = len(names)
+    text = f"{n} {one if n == 1 else many}"
+    return f"{text} ({', '.join(names)})" if n <= _NAMES_MAX else text
+
+
+def _entities(key: str, names: list[str], units: set[str]) -> str:
+    """``names`` worded for ``key``: processes as units and connections, the others by their kind."""
+    if key == "user_constraints":
+        return _counted(names, "user constraint", "user constraints")
+    if key == "reserves":
+        return _counted(names, "reserve group", "reserve groups")
+    if key in ("inertia", "non_synchronous"):
+        return _counted(names, "group", "groups")
+    if key == "dc_power_flow":
+        return _counted(names, "connection", "connections")
+    unit = [p for p in names if p in units]
+    conn = [p for p in names if p not in units]
+    parts = ([_counted(unit, "unit", "units")] if unit else []) + ([_counted(conn, "connection", "connections")]
+                                                                   if conn else [])
+    return " and ".join(parts)
+
+
+def _note_entities(key: str, names: list[str], units: set[str]) -> str:
+    if key == "inertia_from_flows":
+        return _counted(names, "group", "groups")
+    if key == "fractional_online_constraints":
+        return _counted(names, "user constraint", "user constraints")
+    return _entities("online", names, units)
+
+
+def summary_line(report: ReduceReport, d: "FlexData", solve: str) -> str:
+    """The run-log line of one reduced sub-solve: per level what was left out, then the interactions.
+
+    ``d`` is the data before the transform (for telling units from connections).  A level that found nothing to
+    reduce says so.  Example: ``Solve invest: reduce_unit_detail_method = online: online variables and start-up
+    costs left out for 1 unit (g1); min load left out for 1 unit (g1).  reduce_system_detail_method = reserves:
+    reserves left out for 1 reserve group (rsv__up__electricity).``
+    """
+    units = _names(d.process_unit)
+    removed = report.removed
+
+    def level(param: str, value: str, keys: tuple[str, ...]) -> str:
+        # Under online* the integer units online go with the online variables: no separate "made continuous".
+        skip = {"integer_online"} if removed.get("online") else set()
+        parts = [_REMOVED_TEXT[k].format(_entities(k, removed[k], units)) for k in keys
+                 if removed.get(k) and k not in skip]
+        return f"{param} = {value}: {'; '.join(parts) if parts else 'nothing to reduce'}."
+
+    out = [f"Solve {solve}:"]
+    if report.unit != "none":
+        out.append(level("reduce_unit_detail_method", report.unit, _UNIT_KEYS))
+    if report.system != "none":
+        out.append(level("reduce_system_detail_method", report.system, _SYSTEM_KEYS))
+    notes = [_NOTE_TEXT[k].format(_note_entities(k, v, units)) for k, v in report.notes.items() if v]
+    if notes:
+        text = "; ".join(notes)
+        out.append(text[0].upper() + text[1:] + ".")
+    return " ".join(out)
+
+
+#: The features whose output cells a reduced solve leaves empty (``process_outputs.reduced_cells``), with the
+#: FlexData fields that carry them: the solve has no variables of these features, so their cells are "not
+#: modelled", not 0.
+OUTPUT_FEATURES: dict[str, tuple[str, ...]] = {
+    "online": ONLINE_FIELDS, "reserves": RESERVE_FIELDS, "inertia": INERTIA_FIELDS,
+    "non_synchronous": NON_SYNC_FIELDS, "dc_power_flow": DC_FIELDS,
+}
+
+
+def output_features(report: ReduceReport, unreduced: "FlexData") -> list[str]:
+    """The features of :data:`OUTPUT_FEATURES` of which the transform cleared a field that had rows in
+    ``unreduced`` (the data before the transform), in that order.  Keyed on the cleared fields, not on ``removed``:
+    a reserve set without a requirement still gives reserve variables when kept."""
+    return [f for f, fields in OUTPUT_FEATURES.items()
+            if any(_has_rows(getattr(unreduced, n)) for n in fields if n in report.fields)]
 
 
 # ---------------------------------------------------------------------------

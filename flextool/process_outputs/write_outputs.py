@@ -1060,6 +1060,11 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         )
         start = log_time("Read flextool outputs", start, timing_recorder)
 
+        # The steps and periods of solves that left a feature out (reduce_*_detail_method), from the solve-keyed
+        # sets before post-processing drops the solve level: their cells of that feature stay empty.
+        from flextool.process_outputs.reduced_cells import read_reduced_markers, reduced_cells_of
+        s.reduced_cells = reduced_cells_of(s, read_reduced_markers(raw_output_dir or 'output_raw'))
+
         # Pre-process results to be closer to what needed for output writing
         r = post_process_results(par, s, v)
         start = log_time("Post-processed outputs", start, timing_recorder)
@@ -1089,6 +1094,8 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 # Use excel_sheet as the key to allow multiple outputs per function
                 all_results[table_name] = result_df
 
+        from flextool.process_outputs.reduced_cells import mask_reduced_cells
+        mask_reduced_cells(all_results, s.reduced_cells)
         results = all_results
         start = log_time("Formatted for output", start, timing_recorder)
 

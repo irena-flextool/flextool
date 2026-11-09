@@ -46,8 +46,8 @@ def _ts(start: str) -> list:
     return b64({"index_type": "str", "data": [[start, 2.0]]}, "map")
 
 
-def _period_map(ts: str) -> list:
-    return b64({"index_type": "str", "index_name": "period", "data": [["p2020", ts]]}, "map")
+def _period_map(ts: str, period: str = "p2020") -> list:
+    return b64({"index_type": "str", "index_name": "period", "data": [[period, ts]]}, "map")
 
 
 ENTITIES = [["node", "elec", None], ["node", "fuel", None], ["commodity", "fuelc", None],
@@ -58,7 +58,11 @@ ENTITIES = [["node", "elec", None], ["node", "fuel", None], ["commodity", "fuelc
             ["timeset", "tsA", None], ["timeset", "tsB", None], ["solve", "sA", None], ["solve", "sB", None]]
 
 
-def _values(levels: dict[str, tuple[str, str]]) -> list:
+PERIOD = {"sA": "p2020", "sB": "p2020"}
+PERIODS2 = {"sA": "p2020", "sB": "p2025"}
+
+
+def _values(levels: dict[str, tuple[str, str]], *, periods: dict[str, str] = PERIOD, inertia: bool = False) -> list:
     out, grp, key = "unit__outputNode", ["rsv", "up", "electricity"], ["rsv", "up", "g1", "elec"]
     vals = [["model", "flexTool", "solves", b64({"value_type": "str", "data": ["sA", "sB"]}, "array")],
             ["timeset", "tsA", "timeline", _s("y2020")], ["timeset", "tsA", "timeset_duration", _ts("t0001")],
@@ -76,9 +80,12 @@ def _values(levels: dict[str, tuple[str, str]]) -> list:
             ["reserve__upDown__unit__node", key, "is_enabled", _s("yes")],
             ["reserve__upDown__unit__node", key, "max_share", _f(1.0)],
             ["reserve__upDown__unit__node", key, "reliability", _f(1.0)]]
+    if inertia:
+        vals += [["group", "electricity", "has_inertia", _s("yes")], ["group", "electricity", "inertia_limit", _f(50.0)],
+                 ["group", "electricity", "penalty_inertia", _f(1000.0)], [out, ["g1", "elec"], "inertia_constant", _f(2.0)]]
     for solve, ts in (("sA", "tsA"), ("sB", "tsB")):
-        vals += [["solve", solve, "period_timeset", _period_map(ts)],
-                 ["solve", solve, "realized_periods", b64({"value_type": "str", "data": ["p2020"]}, "array")],
+        vals += [["solve", solve, "period_timeset", _period_map(ts, periods[solve])],
+                 ["solve", solve, "realized_periods", b64({"value_type": "str", "data": [periods[solve]]}, "array")],
                  ["solve", solve, "solve_mode", _s("single_solve")], ["solve", solve, "solver_mip_gap", _f(0.0)]]
     for solve, (unit, system) in levels.items():
         vals += [["solve", solve, "reduce_unit_detail_method", _s(unit)],
@@ -86,10 +93,11 @@ def _values(levels: dict[str, tuple[str, str]]) -> list:
     return vals
 
 
-def _run(tmp_path_factory, alt: str, levels: dict, *, keep_solutions: bool = True):
+def _run(tmp_path_factory, alt: str, levels: dict, *, keep_solutions: bool = True, **fixture):
     from flextool.engine import run_chain_from_db
 
-    url, scen = make_db(tmp_path_factory, alt=alt, values=_values(levels), base_chain=["init"], entities=ENTITIES)
+    url, scen = make_db(tmp_path_factory, alt=alt, values=_values(levels, **fixture), base_chain=["init"],
+                        entities=ENTITIES)
     wf = tmp_path_factory.mktemp(f"{alt}_w")
     steps = run_chain_from_db(url, scen, work_folder=wf, keep_solutions=keep_solutions)
     assert list(steps) == ["sA", "sB"], list(steps)
@@ -109,7 +117,7 @@ def _write_outputs(steps, wf: Path, scen: str, *, in_memory: bool) -> Path:
         write_outputs(scenario_name=scen, output_location=str(wf), subdir=scen, output_config_path=OUTPUT_CONFIG,
                       write_methods=["csv"], fallback_output_location=str(wf),
                       raw_output_dir=str(wf / "output_raw"), solution=last.solution, solve_name=last.solve_name,
-                      flex_data_provider=FlexDataProvider(), **kwargs)
+                      flex_data_provider=last.flex_data_provider or FlexDataProvider(), **kwargs)
     finally:
         os.chdir(cwd)
     return wf / "output_csv" / scen
@@ -313,3 +321,112 @@ def test_declared_realization_solve_warns_when_its_own_level_is_overridden() -> 
     assert sc.reduce_detail_overridden("same") == []
     assert sc.reduce_detail_overridden("unset") == []
     assert sc.reduce_detail_overridden("stoch") == []
+
+
+# ---------------------------------------------------------------------------
+# the cells of a feature a solve left out are empty, not 0 (process_outputs.reduced_cells)
+
+
+def _raw(out: Path, name: str, column: str) -> dict[tuple, str]:
+    """``{(period, time): cell}`` (``time`` None in a per-period table) of ``column`` in the output CSV ``name``, the
+    cells as written (an empty cell is ``""``)."""
+    lines = [ln.split(",") for ln in (out / name).read_text().splitlines() if ln]
+    head = lines[0]
+    k, d = head.index(column), head.index("period")
+    t = head.index("time") if "time" in head else None
+    return {(row[d], row[t] if t is not None else None): row[k] for row in lines[1:] if row[0]}
+
+
+DT = {"sA": [("p2020", "t0001"), ("p2020", "t0002")], "sB": [("p2025", "t0003"), ("p2025", "t0004")]}
+
+
+def _assert_cells(out: Path, name: str, column: str, full: str, reduced: str, value: float, *,
+                  per_period: bool = False) -> None:
+    """The cells of solve ``full`` hold ``value``, those of solve ``reduced`` are empty."""
+    cells = _raw(out, name, column)
+    keys = {s: ([(PERIODS2[s], None)] if per_period else DT[s]) for s in (full, reduced)}
+    assert set(cells) == set(keys[full]) | set(keys[reduced]), (name, cells)
+    for key in keys[full]:
+        assert float(cells[key]) == pytest.approx(value, abs=1e-6), (name, key, cells)
+    for key in keys[reduced]:
+        assert cells[key] == "", (name, key, cells)
+
+
+@pytest.mark.parametrize("in_memory", [True, False])
+def test_left_out_cells_are_empty_after_a_full_solve(tmp_path_factory, in_memory) -> None:
+    """sA full (realises p2020), sB online + reserves + inertia + non-synchronous (realises p2025), with an inertia
+    limit of 50 on group electricity: the online, start-up, reserve and inertia tables keep sA's values (1 unit
+    online, 0 start-ups: its first step links to its last, units.md, and 1 unit is online throughout; 10 MW of
+    reserve and 0 reserve shortfall; largest flow 50 MW and 0 inertia shortfall) and leave sB's cells empty, per
+    step and per period.  Fuel of the min_load_efficiency unit in p2025 is output / 0.5 = 100 MW (125 MW in p2020).
+    Both output paths: the in-memory steps and the persisted per-roll slices."""
+    steps, wf, scen = _run(tmp_path_factory, f"rdc_cells_{in_memory}",
+                           {"sB": ("online", "reserves_inertia_non_synchronous")}, periods=PERIODS2, inertia=True,
+                           keep_solutions=in_memory)
+    out = _write_outputs(steps, wf, scen, in_memory=in_memory)
+    _assert_cells(out, "unit_online__dt.csv", "g1", "sA", "sB", 1.0)
+    _assert_cells(out, "unit_online__d_average.csv", "g1", "sA", "sB", 1.0, per_period=True)
+    _assert_cells(out, "unit_startup__d.csv", "g1", "sA", "sB", 0.0, per_period=True)
+    _assert_cells(out, "process__reserve__upDown__node__dt.csv", "g1", "sA", "sB", 10.0)
+    _assert_cells(out, "process__reserve__upDown__node__d_average.csv", "g1", "sA", "sB", 10.0, per_period=True)
+    _assert_cells(out, "slack__reserve__upDown__group__dt.csv", "rsv", "sA", "sB", 0.0)
+    _assert_cells(out, "group_inertia_largest_flow__dt.csv", "electricity", "sA", "sB", 50.0)
+    _assert_cells(out, "slack__inertia_group__dt.csv", "electricity", "sA", "sB", 0.0)
+    fuel = _raw(out, "unit__inputNode__dt.csv", "g1")
+    assert {k: float(v) for k, v in fuel.items()} == pytest.approx(
+        {**{k: FUEL["full"] for k in DT["sA"]}, **{k: FUEL["online"] for k in DT["sB"]}}, abs=1e-6)
+
+
+@pytest.mark.parametrize("in_memory", [True, False])
+def test_left_out_cells_are_empty_before_a_full_solve(tmp_path_factory, in_memory) -> None:
+    """sA online + reserves first, sB full last: sB's tables are complete (1 unit online, 10 MW of reserve), sA's
+    cells are empty, its fuel is 100 MW.  Both output paths."""
+    steps, wf, scen = _run(tmp_path_factory, f"rdc_cells_rev_{in_memory}", {"sA": ("online", "reserves")},
+                           periods=PERIODS2, keep_solutions=in_memory)
+    out = _write_outputs(steps, wf, scen, in_memory=in_memory)
+    _assert_cells(out, "unit_online__dt.csv", "g1", "sB", "sA", 1.0)
+    _assert_cells(out, "unit_online__d_average.csv", "g1", "sB", "sA", 1.0, per_period=True)
+    _assert_cells(out, "process__reserve__upDown__node__dt.csv", "g1", "sB", "sA", 10.0)
+    fuel = _raw(out, "unit__inputNode__dt.csv", "g1")
+    assert {k: float(v) for k, v in fuel.items()} == pytest.approx(
+        {**{k: FUEL["online"] for k in DT["sA"]}, **{k: FUEL["full"] for k in DT["sB"]}}, abs=1e-6)
+
+
+def test_a_period_shared_with_a_full_solve_keeps_its_value(tmp_path_factory) -> None:
+    """sA full and sB online + reserves both in p2020: sB's steps are empty, the per-period cell of p2020 keeps
+    its value (sA realised the period too)."""
+    steps, wf, scen = _run(tmp_path_factory, "rdc_cells_shared", {"sB": ("online", "reserves")})
+    out = _write_outputs(steps, wf, scen, in_memory=True)
+    online = _raw(out, "unit_online__dt.csv", "g1")
+    assert online == {("p2020", "t0001"): "1", ("p2020", "t0002"): "1", ("p2020", "t0003"): "",
+                      ("p2020", "t0004"): ""}
+    assert _raw(out, "unit_online__d_average.csv", "g1")[("p2020", None)] != ""
+
+
+def test_reduced_cells_rules() -> None:
+    """A step belongs to the last solve that realised it; a period is empty only when every solve that realised
+    it left the feature out; tables of other features and unreduced solves are untouched."""
+    import numpy as np
+    import pandas as pd
+
+    from flextool.process_outputs.reduced_cells import mask_reduced_cells, reduced_cells_of
+
+    dt = pd.MultiIndex.from_tuples([("a", "p1", "t1"), ("a", "p1", "t2"), ("b", "p1", "t2"), ("b", "p2", "t3")],
+                                   names=["solve", "period", "time"])
+    dp = pd.MultiIndex.from_tuples([("a", "p1"), ("b", "p1"), ("b", "p2")], names=["solve", "period"])
+    from types import SimpleNamespace
+    cells = reduced_cells_of(SimpleNamespace(dt_realize_dispatch=dt, d_realized_period=dp),
+                             {"b": frozenset({"online"})})
+    assert cells.steps == {"online": {("p1", "t2"), ("p2", "t3")}} and cells.periods == {"online": {"p2"}}
+    step_idx = pd.MultiIndex.from_tuples([("p1", "t1"), ("p1", "t2"), ("p2", "t3")], names=["period", "time"])
+    period_idx = pd.Index(["p1", "p2"], name="period")
+    results = {"unit_online_dt_e": pd.DataFrame({"g1": [1.0, 1.0, 1.0]}, index=step_idx),
+               "unit_online_average_d_e": pd.DataFrame({"g1": [1.0, 1.0]}, index=period_idx),
+               "process_reserve_upDown_node_dt_eppe": pd.DataFrame({"g1": [5.0, 5.0, 5.0]}, index=step_idx)}
+    mask_reduced_cells(results, cells)
+    assert np.isnan(results["unit_online_dt_e"]["g1"].to_numpy()).tolist() == [False, True, True]
+    assert np.isnan(results["unit_online_average_d_e"]["g1"].to_numpy()).tolist() == [False, True]
+    assert results["process_reserve_upDown_node_dt_eppe"]["g1"].tolist() == [5.0, 5.0, 5.0]
+    untouched = {"unit_online_dt_e": pd.DataFrame({"g1": [1.0]}, index=step_idx[:1])}
+    mask_reduced_cells(untouched, reduced_cells_of(SimpleNamespace(dt_realize_dispatch=dt, d_realized_period=dp), {}))
+    assert untouched["unit_online_dt_e"]["g1"].tolist() == [1.0]
