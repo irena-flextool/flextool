@@ -350,7 +350,9 @@ def _read_from_parquet(parquet_dir: Path) -> SimpleNamespace:
     # when no such arc is present).  Folded into the signed net flow by
     # calc_capacity_flows.
     v.flow_back = _read("v_flow_back", ("process", "source", "sink"))
-    v.ramp = _read("v_ramp", ("process", "source", "sink"))
+    # The ramp-cost split of the flow change (empty frames without a ramp cost); read by calc_costs.
+    v.ramp_up = _read("v_ramp_up", ("process", "source", "sink"))
+    v.ramp_down = _read("v_ramp_down", ("process", "source", "sink"))
     v.reserve = _read("v_reserve", ("process", "reserve", "updown", "node"))
     v.state = _read("v_state", ("node",))
     # Self-discharge per step (MWh) as the balance rows used it (engine writer write_v_self_discharge); empty

@@ -965,12 +965,14 @@ def _build_region_data(
     new.p_slope = _filter_param(src.p_slope, "p", keep_procs)
     new.p_process_existing_count = _filter_param(src.p_process_existing_count, "p", keep_procs)
     new.p_process_availability = _filter_param(src.p_process_availability, "p", keep_procs)
-    # Ramp limits: only this region's arcs (dt_ramp_link / dt_online_wrap / dt_ramp_carry / dt_online_carry are
+    # Ramp limits and ramp costs: only this region's arcs (dt_ramp_link / dt_online_wrap / dt_ramp_carry / dt_online_carry are
     # (d, t)-keyed, process-independent, and pass through; so do process_online / p_roll_continue_online, online sets
     # never filtered by region).
     for _f in ("process_source_sink_ramp_limit_sink_up", "process_source_sink_ramp_limit_sink_down",
-               "process_source_sink_ramp_limit_source_up", "process_source_sink_ramp_limit_source_down"):
+               "process_source_sink_ramp_limit_source_up", "process_source_sink_ramp_limit_source_down",
+               "process_source_sink_ramp_cost"):
         setattr(new, _f, _filter_arc_by_proc(getattr(src, _f)))
+    new.p_ramp_cost_arc = _filter_param_arc(getattr(src, "p_ramp_cost_arc", None))
     new.p_roll_continue_flow = _filter_param_arc(src.p_roll_continue_flow)
     new.p_roll_continue_flow_duration = _filter_param_arc(getattr(src, "p_roll_continue_flow_duration", None))
 
@@ -1898,10 +1900,12 @@ def master_network_data(
     new.p_slope = _keep_proc_param(data.p_slope)
     new.p_process_existing_count = _keep_proc_param(data.p_process_existing_count)
     new.p_process_availability = _keep_proc_param(data.p_process_availability)
-    # Ramp limits: only the kept (cross) arcs.
+    # Ramp limits and ramp costs: only the kept (cross) arcs.
     for _f in ("process_source_sink_ramp_limit_sink_up", "process_source_sink_ramp_limit_sink_down",
-               "process_source_sink_ramp_limit_source_up", "process_source_sink_ramp_limit_source_down"):
+               "process_source_sink_ramp_limit_source_up", "process_source_sink_ramp_limit_source_down",
+               "process_source_sink_ramp_cost"):
         setattr(new, _f, _keep_cross_triple(getattr(data, _f)))
+    new.p_ramp_cost_arc = _keep_cross_triple_param(getattr(data, "p_ramp_cost_arc", None))
     new.p_roll_continue_flow = _keep_cross_triple_param(data.p_roll_continue_flow)
     new.p_roll_continue_flow_duration = _keep_cross_triple_param(getattr(data, "p_roll_continue_flow_duration", None))
     new.pd_neg_cap = _keep_proc_param(data.pd_neg_cap)

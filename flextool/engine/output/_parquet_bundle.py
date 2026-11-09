@@ -150,7 +150,10 @@ REGISTRY: dict[str, ParquetSpec] = {}
 # -- raw / v_*.parquet (per-solve LP decision/slack/dual variables) ----------
 for _spec in (
     _v("v_flow",            ("process", "source", "sink")),
-    _v("v_ramp",            ("process", "source", "sink")),
+    _v("v_ramp_up",         ("process", "source", "sink"),
+       note="Increase of v_flow from its ramp predecessor; only arcs with a ramp cost."),
+    _v("v_ramp_down",       ("process", "source", "sink"),
+       note="Decrease of v_flow from its ramp predecessor; only arcs with a ramp cost."),
     _v("v_reserve",         ("process", "reserve", "updown", "node")),
     _v("v_state",           ("node",)),
     _v("v_online_linear",   ("process",)),

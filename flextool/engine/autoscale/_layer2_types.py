@@ -96,6 +96,11 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # ── Process / connection flow (dispatched per timestep).
     # flextool/engine/model/core.py _declare_variables
     "v_flow": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
+    # The increase / decrease of v_flow from its ramp predecessor (ramp cost), in v_flow's units, so that
+    # ramp_change_eq keeps its ±1 coefficients after column scaling.
+    # flextool/engine/model/core.py _declare_variables
+    "v_ramp_up": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
+    "v_ramp_down": VarFamily(QuantityType.DIMENSIONLESS, multiplier_param="p_unitsize"),
 
     # ── Storage / nodeBalance slacks.  Carry ENERGY directly (no
     # unitsize multiplier on the column).
@@ -284,6 +289,9 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # _coarse_flows.reserve_room_rows).  Explicit, with the ramp family's type.
     **{f"ramp_{side}_{dir_}_reserve_coarse": CstrFamily(QuantityType.DIMENSIONLESS)
        for side in ("sink", "source") for dir_ in ("up", "down")},
+    # The flow change of an arc with a ramp cost, split into v_ramp_up / v_ramp_down (core.py _eq_ramp_cost).
+    # Exact entry: the "ramp" prefix above would otherwise catch it.
+    "ramp_change_eq": CstrFamily(QuantityType.DIMENSIONLESS),
 
     # ── Investment caps — entity scope.
     # flextool/engine/model/core.py _eq_invest_max_units

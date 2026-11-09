@@ -195,6 +195,24 @@ def _pdX_per_entity(
     return out
 
 
+def _ramp_cost_by_period(flex_data: "FlexData") -> "object | None":
+    """``p_ramp_cost_arc`` (p, source, sink) repeated over the periods of the solve, as a Param
+    ``(p, source, sink, d)`` (the cost is constant; the period key keeps it solve-keyed like
+    ``process_startup_cost``).  ``None`` without a ramp cost."""
+    from polar_high import Param
+
+    param = getattr(flex_data, "p_ramp_cost_arc", None)
+    if param is None or flex_data.dt is None or flex_data.dt.height == 0:
+        return None
+    frame = param.frame.collect() if isinstance(param.frame, pl.LazyFrame) else param.frame
+    if frame.height == 0:
+        return None
+    periods = flex_data.dt.select("d").unique(maintain_order=True)
+    return Param(("p", "source", "sink", "d"),
+                 frame.select("p", "source", "sink", "value").join(periods, how="cross")
+                 .select("p", "source", "sink", "d", "value"))
+
+
 def _pX_per_entity(
     param,
     *,
@@ -1460,6 +1478,13 @@ def read_parameters(
     p.process_startup_cost = _pdX_per_entity(
         flex_data.p_startup_cost, solve_name=solve_name,
         entity_dim="p", col_name="process", flex_data=flex_data,
+    )
+
+    # process_ramp_cost — (solve, period) × (process, source, sink): the ramp cost of each arc (CUR/MW of
+    # change, p_ramp_cost_arc), constant over the periods.
+    p.process_ramp_cost = _pdX_multi_col(
+        _ramp_cost_by_period(flex_data), solve_name=solve_name,
+        col_dims=("p", "source", "sink"), col_names=("process", "source", "sink"),
     )
 
     # entity_fixed_cost / entity_lifetime_fixed_cost / entity_lifetime_fixed_cost_divest.

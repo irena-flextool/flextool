@@ -69,6 +69,8 @@ categories:
     other operational:                     '#8856a7'   # purple
     # Startup (amber/yellow — "ignition")
     starts:                                '#e6a41a'   # amber
+    # Ramping (lighter amber — the startup's operational sibling)
+    ramps:                                 '#f2cf73'   # light amber
     # Slack / penalties (red / magenta family — alarming)
     upward slack penalty:                  '#d62728'   # strong red
     downward slack penalty:                '#ff7f7f'   # light red

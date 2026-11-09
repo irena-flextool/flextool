@@ -161,9 +161,9 @@ _NODE_TIME_PARAM_REQUIRED: frozenset[str] = frozenset((
     "inflow", "penalty_down", "penalty_up",
 ))
 
-# preprocessing/_method_constants.py L90 / L93 — speed/cost-gated subsets.
+# preprocessing/_method_constants.py L90 — speed-gated subsets.  (The ramp-cost arcs are built from the DB only,
+# params._projection.process_source_sink_ramp_cost: they need the ramp_cost value too.)
 _RAMP_LIMIT_METHOD: frozenset[str] = frozenset(("ramp_limit", "both"))
-_RAMP_COST_METHOD: frozenset[str] = frozenset(("ramp_cost", "both"))
 
 
 # ===========================================================================
@@ -578,7 +578,7 @@ def _compute_ramp_family(
     *,
     provider: "object | None" = None,
 ) -> dict[str, list[tuple[str, str, str]]]:
-    """Emit the 5 ramp-family triple sets.
+    """Emit the 4 ramp-limit triple sets.
 
     Returns ``{filename → rows}``.  Rows preserve ``process_source_sink``
     order; legacy emits no dedup (input is already unique).
@@ -627,17 +627,11 @@ def _compute_ramp_family(
         if _has_method(p, sink, _RAMP_LIMIT_METHOD)
         and p_proc_sink.get((p, sink, "ramp_speed_down"), 0.0) > 0
     ]
-    cost = [
-        (p, src, sink) for p, src, sink in triples
-        if _has_method(p, src, _RAMP_COST_METHOD)
-        or _has_method(p, sink, _RAMP_COST_METHOD)
-    ]
     return {
         "process_source_sink_ramp_limit_source_up.csv": rsu,
         "process_source_sink_ramp_limit_sink_up.csv":   siu,
         "process_source_sink_ramp_limit_source_down.csv": rsd,
         "process_source_sink_ramp_limit_sink_down.csv":   sid,
-        "process_source_sink_ramp_cost.csv":               cost,
     }
 
 

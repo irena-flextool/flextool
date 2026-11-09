@@ -5,7 +5,7 @@ import pandas as pd
 
 # Variables: droplevel('solve') only
 _V_DROP = [
-    'flow', 'ramp', 'reserve', 'state', 'self_discharge',
+    'flow', 'ramp_up', 'ramp_down', 'reserve', 'state', 'self_discharge',
     'online_linear', 'startup_linear', 'shutdown_linear',
     'online_integer', 'startup_integer', 'shutdown_integer',
     'q_state_up', 'q_state_down', 'q_reserve',
@@ -107,6 +107,7 @@ _PAR_DEDUP = [
     'years_from_start_d', 'years_represented_d',
     'entity_max_units',
     'process_startup_cost',
+    'process_ramp_cost',
     'entity_fixed_cost', 'entity_lifetime_fixed_cost', 'entity_lifetime_fixed_cost_divest',
     'node_annual_flow',
     'group_penalty_inertia', 'group_penalty_non_synchronous',

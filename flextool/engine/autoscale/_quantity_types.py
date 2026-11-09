@@ -456,13 +456,13 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('profile_method', 'unit__node__profile'): QuantityType.DIMENSIONLESS,
     # Choice of profile method (upper_limit, lower_limit, fixed). Negative values also possible.
     ('ramp_cost', 'unit__inputNode'): QuantityType.PRICE_PER_CAPACITY,
-    # [CUR/MW] Cost of ramping the unit. Constant.
+    # [CUR/MW] Cost per MW of change in the step-average flow, up or down, between a time step and the step before it. Charged per change...
     ('ramp_cost', 'unit__outputNode'): QuantityType.PRICE_PER_CAPACITY,
-    # [CUR/MW] Cost of ramping the unit. Constant.
+    # [CUR/MW] Cost per MW of change in the step-average flow, up or down, between a time step and the step before it. Charged per change...
     ('ramp_method', 'unit__inputNode'): QuantityType.DIMENSIONLESS,
-    # Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.
+    # [choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost charges every change in the flow between consecutive time steps. both adds the limit as well.
     ('ramp_method', 'unit__outputNode'): QuantityType.DIMENSIONLESS,
-    # Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.
+    # [choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost charges every change in the flow between consecutive time steps. both adds the limit as well.
     ('ramp_speed_down', 'unit__inputNode'): QuantityType.RAMP_RATE,
     # [share of capacity per minute] Largest decrease of the flow between two time steps. No limit across a gap in the timeline. Constant.
     ('ramp_speed_down', 'unit__outputNode'): QuantityType.RAMP_RATE,

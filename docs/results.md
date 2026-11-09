@@ -56,6 +56,7 @@ With `output_horizon = yes` (a debug option), `output_parquet/<scenario>/horizon
     - *co2* — M[CUR] cost of CO2 emissions caused by commodities with CO2 content, net of the removal credit (negative cost) for flows into the same priced group's node(s)
     - *other operational* — M[CUR] other variable O&M costs
     - *starts* — M[CUR] start-up costs
+    - *ramps* — M[CUR] ramp costs: the cost of changing the flow of units with a `ramp_cost`
     - *upward / downward slack penalty* — M[CUR] cost of involuntary demand reduction / increase
     - *inertia slack penalty* — M[CUR] cost of not meeting the inertia constraint
     - *non-synchronous slack penalty* — M[CUR] cost of not meeting the non-synchronous constraint
@@ -134,6 +135,7 @@ The categories mirror the system [Costs](#costs) decomposition, restricted to th
 - *co2* — M[CUR] cost of CO2 emissions caused by the entity's flows
 - *other operational* — M[CUR] other variable O&M costs
 - *starts* — M[CUR] start-up costs (units)
+- *ramps* — M[CUR] ramp costs (units with a `ramp_cost`)
 - *investment* / *retirement* — M[CUR] cost of investing in unit / connection capacity or salvage from retiring it (named *storage investment* / *storage retirement* in the `node` table, where the capacity is node-state storage energy)
 - *fixed cost pre-existing* / *fixed cost invested* / *fixed cost reduction of divestments* — M[CUR] fixed O&M for pre-existing, newly invested and divested capacity
 - in the *annualized* tables, *investment*, *retirement*, *fixed cost invested* and *fixed cost reduction of divestments* are the yearly amounts in every period the capacity operates or the retirement applies, as in the system [Costs](#costs)

@@ -418,6 +418,27 @@ def compute_costs(par, s, v, r) -> None:
         period_costs.index = cost.index
         r.cost_startup_dt[valid_processes] = cost.mul(period_costs).mul(par.timestep_weight, axis=0)
 
+    # --- Ramp costs ---
+    # The LP objective (model/core.py _obj_ramp_cost): (v_ramp_up + v_ramp_down) × unitsize × ramp_cost
+    # × timestep_weight × inflation / period_share × pdt_branch_weight.  No step_duration: a change of the flow is
+    # a per-event cost, as a start-up.  Up + down, never |up − down| (the objective's value, also when an
+    # interior-point solution leaves both slightly > 0).  A coarse process's change sits at the first fine step of
+    # its coarse step (0 at the others).  Columns: the processes with a ramp cost.
+    ramp_cost = par.process_ramp_cost
+    ramp_procs = pd.Index(ramp_cost.columns.get_level_values(0).unique(), name='process')
+    r.cost_ramp_dt = pd.DataFrame(0.0, index=r.flow_dt.index, columns=ramp_procs, dtype=float)
+    ramp = v.ramp_up.add(v.ramp_down, fill_value=0)
+    ramp_arcs = ramp.columns.intersection(ramp_cost.columns) if len(ramp.columns) else ramp_cost.columns[:0]
+    if len(ramp_arcs) > 0:
+        cost = ramp[ramp_arcs].mul(
+            par.entity_unitsize.reindex(ramp_arcs.get_level_values(0)).to_numpy(), axis=1)
+        periods = cost.index.get_level_values('period')
+        arc_costs = ramp_cost.loc[periods, ramp_arcs]
+        arc_costs.index = cost.index
+        cost = cost.mul(arc_costs).mul(par.timestep_weight, axis=0)
+        r.cost_ramp_dt = (cost.T.groupby(level=0).sum().T
+                          .reindex(index=r.flow_dt.index, columns=ramp_procs, fill_value=0.0))
+
     # --- Investment costs ---
     # The lumps are discounted from the start of the run over the run's periods; the investment lump and the
     # lifetime fixed cost of new capacity are reported in the period the capacity starts to operate, the
@@ -454,6 +475,7 @@ def compute_costs(par, s, v, r) -> None:
                      r.sales_commodity_dt.sum(axis=1) +
                      r.cost_process_other_operational_cost_dt.sum(axis=1) +
                      r.cost_startup_dt.sum(axis=1) +
+                     r.cost_ramp_dt.sum(axis=1) +
                      r.cost_co2_dt
                      )
     r.costPenalty_dt = (r.costPenalty_node_state_upDown_dt.sum(axis=1) +
@@ -465,6 +487,7 @@ def compute_costs(par, s, v, r) -> None:
     r.cost_variable_d = r.cost_process_other_operational_cost_d.sum(axis=1)
 
     r.cost_startup_d = _agg_period_or_empty(r.cost_startup_dt, s.d_realized_period)
+    r.cost_ramp_d = _agg_period_or_empty(r.cost_ramp_dt, s.d_realized_period)
     r.costPenalty_inertia_d = _agg_period_or_empty(r.costPenalty_inertia_dt, s.d_realized_period)
     r.costPenalty_non_synchronous_d = _agg_period_or_empty(r.costPenalty_non_synchronous_dt, s.d_realized_period)
     r.costPenalty_reserve_upDown_d = _agg_period_or_empty(r.costPenalty_reserve_upDown_dt, s.d_realized_period)

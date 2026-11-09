@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **New: `ramp_cost` is charged (database version 80).** A unit flow with `ramp_method` *ramp_cost* or *both* pays
+  `ramp_cost` [CUR/MW] for every MW its step-average flow changes from the previous time step, up and down alike.
+  A change is an event, like a start-up, so the step length does not enter: ramping 0 → X → 0 costs
+  2 × `ramp_cost` × X. The previous step is the one the ramp limits use: no cost at the first step of a solve,
+  after a gap in the timeline or at the start of a representative period, and a rolling window pays once for the
+  change from the flow the previous window realized. *ramp_cost* works without any `ramp_speed`; *both* adds the
+  limit. On a `constant_efficiency` unit with one input and one output, an input-side cost prices the change of
+  the unit's output flow. A negative `ramp_cost` is an error. The cost is reported in the new cost category
+  *ramps* (a zero column in the cost tables of models without a ramp cost) and in the per-unit cost tables.
+  Databases are migrated automatically (new descriptions of `ramp_method` and `ramp_cost` only); a model whose
+  `ramp_method` was already *ramp_cost* or *both* with a `ramp_cost` value now pays that cost.
 - **New: units online in user constraints (`constraint_online_coeff`, database version 79).** A map on `unit` and
   `connection` (index: constraint name) puts the number of units online in each time step on the left side of a
   user `constraint`, for example "at least two of three units online": `constraint_online_coeff` 1 on each unit and

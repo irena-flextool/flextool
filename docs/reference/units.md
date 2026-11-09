@@ -149,8 +149,16 @@ Finally, the retirements work similar to investments using the same `inflation_r
 
 - `other_operational_cost` - [CUR/MWh] Other operational variable costs for energy flows. Constant, period, time, period+time or stochastic time.
 - `inertia_constant` - [MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.
-- `ramp_method` - Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 19.3.2023).
-- `ramp_cost` - [CUR/MW] Cost of ramping the unit. Constant.
+- `ramp_method` - [choice] Choice of ramp method. `ramp_limit` limits the ramp speed (`ramp_speed_up`, `ramp_speed_down`). `ramp_cost` charges every change in the flow between consecutive time steps (`ramp_cost`). `both` adds the limit as well.
+- `ramp_cost` - [CUR/MW] Cost per MW of change in the step-average flow, up or down, between a time step and the step before it. Charged per change, independent of step length. Needs `ramp_method` `ramp_cost` or `both`. Constant.
+
+    **What is charged.** Every change of the flow from the previous step costs `ramp_cost` per MW, up and down alike. A change is an event, like a start-up, so the step length does not enter: ramping 0 → X → 0 costs 2 × `ramp_cost` × X however long the steps are. Finer time steps can show more variation of the flow, and the cost charges it. The cost is reported in the cost category *ramps*.
+
+    **Which flow.** The cost is on the flow of the side it is set on: an output of the unit on `unit__outputNode`, an input on `unit__inputNode`. A `constant_efficiency` unit with one input and one output has one flow, its output: an input-side ramp cost then prices the change of that output flow, as the input-side ramp limit limits it. Costs on both sides of such a unit add up. A unit with several inputs on one flow pays for the change of each input separately, so switching between fuels at a constant output is charged.
+
+    **Where the cost applies.** The cost uses the same previous step as the ramp limit (see `ramp_speed_up`): no cost at the first step of a solve, across a gap in the timeline, at the start of a representative period or between periods that reuse the same timeset. A rolling window is charged for the change from the flow the previous window realized, once. A unit between coarse nodes is charged between its coarse steps. A stochastic solve charges each forecast branch with its weight.
+
+    **Interactions.** A start-up from zero pays both `startup_cost` and the ramp cost of the flow it adds. A `conversion_flow_coeff` of 0 removes the ramp limit of the flow but not its ramp cost. Reserves are not charged. A ramp cost makes the node price ambiguous at a step where the flow does not change: any price within ± `ramp_cost` of the neighbouring steps' prices is consistent with the dispatch. A negative `ramp_cost` is an error.
 - `ramp_speed_up` - [share of capacity per minute] Maximum ramp up speed, as a share of capacity per minute. Constant.
 
     **The limit.** Between two consecutive time steps the flow may rise by at most `ramp_speed_up × 60 × (average duration of the two steps in hours) × capacity`. The capacity is that of the side: `capacity_max_coeff` × capacity on an output, the input limit of `input_share_max` on an input. A speed of 1/60 or more on hourly steps never binds within a period.

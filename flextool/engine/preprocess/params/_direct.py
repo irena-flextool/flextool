@@ -59,6 +59,7 @@ from flextool.engine.preprocess.params._projection import (
     groupCapacityMargin,
     groupInertia,
     groupNonSync,
+    p_ramp_cost_arc_from_source,
 )
 
 if TYPE_CHECKING:
@@ -2689,6 +2690,8 @@ def apply_direct_params_b(source: "InputSource",
         (p_ramp_speed_down_sink_from_source, "p_ramp_speed_down_sink"),
         (p_ramp_speed_up_source_from_source, "p_ramp_speed_up_source"),
         (p_ramp_speed_down_source_from_source, "p_ramp_speed_down_source"),
+        # The ramp cost per arc (Σ of its sides with ramp_method ramp_cost / both), read by ramp_change_eq.
+        (p_ramp_cost_arc_from_source, "p_ramp_cost_arc"),
         (p_process_sink_inertia_constant_from_source,
             "p_process_sink_inertia_constant"),
         (p_process_source_inertia_constant_from_source,

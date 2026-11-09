@@ -40,6 +40,7 @@ def cost_summaries(par, s, v, r, debug):
     costs_dt['co2'] = r.cost_co2_dt
     costs_dt['other operational'] = r.cost_process_other_operational_cost_dt.sum(axis=1)
     costs_dt['starts'] = r.cost_startup_dt.sum(axis=1)
+    costs_dt['ramps'] = r.cost_ramp_dt.sum(axis=1)
     # With penalty_method=off on every node, v.q_state_up/down have no
     # columns, so costPenalty_node_state_upDown_dt is empty and the 'up'/
     # 'down' keys never attach to the upDown level (KeyError on .xs).  Guard
@@ -269,6 +270,7 @@ def cost_breakdown_by_entity(par, s, v, r, debug):
             ('co2', r.cost_process_co2_dt, 1.0),
             ('other operational', r.cost_process_other_operational_cost_dt, 1.0),
             ('starts', r.cost_startup_dt, 1.0),
+            ('ramps', r.cost_ramp_dt, 1.0),
         ]
         for cat, frame, sign in op_specs:
             src = frame if sign == 1.0 else frame.mul(sign)

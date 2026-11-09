@@ -1806,6 +1806,8 @@ def migrate_database(
                 _migrate_v78_unit_prefixes(db)
             elif next_version == 79:
                 _migrate_v79_constraint_online_coeff(db)
+            elif next_version == 80:
+                _migrate_v80_ramp_cost_descriptions(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -5826,6 +5828,36 @@ def _migrate_v79_constraint_online_coeff(db) -> None:
         elif any(pdef[k] != v for k, v in fields.items()):
             db.update_parameter_definition(id=pdef["id"], **fields)
     _commit_step(db, "v79: constraint_online_coeff on unit and connection")
+
+
+#: Descriptions written by v80: ``ramp_cost`` became functional (a cost per MW of change of the flow).
+_V80_DESCRIPTIONS: dict[tuple[str, str], str] = {
+    **{(cls, "ramp_method"): (
+        "[choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost charges every change in the "
+        "flow between consecutive time steps. both adds the limit as well.")
+       for cls in ("unit__inputNode", "unit__outputNode")},
+    **{(cls, "ramp_cost"): (
+        "[CUR/MW] Cost per MW of change in the step-average flow, up or down, between a time step and the step "
+        "before it. Charged per change, independent of step length. Needs ramp_method ramp_cost or both. Constant. "
+        "On a constant_efficiency unit with one input and one output, an input-side ramp cost prices the change "
+        "of the unit's output flow.")
+       for cls in ("unit__inputNode", "unit__outputNode")},
+}
+
+
+def _migrate_v80_ramp_cost_descriptions(db) -> None:
+    """``ramp_method`` and ``ramp_cost`` descriptions on unit__inputNode / unit__outputNode (v79 -> v80).
+
+    Description-only: ``ramp_cost`` is now charged (``ramp_change_eq``), so the "not functional" text goes.
+    No data is rewritten.  Definitions a database does not have are skipped.  Idempotent: a rerun finds every
+    description already in its v80 form.
+    """
+    for (cls, name), text in sorted(_V80_DESCRIPTIONS.items()):
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is None or (pdef["description"] or "") == text:
+            continue
+        db.update_parameter_definition(id=pdef["id"], description=text)
+    _commit_step(db, "v80: ramp_method and ramp_cost descriptions (ramp_cost is functional)")
 
 
 _V70_MAX_FLOW_UNCONSTRAINED_DESCRIPTION = (

@@ -1294,13 +1294,12 @@ class FlexData:
     process_source_sink_ramp_limit_sink_down: pl.DataFrame | None = None
     process_source_sink_ramp_limit_source_up: pl.DataFrame | None = None
     process_source_sink_ramp_limit_source_down: pl.DataFrame | None = None
-    # Δ.17c Gap D — process_source_sink_ramp_cost (mod L1115-1119): (p, src,
-    # sink) rows whose source-side OR sink-side ramp_method ∈
-    # RAMP_COST_METHOD.  Populated by ``apply_projection_params``; not yet
-    # consumed by model/core.py (the LP doesn't carry a per-arc ramp-cost
-    # objective term in the current scope) but kept for parity with
-    # flextool's preprocessing set family.
+    # The arcs whose flow change is priced (ramp_change_eq, v_ramp_up / v_ramp_down, the ramp_cost objective
+    # term): p_ramp_cost_arc > 0.  Populated by ``apply_projection_params`` (params._projection.ramp_cost_arc_frame).
     process_source_sink_ramp_cost: pl.DataFrame | None = None
+    # (p, source, sink): the ramp cost of each arc in CUR/MW of change, the sum of the ramp_cost of its sides whose
+    # own ramp_method is ramp_cost or both (> 0 only).  Populated by ``apply_direct_params``.
+    p_ramp_cost_arc: Param | None = None
     # method_2way_1var_off arcs (the .mod's signed-flow 2-way method,
     # ``v_flow ∈ [-cap, +cap]``).  The engine emits ``v_flow ≥ 0`` on the
     # forward arc only, so these arcs carry sink→source flow via a
@@ -3031,9 +3030,10 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
                 dt: "pl.DataFrame | None" = None,
                 provider: "object | None" = None) -> dict:
     """Load ramp-limit sets and ramp_speed params, the ramp predecessor links (``dt_ramp_link``) and, on a
-    continuation roll, the previous roll's flow (``dt_ramp_carry``, ``p_roll_continue_flow``).  The sets and
-    the carry are empty when no process_source_sink_ramp_limit_* row is populated.  ``dt_online_wrap`` is set with
-    ``dt_ramp_link`` (``params._ramp_links.ramp_link_fields``)."""
+    continuation roll, the previous roll's flow (``dt_ramp_carry``, ``p_roll_continue_flow``).  The sets are empty
+    when no process_source_sink_ramp_limit_* row is populated; the carried flow is kept also then (an arc with
+    only a ramp cost ramps from it, ``ramp_change_eq``).  ``dt_online_wrap`` is set with ``dt_ramp_link``
+    (``params._ramp_links.ramp_link_fields``)."""
     from flextool.engine.preprocess.params._ramp_links import ramp_link_fields
 
     blank = dict(
@@ -3051,9 +3051,12 @@ def _load_ramp(inp: Path, sd: Path, pss: pl.DataFrame | None,
         p_roll_continue_flow_duration=None,
     )
     # One read of the carry (pure on the Provider): dt_ramp_carry is needed also without ramp limits (the ramp
-    # output), p_roll_continue_flow only with them.
+    # output), p_roll_continue_flow by the ramp limits and the ramp cost (the previous roll wrote roll_end_flow
+    # only for arcs with either, _roll_end_flow).
     dt_ramp_carry, p_roll_continue_flow, p_roll_continue_flow_duration = _load_ramp_carry(sd, dt, provider=provider)
     blank["dt_ramp_carry"] = dt_ramp_carry
+    blank["p_roll_continue_flow"] = p_roll_continue_flow
+    blank["p_roll_continue_flow_duration"] = p_roll_continue_flow_duration
     if pss is None:
         return blank
 
@@ -6595,12 +6598,13 @@ def _step_duration_at(flex_data: "FlexData | None", step: "tuple[str, str]") -> 
 
 
 def _roll_end_flow(sol, flex_data: "FlexData | None", last: "tuple[str, str] | None") -> "pl.DataFrame | None":
-    """``[process, source, sink, period, step, duration, value]``: ``v_flow`` of the ramp-limited arcs at the
-    solve's last realized step; ``None`` without ramp limits, realized steps or ``v_flow``."""
+    """``[process, source, sink, period, step, duration, value]``: ``v_flow`` of the ramp-limited and the
+    ramp-cost arcs at the solve's last realized step; ``None`` without either, realized steps or ``v_flow``."""
     if flex_data is None or "v_flow" not in sol._vars:
         return None
     sets = [getattr(flex_data, f"process_source_sink_ramp_limit_{k}", None)
             for k in ("sink_up", "sink_down", "source_up", "source_down")]
+    sets.append(getattr(flex_data, "process_source_sink_ramp_cost", None))
     sets = [x.select(pl.col(c).cast(pl.Utf8) for c in ("p", "source", "sink")) for x in sets
             if x is not None and x.height > 0]
     if not sets or last is None:
@@ -7053,7 +7057,7 @@ def build_handoff_from_solution(
             roll_end_online_df = pl.DataFrame(
                 rco_rows, schema=["process", "value"], orient="row")
 
-    # ---- roll_end_flow: v_flow of the ramp-limited arcs at the last realized step ----
+    # ---- roll_end_flow: v_flow of the ramp-limited and ramp-cost arcs at the last realized step ----
     # The next roll's first step ramps from this flow (``_load_ramp_carry``; the next roll applies it only
     # where the complete solve's predecessor of its first step is this step and adjacent).  Units of
     # unitsize, like v_flow.  ``duration`` = this step's length (the ramp room uses both step lengths).

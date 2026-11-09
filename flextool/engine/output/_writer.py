@@ -15,10 +15,11 @@ renaming the live HiGHS column names BEFORE delegating;
 ``passColName`` accepts a post-solve update.  The rename is a no-op
 for variables already named correctly.
 
-``v_ramp`` is absent from the polars LP entirely — the extractor
-handles "no matching columns" gracefully by emitting an empty-but-
-well-shaped parquet (see ``read_highs_solution.extract_variable``'s
-``if not seen_cols`` fallback).
+``v_ramp_up`` / ``v_ramp_down`` exist only with a ramp cost — without
+one the extractor handles "no matching columns" gracefully by emitting an
+empty-but-well-shaped parquet (see
+``read_highs_solution.extract_variable``'s ``if not seen_cols``
+fallback).
 
 The carry-forward dependency is the support CSV cluster
 (``p_step_duration.csv``, ``entity_block.csv``, …) read by

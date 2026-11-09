@@ -1323,7 +1323,7 @@
       "model",
       "version",
       [
-        "79.0",
+        "80.0",
         "float"
       ],
       null,
@@ -2611,7 +2611,7 @@
       "ramp_cost",
       null,
       null,
-      "[CUR/MW] Cost of ramping the unit. Constant.",
+      "[CUR/MW] Cost per MW of change in the step-average flow, up or down, between a time step and the step before it. Charged per change, independent of step length. Needs ramp_method ramp_cost or both. Constant. On a constant_efficiency unit with one input and one output, an input-side ramp cost prices the change of the unit's output flow.",
       "tech_advanced"
     ],
     [
@@ -2622,7 +2622,7 @@
         "str"
       ],
       "ramp_methods",
-      "[choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.",
+      "[choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost charges every change in the flow between consecutive time steps. both adds the limit as well.",
       "tech_advanced"
     ],
     [
@@ -2725,7 +2725,7 @@
       "ramp_cost",
       null,
       null,
-      "[CUR/MW] Cost of ramping the unit. Constant.",
+      "[CUR/MW] Cost per MW of change in the step-average flow, up or down, between a time step and the step before it. Charged per change, independent of step length. Needs ramp_method ramp_cost or both. Constant. On a constant_efficiency unit with one input and one output, an input-side ramp cost prices the change of the unit's output flow.",
       "tech_advanced"
     ],
     [
@@ -2736,7 +2736,7 @@
         "str"
       ],
       "ramp_methods",
-      "[choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost is not functional yet.",
+      "[choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost charges every change in the flow between consecutive time steps. both adds the limit as well.",
       "tech_advanced"
     ],
     [

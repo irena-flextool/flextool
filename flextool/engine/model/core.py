@@ -49,7 +49,7 @@ Equation families, in emit order (module in brackets when not model/core.py):
                       minimum_{uptime,downtime}, online_fix_eq [_online];
                       maxFlow_exact_{forward,reverse} (exact connections) [_exact];
                       minFlow_{minload,output_floor,reserve,reserve_arc} [_unit_floors];
-                      ramp_{sink,source}_{up,down}_constraint
+                      ramp_{sink,source}_{up,down}_constraint; ramp_change_eq (ramp cost)
   Investment          max{Invest,Divest}_var_bound[_n], _entity_period_{p,n}, _entity_total[_path][_n]
   Conversion          conversion_indirect (delayed inputs from [_delay]); minInputShare
   Emissions & user    co2_max_period, co2_max_total; process_constraint_{equal,less_than,greater_than}[_period]
@@ -58,7 +58,7 @@ Equation families, in emit order (module in brackets when not model/core.py):
                       storage_state_solve_horizon_reference_value
   Profiles            profile_flow_{upper_limit,lower_limit,fixed}
   Objective           balance slack penalty, commodity cost and sales, CO2 price, variable cost, startup cost,
-                      storage reference price, invest/divest annuities, existing fixed cost (optional constant)
+                      ramp cost, storage reference price, invest/divest annuities, existing fixed cost (optional constant)
   Feature modules     capacityMargin, inertia_constraint, non_sync_constraint + slack penalties [_group_slack];
                       reserveBalance_*, reserve_total_upper, reserve_process_*, connection_reserve_*,
                       reserve_storage_*
@@ -184,6 +184,8 @@ MINLOAD_EFF: tuple[str, ...] = ("process_min_load_eff", "p_section")
 STARTUP_COST_LINEAR: tuple[str, ...] = ("p_startup_cost", "pdt_online_linear")
 STARTUP_COST_INTEGER: tuple[str, ...] = ("p_startup_cost", "pdt_online_integer")
 RAMP: tuple[str, ...] = ("dt_ramp_link", "p_step_duration", "p_process_existing_count")
+# The ramp cost needs no dt_ramp_link: a solve with only carried rows, or none, builds what it has.
+RAMP_COST: tuple[str, ...] = ("p_unitsize", "p_ramp_cost_arc")
 # Checked whenever a group has capacity_margin_method = manual: without period_invest or the group scaling the
 # capacity margin would be skipped without a word.
 CAPACITY_MARGIN: tuple[str, ...] = ("period_invest", "p_inv_group_cap")
@@ -288,6 +290,7 @@ class _Build:
     has_startup_cost_lin: bool = False
     has_startup_cost_int: bool = False
     has_ramp: bool = False
+    has_ramp_cost: bool = False          # process_source_sink_ramp_cost: arcs whose flow change is priced
     has_invest_p: bool = False
     has_divest_p: bool = False
     has_invest_n: bool = False
@@ -343,6 +346,10 @@ class _Build:
     v_invest_n: Var | None = None
     v_divest_n: Var | None = None
     v_flow_back: Var | None = None
+    v_ramp_up: Var | None = None
+    v_ramp_down: Var | None = None
+    # The rows R of ramp_change_eq (_ramp_cost_rows; _ramp_rows columns), built once at declare time.
+    ramp_cost_rows: pl.DataFrame | None = None
     v_exact_forward: Var | None = None
     exact_arcs: pl.DataFrame | None = None       # (p, source, sink, forward) of the exact connections
     v_reserve: Var | None = None
@@ -411,6 +418,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _exact.add_constraints,
         _unit_floors.add_constraints,
         _eq_ramp,
+        _eq_ramp_cost,
         _eq_invest_max_units,
         _eq_invest_period_caps,
         _eq_invest_total_caps,
@@ -434,6 +442,7 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _obj_co2_price_noEff,
         _obj_variable_cost,
         _obj_startup_cost,
+        _obj_ramp_cost,
         _obj_storage_reference_price,
         _obj_invest_divest,
         _obj_existing_fixed_cost,
@@ -516,6 +525,7 @@ def _prepare(b: _Build) -> None:
                                "process_source_sink_ramp_limit_sink_down",
                                "process_source_sink_ramp_limit_source_up",
                                "process_source_sink_ramp_limit_source_down"))
+    b.has_ramp_cost = _has_rows(getattr(d, "process_source_sink_ramp_cost", None))
     b.has_invest_p = _has_rows(d.pd_invest_set)
     b.has_divest_p = _has_rows(d.pd_divest_set)
     b.has_invest_n = _has_rows(d.nd_invest_set)
@@ -561,6 +571,8 @@ def _prepare(b: _Build) -> None:
         _check(d, STORAGE, "storage")
     if b.has_ramp:
         _check(d, RAMP, "ramp_limit")
+    if b.has_ramp_cost:
+        _check(d, RAMP_COST, "ramp_cost")
     if b.has_invest_p or b.has_invest_n:
         _check(d, INVEST, "invest")
     if b.has_divest_p:
@@ -841,6 +853,21 @@ def _declare_variables(b: _Build) -> None:
             b, m.add_var("v_flow", ("p", "source", "sink", "d", "t"), _coarse_flows.domain(b, b.pss_dt),
                          lower=0.0, upper=upper),
             b.pss_dt)
+
+    # ─── VAR. ─── v_ramp_up / v_ramp_down ────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_ramp_up[p,s,k,d,t] ≥ 0, v_ramp_down[p,s,k,d,t] ≥ 0   ∀ (p,s,k,d,t) ∈ R
+    #   R = the rows of ramp_change_eq (_ramp_cost_rows): (p,s,k) ∈ process_source_sink_ramp_cost with a ramp
+    #   predecessor at (d,t) (dt_ramp_link or dt_ramp_carry; for a coarse process t = b, its coarse step)
+    # The increase and the decrease of v_flow from the ramp predecessor, in units of unitsize (as v_flow).  Priced
+    # equally by the ramp cost, so at most one of them is > 0 at an optimum (up + down = |Δv_flow|).  Declared
+    # only when some arc has a ramp cost.
+    if b.has_proc and b.has_ramp_cost:
+        b.ramp_cost_rows = _ramp_cost_rows(b)
+        if b.ramp_cost_rows.height > 0:
+            r_idx = b.ramp_cost_rows.select("p", "source", "sink", "d", "t")
+            b.v_ramp_up = m.add_var("v_ramp_up", ("p", "source", "sink", "d", "t"), r_idx, lower=0.0)
+            b.v_ramp_down = m.add_var("v_ramp_down", ("p", "source", "sink", "d", "t"), r_idx, lower=0.0)
 
     # ─── VAR. ─── vq_state_up / vq_state_down ────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -2255,26 +2282,73 @@ def _eq_ramp(b: _Build) -> None:
                 _ramp_family(b, name, family_rows, idx_set, ramp_speed, side, up, keys)
 
 
+def _ramp_cost_rows(b: _Build) -> pl.DataFrame:
+    """The rows R of ``ramp_change_eq`` (:func:`_ramp_rows` columns, ``__kind`` ``link`` / ``carry``): every arc of
+    ``process_source_sink_ramp_cost`` at every step with a ramp predecessor, the same predecessors as the ramp
+    limits (:func:`ramp_step_links`) but without their room filter; a coarse process at its coarse steps
+    (``_coarse_flows.ramp_rows``)."""
+    d = b.d
+    link, carry = ramp_step_links(d)
+    idx_set = d.process_source_sink_ramp_cost.select("p", "source", "sink")
+    if b.has_coarse_proc:
+        fine_arcs, coarse_arcs = _coarse_flows.split_arcs(b, idx_set)
+        parts = []
+        if fine_arcs.height > 0:
+            parts.append(_ramp_rows(d, fine_arcs, None, "sink", "up", link, carry))
+        if coarse_arcs.height > 0:
+            parts.append(_coarse_flows.ramp_rows(b, coarse_arcs, None, "sink", link, carry))
+        return pl.concat(parts)
+    return _ramp_rows(d, idx_set, None, "sink", "up", link, carry)
+
+
+def _eq_ramp_cost(b: _Build) -> None:
+    """The change of a priced flow from its ramp predecessor, split into v_ramp_up and v_ramp_down."""
+    if b.v_ramp_up is None:
+        return
+    rows = b.ramp_cost_rows
+    keys = ["p", "source", "sink"]
+    over = rows.select(*keys, "d", "t")
+    carried = rows.filter(pl.col("__kind") == "carry")
+
+    # ─── EQ. ─── ramp_change_eq ──────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_flow[p,s,k,d,t] − v_flow[p,s,k,d′,t′] − v_ramp_up[p,s,k,d,t] + v_ramp_down[p,s,k,d,t] = 0
+    #   ∀ (p,s,k) ∈ process_source_sink_ramp_cost, (d,t,d′,t′) ∈ dt_ramp_link   (every link, no room filter)
+    # carried row (dt_ramp_carry): v_flow[p,s,k,d,t] − v_ramp_up + v_ramp_down = f̂[p,s,k,d,t] (p_roll_continue_flow)
+    # coarse process: t = b (its coarse step, named by the first fine step), (d′,t′) = b⁻, as _coarse_flows.ramp_rows
+    # Splits the change of a flow between a step and its ramp predecessor into an increase and a decrease, both
+    # priced by the ramp cost (OBJ. ramp_cost), in units of unitsize.  The predecessors are those of the ramp limits:
+    # no row at the first step of a solve, after a gap in the timeline, at a period that does not continue the
+    # previous one or at a representative-block start; cross-period links are kept; a stochastic branch's first step
+    # links to the shared predecessor; a continuation roll's first step ramps from the flow the previous roll
+    # realized, so a change at a roll boundary is charged once, in the roll that realizes it.  Arcs with
+    # conversion_flow_coeff = 0 have rows too (that parameter removes the ramp limits, not the cost).  Reserves are
+    # not part of the change.  A direct unit with two inputs prices each input arc's change separately.
+    lhs = _ramp_flow_change(b, rows, keys)
+    lhs["ramp_up"] = -Where(b.v_ramp_up, over)
+    lhs["ramp_down"] = Where(b.v_ramp_down, over)
+    rhs: dict = {}
+    if carried.height > 0:
+        rhs["roll_continue_flow"] = Param(("p", "source", "sink", "d", "t"),
+                                          carried.select(*keys, "d", "t", value=pl.col("__f_hat")))
+    b.m.add_cstr(
+        "ramp_change_eq",
+        over      = over,
+        sense     = "==",
+        lhs_terms = lhs,
+        rhs_terms = rhs,
+    )
+
+
 def _ramp_family(b: _Build, name: str, rows: pl.DataFrame, idx_set: pl.DataFrame, ramp_speed: Param, side: str,
                  up: bool, keys: list) -> None:
     """The rows ``rows`` (:func:`_ramp_rows` columns) of the ramp family ``name`` (EQ. header in :func:`_eq_ramp`)."""
     m, d = b.m, b.d
-    v_flow = b.v_flow
     sign = 1.0 if up else -1.0
     over = rows.select(*keys, "d", "t")
-    flow_rows = rows.filter(pl.col("__kind") != "reserve").select(*keys, "d", "t")
-    linked = rows.filter(pl.col("__kind") == "link")
     carried = rows.filter(pl.col("__kind") == "carry")
 
-    lhs: dict = {}
-    if flow_rows.height > 0:
-        lhs["flow"] = Where(v_flow, flow_rows)
-    if linked.height > 0:
-        prev = _var_view(v_flow, "__ramp_prev", {"d": "d_previous", "t": "t_previous"}, to_axis=True)
-        pairs = linked.select(*keys, "d", "t",
-                              pl.col("__d_prev").cast(prev.frame.schema["d_previous"]).alias("d_previous"),
-                              pl.col("__t_prev").cast(prev.frame.schema["t_previous"]).alias("t_previous"))
-        lhs["flow_prev"] = -Sum(Where(prev, pairs), over=("d_previous", "t_previous"))
+    lhs = _ramp_flow_change(b, rows, keys)
     if up:
         if b.reserve_up_to_sink is not None:
             lhs["reserve_up"] = b.reserve_up_to_sink
@@ -2328,6 +2402,25 @@ def _ramp_family(b: _Build, name: str, rows: pl.DataFrame, idx_set: pl.DataFrame
     )
 
 
+def _ramp_flow_change(b: _Build, rows: pl.DataFrame, keys: list) -> dict:
+    """The flow change of the ramp rows ``rows`` (:func:`_ramp_rows` columns): ``flow`` = v_flow at (d,t) on the
+    ``link`` and ``carry`` rows, ``flow_prev`` = −v_flow at the predecessor (d′,t′) on the ``link`` rows (a carried
+    predecessor is the constant f̂ on the right side).  Shared by the ramp limits and the ramp cost."""
+    v_flow = b.v_flow
+    flow_rows = rows.filter(pl.col("__kind") != "reserve").select(*keys, "d", "t")
+    linked = rows.filter(pl.col("__kind") == "link")
+    lhs: dict = {}
+    if flow_rows.height > 0:
+        lhs["flow"] = Where(v_flow, flow_rows)
+    if linked.height > 0:
+        prev = _var_view(v_flow, "__ramp_prev", {"d": "d_previous", "t": "t_previous"}, to_axis=True)
+        pairs = linked.select(*keys, "d", "t",
+                              pl.col("__d_prev").cast(prev.frame.schema["d_previous"]).alias("d_previous"),
+                              pl.col("__t_prev").cast(prev.frame.schema["t_previous"]).alias("t_previous"))
+        lhs["flow_prev"] = -Sum(Where(prev, pairs), over=("d_previous", "t_previous"))
+    return lhs
+
+
 def ramp_step_links(d) -> "tuple[pl.DataFrame, pl.DataFrame]":
     """The ramp predecessors of the steps of ``dt``, Utf8 keys ``_d, _t``.
 
@@ -2362,22 +2455,30 @@ def ramp_step_links(d) -> "tuple[pl.DataFrame, pl.DataFrame]":
     return link, carry
 
 
-def _ramp_rows(d, idx_set: pl.DataFrame, ramp_speed: Param, side: str, dir_: str,
+def _ramp_rows(d, idx_set: pl.DataFrame, ramp_speed: "Param | None", side: str, dir_: str,
                link: pl.DataFrame, carry: pl.DataFrame) -> pl.DataFrame:
     """The rows of one ramp family: ``(p, source, sink, d, t)`` in the dtypes of ``idx_set`` / ``dt`` with
     ``__kind`` (``link`` / ``carry`` / ``reserve``), ``__room`` (ρ), ``__d_prev`` / ``__t_prev`` (Utf8) and
-    ``__f_hat`` (the carried flow of ``carry`` rows).  See the EQ. header of :func:`_eq_ramp`."""
+    ``__f_hat`` (the carried flow of ``carry`` rows).  See the EQ. header of :func:`_eq_ramp`.  With
+    ``ramp_speed=None`` (the ramp cost, :func:`_eq_ramp_cost`) only the ``link`` and ``carry`` rows, every one of
+    them (no room filter), and ``__room`` null."""
     keys = ["p", "source", "sink"]
-    speed = ramp_speed.frame.select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col(side).cast(pl.Utf8).alias("_n"),
-                                    pl.col("value").cast(pl.Float64).alias("__speed"))
-    base = (_utf8_keys(idx_set.select(keys).unique(maintain_order=True).join(d.dt.select("d", "t"), how="cross")
-                       .lazy(), keys + ["d", "t"])
-            .with_columns(pl.col(f"_{side}").alias("_n"))
-            .join(speed.lazy(), on=["_p", "_n"], how="inner"))
+    base = _utf8_keys(idx_set.select(keys).unique(maintain_order=True).join(d.dt.select("d", "t"), how="cross")
+                      .lazy(), keys + ["d", "t"])
+    if ramp_speed is not None:
+        speed = ramp_speed.frame.select(pl.col("p").cast(pl.Utf8).alias("_p"),
+                                        pl.col(side).cast(pl.Utf8).alias("_n"),
+                                        pl.col("value").cast(pl.Float64).alias("__speed"))
+        base = (base.with_columns(pl.col(f"_{side}").alias("_n"))
+                .join(speed.lazy(), on=["_p", "_n"], how="inner"))
     with_link = (base.join(link.lazy(), on=["_d", "_t"], how="inner")
                  .with_columns(__kind=pl.lit("link"), __f_hat=pl.lit(None, pl.Float64)))
-    parts = [with_link.filter((pl.col("__d_prev") != pl.col("_d"))
-                              | (pl.col("__speed") * 60.0 * (pl.col("__dur") + pl.col("__dur_prev")) / 2.0 < 1.0))]
+    if ramp_speed is None:
+        parts = [with_link]
+    else:
+        parts = [with_link.filter((pl.col("__d_prev") != pl.col("_d"))
+                                  | (pl.col("__speed") * 60.0 * (pl.col("__dur") + pl.col("__dur_prev")) / 2.0
+                                     < 1.0))]
     if carry.height > 0:
         f_hat = d.p_roll_continue_flow.frame.select(
             pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("source").cast(pl.Utf8).alias("_source"),
@@ -2387,6 +2488,9 @@ def _ramp_rows(d, idx_set: pl.DataFrame, ramp_speed: Param, side: str, dir_: str
                      .join(f_hat.lazy(), on=["_p", "_source", "_sink", "_d", "_t"], how="inner")
                      .with_columns(__kind=pl.lit("carry")))
     prundt = getattr(d, "prundt", None)
+    if ramp_speed is None:
+        cols = [*keys, "d", "t", "__kind", "__d_prev", "__t_prev", "__f_hat", pl.lit(None, pl.Float64).alias("__room")]
+        return pl.concat([p.select(cols) for p in parts]).collect()
     if prundt is not None and prundt.height > 0:
         # Steps without a predecessor where the arc holds reserve in this direction: at its sink in the same
         # direction, at its source in the opposite one.
@@ -4288,7 +4392,7 @@ def _sum_terms(terms: list) -> Expr | None:
 # step_duration turns a rate (currency/h) into currency per step, timestep_weight scales a representative step
 # to the time it stands for, / period_share scales the modelled part of the period to a full year, and
 # inflation_op discounts that year's operating cost; branch_weight is 1 outside stochastic solves.  Terms for point events
-# (startups, end-of-horizon valuation) use w_ev[d,t] = w_op[d,t] / step_duration[d,t].
+# (startups, ramp changes, end-of-horizon valuation) use w_ev[d,t] = w_op[d,t] / step_duration[d,t].
 # The commodity ladder (_commodity_ladder) uses the per-period form
 # inflation_op[d] / period_share[d] · branch_weight[d], because its purchases are per period.
 
@@ -4534,6 +4638,28 @@ def _obj_startup_cost(b: _Build) -> Expr | None:
             Where(b.v_startup_integer, d.pdt_online_integer)
             * d.p_startup_cost * d.p_unitsize * startup_factor))
     return _sum_terms(terms)
+
+
+def _obj_ramp_cost(b: _Build) -> Expr | None:
+    """Cost of changing the flow of the arcs with a ramp cost."""
+    if b.v_ramp_up is None:
+        return None
+    d = b.d
+
+    # ─── OBJ. ─── ramp_cost ──────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(p,s,k,d,t) ∈ R} (v_ramp_up + v_ramp_down)[p,s,k,d,t] · unitsize[p] · rc[p,s,k] · w_ev[d,t]
+    #   rc[p,s,k] = p_ramp_cost_arc = Σ_{side ∈ {source s, sink k}, ramp_method[p,side] ∈ {ramp_cost, both}}
+    #               ramp_cost[p,side]   (> 0; a direct unit's one arc takes both sides)
+    #   w_ev = timestep_weight · inflation_op / period_share · branch_weight   (as startup_cost)
+    # Cost of changing a flow, ramp_cost in currency per MW of change of the step-average flow, up and down
+    # alike.  A change is an event, as a start-up, so the weight has no step_duration: ramping 0 → X → 0 costs
+    # 2·rc·X whatever the step lengths.  A start-up from 0 pays both its startup cost and this cost.
+    factor = d.p_timestep_weight * d.p_inflation_op / d.p_period_share
+    if d.pdt_branch_weight is not None:
+        factor = factor * d.pdt_branch_weight
+    return _sum_terms([Sum(v * d.p_ramp_cost_arc * d.p_unitsize * factor)
+                       for v in (b.v_ramp_up, b.v_ramp_down)])
 
 
 def _obj_storage_reference_price(b: _Build) -> Expr | None:

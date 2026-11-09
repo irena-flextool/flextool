@@ -275,7 +275,10 @@ VARIABLE_SPECS: list[VariableSpec] = [
     # folds it into ``r.flow_dt`` (calc_capacity_flows) so the reported
     # connection flow carries the correct sign (negative = sink→source).
     VariableSpec("v_flow_back",        ("process", "source", "sink")),
-    VariableSpec("v_ramp",             ("process", "source", "sink")),
+    # The increase / decrease of v_flow from its ramp predecessor on the arcs with a ramp cost (units of
+    # unitsize, as v_flow); a coarse process's change is at the first fine step of its coarse step.
+    VariableSpec("v_ramp_up",          ("process", "source", "sink")),
+    VariableSpec("v_ramp_down",        ("process", "source", "sink")),
     VariableSpec("v_reserve",          ("process", "reserve", "updown", "node")),
     VariableSpec("v_state",            ("node",)),
     VariableSpec("v_online_linear",    ("process",)),
