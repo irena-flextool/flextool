@@ -412,9 +412,20 @@ def update_flextool(skip_git):
     path = specifications["items"]["Input data"]["url"]["database"]["path"]
     db_to_update.append(path)
 
-    # migrate the databases to new version
+    # migrate the databases to new version; a frozen database older than
+    # this FlexTool is skipped and listed (migrate a copy of it with
+    # ``flextool-migrate-database DB --copy-to NEW.sqlite``).
+    from flextool.update_flextool.frozen import FrozenDatabaseError
+    skipped_frozen: list[str] = []
     for i in db_to_update:
-        migrate_database(i)
+        try:
+            migrate_database(i)
+        except FrozenDatabaseError as exc:
+            skipped_frozen.append(str(exc))
+    if skipped_frozen:
+        print("These frozen databases were not migrated:")
+        for line in skipped_frozen:
+            print("  " + line)
 
     # Refresh the results template (unconditional) and ensure results.sqlite
     # exists (ensure_runtime_files seeds it; this is a belt-and-braces copy

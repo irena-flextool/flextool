@@ -64,6 +64,7 @@ def migrate_database(
     *,
     progress_callback: Callable[[int, int, int], None] | None = None,
     cancel_check: Callable[[], bool] | None = None,
+    allow_frozen: bool = False,
 ):
     """Migrate a FlexTool database to a target schema version.
 
@@ -82,7 +83,25 @@ def migrate_database(
             completed version.  The check does not fire inside a step,
             so an in-flight commit always finishes before cancellation
             takes effect.
+        allow_frozen: Migrate a database that carries the frozen marker
+            (:mod:`flextool.update_flextool.frozen`); the marker is kept with
+            its version part updated.  Without it, a frozen database older
+            than this FlexTool raises
+            :class:`~flextool.update_flextool.frozen.FrozenDatabaseError`
+            before the file is opened, and a frozen database that is
+            already current is left unchanged.
     """
+    from flextool.update_flextool.frozen import FrozenDatabaseError, frozen_guard, set_frozen_version
+
+    # The guard reads the file with sqlite3 read-only, before the
+    # ``upgrade=True`` open below can change its SpineDB schema.
+    try:
+        frozen = frozen_guard(database_path, allow_frozen=allow_frozen)
+    except FrozenDatabaseError as exc:
+        if exc.db_version == exc.target_version:
+            print(f"{database_path} is frozen ({exc.info.describe()}) and up to date; left unchanged")
+            return
+        raise
 
     if database_path.startswith('sqlite://') or database_path.startswith('http://'):
         mapping_name = database_path
@@ -1823,6 +1842,8 @@ def migrate_database(
             version_up = [["model", "version", new_version, None,
                            "[version number] Contains database version information."]]
             (num,log) = import_data(db, object_parameters = version_up)
+            if frozen is not None:
+                set_frozen_version(db, new_version)
             print(database_path+ " updated to version "+ str(new_version))
             _commit_step(db,"Updated Flextool data structure to version " + str(new_version))
         else:

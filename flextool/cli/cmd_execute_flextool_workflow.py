@@ -5,7 +5,9 @@ FlexTool Workflow Orchestrator
 Runs the FlexTool workflow in two phases:
 1. Input preparation (optional): convert tabular data into a FlexTool input
    database. Runs only when --tabular-file-path or --csv-directory-path is
-   given; otherwise the existing input database is used as-is.
+   given; otherwise the existing input database is used as-is.  Either way, an input
+   database older than this FlexTool is migrated before the model runs (a frozen one is
+   refused: migrate a copy with ``flextool-migrate-database DB --copy-to NEW.sqlite``).
 2. Model execution + output write: run the optimisation model and write
    results in the requested formats. Parquet is always produced; --write-methods
    selects which additional formats (plot, csv, excel) to generate alongside.
@@ -39,6 +41,29 @@ def run_flextool_args(args: argparse.Namespace, *, output_config: str, output_su
         argv.extend(['--threads', str(args.threads)])
     argv.extend(['--run-launcher', 'workflow'])
     return argv
+
+
+def migrate_input_if_needed(input_db_url: str) -> int | None:
+    """Migrate a local sqlite input database older than this FlexTool; returns the version it had, else ``None``.
+
+    The engine refuses a database that is not at the current version, so the workflow migrates first.  The version is
+    read read-only, so a current database is not touched.  A frozen database is not migrated: this raises
+    :class:`~flextool.update_flextool.frozen.FrozenDatabaseError`.  Other URLs and missing files are left to the engine,
+    which reports them.
+    """
+    from flextool.update_flextool import FLEXTOOL_DB_VERSION
+    from flextool.update_flextool.db_migration import migrate_database
+    from flextool.update_flextool.frozen import read_db_version_ro, sqlite_path_from
+
+    path = sqlite_path_from(input_db_url)
+    if path is None or not path.is_file():
+        return None
+    version = read_db_version_ro(path)
+    if version is None or version >= FLEXTOOL_DB_VERSION:
+        return None
+    print(f"  Migrating the input database from version {version} to {FLEXTOOL_DB_VERSION}: {path}")
+    migrate_database(str(path))
+    return version
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -155,6 +180,16 @@ def main():
         print(f"\n{'='*70}")
         print("PHASE 1: SKIPPED (using existing input database)")
         print(f"{'='*70}\n")
+
+    # The engine refuses an input database that is not at the current version: migrate it first (never a frozen one).
+    from flextool.update_flextool.frozen import FrozenDatabaseError
+    try:
+        migrate_input_if_needed(args.input_db_url)
+    except FrozenDatabaseError as exc:
+        print("\n" + "="*70)
+        print(f"ERROR: {exc}")
+        print("="*70)
+        sys.exit(2)
 
     # Phase 2: Model Execution + Output Write
     # cmd_run_flextool writes outputs inline using the live in-memory

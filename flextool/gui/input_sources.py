@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import shutil
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from flextool.gui.data_models import InputSourceInfo, ProjectSettings, ScenarioInfo
@@ -12,6 +13,19 @@ logger = logging.getLogger(__name__)
 
 # File extensions recognised as input sources
 SUPPORTED_EXTENSIONS = {".xlsx", ".ods", ".sqlite"}
+
+
+@dataclass(frozen=True)
+class FrozenMigration:
+    """A frozen sqlite source older than this FlexTool: the user chooses how to migrate it."""
+
+    source_name: str
+    path: Path
+    label: str
+    frozen_version: int | None
+    current_version: int | None
+    target_version: int
+    external: bool
 
 
 def _relative_posix(target: Path, base: Path) -> str:
@@ -53,6 +67,11 @@ class InputSourceManager:
         self._last_known_mtimes: dict[str, float] = {}
         # Track which sources were explicitly opened for editing
         self._editing_sources: set[str] = set()
+        # Frozen sources the user chose not to migrate this session: not asked
+        # again, shown as "frozen, older version" and not runnable.
+        self._frozen_declined: set[Path] = set()
+        # SHA-256 of frozen files by (path, size, mtime), for the migrated-copy check.
+        self._sha_cache: dict[tuple[Path, int, int], str] = {}
 
     # ── Public API ────────────────────────────────────────────────────
 
@@ -403,6 +422,8 @@ class InputSourceManager:
             else:
                 source.status = "ok"
                 source.scenarios = scenarios
+            if source.file_type == "sqlite":
+                self._apply_frozen_status(source, filepath)
 
         # Rebuild the live name→number index from scratch so deleted files
         # drop out automatically, and refresh each live source's registry
@@ -551,13 +572,20 @@ class InputSourceManager:
     ) -> tuple[
         list[tuple[str, Path]],
         list[tuple[str, Path, int, int]],
+        list[FrozenMigration],
         list[str],
     ]:
         """Probe sqlite input sources for needed FlexTool DB migrations.
 
-        Returns ``(internal_to_migrate, external_to_migrate, planning_messages)``.
-        Internal entries are ``(source_name, abs_path)``; external entries
-        include current and target version numbers for the consent dialog.
+        Returns ``(internal_to_migrate, external_to_migrate,
+        frozen_to_migrate, planning_messages)``.  Internal entries are
+        ``(source_name, abs_path)``; external entries include current and
+        target version numbers for the consent dialog.  A frozen source
+        (internal or external) older than this FlexTool is never in the
+        first two lists: it is in *frozen_to_migrate*, unless the user
+        declined it this session or a registered source is already its
+        migrated copy.  Every probe reads the file with sqlite3 read-only,
+        so planning never changes a file.
         """
         from flextool.gui.db_version_check import (
             _read_flextool_version,
@@ -567,50 +595,176 @@ class InputSourceManager:
 
         internal_to_migrate: list[tuple[str, Path]] = []
         external_to_migrate: list[tuple[str, Path, int, int]] = []
+        frozen_to_migrate: list[FrozenMigration] = []
         planning_messages: list[str] = []
 
         target_version = get_target_flextool_version()
 
+        candidates: list[tuple[str, Path, bool]] = []
         if self.input_dir.is_dir():
             for filepath in sorted(self.input_dir.iterdir()):
                 if filepath.suffix.lower() != ".sqlite" or not filepath.is_file():
                     continue
-                needs = needs_flextool_migration(filepath)
-                if needs is True:
-                    internal_to_migrate.append((filepath.name, filepath))
-                elif needs is None:
-                    planning_messages.append(
-                        f"{filepath.name}: could not read FlexTool version; "
-                        f"migration will attempt to surface the error."
-                    )
-                    internal_to_migrate.append((filepath.name, filepath))
-
+                candidates.append((filepath.name, filepath, False))
         for ext_name, rel_path in self.settings.external_refs.items():
             if Path(ext_name).suffix.lower() != ".sqlite":
                 continue
             abs_path = (self.project_path / rel_path).resolve()
             if not abs_path.is_file():
                 continue
-            needs = needs_flextool_migration(abs_path)
+            candidates.append((ext_name, abs_path, True))
+
+        for name, path, external in candidates:
+            frozen = self._frozen_needing_migration(path, target_version)
+            if frozen is not None:
+                info, current = frozen
+                if path.resolve() in self._frozen_declined:
+                    continue
+                if self.migrated_copy_of(path) is not None:
+                    continue
+                frozen_to_migrate.append(FrozenMigration(
+                    source_name=name, path=path, label=info.label,
+                    frozen_version=info.version, current_version=current,
+                    target_version=target_version, external=external,
+                ))
+                continue
+            needs = needs_flextool_migration(path)
+            if not external:
+                if needs is True:
+                    internal_to_migrate.append((name, path))
+                elif needs is None:
+                    planning_messages.append(
+                        f"{name}: could not read FlexTool version; "
+                        f"migration will attempt to surface the error."
+                    )
+                    internal_to_migrate.append((name, path))
+                continue
             if needs is True:
-                current_version = _read_flextool_version(f"sqlite:///{abs_path}")
+                current_version = _read_flextool_version(f"sqlite:///{path}")
                 if current_version is None:
                     planning_messages.append(
-                        f"{ext_name}: external file's FlexTool version "
+                        f"{name}: external file's FlexTool version "
                         f"became unreadable between checks; skipped."
                     )
                     continue
                 external_to_migrate.append(
-                    (ext_name, abs_path, current_version, target_version)
+                    (name, path, current_version, target_version)
                 )
             elif needs is None:
                 planning_messages.append(
-                    f"{ext_name}: could not read external file's FlexTool "
+                    f"{name}: could not read external file's FlexTool "
                     f"version; skipped (open it in a tool that can read the "
                     f"file to investigate)."
                 )
 
-        return internal_to_migrate, external_to_migrate, planning_messages
+        return internal_to_migrate, external_to_migrate, frozen_to_migrate, planning_messages
+
+    # ── Frozen sources ────────────────────────────────────────────────
+
+    def decline_frozen(self, path: Path) -> None:
+        """Remember for this session that the user chose not to migrate a frozen source."""
+        self._frozen_declined.add(Path(path).resolve())
+
+    def undecline_frozen(self, path: Path) -> None:
+        """Ask again about a frozen source the user declined (the next plan lists it)."""
+        self._frozen_declined.discard(Path(path).resolve())
+
+    def frozen_copy_path(self, entry: FrozenMigration) -> Path:
+        """Where "Migrate a copy" writes: ``input_sources/<stem>_v<target>.sqlite`` (``_2``, ``_3``… when taken)."""
+        stem = Path(entry.source_name).stem
+        base = f"{stem}_v{entry.target_version}"
+        candidate = self.input_dir / f"{base}.sqlite"
+        n = 2
+        while candidate.exists():
+            candidate = self.input_dir / f"{base}_{n}.sqlite"
+            n += 1
+        return candidate
+
+    def _registered_sqlite_paths(self) -> list[Path]:
+        paths: list[Path] = []
+        if self.input_dir.is_dir():
+            paths.extend(
+                p for p in sorted(self.input_dir.iterdir())
+                if p.suffix.lower() == ".sqlite" and p.is_file()
+            )
+        for ext_name, rel_path in self.settings.external_refs.items():
+            if Path(ext_name).suffix.lower() == ".sqlite":
+                abs_path = (self.project_path / rel_path).resolve()
+                if abs_path.is_file():
+                    paths.append(abs_path)
+        return paths
+
+    def _sha256(self, path: Path) -> str:
+        from flextool.update_flextool.frozen import sha256_of
+
+        stat = path.stat()
+        key = (path.resolve(), stat.st_size, stat.st_mtime_ns)
+        digest = self._sha_cache.get(key)
+        if digest is None:
+            digest = sha256_of(path)
+            self._sha_cache[key] = digest
+        return digest
+
+    def migrated_copy_of(self, original: Path) -> Path | None:
+        """A registered source that is the migrated copy of *original* as it is now (same SHA-256), or ``None``."""
+        from flextool.update_flextool.frozen import read_migrated_from
+
+        resolved = Path(original).resolve()
+        copies = []
+        for candidate in self._registered_sqlite_paths():
+            if candidate.resolve() == resolved:
+                continue
+            marker = read_migrated_from(candidate)
+            if marker is not None:
+                copies.append((candidate, marker))
+        if not copies:
+            return None
+        digest = self._sha256(Path(original))
+        for candidate, marker in copies:
+            if marker.sha256 == digest:
+                return candidate
+        return None
+
+    @staticmethod
+    def _frozen_needing_migration(path: Path, target_version: int):
+        """``(marker, current version)`` of a frozen *path* that is not at *target_version*, else ``None``."""
+        from flextool.update_flextool.frozen import read_db_version_ro, read_frozen
+
+        info = read_frozen(path)
+        if info is None:
+            return None
+        current = read_db_version_ro(path)
+        if current == target_version:
+            return None
+        return info, current
+
+    def _apply_frozen_status(self, source: InputSourceInfo, filepath: Path) -> None:
+        """Set the frozen fields of a sqlite source; an older frozen one becomes ``frozen_old`` (not runnable)."""
+        from flextool.gui.db_version_check import get_target_flextool_version
+        from flextool.update_flextool.frozen import read_db_version_ro, read_frozen
+
+        info = read_frozen(filepath)
+        if info is None:
+            return
+        source.frozen_label = info.label
+        target = get_target_flextool_version()
+        current = read_db_version_ro(filepath)
+        note = f"Frozen: {info.describe()}."
+        if current != target:
+            found = f"version {current}" if current is not None else "an unreadable version"
+            copy = self.migrated_copy_of(filepath)
+            if copy is not None:
+                note += (f"\nFrozen, older version ({found}; this FlexTool needs {target}). "
+                         f"Migrated copy: {copy.name}. Run the copy.")
+            else:
+                note += (f"\nFrozen, older version ({found}; this FlexTool needs {target}): not runnable. "
+                         "Right-click > Migrate frozen database... to choose how to migrate it.")
+            if source.status in ("ok", "empty"):
+                source.status = "frozen_old"
+                source.scenarios = []
+        else:
+            note += "\nIt is not migrated in place without asking. Right-click to unfreeze."
+        source.frozen_note = note
 
     def copy_external_to_project(
         self, source_name: str

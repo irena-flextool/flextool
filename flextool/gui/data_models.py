@@ -321,7 +321,9 @@ class InputSourceInfo:
     name: str
     file_type: str  # "xlsx" or "sqlite"
     number: int
-    status: str  # "ok", "error", "empty", "editing", or "retired"
+    # "ok", "error", "empty", "editing", "retired", or "frozen_old" (a frozen
+    # sqlite older than this FlexTool that the user did not migrate: not runnable)
+    status: str
     scenarios: list[str] = field(default_factory=list)
     # Set when the source lives outside the project; stored as POSIX path
     # relative to the project root (e.g. "../data/input.xlsx").
@@ -333,6 +335,10 @@ class InputSourceInfo:
     # Number of executed-scenario result folders that resolve to this
     # source number (used for the ghost-row tooltip / GC decision).
     result_count: int = 0
+    # The label of a frozen sqlite (``flextool-freeze``), or None.
+    frozen_label: str | None = None
+    # The frozen marker and version for the status tooltip ("" when not frozen).
+    frozen_note: str = ""
 
 
 @dataclass
