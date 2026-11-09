@@ -17,8 +17,9 @@ runs under its lock (``_files.locked``).
 :meth:`Store.purge_expired` runs at the start of every chat, of the agent connection and of each tool call from the
 command line, and when FlexTool closes: it deletes the conversations not changed within the expiry (age from the
 id's time and the file's modification time; no file is parsed), their title files, title files without a
-conversation, temp files of writers that are gone and stale lock files; then it removes empty project folders and
-the rows of projects without conversations that were not used within the expiry.  Conversations open in a running
+conversation, temp files of writers that are gone, stale lock files and set-aside damaged copies of
+``projects.json`` (copies of the usage ledger are kept 30 days); then it removes empty project folders and the rows
+of projects without conversations that were not used within the expiry.  Conversations open in a running
 session are never touched.  Expiry 0: nothing is written and everything not open is deleted; the usage ledger is
 kept (D3).
 
@@ -49,6 +50,8 @@ FIRST_QUESTION_CHARS = 80
 TITLE_CHARS = 60
 #: A cleanup (purge, delete, rename) holds a conversation's lock for moments; an opener waits this long for it.
 CLEANUP_WAIT = 2.0
+#: Copies of a damaged usage ledger are kept this long (the ledger itself survives the conversation expiry).
+DAMAGED_KEEP_DAYS = 30
 
 _ID = re.compile(r"^(\d{8}T\d{6}Z)-[0-9a-f]{6}$")
 _ID_TIME = "%Y%m%dT%H%M%SZ"
@@ -506,7 +509,8 @@ class Store:
         except BaseException:
             held.release()
             raise
-        self._touch_project(path, name, key)
+        if self.expiry_days() > 0:              # expiry 0: nothing is written
+            self._touch_project(path, name, key)
         return conv
 
     def _read_conversation(self, file: Path, path: Path, name: str, key: str, conversation_id: str
@@ -940,8 +944,7 @@ class Store:
                 lock.release()
         for entry in names:
             target = folder / entry
-            pid = _files.temp_writer_pid(entry)
-            if pid is not None and not _files.pid_alive(pid):
+            if _files.temp_orphan(target):
                 with contextlib.suppress(FileNotFoundError):
                     target.unlink()
             elif entry.endswith(".break"):
@@ -968,6 +971,7 @@ class Store:
         for key in sorted(keys):
             deleted += self._clean_folder(key, cutoff)
         self._purge_temp(self.root)
+        self._purge_damaged(self.root, cutoff, (moment - timedelta(days=DAMAGED_KEEP_DAYS)).timestamp())
 
         def change(rows: dict[str, Any]) -> None:
             for key in list(rows):
@@ -992,8 +996,27 @@ class Store:
         except (FileNotFoundError, NotADirectoryError):
             return
         for entry in names:
-            pid = _files.temp_writer_pid(entry)
-            if pid is not None and not _files.pid_alive(pid):
+            if _files.temp_orphan(folder / entry):
+                with contextlib.suppress(FileNotFoundError, IsADirectoryError):
+                    (folder / entry).unlink()
+
+    @staticmethod
+    def _purge_damaged(folder: Path, cutoff: float, ledger_cutoff: float) -> None:
+        """Delete the set-aside copies (``<name>.damaged-<unix seconds>-<hex>``) in *folder* made before *cutoff*
+        (the conversation expiry: those of ``projects.json``), or before *ledger_cutoff* for copies of the usage
+        ledger, which outlives the expiry."""
+        from flextool.assistant.usage import FILE_NAME as LEDGER
+
+        try:
+            names = os.listdir(folder)
+        except (FileNotFoundError, NotADirectoryError):
+            return
+        for entry in names:
+            match = _files.DAMAGED.match(entry)
+            if match is None:
+                continue
+            made = int(match.group("time"))
+            if made < (ledger_cutoff if match.group("base") == LEDGER else cutoff):
                 with contextlib.suppress(FileNotFoundError, IsADirectoryError):
                     (folder / entry).unlink()
 

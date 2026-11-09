@@ -597,3 +597,60 @@ def test_an_opener_waiting_for_a_cleanup_does_not_block_the_registry(st, project
         opener.join(30)
     assert opened and opened[0].id == conv.id
     st.close(opened[0])
+
+
+# --- C5-13: set-aside copies and temp files are cleaned up --------------------------------------------------------
+def test_a_temp_file_of_a_reused_process_id_is_removed_once_old(st, root, project):
+    from flextool.assistant import runtime_context
+
+    conv = saved(st, project)
+    st.close(conv)
+    start = _files._own_start()
+    assert start is not None                # psutil is installed in the test environment
+    me = os.getpid()
+    folder = st.project_dir(conv.project_key)
+    runtime = runtime_context.runtime_dir(root)
+    runtime.mkdir(parents=True, exist_ok=True)
+    names = {"reused": f"{conv.id}.json.{me}-{int((start - 100) * 1000)}.0a1b2c3d.tmp",   # another process, same id
+             "live": f"{conv.id}.json.{me}-{int(start * 1000)}.0a1b2c3d.tmp",           # this writer
+             "fresh": f"{conv.id}.json.{me}-{int((start - 100) * 1000)}.0a1b2c3e.tmp"}  # too new to judge
+    for where in (folder, root, runtime):
+        for label, name in names.items():
+            (where / name).write_text("{", encoding="utf-8")
+            if label != "fresh":
+                make_old(where / name)
+    st.purge_expired()
+    assert runtime_context.cleanup(root) == 1
+    for where in (folder, root, runtime):
+        assert {n for n in os.listdir(where) if n.endswith(".tmp")} == {names["live"], names["fresh"]}
+
+
+def test_set_aside_copies_are_deleted_after_their_keep_time(st, root):
+    root.mkdir(parents=True, exist_ok=True)
+    now = time.time()
+    day = 86400
+    names = [f"projects.json.damaged-{int(now - 40 * day)}-ab12", f"projects.json.damaged-{int(now - day)}-ab13",
+             f"usage.json.damaged-{int(now - 40 * day)}-ab14", f"usage.json.damaged-{int(now - day)}",
+             f"usage.json.damaged-{int(now - 20 * day)}-ab15"]
+    for name in names:
+        (root / name).write_text("{", encoding="utf-8")
+    set_expiry(root, 30)
+    st.purge_expired()
+    left = sorted(n for n in os.listdir(root) if ".damaged-" in n)
+    assert left == sorted([names[1], names[3], names[4]])
+    set_expiry(root, 0)
+    st.purge_expired()
+    left = sorted(n for n in os.listdir(root) if ".damaged-" in n)
+    assert left == sorted([names[3], names[4]])           # the ledger's copies keep their 30 days
+
+
+# --- C5-15: expiry 0 writes nothing, also when a chat is opened ---------------------------------------------------
+def test_opening_a_chat_at_expiry_zero_writes_no_project_row(st, root, project):
+    conv = saved(st, project)
+    st.close(conv)
+    (root / "projects.json").unlink()
+    set_expiry(root, 0)
+    opened = st.open(project, conv.id, if_locked="raise")
+    assert opened.id == conv.id
+    assert not (root / "projects.json").exists()
+    st.close(opened)

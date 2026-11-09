@@ -171,12 +171,6 @@ def temp_writer(name: str) -> tuple[int, float | None] | None:
     return int(pid), (int(start) / 1000.0 if dash else None)
 
 
-def temp_writer_pid(name: str) -> int | None:
-    """The writer's process id in a temp file name, or ``None`` for a name that is not one."""
-    writer = temp_writer(name)
-    return None if writer is None else writer[0]
-
-
 def temp_orphan(path: Path) -> bool:
     """Whether *path* is a temp file whose writer is gone: its process does not run, or (a reused process id) runs
     with another start time and the file is older than :data:`TEMP_ORPHAN_AGE` seconds."""

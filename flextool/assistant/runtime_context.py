@@ -208,8 +208,10 @@ def cleanup(config_root: Path | None = None) -> int:
     removed = 0
     for name in names:
         parsed = _file_pid(name)
-        pid = parsed[1] if parsed is not None else _files.temp_writer_pid(name)
-        if pid is None or _files.pid_alive(pid):
+        if parsed is not None:
+            if _files.pid_alive(parsed[1]):
+                continue
+        elif not _files.temp_orphan(folder / name):
             continue
         with contextlib.suppress(FileNotFoundError):
             (folder / name).unlink()
