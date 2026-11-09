@@ -6162,6 +6162,18 @@
     ],
     [
       "solve",
+      "reduce_system_detail_method",
+      "str",
+      0
+    ],
+    [
+      "solve",
+      "reduce_unit_detail_method",
+      "str",
+      0
+    ],
+    [
+      "solve",
       "rolling_duration",
       "float",
       0

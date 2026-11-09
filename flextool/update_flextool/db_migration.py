@@ -5894,8 +5894,8 @@ _V81_DESCRIPTIONS: dict[str, str] = {
 def _migrate_v81_reduce_detail_methods(db) -> None:
     """``solve.reduce_unit_detail_method`` and ``solve.reduce_system_detail_method`` (v80 -> v81).
 
-    Two scalar choices with their value lists (``reduce_unit_detail_methods`` / ``reduce_system_detail_methods``),
-    default ``none``, group ``solve_advanced``.  No data is rewritten.  Idempotent: an existing definition is
+    Two scalar choices (type ``str``) with their value lists (``reduce_unit_detail_methods`` /
+    ``reduce_system_detail_methods``), default ``none``, group ``solve_advanced``.  No data is rewritten.  Idempotent: an existing definition is
     updated to the v81 fields, and value-list entries already present are not added again.
     """
     if not db.get_item("entity_class", name="solve"):
@@ -5922,9 +5922,9 @@ def _migrate_v81_reduce_detail_methods(db) -> None:
                   "description": _V81_DESCRIPTIONS[name]}
         pdef = _pdef_or_none(db, "solve", name)
         if pdef is None:
-            db.add_parameter_definition(entity_class_name="solve", name=name, **fields)
-        elif any(pdef[k] != v for k, v in fields.items()):
-            db.update_parameter_definition(id=pdef["id"], **fields)
+            db.add_parameter_definition(entity_class_name="solve", name=name, parameter_type_list=("str",), **fields)
+        elif any(pdef[k] != v for k, v in fields.items()) or tuple(pdef["parameter_type_list"] or ()) != ("str",):
+            db.update_parameter_definition(id=pdef["id"], parameter_type_list=("str",), **fields)
     _commit_step(db, "v81: solve.reduce_unit_detail_method and solve.reduce_system_detail_method")
 
 

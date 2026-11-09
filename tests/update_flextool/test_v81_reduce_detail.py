@@ -34,7 +34,8 @@ SYSTEM_VALUES = ["none", "reserves", "inertia", "non_synchronous", "inertia_non_
 def _defs(db) -> dict:
     return {(d["entity_class_name"], d["name"]): (d["parameter_value_list_name"], d["parameter_group_name"],
                                                   d["description"],
-                                                  from_database(d["default_value"], d["default_type"]))
+                                                  from_database(d["default_value"], d["default_type"]),
+                                                  tuple(d["parameter_type_list"] or ()))
             for d in db.get_items("parameter_definition")}
 
 
@@ -63,7 +64,8 @@ def test_adds_the_definitions(migrated) -> None:
     shipped = {(r[0], r[1]): r[4] for r in schema["parameter_definitions"]}
     for key, value_list in NEW.items():
         assert key not in migrated["before"]
-        vl, group, description, default = migrated["after"][key]
+        vl, group, description, default, types = migrated["after"][key]
+        assert types == ("str",)
         assert vl == value_list
         assert group == "solve_advanced"
         assert default == "none"
