@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import copy
 import logging
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 from enum import Enum
@@ -31,6 +32,16 @@ from typing import TYPE_CHECKING, Any
 import spinedb_api as api
 
 from flextool.engine.input._solve_state import FlexToolConfigError
+
+#: The values of ``solve.reduce_unit_detail_method`` / ``solve.reduce_system_detail_method`` the engine accepts:
+#: the v81 value lists ``reduce_unit_detail_methods`` / ``reduce_system_detail_methods`` (pinned against the schema
+#: by tests/engine/test_reduce_detail.py).
+REDUCE_UNIT_DETAIL_METHODS: tuple[str, ...] = (
+    "none", "integers", "integers_ramps", "integers_min_limits", "integers_ramps_min_limits", "online",
+    "online_ramps")
+REDUCE_SYSTEM_DETAIL_METHODS: tuple[str, ...] = (
+    "none", "reserves", "inertia", "non_synchronous", "inertia_non_synchronous",
+    "reserves_inertia_non_synchronous", "dc_power_flow", "reserves_inertia_non_synchronous_dc_power_flow")
 
 if TYPE_CHECKING:
     from spinedb_api import DatabaseMapping
@@ -245,6 +256,8 @@ class SolveConfig:
         scaling: dict | None = None,
         stochastic_invest_method: dict | None = None,
         dispatch_realization_method: dict | None = None,
+        reduce_unit_detail_method: dict | None = None,
+        reduce_system_detail_method: dict | None = None,
     ) -> None:
         # Base fields (read directly from DB in load_from_db).
         self.model = model
@@ -314,6 +327,15 @@ class SolveConfig:
         self.dispatch_realization_method: dict = (
             dispatch_realization_method
             if dispatch_realization_method is not None else {}
+        )
+
+        # v81 per-solve detail reductions (solve-name -> value-list string); only authored solves appear.
+        # Resolved at access time via :meth:`reduce_unit_detail_for` / :meth:`reduce_system_detail_for`.
+        self.reduce_unit_detail_method: dict = (
+            reduce_unit_detail_method if reduce_unit_detail_method is not None else {}
+        )
+        self.reduce_system_detail_method: dict = (
+            reduce_system_detail_method if reduce_system_detail_method is not None else {}
         )
 
         # Computed fields — populated by load_from_db after construction.
@@ -557,6 +579,15 @@ class SolveConfig:
             mode=DictMode.DICT,
         )
 
+        # v81 per-solve detail reductions.  Only solves that author them appear; absent solves resolve to
+        # "none" via ``reduce_unit_detail_for`` / ``reduce_system_detail_for``.
+        reduce_unit_detail_method: dict = params_to_dict(
+            db=db, cl="solve", par="reduce_unit_detail_method", mode=DictMode.DICT,
+        )
+        reduce_system_detail_method: dict = params_to_dict(
+            db=db, cl="solve", par="reduce_system_detail_method", mode=DictMode.DICT,
+        )
+
         # rolling_times: assemble per-solve [jump, horizon, duration].
         rolling_duration: dict = params_to_dict(
             db=db, cl="solve", par="rolling_duration", mode=DictMode.DICT
@@ -657,6 +688,8 @@ class SolveConfig:
             scaling=scaling,
             stochastic_invest_method=stochastic_invest_method,
             dispatch_realization_method=dispatch_realization_method,
+            reduce_unit_detail_method=reduce_unit_detail_method,
+            reduce_system_detail_method=reduce_system_detail_method,
         )
 
         # Computed fields — loading order MUST be preserved exactly.
@@ -878,6 +911,8 @@ class SolveConfig:
                 self.benders_tolerance,
                 self.benders_in_out_weight,
                 self.scaling,
+                self.reduce_unit_detail_method,
+                self.reduce_system_detail_method,
             ]
             for dup_map in dup_map_list:
                 if old_solve in dup_map.keys():
@@ -1087,6 +1122,34 @@ class SolveConfig:
         return value if value in (
             "within_solve", "separate_dispatch"
         ) else "within_solve"
+
+    def _reduce_detail_for(self, solve_name: str, values: dict, param: str, valid: tuple[str, ...]) -> str:
+        """The authored ``solve.<param>`` of *solve_name*: its roll suffix stripped, a realization solve mapped to
+        its parent (:attr:`realized_dispatch_parent`), absent or blank -> ``"none"``.  Case and surrounding blanks
+        are ignored.  An unknown value raises :class:`FlexToolConfigError` naming the solve and the valid values (a
+        typo must not silently run the full model)."""
+        base = re.sub(r"_roll_\d+$", "", solve_name)
+        owner = self.realized_dispatch_parent.get(base, base)
+        owner = re.sub(r"_roll_\d+$", "", owner)
+        raw = values.get(owner)
+        if raw is None or str(raw).strip() == "":
+            return "none"
+        value = str(raw).strip().lower()
+        if value not in valid:
+            raise FlexToolConfigError(
+                f"solve '{owner}': {param} = '{raw}' is not one of {', '.join(valid)}.")
+        return value
+
+    def reduce_unit_detail_for(self, solve_name: str) -> str:
+        """Resolve ``solve.reduce_unit_detail_method`` for *solve_name* (a roll ``<solve>_roll_N`` and a
+        realization solve take the base solve's / the parent's value).  ``"none"`` when not authored."""
+        return self._reduce_detail_for(solve_name, self.reduce_unit_detail_method, "reduce_unit_detail_method",
+                                       REDUCE_UNIT_DETAIL_METHODS)
+
+    def reduce_system_detail_for(self, solve_name: str) -> str:
+        """Resolve ``solve.reduce_system_detail_method`` for *solve_name*, as :meth:`reduce_unit_detail_for`."""
+        return self._reduce_detail_for(solve_name, self.reduce_system_detail_method,
+                                       "reduce_system_detail_method", REDUCE_SYSTEM_DETAIL_METHODS)
 
     def benders_config_for(self, solve_name: str) -> tuple[int, float, float]:
         """Resolve ``(max_iter, tol, in_out_weight)`` for *solve_name*.

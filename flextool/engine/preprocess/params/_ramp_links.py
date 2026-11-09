@@ -256,3 +256,22 @@ def check_online_ramp_carry_consistency(dt_online_carry: "pl.DataFrame | None",
                 "check_online_ramp_carry_consistency: step(s) "
                 f"{overlap.rows()} are both in dt_online_carry and a dt_ramp_link target — "
                 "the two online-predecessor rules must be disjoint.")
+
+
+def check_online_ramp_carry(flex_data) -> None:
+    """:func:`check_online_ramp_carry_consistency` on the fields of a :class:`FlexData`.
+
+    The cascade calls it on the solve's reduced data (after ``preprocess._reduce_detail.apply_reduce_detail``), not
+    inside ``load_flextool``: a solve whose ``reduce_unit_detail_method`` leaves out online variables (``online``,
+    ramps kept) carries a ramp flow but no online carry, and its reduced ``process_online`` is empty, so the check
+    must see the reduced sets.  Raises ``ValueError`` on a violation.
+    """
+    rco = flex_data.p_roll_continue_online
+    rcf = flex_data.p_roll_continue_flow
+    check_online_ramp_carry_consistency(
+        flex_data.dt_online_carry,
+        rco.frame.select("p") if rco is not None else None,
+        flex_data.dt_ramp_carry,
+        rcf.frame.select("p") if rcf is not None else None,
+        flex_data.process_online,
+        flex_data.dt_ramp_link)

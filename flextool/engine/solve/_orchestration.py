@@ -3126,6 +3126,31 @@ def _drive_cascade(
                     user_label="FlexData built",
                 )
 
+            # Solve-level detail reduction (solve.reduce_unit_detail_method /
+            # reduce_system_detail_method): every consumer below — the
+            # realization checks, Benders, the cold / warm build, the handoff
+            # and the outputs — reads the reduced data.  A roll and a
+            # realization solve take their base / parent solve's levels.
+            from flextool.engine.preprocess._reduce_detail import apply_reduce_detail
+            from flextool.engine.preprocess.params._ramp_links import check_online_ramp_carry
+            data, _reduce_report = apply_reduce_detail(
+                data,
+                self.state.solve.reduce_unit_detail_for(complete_solve_name),
+                self.state.solve.reduce_system_detail_for(complete_solve_name),
+            )
+            if _reduce_report.warnings:
+                _warned = self.__dict__.setdefault("_reduce_detail_warned", set())
+                _reduce_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
+                if _reduce_base not in _warned:
+                    _warned.add(_reduce_base)
+                    for _line in _reduce_report.warnings:
+                        self.state.logger.warning("Solve %s: %s", _reduce_base, _line)
+                        print(f"Warning: solve {_reduce_base}: {_line}", flush=True)
+            # The online carry and the ramp carry / ramp link must agree on the
+            # reduced sets (params._ramp_links): raise instead of silently
+            # falling back to a predecessor of 0.
+            check_online_ramp_carry(data)
+
             # A realization solve pins units online and reserves to the
             # stochastic solve's NA-tied values: name the hard-balance node
             # the realized data cannot balance before the LP is built.

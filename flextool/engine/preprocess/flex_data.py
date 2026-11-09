@@ -1331,6 +1331,9 @@ class FlexData:
     process_online: pl.DataFrame | None = None              # set: (p,)
     process_online_linear: pl.DataFrame | None = None        # set: (p,)
     process_online_integer: pl.DataFrame | None = None       # set: (p,)
+    # True when the solve's reduce_unit_detail_method relaxes integers (preprocess._reduce_detail): v_online_integer
+    # and v_exact_forward are then declared continuous.  False (default): integer as authored.
+    relax_integrality: bool = False
     # Connections with the ``exact`` transfer method (internal method_2way_2var_MIP_exclude, override-aware):
     # their direction switch v_exact_forward (model/_exact.py).
     process_exact: pl.DataFrame | None = None                 # set: (p,)
@@ -5007,18 +5010,9 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # The online carry lands on the ramp's seam roots: one adjacency for ramp, min up / down and online.
         if online.get("p_roll_continue_online") is not None and ramp.get("dt_ramp_carry") is not None:
             online["dt_online_carry"] = ramp["dt_ramp_carry"].select("d", "t").unique(maintain_order=True)
-        # The online carry and the ramp carry / ramp link must agree — raise instead of silently falling back to
-        # a predecessor of 0 (params._ramp_links).
-        from flextool.engine.preprocess.params._ramp_links import check_online_ramp_carry_consistency
-        _rco = online.get("p_roll_continue_online")
-        _rcf = ramp.get("p_roll_continue_flow")
-        check_online_ramp_carry_consistency(
-            online.get("dt_online_carry"),
-            _rco.frame.select("p") if _rco is not None else None,
-            ramp.get("dt_ramp_carry"),
-            _rcf.frame.select("p") if _rcf is not None else None,
-            online.get("process_online"),
-            ramp.get("dt_ramp_link"))
+        # The online carry and the ramp carry / ramp link must agree.  Checked by the caller on the solve's
+        # reduced data (params._ramp_links.check_online_ramp_carry, after preprocess._reduce_detail), since a
+        # reduce_unit_detail_method that leaves out online variables also removes the online carry.
         invest = _load_invest(sd, dt, inp, proc["pss"], db_reader=db_reader,
                               provider=provider)
         varcost = _load_varcost(sd, proc["pss"], provider=provider)

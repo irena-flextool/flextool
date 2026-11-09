@@ -1,5 +1,18 @@
 ## Unreleased
 
+- **New: a solve can leave out unit detail (`reduce_unit_detail_method`, database version 81).** Set it on a
+  `solve` to make that solve faster, typically an investment solve followed by a full dispatch. *none* (default)
+  keeps everything. *integers*: units with `startup_method` *binary* get continuous units online and `exact`
+  connections behave as *regular*, so the solve is an LP. *integers_ramps* also leaves out ramp limits and ramp
+  costs, *integers_min_limits* `min_load`, the `capacity_min_coeff` floors and minimum up / down times,
+  *integers_ramps_min_limits* both. *online* leaves out the online variables and with them the min limits and
+  start-up costs; `min_load_efficiency` units use their full-load efficiency (the same fuel at full load, less at
+  part load), ramp limits apply to the capacity, and a user constraint with a `constraint_online_coeff` term is
+  left out of the solve, with a warning naming it. *online_ramps* is *online* without ramps. A level never adds
+  detail, and the rolls of a rolling solve and its realization solve use the solve's own level. The companion
+  `reduce_system_detail_method` (reserves, inertia, non-synchronous limits, DC power flow) is added to the
+  database in the same version. Databases are migrated automatically; models that do not set the parameters are
+  unchanged.
 - **New: `ramp_cost` is charged (database version 80).** A unit flow with `ramp_method` *ramp_cost* or *both* pays
   `ramp_cost` [CUR/MW] for every MW its step-average flow changes from the previous time step, up and down alike.
   A change is an event, like a start-up, so the step length does not enter: ramping 0 → X → 0 costs
