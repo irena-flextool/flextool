@@ -1,5 +1,21 @@
 ## Unreleased
 
+- **Fix: a solve's `new_stepduration` combines every time series over the new time step (results change).** A
+  solve with its own `new_stepduration` used to take the value of the first original time step of each new step for
+  every time map other than profiles and inflows: commodity `price`, `co2_price`, `availability` of units,
+  connections and nodes, `efficiency`, `min_load`, `efficiency_at_min_load`, `other_operational_cost`,
+  `penalty_up` / `penalty_down`, `reservation`, `self_discharge_loss`, `inertia_limit`, `non_synchronous_limit`,
+  `max_instant_flow` / `min_instant_flow`, `storage_state_reference_value`, `timeset_weights` and profiles given
+  as a period+time map. Each now follows one rule per parameter: prices, costs, limits, availability, min load,
+  penalties, reserves, self-discharge, weights and profiles take the duration-weighted mean of the step's time
+  steps; an efficiency takes the mean of 1/efficiency (so the fuel of a flow that is constant over the step is
+  right: 0.4 and 0.5 give 1/efficiency 2.25, not 1/0.45); `storage_state_reference_value` takes the value at the
+  step's end; `inflow` stays summed. A time map with values for only some hours of a new step uses the hours it
+  has (a warning names the parameter), and a `min_load` that varies within a new step makes the
+  `min_load_efficiency` curve of that step approximate (a warning names the units). Results change for models
+  that combine a solve-level `new_stepduration` with such time maps; models without a solve-level
+  `new_stepduration`, and time series that are constant within each new step, give the same model as before.
+  Not yet combined this way: stochastic (branch) time series and `energy_margin_adder`.
 - **New: `inertia_limit` and `non_synchronous_limit` per time step (database version 82).** Both group limits now
   take a constant, a period map, a time map or a period+time map (before: constant or period), e.g. a
   non-synchronous share that steps up by hour or season, or an inertia requirement that is higher in some hours.
@@ -9,8 +25,6 @@
   covers), and the coarse-flow info line names a limit that varies within a coarse step. The hourly inertia shortfall table shows 0 instead of an
   empty cell in a time step without a requirement. The Excel export puts both limits also on the time sheets.
   Databases are migrated automatically; constant and period values are unchanged and give the same model.
-  Known limitation, shared with `co2_price` and the other time maps that are not profiles or inflows: a solve with
-  its own `new_stepduration` takes a time map's value at the first time step of each new step, not the step mean.
 - **New: a solve can leave out unit detail (`reduce_unit_detail_method`, database version 81).** Set it on a
   `solve` to make that solve faster, typically an investment solve followed by a full dispatch. *none* (default)
   keeps everything. *integers*: units with `startup_method` *binary* get continuous units online and `exact`

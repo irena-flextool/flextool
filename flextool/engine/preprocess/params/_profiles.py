@@ -83,6 +83,7 @@ from flextool.engine.input._axis_enums import (
     schema_dtype,
 )
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_step_aggregation import aggregate_if_active
 
 
 # Substrate handle for the cascade-wide axis enum vocabulary.
@@ -356,7 +357,9 @@ def _profile_period_time_lf(source: "InputSource",
     """Lazy ``[f, d, t, value]`` for 2d_map(period, t) profiles.
 
     The (d, t) keys are direct; only inner-join with dt_lf for
-    membership.
+    membership.  In a solve with ``new_stepduration`` each solve step takes
+    the duration-weighted mean of its time steps first
+    (:func:`~flextool.engine.input._solve_step_aggregation.aggregate_if_active`).
     """
     if not pt_profiles:
         return pl.LazyFrame(schema={
@@ -388,6 +391,10 @@ def _profile_period_time_lf(source: "InputSource",
     # Branch periods get their anchor period's curve (this reader bypasses _param_shapes).
     raw = inherit_active_branch_periods(raw.filter(pl.col("name").is_in(pt_profiles)),
                                         group_keys=("name",), period_col="period")
+    # A solve with new_stepduration: one value per solve step, the step mean (_solve_step_aggregation).
+    raw = aggregate_if_active(
+        raw.select("name", "period", t_col, pl.col("value").cast(pl.Float64, strict=False)),
+        ("profile", "profile"), time_col=t_col)
     raw_lf = (raw.lazy()
                   .select(alias_to_axis("name", "f"),
                           alias_to_axis(pl.col("period").cast(pl.Utf8), "d"),

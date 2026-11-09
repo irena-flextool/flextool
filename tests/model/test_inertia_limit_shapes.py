@@ -242,15 +242,11 @@ def test_stochastic_solve_map_equals_constant(tmp_path_factory, shape) -> None:
     _assert_same_model(steps, ref, shape)
 
 
-@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
-    "Shared gap (also group.co2_price and the other time-map parameters read by resolve_param_shape): on the "
-    "DB-direct path a solve with new_stepduration samples a time map at the first original step of each new step "
-    "instead of taking the step mean; only the provider's averaged frames (profiles, inflow) are averaged."))
 def test_solve_step_aggregation_takes_the_step_mean(tmp_path_factory) -> None:
     """With the solve's ``new_stepduration`` = 2 h, an hourly map alternating 100 / 300 MWs (inertia) and
     0.2 / 0.6 (non-synchronous) gives, on each 2 h step, the Δt-weighted mean: (1·100 + 1·300)/2 = 200 MWs and
     (0.2 + 0.6)/2 = 0.4, the LP of the constants 200 MWs / 0.4 (the solve-level new_stepduration description:
-    the other time series are averaged).  Today the 2 h step takes the first hour's value (100 MWs / 0.2)."""
+    the other time series are averaged).  Before C-13 the 2 h step took the first hour's value (100 MWs / 0.2)."""
     ref = _run(tmp_path_factory, "c5_step2_constant", TESTS_JSON, DET_CHAIN,
                STEP2 + _det_values(scalar(L_INERTIA), scalar(L_NS)))
     alt_i = tmap({t: (100.0 if i % 2 == 0 else 300.0) for i, t in enumerate(T48)})

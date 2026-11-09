@@ -25,12 +25,14 @@ Architecture notes
   durations passed by the orchestration layer; the function tolerates
   either by taking timeset durations as the second argument.
 
-* ``create_averaged_timeseries`` aggregates per-(``solve``) timeline
-  data by averaging or summing matched timesteps.  The
-  ``pt_node_inflow.csv`` / ``pbt_node_inflow.csv`` files are summed;
-  every other ``pt_*.csv`` / ``pbt_*.csv`` is averaged.  The
-  ``storage_state_reference_value`` row in any of those files bypasses
-  aggregation entirely.
+* ``create_averaged_timeseries`` combines the provider's time-series
+  frames (``pt_*`` / ``pbt_*`` / ``pdt_process`` / ``pdt_node``) to the
+  steps of a solve with ``new_stepduration``.  The kind of each row
+  (mean, harmonic mean, sum, last) is the parameter's
+  ``TIME_AGGREGATION`` entry and the arithmetic is
+  ``aggregate_to_solve_steps``, both in ``_solve_step_aggregation``: the
+  same function the DB-direct readers use, so both paths give the same
+  values.
 
 * ``_derived.py::dt_and_step_duration_from_source`` is a
   polars-lazy alternative that consumes the per-(entity_class,
@@ -61,6 +63,12 @@ from flextool.engine.input._solve_config import (
 from flextool.engine.input._solve_state import (
     ActiveTimeEntry,
     FlexToolConfigError,
+)
+from flextool.engine.input._solve_step_aggregation import (
+    TIME_AGGREGATION,
+    Agg,
+    aggregate_to_solve_steps,
+    kind_of,
 )
 from flextool.engine.preprocess.emit._base_steps import NEW_STEP_BASE_STEPS, NEW_STEP_BASE_STEPS_SCHEMA
 from flextool.engine.preprocess._provider_io import (
@@ -673,21 +681,21 @@ class TimelineConfig:
         ``provider.put`` the aggregated frame under the canonical
         ``solve_data/<basename>`` key.
 
-        Aggregation rules (lines 405-422 of the flextool source):
-
-        Each new step combines the time steps of the original timeline
-        that it covers (any step length; see ``_base_steps_of_new_steps``):
-        the rows of those steps are read and combined into one row.
-
-        * ``pt_node_inflow.csv`` and ``pbt_node_inflow.csv`` →
-          ``"sum"`` (inflow energies per step sum across coarsened steps).
-        * Every other ``pt_*.csv`` / ``pbt_*.csv``, plus ``pdt_process.csv`` / ``pdt_node.csv`` (the
-          genuine period × time maps — the group key includes their leading ``period`` column, found by
-          name like every other column before ``time``) → ``"average"``, weighted by the durations of
-          the combined steps (the plain mean when they are equally long), rounded to 6 decimals.
-        * Rows with parameter ``"storage_state_reference_value"`` are
-          ALWAYS bypassed (line 474) — they're per-step state targets
-          rather than time-integrated quantities.
+        Aggregation rules: each new step combines the time steps of the
+        original timeline that it covers (any step length; see
+        ``_base_steps_of_new_steps``).  The rows of each file (grouped by
+        the columns before ``time``, which include the leading ``period``
+        of ``pdt_process`` / ``pdt_node`` and the ``branch`` /
+        ``time_start`` of ``pbt_*``) are combined by the kind of their
+        parameter in ``TIME_AGGREGATION`` (:data:`_CSV_SERIES` names the
+        parameter of each row; :func:`aggregate_to_solve_steps` does the
+        arithmetic): ``inflow`` is summed, efficiencies take the harmonic
+        mean, ``storage_state_reference_value`` the value of the step's
+        last original step, every other series the duration-weighted mean
+        (rounded to 6 decimals; a step whose values are all equal keeps
+        the value itself).  ``solve_data/new_step_base_steps`` lists the
+        original steps (``time``), their new step, its number of original
+        steps, their hours and timeline positions.
 
         After file aggregation, ``input/p_node``'s ``inflow`` rows
         are appended to ``solve_data/pt_node_inflow`` as one entry
@@ -708,26 +716,6 @@ class TimelineConfig:
                 current working directory.
         """
         wf = Path(work_folder) if work_folder is not None else Path.cwd()
-        timeseries_map: dict[str, str] = {
-            "pt_node_inflow.csv": "sum",
-            "pt_commodity.csv": "average",
-            "pt_group.csv": "average",
-            "pt_node.csv": "average",
-            "pt_process.csv": "average",
-            "pdt_process.csv": "average",
-            "pdt_node.csv": "average",
-            "pt_profile.csv": "average",
-            "pt_process_source.csv": "average",
-            "pt_process_sink.csv": "average",
-            "pt_reserve__upDown__group.csv": "average",
-            "pbt_node_inflow.csv": "sum",
-            "pbt_node.csv": "average",
-            "pbt_process.csv": "average",
-            "pbt_profile.csv": "average",
-            "pbt_process_source.csv": "average",
-            "pbt_process_sink.csv": "average",
-            "pbt_reserve__upDown__group.csv": "average",
-        }
         # As of DB v50 new_stepduration is keyed by solve.  ``None`` is
         # the parameter_definition default in the master template; treat
         # it as "not set" and skip aggregation.
@@ -737,7 +725,7 @@ class TimelineConfig:
         )
         base_steps_key = _provider_key(wf / "solve_data" / NEW_STEP_BASE_STEPS)
         if not create:
-            for timeseries in timeseries_map:
+            for timeseries in _CSV_SERIES:
                 src_path = wf / "input" / timeseries
                 dst_path = wf / "solve_data" / timeseries
                 src_key = _provider_key(src_path)
@@ -776,8 +764,8 @@ class TimelineConfig:
         # (O(1) access per row); a timeline that is not an aggregated
         # one keeps one step per step.
         base_durations: dict[str, list[float]] = {}
-        # (original step, the new step that combines it), in timeline order.
-        base_step_rows: list[tuple[str, str]] = []
+        # (original step, the new step that combines it, the original step's hours), in timeline order.
+        base_step_rows: list[tuple[str, str, float]] = []
         for timeline in timelines_list:
             new_timeline = self.timelines[timeline]
             original = self.original_timeline.get(timeline)
@@ -786,16 +774,20 @@ class TimelineConfig:
                     self.timelines[original], new_timeline, logger,
                     solve_name=solve, timeline_name=timeline,
                 ))
-                base_step_rows.extend(_new_step_of_base_steps(self.timelines[original], new_timeline))
+                hours = {name: float(d) for name, d in self.timelines[original]}
+                base_step_rows.extend((t, s, hours[t])
+                                      for t, s in _new_step_of_base_steps(self.timelines[original], new_timeline))
             else:
                 for timeline_row in new_timeline:
                     base_durations[timeline_row[0]] = [float(timeline_row[1])]
-                    base_step_rows.append((timeline_row[0], timeline_row[0]))
+                    base_step_rows.append((timeline_row[0], timeline_row[0], float(timeline_row[1])))
         # The scalings read how many original steps each solve step combines
-        # (inflow and peak_inflow are energy per original step).
-        provider.put(base_steps_key, pl.DataFrame(
-            [(t, s, float(len(base_durations[s]))) for t, s in base_step_rows],
-            schema=NEW_STEP_BASE_STEPS_SCHEMA, orient="row"))
+        # (inflow and peak_inflow are energy per original step); the aggregation
+        # reads the original steps' hours and timeline positions.
+        base_steps = pl.DataFrame(
+            [(t, s, float(len(base_durations[s])), d, i) for i, (t, s, d) in enumerate(base_step_rows)],
+            schema=NEW_STEP_BASE_STEPS_SCHEMA, orient="row")
+        provider.put(base_steps_key, base_steps)
 
         # node-name → constant-inflow value (used to append per-step
         # contributions to pt_node_inflow below).
@@ -812,7 +804,8 @@ class TimelineConfig:
                 if len(row) >= 3 and row[1] == "inflow":
                     node__inflow.append([row[0], row[2]])
 
-        for timeseries in timeseries_map:
+        notes: set = set()
+        for timeseries in _CSV_SERIES:
             src_path = wf / "input" / timeseries
             dst_path = wf / "solve_data" / timeseries
             src_key = _provider_key(src_path)
@@ -821,110 +814,11 @@ class TimelineConfig:
             if src_frame is None:
                 continue
             headers = src_frame.columns
-            try:
-                time_index = headers.index("time")
-            except ValueError:
+            if "time" not in headers:
                 # No time column — pass through verbatim.
                 provider.put(dst_key, src_frame)
                 continue
-            # Row-by-row state machine port of the legacy CSV loop.
-            rows_iter = iter(src_frame.iter_rows())
-            out_rows: list[list[Any]] = []
-            timeline_for_bypass = (
-                timelines_list[0] if timelines_list else None
-            )
-            try:
-                while True:
-                    datain = next(rows_iter)
-                    step_base_durations = base_durations.get(datain[time_index])
-                    if step_base_durations is not None:
-                        values: list[float] = []
-                        params = list(datain[0:time_index])
-                        row = list(datain[0 : time_index + 1])
-                        values.append(float(datain[time_index + 1]))
-                        if (
-                            time_index >= 2
-                            and datain[1] != "storage_state_reference_value"
-                        ) or time_index < 2:
-                            for _i in range(len(step_base_durations) - 1):
-                                try:
-                                    datain = next(rows_iter)
-                                except StopIteration:
-                                    break
-                                if list(datain[0:time_index]) != params:
-                                    message = (
-                                        "Cannot find the same "
-                                        "timesteps in input data as "
-                                        "in timeline for file  "
-                                        + timeseries
-                                        + " after "
-                                        + str(row[-1])
-                                    )
-                                    logger.error(message)
-                                    raise FlexToolConfigError(message)
-                                values.append(
-                                    float(datain[time_index + 1])
-                                )
-
-                        if timeseries_map[timeseries] == "average":
-                            ds = step_base_durations[: len(values)]
-                            if all(d == ds[0] for d in ds):
-                                out_value = round(
-                                    sum(values) / len(values), 6
-                                )
-                            else:
-                                # Rates per hour (profile, limits, prices):
-                                # the new step keeps their time integral.
-                                out_value = round(
-                                    sum(v * d for v, d in zip(values, ds)) / sum(ds), 6
-                                )
-                        else:
-                            out_value = sum(values)
-                        row.append(out_value)
-                        out_rows.append(row)
-                    else:
-                        # Bypass aggregation for
-                        # storage_state_reference_value rows — pin to
-                        # the new timeline's nearest step at-or-before
-                        # the original target step.
-                        if (
-                            time_index >= 2
-                            and datain[1] == "storage_state_reference_value"
-                            and timeline_for_bypass is not None
-                        ):
-                            original_tl = self.original_timeline[
-                                timeline_for_bypass
-                            ]
-                            new_timeline = self.timelines[
-                                timeline_for_bypass
-                            ]
-                            counter = 0
-                            current_index = 0
-                            for timestep in self.timelines[original_tl]:
-                                if datain[2] == timestep[0]:
-                                    current_index = counter
-                                counter += 1
-                            found = False
-                            new_index = None
-                            for timestep in reversed(
-                                self.timelines[original_tl][
-                                    0 : current_index + 1
-                                ]
-                            ):
-                                for timeline_row in new_timeline:
-                                    if timeline_row[0] == timestep[0]:
-                                        new_index = timeline_row[0]
-                                        found = True
-                                        break
-                                if found:
-                                    break
-                            if found:
-                                row = list(datain[0:time_index])
-                                row.append(new_index)
-                                row.append(datain[time_index + 1])
-                                out_rows.append(row)
-            except StopIteration:
-                pass
+            out_rows = _aggregate_csv_series(timeseries, src_frame, base_steps, notes)
 
             # Append per-step inflow contributions from p_node to
             # pt_node_inflow only; times the number of time steps each new
@@ -1022,6 +916,73 @@ class TimelineConfig:
 # ---------------------------------------------------------------------------
 # Helpers (private)
 # ---------------------------------------------------------------------------
+
+
+# The provider's time-series frames that a solve's ``new_stepduration`` aggregates: file -> (the entity classes of
+# its rows, the parameter when the file holds one parameter only, else None: the parameter is in the file's
+# ``…Param`` column).  The kind of each row comes from TIME_AGGREGATION (one kind per (file, parameter): every
+# class of a file agrees, tests/engine/test_time_aggregation_registry.py).
+_CSV_SERIES: dict[str, tuple[tuple[str, ...], "str | None"]] = {
+    "pt_node_inflow.csv": (("node",), "inflow"),
+    "pt_commodity.csv": (("commodity",), None),
+    "pt_group.csv": (("group", "flowGroup"), None),
+    "pt_node.csv": (("node",), None),
+    "pt_process.csv": (("unit", "connection"), None),
+    "pdt_process.csv": (("unit", "connection"), None),
+    "pdt_node.csv": (("node",), None),
+    "pt_profile.csv": (("profile",), "profile"),
+    "pt_process_source.csv": (("unit__inputNode",), None),
+    "pt_process_sink.csv": (("unit__outputNode",), None),
+    "pt_reserve__upDown__group.csv": (("reserve__upDown__group",), None),
+    "pbt_node_inflow.csv": (("node",), "inflow"),
+    "pbt_node.csv": (("node",), None),
+    "pbt_process.csv": (("unit", "connection"), None),
+    "pbt_profile.csv": (("profile",), "profile"),
+    "pbt_process_source.csv": (("unit__inputNode",), None),
+    "pbt_process_sink.csv": (("unit__outputNode",), None),
+    "pbt_reserve__upDown__group.csv": (("reserve__upDown__group",), None),
+}
+
+
+def csv_series_kind(file: str, parameter: str) -> "tuple[tuple[str, str], Agg]":
+    """``((class, parameter), kind)`` of the rows of ``parameter`` in the provider frame ``file``
+    (:data:`_CSV_SERIES`): the first class of the file with a TIME_AGGREGATION entry; every class of the file that
+    has one must agree.  A parameter without an entry raises :class:`FlexToolConfigError`."""
+    classes, _fixed = _CSV_SERIES[file]
+    found = [((c, parameter), TIME_AGGREGATION[(c, parameter)]) for c in classes
+             if (c, parameter) in TIME_AGGREGATION]
+    if not found:
+        return (classes[0], parameter), kind_of((classes[0], parameter))
+    if len({k for _key, k in found}) > 1:
+        raise FlexToolConfigError(
+            f"{file}: the classes {[key[0] for key, _k in found]} combine '{parameter}' over a new_stepduration "
+            f"step differently ({[k.value for _key, k in found]}); TIME_AGGREGATION must agree within one file.")
+    return found[0]
+
+
+def _aggregate_csv_series(file: str, frame: pl.DataFrame, base_steps: pl.DataFrame, notes: set) -> list[list]:
+    """The rows of the provider frame ``file`` combined to the solve's steps (:func:`aggregate_to_solve_steps`):
+    one row per (columns before ``time``, solve step), the value last; every value as a float."""
+    headers = frame.columns
+    ti = headers.index("time")
+    group_cols = headers[:ti]
+    value_col = headers[ti + 1]
+    classes, fixed = _CSV_SERIES[file]
+    if fixed is not None:
+        key, kind = csv_series_kind(file, fixed)
+        out = aggregate_to_solve_steps(frame, kind, group_cols, base_steps, time_col="time",
+                                       value_col=value_col, keys=key, notes=notes)
+    else:
+        param_col = next((c for c in group_cols if c.endswith("Param")), None)
+        if param_col is None:
+            raise FlexToolConfigError(f"{file}: no parameter column (…Param) before 'time' in {headers}.")
+        params = frame.get_column(param_col).cast(pl.Utf8).unique(maintain_order=True).to_list()
+        resolved = {p: csv_series_kind(file, p) for p in params if p is not None}
+        out = aggregate_to_solve_steps(
+            frame, param_col, group_cols, base_steps, time_col="time", value_col=value_col,
+            keys={p: key for p, (key, _k) in resolved.items()},
+            kind_values={p: k for p, (_key, k) in resolved.items()}, notes=notes)
+    return [list(r) for r in out.select(*group_cols, "time", value_col).iter_rows()]
 
 
 def _solves_in_model(solve_config: "SolveConfig") -> set[str]:

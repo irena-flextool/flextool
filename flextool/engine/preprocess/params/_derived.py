@@ -75,6 +75,7 @@ from flextool.engine.preprocess.params._per_solve_sets import (
     timeset_timeline_lf,
 )
 from flextool.engine.input._solve_state import CommissioningLagError, FlexToolConfigError, LineageFilterError
+from flextool.engine.input._solve_step_aggregation import aggregate_if_active
 from flextool.engine.input._param_shapes import (
     broadcast_to_period_time,
     parameter_has_values,
@@ -1122,6 +1123,11 @@ def p_timestep_weight_from_source(
     # resolved and validated by the shape registry; any other shape raises.
     resolved_tw = resolve_param_shape(source, "timeset", "timeset_weights")
     tw = resolved_tw.frame if resolved_tw is not None else None
+    if tw is not None and tw.height > 0:
+        # A solve with new_stepduration: one weight per solve step, the step mean (_solve_step_aggregation).
+        tw = aggregate_if_active(
+            tw.select("name", resolved_tw.time_index_column, pl.col("value").cast(pl.Float64)),
+            ("timeset", "timeset_weights"), time_col=resolved_tw.time_index_column)
     if tw is None or tw.height == 0:
         # No flat ``timeset_weights`` — but this may be an RP solve.
         # ``representative_period_weights`` are folded into

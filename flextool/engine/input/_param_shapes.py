@@ -77,6 +77,15 @@ silent ``x`` labels).  For the parameters of :data:`STOCHASTIC_TIME_PARAMS` the 
 authoring one out of its view (the period / time classifier never sees them) and :func:`broadcast_to_period_time`
 gives them the values the solve's emit folded from ``pbt_*`` onto its ``(d, t)``; every other entity is read as
 before.  The emit frames are armed by ``load_flextool`` (:func:`activate_stochastic_time_source`).
+
+Solve-step aggregation
+----------------------
+
+In a solve with ``new_stepduration`` a solve step combines several time steps of the timeline.
+:func:`broadcast_to_period_time` gives the time-keyed rows one value per solve step, by the parameter's kind in
+``_solve_step_aggregation.TIME_AGGREGATION`` (mean, harmonic mean, last) through
+``_solve_step_aggregation.aggregate_if_active`` (keyed by :attr:`ResolvedShape.key`), before the zero filter and
+the axis cast.  The base steps are armed per load by ``load_flextool``; without ``new_stepduration`` nothing runs.
 """
 from __future__ import annotations
 
@@ -97,6 +106,7 @@ from flextool.engine.input._axis_enums import (
     rename_to_axis,
 )
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_step_aggregation import active_base_steps, aggregate_if_active
 from flextool.spinedb_backend._axis_enums import FlexDataIntegrityError
 
 _LOGGER = logging.getLogger(__name__)
@@ -654,6 +664,9 @@ class ResolvedShape:
       solve's emit (:func:`broadcast_to_period_time`).
     * :attr:`stochastic_key` — the ``(entity_class, parameter_name)`` of
       those entities (a :data:`STOCHASTIC_TIME_PARAMS` key), or ``None``.
+    * :attr:`key` — the ``(entity_class, parameter_name)`` it was resolved
+      for (set by :func:`resolve_param_shape`); the solve-step aggregation
+      of a solve with ``new_stepduration`` reads its kind by it.
     """
 
     shape: Shape
@@ -663,6 +676,7 @@ class ResolvedShape:
     time_index_column: "str | None"
     stochastic_entities: "frozenset[tuple[str, ...]]" = frozenset()
     stochastic_key: "tuple[str, str] | None" = None
+    key: "tuple[str, str] | None" = None
 
 
 # ---------------------------------------------------------------------------
@@ -2071,6 +2085,8 @@ def resolve_param_shape(
     resolved = _resolve_param_shape(source, entity_class, parameter_name, period_filter)
     if resolved is not None:
         _shape_read_notice(source, entity_class, parameter_name, resolved)
+        if resolved.key != (entity_class, parameter_name):
+            resolved = dataclasses.replace(resolved, key=(entity_class, parameter_name))
     return resolved
 
 
@@ -2638,6 +2654,11 @@ def broadcast_to_period_time(
     lf = (df.lazy()
             .pipe(rename_to_axis, rename_map)
             .filter(pl.col("value").is_not_null()))
+    # A solve with new_stepduration: the time-keyed rows take one value per solve step by the parameter's
+    # aggregation kind (_solve_step_aggregation).  Before the zero filter (a 0 hour is part of the step mean)
+    # and before the axis cast (the original steps that are not solve-step labels are not in the vocabulary).
+    if resolved.time_index_column is not None and active_base_steps() is not None:
+        lf = aggregate_if_active(lf.collect(), resolved.key, time_col=resolved.time_index_column).lazy()
     if filter_zero:
         lf = lf.filter(pl.col("value") != 0.0)
     # Phase 4 — align producer-side dim dtypes to the canonical Enum

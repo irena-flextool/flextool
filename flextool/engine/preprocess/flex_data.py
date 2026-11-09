@@ -50,6 +50,10 @@ from flextool.engine.input._param_shapes import (
     activate_stochastic_time_source,
     deactivate_stochastic_time_source,
 )
+from flextool.engine.input._solve_step_aggregation import (
+    activate_solve_step_aggregation,
+    deactivate_solve_step_aggregation,
+)
 from flextool.engine.preprocess.params._block_layout import BlockLayout
 from flextool.engine.preprocess.params._branch import (
     activate_branch_anchor_pairs,
@@ -59,6 +63,7 @@ from flextool.engine.preprocess.params._branch import (
     solve_branch_anchor_pairs,
 )
 from flextool.engine.preprocess._provider_io import _provider_key
+from flextool.engine.preprocess.emit._base_steps import NEW_STEP_BASE_STEPS
 
 
 def _loadflex_prof(label: str) -> None:
@@ -4873,6 +4878,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
 
     _branch_tok = None
     _stoch_tok = None
+    _steps_tok = None
     try:
         # Stochastic branch periods inherit the period-keyed input values of their anchor period:
         # arm the solve's (anchor, branch) pairs for the DB-direct readers before any of them runs
@@ -4886,6 +4892,12 @@ def load_flextool(source: "Path | str | FlexInputSource",
             _memo = getattr(db_reader, "run_memo", None)
             _stoch_tok = activate_stochastic_time_source(
                 provider, _memo(("stochastic_time_warnings",), set) if _memo is not None else None)
+            # The solve's new_stepduration steps (empty without one): the DB-direct readers combine a time
+            # series to them by its TIME_AGGREGATION kind.
+            _steps_key = _provider_key(Path("solve_data") / NEW_STEP_BASE_STEPS)
+            _steps_tok = activate_solve_step_aggregation(
+                provider.get(_steps_key) if provider.has(_steps_key) else None,
+                _memo(("solve_step_aggregation_notes",), set) if _memo is not None else None)
 
         # Reuse the recorder bound at the function entry above so the
         # sub-checkpoints (axis_enums / SpineDbReader / load_flextool
@@ -5442,6 +5454,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         _loadflex_prof("return")
         return result
     finally:
+        if _steps_tok is not None:
+            deactivate_solve_step_aggregation(_steps_tok)
         if _stoch_tok is not None:
             deactivate_stochastic_time_source(_stoch_tok)
         if _branch_tok is not None:
