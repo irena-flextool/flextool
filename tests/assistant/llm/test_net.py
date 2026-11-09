@@ -1,15 +1,17 @@
 """FlexTool's own HTTP client (P1 §3.0): the environment variables the provider libraries read add nothing to a
-request, proxies apply to remote endpoints only, redirects are not followed, odd base URLs are refused."""
+request and change none of its headers, proxies apply to remote endpoints only, redirects are not followed, odd base
+URLs are refused, and a remote plain ``http://`` address is warned about (or refused, :data:`net.REMOTE_HTTP`)."""
 from __future__ import annotations
 
+import json
 import logging
 import threading
 
 import httpx2
 import pytest
 
+from flextool.assistant import endpoint, net
 from flextool.assistant import llm_errors as E
-from flextool.assistant import net
 from flextool.assistant.llm_adapter import Message, make_backend
 from flextool.assistant.providers import PRESETS
 from tests.assistant.llm.wire import (
@@ -23,6 +25,7 @@ from tests.assistant.llm.wire import (
     request,
     sse_response,
 )
+from tests.assistant.llm.local_server import RawServer
 
 SDK_VARIABLES = {
     "OPENAI_CUSTOM_HEADERS": "Authorization: Bearer from-the-environment\nX-Custom-Header: leaked",
@@ -69,7 +72,8 @@ def _send(preset_id: str, key: str | None = KEY):
 def test_only_allow_listed_headers_and_our_key_and_address(preset_id, sdk_environment):
     backend = PRESETS[preset_id].backend
     sent = _send(preset_id)
-    assert set(sent.headers) <= net.ALLOWED_HEADERS | net.BACKEND_HEADERS[backend]
+    assert set(sent.headers) <= (net.ALLOWED_HEADERS | set(net.FIXED_HEADERS) | net.COMPUTED_HEADERS
+                                 | net.BACKEND_HEADERS[backend])
     assert sent.headers["authorization"] == f"Bearer {KEY}"
     assert sent.headers["user-agent"] == "FlexTool-assistant"
     assert not any(h.startswith("x-") for h in sent.headers)
@@ -79,6 +83,70 @@ def test_only_allow_listed_headers_and_our_key_and_address(preset_id, sdk_enviro
     if backend == "anthropic":
         assert sent.headers["anthropic-version"]
     assert "leaked" not in str(sent.headers.values())
+
+
+#: Custom-header lines that try to change every header FlexTool sets itself (C4-m2): the address, the framing,
+#: the types, the connection and Anthropic's API version.  The second set has a chunked transfer encoding and no
+#: length, which made ``httpx2`` leave the length out while the hook dropped the encoding (no framing at all).
+OVERRIDES = {
+    "all": "\n".join(["Host: evil.example", "Accept-Encoding: identity-evil", "Content-Length: 1",
+                      "Connection: close", "Accept: text/evil", "Content-Type: text/evil",
+                      "anthropic-version: 1999-01-01", "Transfer-Encoding: chunked"]),
+    "chunked": "Transfer-Encoding: chunked",
+}
+
+
+@pytest.mark.parametrize("variant", sorted(OVERRIDES))
+@pytest.mark.parametrize("preset_id", sorted(PRESETS))
+def test_custom_header_variables_cannot_set_computed_headers(preset_id, variant, monkeypatch):
+    """The real library, the real client and a server on this computer: what arrives is what FlexTool chose."""
+    backend = PRESETS[preset_id].backend
+    for name in ("OPENAI_CUSTOM_HEADERS", "ANTHROPIC_CUSTOM_HEADERS"):
+        monkeypatch.setenv(name, OVERRIDES[variant])
+    answer = (anthropic_sse(payload("anthropic", "text_end")["events"]) if backend == "anthropic"
+              else openai_sse(payload("openai", "text_usage")["chunks"]))
+    server = RawServer(body=answer, content_type="text/event-stream")
+    try:
+        url = server.url if backend == "anthropic" else server.url + "/v1"
+        made = make_backend(PRESETS[preset_id], connection(preset_id, url=url))
+        try:
+            made.stream(request([Message("user", "hello")]), lambda e: None, threading.Event())
+        finally:
+            made.close()
+    finally:
+        server.close()
+    (line, headers, body), = server.requests
+    names = [name for name, _value in headers]
+    assert len(names) == len(set(names))                    # no header twice
+    sent = dict(headers)
+    assert sent["host"] == f"127.0.0.1:{server.port}"
+    assert sent["accept-encoding"] == "gzip, deflate"
+    assert sent["connection"] == "keep-alive"
+    assert sent["accept"] == "application/json"
+    assert sent["content-type"] == "application/json"
+    assert "transfer-encoding" not in sent
+    assert sent["content-length"] == str(len(body))
+    assert json.loads(body)["model"] == "example-model"     # the whole body arrived, framed by its length
+    if backend == "anthropic":
+        from anthropic._constants import ANTHROPIC_API_VERSION
+
+        assert sent["anthropic-version"] == ANTHROPIC_API_VERSION
+    else:
+        assert "anthropic-version" not in sent
+
+
+def test_a_streamed_body_is_sent_chunked():
+    hook = net.header_hook("the-key", net.ALLOWED_HEADERS)
+    streamed = httpx2.Request("POST", "https://api.example.test:8443/v1", content=iter([b"{}"]),
+                              headers={"Authorization": "Bearer the-key", "Content-Length": "1"})
+    hook(streamed)
+    assert (streamed.headers["host"], streamed.headers["transfer-encoding"]) == ("api.example.test:8443", "chunked")
+    assert "content-length" not in streamed.headers
+    plain = httpx2.Request("GET", "https://api.example.test/v1/models",
+                           headers={"Authorization": "Bearer the-key", "Content-Type": "text/evil"})
+    hook(plain)
+    assert plain.headers["host"] == "api.example.test"      # the default port is not written
+    assert "content-type" not in plain.headers and "content-length" not in plain.headers
 
 
 def test_an_endpoint_without_a_key_never_gets_the_environment_key(sdk_environment):
@@ -212,3 +280,93 @@ def net_loggers():
     from flextool.assistant.llm_adapter import SDK_LOGGERS
 
     return SDK_LOGGERS
+
+
+# --- a remote plain http:// address (C4-m6, owner decision D2 pending: "warn" is the default) -------------------
+#: The notice hash before the plain-http sentence existed: the acknowledgements users already hold carry it.
+NOTICE_HASH_BEFORE = "7dedb880c96c"
+PLAIN = "http://gpu.example.org:11434/v1"
+
+
+@pytest.fixture
+def no_proxy_variables(monkeypatch):
+    for name in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY"):
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name.lower(), raising=False)
+
+
+def test_remote_http_is_warned_about_by_default():
+    assert net.REMOTE_HTTP == "warn"
+
+
+@pytest.mark.parametrize("url,plain", [
+    (PLAIN, True),
+    ("HTTP://GPU.Example.org/v1", True),
+    ("https://gpu.example.org:11434/v1", False),
+    ("http://192.168.1.5:11434/v1", False),
+    ("http://localhost:11434/v1", False),
+])
+def test_warn_mode_says_the_connection_is_not_encrypted(url, plain, monkeypatch, no_proxy_variables):
+    monkeypatch.setattr(net, "REMOTE_HTTP", "warn")
+    assert net.plain_http_remote(url) is plain
+    assert net.check_base_url(url) == url                   # used, with the warning
+    route = net.route_for(url, "Custom endpoint")
+    assert route.encrypted is not plain
+    assert endpoint.indicator_text(route).endswith(endpoint.PLAIN_HTTP) is plain
+    assert endpoint.consent_notice(route).endswith(endpoint.PLAIN_HTTP) is plain
+
+
+def test_the_warning_texts(monkeypatch, no_proxy_variables):
+    monkeypatch.setattr(net, "REMOTE_HTTP", "warn")
+    route = net.route_for(PLAIN, "Custom endpoint")
+    assert endpoint.indicator_text(route) == (
+        "Data goes to: Custom endpoint (gpu.example.org:11434). The connection is not encrypted: the key and the "
+        "data can be read on the way.")
+    assert endpoint.consent_notice(route).endswith(
+        "or LM Studio), which requires considerable local compute. The connection is not encrypted: the key and the "
+        "data can be read on the way.")
+    # A local server forwarding a cloud model is encrypted on the part FlexTool chooses: no warning.
+    forwarded = net.route_for("http://localhost:11434/v1", "Ollama cloud", forwarded_to="ollama.com")
+    assert forwarded.encrypted and not endpoint.indicator_text(forwarded).endswith(endpoint.PLAIN_HTTP)
+
+
+def test_only_plain_http_routes_are_asked_again(monkeypatch, no_proxy_variables, user_config_in_tmp):
+    import dataclasses
+
+    monkeypatch.setattr(net, "REMOTE_HTTP", "warn")
+    secure_url = "https://gpu.example.org:11434/v1"
+    secure = endpoint.consent_key("openai_compatible", secure_url, net.route_for(secure_url, "Custom endpoint"))
+    plain = endpoint.consent_key("openai_compatible", PLAIN, net.route_for(PLAIN, "Custom endpoint"))
+    assert endpoint.NOTICE_HASH == NOTICE_HASH_BEFORE        # the https notice did not change
+    # Acceptances made before the sentence existed: https keeps its acceptance, plain http is asked once more.
+    endpoint.record_consent(dataclasses.replace(secure, notice=NOTICE_HASH_BEFORE), user_config_in_tmp)
+    endpoint.record_consent(dataclasses.replace(plain, notice=NOTICE_HASH_BEFORE), user_config_in_tmp)
+    assert endpoint.needs_consent(secure, user_config_in_tmp) is False
+    assert endpoint.needs_consent(plain, user_config_in_tmp) is True
+    endpoint.record_consent(plain, user_config_in_tmp)
+    assert endpoint.needs_consent(plain, user_config_in_tmp) is False
+
+
+def test_switching_scheme_asks_again(no_proxy_variables, user_config_in_tmp):
+    """A pin (it held before C4-m6): http and https are two endpoints of the acknowledgement."""
+    https_url = "https://gpu.example.org:11434/v1"
+    https = endpoint.consent_key("openai_compatible", https_url, net.route_for(https_url, "Custom endpoint"))
+    http = endpoint.consent_key("openai_compatible", PLAIN, net.route_for(PLAIN, "Custom endpoint"))
+    endpoint.record_consent(https, user_config_in_tmp)
+    assert endpoint.needs_consent(http, user_config_in_tmp) is True
+    endpoint.record_consent(http, user_config_in_tmp)
+    (user_config_in_tmp / endpoint.ACKS_FILE).unlink()
+    endpoint.record_consent(http, user_config_in_tmp)
+    assert endpoint.needs_consent(https, user_config_in_tmp) is True
+
+
+def test_refuse_mode_refuses_remote_http_only(monkeypatch, no_proxy_variables):
+    monkeypatch.setattr(net, "REMOTE_HTTP", "refuse")
+    with pytest.raises(net.BaseUrlRefused) as info:
+        net.check_base_url(PLAIN)
+    assert str(info.value) == ("FlexTool sends a key and case data to an address outside this computer and your "
+                               "local network only over https://. Use https://gpu.example.org.")
+    for url in ("http://localhost:11434/v1", "http://192.168.1.5:11434/v1", "https://gpu.example.org:11434/v1"):
+        assert net.check_base_url(url) == url
+    with pytest.raises(net.BaseUrlRefused):
+        net.build_http_client(connection("openai_compatible", url=PLAIN), backend="openai", api_key=KEY)

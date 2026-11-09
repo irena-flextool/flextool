@@ -4,17 +4,23 @@ A ``http.server`` on ``127.0.0.1`` plays Ollama (``/api/show``, ``/api/generate`
 v0 model endpoints) and OpenRouter's model list.  Checked: a small loaded context stops the chat before any model
 request (the OLLAMA_CONTEXT_LENGTH message); no ``tools`` capability stops it; ``remote_host`` and ``:cloud`` /
 ``-cloud`` names give the Ollama cloud route and skip the load; an unreadable ``/api/show`` sends nothing more;
-nothing but the model and ``keep_alive`` is sent to load a model; the probes ignore the proxy variables.
+nothing but the model and ``keep_alive`` is sent to load a model; a probe of this computer ignores the proxy
+variables, and every probe takes the route of the requests (C4-m5: the same proxy decision, NO_PROXY and the system
+exceptions included, and the remote timeout for a remote server).  A second raw server plays the proxy; a remote
+host is either the loopback server with ``net.endpoint_kind`` patched to "remote", or ``example.org`` resolved to
+the loopback server (so nothing leaves this computer even when the route were wrong).
 """
 from __future__ import annotations
 
+import socket
 import threading
 import time
+import urllib.request
 from collections.abc import Iterator
 
 import pytest
 
-from flextool.assistant import endpoint, probes
+from flextool.assistant import endpoint, net, probes
 from flextool.assistant.llm_adapter import Connection, ToolSpec, Waiting
 from flextool.assistant.llm_errors import (
     Cancelled,
@@ -22,10 +28,13 @@ from flextool.assistant.llm_errors import (
     ProviderError,
     ServerBusy,
     ToolsUnsupported,
+    LLMError,
     Unreachable,
 )
+from flextool.assistant.llm_adapter import Message, make_backend
 from flextool.assistant.providers import PRESETS
-from tests.assistant.llm.local_server import Answer, FakeServer
+from tests.assistant.llm.local_server import Answer, FakeServer, RawServer
+from tests.assistant.llm.wire import connection, request
 
 @pytest.fixture
 def server() -> Iterator[FakeServer]:
@@ -236,3 +245,146 @@ def test_anthropic_input_limit():
     preset, conn = _conn("anthropic", "https://api.anthropic.com", "claude-test")
     assert probes.probe(preset, conn, threading.Event(), backend=Limits()).context_window == 200_000
     assert probes.probe(PRESETS["mistral"], conn, threading.Event()) == probes.ModelFacts()
+
+
+@pytest.mark.parametrize("server_where,where", [
+    ("http://127.0.0.1:11434/v1", "on this computer"),
+    ("http://192.168.1.20:11434/v1", "at 192.168.1.20:11434"),
+])
+def test_the_forwarding_server_is_named_where_it_runs(server_where, where):
+    """C4-n3: an Ollama elsewhere on the network is not "on this computer"."""
+    ollama = PRESETS["ollama"]
+    cloud = endpoint.route_for(ollama, server_where, model="kimi:cloud")
+    assert endpoint.indicator_text(cloud) == f"Data goes to: Ollama cloud (ollama.com), forwarded by Ollama {where}."
+    other = endpoint.route_for(ollama, server_where, facts=probes.ModelFacts(remote_host="gpu.example.org"))
+    assert endpoint.indicator_text(other) == f"Data goes to: gpu.example.org, forwarded by Ollama {where}."
+
+
+# --- the probe takes the route of the requests (C4-m5) -------------------------------------------------------------
+PROXY_VARIABLES = ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "NO_PROXY")
+
+
+@pytest.fixture
+def proxy() -> Iterator[RawServer]:
+    """A proxy that records the request line (the absolute address) and answers 502."""
+    fake = RawServer(status=502, body=b'{"error": "from the proxy"}')
+    yield fake
+    fake.close()
+
+
+def _proxy_variables(monkeypatch: pytest.MonkeyPatch, proxy_url: str | None, no_proxy: str | None = None) -> None:
+    for name in PROXY_VARIABLES:
+        monkeypatch.delenv(name, raising=False)
+        monkeypatch.delenv(name.lower(), raising=False)
+    if proxy_url is not None:
+        for name in ("HTTP_PROXY", "http_proxy"):
+            monkeypatch.setenv(name, proxy_url)
+    if no_proxy is not None:
+        for name in ("NO_PROXY", "no_proxy"):
+            monkeypatch.setenv(name, no_proxy)
+
+
+def _remote_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(net, "endpoint_kind", lambda url: "remote")
+
+
+def _probe_target(server: FakeServer, preset_id: str) -> tuple[object, Connection, str]:
+    """A probe of *preset_id* at *server*, and the request line it starts with."""
+    if preset_id == "ollama":
+        preset, conn = _ollama(server)
+        return preset, conn, f"POST http://127.0.0.1:{server.port}/api/show HTTP/1.1"
+    preset, conn = _lmstudio(server, loaded_context=32768, capabilities=["tool_use"])
+    return preset, conn, f"GET http://127.0.0.1:{server.port}/api/v1/models HTTP/1.1"
+
+
+@pytest.mark.parametrize("preset_id", ["ollama", "lmstudio"])
+def test_remote_probe_goes_through_the_proxy(preset_id, server, proxy, monkeypatch):
+    _remote_loopback(monkeypatch)
+    _proxy_variables(monkeypatch, proxy.url)
+    # urllib's own bypass rules play no part: the route was decided by net.proxy_for.
+    monkeypatch.setattr(urllib.request, "proxy_bypass", lambda host: True)
+    preset, conn, first = _probe_target(server, preset_id)
+    with pytest.raises(LLMError):
+        probes.probe(preset, conn, threading.Event(), needed=9000)
+    assert proxy.lines[0] == first
+    assert server.paths == []                                   # nothing went around the proxy
+
+
+@pytest.mark.parametrize("preset_id", ["ollama", "lmstudio"])
+def test_remote_probe_uses_the_remote_timeout(preset_id, server, monkeypatch):
+    _remote_loopback(monkeypatch)
+    _proxy_variables(monkeypatch, None)
+    timeouts: list[float] = []
+    fetch = probes._Asker._fetch
+
+    def spy(self, method, path, payload, timeout):
+        timeouts.append(timeout)
+        return fetch(self, method, path, payload, timeout)
+
+    monkeypatch.setattr(probes._Asker, "_fetch", spy)
+    preset, conn, _first = _probe_target(server, preset_id)
+    probes.probe(preset, conn, threading.Event(), needed=9000)
+    assert timeouts[0] == 10.0                                  # REMOTE_TIMEOUT; this computer gets 2 s
+    if preset_id == "ollama":
+        assert timeouts[1] == 900.0                             # loading a model keeps its own timeout
+
+
+@pytest.fixture
+def example_org(server: FakeServer, monkeypatch: pytest.MonkeyPatch) -> str:
+    """``http://example.org:<server port>/v1``, a remote address whose name resolves to the loopback server."""
+    real = socket.getaddrinfo
+
+    def getaddrinfo(host, port, *args, **kwargs):
+        return real("127.0.0.1" if host == "example.org" else host, port, *args, **kwargs)
+
+    monkeypatch.setattr(socket, "getaddrinfo", getaddrinfo)
+    server.routes[("GET", "/v1/models")] = (200, {"data": [{"id": "example-model", "context_length": 32768}]})
+    server.routes[("POST", "/v1/chat/completions")] = (500, {"error": "the test only checks the route"})
+    return f"http://example.org:{server.port}/v1"
+
+
+def _probe_and_request(url: str) -> None:
+    """Probe the custom endpoint at *url*, then send it a chat request through the real client."""
+    preset = PRESETS["openai_compatible"]
+    conn = connection("openai_compatible", url=url)
+    probes.probe(preset, conn, threading.Event())               # a list it cannot read gives no facts
+    backend = make_backend(preset, conn)
+    try:
+        with pytest.raises(LLMError):
+            backend.stream(request([Message("user", "hello")]), lambda e: None, threading.Event())
+    finally:
+        backend.close()
+
+
+def test_no_proxy_rules_give_the_probe_and_the_request_one_route(example_org, server, proxy, monkeypatch):
+    port = server.port
+    # NO_PROXY=.example.org exempts the subdomains, not example.org itself (curl's rule, as httpx2 reads it;
+    # urllib's own bypass would exempt it): both go through the proxy.
+    _proxy_variables(monkeypatch, proxy.url, ".example.org")
+    _probe_and_request(example_org)
+    assert proxy.lines == [f"GET http://example.org:{port}/v1/models HTTP/1.1",
+                           f"POST http://example.org:{port}/v1/chat/completions HTTP/1.1"]
+    assert server.paths == []
+    # NO_PROXY=example.org exempts it: both go directly.
+    _proxy_variables(monkeypatch, proxy.url, "example.org")
+    _probe_and_request(example_org)
+    assert server.paths == ["/v1/models", "/v1/chat/completions"]
+    assert len(proxy.lines) == 2
+
+
+def test_system_proxy_exceptions_give_the_probe_and_the_request_one_route(example_org, server, proxy,
+                                                                          monkeypatch):
+    """No proxy variable: the system settings name the proxy, and their exception list (Windows ProxyOverride,
+    macOS exceptions, read by urllib.request.proxy_bypass) exempts the host for both."""
+    import httpx2._utils
+
+    _proxy_variables(monkeypatch, None)
+    monkeypatch.setattr(httpx2._utils, "getproxies", lambda: {"http": proxy.url})
+    monkeypatch.setattr(urllib.request, "proxy_bypass", lambda host: host == f"example.org:{server.port}")
+    assert net.proxy_for(example_org) is None
+    _probe_and_request(example_org)
+    assert server.paths == ["/v1/models", "/v1/chat/completions"]
+    assert proxy.lines == []
+    # A host the exceptions do not list goes through the system proxy.
+    monkeypatch.setattr(urllib.request, "proxy_bypass", lambda host: False)
+    assert net.proxy_for(example_org) == proxy.url

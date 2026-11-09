@@ -29,12 +29,15 @@ are kept in this process and in ``<user cache>/flextool/assistant/model_facts.js
 found, so the settings show the level and context of a model without asking any server (:func:`cached_facts`).
 The same entry keeps the interval between requests the pacing learned (:func:`store_interval`, P1 §5.1).
 
-Local servers are asked through a proxy-less opener (a local endpoint never goes through a proxy, whatever the
-environment says), with a 2 second timeout; no redirect is followed.  Only the standard library is used, apart
-from the Anthropic library for the Anthropic check.
+Every server is asked on the route its requests take (:func:`flextool.assistant.net.proxy_for`, the one route
+decision): an endpoint on this computer or the local network without a proxy, whatever the environment says, with
+a 2 second timeout; a remote one through the proxy the indicator names (or directly when none applies), with 10
+seconds.  No redirect is followed.  Only the standard library is used, apart from the Anthropic library for the
+Anthropic check.
 """
 from __future__ import annotations
 
+import base64
 import json
 import math
 import re
@@ -47,7 +50,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote, urlsplit
+from urllib.parse import quote, unquote, urlsplit
 
 from flextool.assistant import net
 from flextool.assistant.endpoint import OLLAMA_CLOUD_HOST
@@ -71,7 +74,7 @@ from flextool.assistant.providers import Preset, is_cloud_name
 #: Timeout of a question to a local server, and of the call that loads a model (P1-D9).
 LOCAL_TIMEOUT = 2.0
 LOAD_TIMEOUT = 900.0
-#: Timeout of the remote model list (OpenRouter).
+#: Timeout of a question to a remote server (an Ollama or LM Studio elsewhere, OpenRouter's model list).
 REMOTE_TIMEOUT = net.CONNECT_TIMEOUT
 #: How long Ollama keeps the model loaded after the probe's load call.
 KEEP_ALIVE = "10m"
@@ -124,11 +127,33 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class _DecidedProxyHandler(urllib.request.ProxyHandler):
+    """A proxy handler that uses the proxy it is given for every host.  ``urllib``'s own handler asks
+    ``urllib.request.proxy_bypass`` once more, whose ``NO_PROXY`` and system-exception rules differ from
+    :func:`flextool.assistant.net.proxy_for` (``NO_PROXY=.example.org`` exempts ``example.org`` there, not in
+    ``httpx2``); the proxy was already decided there, so this handler only applies it (the standard library's
+    ``proxy_open`` without the bypass check)."""
+
+    def proxy_open(self, req, proxy, type):  # noqa: A002, ANN001 — urllib's signature
+        orig_type = req.type
+        proxy_type, user, password, hostport = urllib.request._parse_proxy(proxy)  # type: ignore[attr-defined]
+        if proxy_type is None:
+            proxy_type = orig_type
+        if user and password:
+            user_pass = f"{unquote(user)}:{unquote(password)}"
+            req.add_header("Proxy-authorization", "Basic " + base64.b64encode(user_pass.encode()).decode("ascii"))
+        req.set_proxy(unquote(hostport), proxy_type)
+        if orig_type == proxy_type or orig_type == "https":
+            return None
+        return self.parent.open(req, timeout=req.timeout)
+
+
 def _opener(proxy: str | None) -> urllib.request.OpenerDirector:
-    """An opener that uses *proxy* (``None``: no proxy at all, whatever the environment says) and follows no
-    redirect."""
-    proxies = {} if proxy is None else {"http": proxy, "https": proxy}
-    return urllib.request.build_opener(urllib.request.ProxyHandler(proxies), _NoRedirect())
+    """An opener that uses *proxy* for every host (``None``: no proxy at all, whatever the environment says) and
+    follows no redirect."""
+    if proxy is None:
+        return urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect())
+    return urllib.request.build_opener(_DecidedProxyHandler({"http": proxy, "https": proxy}), _NoRedirect())
 
 
 @dataclass
@@ -139,16 +164,20 @@ class _Answer:
 
 
 class _Asker:
-    """Questions to one server: JSON in, JSON out, cancellable, with the connection's error context."""
+    """Questions to one server: JSON in, JSON out, cancellable, with the connection's error context.  The route is
+    the one the connection's requests take: the proxy of :func:`flextool.assistant.net.proxy_for` for the base
+    URL, and the local or the remote timeout by where the endpoint is."""
 
     def __init__(self, base: str, conn: Connection, ctx: ErrorContext, cancel: threading.Event,
-                 on_event: OnEvent | None, *, proxy: str | None = None) -> None:
+                 on_event: OnEvent | None) -> None:
         self.base = base.rstrip("/")
         self.conn = conn
         self.ctx = ctx
         self.cancel = cancel
         self.on_event = on_event
-        self.opener = _opener(proxy)
+        self.local = net.is_local(conn.base_url)
+        self.proxy = net.proxy_for(conn.base_url)
+        self.opener = _opener(self.proxy)
 
     def _headers(self, body: bytes | None) -> dict[str, str]:
         headers = {"User-Agent": net.USER_AGENT, "Accept": "application/json"}
@@ -173,10 +202,13 @@ class _Asker:
             body = text
         return _Answer(status, body, headers)
 
-    def ask(self, method: str, path: str, payload: dict | None = None, *, timeout: float = LOCAL_TIMEOUT,
+    def ask(self, method: str, path: str, payload: dict | None = None, *, timeout: float | None = None,
             waiting: bool = False) -> _Answer:
-        """The answer to one request; a status other than 200 raises the classified error.  The request runs
+        """The answer to one request; a status other than 200 raises the classified error.  *timeout* is
+        :data:`LOCAL_TIMEOUT` or :data:`REMOTE_TIMEOUT` by where the endpoint is, unless given.  The request runs
         in a daemon thread, so *cancel* stops the wait at once (the thread is left to finish on its own)."""
+        if timeout is None:
+            timeout = LOCAL_TIMEOUT if self.local else REMOTE_TIMEOUT
         if self.cancel.is_set():
             raise cancelled(self.ctx)
         result: dict[str, Any] = {}
@@ -438,9 +470,9 @@ def _probe_openrouter(conn: Connection, ctx: ErrorContext, cancel: threading.Eve
     now = clock()
     models = _cached_models(conn.base_url, now)
     if models is None:
-        asker = _Asker(conn.base_url, conn, ctx, cancel, None, proxy=net.proxy_for(conn.base_url))
+        asker = _Asker(conn.base_url, conn, ctx, cancel, None)
         try:
-            listing = asker.ask_object("GET", "/models", timeout=REMOTE_TIMEOUT)
+            listing = asker.ask_object("GET", "/models")
         except LLMError as exc:
             if exc.code == "cancelled":
                 raise
@@ -465,10 +497,9 @@ LISTED_CONTEXT_FIELDS = ("context_length", "max_model_len", "context_window")
 
 
 def _probe_openai_compatible(conn: Connection, ctx: ErrorContext, cancel: threading.Event) -> ModelFacts:
-    proxy = None if ctx.local else net.proxy_for(conn.base_url)
-    asker = _Asker(conn.base_url, conn, ctx, cancel, None, proxy=proxy)
+    asker = _Asker(conn.base_url, conn, ctx, cancel, None)
     try:
-        listing = asker.ask_object("GET", "/models", timeout=LOCAL_TIMEOUT if ctx.local else REMOTE_TIMEOUT)
+        listing = asker.ask_object("GET", "/models")
     except LLMError as exc:
         if exc.code == "cancelled":
             raise

@@ -13,7 +13,10 @@ question settles it.
 service on the internet, a model a local server forwards, such as an Ollama cloud model), the user accepts
 :func:`consent_notice`.  The acceptance is kept in ``<config>/assistant/acknowledgements.json`` under its
 :class:`ConsentKey` — preset, normalised endpoint, proxy host, forwarded host and the hash of the notice's
-wording — so another endpoint, a new or changed proxy, a cloud model or a changed notice asks again.  An endpoint
+wording — so another endpoint (``http`` and ``https`` are two endpoints), a new or changed proxy, a cloud model
+or a changed notice asks again.  A remote plain ``http://`` route (:func:`flextool.assistant.net.plain_http_remote`)
+adds :data:`PLAIN_HTTP` to the indicator and the notice, and its notice has its own hash
+(:data:`NOTICE_HASH_PLAIN`), so only those routes are asked again for that sentence.  An endpoint
 on this computer or the local network needs no acceptance (the indicator says where the data goes).  The file
 also records when the welcome was first shown (:func:`welcome_seen`, :func:`mark_welcome_seen`).  Every
 read-modify-write runs under the file's lock: several chats and front ends write it.
@@ -43,8 +46,13 @@ INDICATOR_LOOPBACK = ("Endpoint on this computer ({host}). FlexTool sends data o
 INDICATOR_LOCAL_NETWORK = "Endpoint on your local network ({host})."
 INDICATOR_REMOTE = "Data goes to: {provider} ({host})."
 INDICATOR_PROXY = " It is sent through the proxy {proxy_host}."
-INDICATOR_OLLAMA_CLOUD = "Data goes to: Ollama cloud ({forwarded_host}), forwarded by Ollama on this computer."
-INDICATOR_FORWARDED = "Data goes to: {forwarded_host}, forwarded by {server} on this computer."
+INDICATOR_OLLAMA_CLOUD = "Data goes to: Ollama cloud ({forwarded_host}), forwarded by Ollama {where}."
+INDICATOR_FORWARDED = "Data goes to: {forwarded_host}, forwarded by {server} {where}."
+#: Where the forwarding server runs: on this computer, else its host.
+WHERE_HERE = "on this computer"
+WHERE_HOST = "at {host}"
+#: Added to the indicator and the data notice of a remote plain ``http://`` route (owner decision D2, option a).
+PLAIN_HTTP = " The connection is not encrypted: the key and the data can be read on the way."
 
 
 def forwarded_label(preset: Preset, forwarded_to: str) -> str:
@@ -80,12 +88,17 @@ def route_from_settings(settings: Settings) -> Route | None:
 
 
 def indicator_text(route: Route) -> str:
-    """The line that says where the data goes."""
+    """The line that says where the data goes (with :data:`PLAIN_HTTP` for a remote plain ``http://`` route)."""
+    return _indicator(route) + ("" if route.encrypted else PLAIN_HTTP)
+
+
+def _indicator(route: Route) -> str:
     if route.forwarded_to:
+        where = WHERE_HERE if route.server_kind == "loopback" else WHERE_HOST.format(host=route.host)
         if route.label == OLLAMA_CLOUD:
-            return INDICATOR_OLLAMA_CLOUD.format(forwarded_host=route.forwarded_to)
+            return INDICATOR_OLLAMA_CLOUD.format(forwarded_host=route.forwarded_to, where=where)
         server = route.label.split(",")[0]
-        return INDICATOR_FORWARDED.format(forwarded_host=route.forwarded_to, server=server)
+        return INDICATOR_FORWARDED.format(forwarded_host=route.forwarded_to, server=server, where=where)
     if route.kind == "loopback":
         return INDICATOR_LOOPBACK.format(host=route.host)
     if route.kind == "local_network":
@@ -110,19 +123,26 @@ NOTICE_PROXY = " Your network settings send this data through the proxy {proxy_h
 NOTICE_HEADERS = " {provider} requires FlexTool to send these request headers: {headers}."
 #: The hash of the notice's wording: a changed notice is asked again.
 NOTICE_HASH = hashlib.sha256((NOTICE + NOTICE_PROXY + NOTICE_HEADERS).encode("utf-8")).hexdigest()[:12]
+#: The hash of the notice of a remote plain ``http://`` route, which adds :data:`PLAIN_HTTP`: such a route is asked
+#: again once for that sentence, an encrypted one is not.
+NOTICE_HASH_PLAIN = hashlib.sha256((NOTICE + NOTICE_PROXY + NOTICE_HEADERS + PLAIN_HTTP).encode("utf-8")
+                                   ).hexdigest()[:12]
 
 ACKS_FILE = "acknowledgements.json"
 
 
 def consent_notice(route: Route, *, required_headers: frozenset[str] | tuple[str, ...] = ()) -> str:
     """The data notice of *route*: the service and the host the data goes to (the forwarded host of a model a
-    local server forwards), the proxy sentence when a proxy applies, and the headers a preset requires."""
+    local server forwards), the proxy sentence when a proxy applies, the headers a preset requires, and
+    :data:`PLAIN_HTTP` for a remote plain ``http://`` route."""
     endpoint = route.forwarded_to or route.host
     text = NOTICE.format(provider=route.label, endpoint=endpoint)
     if route.proxy_host:
         text += NOTICE_PROXY.format(proxy_host=route.proxy_host)
     if required_headers:
         text += NOTICE_HEADERS.format(provider=route.label, headers=", ".join(sorted(required_headers)))
+    if not route.encrypted:
+        text += PLAIN_HTTP
     return text
 
 
@@ -151,7 +171,8 @@ class ConsentKey:
 def consent_key(preset_id: str, base_url: str, route: Route) -> ConsentKey:
     """The key of the data notice of *route* (the connection of *preset_id* to *base_url*)."""
     return ConsentKey(preset=preset_id, endpoint=normalise_endpoint(base_url), proxy=route.proxy_host,
-                      forwarded_to=route.forwarded_to, notice=NOTICE_HASH, remote=route.kind == "remote")
+                      forwarded_to=route.forwarded_to, notice=NOTICE_HASH if route.encrypted else NOTICE_HASH_PLAIN,
+                      remote=route.kind == "remote")
 
 
 def acks_path(config_root: Path | None = None) -> Path:

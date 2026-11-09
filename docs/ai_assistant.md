@@ -170,13 +170,19 @@ The start of the chat shows where the data goes:
 - "Endpoint on this computer (localhost:11434). FlexTool sends data only there; if that server forwards requests,
   data leaves this computer." for a model server on this computer;
 - "Endpoint on your local network (192.168.1.20)." for a server on your local network;
-- "Data goes to: Ollama cloud (ollama.com), forwarded by Ollama on this computer." for an Ollama cloud model.
+- "Data goes to: Ollama cloud (ollama.com), forwarded by Ollama on this computer." for an Ollama cloud model
+  ("forwarded by Ollama at 192.168.1.20:11434." when that Ollama runs elsewhere on your network).
+
+For an address that starts with `http://` and is neither on this computer nor on your local network, the line
+ends with " The connection is not encrypted: the key and the data can be read on the way." Use an `https://`
+address for such a server when it has one.
 
 ### The data notice
 
 Before the first question goes to a service on the internet (or to Ollama's cloud), the chat shows the data notice:
 what is sent, to which service and address, that FlexTool cannot guarantee how it is stored or used, and, when a
-proxy applies, that the proxy can also see it. Type `yes` to send; anything else sends nothing. The answer is kept,
+proxy applies, that the proxy can also see it (and, for an unencrypted `http://` address on the internet, that
+the connection is not encrypted). Type `yes` to send; anything else sends nothing. The answer is kept,
 so the notice is shown again only when the service, its address, the proxy or the notice itself changes. A model on
 this computer or your local network needs no notice.
 

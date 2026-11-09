@@ -117,13 +117,17 @@ class ModelEntry:
 class Route:
     """Where the data of a connection goes (P1 §9.1): the endpoint kind (for a model a local server forwards,
     ``remote``), the endpoint host, the proxy host for a remote endpoint, the host a local server forwards to,
-    and the label that names the service in every message."""
+    and the label that names the service in every message.  *server_kind* is the kind of the endpoint itself (for a
+    forwarded model, where the forwarding server runs); *encrypted* is ``False`` for a plain ``http://`` address
+    outside this computer and the local network (:func:`flextool.assistant.net.plain_http_remote`)."""
 
     kind: EndpointKind
     host: str
     proxy_host: str | None
     forwarded_to: str | None
     label: str
+    server_kind: EndpointKind = "remote"
+    encrypted: bool = True
 
 
 @dataclass(frozen=True)

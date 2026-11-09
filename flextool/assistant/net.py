@@ -2,14 +2,23 @@
 
 FlexTool, not the library, decides what a request carries and where it goes:
 
-* **Headers** are rebuilt from an allow-list by a request hook, after the library and its environment variables
-  have added theirs: the library's identification headers (version, operating system, processor, Python),
-  organisation and project ids, custom headers from the environment and beta switches are dropped; the
-  ``user-agent`` is ``FlexTool-assistant``; the key header must carry the resolved key, else the request is
-  stopped (a programming error, never silent).
+* **Headers** are rebuilt by a request hook, after the library and its environment variables
+  (``OPENAI_CUSTOM_HEADERS``, ``ANTHROPIC_CUSTOM_HEADERS``) have added theirs: the library's identification
+  headers (version, operating system, processor, Python), organisation and project ids, custom headers and beta
+  switches are dropped.  Only the key header (and a header a preset requires) keeps the library's value, and the
+  key header must carry the resolved key, else the request is stopped (a programming error, never silent).  Every
+  other header FlexTool sets itself, so no environment variable can change it: the fixed ones
+  (:data:`FIXED_HEADERS`, ``user-agent`` ``FlexTool-assistant``, Anthropic's ``anthropic-version`` of the
+  installed library) and the ones computed from the request (:data:`COMPUTED_HEADERS`: the ``host`` of the URL
+  and the body's ``content-type`` and length).
 * **Proxies**: an endpoint on this computer or the local network never goes through a proxy; a remote endpoint
-  uses the proxy :func:`proxy_for` names (the system and environment settings, read the way ``httpx2`` reads them),
-  so the proxy FlexTool shows is the one used.
+  uses the proxy :func:`proxy_for` names (the environment settings, read the way ``httpx2`` reads them with their
+  ``NO_PROXY`` rules, else the system settings with their exceptions).  The requests and the probes
+  (:mod:`flextool.assistant.probes`) both go exactly where :func:`proxy_for` says, so the proxy FlexTool shows is
+  the one used.
+* **Plain http**: a remote ``http://`` address sends the key and the data unencrypted (:func:`plain_http_remote`);
+  :data:`REMOTE_HTTP` says whether FlexTool warns about it (the indicator and the data notice say so) or refuses
+  the address.
 * **Redirects** are never followed.
 * **Response headers**: only the request-limit headers of :data:`~flextool.assistant.pacing.RATE_HEADERS` are
   read, by a response hook, for the pacing (P1 §5.1); they are kept as counts and times, never logged.
@@ -22,7 +31,7 @@ import contextlib
 import ipaddress
 import socket
 import threading
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import urlsplit
@@ -35,13 +44,20 @@ if TYPE_CHECKING:
 USER_AGENT = "FlexTool-assistant"
 #: Sent as the key when an endpoint needs none, so a library never falls back to a key from the environment.
 NO_KEY = "not-needed"
-#: Headers every request may carry.
-ALLOWED_HEADERS = frozenset({"host", "accept", "accept-encoding", "content-type", "content-length", "connection",
-                             "user-agent", "authorization"})
-#: Headers a backend adds to :data:`ALLOWED_HEADERS`.
-BACKEND_HEADERS = {"openai": frozenset(), "anthropic": frozenset({"anthropic-version"})}
 #: The header that carries the key, and its value for a key.
 KEY_HEADER = "authorization"
+#: Headers that keep the value the library gives them: only the key header, which the hook checks.
+ALLOWED_HEADERS = frozenset({KEY_HEADER})
+#: Headers FlexTool sets to these values on every request, whatever the library or the environment put there.
+#: Both libraries ask for JSON (a streamed answer included), and ``httpx2`` decodes gzip and deflate.
+FIXED_HEADERS: Mapping[str, str] = {"accept": "application/json", "accept-encoding": "gzip, deflate",
+                                    "connection": "keep-alive", "user-agent": USER_AGENT}
+#: Headers computed from the request: the address, and for a body its type and framing.
+COMPUTED_HEADERS = frozenset({"host", "content-type", "content-length", "transfer-encoding"})
+#: The type of every request body (both libraries send JSON).
+BODY_TYPE = "application/json"
+#: Headers a backend sets to a fixed value of its own (:func:`backend_headers`).
+BACKEND_HEADERS = {"openai": frozenset(), "anthropic": frozenset({"anthropic-version"})}
 
 CONNECT_TIMEOUT = 10.0
 #: Longest silence between two parts of an answer: a model on this computer may load or read the prompt for
@@ -52,6 +68,13 @@ READ_TIMEOUT_LOCAL = 900.0
 
 BASE_URL_CREDENTIALS = "Put the key in the key setting, not in the address; FlexTool stores and shows the address."
 BASE_URL_SCHEME = "The address must start with http:// or https://, for example http://localhost:8000/v1."
+BASE_URL_PLAIN_REMOTE = ("FlexTool sends a key and case data to an address outside this computer and your local "
+                         "network only over https://. Use https://{host}.")
+
+#: What FlexTool does with a plain ``http://`` address outside this computer and the local network: ``"warn"``
+#: (the indicator and the data notice say the connection is not encrypted) or ``"refuse"`` (the address is not
+#: used).  Owner decision D2 (pending; ``"warn"`` is the recommended option).
+REMOTE_HTTP: Literal["warn", "refuse"] = "warn"
 
 
 class BaseUrlRefused(ValueError):
@@ -60,6 +83,16 @@ class BaseUrlRefused(ValueError):
 
 def key_header_value(api_key: str) -> str:
     return f"Bearer {api_key}"
+
+
+def backend_headers(backend: Literal["openai", "anthropic"]) -> dict[str, str]:
+    """The fixed headers of *backend*: for Anthropic the API version the installed library is written for (the
+    value the library itself sends, which ``ANTHROPIC_CUSTOM_HEADERS`` could otherwise replace)."""
+    if backend == "anthropic":
+        from anthropic._constants import ANTHROPIC_API_VERSION
+
+        return {"anthropic-version": ANTHROPIC_API_VERSION}
+    return {}
 
 
 # --- where an address points --------------------------------------------------------------------------------------
@@ -95,9 +128,10 @@ def read_timeout_for(url: str) -> float:
 
 
 def proxy_for(url: str) -> str | None:
-    """The proxy a request to *url* goes through: ``None`` for an endpoint on this computer or the local network,
-    else what the environment and system settings give (``urllib.request.getproxies()`` with the ``NO_PROXY``
-    rules, matched exactly as ``httpx2`` matches them)."""
+    """The proxy a request to *url* goes through — the one route decision of the requests and the probes:
+    ``None`` for an endpoint on this computer or the local network, else what the environment and system settings
+    give (``urllib.request.getproxies()`` with the ``NO_PROXY`` rules, matched exactly as ``httpx2`` matches
+    them), and ``None`` for a host the system settings list as an exception (:func:`_system_exception`)."""
     if is_local(url):
         return None
     import httpx2
@@ -107,18 +141,46 @@ def proxy_for(url: str) -> str | None:
     patterns = sorted((URLPattern(key), value) for key, value in get_environment_proxies().items())
     for pattern, proxy in patterns:
         if pattern.matches(target):
-            return proxy
+            return None if proxy is None or _system_exception(url) else proxy
     return None
+
+
+def _system_exception(url: str) -> bool:
+    """Whether the system proxy settings list the host of *url* as an exception (Windows: the registry's
+    ``ProxyOverride``; macOS: the exceptions of the network settings).  Only when no proxy environment variable is
+    set: the proxies then come from the system settings, whose exceptions ``httpx2`` does not read; with proxy
+    variables, their ``NO_PROXY`` rules (matched in :func:`proxy_for`) are the exceptions."""
+    import urllib.request
+
+    if urllib.request.getproxies_environment():
+        return False
+    return bool(urllib.request.proxy_bypass(urlsplit(url).netloc))
+
+
+def plain_http_remote(url: str) -> bool:
+    """Whether *url* is a plain ``http://`` address outside this computer and the local network: the key and the
+    data then cross networks unencrypted.  This computer and the local network are a lower-risk class and never
+    count."""
+    return urlsplit(url.strip()).scheme.lower() == "http" and endpoint_kind(url.strip()) == "remote"
+
+
+def _check_plain_http(url: str) -> None:
+    """Raise :class:`BaseUrlRefused` for a remote ``http://`` address when :data:`REMOTE_HTTP` refuses those."""
+    if REMOTE_HTTP == "refuse" and plain_http_remote(url):
+        host = _host(url.strip())
+        raise BaseUrlRefused(BASE_URL_PLAIN_REMOTE.format(host=f"[{host}]" if ":" in host else host))
 
 
 def check_base_url(url: str) -> str:
     """*url* if FlexTool uses it as a base URL; raises :class:`BaseUrlRefused` for an address with a user name,
-    password or query (a key belongs in the key setting), or one that is not http(s)."""
+    password or query (a key belongs in the key setting), one that is not http(s), and — when :data:`REMOTE_HTTP`
+    is ``"refuse"`` — a plain ``http://`` address outside this computer and the local network."""
     parts = urlsplit(url.strip())
     if parts.scheme not in ("http", "https") or not parts.hostname:
         raise BaseUrlRefused(BASE_URL_SCHEME)
     if parts.username is not None or parts.password is not None or parts.query or "@" in parts.netloc:
         raise BaseUrlRefused(BASE_URL_CREDENTIALS)
+    _check_plain_http(url)
     return url.strip()
 
 
@@ -146,14 +208,14 @@ def _host_port(url: str) -> str:
 
 def route_for(base_url: str, label: str, *, forwarded_to: str | None = None) -> Route:
     """The route of a connection to *base_url*.  *forwarded_to* is the host a local server forwards the model's
-    requests to (an Ollama cloud model): the route is then remote."""
-    kind = endpoint_kind(base_url)
+    requests to (an Ollama cloud model): the route is then remote, and *server_kind* keeps where that server runs.
+    The route is not *encrypted* when *base_url* is a remote ``http://`` address (:func:`plain_http_remote`)."""
+    server_kind = endpoint_kind(base_url)
     proxy = proxy_for(base_url)
     proxy_host = urlsplit(proxy).hostname if proxy else None
-    if forwarded_to:
-        kind = "remote"
+    kind: EndpointKind = "remote" if forwarded_to else server_kind
     return Route(kind=kind, host=_host_port(base_url), proxy_host=proxy_host, forwarded_to=forwarded_to,
-                 label=label)
+                 label=label, server_kind=server_kind, encrypted=not plain_http_remote(base_url))
 
 
 # --- sockets that can be shut down from another thread ------------------------------------------------------------
@@ -256,16 +318,42 @@ class HttpSession:
         self.client.close()
 
 
-def header_hook(api_key: str, allowed: Iterable[str]) -> Callable[[Any], None]:
-    """The request hook that keeps only the *allowed* headers and checks the key header."""
+def _set_body_headers(request: Any) -> None:
+    """Set the ``content-type`` and the framing of *request* from its body: ``content-length`` for a body in
+    memory (and for an empty POST, PUT or PATCH, as ``httpx2`` sends it), ``transfer-encoding: chunked`` for a
+    streamed one; a request without a body gets neither."""
+    import httpx2
+
+    for name in ("content-type", "content-length", "transfer-encoding"):
+        request.headers.pop(name, None)
+    try:
+        body = request.content
+    except httpx2.RequestNotRead:
+        request.headers["content-type"] = BODY_TYPE
+        request.headers["transfer-encoding"] = "chunked"
+        return
+    if body:
+        request.headers["content-type"] = BODY_TYPE
+    if body or request.method in ("POST", "PUT", "PATCH"):
+        request.headers["content-length"] = str(len(body))
+
+
+def header_hook(api_key: str, allowed: Iterable[str], fixed: Mapping[str, str] | None = None) -> Callable[[Any], None]:
+    """The request hook: keeps only the *allowed* headers with the library's value, sets :data:`FIXED_HEADERS`
+    and the backend's *fixed* ones, computes :data:`COMPUTED_HEADERS` from the request, and checks the key
+    header."""
     keep = frozenset(h.lower() for h in allowed)
+    values = {**FIXED_HEADERS, **(fixed or {})}
     expected = key_header_value(api_key)
 
     def hook(request: Any) -> None:
         for name in list(request.headers.keys()):
             if name.lower() not in keep:
                 del request.headers[name]
-        request.headers["user-agent"] = USER_AGENT
+        for name, value in values.items():
+            request.headers[name] = value
+        request.headers["host"] = request.url.netloc.decode("ascii")
+        _set_body_headers(request)
         if request.headers.get(KEY_HEADER) != expected:
             raise RuntimeError("the request's key header does not carry the key FlexTool resolved")
 
@@ -281,8 +369,11 @@ def build_http_client(conn: Connection, *, backend: Literal["openai", "anthropic
 
     if not api_key:
         raise ValueError("a request always carries a key; use NO_KEY for an endpoint without one")
+    _check_plain_http(conn.base_url)
     local = is_local(conn.base_url)
-    proxy = None if local else proxy_for(conn.base_url)
+    # The one route decision (the probes use it too).  The transport is passed in, so ``httpx2`` reads no proxy
+    # of its own from the environment: the request goes exactly where proxy_for says.
+    proxy = proxy_for(conn.base_url)
     registry = _SocketRegistry()
     if transport is None:
         transport = httpx2.HTTPTransport(trust_env=not local, proxy=proxy)
@@ -292,9 +383,10 @@ def build_http_client(conn: Connection, *, backend: Literal["openai", "anthropic
         pool._network_backend = _tracked_backend(registry)
     timeout = httpx2.Timeout(read_timeout if read_timeout is not None else read_timeout_for(conn.base_url),
                              connect=CONNECT_TIMEOUT)
-    allowed = ALLOWED_HEADERS | BACKEND_HEADERS[backend] | frozenset(h.lower() for h in required_headers)
+    allowed = ALLOWED_HEADERS | frozenset(h.lower() for h in required_headers)
     session = HttpSession(client=None, proxy=proxy, _registry=registry)  # type: ignore[arg-type]
     session.client = httpx2.Client(transport=transport, trust_env=not local, follow_redirects=False, timeout=timeout,
-                                   event_hooks={"request": [header_hook(api_key, allowed)],
+                                   event_hooks={"request": [header_hook(api_key, allowed,
+                                                                        backend_headers(backend))],
                                                 "response": [session.keep_rate_headers]})
     return session
