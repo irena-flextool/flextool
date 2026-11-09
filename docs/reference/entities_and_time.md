@@ -89,6 +89,11 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
     - *stochastic_branches*: 4D-map defining the solve's **forecast branches** — the probability-weighted possible futures. Index columns: *period*, *branch*, *analysis_time* (the branch's start timestep), *realized* (yes/no), and the value is the branch's **probability weight**. The weights are normalized to sum to one across the forecast branches at each start time. The *realized* flag is an **optional designation** (at most one branch per start time) marking which branch's data are treated as the actuals for the committed / realized-dispatch results; a realized-flagged branch is **not** a weighted member of the forecast fan. A period-indexed value (a map keyed by period, e.g. efficiency, startup cost, commodity price, availability, variable cost or a per-period limit) also applies to that period's forecast branches; a value authored for a branch period itself takes precedence. See 'How to use stochastics' for more information.
     - *stochastic_invest_method*: `none` (default) or `recourse`. `none` makes a single shared here-and-now investment plan across all forecast branches (operations still fan per branch). `recourse` gives per-branch (wait-and-see) investment: each forecast branch invests on its own data at and after the branching period, with probability-weighted investment costs and per-branch investment limits, and reports EVPI/VSS-style stochastic value. Forecast-branch (unrealized) investments are not in the normal outputs, only in the raw dump of `model.output_horizon` (a debug flag). Incompatible with Benders decomposition. See 'How to use stochastics' for the interpretation caveats.
   
+  - Detail reduction parameters (see [Leaving out detail in a solve](#leaving-out-detail-in-a-solve)):
+
+    - *reduce_unit_detail_method*: choice. Detail of units and connections this solve leaves out: integer units online, ramps, min limits or the online variables. Default `none`.
+    - *reduce_system_detail_method*: choice. System detail this solve leaves out: reserves, inertia limits, non-synchronous limits or the angles of DC power flow. Default `none`.
+
   - For commercial solvers:
 
     - *solver_precommand* the commandline text in front of the call for the commercial (CPLEX) solver. For a possibility of reserving a floating licence for the duration of the solve
@@ -105,6 +110,114 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
 
   - *timestep_duration*: a map with *timestep_name* as an index and *duration* as a value.
   - *timeline_duration_in_years* Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model.
+
+### Leaving out detail in a solve
+
+Two `solve` parameters make one solve faster by leaving out detail: `reduce_unit_detail_method` for units and
+connections, `reduce_system_detail_method` for the system. The typical use is an investment solve that leaves out
+unit commitment and reserves, followed by a dispatch solve with all the detail (see
+[LP investment and a detailed dispatch check](../how_to/solve_sequences.md#how-to-make-an-lp-investment-and-a-detailed-dispatch-check)).
+
+**Only reduces.** Both default to `none`, which keeps everything: the solve is then the same as without the
+parameters. A level only leaves out or relaxes detail that the data gives. It never adds any, and an entity without
+the feature is untouched. A level that finds nothing to leave out says so in the run log.
+
+**`reduce_unit_detail_method`.** Each value leaves out the parts marked:
+
+| value | integer units online | ramps | min limits | online variables |
+|---|---|---|---|---|
+| `none` (default) | | | | |
+| `integers` | continuous | | | |
+| `integers_ramps` | continuous | left out | | |
+| `integers_min_limits` | continuous | | left out | |
+| `integers_ramps_min_limits` | continuous | left out | left out | |
+| `online` | (no online variables left) | kept | left out | left out |
+| `online_ramps` | (no online variables left) | left out | left out | left out |
+
+- **Integer units online.** Units and connections with `startup_method` *binary* get continuous units online.
+
+    The rows stay the same, so units online, start-ups and shut-downs can be fractional. A connection with
+    `transfer_method` *exact* behaves as *regular*: both directions keep their own flow and losses, only the binary
+    that blocks simultaneous flow in both directions goes. Without other integer variables the solve is an LP: node
+    and reserve prices are LP duals, and `solver_mip_gap` no longer applies.
+
+- **Ramps.** Ramp limits (`ramp_method` *ramp_limit* or *both* with `ramp_speed_up` / `ramp_speed_down`) and ramp costs (`ramp_method` *ramp_cost* or *both*).
+
+    The start-up and shut-down allowance of the ramp limits goes with them. The *ramps* cost category is 0 for the
+    solve.
+
+- **Min limits.** `min_load`, the `capacity_min_coeff` floors and the minimum up and down times (`min_uptime`, `min_downtime`).
+
+    A unit with `min_load_efficiency` keeps its part-load curve. Without the min load floor its units online can
+    follow its output (units online ≈ output / capacity), so its fuel becomes close to linear in output.
+
+- **Online variables.** The units online of every unit and connection with a `startup_method`, and with them start-ups, shut-downs, start-up costs and the min limits.
+
+    A unit with `conversion_method` *min_load_efficiency* uses its full-load efficiency at every output: the same
+    fuel at full load and less at part load. A user constraint with a `constraint_online_coeff` term is left out of
+    the solve whole, with a warning that names it. Ramp limits that are kept apply to the capacity, so a unit that
+    starts from zero ramps up at its ramp speed (there is no start-up allowance). `online` contains every effect of
+    `integers`, so the solve is an LP.
+
+**`reduce_system_detail_method`.** Each value leaves out the parts in its name:
+
+| value | reserves | inertia | non-synchronous | DC power flow |
+|---|---|---|---|---|
+| `none` (default) | | | | |
+| `reserves` | left out | | | |
+| `inertia` | | left out | | |
+| `non_synchronous` | | | left out | |
+| `inertia_non_synchronous` | | left out | left out | |
+| `reserves_inertia_non_synchronous` | left out | left out | left out | |
+| `dc_power_flow` | | | | lossless transport |
+| `reserves_inertia_non_synchronous_dc_power_flow` | left out | left out | left out | lossless transport |
+
+- **Reserves.** Every reserve requirement (`reserve__upDown__group`) and the reserve that units and connections hold, with its limits and shortfall penalty.
+
+    In a stochastic solve the ties that make the forecast branches hold the same reserve go too. An investment
+    solve without reserves invests less in flexible capacity.
+
+- **Inertia.** The inertia limits of groups with `has_inertia` and their shortfall penalty.
+- **Non-synchronous.** The non-synchronous share limits of groups with `has_non_synchronous` and their shortfall penalty.
+- **DC power flow.** The angles of `dc_power_flow_with_angles` groups: the lines become lossless transport connections limited by their capacity.
+
+    Loop flows disappear, so a meshed network can carry more than its physics allows, and an investment solve
+    invests less in lines.
+
+The capacity margin (`capacity_margin_method`) is never left out.
+
+**Interactions.** When the unit level leaves out something that the system detail the solve keeps relies on, the
+run log says so in the solve's info line:
+
+- `online*` with reserves kept: the reserves come from built capacity, not from the capacity online.
+- `online*` with inertia kept: inertia is counted from the flows (flow × `inertia_constant`), not from the units online.
+- `*min_limits` or `online*` with downward reserves kept: the downward reserve can reach down to zero flow, not only to min load.
+- `integers*` with a `constraint_online_coeff` term: the user constraint counts fractional units online.
+
+**An approximation, never tighter.** Every part only removes constraints or integer restrictions, except the
+full-load efficiency of `min_load_efficiency` units under `online*`, which uses less fuel than the part-load
+curve. CO2 limits read that fuel, so they relax as well. The reduced solve is therefore never more constrained than
+the full one.
+
+**Across solves.** Every roll of a rolling solve uses the solve's levels. A nested solve uses its own levels, not
+its parent's. A realization solve (the dispatch of a stochastic solve's realized branch) uses its parent solve's
+levels, whatever is set on it, since it takes the parent's units online and reserves; a warning names a
+different value set on a declared realization solve. A solve that continues the ramp of a solve without online
+variables starts its commitment and ramps cold, with an info line. A Benders decomposition can split connections
+whose reserves, online variables or `exact` method the solve leaves out.
+
+**Run log and run status.** A solve with a level other than `none` writes one info line to the run log at its
+first roll: what each level left out, for how many units, connections and groups, and the interactions above.
+The entry of each roll in `_run_status.json` records `reduced`: the two levels and that line.
+
+**Results.** The result cells of a feature that a solve left out are empty, not 0, in the time steps that solve
+realized: units online and start-ups, reserves, reserve prices and reserve shortfall, the inertia of groups,
+their largest flow and inertia shortfall, the non-synchronous shortfall, and the DC angles. "Not modelled" is not
+"zero". A per-period cell is empty when every solve that realized the period left the feature out. A period
+shared with a solve that kept the feature keeps its per-period value, in which the time steps of the solve that
+left it out count as 0. The costs stay: a left-out feature costs nothing in
+the solve. The fuel of a `min_load_efficiency` unit under `online*` is its output divided by its full-load
+efficiency. The tables of other solves that kept the feature are complete.
 
 ### Time structure assumptions
 

@@ -32,6 +32,40 @@ Note that the picture has two `model`: *solves* parameters defined one for each 
 
 ![Invest_and_dispatch](../img/concept/invest_and_dispatch.png)
 
+## How to make an LP investment and a detailed dispatch check
+
+Unit commitment (`startup_method` *binary*), min loads, ramps and reserves make an investment solve slow, and an
+investment solve over many periods or a long sample may not finish at all. A common way out is to make the
+investment solve an LP with less detail and then check the plan with a dispatch solve that has all the detail.
+
+**Set up the two solves** as in [How to run solves in a sequence](#how-to-run-solves-in-a-sequence-investment-dispatch):
+an investment solve that realizes the investments only (`realized_invest_periods`) and a dispatch solve that
+realizes the operations (`realized_periods`). Then set on the investment solve:
+
+- `reduce_unit_detail_method`: *online* (or *online_ramps* to also leave out ramp limits and ramp costs).
+
+    The investment solve has no units online: no start-ups and start-up costs, no min load, no minimum up and down
+    times. `min_load_efficiency` units run at their full-load efficiency, and `exact` connections behave as
+    *regular*. Use *integers* instead to keep the units online but make them continuous (linear unit
+    commitment), which keeps start-up costs and min loads.
+
+- `reduce_system_detail_method`: *reserves* (or *reserves_inertia_non_synchronous* to also leave out the inertia and non-synchronous limits).
+
+Leave both at *none* on the dispatch solve. The dispatch solve then commits the invested units with integer units
+online, ramps and holds the reserves.
+
+**What to check.** Read the investment solve's info line in the run log: it lists what was left out, for which
+units and groups, and what that means for the detail that was kept (for example "the reserves of ... now come from
+built capacity"). Then look at the dispatch solve's slack and penalty results (`slack__*` tables, the reserve
+shortfall). A shortfall there means the plan does not hold with the detail the investment solve left out:
+reserves in particular drive investment in flexible capacity, so an investment solve without them invests less
+in it. Then add the detail back step by step (for example *integers* instead of *online*, or keep the reserves)
+until the dispatch check passes.
+
+**In the results** the investment solve realizes no operations, so the dispatch solve's tables are complete. If a
+solve that realizes operations leaves a feature out, its cells of that feature are empty, not 0 (see
+[Leaving out detail in a solve](../reference/entities_and_time.md#leaving-out-detail-in-a-solve)).
+
 ## How to use a rolling window for a dispatch model
 
 A rolling window can be used for example when a dispatch model gets too big to be solved on one go. It splits the problem into multiple consecutive smaller problems.

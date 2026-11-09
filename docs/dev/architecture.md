@@ -373,6 +373,14 @@ its flag is off. Required-field lists are module-level tuples in
 | `has_cumulative_invest` | `_cumulative_invest.has_feature` | — | `_cumulative_invest`. |
 | `has_ladder` | `_commodity_ladder.has_feature` | — | `_commodity_ladder`. |
 
+A solve's `reduce_unit_detail_method` / `reduce_system_detail_method` turns flags off by clearing their switch
+fields before the build (`preprocess._reduce_detail`, see [engine.md](engine.md#solve-level-detail-reduction)):
+`online*` clears the `has_online_*`, `has_minload_eff` and `has_startup_cost_*` switches, `*ramps` the `has_ramp`
+switch and the ramp-cost set, `*min_limits` the min-load and min-time sets, `reserves` the `has_reserve` gate,
+`inertia` / `non_synchronous` the group sets behind `has_inertia` / `has_non_sync`, and `dc_power_flow` the DC
+sets. `integers*` keeps the online flags and sets `relax_integrality`, which `_online` and `_exact` read as
+`integer=not d.relax_integrality`. The capacity margin is never cleared.
+
 The DC power-flow, exact-connection, delay and non-anticipativity modules
 gate on their own data (`_dc_power_flow.has_feature`, `_exact.has_feature`
 (`process_exact`), `_delay.has_feature`, `period_branch_full` /

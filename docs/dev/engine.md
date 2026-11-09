@@ -57,6 +57,43 @@ Side-paths off this trunk:
   and accumulates the sub-problems' duals as optimality cuts until
   the optimality gap closes.
 
+### Solve-level detail reduction
+
+`solve.reduce_unit_detail_method` / `reduce_system_detail_method` (user docs: entities_and_time.md "Leaving out
+detail in a solve") are applied in one place: `preprocess._reduce_detail.apply_reduce_detail(d, unit, system)`,
+called by the cascade right after `load_flextool` for every sub-solve (`_orchestration._drive_cascade`). Every
+consumer after it reads the reduced data: the online / ramp carry check (`check_online_ramp_carry`, moved out of
+`load_flextool` so that it sees the reduced online set), the realization checks, the Benders split, the cold and
+warm build, the handoff and the per-roll outputs. The per-roll emit and the input derivation are not changed.
+
+- **Copy, not replace.** The transform returns a `copy.copy` of the FlexData with the changed fields set, not `dataclasses.replace`.
+
+    A shallow copy keeps the extra attributes that the cascade and the emit hang on a FlexData (the axis
+    vocabulary, `output_static_data`, `reduced_output_features`); `dataclasses.replace` would rebuild the object
+    from its fields only and drop them. Unchanged frames are shared. A level that changes nothing returns the
+    same object, so the LP is byte-identical.
+
+- **Only clears, relaxes or folds.** Each part sets its fields to `None` (the field lists `RAMP_FIELDS`, `ONLINE_FIELDS`, `RESERVE_FIELDS`, ... in `_reduce_detail.py`), except `relax_integrality` (integer online columns continuous) and the `min_load_efficiency` fold (`p_slope + p_section`, `p_section = 0`).
+
+    `test_reduce_detail.py` and `test_reduce_system_detail.py` check that every FlexData field of a feature is in
+    its list by name, and for the system features also by the columns the frames hold. A new field of a feature
+    must be added there.
+
+- **Warm start.** `relax_integrality` is a FlexData field in `_warm._STRUCTURAL_FIELDS`, so a warm LP built under one integrality is never reused under the other.
+
+    The level strings are not fields: two sub-solves whose reduced data are identical may share a warm LP.
+
+- **Run log and run status.** The cascade prints one info line per solve at its first roll (`_reduce_detail.summary_line`: what each level left out and the interaction notes, `ReduceReport.notes`), logs the dropped user constraints as warnings, and records `reduced = {unit, system, summary}` on the run-status entry of every roll (`RunRecorder.solve_reduced`).
+- **Outputs.** The static sets of the last sub-solve come from its pre-transform data (`output_static_view`), so a reduced last solve keeps the tables of earlier full solves.
+
+    The cells of a left-out feature in a reduced solve's steps are emptied after the tables are built
+    (`process_outputs.reduced_cells`): the cascade sets `reduced_output_features` on the reduced data, the per-roll
+    writer writes it as `output_raw/reduced_detail__<roll>.parquet`, and `write_outputs` maps the markers onto
+    the realised steps and periods (from the solve-keyed sets before `drop_levels`) and empties the rows of the
+    feature tables (`FEATURE_TABLES`). Unreduced solves write no marker, so their tables are unchanged.
+
+- **Carry across levels.** The handoff records its producer's unit level (`SolveHandoff.unit_detail`); a solve that keeps online variables and continues the ramp flow of an `online*` producer drops that flow for its online processes and starts cold (`cold_start_online_flow_carry`).
+
 ## FlexData — the central data carrier
 
 `FlexData` (in `flex_data.py`) is a `@dataclass` of roughly 220 fields. Five

@@ -24,6 +24,16 @@
   ramp cold (an info line) instead of stopping, and a Benders decomposition can split connections whose reserve,
   online variables or `exact` method the solve leaves out (its warning about integer variables now points to
   *integers*).
+- **New: the run log and the results say what a solve left out.** A solve with `reduce_unit_detail_method` or
+  `reduce_system_detail_method` other than *none* writes one info line to the run log at its first roll: what each
+  level left out, for how many units, connections and groups, and how it changes the detail that was kept (for
+  example "the reserves of 1 unit (g1) now come from built capacity, not online capacity"); a level with nothing
+  to leave out says so. Every roll's entry in `_run_status.json` records `reduced` (the two levels and that line).
+  In the result tables, the cells of a feature that a solve left out are empty, not 0, in the time steps that
+  solve realized: units online and start-ups, reserves, reserve prices and shortfall, group inertia, its largest
+  flow and shortfall, the non-synchronous shortfall and the DC angles. A per-period cell is empty when every solve
+  that realized the period left the feature out. Costs are unchanged. Models that do not set the parameters get
+  the same results as before.
 - **New: `ramp_cost` is charged (database version 80).** A unit flow with `ramp_method` *ramp_cost* or *both* pays
   `ramp_cost` [CUR/MW] for every MW its step-average flow changes from the previous time step, up and down alike.
   A change is an event, like a start-up, so the step length does not enter: ramping 0 → X → 0 costs

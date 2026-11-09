@@ -169,6 +169,12 @@ A typical workflow when introducing a new parameter or entity class:
 6. Add a test if the migration is non-trivial — see
    [`testing.md`](testing.md) for where to put it.
 
+**A new value in a value list** (for example a new combination of `reduce_system_detail_methods`) also needs a
+migration step and a version bump: value lists live in each database, so existing databases only get the value
+through `add_value_list_manual`. No data is rewritten. The engine side must accept the value too (for the two
+detail-reduction lists: `REDUCE_UNIT_DETAIL_METHODS` / `REDUCE_SYSTEM_DETAIL_METHODS` in
+`engine/input/_solve_config.py`, and `UNIT_PARTS` / `SYSTEM_TOKENS` in `engine/preprocess/_reduce_detail.py`).
+
 !!! tip
     Steps that touch existing rows should be tolerant of partial state:
     use `update_item` / `add_update_item` so re-applying the step on a
