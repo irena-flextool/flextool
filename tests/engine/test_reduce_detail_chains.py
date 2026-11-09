@@ -62,7 +62,8 @@ PERIOD = {"sA": "p2020", "sB": "p2020"}
 PERIODS2 = {"sA": "p2020", "sB": "p2025"}
 
 
-def _values(levels: dict[str, tuple[str, str]], *, periods: dict[str, str] = PERIOD, inertia: bool = False) -> list:
+def _values(levels: dict[str, tuple[str, str]], *, periods: dict[str, str] = PERIOD, inertia: bool = False,
+            non_synchronous: bool = False, timesets: dict[str, str] | None = None) -> list:
     out, grp, key = "unit__outputNode", ["rsv", "up", "electricity"], ["rsv", "up", "g1", "elec"]
     vals = [["model", "flexTool", "solves", b64({"value_type": "str", "data": ["sA", "sB"]}, "array")],
             ["timeset", "tsA", "timeline", _s("y2020")], ["timeset", "tsA", "timeset_duration", _ts("t0001")],
@@ -83,7 +84,12 @@ def _values(levels: dict[str, tuple[str, str]], *, periods: dict[str, str] = PER
     if inertia:
         vals += [["group", "electricity", "has_inertia", _s("yes")], ["group", "electricity", "inertia_limit", _f(50.0)],
                  ["group", "electricity", "penalty_inertia", _f(1000.0)], [out, ["g1", "elec"], "inertia_constant", _f(2.0)]]
-    for solve, ts in (("sA", "tsA"), ("sB", "tsB")):
+    if non_synchronous:
+        vals += [["group", "electricity", "has_non_synchronous", _s("yes")],
+                 ["group", "electricity", "non_synchronous_limit", _f(0.8)],
+                 ["group", "electricity", "penalty_non_synchronous", _f(1000.0)],
+                 [out, ["g1", "elec"], "is_non_synchronous", _s("yes")]]
+    for solve, ts in (timesets or {"sA": "tsA", "sB": "tsB"}).items():
         vals += [["solve", solve, "period_timeset", _period_map(ts, periods[solve])],
                  ["solve", solve, "realized_periods", b64({"value_type": "str", "data": [periods[solve]]}, "array")],
                  ["solve", solve, "solve_mode", _s("single_solve")], ["solve", solve, "solver_mip_gap", _f(0.0)]]
@@ -451,3 +457,23 @@ def test_reduced_cells_rules() -> None:
     untouched = {"unit_online_dt_e": pd.DataFrame({"g1": [1.0]}, index=step_idx[:1])}
     mask_reduced_cells(untouched, reduced_cells_of(SimpleNamespace(dt_realize_dispatch=dt, d_realized_period=dp), {}))
     assert untouched["unit_online_dt_e"]["g1"].tolist() == [1.0]
+
+
+SAME_STEPS = {"sA": "tsA", "sB": "tsA"}
+
+
+@pytest.mark.parametrize("in_memory", [True, False])
+@pytest.mark.parametrize("system", ["reserves", "non_synchronous"])
+def test_left_out_on_the_steps_of_a_full_solve(tmp_path_factory, system, in_memory) -> None:
+    """sA full, then sB on sA's own steps (timeset tsA; sB realises them last) without reserves or the
+    non-synchronous limit.  The output static view keeps sA's reserve and non-synchronous groups, sB's
+    parameters have none: the write does not raise, and sB owns the steps, so their cells are empty."""
+    steps, wf, scen = _run(tmp_path_factory, f"rdc_same_{system}_{in_memory}", {"sB": ("none", system)},
+                           timesets=SAME_STEPS, non_synchronous=True, keep_solutions=in_memory)
+    out = _write_outputs(steps, wf, scen, in_memory=in_memory)
+    tables = {"reserves": [("process__reserve__upDown__node__dt.csv", "g1"),
+                           ("slack__reserve__upDown__group__dt.csv", "rsv"),
+                           ("reserve_price__upDown__group__dt.csv", "rsv")],
+              "non_synchronous": [("slack__nonsync_group__dt.csv", "electricity")]}[system]
+    for name, column in tables:
+        assert _raw(out, name, column) == {("p2020", "t0001"): "", ("p2020", "t0002"): ""}, name

@@ -102,8 +102,11 @@ def compute_slacks(par, s, v, r) -> None:
     # vq_reserve is a fraction of the group's largest possible requirement
     # (``reserve_upDown_group_shortfall_scale``, the same multiplier the LP
     # uses in the reserve balances and the penalty; the reservation for
-    # timeseries groups).
-    r.q_reserves_dt = v.q_reserve.mul(par.reserve_upDown_group_shortfall_scale[v.q_reserve.columns], axis=1)
+    # timeseries groups).  ``reindex``, not ``[...]``: the output static view keeps the reserve groups of every
+    # solve, while a solve that left reserves out (``reduce_system_detail_method``) has no scale for them; those
+    # cells become NaN, and ``reduced_cells`` empties them anyway.
+    r.q_reserves_dt = v.q_reserve.mul(
+        par.reserve_upDown_group_shortfall_scale.reindex(columns=v.q_reserve.columns), axis=1)
     r.q_reserves_d_not_annualized = r.q_reserves_dt.mul(par.step_duration, axis=0).groupby(level='period').sum()
     r.q_reserves_d = annualize_dt_to_d(r.q_reserves_dt, par.timestep_weight, par.complete_period_share_of_year, par.step_duration)
     # Reserve slack penalty: step_duration is already here (line below);
