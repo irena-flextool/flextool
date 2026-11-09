@@ -251,8 +251,11 @@ def window_class(window: int) -> tuple[int, int, str | None]:
 
 
 def _smaller(a: caps_module.Caps, b: caps_module.Caps) -> caps_module.Caps:
+    """The smaller of each cap of *a* and *b* (every field but ``ceilings``: a new cap field must be added here,
+    or it comes back as its default on every budget path, Cycle 2 critique M3)."""
     return caps_module.Caps(min(a.max_rows, b.max_rows), min(a.max_chars, b.max_chars),
-                            min(a.max_results, b.max_results), min(a.max_items, b.max_items))
+                            min(a.max_results, b.max_results), min(a.max_items, b.max_items),
+                            max_runs=min(a.max_runs, b.max_runs))
 
 
 def fit_caps(window: int, level: LevelBudget, max_output_tokens: int, keep_recent_turns: int) -> caps_module.Caps:
@@ -265,7 +268,7 @@ def fit_caps(window: int, level: LevelBudget, max_output_tokens: int, keep_recen
     share = max_chars / small.max_chars
     return caps_module.Caps(max_rows=max(10, round(small.max_rows * share)), max_chars=max_chars,
                             max_results=max(3, round(small.max_results * share)),
-                            max_items=max(3, round(small.max_items * share)))
+                            max_items=max(3, round(small.max_items * share)), max_runs=small.max_runs)
 
 
 def fitting_calls(window: int, level: LevelBudget, max_output_tokens: int, keep_recent_turns: int,

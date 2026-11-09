@@ -306,3 +306,42 @@ def test_the_levels_list_their_forms_of_list_sources() -> None:
     listed = {t.name: t for t in registry.listed_tools("small")}
     assert listed["list_sources"].description == by_level["basic"].description
     assert {t.name for t in registry.listed_tools(None)} == set(registry.all_tools())
+
+
+def test_list_runs_has_a_basic_form(ctx) -> None:
+    """Basic lists five list_runs arguments (scenario, folders, detail, all, offset), standard and advanced all
+    eight; the basic text offers no hidden argument (column names may appear).  A hidden argument still works at
+    basic (validation uses the full schema) and a wrong one reads sensibly (critique m1).  Before: one form."""
+    from flextool.assistant.session import tool_specs
+
+    basic = {t.name: t for t in tool_specs("basic")}["list_runs"]
+    assert list(basic.input_schema["properties"]) == ["scenario", "folders", "detail", "all", "offset"]
+    assert basic.input_schema["properties"]["detail"] == {"type": "string", "enum": ["scan", "overview", "full"]}
+    for level in ("standard", "advanced"):
+        full = {t.name: t for t in tool_specs(level)}["list_runs"]
+        assert list(full.input_schema["properties"]) == ["source", "scenario", "state", "results_usable",
+                                                         "folders", "detail", "all", "offset"]
+        assert "Filters: source, scenario, state, results_usable, folders" in full.description
+    text = basic.description
+    for hidden in ("source", "state", "results_usable"):
+        assert f"{hidden}:" not in text and f"{hidden} true" not in text and f"{hidden} false" not in text
+    assert "source," not in text and "Filters:" not in text
+    assert call_tool(ctx, "list_runs", {"state": "succeeded"}).ok
+    wrong = call_tool(ctx, "list_runs", {"state": 3})
+    assert not wrong.ok and wrong.message == ('The arguments of "list_runs" are not valid: state: 3 is not of type '
+                                              "'string'.")
+
+
+def test_budget_keeps_every_cap_field() -> None:
+    """Critique M3: ``budget._smaller`` takes the smaller of every ``Caps`` field (but ``ceilings``), so a new cap
+    field cannot fall back to its default on a budget path."""
+    from dataclasses import fields
+
+    from flextool.assistant import budget
+
+    a = caps.Caps(1, 2, 3, 4, max_runs=5)
+    b = caps.Caps(10, 20, 30, 40, max_runs=50)
+    smaller = budget._smaller(b, a)
+    assert {f.name: getattr(smaller, f.name) for f in fields(caps.Caps) if f.name != "ceilings"} == {
+        f.name: getattr(a, f.name) for f in fields(caps.Caps) if f.name != "ceilings"}
+    assert budget.fit_caps(16_384, budget.LEVEL_BUDGETS["small"], 4_096, 0).max_runs == 8

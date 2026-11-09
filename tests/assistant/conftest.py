@@ -280,3 +280,185 @@ def build_many_runs_project(root: Path, db: Path) -> Path:
 @pytest.fixture(scope="session")
 def many_runs_project(tmp_path_factory: pytest.TempPathFactory, tests_db: Path) -> Path:
     return build_many_runs_project(tmp_path_factory.mktemp("many_runs"), tests_db)
+
+
+#: The latest-runs project (Cycle 2): the many-runs project plus a second input source ``tests_b.sqlite``
+#: (number 2), fixed run times, discounted cost tables and, for its newest run, capacity and slack tables.
+#:
+#: * succeeded run ``j`` (0…19, the scenarios after the 43 record-less ones) finished at 2026-10-01 j:00 UTC, but
+#:   ``j = 11`` at 10:00 (the time of ``j = 10``: equal times go by folder name); its ``costs_discounted_p_`` is
+#:   :func:`latest_costs` (``j = 5`` has none);
+#: * failed run ``f`` (0…3) finished at 2026-10-08 f:00 UTC; ``f = 1`` was killed;
+#: * the scenario of ``j = 19`` was also run from the second source as ``<scenario>_2``, finished 2026-10-09 00:00
+#:   UTC (the newest run), with :data:`OVERVIEW_COSTS`, the capacity tables of :func:`write_overview_tables` and
+#:   two slack tables;
+#: * ``j = 3`` was made with FlexTool 0.0.1 (another version);
+#: * the 43 record-less folders' files were written 2026-11-01 00:00 UTC + i minutes (i = their index; i = 6 at
+#:   the time of i = 5): newer than every run record, as in a copied project (critique M2).
+LATEST_SUCCEEDED_HOUR = {j: (10 if j == 11 else j) for j in range(MANY_SUCCEEDED)}
+LATEST_NO_COST_TABLE = 5
+LATEST_OTHER_VERSION = 3
+LATEST_KILLED = 1
+#: The costs of the newest run: 18 categories, in this table order.
+OVERVIEW_COSTS = (
+    ("commodity_cost", 600.0), ("commodity_sales", -50.0), ("co2", 80.0), ("other operational", 5.0),
+    ("starts", 0.5), ("upward slack penalty", 300.0), ("downward slack penalty", 0.0),
+    ("inertia slack penalty", 0.0), ("non-synchronous slack penalty", 0.0), ("upward reserve slack penalty", 2.0),
+    ("downward reserve slack penalty", 0.0), ("capacity margin slack penalty", 0.0),
+    ("unit investment/retirement", 200.0), ("connection investment/retirement", 40.0),
+    ("storage investment/retirement", 30.0), ("fixed cost of existing assets", 10.0),
+    ("fixed cost of pre-existing capacity", 0.25), ("profile penalty", 0.0),
+)
+OVERVIEW_PERIODS = ("p2020", "p2025", "p2030")
+#: Units ``k`` = 1…16: existing 10 k in every period; k in (1, 4, 7, 10, 13) invested 100 in p2025 (p2020 empty:
+#: no decision), so total 10 k + 100 from p2025; unit 16 divested 20 in p2030 (total 140 there).
+OVERVIEW_UNIT_NAMES = tuple(f"wind_offshore_farm_north_{k:02d}" for k in range(1, 17))
+OVERVIEW_INVESTED_UNITS = (1, 4, 7, 10, 13)
+#: Connections ``k`` = 1…6: existing and total 100 k, nothing invested.
+OVERVIEW_CONNECTION_NAMES = tuple(f"interconnector_link_{k}_to_{k + 1}" for k in range(1, 7))
+
+
+def latest_costs(j: int) -> tuple[tuple[str, float], ...]:
+    """``costs_discounted_p_`` of succeeded run *j*: commodity_cost 100 + 10 j, commodity_sales −20 (−500 for
+    j = 4), investment 50, upward slack penalty 40 for j in (2, 7), upward reserve slack penalty 5 for j = 7."""
+    return (("commodity_cost", 100.0 + 10 * j), ("commodity_sales", -500.0 if j == 4 else -20.0),
+            ("investment", 50.0), ("upward slack penalty", 40.0 if j in (2, 7) else 0.0),
+            ("upward reserve slack penalty", 5.0 if j == 7 else 0.0))
+
+
+def write_costs_table(folder: Path, scenario: str, costs: tuple[tuple[str, float], ...]) -> None:
+    """``costs_discounted_p_`` as write_outputs writes it: a series by category under a ``scenario`` level."""
+    import pandas as pd
+
+    from flextool.lean_parquet import write_lean_parquet
+
+    series = pd.Series(dict(costs), dtype=float)
+    series.index.name = "category"
+    folder.mkdir(parents=True, exist_ok=True)
+    write_lean_parquet(pd.concat({scenario: series}, axis=1, names=["scenario"]), folder / "costs_discounted_p_.parquet")
+
+
+def write_overview_tables(folder: Path, scenario: str) -> None:
+    """The capacity and slack tables of the newest run of the latest-runs project."""
+    import numpy as np
+    import pandas as pd
+
+    from tests.assistant.results_tables import write_result
+
+    def capacity(stem: str, level: str, rows: dict[str, list[tuple[float, float, float, float, float]]]) -> None:
+        index = pd.MultiIndex.from_tuples([(e, p) for e in rows for p in OVERVIEW_PERIODS], names=[level, "period"])
+        values = [cell for e in rows for cell in rows[e]]
+        frame = pd.DataFrame(values, index=index,
+                             columns=pd.Index(["existing", "invested", "in_construction", "divested", "total"],
+                                              name="parameter"))
+        write_result(folder, stem, frame, scenario)
+
+    nan = np.nan
+    units = {}
+    for k, name in enumerate(OVERVIEW_UNIT_NAMES, start=1):
+        e = 10.0 * k
+        if k in OVERVIEW_INVESTED_UNITS:
+            units[name] = [(e, nan, 0.0, nan, e), (e, 100.0, 0.0, nan, e + 100), (e, 0.0, 0.0, nan, e + 100)]
+        elif k == 16:
+            units[name] = [(e, 0.0, 0.0, nan, e), (e, 0.0, 0.0, nan, e), (e, 0.0, 0.0, 20.0, e - 20)]
+        else:
+            units[name] = [(e, 0.0, 0.0, nan, e)] * 3
+    capacity("unit_capacity_ed_p", "unit", units)
+    capacity("connection_capacity_ed_p", "connection",
+             {name: [(100.0 * k, 0.0, 0.0, nan, 100.0 * k)] * 3
+              for k, name in enumerate(OVERVIEW_CONNECTION_NAMES, start=1)})
+    capacity("node_capacity_ed_p", "node", {
+        "pumped_hydro_reservoir_03": [(1000.0, 0.0, 0.0, nan, 1000.0)] * 3,
+        "battery_storage_west_01": [(0.0, nan, 0.0, nan, 0.0), (0.0, 0.0, 0.0, nan, 0.0),
+                                    (0.0, 455.5, 0.0, nan, 455.5)],
+        "battery_storage_east_02": [(0.0, nan, 0.0, nan, 0.0), (0.0, nan, 0.0, nan, 0.0),
+                                    (0.0, nan, 80.0, nan, 0.0)],
+    })
+    periods = pd.Index(list(OVERVIEW_PERIODS), name="period")
+    up = pd.DataFrame({"west_grid_node": [0.0, 1520.5, 3.0], "east_grid_node": [0.0, 0.0, 0.0]}, index=periods)
+    up.columns.name = "node"
+    write_result(folder, "node_slack_up_d_e", up, scenario)
+    down = pd.DataFrame({"west_grid_node": [0.0, 0.0, 0.0]}, index=periods)
+    down.columns.name = "node"
+    write_result(folder, "node_slack_down_d_e", down, scenario)
+    reserve = pd.DataFrame([[0.0], [2.25], [0.0]], index=periods,
+                           columns=pd.MultiIndex.from_tuples([("primary_reserve", "up", "all_nodes_group")],
+                                                             names=["reserve", "updown", "node_group"]))
+    write_result(folder, "nodeGroup_slack_reserve_d_eeg", reserve, scenario)
+
+
+def set_record(folder: Path, **fields: object) -> None:
+    """Rewrite fields of the run record of *folder* (``versions`` merges)."""
+    import json
+
+    from flextool.run_record import RUN_STATUS_FILE
+
+    path = folder / RUN_STATUS_FILE
+    status = json.loads(path.read_text(encoding="utf-8"))
+    for key, value in fields.items():
+        if key == "versions":
+            status.setdefault("versions", {}).update(value)
+        else:
+            status[key] = value
+    path.write_text(json.dumps(status), encoding="utf-8")
+
+
+def set_finished(folder: Path, iso: str) -> None:
+    """The run record of *folder* finished at *iso* (started ten minutes before)."""
+    from datetime import datetime, timedelta
+
+    end = datetime.fromisoformat(iso)
+    set_record(folder, finished_at=end.isoformat(), started_at=(end - timedelta(minutes=10)).isoformat())
+
+
+def latest_no_record_time(i: int) -> float:
+    """When the files of record-less folder *i* were written (a POSIX time)."""
+    from datetime import datetime, timezone
+
+    minutes = 5 if i == 6 else i
+    return datetime(2026, 11, 1, tzinfo=timezone.utc).timestamp() + 60 * minutes
+
+
+def build_latest_runs_project(root: Path, db: Path) -> Path:
+    import os
+
+    from tests.assistant.results_tables import succeed_writing
+
+    project = build_many_runs_project(root, db)
+    shutil.copy(db, project / "input_sources" / "tests_b.sqlite")
+    (project / "settings.yaml").write_text("input_source_numbers:\n  tests.sqlite: 1\n  tests_b.sqlite: 2\n",
+                                           encoding="utf-8")
+    scenarios = many_run_scenarios()
+    out = project / "output_parquet"
+    for i in range(MANY_NO_RECORD):
+        stamp = latest_no_record_time(i)
+        for path in (out / f"{scenarios[i]}_1").glob("*.parquet"):
+            os.utime(path, (stamp, stamp))
+    for j in range(MANY_SUCCEEDED):
+        scenario = scenarios[MANY_NO_RECORD + j]
+        folder = out / f"{scenario}_1"
+        if j != LATEST_NO_COST_TABLE:
+            write_costs_table(folder, scenario, latest_costs(j))
+        set_finished(folder, f"2026-10-01T{LATEST_SUCCEEDED_HOUR[j]:02d}:00:00+00:00")
+        if j == LATEST_OTHER_VERSION:
+            set_record(folder, versions={"flextool": "0.0.1"})
+    for f in range(MANY_RUNS - MANY_NO_RECORD - MANY_SUCCEEDED):
+        folder = out / f"{scenarios[MANY_NO_RECORD + MANY_SUCCEEDED + f]}_1"
+        set_finished(folder, f"2026-10-08T{f:02d}:00:00+00:00")
+        if f == LATEST_KILLED:
+            set_record(folder, state="killed")
+    newest = scenarios[MANY_NO_RECORD + MANY_SUCCEEDED - 1]
+
+    def tables(folder: Path) -> None:
+        write_parquet(folder)
+        write_costs_table(folder, newest, OVERVIEW_COSTS)
+        write_overview_tables(folder, newest)
+
+    record_run(project, f"{newest}_2", newest, succeed_writing(tables))
+    set_finished(out / f"{newest}_2", "2026-10-09T00:00:00+00:00")
+    return project
+
+
+@pytest.fixture(scope="session")
+def latest_runs_project(tmp_path_factory: pytest.TempPathFactory, tests_db: Path) -> Path:
+    return build_latest_runs_project(tmp_path_factory.mktemp("latest_runs"), tests_db)

@@ -55,31 +55,35 @@ def _folders() -> list[str]:
 
 
 def test_list_runs_compact_lists_every_run(mctx) -> None:
-    """Before: 44 of the 67 rows at the medium cap (19 661 characters, about 9 000 tokens), the no-record note on
-    each of the 43 rows, about ten nulls a row."""
-    text = _text(mctx, "list_runs")
+    """``all: true``: every run, compact.  Before Cycle 1: 44 of the 67 rows at the medium cap (19 661 characters,
+    about 9 000 tokens), the no-record note on each of the 43 rows, about ten nulls a row.  Cycle 2 added the
+    ``finished`` column (newest first; ``test_list_runs_scan`` checks the order)."""
+    text = _text(mctx, "list_runs", all=True)
     out = json.loads(text)
     assert out["total"] == MANY_RUNS == 67 and len(out["runs"]) == 67
     assert out["counts"] == {"no_record": 43, "succeeded": 20, "failed": 4}
     assert list(out["counts"]) == ["no_record", "succeeded", "failed"]          # largest count first
     assert out["results_usable"] == 63
-    assert out["columns"] == ["folder", "state", "results_usable"]
-    assert [r[0] for r in out["runs"]] == sorted(_folders())
+    assert out["columns"] == ["folder", "state", "finished", "results_usable"]
+    assert sorted(r[0] for r in out["runs"]) == sorted(_folders())
+    assert {r[1] for r in out["runs"][:24]} == {"succeeded", "failed"}         # recorded runs first
+    assert {r[1] for r in out["runs"][24:]} == {"no_record"}
     rows = {r[0]: r for r in out["runs"]}
     names = _folders()
-    assert rows[names[0]] == [names[0], "no_record", True]
-    assert rows[names[MANY_NO_RECORD]] == [names[MANY_NO_RECORD], "succeeded", True]
-    assert rows[names[-1]] == [names[-1], "failed", False]
-    assert out["notes"] == [NO_RECORD_NOTE] and text.count("no run record") == 1
+    assert [rows[names[0]][i] for i in (1, 3)] == ["no_record", True]
+    assert [rows[names[MANY_NO_RECORD]][i] for i in (1, 3)] == ["succeeded", True]
+    assert [rows[names[-1]][i] for i in (1, 3)] == ["failed", False]
+    assert out["notes"][0] == NO_RECORD_NOTE and text.count("no run record") == 1
     assert "null" not in text and "shown" not in out and "truncated" not in out
-    assert len(text) <= 3_600 and approx_tokens(text, "json") <= 1_700
+    # Cycle 2: + the finished column and the order note (about 190 characters)
+    assert len(text) <= 5_000 and approx_tokens(text, "json") <= 2_800
 
 
 def test_list_runs_full_detail_states_shared_fields_only_when_every_row_has_them(mctx) -> None:
     """Critique B1: a field stated once (``same_in_every_row``) holds for every row; a run without a record never
     seems to have a verdict or a version.  Before: ``detail`` was refused; the large cap sent 28 782 characters
     (about 13 700 tokens)."""
-    text = _text(mctx, "list_runs", detail="full")
+    text = _text(mctx, "list_runs", detail="full", all=True)
     out = json.loads(text)
     assert len(out["runs"]) == 67
     common = out["same_in_every_row"]
@@ -109,7 +113,7 @@ def test_list_runs_filters(mctx) -> None:
     assert sorted(r["folder"] for r in unusable["runs"]) == sorted(_folders()[-4:])
     assert unusable["same_in_every_row"]["state"] == "failed"
     y2020 = _call(mctx, "list_runs", folders=["y2020*"])
-    assert [r["folder"] for r in y2020["runs"]] == ["y2020_2029_1x10y_1", "y2020_2029_2x5y_1"]
+    assert sorted(r["folder"] for r in y2020["runs"]) == ["y2020_2029_1x10y_1", "y2020_2029_2x5y_1"]
     assert all(r["verdict"] == "infeasible" for r in y2020["runs"])
     # Exact names: full detail, whatever their number; filters combine.
     named = _call(mctx, "list_runs", folders=["base_1", "coal_1", "wind_1"], results_usable=True)
@@ -125,7 +129,8 @@ def test_list_runs_filters(mctx) -> None:
                                                   'runs are: "succeeded", "failed", "no_record".')
     unknown = call_tool(mctx, "list_runs", {"folders": ["base_2"]})
     assert not unknown.ok and unknown.message.startswith('There is no result folder "base_2".')
-    assert all_tools()["list_runs"].input_schema["properties"]["detail"] == {"type": "string", "enum": ["full"]}
+    assert all_tools()["list_runs"].input_schema["properties"]["detail"] == {
+        "type": "string", "enum": ["scan", "overview", "full"]}
 
 
 def test_list_runs_pages_explicitly(mctx) -> None:
@@ -133,11 +138,12 @@ def test_list_runs_pages_explicitly(mctx) -> None:
     run once.  Before: ``offset`` was refused and fit_json cut the list (``truncated``)."""
     small = dataclasses.replace(mctx, caps=dataclasses.replace(mctx.caps, max_chars=2_000))
     small.redactor = mctx.redactor
+    order = [r[0] for r in _call(mctx, "list_runs", all=True)["runs"]]
     seen: list[str] = []
     offset = 0
     pages = 0
     while True:
-        text = _text(small, "list_runs", offset=offset)
+        text = _text(small, "list_runs", offset=offset, all=True)
         out = json.loads(text)
         assert len(text) <= 2_000 and "truncated" not in out
         assert out["total"] == 67 and out["counts"]["no_record"] == 43           # every page: the whole set
@@ -145,22 +151,22 @@ def test_list_runs_pages_explicitly(mctx) -> None:
         pages += 1
         end = offset + len(out["runs"])
         if end == 67:
-            assert out["shown"] == f"runs {offset + 1}–67 of 67"
+            assert out["shown"] == f"runs {offset + 1}–67 of 67, newest first"
             break
-        assert out["shown"] == (f"runs {offset + 1}–{end} of 67; pass offset {end} for the next (with the same "
-                                "filters; a new run folder shifts the list), or filter by state, results_usable or "
-                                "folders")
+        assert out["shown"] == (f"runs {offset + 1}–{end} of 67, newest first; pass offset {end} for the next (with "
+                                "the same filters; a run that starts or finishes moves to the top), or filter by "
+                                "state, results_usable or folders")
         offset = end
-    assert seen == sorted(_folders()) and pages >= 2
-    past = _call(small, "list_runs", offset=70)
+    assert seen == order and pages >= 2
+    past = _call(small, "list_runs", offset=70, all=True)
     assert past["runs"] == [] and past["shown"] == "no runs from offset 70; there are 67"
 
 
 def test_paging_is_measured_on_the_redacted_text(tmp_path: Path, tests_db: Path) -> None:
     """Critique M3: the user name in 40 folder names is sent as <user> (three characters longer each).  A page fitted
     on the names as stored would be longer than the cap once redacted, and fit_json would drop rows the page note
-    says were sent.  Each page fits as sent, and the pages hold every folder once, in the order of the stored
-    names."""
+    says were sent.  Each page fits as sent, and the pages hold every folder once, newest files first (no run
+    records: by the files' times, equal times by name)."""
     project = make_project(tmp_path, tests_db)
     names = [f"s-zz9-{i:02d}_1" for i in range(40)]
     for name in names:
@@ -171,7 +177,7 @@ def test_paging_is_measured_on_the_redacted_text(tmp_path: Path, tests_db: Path)
     seen: list[str] = []
     offset = 0
     while offset < 40:
-        text = _text(ctx, "list_runs", offset=offset)
+        text = _text(ctx, "list_runs", offset=offset, all=True)
         out = json.loads(text)
         assert len(text) <= 1_200 and "truncated" not in out and "zz9" not in text
         assert out["runs"], out
@@ -179,7 +185,9 @@ def test_paging_is_measured_on_the_redacted_text(tmp_path: Path, tests_db: Path)
         offset += len(out["runs"])
         if offset < 40:
             assert f"pass offset {offset} for the next" in out["shown"]
-    assert seen == [n.replace("zz9", "<user>") for n in names]
+    by_time = sorted(names, key=lambda n: (-(project / "output_parquet" / n / "node_d_ee.parquet").stat().st_mtime,
+                                           n))
+    assert seen == [n.replace("zz9", "<user>") for n in by_time]
 
 
 def test_compare_runs_overview_is_short(mctx) -> None:

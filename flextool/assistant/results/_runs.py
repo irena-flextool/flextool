@@ -266,6 +266,10 @@ def _input_changed(ctx: AssistantContext, status: dict, source: project.Source |
     return int(now) > int(stamp.timestamp())
 
 
+#: States of a record that exists but whose times cannot be read (a strict read's answers).
+_TIMELESS_STATES = frozenset({run_record.UNREADABLE_STATE, run_record.MALFORMED_STATE})
+
+
 @dataclass
 class Run:
     folder: Path
@@ -279,6 +283,53 @@ class Run:
     def verified(self) -> bool:
         """Whether the folder has a run record: without one, the run's success is not known."""
         return self.status is not None
+
+    @property
+    def record_time(self) -> float | None:
+        """When the run finished by its readable run record (``finished_at``; ``started_at`` for one that has not
+        finished), or ``None``: no record, an unreadable or damaged one, or one without times."""
+        if self.status is None or self.entry["state"] in _TIMELESS_STATES:
+            return None
+        for key in ("finished_at", "started_at"):
+            stamp = run_record.parse_iso(self.status.get(key))
+            if stamp is not None:
+                return stamp.timestamp()
+        return None
+
+    @property
+    def files_time(self) -> float:
+        """The newest modification time of the folder's result files and run record file (0 when none can be
+        read).  A copied project gets the copy's times, so this orders runs only among themselves (critique M2)."""
+        newest = 0.0
+        for path in (*self.folder.glob("*.parquet"), self.folder / run_record.RUN_STATUS_FILE):
+            try:
+                newest = max(newest, path.stat().st_mtime)
+            except OSError:
+                continue
+        return newest
+
+    @property
+    def finished(self) -> str | None:
+        """The ``finished`` a listing shows, local ``YYYY-MM-DD HH:MM``: the record's ``finished_at`` (``None``
+        for a readable record that has not finished); for a run without a readable record when its files were
+        last written."""
+        if self.record_time is not None:
+            stamp = run_record.parse_iso(self.status.get("finished_at")) if self.status else None
+            return stamp.astimezone().strftime("%Y-%m-%d %H:%M") if stamp is not None else None
+        newest = self.files_time
+        return datetime.fromtimestamp(newest).strftime("%Y-%m-%d %H:%M") if newest else None
+
+
+def newest_first(found: list[Run]) -> list[Run]:
+    """*found* newest first (Cycle 2, C1-OD4, critique M2): the runs with a readable run record by its time (at
+    full resolution), then the others by when their files were last written (their order is uncertain: a copy of
+    the project changes file times); equal times by folder name."""
+    def key(run: Run) -> tuple[int, float, str]:
+        stamp = run.record_time
+        if stamp is not None:
+            return 0, -stamp, run.folder.name
+        return 1, -run.files_time, run.folder.name
+    return sorted(found, key=key)
 
 
 def _run(ctx: AssistantContext, folder: Path, settings, sources: list[project.Source],
@@ -327,8 +378,8 @@ def runs(ctx: AssistantContext) -> list[Run]:
 def select_runs(ctx: AssistantContext, *, source: str | None = None, scenario: str | None = None,
                 state: str | None = None, results_usable: bool | None = None,
                 folders: list[str] | None = None) -> list[Run]:
-    """The runs that pass every filter given (AND), in folder-name order (the order :func:`run_folders` gives,
-    by the real names: a page offset counts in it).  *folders* holds names and ``*`` patterns; an exact name that
+    """The runs that pass every filter given (AND), newest first (:func:`newest_first`: a page offset counts in
+    that order).  *folders* holds names and ``*`` patterns; an exact name that
     is no run folder, or a pattern that matches none, is refused with the close names; a *state* that is neither
     a known state nor one a run has, with the states there are."""
     from flextool.assistant.results._query import _matching
@@ -359,7 +410,7 @@ def select_runs(ctx: AssistantContext, *, source: str | None = None, scenario: s
                                 runs=name_list(close or names))
         keep = set(_matching([r.folder.name for r in selected], [str(f) for f in folders]))
         selected = [r for r in selected if r.folder.name in keep]
-    return selected
+    return newest_first(selected)
 
 
 @dataclass

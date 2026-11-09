@@ -70,7 +70,12 @@ def test_list_runs_reports_each_run_from_its_record(ctx) -> None:
     # A folder without a run record: state no_record, verified false, no field of a run record; the note once.
     assert legacy == {"folder": "base_1", "source_number": 1, "source_name": "tests.sqlite", "state": "no_record",
                       "results_usable": True, "verified": False}
-    assert out["notes"] == [f"1 run has no run record (state no_record, verified false): {_NO_RECORD_TAIL}"]
+    assert out["notes"] == [f"1 run has no run record (state no_record, verified false): {_NO_RECORD_TAIL}",
+                            "1 run without a readable run record is listed after the others, by when its files "
+                            "were last written (finished), which copying a project changes: their order is "
+                            "uncertain."]
+    # Newest first: the two recorded runs (by their finish, to the second), then base_1 (no record).
+    assert [r["folder"] for r in out["runs"]][2] == "base_1"
     assert out["comparison"]["usable"] is True
     assert [m["folder"] for m in out["comparison"]["members"]] == ["coal_1"]
     assert _call(ctx, "list_runs", scenario="coal")["total"] == 1

@@ -29,15 +29,17 @@ class Caps:
     max_results: int     # search hits
     max_items: int       # entries of a listing (entities, runs, scenarios)
     ceilings: Caps | None = None    # the most a call may ask for with this model's context (chat); None: CEILINGS
+    #: The runs list_runs shows without a filter: the latest ones (Cycle 2, C1-OD4).  No call argument sets it.
+    max_runs: int = 20
 
 
 PRESETS: dict[str, Caps] = {
-    "small": Caps(50, 6_000, 5, 100),
-    "medium": Caps(200, 20_000, 8, 300),
-    "large": Caps(1_000, 60_000, 10, 1_000),
+    "small": Caps(50, 6_000, 5, 100, max_runs=8),
+    "medium": Caps(200, 20_000, 8, 300, max_runs=20),
+    "large": Caps(1_000, 60_000, 10, 1_000, max_runs=20),
 }
 DEFAULT_PRESET = "medium"
-CEILINGS = Caps(5_000, 200_000, 20, 2_000)
+CEILINGS = Caps(5_000, 200_000, 20, 2_000, max_runs=200)
 
 #: Lengths at which user-written strings are cut (P0 §6).
 NAME_MAX = 200
@@ -184,6 +186,41 @@ def fit_rows(payload: dict, rows_key: str, max_chars: int, redact: Callable[[str
         else:
             hi = k - 1
     return trial(best)
+
+
+def fit_page(build: Callable[[int], dict], n: int, max_chars: int, redact: Callable[[str], str], *,
+             start: int = 8) -> dict:
+    """The sent payload (:func:`sent_payload`) of ``build(k)`` for the largest *k* ≤ *n* found whose text fits
+    *max_chars* (``build(0)`` when none does).
+
+    ``build(k)`` makes the whole payload of the first *k* rows, header and page note included, so a header that
+    depends on the rows sent (counts of the rest, names of sent folders) is measured as it is sent (Cycle 2
+    critique m5).  The search doubles from *start* before it bisects, so a builder that reads a file for each row
+    reads about twice the rows that are sent, not all *n*."""
+    cache: dict[int, dict] = {}
+
+    def trial(k: int) -> dict | None:
+        if k not in cache:
+            cache[k] = sent_payload(build(k), redact)
+        data = cache[k]
+        return data if len(dumps(data)) <= max_chars else None
+
+    hi = min(n, max(start, 1))
+    lo = 0
+    while trial(hi) is not None:
+        if hi == n:
+            return cache[hi]
+        lo, hi = hi, min(n, hi * 2)
+    hi -= 1
+    while lo < hi:                      # trial(lo) fits (or lo is 0), trial(hi + 1) does not
+        k = (lo + hi + 1) // 2
+        if trial(k) is not None:
+            lo = k
+        else:
+            hi = k - 1
+    if lo == 0:
+        trial(0)
+    return cache[lo]
 
 
 def fit_json(payload: dict, max_chars: int, redact: Callable[[str], str], *, rows_key: str | None = None,

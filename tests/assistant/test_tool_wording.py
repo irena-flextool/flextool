@@ -25,6 +25,8 @@ def _texts() -> list[tuple[str, str]]:
     for tool in all_tools().values():
         out.append((f"{tool.name}.title", tool.title))
         out.append((f"{tool.name}.description", tool.description))
+        if tool.basic is not None:
+            out.append((f"{tool.name}.basic_description", tool.basic[0]))
     out += [(f"MESSAGES[{k}]", v) for k, v in MESSAGES.items()]
     out += [(f"session note {k}", v) for k, v in unit_wording.SESSION_NOTES.items()]
     out += [(f"trap {k}", t.text) for k, ts in traps().items() for t in ts]
@@ -42,6 +44,8 @@ def _texts() -> list[tuple[str, str]]:
 def test_every_description_ends_with_the_data_sentence() -> None:
     for tool in all_tools().values():
         assert tool.description.endswith(" " + DATA_SENTENCE), tool.name
+        if tool.basic is not None:
+            assert tool.basic[0].endswith(" " + DATA_SENTENCE), tool.name
         assert "minimum" not in str(tool.input_schema) and "maximum" not in str(tool.input_schema), tool.name
 
 
