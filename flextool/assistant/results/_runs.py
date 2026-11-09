@@ -20,6 +20,7 @@ import json
 import os
 import threading
 from dataclasses import dataclass, field
+from functools import cached_property
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -272,6 +273,9 @@ _TIMELESS_STATES = frozenset({run_record.UNREADABLE_STATE, run_record.MALFORMED_
 
 @dataclass
 class Run:
+    """One run folder as one scan of the project found it.  Its times are computed once (Cycle 2 review n4): a
+    listing sorts, pages and notes by them, and a new scan (:func:`runs`) makes new objects."""
+
     folder: Path
     status: dict | None
     entry: dict
@@ -284,7 +288,7 @@ class Run:
         """Whether the folder has a run record: without one, the run's success is not known."""
         return self.status is not None
 
-    @property
+    @cached_property
     def record_time(self) -> float | None:
         """When the run finished by its readable run record (``finished_at``; ``started_at`` for one that has not
         finished), or ``None``: no record, an unreadable or damaged one, or one without times."""
@@ -296,7 +300,7 @@ class Run:
                 return stamp.timestamp()
         return None
 
-    @property
+    @cached_property
     def files_time(self) -> float:
         """The newest modification time of the folder's result files and run record file (0 when none can be
         read).  A copied project gets the copy's times, so this orders runs only among themselves (critique M2)."""
@@ -308,7 +312,7 @@ class Run:
                 continue
         return newest
 
-    @property
+    @cached_property
     def finished(self) -> str | None:
         """The ``finished`` a listing shows, local ``YYYY-MM-DD HH:MM``: the record's ``finished_at`` (``None``
         for a readable record that has not finished); for a run without a readable record when its files were

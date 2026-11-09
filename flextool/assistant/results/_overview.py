@@ -44,7 +44,8 @@ SCAN_COST_TEXT = "; largest_cost: [category, value] of the largest cost"
 SLACK_NOTE = "Each slack's entries: query_result on its table."
 NOT_USABLE = "not shown: the results of this run may not be used"
 #: The overview's cut, in this order, until it fits the result (critique M5): (cost categories: "all", "1%" (those
-#: of at least 1 % of the costs) or a number; entities per capacity class; slacks).  ``None``: the level's cap.
+#: of at least 1 % of the costs) or a number (the largest of those of at least 1 %, so a step never shows a
+#: category an earlier one dropped); entities per capacity class; slacks).  ``None``: the level's cap.
 CUT_STEPS: tuple[tuple[Any, int | None, int | None], ...] = (
     ("all", None, None), ("1%", None, None), ("1%", 3, None), ("1%", 3, 3), (3, 3, 3), (3, 2, 3), (3, 1, 3),
     (3, 1, 1), (1, 1, 1), (0, 0, 0),
@@ -248,11 +249,13 @@ def overview_numbers(folder: Path, max_entities: int, max_chars: int, head: dict
             out["cost_unit"] = cost_unit_text(costs.unit, scan=False)
             rows = costs.split()
             n = len(rows)
-            if cost_mode == "1%":
+            if cost_mode != "all":
+                # A number of categories cuts the 1 % list, so no later step brings back a category under 1 %
+                # (Cycle 2 review m2).
                 scale = sum(abs(v) for _, v in costs.categories)
                 rows = [r for r in rows if abs(r[1]) >= 0.01 * scale]
-            elif cost_mode != "all":
-                rows = rows[:cost_mode]
+                if cost_mode != "1%":
+                    rows = rows[:cost_mode]
             split: dict[str, Any] = {"columns": ["category", "value"], "rows": rows}
             if len(rows) < n:
                 split["shown"] = f"{len(rows)} of {n}; every one: query_result on {COSTS_TABLE}"

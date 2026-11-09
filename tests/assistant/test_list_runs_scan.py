@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import shutil
 from datetime import datetime
 from pathlib import Path
 
@@ -22,7 +23,7 @@ from flextool.assistant.context import make_context
 from flextool.assistant.registry import call_tool
 from flextool.assistant.results import _overview
 
-from tests.assistant.conftest import MANY_NO_RECORD, many_run_scenarios
+from tests.assistant.conftest import MANY_NO_RECORD, many_run_scenarios, set_record
 
 SCENARIOS = many_run_scenarios()
 
@@ -43,8 +44,12 @@ RECORDED = [NEWEST, fail(3), fail(2), fail(1), fail(0), *(succ(j) for j in range
 NO_RECORD = [f"{SCENARIOS[i]}_1" for i in range(42, 6, -1)] + sorted(f"{SCENARIOS[i]}_1" for i in (5, 6)) + \
     [f"{SCENARIOS[i]}_1" for i in range(4, -1, -1)]
 ALL = RECORDED + NO_RECORD
-ORDER_NOTE = ("43 runs without a readable run record are listed after the others, by when their files were last "
-              "written (finished), which copying a project changes: their order is uncertain.")
+ORDER_NOTE = ("43 runs without a readable run record or run time are listed after the others, by when their files "
+              "were last written (finished), which copying a project changes: their order is uncertain.")
+NO_RECORD_NOTE = ("43 runs have no run record (state no_record, verified false): the run's success is not known; "
+                  "results may be from a failed or older run. Say so when you use them.")
+#: The no-record note of a page that lists none of those runs (Cycle 2 review m3).
+NO_RECORD_COUNT = "43 runs have no run record (state no_record); none is on this page."
 COST_UNIT = ("M CUR (default convention), discounted, all periods (costs_discounted_p_); compare runs over the same "
              "periods; penalty_cost: slack penalties")
 
@@ -94,13 +99,15 @@ def test_latest_runs_first(lctx) -> None:
     assert out["total"] == 68 and out["results_usable"] == 64
     assert out["counts"] == {"no_record": 43, "succeeded": 21, "failed": 3, "killed": 1}
     assert out["older"] == {"no_record": 43, "succeeded": 5}               # succ(4) … succ(0)
-    assert "scenarios" not in out and ORDER_NOTE in out["notes"]
+    # Cycle 2 review m3: no record-less run on this page: one count line, no order note.  Before: both notes in full.
+    assert "scenarios" not in out and out["notes"] == [NO_RECORD_COUNT]
     assert out["shown"] == ("the latest 20 of 68 runs, newest first; pass offset 20 for the next (a run that starts "
                             "or finishes moves to the top), or all true for every run")
     assert len(text) <= 2_200 and approx_tokens(text, "json") <= 1_200
     # every run, the same order
     everything = _call(lctx, all=True)
     assert [r[0] for r in everything["runs"]] == ALL and "older" not in everything and "shown" not in everything
+    assert everything["notes"] == [NO_RECORD_NOTE, ORDER_NOTE]
     assert {r[0]: r[2] for r in everything["runs"]}[NO_RECORD[0]] == _local("2026-11-01T00:42:00+00:00")
 
 
@@ -272,13 +279,14 @@ def test_overview(lctx, cost_reads) -> None:
 
 
 def test_the_overview_shortens_in_a_fixed_order(lctx) -> None:
-    """Critique M5: at 2 000 characters (basic, 16 384 tokens: 3 entities a class) the overview is cut by its
-    steps — categories under 1 % of the costs, entities to 3, slacks to 3, categories to 3, entities to 2 — each
-    cut saying what it shows, never the bare ``truncated`` text."""
+    """Critique M5: at 1 950 characters (basic, 16 384 tokens: 3 entities a class; its 2 000 characters fit the
+    step "categories to 3" since the overview gives ``finished`` short, Cycle 2 review n3) the overview is cut by
+    its steps — categories under 1 % of the costs, entities to 3, slacks to 3, categories to 3, entities to 2 —
+    each cut saying what it shows, never the bare ``truncated`` text."""
     caps = resolve_budget("small", 16_384, "loaded", local=True).result_caps
-    text = _text(_with_caps(lctx, caps), detail="overview", folders=[NEWEST])
+    text = _text(_with_caps(lctx, dataclasses.replace(caps, max_chars=1_950)), detail="overview", folders=[NEWEST])
     out = json.loads(text)
-    assert len(text) <= 2_000 and "truncated" not in out
+    assert len(text) <= 1_950 and "truncated" not in out
     assert out["cost_split"]["rows"] == [["commodity_cost", 600.0], ["upward slack penalty", 300.0],
                                          ["unit investment/retirement", 200.0]]
     assert out["cost_split"]["shown"] == "3 of 12; every one: query_result on costs_discounted_p_"
@@ -326,3 +334,125 @@ def test_sizes(lctx) -> None:
             (basic, {"detail": "overview", "folders": [NEWEST]}, 2_000, 1_050)):
         text = _text(ctx, **args)
         assert len(text) <= chars and approx_tokens(text, "json") <= tokens, (args, len(text))
+
+
+# --- Cycle 2 review fixes ---------------------------------------------------------------------------------------
+
+@pytest.fixture
+def copied(latest_runs_project: Path, tmp_path: Path) -> Path:
+    """A copy of the latest-runs project, for a test that rewrites a run record."""
+    return Path(shutil.copytree(latest_runs_project, tmp_path / "project", copy_function=shutil.copy2))
+
+
+def test_the_scan_names_a_run_without_a_proven_optimum(copied) -> None:
+    """Review m1: a succeeded run whose verdict is not optimal (a time-limited or not converged solve) is named with
+    its verdict next to the costs; the optimal ones are not.  Before: nothing in the scan said so."""
+    set_record(copied / "output_parquet" / succ(19), verdict="not_converged")
+    out = _call(make_context(copied), detail="scan")
+    row = next(r for r in out["runs"] if r[0] == succ(19))
+    assert row[1] == "succeeded" and row[3] is True and row[4] == 320.0
+    assert out["not_optimal_in"] == f"{succ(19)} (not_converged)"
+
+
+def test_the_scan_of_optimal_runs_names_none(lctx) -> None:
+    assert "not_optimal_in" not in _call(lctx, detail="scan", all=True)
+
+
+def test_the_overview_cut_never_brings_back_what_it_dropped(lctx, monkeypatch) -> None:
+    """Review m2: costs commodity_cost 1 000, co2 2, starts 1, other operational 0.5 (1 % of 1 003.5 is 10.035:
+    only commodity_cost).  At every size the overview is cut, a smaller one never shows more categories, entities
+    or slacks, and a cut cost split never holds a category under 1 %.  Before: the step "3 categories" after "1 %"
+    brought co2 and starts back (3 categories at about 1 750 characters, 1 at about 1 800)."""
+    real = _overview.read_costs(lctx.project_path / "output_parquet" / NEWEST)
+    costs = dataclasses.replace(real, categories=(("commodity_cost", 1000.0), ("co2", 2.0), ("starts", 1.0),
+                                                  ("other operational", 0.5)))
+    monkeypatch.setattr(_overview, "read_costs", lambda folder: costs)
+    caps = resolve_budget("small", 16_384, "loaded", local=True).result_caps
+    sizes = []
+    for max_chars in range(2_600, 0, -20):
+        out = _call(_with_caps(lctx, dataclasses.replace(caps, max_chars=max_chars)), detail="overview",
+                    folders=[NEWEST])
+        if "cost_split" not in out:             # below the last step's size: the result's own cut
+            break
+        split = out["cost_split"]
+        if "shown" in split:
+            assert [r[0] for r in split["rows"]] in (["commodity_cost"], []), max_chars
+        sizes.append((len(split["rows"]), len(out.get("capacity", {}).get("unit", {}).get("rows", [])),
+                      len(out["slacks"]["rows"])))
+    assert sizes[0] == (4, 3, 2) and sizes[-1] == (0, 0, 0)
+    for bigger, smaller in zip(sizes, sizes[1:]):
+        assert all(s <= b for s, b in zip(smaller, bigger)), (bigger, smaller)
+    # (1, 3, 2) is never sent: one category with its "shown" text is longer than all four (step "all").
+    assert sorted(set(sizes)) == [(0, 0, 0), (1, 1, 1), (1, 1, 2), (1, 2, 2), (4, 3, 2)]
+
+
+def test_the_overview_refusal_says_what_did_not_match(lctx) -> None:
+    """Review m4: one folder with a scenario it is not a run of, a scenario no run is of (with the closest
+    scenarios, here none close: the first ten), and filters that leave nothing are each refused with their own
+    reason.  Before: all three said "needs one result folder"."""
+    own = SCENARIOS[MANY_NO_RECORD + 19]
+    out = call_tool(lctx, "list_runs", {"detail": "overview", "folders": [NEWEST], "scenario": "coal"})
+    assert not out.ok and out.message == (
+        f'The result folder "{NEWEST}" is a run of scenario "{own}", not of "coal". Leave scenario out for its '
+        'overview, or name a result folder of "coal".')
+    out = call_tool(lctx, "list_runs", {"detail": "overview", "scenario": "no_such"})
+    first = ", ".join(f'"{s}"' for s in sorted(SCENARIOS)[:10])
+    assert not out.ok and out.message == (
+        f'No result folder is a run of scenario "no_such". The scenarios with result folders include: {first} '
+        "and 57 more.")
+    out = call_tool(lctx, "list_runs", {"detail": "overview", "scenario": own[:-1]})
+    assert not out.ok and f'"{own}"' in out.message and out.message.startswith(
+        f'No result folder is a run of scenario "{own[:-1]}". The scenarios with result folders include: ')
+    out = call_tool(lctx, "list_runs", {"detail": "overview", "folders": [fail(2)], "state": "succeeded"})
+    assert not out.ok and out.message == (
+        "No result folder passes every filter given. Leave out source, state or results_usable for the overview, "
+        "or list_runs with the same filters to see what passes.")
+
+
+def test_the_basic_default_view_spends_one_line_on_runs_it_does_not_list(lctx) -> None:
+    """Review m3: basic at 16 384 tokens lists 8 recorded runs; the 43 record-less ones get one count line (they
+    are in ``older``), not the two notes in full; a page of record-less runs gets both.  Before: 345 characters of
+    notes about runs not on the page."""
+    basic = _with_caps(lctx, resolve_budget("small", 16_384, "loaded", local=True).result_caps)
+    out = _call(basic)
+    assert [r[0] for r in out["runs"]] == RECORDED[:8]
+    assert out["notes"] == [NO_RECORD_COUNT] and out["older"]["no_record"] == 43
+    page = _call(basic, offset=25)
+    assert page["runs"][0][0] == NO_RECORD[0] and page["notes"] == [NO_RECORD_NOTE, ORDER_NOTE]
+
+
+def test_a_record_without_times_is_named_in_the_order_note(copied) -> None:
+    """Review n1: a readable record without ``started_at`` and ``finished_at`` is listed with the record-less runs;
+    the note says "without a readable run record or run time".  Before: "44 runs without a readable run record"."""
+    set_record(copied / "output_parquet" / succ(19), started_at=None, finished_at=None)
+    out = _call(make_context(copied), all=True)
+    assert out["notes"][1] == ORDER_NOTE.replace("43", "44")
+
+
+def test_the_overview_gives_finished_as_the_rows_do(lctx) -> None:
+    """Review n3: the overview's ``finished`` is the local ``YYYY-MM-DD HH:MM`` of the list rows, also for a run
+    whose results may not be used.  Before: the raw ``finished_at`` (and ``started_at``)."""
+    out = _call(lctx, detail="overview", folders=[NEWEST])
+    assert out["finished"] == _local("2026-10-09T00:00:00+00:00") and "finished_at" not in out
+    assert list(out)[:4] == ["run", "state", "verdict", "finished"]
+    failed = _call(lctx, detail="overview", folders=[fail(2)])
+    assert failed["finished"] == _local("2026-10-08T02:00:00+00:00")
+    assert not {"started_at", "finished_at"} & set(failed)
+
+
+def test_a_runs_file_times_are_read_once(lctx, monkeypatch) -> None:
+    """Review n4: a run's file time is computed once per scan of the project, not at each sort, row and page
+    trial.  Before: every read of ``files_time`` (or ``finished``) globbed the folder again."""
+    from flextool.assistant.results import _runs
+
+    run = next(r for r in _runs.runs(lctx) if r.folder.name == NO_RECORD[0])
+    globs = []
+    real = Path.glob
+
+    def counting(self, pattern):
+        globs.append(self.name)
+        return real(self, pattern)
+    monkeypatch.setattr(Path, "glob", counting)
+    for _ in range(3):
+        assert run.files_time > 0 and run.finished is not None and run.record_time is None
+    assert globs == [NO_RECORD[0]]

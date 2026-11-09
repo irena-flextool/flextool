@@ -426,6 +426,10 @@ def build_latest_runs_project(root: Path, db: Path) -> Path:
 
     project = build_many_runs_project(root, db)
     shutil.copy(db, project / "input_sources" / "tests_b.sqlite")
+    # The run of source 2 below records tests.sqlite's time (record_run); with tests_b.sqlite one second newer the
+    # run read as "input changed" in about one build in five, adding a run note to its overview.
+    stat = (project / "input_sources" / "tests.sqlite").stat()
+    os.utime(project / "input_sources" / "tests_b.sqlite", ns=(stat.st_atime_ns, stat.st_mtime_ns))
     (project / "settings.yaml").write_text("input_source_numbers:\n  tests.sqlite: 1\n  tests_b.sqlite: 2\n",
                                            encoding="utf-8")
     scenarios = many_run_scenarios()

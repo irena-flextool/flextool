@@ -628,7 +628,8 @@ Other tools keep their results short so that a project with many runs fits the a
   with a run record come first, by when they finished (a run that has not finished, by when it started). A folder
   whose result files were written without a run record (by an older FlexTool) has the state `no_record`: its
   success is not known. Such runs come after the others, by when their files were last written. Copying a project
-  changes those times, so the listing says that their order is uncertain. A result read from such a run says
+  changes those times, so the listing says that their order is uncertain; a page that lists none of them gives
+  only their count. A result read from such a run says
   `"verified": false` (`compare_runs` lists such runs in `unverified`), and its run notes start with the same
   warning. Named folders (`"folders": ["base_1"]`), a filtered list of up to five runs or `"detail": "full"` add
   the verdict, times, FlexTool version and error; a value shared by every row is then given once
@@ -640,16 +641,21 @@ Other tools keep their results short so that a project with many runs fits the a
 - `list_runs` with `"detail": "scan"` adds three numbers to each row: `total_cost` (the discounted cost over all
   periods, as the model minimises it, from `costs_discounted_p_`), `penalty_cost` (its slack penalty categories)
   and `largest_cost` (the category with the largest cost). Compare totals only between runs over the same periods.
-  A run whose results may not be used gets no numbers, and `no_cost_table` names the runs without the table. A
+  A run whose results may not be used gets no numbers, and `no_cost_table` names the runs without the table.
+  `not_optimal_in` names the runs whose solve was not proven optimal (a time limit, a decomposition that did not
+  converge), each with its verdict: their costs may be higher than the optimum. A
   given `detail` always wins: `"folders": ["a_1", "b_1"], "detail": "scan"` gives the costs of those two runs.
 - `list_runs` with `"detail": "overview"` and one folder (or a `scenario` alone, for its newest run) gives one run in
-  one call: its state and verdict, its costs by category (largest first), its capacity per unit, connection and
+  one call: its state and verdict, when it finished (local time, as in the rows), its costs by category (largest
+  first), its capacity per unit, connection and
   storage (existing in the first period, invested added up over the periods, total in the last period; divested
   and capacity in construction when there is any) and the slacks it used, each with its largest entry. Capacity is
   never added up over periods or over entities. Entities with new, divested or in-construction capacity are listed
   first. When the overview is too long for one result, it drops, in this order: the cost categories under 1 % of
-  the costs, entities beyond three per class, slacks beyond three, categories beyond three, then fewer entities.
-  Each cut says what it shows. A run whose results may not be used gets its state and error, and no numbers.
+  the costs, entities beyond three per class, slacks beyond three, categories beyond three (of those of at least
+  1 %), then fewer entities. A cut never brings back what an earlier one dropped, and each says what it shows. A
+  request that selects no run says why: the folder is a run of another scenario, no run is of the scenario (with
+  the closest scenario names), or the other filters leave nothing. A run whose results may not be used gets its state and error, and no numbers.
 - `list_sources` with `"scenario": "coal_chp"` gives that scenario's alternatives, highest rank first, and its base
   alternative.
 - `compare_runs` without `group_by`, `agg`, `sort` and `top_n` gives each run's totals per period and category

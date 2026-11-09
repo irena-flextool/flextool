@@ -44,7 +44,7 @@ ADDENDA_SHA256 = {
 PREFIX_BUDGETS = {"small": 4_920, "medium": 9_000, "large": 9_100}
 #: The prefix estimate (layers and tool schemas, digit-aware) of every level and front end.  A change of a level
 #: text or a tool description moves one of them on purpose: update the pin, and the budget table in
-#: ``specs/ai_assistant_autonomous_decisions.md`` (Cycle 2 C2-D-prefix), in the same commit.
+#: ``specs/ai_assistant_autonomous_decisions.md`` (Cycle 2 C2-D2), in the same commit.
 PREFIX_PINS = {
     ("small", "gui"): 4_872, ("small", "terminal"): 4_852, ("small", "agent"): 4_792,
     ("medium", "gui"): 8_912, ("medium", "terminal"): 8_892, ("medium", "agent"): 8_832,

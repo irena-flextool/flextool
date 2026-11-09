@@ -92,14 +92,34 @@ def _state_counts(found: list[_runs.Run]) -> dict[str, int]:
 
 
 def _order_note(found: list[_runs.Run]) -> str | None:
-    """The note on the runs without a readable run record, which come last in an uncertain order (critique M2)."""
+    """The note on the runs without a readable run time (no run record, an unreadable one, or one without times),
+    which come last in an uncertain order (critique M2; Cycle 2 review n1)."""
     m = sum(1 for r in found if r.record_time is None)
     if not m:
         return None
     one = m == 1
-    return (f"{m} {'run' if one else 'runs'} without a readable run record {'is' if one else 'are'} listed after "
-            f"the others, by when {'its' if one else 'their'} files were last written (finished), which copying a "
-            "project changes: their order is uncertain.")
+    return (f"{m} {'run' if one else 'runs'} without a readable run record or run time {'is' if one else 'are'} "
+            f"listed after the others, by when {'its' if one else 'their'} files were last written (finished), "
+            "which copying a project changes: their order is uncertain.")
+
+
+def _record_notes(selected: list[_runs.Run], sent: list[_runs.Run]) -> list[str]:
+    """The notes on the runs without a run record and on their order (Cycle 2 review m3): in full only when a row
+    sent is such a run; otherwise one count line for the selected runs without a record, and no order note."""
+    unrecorded = sum(1 for r in selected if not r.verified)
+    notes = []
+    if any(not r.verified for r in sent):
+        notes.append(f"{unrecorded} {'run has' if unrecorded == 1 else 'runs have'} no run record (state "
+                     "no_record, verified false): the run's success is not known; results may be from a failed or "
+                     "older run. Say so when you use them.")
+    elif unrecorded:
+        notes.append(f"{unrecorded} {'run has' if unrecorded == 1 else 'runs have'} no run record (state "
+                     "no_record); none is on this page.")
+    if any(r.record_time is None for r in sent):
+        order = _order_note(selected)
+        if order:
+            notes.append(order)
+    return notes
 
 
 def _names(names: list[str]) -> str:
@@ -133,17 +153,6 @@ def list_runs(ctx: AssistantContext, args: dict) -> Fit:
     other = sum(1 for r in selected if r.entry["other_flextool_version"])
     if other:
         header["other_flextool_version"] = other
-    notes = []
-    unrecorded = sum(1 for r in selected if not r.verified)
-    if unrecorded:
-        notes.append(f"{unrecorded} {'run has' if unrecorded == 1 else 'runs have'} no run record (state "
-                     "no_record, verified false): the run's success is not known; results may be from a failed or "
-                     "older run. Say so when you use them.")
-    order = _order_note(selected)
-    if order:
-        notes.append(order)
-    if notes:
-        header["notes"] = notes
     comparison = _runs.comparison_state(ctx)
     if comparison is not None and not full:
         compact = {"usable": comparison["usable"], "members": len(comparison["members"])}
@@ -154,6 +163,9 @@ def list_runs(ctx: AssistantContext, args: dict) -> Fit:
         payload = {**header, "runs": []}
         if comparison is not None:
             payload["comparison"] = comparison
+        notes = _record_notes(selected, [])
+        if notes:
+            payload["notes"] = notes
         payload["shown"] = f"no runs from offset {offset}; there are {n}"
         return Fit(payload, rows_key="runs", what="runs", hint=f"pass offset or {PAGE_HINT}")
     page = selected[offset:]
@@ -202,6 +214,9 @@ def list_runs(ctx: AssistantContext, args: dict) -> Fit:
     def build(k: int) -> dict:
         sent = page[:k]
         payload = dict(header)
+        notes = _record_notes(selected, sent)
+        if notes:
+            payload["notes"] = notes
         older = _state_counts(selected[offset + k:])
         if older:
             payload["older"] = older
@@ -227,6 +242,11 @@ def list_runs(ctx: AssistantContext, args: dict) -> Fit:
             versions = [r.folder.name for r in with_costs if r.entry["other_flextool_version"]]
             if versions:
                 payload["other_flextool_version_in"] = _names(versions)
+            # A run that succeeded without a proven optimum (time limit, Benders not converged; Cycle 2 review m1).
+            not_optimal = [f"{r.folder.name} ({r.entry['verdict']})" for r in with_costs
+                           if r.entry["verdict"] not in (None, "optimal")]
+            if not_optimal:
+                payload["not_optimal_in"] = _names(not_optimal)
         if comparison is not None:
             payload["comparison"] = comparison
         text = note(k)
@@ -249,15 +269,14 @@ def _overview(ctx: AssistantContext, args: dict) -> Fit:
     selected = _runs.select_runs(ctx, source=args.get("source"), scenario=scenario, state=args.get("state"),
                                  results_usable=args.get("results_usable"), folders=folders or None)
     if not selected:
-        _refuse_overview(ctx)
+        _refuse_empty_overview(ctx, folders[0] if one else None, scenario)
     run = selected[0]
     entry = run.entry
-    row = _full_row(run)
-    row.pop("folder", None)
+    row = _overview_row(run)
     if not entry["results_usable"]:
         return Fit({"run": run.folder.name, **row, "numbers": _overview_mod.NOT_USABLE})
     head: dict[str, Any] = {"run": run.folder.name}
-    for key in ("state", "verdict", "finished_at", "results_usable", "verified"):
+    for key in ("state", "verdict", "finished", "results_usable", "verified"):
         if key in row:
             head[key] = row[key]
     run_notes = _runs.run_notes(run)
@@ -268,6 +287,40 @@ def _overview(ctx: AssistantContext, args: dict) -> Fit:
                          "this is the newest. Name one in folders for its overview."]
     payload = _overview_mod.overview_numbers(run.folder, ctx.caps.max_results, ctx.caps.max_chars, head, ctx.redact)
     return Fit(payload)
+
+
+def _overview_row(run: _runs.Run) -> dict:
+    """The run's full row without ``folder``, its times as the compact rows give them (Cycle 2 review n3): ``finished``
+    in local ``YYYY-MM-DD HH:MM`` in place of ``started_at`` and ``finished_at``."""
+    row = {k: v for k, v in _full_row(run).items() if k not in ("folder", "started_at", "finished_at")}
+    finished = run.finished
+    if finished is None:
+        return row
+    items = list(row.items())
+    at = [k for k, _ in items].index("verdict" if "verdict" in row else "state") + 1
+    items.insert(at, ("finished", finished))
+    return dict(items)
+
+
+def _refuse_empty_overview(ctx: AssistantContext, folder: str | None, scenario: str | None) -> None:
+    """Refuse an overview whose request selects no run (Cycle 2 review m4), saying what did not match: the folder is a run
+    of another scenario, no run is of the scenario (with the closest scenarios that have runs), or the other
+    filters left nothing."""
+    from flextool.assistant.errors import close_names
+
+    every = _runs.runs(ctx)
+    if folder is not None and scenario is not None:
+        own = next((r.entry["db_scenario"] for r in every if r.folder.name == folder), None)
+        if own != scenario:
+            if own is None:
+                raise ToolError("overview_not_of_scenario", run=folder, scenario=scenario)
+            raise ToolError("overview_other_scenario", run=folder, scenario=scenario, value=own)
+    elif folder is None and scenario is not None:
+        known = sorted({r.entry["db_scenario"] for r in every if r.entry["db_scenario"] is not None})
+        if scenario not in known:
+            raise ToolError("overview_no_scenario_run", scenario=scenario,
+                            scenarios=name_list(close_names(scenario, known) or known, NAMES_MAX))
+    raise ToolError("overview_filtered_out")
 
 
 def _refuse_overview(ctx: AssistantContext) -> None:

@@ -85,6 +85,15 @@ MESSAGES: dict[str, str] = {
     "no_run_matches": "No result folder matches {run}. The folders include: {runs}.",
     "overview_one_run": ("detail overview needs one result folder: folders with one name, or scenario alone (its "
                          "newest run). The latest folders are: {runs}."),
+    "overview_other_scenario": ("The result folder {run} is a run of scenario {value}, not of {scenario}. Leave "
+                                "scenario out for its overview, or name a result folder of {scenario}."),
+    "overview_not_of_scenario": ("The result folder {run} is not a run of scenario {scenario}. Leave scenario out "
+                                 "for its overview, or name a result folder of {scenario}."),
+    "overview_no_scenario_run": ("No result folder is a run of scenario {scenario}. The scenarios with result "
+                                 "folders include: {scenarios}."),
+    "overview_filtered_out": ("No result folder passes every filter given. Leave out source, state or "
+                              "results_usable for the overview, or list_runs with the same filters to see what "
+                              "passes."),
     "unknown_run_state": "There is no run state {value}. The states of this project's runs are: {values}.",
     "run_running": "Scenario folder {run} is running now; its results are not complete.",
     "run_abandoned": ("The latest run of {run} stopped without finishing. Read the run log (get_run_log) and run "
