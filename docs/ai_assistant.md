@@ -353,12 +353,16 @@ Give Claude Code the command that starts the tools for one project. Use the abso
 claude mcp add flextool -- flextool-assistant --mcp --project-path /home/me/flextool/projects/MyProject
 ```
 
-On Windows, if `flextool-assistant` is not found, give the full path of the command in the Python environment where
-FlexTool is installed, for example:
+Claude Code does not activate your Python environment, so if `claude mcp list` says `flextool-assistant` is not
+found, give the full path of the command in the Python environment where FlexTool is installed, for example:
 
 ```bash
+claude mcp add flextool -- /home/me/venv/bin/flextool-assistant --mcp --project-path /home/me/flextool/projects/MyProject
 claude mcp add flextool -- C:\flextool\venv\Scripts\flextool-assistant.exe --mcp --project-path C:\flextool\projects\MyProject
 ```
+
+`claude mcp add` connects the tools for the folder you run it in. Add `--scope user` (before `flextool`) to use them
+in every folder. A Claude Code session that was already open sees a new connection only after it is started again.
 
 With the Spine Toolbox bundle, start the tools with the bundle's own Python (the path depends on where you unpacked
 the bundle):
