@@ -314,3 +314,15 @@ def test_the_overview_of_a_run_without_a_record_or_tables(lctx) -> None:
     assert out["run_notes"][0].startswith("No run record: the run's success is not known")
     assert out["notes"] == ["This run has no cost table (costs_discounted_p_), so its costs are not shown."]
     assert "capacity" not in out and out["slacks"]["rows"] == []
+
+
+def test_sizes(lctx) -> None:
+    """Upper bounds on what is sent (measured: default 2 095 characters / 1 125 tokens at medium, scan 2 997 /
+    1 620, overview 2 684 / 1 396; at basic 16 384 tokens 1 312 / 683, scan 1 767 / 913, overview 1 891 / 949)."""
+    basic = _with_caps(lctx, resolve_budget("small", 16_384, "loaded", local=True).result_caps)
+    for ctx, args, chars, tokens in (
+            (lctx, {"detail": "scan"}, 3_100, 1_700), (lctx, {"detail": "overview", "folders": [NEWEST]}, 2_800, 1_500),
+            (basic, {}, 1_400, 750), (basic, {"detail": "scan"}, 1_900, 1_000),
+            (basic, {"detail": "overview", "folders": [NEWEST]}, 2_000, 1_050)):
+        text = _text(ctx, **args)
+        assert len(text) <= chars and approx_tokens(text, "json") <= tokens, (args, len(text))

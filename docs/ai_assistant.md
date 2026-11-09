@@ -418,7 +418,7 @@ itself; there is no network port.
 | `--input-source SOURCE` | The input source the tools use when a question names none: its file name or its number in the FlexTool window. Without it, the agent names a source when the project has several. |
 | `--scenario NAME` | The scenario the tools use when a question names none. |
 | `--result-cap small\|medium\|large` | How much one tool result may hold (rows, characters). Default: `medium`. A smaller cap saves the agent's context; the agent can still ask for more in one call, up to a fixed limit. |
-| `--tier basic\|standard\|advanced` | The assistant level (see below). `basic` offers only the seven basic tools and starts with the small result cap; `standard` starts with the medium one and `advanced` with the large one. |
+| `--tier basic\|standard\|advanced` | The assistant level (see below). `basic` offers only the eight basic tools, in their shorter basic form, and starts with the small result cap; `standard` starts with the medium one and `advanced` with the large one. |
 | `--threads N` | Threads for FlexTool's own processing in the tools. Default: 1, so the tools never slow down a model that is running. |
 | `--verbose` | More messages on the standard error stream (the agent usually shows them in its log). |
 | `--call TOOL [ARGUMENTS]` | Run one tool from the terminal and print its result (see below). |
@@ -437,7 +437,11 @@ In Claude Code they are `/mcp__flextool__basic`, `/mcp__flextool__standard` and 
 can add your question after the name. Without a prompt the agent works with the general instructions the tools
 send when they connect. `--tier basic` limits the tools to the basic set, for agents that run a small model: any
 other tool answers "The tool … is not part of the basic level. Restart the FlexTool connection without --tier basic
-to use it." `--tier standard` and `--tier advanced` keep every tool and change only the default result cap. The
+to use it." With `--tier basic` the tools are listed in the same shorter form the basic chat sends (`list_runs`, for
+example, lists five of its arguments; the others still work when an agent sends them). Without `--tier`, and with
+`--tier standard` or `--tier advanced`, every tool is listed in its full form, also beside the `basic` prompt: an
+agent may pick any prompt, so it gets every tool. `--tier standard` and `--tier advanced` change only the default
+result cap. The
 tools do not know which model the agent uses, so they do not check the level against it: choose the level that suits
 the agent's model (see [Assistant levels](#assistant-levels)).
 
@@ -618,16 +622,34 @@ sets a value wins). `flextool-assistant --help` lists the options.
 
 Other tools keep their results short so that a project with many runs fits the agent's context:
 
-- `list_runs` gives the number of runs in each state, then one row per run: folder, state and whether its results
-  can be read. A folder whose result files were written without a run record (by an older FlexTool) has the state
-  `no_record`: its success is not known. A result read from it says `"verified": false` (`compare_runs` lists
-  such runs in `unverified`), and its run notes start with the same warning. Named folders
-  (`"folders": ["base_1"]`), a filtered list of up to five runs or `"detail": "full"` add the verdict, times,
-  FlexTool version and error; a value shared by every row is then given once (`same_in_every_row`). Filter with
-  `source`, `scenario`, `state`, `results_usable` and `folders` (names or `*` patterns; a name or pattern that
-  matches no folder is refused with the closest folder names); a long list comes in pages, and `shown` names the
-  `offset` of the next one. The states are those of the run record (`succeeded`, `failed`, `killed`,
-  `interrupted`, `crashed`, `running`, `abandoned`, `unknown`, `unreadable`, `malformed`) and `no_record`.
+- `list_runs` lists the latest runs first: without filters the newest 8 (basic) or 20 (standard, advanced), with
+  the number of runs in each state and, in `older`, the counts of the runs not shown; `"all": true` lists every
+  run in the same order. A row is folder, state, `finished` (local time) and whether its results can be read. Runs
+  with a run record come first, by when they finished (a run that has not finished, by when it started). A folder
+  whose result files were written without a run record (by an older FlexTool) has the state `no_record`: its
+  success is not known. Such runs come after the others, by when their files were last written. Copying a project
+  changes those times, so the listing says that their order is uncertain. A result read from such a run says
+  `"verified": false` (`compare_runs` lists such runs in `unverified`), and its run notes start with the same
+  warning. Named folders (`"folders": ["base_1"]`), a filtered list of up to five runs or `"detail": "full"` add
+  the verdict, times, FlexTool version and error; a value shared by every row is then given once
+  (`same_in_every_row`). Filter with `source`, `scenario`, `state`, `results_usable` and `folders` (names or `*`
+  patterns; a name or pattern that matches no folder is refused with the closest folder names); a filtered list
+  holds every match, newest first. A long list comes in pages, and `shown` names the `offset` of the next one. The
+  states are those of the run record (`succeeded`, `failed`, `killed`, `interrupted`, `crashed`, `running`,
+  `abandoned`, `unknown`, `unreadable`, `malformed`) and `no_record`.
+- `list_runs` with `"detail": "scan"` adds three numbers to each row: `total_cost` (the discounted cost over all
+  periods, as the model minimises it, from `costs_discounted_p_`), `penalty_cost` (its slack penalty categories)
+  and `largest_cost` (the category with the largest cost). Compare totals only between runs over the same periods.
+  A run whose results may not be used gets no numbers, and `no_cost_table` names the runs without the table. A
+  given `detail` always wins: `"folders": ["a_1", "b_1"], "detail": "scan"` gives the costs of those two runs.
+- `list_runs` with `"detail": "overview"` and one folder (or a `scenario` alone, for its newest run) gives one run in
+  one call: its state and verdict, its costs by category (largest first), its capacity per unit, connection and
+  storage (existing in the first period, invested added up over the periods, total in the last period; divested
+  and capacity in construction when there is any) and the slacks it used, each with its largest entry. Capacity is
+  never added up over periods or over entities. Entities with new, divested or in-construction capacity are listed
+  first. When the overview is too long for one result, it drops, in this order: the cost categories under 1 % of
+  the costs, entities beyond three per class, slacks beyond three, categories beyond three, then fewer entities.
+  Each cut says what it shows. A run whose results may not be used gets its state and error, and no numbers.
 - `list_sources` with `"scenario": "coal_chp"` gives that scenario's alternatives, highest rank first, and its base
   alternative.
 - `compare_runs` without `group_by`, `agg`, `sort` and `top_n` gives each run's totals per period and category
