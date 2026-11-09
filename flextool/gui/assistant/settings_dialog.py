@@ -384,10 +384,7 @@ class AssistantSettingsDialog(_AssistantDialog):
             widget.state(enabled)
         if preset is not None:
             self.level_box.state(["readonly"])
-        from flextool.assistant.providers import lists_latest_only
-
-        self.show_all_button.state(["!disabled"] if preset is not None and lists_latest_only(preset)
-                                   else ["disabled"])
+        self.show_all_button.state(["!disabled"] if preset is not None else ["disabled"])
         self._clear_list()
         self.model_var.set(self._models.get(preset.id, "") if preset is not None else "")
         self._show_saved_list()
@@ -805,8 +802,8 @@ class AssistantSettingsDialog(_AssistantDialog):
         self.models_label.configure(text="")
 
     def _show_list(self, *, select: bool = False) -> None:
-        """The model box from the whole list: the newest stable version of each model (all of them with "Show all
-        models", or for a server on this computer).  The chosen model stays in the box when the default list leaves
+        """The model box from the whole list: the chat models, and for a remote service only the newest stable
+        version of each (all of them with "Show all models").  The chosen model stays in the box when the default list leaves
         it out, marked "(pre-release)", "(alias)", "(older version)", "(not a chat model)" or "(not available to
         your account)"; it is never replaced.  A model a test found not available to the account is marked so also
         under "Show all models".  *select*: the chosen model is the selected entry."""

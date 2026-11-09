@@ -408,7 +408,8 @@ def test_the_list_shows_the_newest_stable_versions_and_keeps_the_chosen_older_on
                                                                                  user_cache_in_tmp):
     """A remote service's list shows the newest stable version of each model; the chosen model, when older, stays in the
     list marked "(older version)" and is not replaced; "Show all models" shows the whole list, which is what is
-    saved.  A server on this computer lists all its models (the box is off)."""
+    saved.  "Show all models" is on for a server on this computer too: its list hides the models that are not
+    chat models."""
     from flextool.assistant.settings import ProviderSettings, Settings, save_settings
 
     monkeypatch.setenv("GEMINI_API_KEY", "test-key")
@@ -433,7 +434,29 @@ def test_the_list_shows_the_newest_stable_versions_and_keeps_the_chosen_older_on
     assert list(dialog.model_box["values"]) == ["gemini-2.5-flash", "gemini-2.5-pro", "gemini-3-flash"]
     assert dialog.models_label.cget("text") == "3 models"
     dialog.select_preset("ollama")
-    assert "disabled" in dialog.show_all_button.state()
+    assert "disabled" not in dialog.show_all_button.state()
+
+
+def test_a_server_on_this_computer_hides_non_chat_models_and_keeps_a_chosen_one_marked(
+        open_dialog, host, fake_backends, user_config_in_tmp, user_cache_in_tmp):
+    """Ollama's list hides an embedding model but keeps an older chat model; a chosen embedding model stays,
+    marked; "Show all models" shows every model."""
+    from flextool.assistant.settings import ProviderSettings, Settings, save_settings
+
+    backend = FakeBackend([], models=[ModelEntry("nomic-embed-text:latest"), ModelEntry("qwen2.5:7b"),
+                                      ModelEntry("qwen3:8b")])
+    fake_backends.append(backend)
+    save_settings(Settings(provider=ProviderSettings(preset="ollama", model="nomic-embed-text:latest")),
+                  user_config_in_tmp)
+    dialog = open_dialog(backend_factory=lambda preset, conn: backend)
+    assert "disabled" not in dialog.show_all_button.state()
+    dialog.refresh_models()
+    pump(host, lambda: dialog.models_label.cget("text") == "2 models")
+    assert list(dialog.model_box["values"]) == ["nomic-embed-text:latest (not a chat model)", "qwen2.5:7b",
+                                                "qwen3:8b"]
+    assert dialog.model_var.get() == "nomic-embed-text:latest"
+    dialog.show_all_button.invoke()
+    assert list(dialog.model_box["values"]) == ["nomic-embed-text:latest", "qwen2.5:7b", "qwen3:8b"]
 
 
 @pytest.mark.parametrize(("chosen", "mark"), [("gemini-3.1-flash-preview", " (pre-release)"),

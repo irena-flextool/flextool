@@ -337,8 +337,13 @@ def test_a_word_counts_only_whole():
     assert is_chat_model("dall-3") and not is_chat_model("dall-e-2")
 
 
-def test_a_server_on_this_computer_shows_its_non_chat_models():
-    from flextool.assistant.providers import shown_models
+def test_a_server_on_this_computer_hides_its_non_chat_models_but_keeps_older_versions():
+    """Ollama and LM Studio hide what is not a chat model (owner decision 2026-11-09) but list every chat model
+    installed: an older version and a ``latest`` tag stay."""
+    from flextool.assistant.providers import hidden_reason, shown_models
 
-    ids = ["nomic-embed-text:latest", "qwen3:8b"]
-    assert shown_models(PRESETS["ollama"], ids) == ids
+    ids = ["nomic-embed-text:latest", "qwen2.5:7b", "qwen3:8b", "whisper-small"]
+    for preset in ("ollama", "lmstudio"):
+        assert shown_models(PRESETS[preset], ids) == ["qwen2.5:7b", "qwen3:8b"]
+        assert shown_models(PRESETS[preset], ids, show_all=True) == ids
+    assert hidden_reason("nomic-embed-text:latest") == hidden_reason("whisper-small") == "not-chat"

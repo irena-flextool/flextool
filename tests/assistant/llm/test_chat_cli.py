@@ -721,6 +721,27 @@ def test_list_models_shows_the_newest_stable_versions_and_all_with_all(fake_back
     assert chat.stderr.getvalue() == "Not shown: 2 models that are not chat models; add --all to list them.\n"
 
 
+def test_list_models_of_a_server_on_this_computer_hides_only_the_non_chat_models(fake_backends):
+    listed = [ModelEntry("nomic-embed-text:latest"), ModelEntry("qwen2.5:7b"), ModelEntry("qwen3:8b")]
+    models = Models([], fake_backends, models=listed)
+    term = terminal(tty=False)
+    assert chat_cli.main(["--provider", "ollama", "--list-models"], backend_factory=models, terminal=term) == 0
+    assert term.stdout.getvalue().splitlines() == ["qwen2.5:7b", "qwen3:8b"]
+    assert term.stderr.getvalue() == "Not shown: 1 model that is not a chat model; add --all to list it.\n"
+    every = terminal(tty=False)
+    assert chat_cli.main(["--provider", "ollama", "--list-models", "--all"], backend_factory=models,
+                         terminal=every) == 0
+    assert every.stdout.getvalue().splitlines() == ["nomic-embed-text:latest", "qwen2.5:7b", "qwen3:8b"]
+
+
+def test_the_help_shows_how_to_list_another_services_models(monkeypatch):
+    from flextool.assistant.cli import build_parser
+
+    monkeypatch.setenv("COLUMNS", "400")                         # no line break inside the example
+    help_text = build_parser().format_help()
+    assert "List another service's models: flextool-assistant --list-models --provider ollama" in help_text
+
+
 # --- --test-model -------------------------------------------------------------------------------------------------
 def test_test_model_needs_the_data_notice_and_reports_the_answer(project, fake_backends):
     import re

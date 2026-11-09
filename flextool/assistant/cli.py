@@ -39,8 +39,8 @@ DATA_NOTICE = (
 )
 EXAMPLES = (
     "Chat in the terminal: flextool-assistant --project-path /absolute/path/to/project. One question: add -q "
-    "\"your question\". For Claude Code: claude mcp add flextool -- flextool-assistant --mcp --project-path "
-    "/absolute/path/to/project"
+    "\"your question\". List another service's models: flextool-assistant --list-models --provider ollama. For "
+    "Claude Code: claude mcp add flextool -- flextool-assistant --mcp --project-path /absolute/path/to/project"
 )
 MCP_MISSING = ("The connection for AI assistants could not load the package mcp: {error}. Reinstall FlexTool with "
                "Update FlexTool.")
@@ -111,8 +111,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="go on with the newest saved conversation of the project, or the one with this id")
     parser.add_argument("--all", dest="all_models", action="store_true",
                         help="with --list-models: every model of the list, also pre-releases, -latest aliases, older "
-                             "versions and models that are not chat models (by default only the newest stable "
-                             "version of each chat model of a remote service)")
+                             "versions and models that are not chat models (by default only chat models, and for "
+                             "a remote service only the newest stable version of each)")
     parser.add_argument("--key-file", action="store_true",
                         help="with --set-key: store the key unencrypted in a file of your user folder instead of "
                              "the system keyring")

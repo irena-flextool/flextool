@@ -325,19 +325,18 @@ def lists_latest_only(preset: Preset) -> bool:
 def shown_models(preset: Preset, ids: Iterable[str], *, show_all: bool = False,
                  unavailable: Iterable[str] = ()) -> list[str]:
     """The ids of a model list as shown: all of them with *show_all*; else without the models a test found not
-    available to the account (*unavailable*), and for a remote service only the chat models (:func:`is_chat_model`)
-    and of those the newest stable version of each family (no pre-releases, no ``latest`` aliases).  The saved list
-    keeps every id; this runs when the list is shown."""
+    available to the account (*unavailable*), only the chat models (:func:`is_chat_model`), and for a remote service
+    of those the newest stable version of each family (no pre-releases, no ``latest`` aliases).  A server on this
+    computer keeps every chat model the user installed.  The saved list keeps every id; this runs when the list is
+    shown."""
     from flextool.assistant.model_versions import latest_ids
 
     ids = list(ids)
     if show_all:
         return ids
     closed = set(unavailable)
-    ids = [i for i in ids if i not in closed]
-    if not lists_latest_only(preset):
-        return ids
-    return latest_ids(i for i in ids if is_chat_model(i))
+    ids = [i for i in ids if i not in closed and is_chat_model(i)]
+    return latest_ids(ids) if lists_latest_only(preset) else ids
 
 
 def hidden_reason(model: str, unavailable: Iterable[str] = ()) -> str:
