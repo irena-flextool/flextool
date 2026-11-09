@@ -526,7 +526,8 @@ def test_test_model_asks_the_data_notice_then_reports_the_answer(open_dialog, ho
     confirm = _open_confirm(dialog, host)
     assert "Before sending to Google Gemini" in str(confirm.title())
     assert factory.made == []                                    # nothing is sent before the answer
-    confirm.action_button.invoke()
+    pump(host, lambda: "disabled" not in confirm.send_button.state(), timeout=3.0)
+    confirm.send_button.invoke()
     pump(host, lambda: dialog.test_label.cget("text").startswith("gemini-3.8-flash is available"), timeout=5)
     assert dialog.test_button.cget("text") == "Test model"
     assert factory.threads and threading.main_thread() not in factory.threads
@@ -540,6 +541,40 @@ def test_test_model_asks_the_data_notice_then_reports_the_answer(open_dialog, ho
     dialog.test_button.invoke()
     pump(host, lambda: dialog.test_label.cget("text").startswith("gemini-3.8-flash is available"), timeout=5)
     assert dialog.confirm is None
+
+
+def test_the_test_notice_ignores_send_for_half_a_second(open_dialog, host, monkeypatch, fake_backends,
+                                                       user_config_in_tmp):
+    """Review G18, C7-n4: the model test's data notice records the same acceptance as a chat's, so it has the
+    chat notice's guard: focus on Cancel, Return does not accept, [Send to …] ignored until 500 ms after it is
+    mapped.  Before, a plain question whose action button accepted at once (no chat line either way)."""
+    from flextool.assistant import endpoint
+    from flextool.assistant.llm_adapter import Message, Reply, Usage
+    from tests.gui.assistant.tk_helpers import key
+
+    factory = TestModels([Reply(Message("assistant", "OK"), "end", None, Usage(9, 0, 0, 1))], fake_backends)
+    dialog = _gemini_dialog(open_dialog, monkeypatch, user_config_in_tmp, factory, "gemini-3.8-flash")
+    url = dialog._checked_address()
+    consent = endpoint.consent_key("gemini", url, endpoint.route_for(PRESETS["gemini"], url,
+                                                                      model="gemini-3.8-flash"))
+    dialog.test_button.invoke()
+    confirm = _open_confirm(dialog, host)
+    send = next(w for w in widgets(confirm)
+                if isinstance(w, ttk.Button) and str(w.cget("text")) == "Send to Google Gemini")
+    assert "disabled" in send.state()                            # refused while it is still disabled
+    assert confirm.focus_lastfor() is confirm.cancel_button
+    send.invoke()
+    key(confirm.cancel_button, "<Return>")
+    key(confirm, "<Return>")
+    pump(host, timeout=0.1)
+    assert factory.made == [] and endpoint.needs_consent(consent, user_config_in_tmp)
+    assert dialog.confirm is confirm and confirm.winfo_exists()
+    assert not any(text.startswith("Chat ") for text in _texts(confirm))
+    pump(host, lambda: "disabled" not in send.state(), timeout=3.0)
+    send.invoke()
+    pump(host, lambda: dialog.test_label.cget("text").startswith("gemini-3.8-flash is available"), timeout=5)
+    assert not endpoint.needs_consent(consent, user_config_in_tmp)
+    assert len(factory.made[0].requests) == 1
 
 
 def test_a_model_closed_to_the_account_is_marked_until_refresh(open_dialog, host, monkeypatch, fake_backends,
@@ -767,3 +802,41 @@ def test_cancel_discards(open_dialog, host, user_config_in_tmp):
     assert not _exists(dialog)
     assert not (user_config_in_tmp / "settings.json").exists()
     assert saved == []
+
+
+def test_a_closed_settings_dialog_retires_its_variables(host, tk_root, user_config_in_tmp):
+    """Review G18, C7-m5: every Tk variable of the closed settings dialog (the traced ones too, and the
+    knobs' check boxes) is unset at the close on the Tk thread, so a worker that collects the dialog needs no Tcl
+    call (before: each ``__del__`` waited for the Tk thread for the whole 3 s wait)."""
+    import gc
+    import time
+    import weakref
+
+    from flextool.assistant.settings import ProviderSettings, Settings, save_settings
+    from tests.gui.assistant.tk_helpers import collect_on_a_worker
+
+    save_settings(Settings(provider=ProviderSettings(preset="openrouter", model="x/y")), user_config_in_tmp)
+    gc.collect()
+    gc.disable()
+    try:
+        dialog = AssistantSettingsDialog(host, None, None, config_root=user_config_in_tmp)
+        pump(host, lambda d=dialog: d.winfo_viewable())
+        variables = [dialog.provider_var, dialog.address_var, dialog.model_var, dialog.level_var,
+                     dialog.free_var, dialog.parallel_var, dialog.retention_var, *dialog.knob_vars.values()]
+        assert dialog.knob_vars                      # OpenRouter's privacy check boxes
+        names = [str(v) for v in variables]
+        dialog.close()
+        assert all(v._tk is None for v in variables)
+        assert not any(tk_root.tk.getboolean(tk_root.tk.call("info", "exists", n)) for n in names)
+        ref = weakref.ref(dialog)
+        del dialog, variables
+        # The dialog's own short threads (the key status, the model list) end and drop their references.
+        deadline = time.monotonic() + 5
+        while any(t.name.startswith("flextool-assistant") for t in threading.enumerate()):
+            assert time.monotonic() < deadline, "the settings dialog's threads did not end"
+            pump(host, timeout=0.02)
+        took = collect_on_a_worker(tk_root, wait=3.0)
+    finally:
+        gc.enable()
+    assert ref() is None
+    assert took < 0.5

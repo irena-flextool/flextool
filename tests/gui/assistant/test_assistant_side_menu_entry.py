@@ -23,6 +23,7 @@ from flextool.gui.assistant.entry import AssistantEntry
 from flextool.gui.data_models import GlobalSettings
 from flextool.gui.settings_io import load_global_settings, save_global_settings
 from tests.assistant.gui_support.worker_rig import LOCAL, Tools, messages_on_disk, save_provider, say, tool_call
+from tests.gui.assistant.tk_helpers import in_mainloop as pump_in_mainloop
 from tests.gui.assistant.tk_helpers import pump
 from tests.gui.assistant.window_rig import WORK_AREA, Backends, ask, no_probe, wait_idle
 
@@ -303,3 +304,45 @@ def test_the_welcome_buttons_from_each_entry_path(main: FakeMain, monkeypatch: p
         assert entry.window is window and entry.settings_dialog is None
     finally:
         entry.close_window()
+
+
+class _FinishingWorker:
+    """A closed chat's worker that, while it ends, drops the last reference to a Tk variable (a finalizer that
+    calls Tcl, as a collected window's would)."""
+
+    def __init__(self, project_path: Path, var: tk.Variable) -> None:
+        import threading
+
+        self.project_path = project_path
+        self.exited = threading.Event()
+        self.go = threading.Event()
+        self._box = [var]
+        self.thread = threading.Thread(target=self._run, name="test-finishing-worker", daemon=True)
+        self.thread.start()
+
+    def _run(self) -> None:
+        self.go.wait(5)
+        self._box.clear()               # Variable.__del__ here: its Tcl calls wait for the Tk thread
+        self.exited.set()
+
+
+def test_a_project_change_serves_a_workers_tcl_call_while_it_waits(main: FakeMain, tmp_path: Path) -> None:
+    """Review G18 critique M1: the Tk thread's wait for the workers serves the Tcl calls they hand it.  Before,
+    a worker whose Tcl call started during the wait was held until the budget ran out, so the change was refused
+    (a rename "still finishing a tool call")."""
+    entry = AssistantEntry(main)
+    var = tk.StringVar(main, value="kept by the worker")
+    name = str(var)
+    worker = _FinishingWorker(tmp_path / "projects" / "Project", var)
+    del var
+    entry._finishing.append(worker)
+
+    def change() -> tuple[bool, float]:
+        start = time.monotonic()
+        worker.go.set()
+        return entry.close_for_project(budget=3.0), time.monotonic() - start
+
+    ok, took = pump_in_mainloop(main, change)
+    worker.thread.join(5)
+    assert ok and took < 1.0
+    assert not main.tk.getboolean(main.tk.call("info", "exists", name))

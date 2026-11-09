@@ -118,3 +118,52 @@ def closes(menu: tk.Menu, timeout: float = 2.0) -> bool:
             pass
         return False
     return True
+
+
+def in_mainloop(root: tk.Misc, fn: Callable[[], object]) -> object:
+    """Run *fn* from inside ``root.mainloop()`` and return its value (re-raising what it raised): only while the
+    Tk thread is in its main loop does a Tcl call from another thread wait for it, as in the running FlexTool."""
+    out: dict[str, object] = {}
+
+    def run() -> None:
+        try:
+            out["value"] = fn()
+        except BaseException as exc:  # noqa: BLE001 — handed to the test
+            out["error"] = exc
+        finally:
+            root.quit()
+
+    root.after(0, run)
+    root.mainloop()
+    if "error" in out:
+        raise out["error"]  # type: ignore[misc]
+    return out.get("value")
+
+
+def collect_on_a_worker(root: tk.Misc, wait: float = 3.0) -> float:
+    """A worker thread runs the cyclic garbage collector while the Tk thread blocks in a plain wait of *wait*
+    seconds for it (inside the main loop, as a project change waits for a worker).  Returns how long the collection
+    took: about *wait* when a finalizer of the garbage needed the Tk thread (review G18, C7-m5)."""
+    import gc
+    import threading
+
+    done = threading.Event()
+    took: list[float] = []
+
+    def worker() -> None:
+        start = time.perf_counter()
+        gc.collect()
+        took.append(time.perf_counter() - start)
+        done.set()
+
+    def blocked() -> None:
+        threading.Thread(target=worker, name="test-gc-worker", daemon=True).start()
+        done.wait(wait)
+
+    in_mainloop(root, blocked)
+    deadline = time.monotonic() + wait + 2.0
+    while not done.is_set() and time.monotonic() < deadline:
+        root.update()                   # a worker still waiting for the Tk thread gets it now
+        done.wait(0.01)
+    assert took, "the worker's collection never ended"
+    return took[0]

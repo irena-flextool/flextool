@@ -405,3 +405,51 @@ def test_typing_in_a_dialog_reaches_no_main_window_shortcut(tk_root, host):
         tk_root.unbind_all("<Key-e>")
         tk_root.unbind_all("<F9>")
 
+
+
+# --- a closed dialog and the garbage collector (review G18, C7-m5) ---------------------------------------------
+def _retired(root: tk.Misc, var: tk.Variable, name: str) -> bool:
+    return var._tk is None and not root.tk.getboolean(root.tk.call("info", "exists", name))
+
+
+def test_a_closed_dialog_retires_its_variables_and_a_worker_collects_it_at_once(tk_root, host):
+    """Closed, the rename dialog lives on in reference cycles (its widgets name it as master).  Its variable is
+    retired at the close, on the Tk thread, so a worker that collects the dialog needs no Tcl call.  Before, the
+    variable's ``__del__`` on the worker waited for the Tk thread for the whole 3 s wait."""
+    import gc
+    import weakref
+
+    from tests.gui.assistant.tk_helpers import collect_on_a_worker
+
+    gc.collect()
+    gc.disable()
+    try:
+        names: list[str | None] = []
+        dialog = RenameChatDialog(host, "Hydrogen", names.append)
+        pump(host, lambda d=dialog: d.grab.held)
+        var, name = dialog.var, str(dialog.var)
+        dialog.cancel()
+        assert names == [None]
+        assert _retired(tk_root, var, name)
+        ref = weakref.ref(dialog)
+        del dialog, var
+        pump(host, timeout=0.05)
+        assert ref() is not None                    # kept by its cycles: the collector's to free
+        took = collect_on_a_worker(tk_root, wait=3.0)
+    finally:
+        gc.enable()
+    assert ref() is None
+    assert took < 0.5
+
+
+def test_a_dialog_destroyed_with_its_parent_retires_its_variables(tk_root):
+    parent = tk.Toplevel(tk_root)
+    parent.geometry("300x200+40+40")
+    parent.update()
+    names: list[str | None] = []
+    dialog = RenameChatDialog(parent, "Hydrogen", names.append)
+    pump(parent, lambda: dialog.grab.held)
+    var, name = dialog.var, str(dialog.var)
+    parent.destroy()
+    assert _retired(tk_root, var, name)
+    assert dialog.grab.dialog is None and tk_root.grab_current() is None

@@ -6,7 +6,8 @@ modal dialog of the assistant shares.
   (:func:`with_welcome`); any close records that it was seen (on a short daemon thread), then the chosen window
   opens: the chat, the settings, or none for Close.  [Open chat] stays disabled until the settings have been saved
   with a provider.  "How this works" in the chat window shows it again without recording anything.
-* :class:`ConsentDialog` — the data notice before the first question goes to a remote route (§8.3).  Focus starts
+* :class:`ConsentDialog` — the data notice before the first question goes to a remote route (§8.3), and before
+  the settings' model test sends to one.  Focus starts
   on Cancel, Return does not accept, and the accept button ignores activation for the first 500 ms after the
   dialog is mapped, so a key still being typed in the chat cannot accept it.
 * :class:`RenameChatDialog` — one entry for the chat's name (§4.3); empty goes back to the number.
@@ -15,6 +16,8 @@ modal dialog of the assistant shares.
 The dialogs are callback-based (never ``wait_window``), centred on their parent, closed by Escape and the window
 button as Cancel, and modal through :class:`ModalGrab`, which takes the grab once the dialog is mapped (retrying for
 at most 5 s), and gives a grab another dialog held back when it closes — also when it is destroyed with its parent.
+A dialog being destroyed retires its Tk variables on the Tk thread (:func:`retire_variable`), so the garbage
+collector never needs the Tk thread for them on a worker thread.
 :func:`install_shield` keeps the main window's application-wide shortcuts from firing while the user types in an
 assistant window.
 """
@@ -115,6 +118,8 @@ class ModalGrab:
         dialog.bind("<Destroy>", self._on_destroy, add="+")
 
     def start(self) -> None:
+        if self.dialog is None:
+            return
         try:
             current = self.dialog.grab_current()
         except (tk.TclError, KeyError):
@@ -124,15 +129,16 @@ class ModalGrab:
         self._try()
 
     def _try(self) -> None:
-        if self._released or not self._exists(self.dialog):
+        dialog = self.dialog
+        if self._released or dialog is None or not self._exists(dialog):
             return
         try:
-            self.dialog.grab_set()
+            dialog.grab_set()
         except tk.TclError:
             if time.monotonic() - self._started < GRAB_RETRY_S:
-                self.dialog.after(GRAB_STEP_MS, self._try)
+                dialog.after(GRAB_STEP_MS, self._try)
             else:
-                logger.info("The %s dialog never became visible, so it is not modal.", self.dialog.title())
+                logger.info("The %s dialog never became visible, so it is not modal.", dialog.title())
             return
         self.held = True
         target = self._focus() if self._focus is not None else None
@@ -153,7 +159,7 @@ class ModalGrab:
         if self._released:
             return
         self._released = True
-        if self.held:
+        if self.held and self.dialog is not None:
             try:
                 self.dialog.grab_release()
             except tk.TclError:
@@ -161,6 +167,9 @@ class ModalGrab:
         self.held = False
         previous = self._previous
         self._previous = None
+        # The dialog no longer needs its grab: dropping the references keeps a closed dialog from being held by it.
+        self.dialog = None
+        self._focus = None
         if previous is not None and self._exists(previous):
             try:
                 previous.grab_set()
@@ -168,7 +177,7 @@ class ModalGrab:
                 pass
 
     def _on_destroy(self, event: tk.Event) -> None:  # type: ignore[type-arg]
-        if event.widget is self.dialog:
+        if self.dialog is not None and event.widget is self.dialog:
             self.release()
 
 
@@ -207,6 +216,20 @@ class _AssistantDialog(tk.Toplevel):
         self.protocol("WM_DELETE_WINDOW", self.cancel)
         self.grab = ModalGrab(self, focus=self.initial_focus)
         self._parent = parent
+        self.bind("<Destroy>", self._retire, add="+")
+
+    def _retire(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """The dialog is being destroyed (closed, or with its parent): on the Tk thread, give the grab back and
+        retire its Tk variables (review G18, C7-m5).  A closed dialog lives on in reference cycles (its widgets
+        name it as their master) until the cyclic garbage collector runs, on whichever thread allocates then — a
+        worker's.  A variable's ``__del__`` there would call Tcl, which waits for the Tk thread, which may itself
+        be waiting for that worker.  A retired variable is unset and its trace commands deleted here, and its
+        ``_tk`` is ``None``, so its later ``__del__`` returns at once (tkinter's own guard)."""
+        if event.widget is not self:
+            return
+        self.grab.release()
+        for var in _tk_variables(vars(self).values()):
+            retire_variable(var)
 
     def initial_focus(self) -> tk.Misc | None:
         return None
@@ -242,6 +265,30 @@ class _AssistantDialog(tk.Toplevel):
         row = ttk.Frame(self.body)
         row.pack(fill="x", pady=(self.lh, 0))
         return row
+
+
+def _tk_variables(values: object) -> list[tk.Variable]:
+    """The Tk variables among *values* and one level into the dicts, lists and tuples among them."""
+    found: list[tk.Variable] = []
+    for value in values:  # type: ignore[attr-defined]
+        if isinstance(value, tk.Variable):
+            found.append(value)
+        elif isinstance(value, dict):
+            found += [v for v in value.values() if isinstance(v, tk.Variable)]
+        elif isinstance(value, (list, tuple)):
+            found += [v for v in value if isinstance(v, tk.Variable)]
+    return found
+
+
+def retire_variable(var: tk.Variable) -> None:
+    """Unset *var* in Tcl and delete its trace commands now (Tk thread), so its ``__del__`` needs no Tcl later."""
+    if getattr(var, "_tk", None) is None:
+        return
+    try:
+        var.__del__()
+    except tk.TclError:
+        pass
+    var._tk = None
 
 
 class WelcomeDialog(_AssistantDialog):
@@ -390,10 +437,11 @@ def with_welcome(parent: tk.Misc, then: Callable[[], None], *, open_chat: Callab
 
 
 class ConsentDialog(_AssistantDialog):
-    """The data notice of one chat.  *on_answer(accepted)* is called once: ``True`` from [Send to …], ``False``
-    from Cancel, Escape, the window button or the dialog being destroyed with its parent."""
+    """The data notice of one chat (*chat_label*), or of the settings' model test (*chat_label* ``None``: no chat
+    line).  *on_answer(accepted)* is called once: ``True`` from [Send to …], ``False`` from Cancel, Escape, the
+    window button or the dialog being destroyed with its parent."""
 
-    def __init__(self, parent: tk.Misc, provider_label: str, notice: str, indicator: str, chat_label: str,
+    def __init__(self, parent: tk.Misc, provider_label: str, notice: str, indicator: str, chat_label: str | None,
                  on_answer: Callable[[bool], None]) -> None:
         super().__init__(parent, strings.NOTICE_TITLE.format(provider=provider_label))
         self._on_answer = on_answer
@@ -401,8 +449,9 @@ class ConsentDialog(_AssistantDialog):
         self._armed = False
         self.notice_label = self.paragraph(self.body, notice)
         self.indicator_label = self.paragraph(self.body, indicator, pady=(self.lh // 2, 0))
-        self.chat_label = self.paragraph(self.body, strings.NOTICE_CHAT.format(number=chat_label),
-                                         pady=(self.lh // 2, 0))
+        # No chat for the settings' model test (review G18, C7-n4): the notice and its guard are the same.
+        self.chat_label = None if chat_label is None else self.paragraph(
+            self.body, strings.NOTICE_CHAT.format(number=chat_label), pady=(self.lh // 2, 0))
         row = self.buttons()
         self.cancel_button = ttk.Button(row, text=strings.CANCEL, command=self.cancel)
         self.cancel_button.pack(side="right")

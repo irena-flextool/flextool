@@ -18,6 +18,8 @@
 """
 from __future__ import annotations
 
+import _tkinter
+import gc
 import importlib.util
 import logging
 import sys
@@ -53,6 +55,8 @@ CLOSE_RESERVE_S = 0.5
 #: How long the runtime-context writer may take to delete its file at a project change.
 WRITER_STOP_S = 1.0
 STEP_S = 0.05
+#: How often a blocking wait of the Tk thread serves the calls other threads hand it.
+PUMP_STEP_S = 0.02
 
 FindSpec = Callable[[str], Any]
 
@@ -336,11 +340,12 @@ class AssistantEntry:
         self._finishing = [w for w in self._finishing if not w.exited.is_set()]
         return live
 
-    @staticmethod
-    def _wait(workers: list[AssistantWorker], deadline: float) -> bool:
-        """Wait until every worker has ended or *deadline* (``time.monotonic``) passes; ``True`` when all ended."""
+    def _wait(self, workers: list[AssistantWorker], deadline: float) -> bool:
+        """Wait until every worker has ended or *deadline* (``time.monotonic``) passes; ``True`` when all ended.
+        The Tk thread keeps serving the Tcl calls other threads hand it meanwhile (:func:`pumped_wait`)."""
+        collect_tk_garbage()
         for worker in workers:
-            if not worker.exited.wait(max(0.0, deadline - time.monotonic())):
+            if not pumped_wait(self.main, worker.exited.is_set, deadline):
                 return False
         return True
 
@@ -457,7 +462,7 @@ class AssistantEntry:
         self._stop_context(wait=0.0)
         open_chats = getattr(window, "_last_open_chats_write", None) if window is not None else None
         if open_chats is not None:
-            open_chats.join(max(0.0, deadline - time.monotonic()))
+            pumped_wait(self.main, lambda: not open_chats.is_alive(), deadline)
         # The workers get the budget but a reserve for the writer and the purge.
         reserve = min(CLOSE_RESERVE_S, (deadline - time.monotonic()) / 3)
         self._wait(workers + self.live_workers(), deadline - reserve)
@@ -466,6 +471,45 @@ class AssistantEntry:
         thread = self._purge()
         if thread is not None:
             thread.join(max(0.0, deadline - time.monotonic()))
+
+
+#: What the Tk thread serves while it waits: the calls other threads hand it (and file events), never the
+#: window events (a click or a key) or the ``after`` timers.
+_PUMP_FLAGS = _tkinter.FILE_EVENTS | _tkinter.DONT_WAIT
+#: The most queued calls served in one step of a wait.
+_PUMP_BURST = 100
+
+
+def pumped_wait(main: Any, done: Callable[[], bool], deadline: float, step: float = PUMP_STEP_S) -> bool:
+    """Wait on the Tk thread until *done()* or *deadline* (``time.monotonic``); ``True`` when *done*.
+
+    Every *step* seconds the Tk thread serves the Tcl calls other threads have handed it (review G18 critique M1):
+    a worker that touches a Tk object — a ``Variable`` or ``PhotoImage`` finalizer run by its garbage collection,
+    for one — waits for the Tk thread, so a plain wait for that worker would last its whole budget.  Window events
+    and timers stay queued (``FILE_EVENTS`` without ``WINDOW_EVENTS`` / ``TIMER_EVENTS``), so nothing the user does
+    runs during the wait.  *main* without a Tk interpreter (a test stand-in) is a plain wait."""
+    app = getattr(main, "tk", None)
+    pump = getattr(app, "dooneevent", None)
+    while not done():
+        left = deadline - time.monotonic()
+        if left <= 0:
+            return done()
+        if pump is not None:
+            try:
+                for _ in range(_PUMP_BURST):
+                    if not pump(_PUMP_FLAGS):
+                        break
+            except (tk.TclError, RuntimeError):
+                pump = None
+        time.sleep(min(step, left))
+    return True
+
+
+def collect_tk_garbage() -> None:
+    """Collect the garbage on the Tk thread before it blocks (review G18, C7-m5): finalizers of Tk objects left
+    in reference cycles then run here, not on a worker that would wait for the Tk thread (the pump of
+    :func:`pumped_wait` covers what becomes garbage during the wait)."""
+    gc.collect()
 
 
 def _resolved(path: Path) -> Path:

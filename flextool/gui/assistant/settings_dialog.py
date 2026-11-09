@@ -51,7 +51,7 @@ from tkinter import ttk
 from typing import TYPE_CHECKING, Any
 
 from flextool.gui.assistant import strings
-from flextool.gui.assistant.notices import ConfirmDialog, _AssistantDialog
+from flextool.gui.assistant.notices import ConfirmDialog, ConsentDialog, _AssistantDialog
 
 if TYPE_CHECKING:
     from flextool.assistant.providers import Knob, Preset
@@ -115,7 +115,7 @@ class AssistantSettingsDialog(_AssistantDialog):
         self.generation = 0
         #: Background results dropped because the dialog closed or the provider changed (for the tests).
         self.stale_results = 0
-        self.confirm: ConfirmDialog | None = None
+        self.confirm: ConfirmDialog | ConsentDialog | None = None
         self.saving = False
         try:
             self._settings = load_settings(config_root)
@@ -920,9 +920,8 @@ class AssistantSettingsDialog(_AssistantDialog):
 
             self._run(run, "flextool-assistant-model-test")
 
-        self.confirm = ConfirmDialog(self, strings.NOTICE_TITLE.format(provider=route.label),
-                                     f"{notice}\n\n{indicator}", strings.NOTICE_SEND.format(provider=route.label),
-                                     answered)
+        # The chats' data notice, with its 500 ms accept guard (review G18, C7-n4): it records the same consent.
+        self.confirm = ConsentDialog(self, route.label, notice, indicator, None, answered)
 
     def _check(self, test: dict[str, Any]) -> None:
         """On the test's thread: the request, then the marks in the saved model list."""
