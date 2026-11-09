@@ -175,7 +175,7 @@ These are period-level tables only — there are no per-timestep per-entity cost
 
 ## Capacity factors
 
-- `unit__node` entity `cf` parameter — [per unit] average capacity factor of the flow: time-average of flow [MWh/h] divided by capacity [MW] of the unit input or output. One table per direction (`unit_cf__inputNode`, `unit_cf__outputNode`).
+- `unit__node` entity `cf` parameter — [per unit] average capacity factor of the flow: time-average of flow [MWh/h] divided by the unit's capacity [MW], which is on its output side; so the input cf of a unit at full load is 1/`efficiency`. One table per direction (`unit_cf__inputNode`, `unit_cf__outputNode`).
 - `connection__node__node` entity `cf` parameter — [per unit] average capacity factor of the absolute flow (flows in either direction count as utilization), divided by connection capacity
 
 ## Energy balance in nodes

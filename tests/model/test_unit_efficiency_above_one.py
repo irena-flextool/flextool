@@ -2,7 +2,8 @@
 
 ``efficiency`` is not bounded to 1: a heat pump with COP 3 has efficiency 3, and a desalination unit with an
 electricity input and a water output in m³ has the m³ per MWh ratio (e.g. 250).  No engine code clamps or rounds
-it; this pins the whole chain, including the large ratio (coefficient range, autoscale).
+it; this pins the slope (single and rolling seed paths), the solve under strict autoscale and
+the written flows, including the large ratio.
 
 Hand-derived oracle (direct unit ``coal_plant``: input ``coal_market``, output ``demand_node``,
 ``constant_efficiency``, conversion coefficients 1):

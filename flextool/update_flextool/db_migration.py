@@ -5983,16 +5983,17 @@ _V83_UNIT_EFFICIENCY_DESCRIPTIONS = {
     "efficiency": (
         "[-] Efficiency of the unit at full load: outputs / inputs, each flow weighted by its conversion_flow_coeff "
         "(default 1, giving plain sum of outputs / sum of inputs). May be above 1: a heat pump with COP 3 has 3; a "
-        "unit with an output in another unit (e.g. m³ of water per MWh of electricity) uses that ratio. A "
-        "min_load_efficiency unit can have different efficiency below full load (see efficiency_at_min_load). No "
-        "effect on a unit without inputs or without outputs. Constant, period, time, period+time or stochastic "
-        "time."),
+        "unit whose output is measured in another unit of measure (e.g. m³ of water per MWh of electricity) uses "
+        "that ratio. A min_load_efficiency unit can have different efficiency below full load (see "
+        "efficiency_at_min_load). No effect on a unit without inputs or without outputs. Constant, period, time, "
+        "period+time or stochastic time."),
     "efficiency_at_min_load": (
-        "[-] e.g. 0.4 means 40% (may be above 1, like efficiency). Efficiency of a min_load_efficiency unit at its "
-        "minimum load. Fuel use is a straight line from minimum load (this efficiency) to full load (efficiency). "
+        "[-] Output / input at minimum load, like efficiency (e.g. 0.4; may be above 1). Efficiency of a "
+        "min_load_efficiency unit at its minimum load. Fuel use is a straight line from minimum load (this efficiency) to full load (efficiency). "
         "Has no effect when min_load is 0: the efficiency at zero output is not defined. No value: efficiency "
         "applies at minimum load too. Constant, period, time or period+time."),
 }
+
 
 def _migrate_v83_solve_step_series(db) -> None:
     """A solve's ``new_stepduration`` combines every time series by its kind (v82 -> v83).
