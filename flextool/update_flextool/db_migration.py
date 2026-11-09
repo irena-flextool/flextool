@@ -5789,14 +5789,16 @@ def _migrate_v78_unit_prefixes(db) -> None:
 def _v79_texts() -> dict[tuple[str, str], str]:
     """Descriptions written by v79 (``constraint_online_coeff``)."""
     t: dict[tuple[str, str], str] = {}
-    for cls, what in (("unit", "units"), ("connection", "units of the connection")):
+    for cls, what, needs in (
+            ("unit", "units", "startup_method linear or binary, or a minimum_time_method"),
+            ("connection", "units of the connection", "startup_method linear or binary")):
         t[(cls, "constraint_online_coeff")] = (
             "[unit of the constraint per unit online] A map of coefficients (Index: constraint name, value: "
             f"coefficient). Puts the number of {what} online in each time step on the left side of the user "
             "constraint. One unit is virtual_unitsize; without it, the largest existing capacity, else 1000 MW "
-            "(set virtual_unitsize when the capacity is invested). Needs online variables (startup_method linear "
-            "or binary, or a minimum_time_method); a coefficient without them is an error. With linear startup "
-            "the number is continuous. For MW online, use the unit size (MW per unit) as the coefficient.")
+            f"(set virtual_unitsize when the capacity is invested). Needs online variables ({needs}); a "
+            "coefficient without them is an error. With linear startup the number is continuous. For MW online, "
+            "use the unit size (MW per unit) as the coefficient.")
     return t
 
 

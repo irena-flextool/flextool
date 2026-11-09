@@ -672,8 +672,9 @@ def _validate_online_constraint_coeff(d) -> None:
     """Raise when a unit / connection of the solve has a ``constraint_online_coeff`` but no online variables.
 
     Dropping the term instead could tighten the row (``flow − 100·online ≤ 0`` would become ``flow ≤ 0``), so
-    it is a configuration error.  The online set holds the ``minimum_time_method`` promotion; coefficients on
-    processes not in the solve are ignored, as for the other coefficients.
+    it is a configuration error.  The online set holds the ``minimum_time_method`` promotion (units only).
+    Coefficients on processes not in the solve, or pointing to constraints the solve does not write (for
+    example ``is_enabled`` no), are ignored, as for the other coefficients.
     """
     coef = d.p_process_constraint_online_coeff
     if coef is None or not _has_rows(d.process_source_sink):
@@ -683,13 +684,18 @@ def _validate_online_constraint_coeff(d) -> None:
     online = {str(x) for f in (d.process_online_linear, d.process_online_integer) if _has_rows(f)
               for x in f.get_column("p").to_list()}
     units = ({str(x) for x in d.process_unit.get_column("p").to_list()} if _has_rows(d.process_unit) else set())
-    missing = sorted({(p, cn) for p, cn in rows.iter_rows() if p in in_solve and p not in online})
+    written = {str(x) for f in (d.cdt_eq, d.cdt_le, d.cdt_ge) if _has_rows(f)
+               for x in f.get_column("cn").unique().to_list()}
+    missing = sorted({(p, cn) for p, cn in rows.iter_rows()
+                      if p in in_solve and p not in online and cn in written})
     if missing:
         shown = ", ".join(f"{'unit' if p in units else 'connection'} '{p}' in constraint '{cn}'"
                           for p, cn in missing)
+        how = ("linear or binary (or, on a unit, a minimum_time_method)" if any(p in units for p, _ in missing)
+               else "linear or binary")
         raise FlexToolConfigError(
             f"constraint_online_coeff needs online variables, but these have none: {shown}. Set startup_method "
-            "linear or binary (or a minimum_time_method), or remove the coefficient.")
+            f"{how}, or remove the coefficient.")
 
 
 def _validate_storage_binding_disjoint(d) -> None:

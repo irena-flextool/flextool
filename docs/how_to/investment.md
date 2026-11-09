@@ -96,7 +96,8 @@ Finally, FlexTool can mix several types of constraint coefficients: `constraint_
            where k contains [node] belonging to the constraint
   + sum_m [constraint_online_coeff(m) * v_online]
            where m contains [unit, connection] with online variables belonging to the constraint,
-           and v_online is the number of units online (of virtual_unitsize) in the time step
+           and v_online is the number of units online in the time step (of virtual_unitsize;
+           without it, the largest existing capacity, else 1000 MW)
   =
   constant (a constant, or a period map giving each period its own value)
 
