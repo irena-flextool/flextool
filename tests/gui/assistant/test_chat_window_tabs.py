@@ -22,7 +22,8 @@ from flextool.gui.assistant.notices import ConfirmDialog, ConsentDialog, RenameC
 from flextool.gui.assistant.worker import ConsentNeeded, finishing_worker
 from tests.assistant.gui_support.worker_rig import LOCAL, REMOTE, Tools, save_provider, say, tool_call
 from tests.assistant.llm.fake_backend import Block
-from tests.gui.assistant.tk_helpers import key, pump, widgets
+from tests.gui.assistant.tk_helpers import (  # noqa: F401 — real_input is a fixture
+    click_on, closes, key, posted, pump, real_input, take_focus, widgets, xdotool)
 from tests.gui.assistant.window_rig import Backends, Windows, ask, chat_texts, wait_idle
 
 pytestmark = pytest.mark.gui
@@ -115,6 +116,68 @@ def test_twelve_chats_in_a_narrow_window_hide_and_the_menu_shows_them(windows, b
     pump(window, lambda: window.current_tab() is target)
     assert window.notebook.tab(target, "state") == "normal"
     assert len(tabs) == 12
+
+
+# --- the menus close like menus (OR-1): real X events, because a menu's global grab ignores event_generate -------
+@pytest.mark.usefixtures("real_input")
+def test_the_chats_menu_closes_on_a_click_in_the_transcript(windows):
+    window = windows.open()
+    take_focus(window)
+    window.post_chats_menu()
+    posted(window.chats_menu)
+    click_on(window.current_tab().transcript)
+    assert closes(window.chats_menu), "the Chats menu stayed open after a click in the transcript"
+
+
+@pytest.mark.usefixtures("real_input")
+def test_the_chats_menu_closes_on_a_click_in_another_window(windows, host):
+    window = windows.open()
+    host.geometry("300x200+700+500")      # beside the chat window, away from the menu
+    host.deiconify()
+    pump(host, lambda: bool(host.winfo_viewable()))
+    take_focus(window)
+    window.post_chats_menu()
+    posted(window.chats_menu)
+    click_on(host)
+    assert closes(window.chats_menu), "the Chats menu stayed open after a click in another window"
+
+
+@pytest.mark.usefixtures("real_input")
+def test_the_chats_menu_closes_on_escape_and_its_cascades_are_made_once(windows):
+    window = windows.open()
+    for _ in range(3):
+        take_focus(window)
+        window.post_chats_menu()
+        posted(window.chats_menu)
+        xdotool(window, "key", "Escape")
+        assert closes(window.chats_menu), "Escape left the Chats menu open"
+    assert len(window.chats_menu.winfo_children()) == 2          # Reopen and Delete, not two more per opening
+
+
+@pytest.mark.usefixtures("real_input")
+def test_the_tab_menu_works_from_the_keyboard_and_closes_on_a_click_outside(windows, backends):
+    save_provider(LOCAL)
+    backends.add([say("one")], [say("two")])
+    window = windows.open()
+    first = ask(window, "first question")
+    wait_idle(window, first)
+    window.go_to_new_chat()
+    second = ask(window, "second question")
+    wait_idle(window, second)
+    window.select(first)
+    pump(window, lambda: window.current_tab() is first)
+    take_focus(window)
+    window._post_tab_menu(first, None)
+    posted(window.tab_menu)
+    click_on(first.transcript)
+    assert closes(window.tab_menu), "the tab menu stayed open after a click in the transcript"
+    take_focus(window)
+    window._post_tab_menu(first, None)                # as Shift+F10 / the Menu key on the tab row
+    posted(window.tab_menu)
+    xdotool(window, "key", "Down", "Down", "Return")   # Rename chat, Close chat → Enter
+    pump(window, lambda: first not in window.tabs)
+    assert not window.tab_menu.winfo_ismapped()
+    assert second in window.tabs
 
 
 def test_ctrl_tab_reaches_hidden_chats_from_every_part_of_the_window(windows, backends):

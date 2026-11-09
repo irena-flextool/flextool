@@ -1498,37 +1498,6 @@ class MainWindow(tk.Tk):
             borderwidth=0,
         )
 
-    def _install_menu_hover_dismiss(
-        self,
-        top_menu: tk.Menu,
-        submenus: list[tk.Menu],
-        delay_ms: int = 400,
-    ) -> None:
-        """Unpost ``top_menu`` shortly after the mouse leaves all menus.
-
-        Native ``tk.Menu`` only closes on click; users expect popup
-        menus to also dismiss on mouse-leave.  The delay keeps the menu
-        open while the cursor briefly crosses the border into a cascade
-        submenu (cascades fire ``<Leave>`` on the parent).
-        """
-        self._menu_dismiss_id: str | None = None
-
-        def _cancel() -> None:
-            if self._menu_dismiss_id is not None:
-                try:
-                    self.after_cancel(self._menu_dismiss_id)
-                except tk.TclError:
-                    pass
-                self._menu_dismiss_id = None
-
-        def _schedule(_event: object) -> None:
-            _cancel()
-            self._menu_dismiss_id = self.after(delay_ms, top_menu.unpost)
-
-        for m in (top_menu, *submenus):
-            m.bind("<Leave>", _schedule, add="+")
-            m.bind("<Enter>", lambda _e: _cancel(), add="+")
-
     def _on_ui_settings_btn(self) -> None:
         """Show the UI-settings popup menu under the button.
 
@@ -1614,24 +1583,16 @@ class MainWindow(tk.Tk):
             command=self._on_reset_window_layout,
         )
 
-        # Auto-dismiss when the mouse leaves all menus.  The delay keeps
-        # the menu visible while the cursor briefly crosses the border
-        # to a cascade submenu.
-        submenus = [code_menu, theme_menu]
-        if size_menu is not None:
-            submenus.insert(0, size_menu)
-        self._install_menu_hover_dismiss(menu, submenus)
-
         # Post the menu just under the button, right-aligned so the
         # menu's right edge lines up with the button's right edge.
         btn = self.ui_settings_btn
         menu.update_idletasks()
         x = btn.winfo_rootx() + btn.winfo_width() - menu.winfo_reqwidth()
         y = btn.winfo_rooty() + btn.winfo_height()
-        try:
-            menu.tk_popup(x, y)
-        finally:
-            menu.grab_release()
+        # No grab_release after tk_popup: on X11 the menu's global grab is
+        # what closes it on a click elsewhere or Escape (a release there
+        # kept it open until an entry was chosen).
+        menu.tk_popup(x, y)
 
     def _resolve_code_pt(self, body_pt: int) -> int:
         """Effective monospace/code font size in points.

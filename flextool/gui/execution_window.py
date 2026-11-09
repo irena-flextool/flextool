@@ -803,10 +803,8 @@ class ExecutionWindow(tk.Toplevel):
 
     def _show_output_menu(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         """Pop up the log context menu at the pointer."""
-        try:
-            self._output_menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            self._output_menu.grab_release()
+        # No grab_release after tk_popup: on X11 the menu's global grab is what closes it on a click elsewhere.
+        self._output_menu.tk_popup(event.x_root, event.y_root)
 
     def _on_key_press(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
         """Block text-mutating keys in the read-only output widget while
@@ -1213,10 +1211,7 @@ class ExecutionWindow(tk.Toplevel):
         menu.add_command(label="Kill", command=self._on_kill_selected, state=can_kill)
         menu.add_separator()
         menu.add_command(label="Remove", command=self._on_remove_selected, state=can_remove)
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
+        menu.tk_popup(event.x_root, event.y_root)   # no grab_release: the grab closes it on a click elsewhere
 
     def _on_memory_guard_toggled(self) -> None:
         """Apply the memory-guard master switch (session-only, not persisted)."""

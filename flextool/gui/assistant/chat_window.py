@@ -332,6 +332,8 @@ class ChatWindow(tk.Toplevel):
         self.footer_label.pack(fill="x", pady=(metrics.lh // 3, 0))
         self.chats_menu = self._menu_factory(self)
         self.chats_menu.configure(postcommand=self._fill_chats_menu)
+        self.reopen_menu = self._menu_factory(self.chats_menu)    # the cascades, made once and refilled
+        self.delete_menu = self._menu_factory(self.chats_menu)
         self.tab_menu = self._menu_factory(self)
         self.new_tab = ChatTab(self, new=True)
         self.notebook.add(self.new_tab, text=strings.NEW_CHAT)
@@ -852,11 +854,9 @@ class ChatWindow(tk.Toplevel):
 
     def post_chats_menu(self) -> None:
         button = self.chats_button
-        try:
-            x, y = button.winfo_rootx(), button.winfo_rooty() + button.winfo_height()
-            self.chats_menu.tk_popup(x, y)
-        finally:
-            self.chats_menu.grab_release()
+        # tk_popup leaves the menu's global grab in place on X11: that grab is what closes it on a click elsewhere
+        # (a grab_release here kept it open, OR-1).  Elsewhere tk_popup runs the menu loop until it closes.
+        self.chats_menu.tk_popup(button.winfo_rootx(), button.winfo_rooty() + button.winfo_height())
 
     def _fill_chats_menu(self) -> None:
         menu = self.chats_menu
@@ -870,8 +870,9 @@ class ChatWindow(tk.Toplevel):
         accelerator_new = strings.NEW_CHAT_ACCELERATOR_MAC if self.aqua else strings.NEW_CHAT_ACCELERATOR
         accelerator_close = strings.CLOSE_CHAT_ACCELERATOR_MAC if self.aqua else strings.CLOSE_CHAT_ACCELERATOR
         menu.add_command(label=strings.NEW_CHAT, accelerator=accelerator_new, command=self.go_to_new_chat)
-        reopen = self._menu_factory(menu)
-        delete = self._menu_factory(menu)
+        reopen, delete = self.reopen_menu, self.delete_menu
+        reopen.delete(0, "end")
+        delete.delete(0, "end")
         if not self.saving:
             menu.add_command(label=f"{strings.REOPEN} — {strings.NOT_SAVED}", state="disabled")
             menu.add_command(label=f"{strings.DELETE_SAVED} — {strings.NOT_SAVED}", state="disabled")
@@ -978,10 +979,7 @@ class ChatWindow(tk.Toplevel):
         if where is None:
             nb = self.notebook
             where = (nb.winfo_rootx() + 20, nb.winfo_rooty() + 20)
-        try:
-            menu.tk_popup(*where)
-        finally:
-            menu.grab_release()
+        menu.tk_popup(*where)   # no grab_release: the grab closes the menu on a click elsewhere (OR-1)
 
     def _on_middle_click(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
         tab = self._tab_at(event.x, event.y)
