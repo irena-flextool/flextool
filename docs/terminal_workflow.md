@@ -397,19 +397,44 @@ python -m flextool.cli.cmd_read_tabular_input \
 
 ### Import old FlexTool v2 files
 
-Converts old-format FlexTool .xlsm files (18 fixed sheets) to the current Spine database format.
+Converts an old-format FlexTool 2 input data file (`.xlsm`, 18 fixed sheets) to a new FlexTool database. With `--master`, the sensitivities of the FlexTool 2 master workbook (the one with the run buttons and the `Sensitivity definitions` sheet) are imported in the same run, as alternatives and scenarios on top of `base`.
 
 ```bash
 python -m flextool.cli.cmd_read_old_flextool \
-    old_model.xlsm sqlite:///input.sqlite
+    InputData/old_model.xlsm sqlite:///input.sqlite \
+    --master flexTool.xlsm
 ```
 
 | Argument | Description |
 |---|---|
-| `xlsm_path` | Path to the old-format FlexTool Excel file |
-| `target_db_url` | Target database URL |
+| `xlsm_path` | Path to the FlexTool 2 input data file (one of the master workbook's `InputData/*.xlsm`) |
+| `target_db_url` | Target database URL. A new file is created. An existing FlexTool database is accepted only at version 56 (see below) |
+| `--master PATH` | FlexTool 2 master workbook: import its sensitivities too |
 | `--alternative-name NAME` | Name for the alternative (default: `base`) |
 | `--no-purge` | Do not purge existing data before importing |
+| `--no-migrate` | Leave the database at version 56 instead of migrating it |
+| `--verbose`, `-v` | Debug logging |
+
+The importer writes the data at a fixed database version (56) and then migrates the database to the current version. The sensitivities are written before the migration, so give `--master` in the same command. A database that is already at another version is refused: writing version-56 data into it would lose every value whose name or meaning changed since. `flextool.cli.cmd_import_sensitivities MASTER BASE.xlsm sqlite:///db.sqlite` adds sensitivities later only to a database left at version 56 with `--no-migrate`. Giving the master workbook as the input file stops with a message that names the right files. The new database carries no behaviour-change notices: they describe changes between FlexTool 4 versions, which an imported FlexTool 2 model never ran on.
+
+**Import report.** The run ends with a report: what was written, every write the database refused, and every FlexTool 2 input that has no FlexTool 4 counterpart, with the entities that use it. Check it before using the model. The inputs that are reported and not translated:
+
+| FlexTool 2 input | Why it is not translated |
+|---|---|
+| master `time_in_years` ≠ 1 | FlexTool 2 scaled every annual cost by it; FlexTool 4 annualises from the timeline. Listed first: costs, and so investments, will not match FlexTool 2 until the period weighting (`solve.years_represented`) is set by hand. |
+| master `curtailment_penalty` | FlexTool 4 has no curtailment cost. |
+| master `reserve_duration` | FlexTool 4 has `reserve__upDown__group.reserve_duration`, which the version-56 importer cannot write. Set it after the import. |
+| unit_type `conversion eff` | The output / input ratio of a unit that takes its input from a node (e.g. a heat pump COP). Set the unit's `efficiency` to it, where the unit has no efficiency time series. |
+| units `use min online` | FlexTool 4 has no time-series floor on online units. |
+| units `fueluse increase eq x output2` | FlexTool 4 has no fuel-use term per MWh of output2. |
+| gridNode `import (MWh)` | The import series is not added to the node. |
+| any other non-zero column the importer does not read | Listed as "not read by the importer". |
+
+Sensitivity overrides of inputs the importer does not translate are listed too, with their scenario.
+
+**Must-run and generation limits.** In FlexTool 2, the `units` flags `fix unit generation`, `use min generation` and `use max generation` use the `ts_unit` series `fix_generation`, `min_generation` and `max_generation` of the same grid / node / unit: the share (0-1) of the unit's capacity it must generate, at least or at most. Each becomes a FlexTool 4 profile `<unit>_<series>` (a time series) and a `unit__node__profile` (unit, output node, profile) with `profile_method` `fixed`, `lower_limit` or `upper_limit`. The limit is on the primary output only; an output2 follows through the CHP constraints. A flag of 0 ignores the series, as in FlexTool 2. The report lists a flag without its series, a `use max generation` on a unit with a cf profile (FlexTool 2 ignores it there), a flag on a conversion unit (FlexTool 2 bounds its input flow) and, where the unit's `availability` is below 1, the difference that FlexTool 4 multiplies the profile by the availability.
+
+**Storage start and finish.** A non-zero `storage start` / `storage finish` fixes the first / last storage state at that share of the storage capacity (`storage_start_end_method` `fix_start`, `fix_end` or `fix_start_end`); 0 fixes nothing. The storage state wraps from the last step to the first (`bind_within_solve`), except when both are set (`bind_forward_only`), as in FlexTool 2.
 
 ---
 
@@ -517,11 +542,9 @@ Comparison plots are saved to `output_plot_comparisons/`.
 ### 5. Import and convert an old FlexTool v2 model
 
 ```bash
-# Create a target database from the template
-python -c "from flextool import initialize_database; initialize_database('schemas/spinedb_schema.json', 'converted.sqlite')"
-
-# Import the old-format file
-python -m flextool.cli.cmd_read_old_flextool old_model.xlsm sqlite:///converted.sqlite
+# Import the old-format file (creates converted.sqlite; --master adds the sensitivities)
+python -m flextool.cli.cmd_read_old_flextool InputData/old_model.xlsm sqlite:///converted.sqlite \
+    --master flexTool.xlsm
 
 # Run a scenario from the converted database
 python execute_flextool_workflow.py \

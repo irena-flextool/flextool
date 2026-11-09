@@ -68,6 +68,10 @@ When you choose **Add → empty Excel**, the **parameter-group picker** dialog o
 
 See [Excel interface](excel_interface.md) for the resulting file structure.
 
+### Convert a FlexTool 2.0 model
+
+**Add → Convert from FlexTool 2.0 input file** asks for the FlexTool 2 input data file (one of the master workbook's `InputData/*.xlsm`), then whether to import its sensitivities too; if yes, pick the FlexTool 2 master workbook (the one with the `Sensitivity definitions` sheet). The sensitivities become alternatives and scenarios on top of `base`. Converting an `.xlsx` FlexTool 2 file in the input sources list asks the same question. The conversion runs as one job in the Execution window: it imports the data and the sensitivities, migrates the database to the current version and ends with an import report that lists every FlexTool 2 input that could not be translated, with the entities that use it. See [Import old FlexTool v2 files](terminal_workflow.md#import-old-flextool-v2-files) for what the report lists and how must-run (fix / min / max generation) and storage start / finish are translated.
+
 ## Available scenarios `[V]`
 
 Lists every scenario found in the **checked** input sources. The header text `[V]` is the keyboard shortcut: press **V** to focus the list.

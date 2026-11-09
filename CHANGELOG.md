@@ -1,5 +1,23 @@
 ## Unreleased
 
+- **Fix: the FlexTool 2 importer (`flextool-read-old`, GUI "Convert from FlexTool 2.0 input file") translates
+  more and reports what it cannot.** Sensitivities are now imported in the same run as the base data
+  (`--master MASTER.xlsm`; in the GUI the master workbook is asked for before the conversion), before the
+  database is migrated: before, the GUI wrote them into an already migrated database, where a renamed parameter
+  such as the capacity margin was dropped with only a log line. A target that is a FlexTool database at another
+  version than the import's (56) is refused, as is `flextool-import-sensitivities` on a migrated database. A
+  storage with `invested storage (MWh)` got `max invest (MWh)` as its investment limit; it now gets the forced
+  size. The FlexTool 2 master workbook given as the input file stops with a message naming the right files
+  (before: an empty database). `fix unit generation`, `use min generation` and `use max generation` with their
+  `ts_unit` series (shares of capacity) become profiles with `profile_method` `fixed`, `lower_limit` and
+  `upper_limit` on the unit's primary output (before: ignored, so must-run units were free). `storage start` /
+  `storage finish` set `storage_start_end_method` explicitly (`fix_start`, `fix_end`, `fix_start_end`, else
+  `fix_nothing`): left to the default, a storage start would have been free after the upgrade to version 77, and
+  a start of 0 was fixed at 0. The import ends with a report of failed writes and of every FlexTool 2 input that
+  has no FlexTool 4 counterpart, with its entities (`time_in_years` ≠ 1 first, `curtailment_penalty`,
+  `reserve_duration`, `conversion eff`, `use min online`, `fueluse increase eq x output2`, `import (MWh)`, and
+  any other column the importer does not read), and the imported database carries no behaviour-change notices.
+  The CLI now prints its log, and a failed import leaves no database file behind.
 - **Fix: a solve's `new_stepduration` combines every time series over the new time step (results change).** A
   solve with its own `new_stepduration` used to take the value of the first original time step of each new step for
   every time map other than profiles and inflows: commodity `price`, `co2_price`, `availability` of units,

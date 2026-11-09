@@ -74,7 +74,7 @@ packages. Every CLI command also has an installed entry point in
 | `cmd_read_self_describing_tabular_input` | `flextool-read-self-describing-tabular-input` | Self-describing Excel (embedded metadata) → Spine DB. |
 | `cmd_read_old_flextool` | `flextool-read-old` | Import old FlexTool v2 `.xlsm` files → Spine DB. |
 | `cmd_read_matpower` | `flextool-read-matpower` | Import a MATPOWER case → Spine DB. |
-| `cmd_import_sensitivities` | `flextool-import-sensitivities` | Import FlexTool v2 sensitivity scenarios. |
+| `cmd_import_sensitivities` | `flextool-import-sensitivities` | Import FlexTool v2 sensitivity scenarios into a version-56 import (`flextool-read-old --master` does both in one run). |
 | `cmd_export_to_tabular` | `flextool-export-to-tabular` | Export Spine DB → Excel (`.xlsx`). |
 | `cmd_execute_flextool_workflow` | `flextool-execute-workflow` | Two-phase workflow runner: optional input-prep (auto-triggered by `--tabular-file-path` / `--csv-directory-path`) followed by the fused model-run + output-write phase. |
 | `cmd_migrate_database` | `flextool-migrate-database` | Upgrade an input DB to the current schema version. |
