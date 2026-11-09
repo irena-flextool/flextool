@@ -146,6 +146,46 @@ def _map_strings(value: Any, fn: Callable[[str], str]) -> Any:
     return value
 
 
+def sent_payload(payload: Any, redact: Callable[[str], str]) -> Any:
+    """*payload* with every string as it is sent (:func:`sent_text`: cleaned and redacted, once)."""
+    return _map_strings(payload, lambda s: sent_text(s, redact))
+
+
+def fit_rows(payload: dict, rows_key: str, max_chars: int, redact: Callable[[str], str], *, note_key: str,
+             note: Callable[[int, int], str | None]) -> dict:
+    """*payload* as it is sent (:func:`sent_payload`) with the most leading rows of ``payload[rows_key]`` whose
+    text fits *max_chars*, and ``payload[note_key] = note(k, n)`` (``k`` rows shown of ``n``; left out when it is
+    ``None``).
+
+    The rows are measured on the redacted text, the one that is sent, so :func:`fit_json` sends the result as it
+    is and never cuts rows of its own: a note that names the next offset stays true (Cycle 1 critique M3)."""
+    data = sent_payload(payload, redact)
+    rows = data[rows_key]
+    n = len(rows)
+
+    def trial(k: int) -> dict:
+        out = dict(data)
+        out[rows_key] = rows[:k]
+        text = note(k, n)
+        if text is not None:
+            out[note_key] = sent_text(text, redact)
+        else:
+            out.pop(note_key, None)
+        return out
+
+    full = trial(n)
+    if len(dumps(full)) <= max_chars:
+        return full
+    lo, hi, best = 0, n - 1, 0
+    while lo <= hi:
+        k = (lo + hi) // 2
+        if len(dumps(trial(k))) <= max_chars:
+            best, lo = k, k + 1
+        else:
+            hi = k - 1
+    return trial(best)
+
+
 def fit_json(payload: dict, max_chars: int, redact: Callable[[str], str], *, rows_key: str | None = None,
              what: str = "rows", hint: str = "add filters, group_by or top_n") -> str:
     """The JSON text of *payload*, redacted, within *max_chars* characters.

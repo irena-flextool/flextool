@@ -196,7 +196,7 @@ def value_record(ctx: AssistantContext, db: _db.InputDB, view: _db.ScenarioView,
                                                                           time_range=time_range))
         record["provenance"] = {
             "from_alternative": winner.alternative,
-            "rank_order": view.ranked,
+            "alternatives_highest_first": list(reversed(view.ranked)),
             "overridden": [{"alternative": v.alternative, "value": _values.compact(v.parsed())}
                            for v in view.overridden(entity_class, byname, parameter)],
         }
@@ -217,7 +217,8 @@ def value_record(ctx: AssistantContext, db: _db.InputDB, view: _db.ScenarioView,
         else:
             record.update(stored=False, is_default=False, value=None)
             notes.append(render("no_value", {}))
-        record["provenance"] = {"from_alternative": None, "rank_order": view.ranked, "overridden": []}
+        record["provenance"] = {"from_alternative": None, "alternatives_highest_first": list(reversed(view.ranked)),
+                                "overridden": []}
         outside = view.outside(entity_class, byname, parameter)
         if outside:
             record["provenance"]["also_set_outside_the_scenario"] = outside
@@ -685,7 +686,30 @@ def _reference_sections(parameter: str) -> list[dict]:
     return [{"doc": h["doc"], "section": h["section"], "anchor": h["anchor"]} for h in hits[:2]]
 
 
+#: compare_inputs lists at most this many entities in one row, and of each class active in one scenario only.
+COMPARE_ENTITIES_MAX = 20
+COMPARE_ONLY_IN_MAX = 10
+COMPARE_COLUMNS = ["alternative", "alternative_a", "alternative_b", "entity_class", "parameter", "a", "b", "n",
+                   "entities"]
+
+
+def _difference_alternative(ia: Any, ib: Any, va: _db.ScenarioView, vb: _db.ScenarioView) -> str | None:
+    """The alternative that makes the two scenarios differ in one value: the winner (b's, then a's) that the
+    other scenario does not have; when both winners are in both scenarios (the ranks differ), b's (Cycle 1
+    critique M1)."""
+    candidates = [(ib, va), (ia, vb)]
+    for item, other in candidates:
+        if item is not None and item.alternative not in other.rank:
+            return item.alternative
+    for item, _ in candidates:
+        if item is not None:
+            return item.alternative
+    return None
+
+
 def compare_inputs(ctx: AssistantContext, args: dict) -> Fit:
+    from flextool.assistant.caps import dumps, fit_rows
+
     source, db, notes = _open(ctx, args)
     a = project.resolve_scenario(ctx, source, db, args["scenario_a"])
     b = project.resolve_scenario(ctx, source, db, args["scenario_b"])
@@ -693,8 +717,13 @@ def compare_inputs(ctx: AssistantContext, args: dict) -> Fit:
     if only_class is not None:
         _check_class(db, only_class)
     va, vb = db.view(a), db.view(b)
+    only_alternative = args.get("alternative")
+    if only_alternative is not None and only_alternative not in va.rank and only_alternative not in vb.rank:
+        names = list(dict.fromkeys([*reversed(vb.ranked), *reversed(va.ranked)]))
+        raise ToolError("unknown_compare_alternative", value=only_alternative,
+                        values=name_list(close_names(only_alternative, names) or names))
     wa, wb = va.winners(), vb.winners()
-    differences = []
+    groups: dict[tuple, dict[str, Any]] = {}
     for key in sorted(set(wa) | set(wb)):
         cls, byname, param = key
         if only_class is not None and cls != only_class:
@@ -708,39 +737,82 @@ def compare_inputs(ctx: AssistantContext, args: dict) -> Fit:
         pb = ib.parsed() if ib is not None else None
         if ia is not None and ib is not None and _values.same_value(pa, pb):
             continue                       # equal once parsed (1 and 1.0)
-        differences.append({
-            "entity_class": cls, "entity": _names(byname), "parameter": param,
-            "a": _values.compact(pa) if ia is not None else None,
-            "b": _values.compact(pb) if ib is not None else None,
-            "from_alternative_a": ia.alternative if ia is not None else None,
-            "from_alternative_b": ib.alternative if ib is not None else None,
-        })
-    only_a, only_b = [], []
+        alternative = _difference_alternative(ia, ib, va, vb)
+        if only_alternative is not None and alternative != only_alternative:
+            continue
+        ca = _values.compact(pa) if ia is not None else None
+        cb = _values.compact(pb) if ib is not None else None
+        alt_a = ia.alternative if ia is not None else None
+        alt_b = ib.alternative if ib is not None else None
+        group_key = (alternative, alt_a, alt_b, cls, param, dumps(ca), dumps(cb))   # canonical: maps too (m2)
+        group = groups.setdefault(group_key, {"alternative": alternative, "alternative_a": alt_a,
+                                              "alternative_b": alt_b, "entity_class": cls, "parameter": param,
+                                              "a": ca, "b": cb, "entities": []})
+        group["entities"].append(_names(byname))
+    by_alternative: dict[str | None, dict[str, int]] = {}
+    for group in groups.values():
+        per_class = by_alternative.setdefault(group["alternative"], {})
+        per_class[group["entity_class"]] = per_class.get(group["entity_class"], 0) + len(group["entities"])
+    alt_order = sorted(by_alternative, key=lambda alt: (-sum(by_alternative[alt].values()), str(alt)))
+    position = {alt: i for i, alt in enumerate(alt_order)}
+    ordered = sorted(groups.values(), key=lambda g: (position[g["alternative"]], g["entity_class"], g["parameter"],
+                                                     sorted(g["entities"])[0]))
+    rows = []
+    longer = False
+    for g in ordered:
+        entities = sorted(g["entities"])
+        longer = longer or len(entities) > COMPARE_ENTITIES_MAX
+        rows.append([g["alternative"], g["alternative_a"], g["alternative_b"], g["entity_class"], g["parameter"],
+                     g["a"], g["b"], len(entities), entities[:COMPARE_ENTITIES_MAX]])
+    only: dict[str, dict[str, list]] = {"a": {}, "b": {}}
+    capped = False
     for cls, ents in sorted(db.entities.items()):
         if only_class is not None and cls != only_class:
             continue
         for byname in sorted(ents):
             in_a, in_b = va.active(cls, byname)[0], vb.active(cls, byname)[0]
-            if in_a and not in_b:
-                only_a.append({"entity_class": cls, "entity": _names(byname)})
-            elif in_b and not in_a:
-                only_b.append({"entity_class": cls, "entity": _names(byname)})
-    max_rows = args["max_rows"]
+            side = "a" if in_a and not in_b else "b" if in_b and not in_a else None
+            if side is None:
+                continue
+            entry = only[side].setdefault(cls, [0, []])
+            entry[0] += 1
+            if len(entry[1]) < COMPARE_ONLY_IN_MAX:
+                entry[1].append(_names(byname))
+            else:
+                capped = True
+    total_values = sum(len(g["entities"]) for g in groups.values())
+    out_notes = notes + ["a and b are the stored values each scenario uses; a missing value (null) means no "
+                         "alternative of that scenario sets it (FlexTool then uses the default). alternative is "
+                         "the one that makes them differ; n counts the entities with that change."]
+    if longer:
+        out_notes.append(f"entities lists at most {COMPARE_ENTITIES_MAX}; get_parameter with entity_class and "
+                         "parameters gives the others.")
+    if capped:
+        out_notes.append(f"entities_active_only_in lists at most {COMPARE_ONLY_IN_MAX} names of each class "
+                         "([count, names]); list_entities with the scenario gives them all.")
+    max_rows = int(args["max_rows"])
     payload = {
         "source": source.name,
         "scenario_a": a,
         "scenario_b": b,
-        "alternatives_only_a": [alt for alt in va.ranked if alt not in vb.rank],
-        "alternatives_only_b": [alt for alt in vb.ranked if alt not in va.rank],
-        "differences": differences[:max_rows],
-        "entities_active_only_in": {"a": only_a[:max_rows], "b": only_b[:max_rows]},
-        "total": len(differences),
-        "truncated": (f"showing {max_rows} of {len(differences)} differences — narrow with entity_class"
-                      if len(differences) > max_rows else None),
-        "notes": notes + ["a and b are the stored values each scenario uses; a missing value (null) means no "
-                          "alternative of that scenario sets it (FlexTool then uses the default)."],
+        "alternatives_only_a": [alt for alt in reversed(va.ranked) if alt not in vb.rank],
+        "alternatives_only_b": [alt for alt in reversed(vb.ranked) if alt not in va.rank],
+        "total_values": total_values,
+        "total_rows": len(rows),
+        "by_alternative": {alt: dict(sorted(by_alternative[alt].items())) for alt in alt_order},
+        "columns": COMPARE_COLUMNS,
+        "differences": rows[:max_rows],
+        "entities_active_only_in": only,
+        "notes": out_notes,
     }
-    return Fit(payload, rows_key="differences", what="differences", hint="narrow with entity_class")
+
+    def note(k: int, _n: int) -> str | None:
+        if k == len(rows):
+            return None
+        return f"{k} of {len(rows)} rows ({total_values} values); pass alternative or entity_class"
+
+    fitted = fit_rows(payload, "differences", ctx.caps.max_chars, ctx.redact, note_key="shown", note=note)
+    return Fit(fitted, rows_key="differences", what="rows", hint="pass alternative or entity_class")
 
 
 # ---------------------------------------------------------------------------------------------------------
@@ -806,11 +878,12 @@ TOOLS = [
         required=("entity_class",), handler=describe_parameter, area="inputs", small_tier=False),
     make_tool(
         name="compare_inputs", title="Input differences of two scenarios",
-        description=("The input differences between two scenarios of one input source: the alternatives only one "
-                     "of them has, every value that differs (with the alternative it comes from in each), and the "
-                     "entities active in only one. entity_class narrows to one class."),
+        description=("Input differences of two scenarios of one source: alternatives only one has; counts by "
+                     "alternative and class; value rows, one per parameter and change with its entities; entities "
+                     "active in only one. entity_class, alternative narrow."),
         properties={"scenario_a": _SCENARIO, "scenario_b": _SCENARIO, "source": _SOURCE,
-                    "entity_class": {"type": "string"}, "max_rows": {"type": "integer"}},
+                    "entity_class": {"type": "string"}, "alternative": {"type": "string"},
+                    "max_rows": {"type": "integer"}},
         required=("scenario_a", "scenario_b"), handler=compare_inputs, area="inputs", small_tier=False,
-        caps={"max_rows": CapArg("max_rows")}),
+        caps={"max_rows": CapArg("max_rows", default=30)}),
 ]

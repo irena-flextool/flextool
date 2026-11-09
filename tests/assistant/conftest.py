@@ -175,6 +175,17 @@ def record_run(project: Path, folder_name: str, scenario: str, outcome: Callable
     return rec.run_id
 
 
+def compare_rows(out: dict) -> dict[tuple, dict]:
+    """compare_inputs' grouped rows as ``{(class, entity, parameter): row as a dict}``, one per entity."""
+    columns = out["columns"]
+    rows = {}
+    for row in out["differences"]:
+        d = dict(zip(columns, row))
+        for entity in d["entities"]:
+            rows[(d["entity_class"], tuple(entity), d["parameter"])] = d
+    return rows
+
+
 def build_tests_db(path: Path) -> Path:
     """``tests/fixtures/tests.json`` as a database at this FlexTool's version, at *path*."""
     from flextool.update_flextool.db_migration import migrate_database
@@ -213,3 +224,59 @@ def ctx(assistant_project: Path):
     from flextool.assistant.context import make_context
 
     return make_context(assistant_project)
+
+
+#: The many-runs project (agent feedback 2026-11-09, Cycle 1): one run folder ``<scenario>_1`` for each of the
+#: first 67 scenarios of ``tests/fixtures/tests.json`` (in the file's order): the first 43 hold a result file but no
+#: run record (an older FlexTool), the next 20 succeeded, the last 4 failed.
+MANY_RUNS = 67
+MANY_NO_RECORD = 43
+MANY_SUCCEEDED = 20
+#: cost_unit_annualized_d_ec of every succeeded run: 3 periods × 16 units rows, 12 categories (576 values).
+MANY_COST_PERIODS = ("p2020", "p2025", "p2030")
+MANY_COST_UNITS = tuple(f"u{i:02d}" for i in range(1, 17))
+MANY_COST_CATEGORIES = tuple(f"category {i:02d}" for i in range(1, 13))
+
+
+def many_run_scenarios() -> list[str]:
+    import json
+
+    data = json.loads((FIXTURES / "tests.json").read_text(encoding="utf-8"))
+    return [s[0] for s in data["scenarios"]][:MANY_RUNS]
+
+
+def _write_costs(folder: Path, scenario: str, scale: float) -> None:
+    import numpy as np
+    import pandas as pd
+
+    from tests.assistant.results_tables import write_result
+
+    index = pd.MultiIndex.from_tuples([(p, u) for p in MANY_COST_PERIODS for u in MANY_COST_UNITS],
+                                      names=["period", "unit"])
+    values = np.arange(len(index) * len(MANY_COST_CATEGORIES), dtype=float).reshape(len(index), -1) * scale
+    frame = pd.DataFrame(values, index=index, columns=pd.Index(MANY_COST_CATEGORIES, name="category"))
+    write_result(folder, "cost_unit_annualized_d_ec", frame, scenario)
+
+
+def build_many_runs_project(root: Path, db: Path) -> Path:
+    from tests.assistant.results_tables import succeed_writing
+
+    project = make_project(root, db)
+    scenarios = many_run_scenarios()
+    for i, scenario in enumerate(scenarios):
+        folder = f"{scenario}_1"
+        if i < MANY_NO_RECORD:
+            write_parquet(project / "output_parquet" / folder)
+        elif i < MANY_NO_RECORD + MANY_SUCCEEDED:
+            def tables(out: Path, scenario=scenario, scale=1.0 + i / 100) -> None:
+                write_parquet(out)
+                _write_costs(out, scenario, scale)
+            record_run(project, folder, scenario, succeed_writing(tables))
+        else:
+            record_run(project, folder, scenario, fail_with("solve y2020 is infeasible"))
+    return project
+
+
+@pytest.fixture(scope="session")
+def many_runs_project(tmp_path_factory: pytest.TempPathFactory, tests_db: Path) -> Path:
+    return build_many_runs_project(tmp_path_factory.mktemp("many_runs"), tests_db)

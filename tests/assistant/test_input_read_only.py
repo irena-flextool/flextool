@@ -25,7 +25,7 @@ from flextool.assistant.inputs import _db
 from flextool.assistant.registry import call_tool
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 
-from tests.assistant.conftest import make_project
+from tests.assistant.conftest import compare_rows, make_project
 
 CALLS = [
     ("get_gui_context", {}),
@@ -146,7 +146,7 @@ def test_scenario_views_are_kept_in_a_small_lru(ctx) -> None:
     assert db.view("all") is not every
     out = call_tool(ctx, "compare_inputs", {"scenario_a": "coal", "scenario_b": "coal_chp", "max_rows": 500})
     assert out.ok, out.message
-    diffs = {(d["entity_class"], tuple(d["entity"]), d["parameter"]): d for d in json.loads(out.text)["differences"]}
+    diffs = compare_rows(json.loads(out.text))
     assert (diffs[("commodity", ("coal",), "price")]["a"], diffs[("commodity", ("coal",), "price")]["b"]) == (
         20.0, None)
     assert (diffs[("unit", ("coal_chp",), "existing")]["a"], diffs[("unit", ("coal_chp",), "existing")]["b"]) == (

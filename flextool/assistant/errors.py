@@ -54,6 +54,9 @@ MESSAGES: dict[str, str] = {
     "unreadable": "The input database {name} could not be read; reading it failed with the message {reason}.",
     "no_scenarios": "The input source {source} has no scenarios.",
     "unknown_scenario": "There is no scenario {scenario} in {source}. Its scenarios include: {scenarios}.",
+    "scenario_in_no_source": "No input source has a scenario {scenario}. The scenarios include: {scenarios}.",
+    "unknown_compare_alternative": ("Neither scenario has the alternative {value}. Their alternatives include: "
+                                    "{values}."),
     "choose_scenario": "The input source {source} has {n} scenarios; name one of them: {scenarios}.",
     # Input data
     "unknown_class": "There is no entity class {entity_class}.{similar}",
@@ -79,6 +82,7 @@ MESSAGES: dict[str, str] = {
     "no_runs": "The project has no scenario results (no folders in output_parquet).",
     "bad_run_name": "{run} is not a result folder name; use a folder name that list_runs gives.",
     "unknown_run": "There is no result folder {run}. The folders include: {runs}.",
+    "unknown_run_state": "There is no run state {value}. The states of this project's runs are: {values}.",
     "run_running": "Scenario folder {run} is running now; its results are not complete.",
     "run_abandoned": ("The latest run of {run} stopped without finishing. Read the run log (get_run_log) and run "
                       "it again."),

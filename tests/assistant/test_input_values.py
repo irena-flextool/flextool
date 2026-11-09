@@ -20,6 +20,8 @@ import pytest
 from flextool.assistant.inputs._values import RUN_TIME_NOTE
 from flextool.assistant.registry import call_tool
 
+from tests.assistant.conftest import compare_rows
+
 
 def _call(ctx, tool: str, **args) -> dict:
     out = call_tool(ctx, tool, args)
@@ -38,7 +40,9 @@ def test_winner_and_the_values_it_overrides(ctx) -> None:
     # The other four alternatives that set it are not in scenario all.
     assert rec["provenance"]["also_set_outside_the_scenario"] == ["1x10y", "2x5y", "coal_unit_size",
                                                                    "dr_decrease_demand"]
-    assert rec["provenance"]["rank_order"][:3] == ["init", "west", "coal"]
+    # Highest rank first (Cycle 1, C1-OD1): retire (12 of all) before coal (3); init (1) last.
+    assert rec["provenance"]["alternatives_highest_first"][-3:] == ["coal", "west", "init"]
+    assert "rank_order" not in rec["provenance"]
     # coal_plant has no virtual_unitsize in tests.json, so existing is a capacity in MW.
     assert rec["unit"] == "MW (default convention)"
 
@@ -137,24 +141,26 @@ def test_get_entity_across_classes(ctx) -> None:
         ("group__node", ["heat", "heat"])]
 
 
+def _only_in(out: dict, side: str) -> set[tuple]:
+    return {(cls, tuple(e)) for cls, (_, names) in out["entities_active_only_in"][side].items() for e in names}
+
+
 def test_compare_inputs_of_two_scenarios(ctx) -> None:
     out = _call(ctx, "compare_inputs", scenario_a="coal", scenario_b="coal_chp", max_rows=500)
-    # coal = init, west, coal; coal_chp = init, west, coal_chp, heat.
+    # coal = init, west, coal; coal_chp = init, west, coal_chp, heat (highest rank first: heat, coal_chp).
     assert out["alternatives_only_a"] == ["coal"]
-    assert out["alternatives_only_b"] == ["coal_chp", "heat"]
-    diffs = {(d["entity_class"], tuple(d["entity"]), d["parameter"]): d for d in out["differences"]}
-    # commodity coal price 20 is set in alternative coal only.
+    assert out["alternatives_only_b"] == ["heat", "coal_chp"]
+    diffs = compare_rows(out)
+    # commodity coal price 20 is set in alternative coal only: coal makes the scenarios differ.
     price = diffs[("commodity", ("coal",), "price")]
-    assert (price["a"], price["b"], price["from_alternative_a"]) == (20.0, None, "coal")
+    assert (price["a"], price["b"], price["alternative_a"], price["alternative"]) == (20.0, None, "coal", "coal")
     # unit coal_chp existing: 1200 from coal, 1000 from coal_chp (the unit is active in coal_chp).
     chp = diffs[("unit", ("coal_chp",), "existing")]
     assert (chp["a"], chp["b"]) == (1200.0, 1000.0)
     # The west node inflow comes from alternative west in both: no difference.
     assert ("node", ("west",), "inflow") not in diffs
-    only_b = {(e["entity_class"], tuple(e["entity"])) for e in out["entities_active_only_in"]["b"]}
-    assert {("unit", ("coal_chp",)), ("node", ("heat",))} <= only_b
-    only_a = {(e["entity_class"], tuple(e["entity"])) for e in out["entities_active_only_in"]["a"]}
-    assert ("unit", ("coal_plant",)) in only_a
+    assert {("unit", ("coal_chp",)), ("node", ("heat",))} <= _only_in(out, "b")
+    assert ("unit", ("coal_plant",)) in _only_in(out, "a")
 
 
 def test_describe_parameter_uses_the_shipped_schema(ctx) -> None:
@@ -379,5 +385,82 @@ def test_compare_inputs_parses_only_values_that_differ(tmp_path, tests_db, monke
 
     monkeypatch.setattr(_db.ValueItem, "parsed", counted)
     out = _call(ctx, "compare_inputs", scenario_a="A", scenario_b="B", entity_class="commodity")
-    assert [(d["entity"], d["a"], d["b"]) for d in out["differences"]] == [(["c6"], 5.0, 6.0)]
+    assert [(d["entities"], d["a"], d["b"]) for d in (dict(zip(out["columns"], r)) for r in out["differences"])] == [
+        ([["c6"]], 5.0, 6.0)]
     assert len(parses) == 4
+
+
+def _identical_changes(path):
+    """On a copy of tests.json: connections c01–c12 with efficiency 0.98 in alternative base_net and 0.97 in
+    loss_up; connections d01, d02 with the same map {p2020: 0.9, p2025: 0.95} in loss_up only; all active in
+    base_net.  Scenarios A = [base_net] and B = [base_net, loss_up]."""
+    from spinedb_api import Map, to_database
+
+    from flextool.update_flextool.db_handle import open_database_mapping
+
+    def put(db, entity: str, alternative: str, value) -> None:
+        raw, value_type = to_database(value)
+        db.add_parameter_value_item(entity_class_name="connection", entity_byname=(entity,),
+                                    parameter_definition_name="efficiency", alternative_name=alternative,
+                                    value=raw, type=value_type)
+
+    with open_database_mapping(f"sqlite:///{path.as_posix()}") as db:
+        for alt in ("base_net", "loss_up"):
+            db.add_alternative_item(name=alt)
+        for scenario, alts in (("A", ("base_net",)), ("B", ("base_net", "loss_up"))):
+            db.add_scenario_item(name=scenario)
+            for rank, alt in enumerate(alts, start=1):
+                db.add_scenario_alternative_item(scenario_name=scenario, alternative_name=alt, rank=rank)
+        names = [f"c{k:02d}" for k in range(1, 13)] + ["d01", "d02"]
+        for name in names:
+            db.add_entity_item(entity_class_name="connection", name=name)
+            db.add_entity_alternative_item(entity_class_name="connection", entity_byname=(name,),
+                                           alternative_name="base_net", active=True)
+        for name in names[:12]:
+            put(db, name, "base_net", 0.98)
+            put(db, name, "loss_up", 0.97)
+        for name in ("d01", "d02"):
+            put(db, name, "loss_up", Map(["p2020", "p2025"], [0.9, 0.95], index_name="period"))
+        db.commit_session("test: identical changes")
+
+
+def test_compare_inputs_groups_identical_changes(tmp_path, tests_db) -> None:
+    """Agent feedback waste 3: one row per parameter and change, with its entities; counts by alternative and
+    class first (critique M1: the alternative that makes the scenarios differ, in both directions; m2: a map
+    value groups too).  Before: one row per entity (14 rows), no counts, no alternative argument."""
+    from flextool.assistant.context import make_context
+    from tests.assistant.conftest import make_project
+
+    project = make_project(tmp_path, tests_db)
+    _identical_changes(project / "input_sources" / "tests.sqlite")
+    ctx = make_context(project)
+    out = _call(ctx, "compare_inputs", scenario_a="A", scenario_b="B", entity_class="connection")
+    assert out["alternatives_only_a"] == [] and out["alternatives_only_b"] == ["loss_up"]
+    assert out["by_alternative"] == {"loss_up": {"connection": 14}}
+    assert (out["total_values"], out["total_rows"]) == (14, 2)
+    rows = [dict(zip(out["columns"], r)) for r in out["differences"]]
+    first, second = rows
+    # c01–c12: 0.98 (base_net) in A, 0.97 (loss_up) in B, all twelve names listed.
+    assert (first["alternative"], first["alternative_a"], first["alternative_b"], first["parameter"]) == (
+        "loss_up", "base_net", "loss_up", "efficiency")
+    assert (first["a"], first["b"], first["n"]) == (0.98, 0.97, 12)
+    assert first["entities"] == [[f"c{k:02d}"] for k in range(1, 13)]
+    # d01, d02: no value in A, the same map in B.
+    assert (second["alternative"], second["alternative_a"], second["a"], second["n"], second["entities"]) == (
+        "loss_up", None, None, 2, [["d01"], ["d02"]])
+    assert second["b"]["n"] == 2 and (second["b"]["min"], second["b"]["max"]) == (0.9, 0.95)
+    assert "shown" not in out
+    # The reverse pair: loss_up is a's, and still the alternative that makes them differ.
+    reverse = _call(ctx, "compare_inputs", scenario_a="B", scenario_b="A", entity_class="connection")
+    assert reverse["by_alternative"] == {"loss_up": {"connection": 14}}
+    assert reverse["alternatives_only_a"] == ["loss_up"]
+    # alternative narrows: base_net makes none of them differ.
+    assert _call(ctx, "compare_inputs", scenario_a="A", scenario_b="B", alternative="base_net")["total_values"] == 0
+    assert _call(ctx, "compare_inputs", scenario_a="B", scenario_b="A", alternative="loss_up")["total_values"] == 14
+    refused = call_tool(ctx, "compare_inputs", {"scenario_a": "A", "scenario_b": "B", "alternative": "loss_upp"})
+    assert not refused.ok and refused.message == ('Neither scenario has the alternative "loss_upp". Their '
+                                                  'alternatives include: "loss_up".')
+    # max_rows caps the rows, and says so.
+    capped = _call(ctx, "compare_inputs", scenario_a="A", scenario_b="B", max_rows=1)
+    assert len(capped["differences"]) == 1
+    assert capped["shown"] == "1 of 2 rows (14 values); pass alternative or entity_class"
