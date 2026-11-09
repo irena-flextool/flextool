@@ -461,6 +461,8 @@ def _overview_tables(scale: dict) -> callable:
         solve_index = pd.MultiIndex.from_tuples([("s1", p, t) for p in PERIODS for t in TIMES],
                                                 names=["solve", "period", "time"])
         write_result(folder, "node_prices_dt_e", _frame(scale["prices"], solve_index, ["node"]), scale["scenario"])
+        write_result(folder, "connection_dt_eee", _frame(scale["connections"], dt_index(), ["process"]),
+                     scale["scenario"])
     return write
 
 
@@ -469,14 +471,16 @@ OVERVIEW_BASE = {"scenario": "base", "dt": OUTPUT_DT,
                  "cost": {("commodity",): [10.0, 5.0, 20.0, 6.0], ("investment",): [100.0, 0.0, 0.0, 50.0]},
                  "discounted": {("commodity",): [3.0, 2.0], ("investment",): [40.0, 10.0]},
                  "prices": {("west",): [30.0, 40.0, 50.0, 60.0, 70.0, 80.0],
-                            ("east",): [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]}}
+                            ("east",): [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]},
+                 "connections": {("c1",): [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], ("c2",): [10.0] * 6}}
 OVERVIEW_HIGH = {"scenario": "high",
                  "dt": {("coal_plant", "west"): [20.0, 40.0, 60.0, 80.0, 100.0, 120.0],
                         ("wind_plant", "west"): [5.0, 0.0, 15.0, 0.0, 0.0, 0.0]},
                  "cost": {("commodity",): [12.0, 5.0, 25.0, 6.0], ("investment",): [100.0, 10.0, 0.0, 50.0]},
                  "discounted": {("commodity",): [4.0, 2.0], ("investment",): [40.0, 20.0]},
                  "prices": {("west",): [40.0, 50.0, 60.0, 70.0, 80.0, 90.0],
-                            ("east",): [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]}}
+                            ("east",): [10.0, 20.0, 30.0, 40.0, 50.0, 60.0]},
+                 "connections": {("c1",): [2.0] * 6, ("c2",): [10.0] * 6}}
 
 
 def test_compare_runs_overview(tmp_path: Path, tests_db: Path) -> None:
@@ -516,14 +520,30 @@ def test_compare_runs_overview(tmp_path: Path, tests_db: Path) -> None:
     assert "totals" not in out
     assert "The values are not added up over node (they are prices or ratios); each node is shown." in out["notes"]
 
-    # Power: the mean over time of the units' sum at each step.  base p2020 (16 + 22 + 48)/3 = 28.67, p2025
-    # (44 + 55 + 60)/3 = 53 (gas_plant has no value at the last step); high (25 + 40 + 75)/3 = 46.67 and
-    # (80 + 100 + 120)/3 = 100.
+    # Power per node (review M3: nodes may hold different carriers, so power is not added up over them): the
+    # mean over time of the node's units' sum at each step.  base west p2020 (15 + 20 + 45)/3 = 26.67, p2025
+    # (40 + 50 + 60)/3 = 50; base east (gas_plant) p2020 (1 + 2 + 3)/3 = 2, p2025 (4 + 5)/2 = 4.5 (no value at
+    # the last step); high west (25 + 40 + 75)/3 = 46.67 and (80 + 100 + 120)/3 = 100; high has no east.
     out = _call(ctx, "compare_runs", table="unit_outputNode_dt_ee", runs=runs)
-    assert out["columns"] == ["period", "base_1", "high_1", "difference_vs_first"]
-    assert _rows(out) == [("p2020", pytest.approx(86 / 3), pytest.approx(140 / 3), pytest.approx(18.0)),
-                          ("p2025", 53.0, 100.0, 47.0)]
-    assert out["applied"]["agg"] == "mean"
+    assert out["columns"] == ["period", "node", "base_1", "high_1", "difference_vs_first"]
+    assert _rows(out) == [("p2020", "west", pytest.approx(80 / 3), pytest.approx(140 / 3), pytest.approx(20.0)),
+                          ("p2020", "east", 2.0, None, None), ("p2025", "west", 50.0, 100.0, 50.0),
+                          ("p2025", "east", 4.5, None, None)]
+    assert out["applied"]["agg"] == "mean" and out["applied"]["group_by"] == ["period", "node"]
+    # Review M2: the first note says what was computed (the mean of the units' sum), not a mean over units.
+    assert out["notes"][0] == ("Totals per period, node (mean of the sum over unit: the values are added up over "
+                               "unit at each time step first, then the mean is taken over time). by_difference true "
+                               "gives each series, largest difference first.")
+    assert out["notes"][1] == ("Energy and power are not added up over node: a model's nodes may hold different "
+                               "carriers (electricity, heat, hydrogen); each node is shown.")
+    # Connections without a node level keep each connection: base c1 p2020 (1 + 2 + 3)/3 = 2, p2025 5; c2 10;
+    # high c1 2, c2 10.
+    out = _call(ctx, "compare_runs", table="connection_dt_eee", runs=runs)
+    assert _rows(out) == [("p2020", "c1", 2.0, 2.0, 0.0), ("p2020", "c2", 10.0, 10.0, 0.0),
+                          ("p2025", "c1", 5.0, 2.0, -3.0), ("p2025", "c2", 10.0, 10.0, 0.0)]
+    assert out["notes"][0] == ("Totals per period, process (mean over time). by_difference true gives each series, "
+                               "largest difference first.")
+    assert out["notes"][1].startswith("Energy and power are not added up over process:")
 
     # by_difference: every series, largest difference first; group_by keeps that order too.
     out = _call(ctx, "compare_runs", table="cost_unit_annualized_d_ec", runs=runs, by_difference=True)
@@ -534,6 +554,76 @@ def test_compare_runs_overview(tmp_path: Path, tests_db: Path) -> None:
     assert out["applied"]["mode"] == "aggregate"
     assert _rows(out) == [("p2020", "u2", 5.0, 15.0, 10.0), ("p2025", "u1", 20.0, 25.0, 5.0),
                           ("p2020", "u1", 110.0, 112.0, 2.0), ("p2025", "u2", 56.0, 56.0, 0.0)]
+
+
+@pytest.fixture
+def overview_ctx(tmp_path: Path, tests_db: Path):
+    project = make_project(tmp_path, tests_db)
+    record_run(project, "base_1", "base", succeed_writing(_overview_tables(OVERVIEW_BASE)))
+    record_run(project, "high_1", "high", succeed_writing(_overview_tables(OVERVIEW_HIGH)))
+    return make_context(project)
+
+
+def test_compare_runs_overview_totals_say_when_they_are_cut(overview_ctx) -> None:
+    """Cycle 1 review m4: totals are cut at max_rows and to the result cap like the rows, and say so.  Before:
+    cut at max_rows without a note, and never fitted (one long totals list could push out every row)."""
+    from flextool.assistant.tools.results import _fit_totals
+
+    runs = ["base_1", "high_1"]
+    out = _call(overview_ctx, "compare_runs", table="cost_unit_annualized_d_ec", runs=runs, max_rows=1)
+    assert out["totals"] == {"columns": ["period", "base_1", "high_1", "difference_vs_first"],
+                             "rows": [["p2020", 115.0, 127.0, 12.0]], "shown": "totals rows 1–1 of 2"}
+    payload = {"table": "t", "rows": [], "totals": {"columns": ["period", "v"],
+                                                     "rows": [[f"p{i:03d}", float(i)] for i in range(100)]}}
+    def redact(text: str) -> str:
+        return text
+
+    fitted = _fit_totals(payload, 800, redact, 100)
+    k = len(fitted["totals"]["rows"])
+    assert 0 < k < 100 and fitted["totals"]["shown"] == f"totals rows 1–{k} of 100"
+    assert len(json.dumps(fitted, ensure_ascii=False, separators=(",", ":"))) <= 800 - 200
+    assert _fit_totals(payload, 100_000, redact, 100)["totals"] == payload["totals"]
+
+
+def test_compare_runs_overview_says_when_it_falls_back(overview_ctx, monkeypatch) -> None:
+    """m5: when both overview queries are refused, each series is shown with a note that says why; any other
+    refusal (not an aggregation's) is the caller's at once.  Before: no note, and a refusal of any kind was
+    taken as "totals not meaningful"."""
+    from flextool.assistant.errors import ToolError
+    from flextool.assistant.tools import results
+
+    real = results._side_by_side
+    calls: list[bool] = []
+
+    def refusing(present, q, *, value_only):
+        calls.append(value_only)
+        if not value_only:
+            raise ToolError("sum_ratio", what="ratios")
+        return real(present, q, value_only=value_only)
+
+    monkeypatch.setattr(results, "_side_by_side", refusing)
+    out = _call(overview_ctx, "compare_runs", table="cost_unit_annualized_d_ec", runs=["base_1", "high_1"])
+    assert out["notes"][0] == ("Totals are not meaningful for this table (This table holds ratios; adding them "
+                               "gives no meaningful total. Use mean, min or max.); each series is shown.")
+    assert out["applied"]["mode"] != "overview" and out["total_rows"] == 8 and calls == [False, False, True]
+
+    def not_found(present, q, *, value_only):
+        calls.append(value_only)
+        raise ToolError("no_runs")
+
+    calls.clear()
+    monkeypatch.setattr(results, "_side_by_side", not_found)
+    message = _refused(overview_ctx, "compare_runs", table="cost_unit_annualized_d_ec", runs=["base_1", "high_1"])
+    assert message.startswith("The project has no scenario results") and calls == [False]
+
+
+def test_energy_units() -> None:
+    """M3: power and energy units (of a node's carrier) against units that add up across carriers."""
+    from flextool.assistant.unit_wording import is_energy_unit
+
+    assert all(is_energy_unit(u) for u in ("MW", "MWh", "MWh/a", "MW·s", "MW·s/a", "kW", "GWh", "MVA"))
+    assert not any(is_energy_unit(u) for u in ("M CUR", "M CUR/a", "CUR", "t/a", "Mt", "units", "units/a", "rad",
+                                               "a", "", None))
 
 
 def test_compare_runs_description_matches_its_rule() -> None:

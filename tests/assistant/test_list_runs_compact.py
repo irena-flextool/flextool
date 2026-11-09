@@ -206,5 +206,6 @@ def test_compare_inputs_is_short(mctx) -> None:
     assert out["total_values"] == 159
     assert sum(n for per_class in out["by_alternative"].values() for n in per_class.values()) == 159
     assert len(out["differences"]) == 30
-    assert out["shown"] == f"30 of {out['total_rows']} rows (159 values); pass alternative or entity_class"
+    assert out["shown"] == (f"30 of {out['total_rows']} rows (159 values); pass alternative or entity_class, or a "
+                            "larger max_rows")
     assert len(text) <= 8_000 and approx_tokens(text, "json") <= 3_800

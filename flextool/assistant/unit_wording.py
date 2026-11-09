@@ -24,6 +24,9 @@ CONVENTION_SUFFIX = " (default convention)"
 _CONVENTION_PART = re.compile(r"(?:MW|kW|MVA)\w*|CUR|Mt|t|tCO2\w*")
 _SPLIT = re.compile(r"[/·\s()]+")
 
+#: A part of a unit that is power or energy (MW, MWh, kW, GWh, MVA, MW·s): a quantity of some carrier.
+_ENERGY_PART = re.compile(r"[kMGT]?(?:W|VA)h?")
+
 UNITS_CONVENTION = "units_convention"
 STORED_VALUES = "stored_values"
 
@@ -43,6 +46,13 @@ DIMENSIONLESS = "dimensionless"
 def is_convention_unit(unit: str) -> bool:
     """Whether *unit* contains a part of the default convention (MW, kWh, CUR, t, tCO2, MVA ...)."""
     return any(_CONVENTION_PART.fullmatch(part) for part in _SPLIT.split(unit) if part)
+
+
+def is_energy_unit(unit: str | None) -> bool:
+    """Whether *unit* is power or energy (``MW``, ``MWh/a``, ``MW·s``; not ``M CUR``, ``t/a`` or ``units``): such
+    values are of the carrier of their node, and a model may hold several (electricity, heat, hydrogen in kg/h
+    under the same default unit), so they do not add up across nodes."""
+    return bool(unit) and any(_ENERGY_PART.fullmatch(part) for part in _SPLIT.split(unit) if part)
 
 
 def shown_unit(unit: str | None) -> str | None:

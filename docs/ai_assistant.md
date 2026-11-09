@@ -620,19 +620,28 @@ Other tools keep their results short so that a project with many runs fits the a
 
 - `list_runs` gives the number of runs in each state, then one row per run: folder, state and whether its results
   can be read. A folder whose result files were written without a run record (by an older FlexTool) has the state
-  `no_record`: its success is not known, and every result read from it says `"verified": false`. Named folders
+  `no_record`: its success is not known. A result read from it says `"verified": false` (`compare_runs` lists
+  such runs in `unverified`), and its run notes start with the same warning. Named folders
   (`"folders": ["base_1"]`), a filtered list of up to five runs or `"detail": "full"` add the verdict, times,
   FlexTool version and error; a value shared by every row is then given once (`same_in_every_row`). Filter with
-  `source`, `scenario`, `state`, `results_usable` and `folders` (names or `*` patterns); a long list comes in pages,
-  and `shown` names the `offset` of the next one.
+  `source`, `scenario`, `state`, `results_usable` and `folders` (names or `*` patterns; a name or pattern that
+  matches no folder is refused with the closest folder names); a long list comes in pages, and `shown` names the
+  `offset` of the next one. The states are those of the run record (`succeeded`, `failed`, `killed`,
+  `interrupted`, `crashed`, `running`, `abandoned`, `unknown`, `unreadable`, `malformed`) and `no_record`.
 - `list_sources` with `"scenario": "coal_chp"` gives that scenario's alternatives, highest rank first, and its base
   alternative.
 - `compare_runs` without `group_by`, `agg`, `sort` and `top_n` gives each run's totals per period and category
   (entities added up where that is meaningful; prices are kept per node), with the totals per period in `totals`;
-  `"by_difference": true` gives each series, largest difference first.
+  `"by_difference": true` gives each series, largest difference first. Energy and power are never added up over
+  nodes, since the nodes of a model can hold different carriers (electricity, heat, hydrogen): such a table is
+  totalled per node (units and connections added up into each node), and a table of units or connections without
+  a node level keeps each unit or connection. Costs, emissions and other quantities that are not energy or power
+  are added up over entities wherever a sum is meaningful. The first note says what was computed.
 - `compare_inputs` counts the differences by alternative and entity class first, then gives one row per parameter
   and change with the entities it applies to (30 rows by default); `alternative` and `entity_class` narrow it. The
-  `alternative` of a row is the one that makes the two scenarios differ.
+  `alternative` of a row is the one that makes the two scenarios differ (when each scenario's value comes from an
+  alternative the other scenario does not have, `alternative` names b's, and the filter finds the row by either).
+  Entities share a row only when their values are exactly the same.
 
 ## When something goes wrong
 

@@ -17,7 +17,7 @@ from flextool.assistant.errors import ToolError
 from flextool.assistant.registry import Fit, make_tool
 from flextool.assistant.results import _catalog, _query, _runs
 from flextool.assistant.results._query import AGGS, SCENARIO_LEVEL, Query
-from flextool.assistant.unit_wording import UNITS_CONVENTION, add_session_notes, shown_unit
+from flextool.assistant.unit_wording import UNITS_CONVENTION, add_session_notes, is_energy_unit, shown_unit
 
 QUERY_HINT = "add filters, group_by or top_n"
 COMPARISON = "comparison"
@@ -267,38 +267,116 @@ def _preloaded(table: _query.Table, q: _query.Query, write_id: str) -> _query.Ta
     return loaded if same else None
 
 
+#: Entity levels whose values are nodes (or carriers): power and energy are never added up over them in the
+#: overview, since the nodes of a model can hold different carriers (Cycle 1 review M3).
+NODE_LEVELS = frozenset({"node", "sink", "source", "commodity"})
+#: The refusals of an aggregation the overview falls back from (the others, such as a filter that matches nothing,
+#: are the caller's to see).
+_AGGREGATION_REFUSALS = frozenset({"mixed_units", "mean_of_parts", "combine_quantities", "sum_over_groups"})
+
+
+def _aggregation_refusal(exc: ToolError) -> bool:
+    return exc.key in _AGGREGATION_REFUSALS or exc.key.startswith("sum_")
+
+
 def _overview(table: _query.Table, q: Query) -> tuple[Query, list[str]]:
     """The query of compare_runs' overview (no group_by, agg, sort, top_n and by_difference): every period,
     category, quantity and group level kept; time combined; entity levels combined where a sum over entities is
     meaningful for every kept column (prices and ratios keep them); periods combined only where a sum over periods
-    is (discounted costs).  agg: on a table with time steps the sum when every column's default statistic is the
-    sum, else the mean (the mean of the entities' total at each step); else the sum.  Returns the query and the
-    notes (Cycle 1 design §3, critique m6)."""
+    is (discounted costs).  Power and energy (:func:`~flextool.assistant.unit_wording.is_energy_unit`) keep every
+    node level (:data:`NODE_LEVELS`): the nodes may hold different carriers; their units and connections are
+    added up into each node, or into each group, and a table with neither keeps its units and connections too.
+    agg: on a table with time steps the sum when every column's default statistic is the sum, else the mean (the
+    mean of the entities' total at each step); else the sum.  Returns the query and the notes (Cycle 1 design §3,
+    critique m6, review M3)."""
     import dataclasses
 
     stem = table.stem
     keep = _query._selected_columns(table, q, None)
     measure_of = table.measure_of()
     semantics = {measure_of[p].semantics for p in keep}
+    energy = any(is_energy_unit(measure_of[p].unit) for p in keep)
+    kinds = {level: _query.level_kind(stem, level) for level in table.levels}
+    anchored = any(level in NODE_LEVELS or kind == "overlapping" for level, kind in kinds.items())
     kept: list[str] = []
     notes: list[str] = []
+    by_carrier: list[str] = []
     for level in table.levels:
-        kind = _query.level_kind(stem, level)
+        kind = kinds[level]
         if kind == "time":
             continue
         if kind == "period" and all(_query.sum_problem(stem, sem, {"period"}) is None for sem in semantics):
             continue
         if kind == "entity":
-            if all(_query.sum_problem(stem, sem, {"entity"}) is None for sem in semantics):
+            if not all(_query.sum_problem(stem, sem, {"entity"}) is None for sem in semantics):
+                notes.append(f"The values are not added up over {level} (they are prices or ratios); each {level} "
+                             "is shown.")
+            elif energy and (level in NODE_LEVELS or not anchored):
+                by_carrier.append(level)
+            else:
                 continue
-            notes.append(f"The values are not added up over {level} (they are prices or ratios); each {level} "
-                         "is shown.")
         kept.append(level)
+    if by_carrier:
+        levels = ", ".join(by_carrier)
+        notes.append(f"Energy and power are not added up over {levels}: a model's nodes may hold different "
+                     f"carriers (electricity, heat, hydrogen); each {levels} is shown.")
     if table.has_time:
         agg = "sum" if all(_query.default_agg(sem) == "sum" for sem in semantics) else "mean"
     else:
         agg = "sum"
     return dataclasses.replace(q, group_by=tuple(kept), agg=agg), notes
+
+
+def _overview_note(stem: str, levels: list[str], keys: list[str], result: _query.Result) -> str:
+    """What the overview computed, in the words of the aggregation (Cycle 1 review M2): its ``how`` when entities
+    were added up at each time step before the statistic over time, else the sum over the entity and category
+    levels and the statistic over the others."""
+    head = f"Totals per {', '.join(keys) or 'run'}"
+    tail = " by_difference true gives each series, largest difference first."
+    if result.how:
+        return f"{head} ({result.how}).{tail}"
+    combined = [lv for lv in levels if lv not in keys]
+    additive = [lv for lv in combined if _query.level_kind(stem, lv) in ("entity", "part")]
+    other = [lv for lv in combined if lv not in additive]
+    parts = []
+    if additive:
+        parts.append(f"sum over {', '.join(additive)}")
+    if other:
+        parts.append(f"{result.agg} over {', '.join(other)}")
+    return f"{head} ({'; '.join(parts) or 'nothing combined'}).{tail}"
+
+
+#: Room left beside the header and the totals for the rows' ``shown`` note.
+_ROWS_NOTE_RESERVE = 200
+
+
+def _fit_totals(payload: dict, max_chars: int, redact, total: int) -> dict:
+    """*payload* with as many leading ``totals`` rows as fit *max_chars* beside the header (the rows are fitted
+    after), and ``totals.shown`` when some of the *total* rows are left out (Cycle 1 review m4)."""
+    from flextool.assistant.caps import sent_payload
+
+    totals = payload["totals"]
+    rows = totals["rows"]
+
+    def trial(k: int) -> dict:
+        t = {"columns": totals["columns"], "rows": rows[:k]}
+        if k < total:
+            t["shown"] = f"totals rows 1–{k} of {total}"
+        return {**payload, "totals": t}
+
+    def fits(k: int) -> bool:
+        return len(dumps(sent_payload({**trial(k), "rows": []}, redact))) <= max_chars - _ROWS_NOTE_RESERVE
+
+    if fits(len(rows)):
+        return trial(len(rows))
+    lo, hi, best = 0, len(rows) - 1, 0
+    while lo <= hi:
+        k = (lo + hi) // 2
+        if fits(k):
+            best, lo = k, k + 1
+        else:
+            hi = k - 1
+    return trial(best)
 
 
 def _side_by_side(present: list[tuple], q: Query, *, value_only: bool):
@@ -383,33 +461,41 @@ def compare_runs(ctx: AssistantContext, args: dict) -> Fit:
     overview = (q.group_by is None and q.agg is None and q.sort_by is None and q.top_n is None
                 and not args.get("by_difference"))
     totals = None
+    totals_n = 0
     if overview:
         oq, overview_notes = _overview(present[0][1], q)
         try:
             joined, keys, run_names, diff_names, first_result = _side_by_side(present, oq, value_only=False)
-        except ToolError:
+        except ToolError as exc:
             # A combination the guard refuses (mixed units, the mean of parts): keep the entity levels too, and
-            # if that is refused as well, give each series (never fail the call without arguments).
+            # if that is refused as well, give each series and say why (never fail the call without arguments).
+            if not _aggregation_refusal(exc):
+                raise
             entity = [lv for lv in present[0][1].levels if _query.level_kind(stem, lv) == "entity"]
             kept = [lv for lv in present[0][1].levels if lv in set(oq.group_by or ()) | set(entity)]
             oq = dataclasses.replace(oq, group_by=tuple(kept))
             try:
                 joined, keys, run_names, diff_names, first_result = _side_by_side(present, oq, value_only=False)
-            except ToolError:
+            except ToolError as again:
+                if not _aggregation_refusal(again):
+                    raise
                 overview = False
+                notes.append(f"Totals are not meaningful for this table ({again.render(ctx.redact)}); each series "
+                             "is shown.")
         if overview:
             q_used = oq
+            notes.append(_overview_note(stem, list(present[0][1].levels), keys, first_result))
             notes += overview_notes
-            combined = ", ".join(lv for lv in present[0][1].levels if lv not in keys) or "nothing"
-            notes.append(f"Totals per {', '.join(keys) or 'run'} ({first_result.agg} over {combined}). "
-                         "by_difference true gives each series, largest difference first.")
             parts = [lv for lv in keys if _query.level_kind(stem, lv) == "part"]
             if parts:
                 tq = dataclasses.replace(oq, group_by=tuple(lv for lv in keys if lv not in parts))
                 try:
                     tj, tkeys, _, _, _ = _side_by_side(present, tq, value_only=False)
+                    totals_n = tj.height
                     totals = {"columns": tj.columns, "rows": _query.rows_of(tj, int(args["max_rows"]))}
-                except ToolError:
+                except ToolError as exc:
+                    if not _aggregation_refusal(exc):
+                        raise
                     totals = None
     if not overview:
         q_used = q
@@ -456,6 +542,8 @@ def compare_runs(ctx: AssistantContext, args: dict) -> Fit:
     def note(k: int, _n: int) -> str | None:
         return None if k == total else f"rows 1–{k} of {total}; {QUERY_HINT}"
 
+    if totals is not None:
+        payload = _fit_totals(payload, int(args["max_chars"]), ctx.redact, totals_n)
     fitted = fit_rows(payload, "rows", int(args["max_chars"]), ctx.redact, note_key="shown", note=note)
     return Fit(fitted, rows_key="rows", hint=QUERY_HINT)
 
