@@ -289,6 +289,27 @@ def test_q_with_a_provider_error_exits_1(project, fake_backends, echo_tool):
     assert "Your Custom endpoint quota is used up for now." in term.stderr.getvalue()
 
 
+def test_q_with_an_unexpected_fault_exits_1_and_does_not_wait(project, fake_backends, echo_tool):
+    """An exception that is not a model error (a bug, a failing save) ends the question with the internal-fault
+    message; the terminal does not wait for an answer that never comes (review G11, C5-3)."""
+    import threading
+
+    def boom(_req):
+        raise RuntimeError("boom")
+
+    models = Models([boom], fake_backends)
+    term = terminal()
+    box: dict = {}
+    thread = threading.Thread(target=lambda: box.setdefault("code", chat_cli.main(
+        remote(project, "-q", "Q", "--accept-data-notice"), backend_factory=models, terminal=term)), daemon=True)
+    thread.start()
+    thread.join(20)
+    assert not thread.is_alive(), "the terminal chat waits forever"
+    assert box["code"] == 1
+    assert "The assistant stopped because of an internal fault (RuntimeError). Please report it." in \
+        term.stderr.getvalue()
+
+
 def test_the_interactive_chat_needs_a_terminal(project, fake_backends):
     models = Models([], fake_backends)
     term = terminal(["yes", "Q"], tty=False)

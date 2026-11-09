@@ -75,6 +75,8 @@ MESSAGES: dict[str, str] = {
     "redirect": ("The endpoint redirected to {host}. FlexTool does not follow redirects, so nothing was sent "
                  "there."),
     "cancelled": "Stopped.",
+    "internal": "The assistant stopped because of an internal fault ({type}). Please report it.",
+    "newer_format": "The assistant stopped: {text}",
     "unknown_stop": "The provider ended the answer for a reason FlexTool does not know ({reason}).",
     "model_list": "The model list could not be fetched: {reason}. Type the model name instead.",
     "small_context_ollama": ("This model runs with a {n}-token context, too small for the assistant's instructions "
@@ -276,10 +278,16 @@ class ProviderError(LLMError):
     code = "other"
 
 
+class InternalFault(LLMError):
+    """A turn that ended on an error of FlexTool itself, not of the model request (review G11, C5-3)."""
+
+    code = "internal"
+
+
 ERROR_CLASSES: tuple[type[LLMError], ...] = (
     RateLimited, AccessInactive, ServerBusy, QuotaExhausted, NoCredit, AuthFailed, NotPermitted, ContextTooLong, HistoryRejected,
     NoMatchingEndpoint, ToolsUnsupported, ModelNotFound, Unreachable, TimedOut, ContextTooSmall, Refused, Truncated,
-    NoKey, Cancelled, ProviderError)
+    NoKey, Cancelled, ProviderError, InternalFault)
 
 
 def make_error(cls: type[LLMError], key: str, ctx: ErrorContext, **kwargs: Any) -> LLMError:

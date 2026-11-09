@@ -221,43 +221,10 @@ def finishing_workers() -> list[AssistantWorker]:
 
 
 def repair_history(messages: list[Message]) -> bool:
-    """Make *messages* a history every provider accepts: each tool call answered once, right after its call and
-    in call order (a missing result becomes "Stopped by the user."), no result without its call.  Changes the
-    list in place; returns whether anything changed."""
-    from flextool.assistant.llm_adapter import Message
-    from flextool.assistant.session import SESSION_MESSAGES, normalise_tool_name
+    """:func:`flextool.assistant.session.repair_history` (the session repairs a turn that fails, too)."""
+    from flextool.assistant.session import repair_history as repair
 
-    out: list[Message] = []
-    changed = False
-    i = 0
-    while i < len(messages):
-        m = messages[i]
-        if m.role == "tool":
-            changed = True                  # a result without its call
-            i += 1
-            continue
-        out.append(m)
-        i += 1
-        if m.role != "assistant" or not m.tool_calls:
-            continue
-        results: dict[str, Message] = {}
-        start = i
-        while i < len(messages) and messages[i].role == "tool":
-            results.setdefault(messages[i].tool_call_id or "", messages[i])
-            i += 1
-        expected = [c.id for c in m.tool_calls]
-        found = [r.tool_call_id for r in messages[start:i]]
-        if found != expected:
-            changed = True
-        for call in m.tool_calls:
-            result = results.get(call.id)
-            if result is None:
-                result = Message("tool", SESSION_MESSAGES["stopped"], tool_call_id=call.id,
-                                 tool_name=normalise_tool_name(call.name), is_error=True, turn=m.turn)
-            out.append(result)
-    if changed:
-        messages[:] = out
-    return changed
+    return repair(messages)
 
 
 @dataclass

@@ -18,6 +18,7 @@ import pytest
 
 from flextool.assistant import _files
 from flextool.assistant.llm_adapter import Message, ToolCall, ToolDone, ToolWaiting
+from flextool.assistant.llm_errors import message_for
 from flextool.assistant.probes import ModelFacts
 from flextool.assistant.settings import ProviderSettings
 from flextool.assistant.store import open_store
@@ -38,7 +39,6 @@ from flextool.gui.assistant.worker import (
     TurnFinished,
     TurnRefused,
     TurnStarted,
-    WorkerFault,
     finishing_worker,
 )
 from tests.assistant.gui_support.worker_rig import (
@@ -312,7 +312,9 @@ def test_a_fault_repairs_and_saves_the_history(project, tools, rigs):
     rig.worker.submit(OpenConversation(conv.id))
     assert rig.wait_for(ConversationLoaded).number == 7
     rig.job("now")
-    assert rig.wait_for(WorkerFault).message == FAULT
+    # The session ends the turn on the fault itself (review G11, C5-3): a finished turn with the fault's message.
+    finished = rig.wait_for(TurnFinished)
+    assert not finished.result.ok and message_for(finished.result.error, "gui") == FAULT
     rig.wait_for(Idle)
     messages = _messages_on_disk(project, conv.id)
     assert [m["role"] for m in messages] == ["user", "assistant", "tool", "user"]

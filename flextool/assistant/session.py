@@ -59,6 +59,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import logging
 import random
 import re
 import threading
@@ -67,6 +68,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
+from flextool.assistant import _files
 from flextool.assistant import budget as budget_module
 from flextool.assistant import caps as caps_module
 from flextool.assistant import prompt, registry, unit_wording
@@ -102,6 +104,7 @@ from flextool.assistant.llm_errors import (
     ContextTooLong,
     ErrorContext,
     HistoryRejected,
+    InternalFault,
     LLMError,
     ProviderError,
     RateLimited,
@@ -116,6 +119,8 @@ from flextool.assistant.llm_retry import Pacing, RetryPolicy, call_with_retries
 from flextool.assistant.pacing import PROCESS_PACER, Pacer, pace_key
 from flextool.assistant.providers import pacing_seed
 from flextool.assistant.usage import add_usage, ledger_key
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from flextool.assistant.context import AssistantContext
@@ -169,6 +174,10 @@ SESSION_MESSAGES: dict[str, str] = {
                  "model may get further."),
     "question_not_shown": "(The question is not shown.)",
     "continuing": "Continuing with a fresh context (part {part} of {of})\u2026",
+    "not_saved": ("The chat could not be saved ({reason}). The answer is shown, but may be missing when the chat is "
+                  "opened again."),
+    "read_only": ("This chat was saved by a newer FlexTool, so it is read-only here: this answer and later ones are "
+                  "not saved."),
     "free_plan_hint": ("The provider limited how fast questions can be sent. If you use a free plan, switch on "
                        "\u201cFree plan\u201d in the assistant settings (in the terminal: --free-tier on), so each "
                        "question uses fewer steps."),
@@ -368,6 +377,51 @@ def carry_summary(messages: list[Message]) -> str:
     return caps_module.cap_text("\n".join(lines), SUMMARY_MAX)
 
 
+def repair_history(messages: list[Message]) -> bool:
+    """Make *messages* a history every provider accepts: each tool call answered once, right after its call and
+    in call order (a missing result becomes "Stopped by the user."), no result without its call.  Changes the
+    list in place; returns whether anything changed."""
+    out: list[Message] = []
+    changed = False
+    i = 0
+    while i < len(messages):
+        m = messages[i]
+        if m.role == "tool":
+            changed = True                  # a result without its call
+            i += 1
+            continue
+        out.append(m)
+        i += 1
+        if m.role != "assistant" or not m.tool_calls:
+            continue
+        results: dict[str, Message] = {}
+        start = i
+        while i < len(messages) and messages[i].role == "tool":
+            results.setdefault(messages[i].tool_call_id or "", messages[i])
+            i += 1
+        expected = [c.id for c in m.tool_calls]
+        found = [r.tool_call_id for r in messages[start:i]]
+        if found != expected:
+            changed = True
+        for call in m.tool_calls:
+            result = results.get(call.id)
+            if result is None:
+                result = Message("tool", SESSION_MESSAGES["stopped"], tool_call_id=call.id,
+                                 tool_name=normalise_tool_name(call.name), is_error=True, turn=m.turn)
+            out.append(result)
+    if changed:
+        messages[:] = out
+    return changed
+
+
+def internal_fault(exc: BaseException) -> LLMError:
+    """The error of a turn that ended on an exception of FlexTool itself (review G11, C5-3): a conversation file of
+    a newer FlexTool says so; anything else is an internal fault to report."""
+    if isinstance(exc, _files.NewerFormat):
+        return make_error(InternalFault, "newer_format", ErrorContext(), message_fields={"text": str(exc)})
+    return make_error(InternalFault, "internal", ErrorContext(), message_fields={"type": type(exc).__name__})
+
+
 class _Stopped(Exception):
     """The user stopped the turn between two tool calls or while a call waited for the lock."""
 
@@ -460,6 +514,10 @@ class Session:
         self._turn_lock = threading.Lock()
         self._cancel: threading.Event | None = None
         self._turn_no = 0
+        #: The running turn's state, usage and event sink (for a turn that ends on an unexpected exception).
+        self._live: tuple[_TurnState, list[Usage], OnEvent] | None = None
+        self._unsaved: str | None = None            # why the last save failed, until one succeeds
+        self._read_only_notice = False              # the conversation has just become read-only
         self._last_block = prompt.last_context_block([m.text for m in conversation.messages if m.role == "user"])
         self._attach(backend, preset, tier, facts, route, budget)
         self._resume()
@@ -562,8 +620,34 @@ class Session:
         self.conversation.messages = drop_provider_extra(self.messages)
 
     def _save(self) -> None:
-        if self.store is not None:
-            self.store.save(self.conversation)
+        """Save the conversation.  A save that fails is logged and said once at the end of the turn, never fails
+        an answer (review G11, C5-3); a file of a newer FlexTool makes the conversation read-only."""
+        if self.store is None:
+            return
+        conv = self.conversation
+        was_read_only = bool(getattr(conv, "read_only", False))
+        try:
+            self.store.save(conv)
+        except _files.NewerFormat as exc:
+            logger.warning("The chat is read-only: %s", exc)
+            conv.read_only = True
+        except (OSError, _files.UnreadableFile) as exc:
+            logger.warning("The chat could not be saved: %s", exc)
+            self._unsaved = str(exc) or type(exc).__name__
+            return
+        self._unsaved = None
+        if not was_read_only and getattr(conv, "read_only", False):
+            self._read_only_notice = True
+
+    def _save_notices(self, emit: OnEvent) -> None:
+        """The turn's notices about saving: a save that failed (and none succeeded after it), a conversation that
+        has just become read-only."""
+        if self._unsaved is not None:
+            emit(Notice(SESSION_MESSAGES["not_saved"].format(reason=self._unsaved)))
+            self._unsaved = None
+        if self._read_only_notice:
+            emit(Notice(SESSION_MESSAGES["read_only"]))
+            self._read_only_notice = False
 
     def _append_limit(self, turn: int) -> None:
         """The session's "tool limit reached" instruction before the tool-less request of *turn*."""
@@ -907,10 +991,42 @@ class Session:
         *cancel* (set by :meth:`abort` or the front end) stops the turn and repairs the history."""
         with self._turn_lock:
             self._cancel = cancel
+            self._live = None
             try:
                 return self._turn(user_text, on_event, cancel)
+            except Exception as exc:  # noqa: BLE001 — every turn ends with a result (review G11, C5-3)
+                return self._fault(exc, on_event, cancel)
             finally:
                 self._cancel = None
+                self._live = None
+
+    def _fault(self, exc: Exception, on_event: OnEvent, cancel: threading.Event) -> TurnResult:
+        """End a turn that raised an exception other than a model request's: the history is repaired and saved,
+        and the result says what happened — "Stopped." when the user stopped the turn (closing the response can
+        make a library raise anything), else the internal fault."""
+        state, usage, emit = self._live or (_TurnState(), [], on_event)
+        if cancel.is_set():
+            logger.debug("A stopped turn ended on %r", exc)
+            err: LLMError = cancelled(self.error_ctx)
+        else:
+            logger.error("The AI assistant's turn failed", exc_info=exc)
+            err = internal_fault(exc)
+        try:
+            # The calls of the round that was running were saved as "not run: FlexTool was closed"; they were
+            # stopped instead.
+            start = self._turn_start(self._turn_no)
+            for i in range(start, len(self.messages)):
+                m = self.messages[i]
+                if m.role == "tool" and m.text == SESSION_MESSAGES["closed"]:
+                    self.messages[i] = dataclasses.replace(m, text=SESSION_MESSAGES["stopped"])
+            repair_history(self.messages)
+            self._drop_dangling_control()
+            self._save()
+        except Exception:  # noqa: BLE001 — the turn still ends; the checkpoint on disk stays valid
+            logger.exception("The chat could not be repaired after the fault")
+        text = next((m.text for m in reversed(self.messages) if m.turn == self._turn_no and m.role == "assistant"
+                     and m.kind != "note" and m.text.strip()), "")
+        return self._fail(err, text, state.rounds, usage, state, emit)
 
     def _turn(self, user_text: str, on_event: OnEvent, cancel: threading.Event) -> TurnResult:
         def emit(event: Event) -> None:
@@ -937,6 +1053,7 @@ class Session:
             emit(Notice(text))
         turn_usage: list[Usage] = []
         state = _TurnState()
+        self._live = (state, turn_usage, emit)
         final_text = ""
         limit_reached = False
         try:
@@ -1113,6 +1230,7 @@ class Session:
         return True
 
     def _done(self, text: str, usage: list[Usage], state: _TurnState, emit: OnEvent) -> TurnResult:
+        self._save_notices(emit)
         if state.repeated:
             emit(Notice(SESSION_MESSAGES["repeated"]))
         return TurnResult(text, True, None, state.rounds, usage, state.requests, state.total_calls, state.part - 1,
@@ -1129,6 +1247,7 @@ class Session:
 
     def _fail(self, err: LLMError, text: str, rounds: int, usage: list[Usage], state: _TurnState,
               emit: OnEvent) -> TurnResult:
+        self._save_notices(emit)
         if state.repeated:
             emit(Notice(SESSION_MESSAGES["repeated"]))      # the question ended because of the repeat (C5-14)
         return TurnResult(text, False, err, rounds, usage, state.requests, state.total_calls, state.part - 1,
@@ -1183,7 +1302,12 @@ class TurnWorker:
                 on_event(event)
 
         def run() -> None:
-            result = self.session.run_turn(text, events, cancel)
+            try:
+                result = self.session.run_turn(text, events, cancel)
+            except BaseException as exc:  # noqa: BLE001 — on_done is always called (review G11, C5-3)
+                logger.error("The AI assistant's turn failed", exc_info=exc)
+                err = cancelled() if cancel.is_set() else internal_fault(exc)
+                result = TurnResult("", False, err, 0)
             if current():
                 on_done(result)
 
