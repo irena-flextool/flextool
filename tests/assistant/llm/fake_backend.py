@@ -3,7 +3,13 @@
 Each ``stream`` call takes the next item of the script: a :class:`Reply` (its text is streamed as
 :class:`TextDelta` pieces and its calls announced with :class:`ToolCallStarted`), an :class:`LLMError` (raised), a
 :class:`Block` (waits until released, cancelled or aborted, then goes on with its ``then`` item) or a callable
-``(request) -> item``.  Every request is recorded in ``requests``.
+``(request) -> item``.  Every request is recorded in ``requests`` and checked with
+:func:`~tests.assistant.llm.history_check.validate`.
+
+A request the script has no item for, or one whose history is not valid, is a fault of the test or of the session:
+it raises ``AssertionError`` and is also recorded in :data:`FAULTS`, which the assistant tests' autouse fixture
+checks at teardown — the session turns any exception into a failed answer (review G11, C5-3), so the raise alone
+would pass unseen.
 """
 from __future__ import annotations
 
@@ -21,6 +27,15 @@ from flextool.assistant.llm_adapter import (
     ToolCallStarted,
 )
 from flextool.assistant.llm_errors import LLMError, cancelled
+from tests.assistant.llm import history_check
+
+#: The faults of the fake backends of this test (see the module docstring).
+FAULTS: list[str] = []
+
+
+def _fault(text: str) -> AssertionError:
+    FAULTS.append(text)
+    return AssertionError(text)
 
 
 @dataclass
@@ -34,8 +49,9 @@ class Block:
 
 class FakeBackend:
     def __init__(self, script: list[object], *, origin: Origin = ("fake", "http://127.0.0.1:9/v1", "fake-model"),
-                 models: list[ModelEntry] | None = None, piece: int = 7) -> None:
+                 models: list[ModelEntry] | None = None, piece: int = 7, validate: bool = True) -> None:
         self.script = list(script)
+        self.validate = validate
         self.origin = origin
         self.models = list(models or [])
         self.piece = piece
@@ -47,8 +63,13 @@ class FakeBackend:
     def stream(self, req: Request, on_event: OnEvent, cancel: threading.Event) -> Reply:
         self.requests.append(req)
         self.aborted.clear()
+        if self.validate:
+            try:
+                history_check.validate(req)
+            except AssertionError as exc:
+                raise _fault(f"request {len(self.requests)} is not a valid history: {exc}") from None
         if not self.script:
-            raise AssertionError("the fake backend's script is used up")
+            raise _fault("the fake backend's script is used up")
         item = self.script.pop(0)
         while True:
             if callable(item) and not isinstance(item, (Reply, LLMError, Block)):

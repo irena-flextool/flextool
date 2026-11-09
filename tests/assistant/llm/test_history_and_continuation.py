@@ -347,10 +347,13 @@ def test_stop_during_a_continuation(tmp_path, tools, where):
         backend.release_all()
     assert finished == []                       # a stopped turn's result is discarded
     if where == "fresh part":
-        assert session.messages[-1].kind == "continuation" and Continuing(2, 3) in events
+        assert Continuing(2, 3) in events
+        assert [m.kind for m in session.messages[-2:]] == ["note_request", "note"]
     else:
-        assert session.messages[-1].kind == "note_request"
-    # The session's own message that got no answer is dropped; the stopped question goes with the next one.
+        assert session.messages[-1].role == "tool"
+    # The session's own message that got no answer is dropped when the turn ends (review G11, C5-1), so the saved
+    # history never ends with it; the stopped question goes with the next one.
+    history_check.check_stored(session.messages)
     result = ask(session, "again")
     assert result.ok and result.text == "Next answer."
     assert plain(backend.requests[-1].messages) == [("user", f"{block_of(ctx)}\n\nq\n\nagain", 0)]
@@ -390,3 +393,127 @@ def test_parse_note():
     assert parse_note("Found x.\n**Keep:** none\n") == ("Found x.", [])
     assert parse_note("Found x.") == ("Found x.", None)
     assert parse_note("Keep the unit.\nFound x.") == ("Keep the unit.\nFound x.", None)
+
+
+# --- the session's own messages that got no answer (review G11) ---------------------------------------------------
+#: One step a part and one continuation: question one continues once and then reaches the limit in its last part.
+ONE_STEP = TurnCaps(max_rounds=1, max_calls_per_round=3, max_continuations=1)
+
+
+def _tool_less_failure(kind: str) -> object:
+    from flextool.assistant.llm_errors import ContextTooLong, ErrorContext, RateLimited, cancelled, make_error
+
+    ctx = ErrorContext(provider="Custom endpoint", model="fake-model")
+    return {"stop": cancelled(ctx),
+            "rate_limited": make_error(RateLimited, "rpm", ctx, retry_after=600.0),
+            "provider_error": ProviderError("broken", provider="Custom endpoint"),
+            "too_long_twice": make_error(ContextTooLong, "context", ctx)}[kind]
+
+
+@pytest.mark.parametrize("failure", ["stop", "rate_limited", "provider_error", "too_long_twice", "repeat_stop",
+                                     "fit_step_3"])
+def test_a_failed_tool_less_request_does_not_take_the_next_question(tmp_path, tools, failure):
+    """Question one reaches the limit in its last part and the tool-less request after the "tool limit reached"
+    instruction fails.  Question two is its own turn, its fresh part starts with question two (question one, which
+    has no answer, goes before it: P1 m12), and `/new carry` lists both (C5-1).
+
+    The instruction comes from the loop (the part's steps are used up), from the repeat stop (the fresh part asks
+    again what part one asked), or from step 3 of the pre-send fit (a provider that replays data, a request with
+    tools that does not fit, a tool-less one that does)."""
+    broken = ProviderError("broken", provider="Custom endpoint")
+    caps = ONE_STEP
+    if failure == "repeat_stop":
+        script = [calls(call("a")), say("Note one."), calls(call("a")), broken]
+    elif failure == "fit_step_3":
+        caps = dataclasses.replace(ONE_STEP, max_rounds=2)
+        script = [calls(call("a")), calls(call("a2")), say("Note one."), calls(call("b"), extra=thinking(2)), broken]
+    else:
+        tool_less = ([_tool_less_failure("too_long_twice")] * 2 if failure == "too_long_twice"
+                     else [_tool_less_failure(failure)])
+        script = [calls(call("a")), say("Note one."), calls(call("b"))] + tool_less
+    if failure == "fit_step_3":
+        script += [calls(call("c")), calls(call("d")), say("Note two."), say("answer TWO")]
+    else:
+        script += [calls(call("c")), say("Note two."), say("answer TWO")]
+    session, backend, _ctx = make(tmp_path, script, tier="basic", caps=caps)
+    if failure == "fit_step_3":
+        session.budget = resolve_budget("small", 200_000, "model", local=False)
+        real_fits = session._fits
+
+        def fits(choice):
+            fresh_part_step_two = any(m.kind == "continuation" for m in session.messages) and \
+                session.messages[-1].role == "tool"
+            return choice == "none" if fresh_part_step_two and session._turn_no == 1 else real_fits(choice)
+        session._fits = fits
+    first = ask(session, "question ONE")
+    assert not first.ok
+    if failure == "fit_step_3":
+        assert backend.requests[-1].messages[-1].kind == "limit" and backend.requests[-1].tool_choice == "none"
+    assert session.messages[-1].kind != "limit"
+    history_check.check_stored(session.messages)
+    turn_one = session.messages[-1].turn
+    second = ask(session, "question TWO")
+    assert second.ok and second.text == "answer TWO" and second.continuations == 1
+    assert {m.turn for m in session.messages if "question TWO" in m.text} == {turn_one + 1}
+    fresh = backend.requests[-1].messages[0]
+    assert fresh.kind == "continuation"
+    body = prompt.remove_context_blocks(fresh.text)
+    # Question one goes once before the body, which starts with question two.
+    assert body.count("question ONE") == 1 and body.index("question ONE") < body.index("question TWO")
+    assert body.split("question ONE\n\n", 1)[1].startswith("question TWO\n\n[This question continues")
+    for req in backend.requests:
+        history_check.validate(req)
+    history_check.check_stored(session.messages)
+    summary = carry_summary(session.messages).splitlines()[1:]
+    assert summary == ["Question: question ONE", "Question: question TWO", "Answer: answer TWO"]
+
+
+def test_a_saved_legacy_limit_message_is_recognised(tmp_path):
+    """A conversation saved before the instruction had its kind: the instruction alone reads as a ``limit``
+    message, and one with the next question merged into it reads as that question again (C5-1)."""
+    from flextool.assistant.store import message_from_json
+
+    limit = SESSION_MESSAGES["limit"]
+    alone = message_from_json({"role": "user", "text": limit, "turn": 1})
+    assert (alone.kind, alone.text) == ("limit", limit)
+    merged = message_from_json({"role": "user", "text": f"{limit}\n\nquestion two", "turn": 1})
+    assert (merged.kind, merged.text) == ("", "question two")
+    asked = message_from_json({"role": "user", "text": "question one", "turn": 1})
+    assert (asked.kind, asked.text) == ("", "question one")
+    answer = message_from_json({"role": "assistant", "text": limit, "turn": 1})
+    assert answer.kind == ""
+
+
+def test_a_blank_note_is_not_kept(tmp_path, tools):
+    """The model's note is only whitespace: it is not stored, and no request carries a blank assistant message
+    (C5-9); the question ends as without a continuation."""
+    script = [calls(call("a")), say("\n"), say("What I have.")]
+    session, backend, _ctx = make(tmp_path, script, tier="basic", caps=ONE_STEP)
+    result = ask(session, "q")
+    assert result.ok and result.text == "What I have." and result.continuations == 0
+    assert not any(m.role == "assistant" and not m.text.strip() and not m.tool_calls for m in session.messages)
+    for req in backend.requests:
+        assert not any(m.role == "assistant" and not m.text.strip() and not m.tool_calls for m in req.messages)
+    assert backend.requests[-1].messages[-1].kind == "limit"
+    history_check.check_stored(session.messages)
+
+
+def test_a_blank_answer_is_the_empty_answer(tmp_path, tools):
+    """An answer of whitespace only and no calls is "The model returned an empty answer." and is not stored."""
+    session, backend, _ctx = make(tmp_path, [say("  \n"), say("Next.")], tier="basic")
+    result = ask(session, "q")
+    assert not result.ok and result.error.user_message == SESSION_MESSAGES["empty"]
+    assert [m.role for m in session.messages] == ["user"]
+    assert ask(session, "again").ok
+    history_check.check_stored(session.messages)
+
+
+def test_a_failure_after_the_repeat_stop_keeps_the_repeat_notice(tmp_path, tools):
+    """A fresh part repeats an earlier call, then the tool-less request fails: the result says the question went
+    in circles and the notice is shown (C5-14)."""
+    script = [calls(call("a")), say("Note one."), calls(call("a")), ProviderError("broken", provider="Custom endpoint")]
+    session, _backend, _ctx = make(tmp_path, script, tier="basic", caps=ONE_STEP)
+    events: list = []
+    result = ask(session, "q", events)
+    assert not result.ok and result.repeated
+    assert Notice(SESSION_MESSAGES["repeated"]) in events

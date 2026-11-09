@@ -174,6 +174,10 @@ SESSION_MESSAGES: dict[str, str] = {
                        "question uses fewer steps."),
 }
 
+#: The kinds of the session's own user messages (P3 §4.7): the note request, the first message of a fresh context and
+#: the "tool limit reached" instruction.  One the model did not answer is dropped, never merged into a question.
+CONTROL_KINDS = frozenset({"note_request", "continuation", "limit"})
+
 #: The compaction rhythm without a budget (P1-O4).
 DEFAULT_COMPACTION_EVERY = 6
 DEFAULT_KEEP_RECENT_TURNS = 2
@@ -299,7 +303,7 @@ def answers_history(messages: list[Message], turns: int | None) -> tuple[list[Me
     for m in messages:
         groups.setdefault(m.turn, []).append(m)
     for turn, group in groups.items():
-        asked = [m.text for m in group if m.role == "user" and not m.kind and m.text != SESSION_MESSAGES["limit"]]
+        asked = [m.text for m in group if m.role == "user" and m.kind not in CONTROL_KINDS]
         question = "\n\n".join(q for q in [pending, *asked] if q.strip())
         answer = next((m for m in reversed(group) if m.role == "assistant" and m.kind != "note" and m.text.strip()),
                       None)
@@ -348,7 +352,7 @@ def carry_summary(messages: list[Message]) -> str:
     answer = ""
     pairs: list[tuple[str, str]] = []
     for m in messages:
-        if m.role == "user" and not m.kind and not m.text.startswith(SESSION_MESSAGES["limit"]):
+        if m.role == "user" and m.kind not in CONTROL_KINDS:
             if question is not None:
                 pairs.append((question, answer))
             question = prompt.strip_context_block(m.text)
@@ -561,6 +565,17 @@ class Session:
         if self.store is not None:
             self.store.save(self.conversation)
 
+    def _append_limit(self, turn: int) -> None:
+        """The session's "tool limit reached" instruction before the tool-less request of *turn*."""
+        self.messages.append(Message("user", SESSION_MESSAGES["limit"], turn=turn, kind="limit"))
+
+    def _drop_dangling_control(self) -> None:
+        """Drop the session's own user messages at the end of the history: the model did not answer them (the
+        request failed or was stopped).  A question then never merges into one (review G11, C5-1); a stopped
+        question still goes with the next one (P1 m12)."""
+        while self.messages and self.messages[-1].role == "user" and self.messages[-1].kind in CONTROL_KINDS:
+            self.messages.pop()
+
     def _append_user(self, text: str, turn: int) -> None:
         block = prompt.context_block(self.ctx.snapshot(), self.ctx.redact)
         if block != self._last_block:
@@ -742,7 +757,7 @@ class Session:
         #    with what the model has.
         if self._replays_data(turn):
             if not limit:
-                self.messages.append(Message("user", SESSION_MESSAGES["limit"], turn=turn))
+                self._append_limit(turn)
                 if self._fits("none"):
                     return True
                 self.messages.pop()             # not sent: the history ends with this turn's results
@@ -903,12 +918,10 @@ class Session:
                 return
             on_event(event)
 
+        # The session's own message that got no answer (a conversation saved before this rule): dropped, not merged
+        # into the question.  The stopped question then goes with the next one (P1 m12).
+        self._drop_dangling_control()
         last = self.messages[-1] if self.messages else None
-        if last is not None and last.role == "user" and last.kind in ("note_request", "continuation"):
-            # The session's own message of a continuation that got no answer (the user stopped it): dropped, not
-            # merged into the question.  The stopped question then goes with the next one (P1 m12).
-            self.messages.pop()
-            last = self.messages[-1] if self.messages else None
         unanswered = last is not None and last.role == "user"
         turn = last.turn if unanswered and last is not None and last.turn else self._last_turn() + 1
         self._turn_no = turn
@@ -933,15 +946,18 @@ class Session:
                                                                                     state):
                         continue
                     limit_reached = True
-                    self.messages.append(Message("user", SESSION_MESSAGES["limit"], turn=turn))
+                    self._append_limit(turn)
                 limit_reached = self._fit(turn, limit_reached, state, emit)
                 reply = self._ask("none" if limit_reached else "auto", turn, cancel, emit, turn_usage, state)
                 state.rounds += 1
                 state.part_rounds += 1
-                if reply.message is None:
+                if reply.message is None or (not reply.message.text.strip() and not reply.message.tool_calls
+                                             and reply.stop not in ("length", "refused")):
+                    # Nothing to keep: a blank answer is not stored, so no request ever carries it (C5-9).
+                    self._drop_dangling_control()
                     self._save()
                     return self._fail(ProviderError(SESSION_MESSAGES["empty"], provider=self.route.label), "",
-                                      state.rounds, turn_usage, state)
+                                      state.rounds, turn_usage, state, emit)
                 message = dataclasses.replace(reply.message, turn=turn)
                 self.messages.append(message)
                 calls = list(message.tool_calls)
@@ -951,8 +967,11 @@ class Session:
                     if calls:
                         self._answer_all(calls, "cut_off_call" if reply.stop == "length" else "declined_call",
                                          turn)
+                    elif not message.text.strip():
+                        self.messages.pop()         # a blank cut-off answer is not kept (C5-9)
+                        self._drop_dangling_control()
                     self._save()
-                    return self._fail(self._stop_error(reply), final_text, state.rounds, turn_usage, state)
+                    return self._fail(self._stop_error(reply), final_text, state.rounds, turn_usage, state, emit)
                 if not calls:
                     self._text_call_notice(message.text, emit)
                     self._save()
@@ -968,19 +987,23 @@ class Session:
                     self._answer_all(calls, "repeated_call", turn)
                     self._save()
                     limit_reached = True
-                    self.messages.append(Message("user", SESSION_MESSAGES["limit"], turn=turn))
+                    self._append_limit(turn)
                     continue
                 self._run_calls(calls, turn, cancel, emit, state)
                 self._save()
         except _Stopped:
-            return self._fail(cancelled(self.error_ctx), final_text, state.rounds, turn_usage, state)
+            self._drop_dangling_control()
+            self._save()
+            return self._fail(cancelled(self.error_ctx), final_text, state.rounds, turn_usage, state, emit)
         except LLMError as err:
             if err.partial_text.strip():
-                # A stopped or broken answer keeps what was shown, without calls or provider data.
+                # A stopped or broken answer keeps what was shown, without calls or provider data.  It answers the
+                # session's message before it, if any, so that message stays.
                 self.messages.append(Message("assistant", err.partial_text, turn=turn))
                 final_text = err.partial_text
+            self._drop_dangling_control()
             self._save()
-            return self._fail(err, final_text, state.rounds + (1 if err.streamed else 0), turn_usage, state)
+            return self._fail(err, final_text, state.rounds + (1 if err.streamed else 0), turn_usage, state, emit)
 
     # --- continuation with a fresh context (P3 §4.7) ----------------------------------------------------------
     def _carry_limit(self) -> int:
@@ -1041,6 +1064,11 @@ class Session:
             self.messages.pop()
             return False
         note = dataclasses.replace(reply.message, turn=turn, kind="note")
+        if not note.text.strip() and not note.tool_calls:
+            # A blank note (only whitespace) is not kept, so no request carries an empty assistant message (C5-9).
+            self.messages.pop()
+            self._save()
+            return False
         self.messages.append(note)
         if note.tool_calls:
             self._answer_all(list(note.tool_calls), "limit_call", turn)
@@ -1099,9 +1127,12 @@ class Session:
         err.args = (err.user_message,)
         return err
 
-    @staticmethod
-    def _fail(err: LLMError, text: str, rounds: int, usage: list[Usage], state: _TurnState) -> TurnResult:
-        return TurnResult(text, False, err, rounds, usage, state.requests, state.total_calls, state.part - 1)
+    def _fail(self, err: LLMError, text: str, rounds: int, usage: list[Usage], state: _TurnState,
+              emit: OnEvent) -> TurnResult:
+        if state.repeated:
+            emit(Notice(SESSION_MESSAGES["repeated"]))      # the question ended because of the repeat (C5-14)
+        return TurnResult(text, False, err, rounds, usage, state.requests, state.total_calls, state.part - 1,
+                          state.repeated)
 
 
 def _summary(outcome: registry.ToolOutcome) -> str:

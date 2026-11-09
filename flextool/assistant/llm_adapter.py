@@ -56,12 +56,13 @@ class Message:
     origin: Origin | None = None
     turn: int = 0
     compacted: bool = False
-    kind: str = ""                  # "" or one of MESSAGE_KINDS: the session's own messages of a continuation
+    kind: str = ""                  # "" or one of MESSAGE_KINDS: the session's own messages
 
 
-#: The kinds of the session's own messages of a continuation (P3 §4.7): the request for the model's note, the note,
-#: and the first message of a fresh context.  Backends send them like any other message.
-MESSAGE_KINDS = ("note_request", "note", "continuation")
+#: The kinds of the session's own messages (P3 §4.7): the request for the model's note, the note, the first message
+#: of a fresh context, and the "tool limit reached" instruction before the tool-less request.  Backends send them like
+#: any other message.
+MESSAGE_KINDS = ("note_request", "note", "continuation", "limit")
 
 
 @dataclass(frozen=True)

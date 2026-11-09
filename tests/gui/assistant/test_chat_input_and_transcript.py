@@ -476,3 +476,27 @@ def test_the_token_line_stays_at_the_bottom_and_not_in_the_transcript(windows, b
         assert tab.totals.winfo_ismapped()
         assert tab.totals.winfo_rooty() >= tab.send_button.winfo_rooty() + tab.send_button.winfo_height()
         assert tab.totals.winfo_rooty() + tab.totals.winfo_height() <= tab.winfo_rooty() + tab.winfo_height()
+
+
+# --- a reopened chat: the session's instruction is found by its kind (review G11) ---------------------------------
+def test_a_reopened_chat_hides_the_limit_instruction_by_kind_not_by_text(host):
+    """The "tool limit reached" instruction (kind ``limit``) is not shown; a question of the user's own that quotes
+    that instruction is shown (C5-1, critique MINOR 8)."""
+    from flextool.assistant.llm_adapter import Message
+    from flextool.assistant.session import SESSION_MESSAGES
+    from flextool.gui.assistant.transcript import Transcript
+
+    limit = SESSION_MESSAGES["limit"]
+    quoted = f"{limit} What does this line mean?"
+    messages = [Message("user", "first question", turn=1), Message("user", limit, turn=1, kind="limit"),
+                Message("assistant", "What I have.", turn=1), Message("user", quoted, turn=2),
+                Message("assistant", "It means the steps were used up.", turn=2)]
+    transcript = Transcript(host)
+    try:
+        transcript.pack()
+        transcript.render_history(messages, "Custom endpoint")
+        shown = transcript.contents()
+    finally:
+        transcript.destroy()
+    assert shown.count(limit) == 1 and "What does this line mean?" in shown
+    assert "first question" in shown and "What I have." in shown

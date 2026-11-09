@@ -1,18 +1,61 @@
 """A conversation every provider accepts: each tool call has exactly one result, right after its call and in call
 order; no message is empty; tool results are grouped the way the backend's wire format needs.
 
-:func:`validate` checks a neutral :class:`Request`; :func:`validate_openai_body` and
-:func:`validate_anthropic_body` check the body that reached the endpoint.  Each raises ``AssertionError`` with the
-first problem.
+The session's own user messages (the note request, the first
+message of a fresh context, the "tool limit reached" instruction) must be answered: each is the request's last
+message or is followed by the model's answer of the same question.  No two user messages follow each other, and no
+question holds the session's instruction texts (a question merged into one, review G11 C5-1).
+
+:func:`validate` checks a neutral :class:`Request` and :func:`check_stored` a saved history (where no session
+message is left unanswered); :func:`validate_openai_body` and :func:`validate_anthropic_body` check the body that
+reached the endpoint.  Each raises ``AssertionError`` with the first problem.
 """
 from __future__ import annotations
 
-from flextool.assistant.llm_adapter import Request
+from flextool.assistant.llm_adapter import Message, Request
+from flextool.assistant.session import SESSION_MESSAGES
+
+#: The kinds of the session's own user messages (as P3 §4.7 names them; not taken from the session's code).
+CONTROL_KINDS = frozenset({"note_request", "continuation", "limit"})
+#: The session's instruction texts no question may hold.
+_CONTROL_TEXTS = (SESSION_MESSAGES["limit"], SESSION_MESSAGES["note_request"])
 
 
 def validate(req: Request) -> None:
     messages = list(req.messages)
     assert messages and messages[0].role == "user", "the conversation must start with a user message"
+    _check_control(messages, last_may_wait=True)
+    _check_pairs(messages)
+
+
+def check_stored(messages: list[Message]) -> None:
+    """A saved history: the checks of :func:`validate`, and no session message left without its answer."""
+    messages = list(messages)
+    if not messages:
+        return
+    assert messages[0].role == "user", "the conversation must start with a user message"
+    _check_control(messages, last_may_wait=False)
+    _check_pairs(messages)
+
+
+def _check_control(messages: list[Message], *, last_may_wait: bool) -> None:
+    for i, m in enumerate(messages):
+        if m.role != "user":
+            continue
+        following = messages[i + 1] if i + 1 < len(messages) else None
+        assert following is None or following.role != "user", f"message {i}: two user messages in a row"
+        if m.kind in CONTROL_KINDS:
+            if following is None:
+                assert last_may_wait, f"message {i}: the session's {m.kind} message has no answer"
+            else:
+                assert following.role == "assistant" and following.turn == m.turn, (
+                    f"message {i}: the session's {m.kind} message is not followed by its answer")
+        else:
+            for text in _CONTROL_TEXTS:
+                assert text not in m.text, f"message {i}: a question holds the session's instruction {text[:30]!r}"
+
+
+def _check_pairs(messages: list[Message]) -> None:
     seen: set[str] = set()
     i = 0
     while i < len(messages):

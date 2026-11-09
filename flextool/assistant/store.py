@@ -217,11 +217,28 @@ def message_from_json(d: dict[str, Any]) -> Message:
                       arguments=c.get("arguments") if isinstance(c.get("arguments"), dict) else None,
                       raw_arguments=str(c.get("raw_arguments", "")), provider_extra=dict(c.get("provider_extra") or {}))
              for c in raw_calls]
-    return Message(role=role, text=str(d.get("text", "")), tool_calls=calls, tool_call_id=d.get("tool_call_id"),
+    text, kind = str(d.get("text", "")), str(d.get("kind") or "")
+    if role == "user" and not kind:
+        text, kind = _legacy_limit(text)
+    return Message(role=role, text=text, tool_calls=calls, tool_call_id=d.get("tool_call_id"),
                    tool_name=d.get("tool_name"), is_error=bool(d.get("is_error", False)),
                    provider_extra=dict(d.get("provider_extra") or {}), origin=_origin(d.get("origin")),
                    turn=int(d.get("turn", 0)), compacted=bool(d.get("compacted", False)),
-                   kind=str(d.get("kind") or ""))
+                   kind=kind)
+
+
+def _legacy_limit(text: str) -> tuple[str, str]:
+    """(text, kind) of a user message saved before the "tool limit reached" instruction had its kind (review G11,
+    C5-1): the instruction alone is a ``limit`` message; the instruction with a question merged into it (an
+    unanswered instruction, then the next question) is that question again."""
+    from flextool.assistant.session import SESSION_MESSAGES
+
+    limit = SESSION_MESSAGES["limit"]
+    if text == limit:
+        return text, "limit"
+    if text.startswith(f"{limit}\n\n"):
+        return text[len(limit) + 2:], ""
+    return text, ""
 
 
 def first_question(messages: list[Message] | list[dict[str, Any]]) -> str:

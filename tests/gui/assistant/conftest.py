@@ -13,7 +13,12 @@ from collections.abc import Iterator
 
 import pytest
 
-from tests.assistant.conftest import fake_keyring, user_cache_in_tmp, user_config_in_tmp  # noqa: F401
+from tests.assistant.conftest import (  # noqa: F401
+    fake_backend_faults,
+    fake_keyring,
+    user_cache_in_tmp,
+    user_config_in_tmp,
+)
 from tests.assistant.llm.conftest import fake_backends, no_network  # noqa: F401
 
 

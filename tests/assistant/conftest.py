@@ -30,6 +30,19 @@ def _user_home_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 
 @pytest.fixture(autouse=True)
+def fake_backend_faults() -> Iterator[None]:
+    """A fake backend whose script ran out, or that got an invalid history, fails the test even when the session
+    turned the raise into a failed answer (``tests/assistant/llm/fake_backend.py``)."""
+    from tests.assistant.llm import fake_backend
+
+    fake_backend.FAULTS.clear()
+    yield
+    faults = list(fake_backend.FAULTS)
+    fake_backend.FAULTS.clear()
+    assert not faults, f"fake backend faults: {faults}"
+
+
+@pytest.fixture(autouse=True)
 def user_cache_in_tmp(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """FlexTool's user cache folder is in ``tmp_path``: no test writes the real user cache.  The model facts the
     probes keep in this process, and the pacing the process learned, are forgotten too (they stand for the same
