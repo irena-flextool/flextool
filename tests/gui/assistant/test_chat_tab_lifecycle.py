@@ -258,12 +258,12 @@ def test_a_reopened_chat_on_another_provider_names_it_in_the_footer(windows, bac
 def test_the_footer_shows_today_and_this_month(windows, backends, user_config_in_tmp):
     """The footer (owner, 2026-11-09): today's and this month's tokens, rounded as the token lines.  The month
     held 244 000 in / 8 000 out before today was kept; one request today adds 12 345 / 1 234."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from flextool.assistant.llm_adapter import Usage
     from flextool.assistant.usage import Ledger
 
-    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    month = datetime.now().astimezone().strftime("%Y-%m")         # the ledger's months are local calendar months
     user_config_in_tmp.mkdir(parents=True, exist_ok=True)
     (user_config_in_tmp / "usage.json").write_text(json.dumps({"format": 1, "months": {month: {"anthropic": {
         "label": "Anthropic", "models": {"claude-opus-5-5": {

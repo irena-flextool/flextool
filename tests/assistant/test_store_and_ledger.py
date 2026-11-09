@@ -554,8 +554,7 @@ def _counts(input_uncached: int, output: int, cache_read: int = 0, requests: int
 
 
 def test_days_count_by_the_local_calendar_date(root, local_time):
-    """23:30 UTC on 8 November is 01:30 on 9 November in Helsinki (UTC+2): the day is the 9th, the month stays
-    the UTC month."""
+    """23:30 UTC on 8 November is 01:30 on 9 November in Helsinki (UTC+2): the day is the 9th."""
     local_time("EET-2")                                         # Helsinki's winter offset, no tz database needed
     ledger = Ledger(root)
     ledger.record("anthropic", "Anthropic", "m", Usage(100, 20, 0, 7), now=datetime(2026, 11, 8, 23, 30,
@@ -568,6 +567,26 @@ def test_days_count_by_the_local_calendar_date(root, local_time):
     assert day["label"] == "Anthropic"
     assert day["models"]["m"] == {"requests": 1, "input_uncached": 100, "cache_read": 20, "cache_write": 0,
                                   "output": 7, "not_reported": 0, "rejected_attempts": 2, "cost": None}
+
+
+def test_the_month_counts_by_the_local_calendar_too(root, local_time):
+    """22:30 UTC on 30 November is 00:30 on 1 December in Helsinki (UTC+2): the request goes to December, the
+    month of today, so today never exceeds this month.  The UTC-keyed November of an older ledger stays as it
+    was (not re-bucketed)."""
+    local_time("EET-2")
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "usage.json").write_text(json.dumps({"format": 1, "months": {"2026-11": {"anthropic": {
+        "label": "Anthropic", "models": {"m": _counts(3_000, 300)}}}}}), encoding="utf-8")
+    now = datetime(2026, 11, 30, 22, 30, tzinfo=timezone.utc)
+    ledger = Ledger(root)
+    assert ledger.record("anthropic", "Anthropic", "m", Usage(12_345, 0, 0, 1_234), now=now) is True
+    data = ledger.read()
+    assert sorted(data["days"]) == ["2026-12-01"]
+    assert sorted(data["months"]) == ["2026-11", "2026-12"]
+    assert data["months"]["2026-11"]["anthropic"]["models"]["m"] == _counts(3_000, 300)
+    assert data["months"]["2026-12"]["anthropic"]["models"]["m"] == _counts(12_345, 1_234)
+    assert format_footer(data, "Anthropic", now) == (
+        "Anthropic today 12k in, 1k out · this month 12k in, 1k out (this FlexTool installation)")
 
 
 def test_only_the_last_40_days_are_kept(root, local_time):

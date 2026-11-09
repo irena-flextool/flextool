@@ -87,8 +87,7 @@ characters of what was sent to the service. Under the buttons, always in view, a
 question and of the whole chat, rounded to thousands ("This question: 26k in, 8k out · Whole chat: 250k in, 5k
 out"; "in" counts every token sent, also the ones the service read from its cache), and the window's last line
 gives the service's tokens today and this month, rounded the same way ("Anthropic today 12k in, 1k out · this month
-256k in, 9k out (this FlexTool installation)"); today is your computer's calendar date, the month is counted in
-universal time (UTC), and both count every chat and terminal session of this FlexTool installation. An error that a setting fixes
+256k in, 9k out (this FlexTool installation)"); today and the month follow your computer's calendar, and both count every chat and terminal session of this FlexTool installation. An error that a setting fixes
 comes with an "Open settings" button; a conversation that got too long for the model offers "New chat" and "New chat
 with summary".
 

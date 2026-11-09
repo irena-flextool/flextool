@@ -1,7 +1,7 @@
 """Token counts: the usage ledger (P1 §10.3) and the usage lines the front ends show.
 
-``<config>/assistant/usage.json`` counts, per UTC month, per provider and model, and the same per local calendar
-day for the last :data:`DAYS_KEPT` days::
+``<config>/assistant/usage.json`` counts, per local calendar month, per provider and model, and the same per local
+calendar day for the last :data:`DAYS_KEPT` days, so today's counts are always part of this month's::
 
     {"format": 1, "months": {"2026-11": {"<provider key>": {"label": "OpenRouter", "models": {"<model>": {
         "requests", "input_uncached", "cache_read", "cache_write", "output", "not_reported",
@@ -29,7 +29,7 @@ import math
 import re
 import sys
 from collections.abc import Iterable, Mapping
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -173,13 +173,15 @@ def ledger_key(preset_id: str, base_url: str | None = None, *, forwarded_to: str
     return preset_id
 
 
-def _month(now: datetime | None) -> str:
-    return (now or _files.utc_now()).astimezone(timezone.utc).strftime("%Y-%m")
-
-
 def _local_date(now: datetime | None) -> date:
     """The local calendar date of *now* (default: the current time)."""
     return (now or _files.utc_now()).astimezone().date()
+
+
+def _month(now: datetime | None) -> str:
+    """The local calendar month of *now*, the month of :func:`_day`.  (Ledgers written before 2026-11-09 keyed
+    their months by UTC; those entries are kept as they are.)"""
+    return _local_date(now).strftime("%Y-%m")
 
 
 def _day(now: datetime | None) -> str:
@@ -364,8 +366,8 @@ def _provider_sums(cell: Mapping[str, Any] | None, label: str) -> tuple[int, int
 
 
 def format_footer(data: Mapping[str, Any], label: str, now: datetime | None = None) -> str:
-    """The usage of the provider labelled *label* today (the local calendar date) and this month (UTC, as the
-    ledger's months), e.g. ``Anthropic today 12k in, 1k out · this month 256k in, 9k out (this FlexTool
+    """The usage of the provider labelled *label* today (the local calendar date) and this month (its local
+    calendar month), e.g. ``Anthropic today 12k in, 1k out · this month 256k in, 9k out (this FlexTool
     installation)``."""
     today_in, today_out, _rejected, today_found = _provider_sums((data.get("days") or {}).get(_day(now)), label)
     month_in, month_out, rejected, month_found = _provider_sums((data.get("months") or {}).get(_month(now)), label)
