@@ -265,6 +265,108 @@ def test_ollama_context_not_applicable(evaluator, grounding: Path, tmp_path: Pat
     assert harness.requests == 1
 
 
+#: A gpt-oss:20b variant on a 16 GB card the desktop uses 4 GB of: 1.3 GB of the 14 GB stays on the CPU.
+OFFLOADED = {"size": 14_000_000_000, "size_vram": 12_700_000_000}
+
+
+@pytest.fixture
+def ollama_server():
+    """A fake Ollama on 127.0.0.1: ``/api/show`` gives each variant its ``num_ctx``, ``/api/ps`` reports it
+    loaded with :data:`OFFLOADED`'s sizes (``size_vram`` below ``size``)."""
+    from tests.assistant.llm.local_server import FakeServer
+
+    server = FakeServer()
+    contexts = {"gpt-oss-20b-16k": 16_384, "gpt-oss-20b-32k": 32_768}
+    server.routes[("POST", "/api/show")] = lambda body: (200, {"parameters": f"num_ctx {contexts[body['model']]}"})
+    server.routes[("GET", "/api/ps")] = (200, {"models": [{"name": name, "model": name, **OFFLOADED}
+                                                          for name in contexts]})
+    yield server
+    server.close()
+
+
+def _offload_run(evaluator, grounding: Path, out: Path, server, harness: Harness, *extra: str,
+                 loaded: int = 16_384, level: str = "basic=16384") -> int:
+    from flextool.assistant.probes import ModelFacts
+
+    def prober(preset, conn, cancel, *, needed):
+        return ModelFacts(context_window=131_072, loaded_context=loaded, tools=True, source="ollama",
+                          parameter_count=20_900_000_000)
+
+    args = evaluator.build_parser().parse_args(
+        ["run", "--project", str(grounding), "--provider", "ollama", "--model", "gpt-oss:20b", "--out", str(out),
+         "--base-url", f"http://127.0.0.1:{server.port}/v1", "--questions", "G01",
+         "--levels", level.split("=")[0], "--ollama-context", level, *extra])
+    return evaluator.cmd_run(args, backend_factory=harness.factory, prober=prober, info=None,
+                             say=lambda _t: None, allow_unsolved=True)
+
+
+def test_cpu_offload_not_applicable_without_the_flag(evaluator, grounding: Path, tmp_path: Path,
+                                                     ollama_server) -> None:
+    harness = Harness()
+    out = tmp_path / "out"
+    assert _offload_run(evaluator, grounding, out, ollama_server, harness) == 0
+    record = json.loads((out / "cells" / "G01__small__r1.json").read_text(encoding="utf-8"))
+    assert record["not_applicable"] == "context" and record["turns"] == [] and harness.requests == 0
+    assert record["model"]["ollama"]["size_vram"] == 12_700_000_000      # read from the fake /api/ps
+    assert record["model"]["cpu_offload"] is None                       # not run: nothing ran offloaded
+    run_json = json.loads((out / evaluator.RUN_FILE).read_text(encoding="utf-8"))
+    assert run_json["cpu_offload_allowed"] is False
+    assert ("GET", "/api/ps") in [(m, p) for m, p, _b, _h in ollama_server.requests]
+
+
+def test_cpu_offload_runs_and_is_recorded_with_the_flag(evaluator, grounding: Path, tmp_path: Path,
+                                                        ollama_server) -> None:
+    harness = Harness()
+    out = tmp_path / "out"
+    assert _offload_run(evaluator, grounding, out, ollama_server, harness, "--allow-cpu-offload") == 0
+    record = json.loads((out / "cells" / "G01__small__r1.json").read_text(encoding="utf-8"))
+    assert record["not_applicable"] is None and record["turns"] and harness.requests == 1
+    # 1.3 GB of 14 GB on the CPU: 1.3 / 14 = 0.092857... -> 0.0929
+    offload = {"size": 14_000_000_000, "size_vram": 12_700_000_000, "cpu_share": 0.0929}
+    assert record["model"]["cpu_offload"] == offload
+    run_json = json.loads((out / evaluator.RUN_FILE).read_text(encoding="utf-8"))
+    assert run_json["cpu_offload_allowed"] is True
+    line = evaluator.summary_line(record, grader="owner", authoritative=True, first_pass=True, result="answered",
+                                  items=[], run=run_json)
+    assert line["cpu_offload"] == offload
+
+
+def test_cpu_offload_smaller_context_stays_not_applicable(evaluator, grounding: Path, tmp_path: Path,
+                                                          ollama_server) -> None:
+    harness = Harness()
+    out = tmp_path / "out"
+    assert _offload_run(evaluator, grounding, out, ollama_server, harness, "--allow-cpu-offload",
+                        loaded=24_576, level="standard=32768") == 0
+    record = json.loads((out / "cells" / "G01__medium__r1.json").read_text(encoding="utf-8"))
+    assert record["not_applicable"] == "context" and harness.requests == 0
+    assert record["model"]["ollama"]["loaded_context"] == 24_576 and record["model"]["cpu_offload"] is None
+
+
+def test_cpu_offload_is_part_of_the_run_identity(evaluator, grounding: Path, tmp_path: Path, ollama_server,
+                                                 capsys) -> None:
+    harness = Harness()
+    out = tmp_path / "out"
+    assert _offload_run(evaluator, grounding, out, ollama_server, harness) == 0          # not applicable
+    assert _offload_run(evaluator, grounding, out, ollama_server, harness, "--resume",
+                        "--allow-cpu-offload") == 2
+    assert evaluator.OTHER_RESULTS in capsys.readouterr().err and harness.requests == 0
+    allowed = tmp_path / "allowed"
+    assert _offload_run(evaluator, grounding, allowed, ollama_server, harness, "--allow-cpu-offload") == 0
+    assert _offload_run(evaluator, grounding, allowed, ollama_server, harness, "--resume") == 2
+    assert evaluator.OTHER_RESULTS in capsys.readouterr().err
+    assert _offload_run(evaluator, grounding, allowed, ollama_server, harness, "--resume",
+                        "--allow-cpu-offload") == 0
+    assert harness.requests == 1                                    # the finished cell is not asked again
+    # a run.json from before the flag existed is a run without it
+    run_file = out / evaluator.RUN_FILE
+    saved = json.loads(run_file.read_text(encoding="utf-8"))
+    run_file.write_text(json.dumps({k: v for k, v in saved.items() if k != "cpu_offload_allowed"}),
+                        encoding="utf-8")
+    assert _offload_run(evaluator, grounding, out, ollama_server, harness, "--resume") == 0
+    assert _offload_run(evaluator, grounding, out, ollama_server, harness, "--resume",
+                        "--allow-cpu-offload") == 2
+
+
 def _write_key(path: Path, *, placeholder: bool) -> Path:
     """A key in the oracle's format for G01 that only exercises grading (never the oracle's values)."""
     import yaml
@@ -321,7 +423,8 @@ def test_grade_and_record(evaluator, grounding: Path, tmp_path: Path) -> None:
                           "window", "free_tier", "knobs_relaxed", "question", "class", "outcome", "score",
                           "critical_failures", "invented_numbers", "calls", "rounds", "tokens_in", "tokens_out",
                           "tokens_not_reported", "prompt_ratio", "repeat", "level_source", "cap_hits",
-                          "length_stops", "fit_compactions", "truncations", "refused_tools"]
+                          "length_stops", "fit_compactions", "truncations", "refused_tools", "cpu_offload"]
+    assert line["cpu_offload"] is None
     assert "coal_plant has" not in json.dumps(line)
 
 

@@ -80,6 +80,11 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
   loads that setting's variant and records its context and memory use. If the variant runs with a smaller context
   than asked, or does not fit fully in graphics memory, every cell of that setting is recorded as "not applicable
   (context)" and not run.
+  On a card whose memory is partly used by the desktop, a model may never fit fully. `--allow-cpu-offload` runs
+  a variant that loaded with the asked context but is partly on the CPU. Each cell records the offload: the
+  model's size, its size in graphics memory and the share on the CPU (`cpu_offload` in the cell and in its
+  `results.jsonl` line, null when the model was fully in graphics memory). A variant whose context is smaller
+  than asked is still not applicable.
 - **OpenRouter free models.** `--relax-data-collection` lets OpenRouter use providers that keep the data of the
   requests. The data is synthetic, and each cell records this. The runner stops after a daily number of requests:
   45 for a `:free` model by default, or `--max-requests-per-day N`. When it stops, it prints "Daily request budget
@@ -91,7 +96,7 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
   `--resume`. The requests it sent still count towards the day's budget (`spent.json` in the results folder).
 - **`--resume`** skips finished cells and asks again the cells that stopped with such an error. It also runs a
   cell recorded as not applicable once its setting fits. It refuses to continue a folder made with another model,
-  provider, address, free-plan setting, Ollama contexts, data-collection setting or project. Other levels,
+  provider, address, free-plan setting, Ollama contexts, CPU-offload setting, data-collection setting or project. Other levels,
   questions or repeats are fine.
 - **Usage.** The requests are counted in the usage ledger under the provider's name with "(calibration)" added,
   apart from chat use.

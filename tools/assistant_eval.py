@@ -66,7 +66,9 @@ GRADED_STOPS = frozenset({"length", "context", "refused"})
 #: What a results folder's ``run.json`` must match to be continued; the levels, questions and repeats only pick
 #: the cells.
 IDENTITY_KEYS = ("provider", "model", "base_url", "free_tier", "ollama_context", "knobs_relaxed",
-                 "project_fingerprint", "set_version")
+                 "project_fingerprint", "set_version", "cpu_offload_allowed")
+#: The value of an identity key a ``run.json`` from before that key was added stands for (it was always so).
+IDENTITY_DEFAULTS = {"cpu_offload_allowed": False}
 DEFAULT_OUT = ROOT / "_audit_reports" / "assistant_eval"
 #: The daily request budget of an OpenRouter ``:free`` model (P3 §7.2).
 FREE_DAILY_REQUESTS = 45
@@ -318,7 +320,8 @@ def _open_results(out: Path, identity: dict[str, Any], resume: bool) -> None:
         if not resume:
             raise Refused(HAS_RESULTS)
         saved = read_json(run_file)
-        if any(k not in saved or saved[k] != identity[k] for k in IDENTITY_KEYS):
+        missing = object()
+        if any(saved.get(k, IDENTITY_DEFAULTS.get(k, missing)) != identity[k] for k in IDENTITY_KEYS):
             raise Refused(OTHER_RESULTS)
         return
     if (Path(out) / CELLS_DIR).is_dir() and any((Path(out) / CELLS_DIR).iterdir()):
@@ -492,6 +495,7 @@ def _record(question: scoring.Question, setting: Setting, repeat: int, *, preset
     b = setting.budget
     choice = setting.choice
     requests_sent = sum(len(t["usage"]) for t in turns or [])
+    offload = None if setting.not_applicable else cpu_offload(setting.ollama)
     return {
         "format": RECORD_FORMAT,
         "cell": {"model": identity["model"], "level_setting": setting.level, "question": question.id,
@@ -501,7 +505,8 @@ def _record(question: scoring.Question, setting: Setting, repeat: int, *, preset
                   "automatic_level": choice.automatic if choice else None,
                   "level_source": choice.source if choice else None,
                   "window": b.window if b else None, "window_source": b.window_source if b else None,
-                  "free_tier": free_tier, "ollama": setting.ollama, "knobs_sent": dict(knobs_sent),
+                  "free_tier": free_tier, "ollama": setting.ollama, "cpu_offload": offload,
+                  "knobs_sent": dict(knobs_sent),
                   "knobs_relaxed": bool(identity.get("knobs_relaxed"))},
         "not_applicable": setting.not_applicable,
         "budget": ({"caps": {"max_rounds": b.level.max_rounds, "max_calls_per_turn": b.level.max_calls_per_turn,
@@ -519,6 +524,15 @@ def _record(question: scoring.Question, setting: Setting, repeat: int, *, preset
     }
 
 
+def cpu_offload(ollama: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """``{size, size_vram, cpu_share}`` of an Ollama variant that is partly on the CPU (``size_vram`` below
+    ``size``, in bytes; ``cpu_share`` the part of ``size`` not in graphics memory), else None."""
+    size, vram = (ollama or {}).get("size"), (ollama or {}).get("size_vram")
+    if not (isinstance(size, int) and isinstance(vram, int) and 0 <= vram < size):
+        return None
+    return {"size": size, "size_vram": vram, "cpu_share": round((size - vram) / size, 4)}
+
+
 def _default_prober(preset: Any, conn: Any, cancel: threading.Event, *, needed: int) -> Any:
     from flextool.assistant import probes
 
@@ -533,9 +547,10 @@ def _default_backend_factory(preset: Any, conn: Any) -> Any:
 
 def _setting(level: str, model: str, *, preset: Any, base_url: str, conn_for: Callable[[str, Any], Any],
              prober: Prober, info: OllamaInfo | None, wanted_context: int | None, free_tier: bool,
-             cache: dict[str, Any]) -> Setting:
+             cache: dict[str, Any], allow_cpu_offload: bool = False) -> Setting:
     """The facts and budget of one level setting: the model is probed (an Ollama variant loaded and its context
-    and graphics memory read); the level is the one asked for, the window rule sets the caps."""
+    and graphics memory read); the level is the one asked for, the window rule sets the caps.  A variant partly
+    on the CPU is not applicable unless *allow_cpu_offload*; a smaller loaded context than asked never is."""
     from flextool.assistant import budget, endpoint, probes, prompt, tiers
     from flextool.assistant.llm_errors import LLMError, message_for
     from flextool.assistant.session import tool_specs
@@ -559,7 +574,7 @@ def _setting(level: str, model: str, *, preset: Any, base_url: str, conn_for: Ca
             ollama.update({k: v for k, v in (info(base_url, model) if info else {}).items() if k in ollama})
         loaded, size, vram = ollama["loaded_context"], ollama["size"], ollama["size_vram"]
         if isinstance(facts, Exception) or loaded is None or loaded < wanted_context or (
-                isinstance(size, int) and isinstance(vram, int) and vram < size):
+                not allow_cpu_offload and isinstance(size, int) and isinstance(vram, int) and vram < size):
             route = endpoint.route_for(preset, base_url, model=model)
             return Setting(level, model, None, None, None, route, ollama, not_applicable="context")
     route = endpoint.route_for(preset, base_url, facts=facts)
@@ -609,6 +624,8 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     contexts = parse_ollama_context(args.ollama_context)
     if contexts and preset.id != "ollama":
         raise Refused("--ollama-context is for the Ollama provider only.")
+    if args.allow_cpu_offload and not contexts:
+        raise Refused("--allow-cpu-offload is for an Ollama run with --ollama-context only.")
     if args.relax_data_collection and preset.id != "openrouter":
         raise Refused("--relax-data-collection is for OpenRouter only.")
     if args.repeat < 1:
@@ -627,7 +644,8 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     free = budget.free_tier_on(preset.id, args.model, FREE_TIER_FLAG[args.free_tier])
     identity = {"provider": preset.id, "model": args.model, "base_url": base_url, "free_tier": free,
                 "ollama_context": contexts, "knobs_relaxed": bool(args.relax_data_collection),
-                "project_fingerprint": marker["fingerprint"], "set_version": qset.set_version}
+                "project_fingerprint": marker["fingerprint"], "set_version": qset.set_version,
+                "cpu_offload_allowed": bool(args.allow_cpu_offload)}
     _open_results(out, identity, args.resume)
 
     key, source = _key_or_refuse(preset, base_url, args.model, endpoint.route_for(preset, base_url, model=args.model))
@@ -657,7 +675,7 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
         model = variant_name(args.model, contexts[level]) if level in contexts else args.model
         setting = _setting(level, model, preset=preset, base_url=base_url, conn_for=conn_for, prober=prober,
                            info=info if level in contexts else None, wanted_context=contexts.get(level),
-                           free_tier=free, cache=probed)
+                           free_tier=free, cache=probed, allow_cpu_offload=args.allow_cpu_offload)
         if not setting.not_applicable:
             # The probe can show that the model is forwarded (Ollama cloud): that route's notice is asked too.
             # The probe sent only the model name, to the local server.
@@ -1014,7 +1032,8 @@ def summary_line(record: Mapping[str, Any], *, grader: str, authoritative: bool,
                  result: str | None, items: Sequence[scoring.Item], run: Mapping[str, Any]) -> dict[str, Any]:
     """One line of ``results.jsonl``: no answer or tool text (P3 §7.7).  Beyond §7.7's fields: ``repeat``,
     ``level_source`` and the health counts the §7.6 analysis reads (cap hits, length stops, fit compactions,
-    truncations, refused tools).  A cell not run for its context is a line with outcome ``not_applicable``."""
+    truncations, refused tools) and ``cpu_offload`` (an Ollama variant partly on the CPU, else null).  A cell
+    not run for its context is a line with outcome ``not_applicable``."""
     turns = record.get("turns") or []
     usage = [u for t in turns for u in t.get("usage") or []]
     reported = [u for u in usage if u.get("reported")]
@@ -1041,7 +1060,7 @@ def summary_line(record: Mapping[str, Any], *, grader: str, authoritative: bool,
         "length_stops": sum(1 for t in turns if (t.get("error") or {}).get("code") == "length"),
         "fit_compactions": sum(int(t.get("fit_compactions") or 0) for t in turns),
         "truncations": sum(int(t.get("truncated") or 0) for t in turns),
-        "refused_tools": refused,
+        "refused_tools": refused, "cpu_offload": model.get("cpu_offload"),
     }
 
 
@@ -1344,6 +1363,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--levels", default="basic,standard,advanced")
     p.add_argument("--ollama-context", help="the context of each setting, e.g. basic=16384,standard=32768,"
                    "advanced=65536 (the model's variants gpt-oss-20b-16k ... made once with ollama create)")
+    p.add_argument("--allow-cpu-offload", action="store_true",
+                   help="run a variant that loaded with the asked context but is partly on the CPU (the share "
+                        "on the CPU is recorded per cell); without it such a setting is not applicable")
     p.add_argument("--free-tier", choices=("on", "off", "auto"), default="auto")
     p.add_argument("--relax-data-collection", action="store_true",
                    help="OpenRouter: allow providers that collect the (synthetic) data; recorded per cell")
