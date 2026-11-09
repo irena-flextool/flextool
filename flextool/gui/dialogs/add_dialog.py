@@ -27,33 +27,35 @@ def ask_old_flextool_master(
     Returns the chosen path, ``None`` for no sensitivities, or ``False`` when
     the user cancelled (the conversion should not start).
     """
-    answer = messagebox.askyesnocancel(
-        "FlexTool 2.0 sensitivities",
-        "Import the sensitivities too?\n\n"
-        "They are in the FlexTool 2.0 master workbook (the one with the "
-        "'Sensitivity definitions' sheet), and are imported as alternatives "
-        "and scenarios.",
-        parent=parent,
-    )
-    if answer is None:
-        return False
-    if not answer:
-        return None
-    picker = FilePickerDialog(
-        parent,
-        title="Select FlexTool 2.0 master workbook (with sensitivity definitions)",
-        initialdir=str(initial_dir),
-        filetypes=[
-            ("Old FlexTool Excel", "*.xlsm *.xlsx"),
-            ("All files", "*"),
-        ],
-        multiple=False,
-        width=width,
-        height=int(screen_height * 0.75),
-    )
-    if not picker.result:
-        return False
-    return Path(picker.result)
+    while True:
+        answer = messagebox.askyesnocancel(
+            "FlexTool 2.0 sensitivities",
+            "Import the sensitivities too?\n\n"
+            "They are in the FlexTool 2.0 master workbook (the one with the "
+            "'Sensitivity definitions' sheet), and are imported as "
+            "alternatives and scenarios.",
+            parent=parent,
+        )
+        if answer is None:
+            return False
+        if not answer:
+            return None
+        picker = FilePickerDialog(
+            parent,
+            title="Select FlexTool 2.0 master workbook (with sensitivity definitions)",
+            initialdir=str(initial_dir),
+            filetypes=[
+                ("Old FlexTool Excel", "*.xlsm *.xlsx"),
+                ("All files", "*"),
+            ],
+            multiple=False,
+            width=width,
+            height=int(screen_height * 0.75),
+        )
+        if picker.result:
+            return Path(picker.result)
+        # No file chosen: ask again (Yes / No / Cancel), so a cancelled
+        # picker never aborts the conversion without a word.
 
 
 def _ask_migration_choice(
@@ -780,17 +782,23 @@ class AddDialog(tk.Toplevel):
             )
             if not overwrite:
                 return
-            try:
-                dest.unlink()
-            except OSError as exc:
-                messagebox.showerror(
-                    "Error",
-                    f"Could not remove existing file:\n{exc}",
-                    parent=self,
-                )
-                return
 
-        db_url = f"sqlite:///{dest}"
+        # Import into a working file OUTSIDE input_sources/ (the only folder
+        # the input-source scan reads) and move it in only when the import,
+        # which includes the migration, has succeeded.  A refresh during the
+        # import (another job finishing, the Refresh button) can then never
+        # find the database at the import version and migrate it under the
+        # importer.  Same filesystem (both under the project): the move is
+        # an atomic rename, which also replaces an existing destination.
+        work_dir = self._project_path / "intermediate"
+        work_dir.mkdir(parents=True, exist_ok=True)
+        work = work_dir / f"{filepath.stem}.ft2import.sqlite"
+        work.unlink(missing_ok=True)  # leftover of a crashed import
+        old_sources: set[str] = set()
+        if self._input_source_mgr is not None:
+            old_sources = {s.name for s in self._input_source_mgr._sources}
+
+        db_url = f"sqlite:///{work}"
         cmd = [
             sys.executable, "-m",
             "flextool.cli.cmd_read_old_flextool",
@@ -844,18 +852,25 @@ class AddDialog(tk.Toplevel):
                             job.job_id,
                             f"\nConversion failed (exit code {rc}).",
                         )
-                        if dest.exists():
-                            dest.unlink(missing_ok=True)
+                    else:
+                        _os.replace(work, dest)
+                        mgr.append_stdout(
+                            job.job_id, f"Input source '{dest_name}' is ready.")
                 except Exception as exc:
+                    rc = 1
                     logger.error("Old FlexTool conversion failed: %s", exc, exc_info=True)
                     mgr.append_stdout(job.job_id, f"\nError: {exc}")
-                    if dest.exists():
-                        dest.unlink(missing_ok=True)
+                work.unlink(missing_ok=True)
 
                 mgr.finish_job(job.job_id, rc == 0)
                 if rc == 0:
+                    def _show_new_source() -> None:
+                        # Tick the new source and its scenarios (the dialog
+                        # closed before the database existed).
+                        main_window._refresh_input_sources()
+                        main_window._autocheck_new_sources(old_sources)
                     try:
-                        main_window.after(0, main_window._refresh_input_sources)
+                        main_window.after(0, _show_new_source)
                     except Exception:
                         pass  # Main window may be gone
 
@@ -877,22 +892,27 @@ class AddDialog(tk.Toplevel):
                     alternative_name=_OLD_FLEX_ALTERNATIVE,
                     master=str(master_path) if master_path is not None else None,
                 )
+                import os as _os
+                _os.replace(work, dest)
             except Exception as exc:
                 logger.error("Old FlexTool conversion failed: %s", exc, exc_info=True)
                 messagebox.showerror("Conversion failed", str(exc), parent=self)
-                if dest.exists():
-                    dest.unlink(missing_ok=True)
                 return
             finally:
+                work.unlink(missing_ok=True)
                 self.config(cursor="")
 
             logger.info("%s", report.format())
             self.result = True
+            failed = (f"{len(report.failed)} value(s) could not be written. "
+                      if report.failed else "")
             messagebox.showinfo(
                 "Done",
                 f"Converted '{filepath.name}' \u2192 '{dest_name}' in "
-                f"input_sources.\n\n{len(report.unmapped)} input(s) could not "
-                "be translated; the log lists them.",
+                f"input_sources.\n\n{failed}{len(report.unmapped)} FlexTool 2 "
+                "input(s) were not carried over or work differently in "
+                "FlexTool 4. The import report, with what to do for each, is "
+                "in the FlexTool log (flextool_gui.log in the projects folder).",
                 parent=self,
             )
 
