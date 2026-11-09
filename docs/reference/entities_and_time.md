@@ -59,7 +59,14 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
   - *period_timeset*: map of periods with associated timesets that will be included in the solve. Index: period name, value: timeset name.
   - *new_stepduration*: [hours] Creates a new `timeline` for this `solve`, with time steps of this length. See also the group-level `new_stepduration` for flex-temporal decomposition.
 
-    **How the data is combined.** The new timeline sums `inflow` over the time steps that form each new time step. A constant `inflow` counts once per time step it combines. Other time series, like `profile`, are averaged over the steps, weighted by their durations.
+    **How the data is combined.** Each time series gets one value per new time step, combined over the time steps of the timeline that form it by a rule that depends on what the value is:
+
+    - *Summed*: `inflow` and `energy_margin_adder` (energy per time step). A constant counts once per time step it combines.
+    - *Averaged, weighted by the durations of the time steps*: commodity `price`, `co2_price`, `other_operational_cost`, `availability` of units, connections and nodes, `min_load`, `penalty_up` / `penalty_down`, `reservation`, `self_discharge_loss`, `inertia_limit`, `non_synchronous_limit`, `max_instant_flow` / `min_instant_flow` (the limit applies to the step-average flow), `timeset_weights` and `profile`. `self_discharge_loss` compounds per hour, so its mean is a close approximation (0.01 and 0.03 give 0.02; the exact rate would be 0.019951).
+    - *Harmonic mean*: `efficiency` and `efficiency_at_min_load` take the mean of 1/efficiency (the fuel per output), so the fuel use of a flow that is constant over the step is exact: 0.4 and 0.5 give 1/efficiency 2.25, not 1/0.45. With a `min_load` that varies within a new time step, the `min_load_efficiency` curve of that step is an approximation (a warning names the units).
+    - *Last*: `storage_state_reference_value` takes the value of the new time step's last time step (the state at its end).
+
+    Stochastic (branch) time series are combined the same way, each branch on its own. A time series with values for only some time steps of a new time step uses the time steps it has (a warning names the parameter); the default value of the other time steps is not part of it. A new time step whose values are all equal keeps that value exactly, so a constant and an equivalent time map give the same model.
 
     **How the steps are formed.** Steps are aggregated from the start of each `timeset_duration` block. A block that is not a multiple of the step ends with a shorter step. A gap between blocks stays a gap. When several timesets share the timeline, each period keeps its own time steps.
 

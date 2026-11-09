@@ -562,6 +562,41 @@ DB-authored, never reach the resolver, and a stray one already fails
 loudly via `_UnrecognisedIndex`. Document such internal axes in
 `schemas/flextool_axis_contract.json`, not in the resolver's allow-lists.
 
+##### Solve-step aggregation (`new_stepduration` of a solve)
+
+A solve with `new_stepduration` combines the time steps of its timeline into longer steps, each labelled by
+its first original (base) step. Every time series then needs one value per new step, and the rule is a
+property of the parameter: `TIME_AGGREGATION` in `engine/input/_solve_step_aggregation.py` maps each
+`(entity_class, parameter)` that can vary in time to `MEAN` (duration-weighted mean: prices, costs, limits,
+availability, min load, penalties, reserves, self-discharge, weights, profiles, instant-flow limits),
+`HARMONIC` (mean of 1/v: `efficiency`, `efficiency_at_min_load`, so the fuel use of a constant flow is
+exact), `SUM` (`inflow`, `energy_margin_adder`: energy per base step) or `LAST` (`storage_state_reference_value`:
+the state at the step's end). `NOT_TIME_SERIES` lists the schema's other map parameters; every map
+parameter of the schema is in exactly one of the two (`tests/engine/test_time_aggregation_registry.py`).
+**A new time-series parameter needs a `TIME_AGGREGATION` entry**; while a solve's steps are active, a
+broadcast of a key without one raises.
+
+One function, `aggregate_to_solve_steps`, does the arithmetic (a step whose base values are all equal keeps
+the value itself; `MEAN` / `HARMONIC` round to 6 decimals; `LAST` follows the timeline position). It
+serves three places:
+
+- the provider's frames: `TimelineConfig.create_averaged_timeseries` writes `solve_data/pt_*`, `pbt_*`,
+  `pdt_process`, `pdt_node` and `pdt_energy_margin_adder` (kinds by (file, parameter)) and
+  `solve_data/new_step_base_steps` (base step, new step, count, duration, position); without
+  `new_stepduration` the `input/` frames pass through verbatim. The per-solve emit folds read these
+  `solve_data/` frames, never `input/` (see docs/dev/engine.md "Vectorized per-roll emit"), and
+  `_run_model` mirrors every key the aggregation wrote onto the sub-solve provider;
+- the DB-direct readers: `broadcast_to_period_time` aggregates the rows that carry `t`, keyed by
+  `ResolvedShape.key`, after the null filter and before `filter_zero` and the axis cast;
+- the readers outside the resolver (the period+time profile reader, `timeset_weights`).
+
+`load_flextool` arms the base steps in a contextvar (`activate_solve_step_aggregation`) next to the
+stochastic-time source; with no `new_stepduration` the frame is empty and nothing is aggregated, so the
+LP of every uncoarsened solve is unchanged. The hook does not break the rule above: `t` stays the I/O axis
+and only the values are grouped. The `SUM` kinds are scaled by their own readers (a constant counts once per
+base step: the inflow scaling, the energy-margin adder), so a `SUM` key reaching the generic broadcast
+raises.
+
 ##### Silent-default `"x"` index — readers outside the resolver
 
 Not every DB read goes through `resolve_param_shape`. The **per-entity

@@ -472,6 +472,16 @@ Two rules keep the rendered output exact:
   duplicate join keys and explode the left-join (one grid row matching
   many lookup rows). Always lift from the dict.
 
+The time-series sources of the folds (`pt_*`, `pbt_*`, `pdt_process`,
+`pdt_node`, `pdt_energy_margin_adder`) are read from `solve_data/`, never
+from `input/`: `create_averaged_timeseries` writes them there, combined
+to the solve's steps when the solve has `new_stepduration` (one rule per
+parameter, `TIME_AGGREGATION`; see docs/dev/architecture.md "Solve-step
+aggregation") and verbatim otherwise. A derive and its `_vectorized`
+twin switch a source in the same commit, and their parity fixtures
+seed the `solve_data/` key. The `input/pt_node_inflow` reads of the
+peak scaling stay on `input/`: `peak_inflow` is per original step.
+
 ### Writer → emitter rename (Phases 1–5)
 
 Every module that used to be `_writer_*.py` became `_emit_*.py`
