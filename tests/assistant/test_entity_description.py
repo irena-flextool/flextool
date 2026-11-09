@@ -52,8 +52,8 @@ def _call(project: Path, tool: str, **args) -> dict:
 
 def test_get_entity_returns_the_description_redacted(described_project):
     match = _call(described_project, "get_entity", name=["coal_plant"], scenario="coal")["matches"][0]
-    # The home folder becomes "~" (P0 §6), so the path keeps no user or machine name.
-    assert match["description"] == "Hard coal plant, see ~/plans/coal notes.txt for the retirement plan."
+    # A path under the home folder shrinks to its last part (P0 §6, D3); unquoted, a part ends at a space.
+    assert match["description"] == "Hard coal plant, see coal notes.txt for the retirement plan."
 
 
 def test_a_long_description_is_cut(described_project):
@@ -77,4 +77,4 @@ def test_list_entities_carries_each_description(described_project):
     assert {name for name, text in by_name.items() if text is not None} == {("west",)}
     units = _call(described_project, "list_entities", entity_class="unit", scenario="coal")
     assert units["entities"] == [{"entity": ["coal_plant"], "description": (
-        "Hard coal plant, see ~/plans/coal notes.txt for the retirement plan.")}]
+        "Hard coal plant, see coal notes.txt for the retirement plan.")}]

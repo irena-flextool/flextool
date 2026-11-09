@@ -240,7 +240,7 @@ def test_no_local_path_host_or_user_name_reaches_a_result(tmp_path: Path, tests_
         texts += _all_strings(json.loads(out.text))
     description = json.loads(call_tool(ctx, "get_entity", {"name": ["coal_plant"], "scenario": "coal"}).text)[
         "matches"][0]["description"]
-    assert description == "notes in <project>/docs/a.txt, ~/x.txt and b.txt on <host> by <user>"
+    assert description == "notes in <project>/docs/a.txt, x.txt and b.txt on <host> by <user>"
     error = {r["folder"]: r for r in json.loads(call_tool(ctx, "list_runs", {}).text)["runs"]}["coal_chp_1"]["error"]
     assert error == "cannot read <project>/work/x on <host> (<user>)"
     # A message, and the fault message.

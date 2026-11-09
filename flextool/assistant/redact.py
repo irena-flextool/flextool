@@ -30,11 +30,11 @@ from functools import lru_cache
 from pathlib import Path
 from urllib.parse import quote, unquote
 
-#: D3 (owner decision pending, review G7): what happens to a path under the home folder.  ``True`` (today) keeps
-#: the folders below it: ``/home/alice/clients/Acme Corp/m.sqlite`` → ``~/clients/Acme Corp/m.sqlite``.  ``False``
-#: shrinks it to its file name (``m.sqlite``), as any other path outside the project.  The one switch: quoted and
-#: unquoted paths, and every spelling of the home folder, follow it alike.
-KEEP_HOME_FOLDERS = True
+#: D3 (owner decision 2026-11-09, review G7): what happens to a path under the home folder.  ``False`` (in use)
+#: shrinks it to its file name, as any other path outside the project: ``/home/alice/clients/Acme Corp/m.sqlite``
+#: → ``m.sqlite``.  ``True`` would keep the folders below it (``~/clients/Acme Corp/m.sqlite``).  The one switch:
+#: quoted and unquoted paths, and every spelling of the home folder, follow it alike.
+KEEP_HOME_FOLDERS = False
 
 #: The path patterns run until nothing changes, at most this often (each pass that changes shortens the text).
 _MAX_PASSES = 8

@@ -33,7 +33,7 @@ def _redactor(**kw) -> Redactor:
     ("//fs01/Acme Corp/m.sqlite", "m.sqlite"),
     ("\\Users\\Acme Corp\\m.sqlite", "m.sqlite"),                       # the current drive's root
     ("/home/a b/proj/input_sources/x.xlsx", "<project>/input_sources/x.xlsx"),
-    ("/home/a b/other/m.sqlite", "~/other/m.sqlite"),
+    ("/home/a b/other/m.sqlite", "m.sqlite"),                           # D3: home folders shrink too
     ("/home/c d/proj/m.sqlite", "m.sqlite"),                             # another user's home
     ("/home/a bc/m.sqlite", "m.sqlite"),                                 # not the home folder: a longer name
     ("missing: /srv/share/Acme Ltd/2026 bids/m.sqlite.", "missing: m.sqlite."),
@@ -58,22 +58,24 @@ def test_paths_become_their_last_part(text: str, expected: str) -> None:
 
 
 def test_the_home_rule_is_one_switch_for_quoted_and_unquoted_paths(monkeypatch) -> None:
-    """Critique M4 / D3: with the folders kept (today) a quoted home path keeps them too; with the switch off
-    both forms shrink to the file name.  The switch is redact.KEEP_HOME_FOLDERS."""
-    keep = _redactor()
-    assert redact_module.KEEP_HOME_FOLDERS is True
-    for plain in ("/home/a b/clients/Acme Corp/m.sqlite", "~/clients/Acme Corp/m.sqlite"):
-        assert keep.redact(plain) == "~/clients/Acme Corp/m.sqlite"
-        assert keep.redact(f"'{plain}'") == "'~/clients/Acme Corp/m.sqlite'"
-    assert keep.redact("'/home/a b/plans/coal notes.txt'") == "'~/plans/coal notes.txt'"
-
-    monkeypatch.setattr(redact_module, "KEEP_HOME_FOLDERS", False)
+    """Critique M4 / D3 (owner decision 2026-11-09: shrink): by default a home path, quoted or not, shrinks to
+    its file name like any other path outside the project; with the switch on both forms keep the folders below
+    the home folder.  The switch is redact.KEEP_HOME_FOLDERS."""
     shrink = _redactor()
+    assert redact_module.KEEP_HOME_FOLDERS is False
     for plain in ("/home/a b/clients/Acme Corp/m.sqlite", "~/clients/Acme Corp/m.sqlite",
                   "C:\\Users\\a b\\clients\\Acme Corp\\m.sqlite"):
         assert shrink.redact(plain) == "m.sqlite", plain
         assert shrink.redact(f"'{plain}'") == "'m.sqlite'", plain
+    assert shrink.redact("'/home/a b/plans/coal notes.txt'") == "'coal notes.txt'"
     assert shrink.redact("/home/a b/proj/x.xlsx") == "<project>/x.xlsx"     # the project stays project-relative
+
+    monkeypatch.setattr(redact_module, "KEEP_HOME_FOLDERS", True)
+    keep = _redactor()
+    for plain in ("/home/a b/clients/Acme Corp/m.sqlite", "~/clients/Acme Corp/m.sqlite"):
+        assert keep.redact(plain) == "~/clients/Acme Corp/m.sqlite"
+        assert keep.redact(f"'{plain}'") == "'~/clients/Acme Corp/m.sqlite'"
+    assert keep.redact("'/home/a b/plans/coal notes.txt'") == "'~/plans/coal notes.txt'"
 
 
 def test_a_folder_with_a_space_at_the_end_keeps_its_last_word() -> None:

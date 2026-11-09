@@ -106,7 +106,7 @@ def test_the_scrub_keeps_formats_and_signatures_and_passes_the_check() -> None:
     assert first["id"].startswith("chatcmpl-") and len(first["id"]) == len("chatcmpl-Planted77")
     result = clean["exchanges"][1]["request"]["body"]["messages"][0]
     assert result["tool_call_id"] == call_id                     # one placeholder for the call and its result
-    assert result["content"] == "run <run id 1> in ~/work, key <key>"
+    assert result["content"] == "run <run id 1> in work, key <key>"
     second = recordings.sse_data(clean["exchanges"][0]["sse_lines"][2])
     delta = second["choices"][0]["delta"]
     assert delta["extra_content"]["google"]["thought_signature"] == "A" * 40
