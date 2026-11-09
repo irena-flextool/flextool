@@ -223,21 +223,25 @@ def test_spreadsheet_states(tmp_path: Path, tests_db: Path) -> None:
 
 
 def test_an_exclusive_lock_gives_the_busy_message(tmp_path: Path, tests_db: Path) -> None:
+    """A locked database is given up after the SQLite timeout (5 s), not waited for.  The same call on another
+    copy runs first, so the timed call does not include this worker's first import of the database library
+    (seconds on a loaded macOS or Windows runner: CI of PR #362)."""
+    args = {"entity_class": "unit", "parameter": "existing", "entity": ["coal_plant"], "scenario": "coal"}
+    warm = make_project(tmp_path / "warm", tests_db)
+    assert call_tool(make_context(warm), "get_parameter", args).ok
     project = make_project(tmp_path, tests_db)
     db_path = project / "input_sources" / "tests.sqlite"
     holder = sqlite3.connect(db_path)
     try:
         holder.execute("BEGIN EXCLUSIVE")
         started = time.monotonic()
-        out = call_tool(make_context(project), "get_parameter",
-                        {"entity_class": "unit", "parameter": "existing", "entity": ["coal_plant"],
-                         "scenario": "coal"})
+        out = call_tool(make_context(project), "get_parameter", args)
         elapsed = time.monotonic() - started
     finally:
         holder.rollback()
         holder.close()
     assert not out.ok and out.message == MESSAGES["busy"]
-    assert elapsed <= 6.0
+    assert elapsed <= _db.SQLITE_TIMEOUT_S + 1.0
 
 
 def _make_older(db_path: Path) -> None:

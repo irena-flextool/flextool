@@ -173,11 +173,13 @@ def test_a_stop_file_present_at_start_runs_nothing(tmp_path, monkeypatch):
     [
         (-9, "linux", "killed", "SIGKILL"),
         (-15, "linux", "interrupted", "SIGTERM"),
-        (-1, "linux", "interrupted", "SIGHUP"),
+        # The reason names a signal by this computer's signal table (Windows has neither SIGHUP nor SIGUSR1, and
+        # numbers 1 CTRL_BREAK_EVENT; macOS numbers 10 SIGBUS and SIGUSR1 30): CI of PR #362.
+        pytest.param(-1, "linux", "interrupted", "SIGHUP", marks=posix_only),
         (-2, "linux", "interrupted", "SIGINT"),
         (-11, "linux", "crashed", "SIGSEGV"),
         (-4, "darwin", "crashed", "SIGILL"),
-        (-10, "linux", "killed", "SIGUSR1"),
+        pytest.param(-getattr(signal, "SIGUSR1", 10), sys.platform, "killed", "SIGUSR1", marks=posix_only),
         (0, "linux", "succeeded", "without finishing"),
         (1, "linux", "failed", "exit code 1"),
         (0xC000013A, "win32", "interrupted", "Ctrl-C"),

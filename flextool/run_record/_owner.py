@@ -833,7 +833,7 @@ def _load_env_check() -> ModuleType:
 
 
 def signal_name(signum: int | None) -> str:
-    """The name of signal *signum* (``SIGTERM``), or ``signal <n>`` when it has none."""
+    """The name of signal *signum* (``SIGTERM``) in this computer's numbering, or ``signal <n>`` when it has none."""
     try:
         return signal.Signals(signum).name
     except (TypeError, ValueError):

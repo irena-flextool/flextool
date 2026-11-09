@@ -29,7 +29,9 @@ REPO = Path(__file__).resolve().parents[2]
 @pytest.fixture(scope="module")
 def solved_project(tmp_path_factory: pytest.TempPathFactory, tests_db: Path) -> Path:
     project = make_project(tmp_path_factory.mktemp("end_to_end"), tests_db)
-    env = dict(os.environ, FLEXTOOL_THREADS="1")
+    # PYTHONIOENCODING: the supervisor echoes in its console's encoding (cp1252 on a Windows runner), read here
+    # as UTF-8.
+    env = dict(os.environ, FLEXTOOL_THREADS="1", PYTHONIOENCODING="utf-8")
     env.pop(RUN_LOG_OWNER_ENV, None)
     db_url = f"sqlite:///{(project / 'input_sources' / 'tests.sqlite').as_posix()}"
     result = subprocess.run(

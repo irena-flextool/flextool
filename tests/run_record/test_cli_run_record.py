@@ -44,7 +44,9 @@ def base_db(tmp_path) -> str:
 
 
 def _engine_env() -> dict[str, str]:
-    env = dict(os.environ, FLEXTOOL_THREADS="1")
+    # PYTHONIOENCODING: the supervisor echoes in its console's encoding (cp1252 on a Windows runner: CI of PR
+    # #362), and the tests read its output as UTF-8.
+    env = dict(os.environ, FLEXTOOL_THREADS="1", PYTHONIOENCODING="utf-8")
     env.pop(RUN_LOG_OWNER_ENV, None)
     env.pop("POLARS_MAX_THREADS", None)
     return env
