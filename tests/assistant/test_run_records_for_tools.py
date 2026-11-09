@@ -904,6 +904,8 @@ def test_the_window_context_marks_a_folder_without_a_run_record() -> None:
     payload = snapshot_payload(ContextSnapshot("p", front_end="gui", gui=gui), gui_running="running")
     checked = {r["folder"]: r for r in payload["results_checked"]}
     assert checked["base_1"]["verified"] is False and "verified" not in checked["coal_1"]
+    # Cycle 1 review n2: one name for a folder without a run record, as list_runs gives it (was null).
+    assert (checked["base_1"]["state"], checked["coal_1"]["state"]) == ("no_record", "succeeded")
     block = prompt.context_block(ContextSnapshot("p", front_end="gui", gui=gui))
     assert "Result selected: base_1 — no run record; its success is not known." in block
 
@@ -930,3 +932,93 @@ def test_list_runs_counts_runs_whose_input_changed(tmp_path: Path, tests_db: Pat
     os.utime(db, (later, later))
     out = _call(make_context(project), "list_runs")
     assert "columns" in out and out["input_changed_since"] == 6 and "other_flextool_version" not in out
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Cycle 1 review (B1, m2, m3, n2, n4, n5)
+
+
+def _with_state(project: Path, folder: str, state: str) -> None:
+    path = project / "output_parquet" / folder
+    status = read_status_file(path)
+    status["state"] = state
+    write_status_atomic(path, status)
+
+
+@pytest.mark.parametrize("state", [*run_record.RUN_STATES, "paused_by_a_newer_flextool"])
+def test_list_runs_answers_for_every_run_record_state(tmp_path: Path, tests_db: Path, state: str) -> None:
+    """B1: a run stopped in the window (``killed``), by Ctrl-C (``interrupted``), by a native fault (``crashed``),
+    or in a state a newer FlexTool writes, no longer makes every list_runs call fail.  The states come from
+    ``run_record.RUN_STATES``.  Before: ValueError (a fault) for any state not in list_runs' own list."""
+    project = _project_with(tmp_path, tests_db, ("coal_1", succeed))
+    write_parquet(project / "output_parquet" / "base_1")          # no run record: state no_record
+    _with_state(project, "coal_1", state)
+    ctx = make_context(project)
+    out = _call(ctx, "list_runs")
+    shown = _listed(ctx)["coal_1"]["state"]
+    assert out["total"] == 2 and sum(out["counts"].values()) == 2 and shown in out["counts"]
+    assert _call(ctx, "list_runs", folders=["coal_1"])["total"] == 1
+    assert [r["folder"] for r in _call(ctx, "list_runs", state=shown)["runs"]] == ["coal_1"]
+    refused = call_tool(ctx, "list_runs", {"state": "no_such_state"})
+    assert not refused.ok and refused.message.startswith("There is no run state")
+    assert _runs.RUN_STATES == (*run_record.RUN_STATES, "no_record")
+
+
+def test_list_runs_counts_states_in_the_run_record_order(tmp_path: Path, tests_db: Path) -> None:
+    """B1: equal counts are listed in run_record's order, a state it does not know last."""
+    project = _project_with(tmp_path, tests_db, *((f"r{i}_1", succeed) for i in range(4)))
+    for folder, state in (("r0_1", "zz_new"), ("r1_1", "crashed"), ("r2_1", "killed")):
+        _with_state(project, folder, state)
+    out = _call(make_context(project), "list_runs")
+    assert list(out["counts"]) == ["succeeded", "killed", "crashed", "zz_new"]
+    refused = call_tool(make_context(project), "list_runs", {"state": "running"})
+    assert refused.ok and json.loads(refused.text)["total"] == 0          # a known state: no runs, not refused
+
+
+def test_list_sources_keeps_a_source_it_cannot_read(tmp_path: Path, tests_db: Path) -> None:
+    """m2: with a scenario, a source whose scenarios cannot be read is listed with its problem (it may have the
+    scenario).  Before: dropped, and the call refused with "No input source has a scenario … (none)"."""
+    project = make_project(tmp_path, tests_db)
+    (project / "input_sources" / "tests.sqlite").write_bytes(b"not a database" * 100)
+    out = _call(make_context(project), "list_sources", scenario="coal")
+    (source,) = out["sources"]
+    assert source["name"] == "tests.sqlite" and source["scenarios"] is None and source["problem"]
+    assert "alternatives" not in source and "scenario" not in source
+    assert source["problem"] == _call(make_context(project), "list_sources")["sources"][0]["problem"]
+
+
+def test_the_tool_line_counts_the_answer_rows(ctx) -> None:
+    """m3: the tool line counts the payload's rows (``Fit.rows_key``), not the first list in it.  Before:
+    "1 notes" for list_runs (its notes come before its runs)."""
+    from flextool.assistant.session import _summary
+
+    assert _summary(call_tool(ctx, "list_runs", {})) == "3 runs"
+    assert _summary(call_tool(ctx, "list_runs", {"detail": "full"})) == "3 runs"
+    assert _summary(call_tool(ctx, "list_sources", {"scenario": "coal"})) == "1 sources"
+
+
+def test_list_runs_refuses_a_pattern_that_matches_no_folder(ctx) -> None:
+    """n4: a ``*`` pattern that matches no run folder is refused with the close folder names, as an exact name is.
+    Before: an empty listing with no hint."""
+    refused = call_tool(ctx, "list_runs", {"folders": ["coal_x*"]})
+    assert not refused.ok and refused.message.startswith('No result folder matches "coal_x*". The folders '
+                                                         'include: "coal_1"')
+    assert _call(ctx, "list_runs", folders=["coal*"])["total"] == 2
+
+
+def test_the_comparison_note_names_at_most_ten_members_without_a_record(tmp_path: Path, tests_db: Path) -> None:
+    """n5: the note of members without a run record names at most ten of them.  Before: every name."""
+    from flextool.run_record import now_iso
+    from flextool.scenario_comparison.db_reader import comparison_members, new_write_id, write_comparison_metadata
+
+    project = _project_with(tmp_path, tests_db, ("coal_1", succeed))
+    names = [f"b{i:02d}_1" for i in range(12)]
+    for name in names:
+        write_parquet(project / "output_parquet" / name)
+    comparison = project / "output_parquet_comparison"
+    write_parquet(comparison)
+    folders = {name: project / "output_parquet" / name for name in [*names, "coal_1"]}
+    write_comparison_metadata(comparison, list(folders), comparison_members(folders), now_iso(), new_write_id())
+    note = _runs.comparison_state(make_context(project))["note"]
+    assert note == (f"The comparison files cannot be matched to their runs: {', '.join(names[:10])} and 2 more have "
+                    "no run record. The tools use each scenario's own results instead.")

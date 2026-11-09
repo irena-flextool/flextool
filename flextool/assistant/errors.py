@@ -82,6 +82,7 @@ MESSAGES: dict[str, str] = {
     "no_runs": "The project has no scenario results (no folders in output_parquet).",
     "bad_run_name": "{run} is not a result folder name; use a folder name that list_runs gives.",
     "unknown_run": "There is no result folder {run}. The folders include: {runs}.",
+    "no_run_matches": "No result folder matches {run}. The folders include: {runs}.",
     "unknown_run_state": "There is no run state {value}. The states of this project's runs are: {values}.",
     "run_running": "Scenario folder {run} is running now; its results are not complete.",
     "run_abandoned": ("The latest run of {run} stopped without finishing. Read the run log (get_run_log) and run "

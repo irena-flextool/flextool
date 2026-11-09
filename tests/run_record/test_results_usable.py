@@ -162,3 +162,21 @@ def test_strict_read_of_a_locked_file_is_unreadable(tmp_path, monkeypatch):
     monkeypatch.setattr(_owner, "open", locked, raising=False)
     assert read_status_file(folder, strict=True) == {"state": "unreadable"}
     assert read_status_file(folder) is None
+
+
+def test_run_states_list_every_state_the_record_is_written_or_shown_with():
+    """Cycle 1 review B1: ``RUN_STATES`` is the one list of states; it holds every state the supervisor writes for
+    an engine that did not finish (``classify_exit``, the owner's stop), the ones ``effective_state`` shows for a
+    stale ``running`` record and the two of a strict read."""
+    from flextool.run_record import RUN_STATES, effective_state
+
+    written = {_owner.classify_exit(code, plat)[0]
+               for plat in ("linux", "win32")
+               for code in (None, 0, 1, -9, -15, -2, -1, -11, -6, 0xC0000005, 0xC000013A, 3)}
+    assert written == {"succeeded", "failed", "killed", "interrupted", "crashed"}
+    assert written | set(_owner._ERROR_TYPES) <= set(RUN_STATES)
+    stale = {effective_state({"state": "running", "process": {}, "heartbeat_at": beat})
+             for beat in ("2000-01-01T00:00:00+00:00", _owner.now_iso())}
+    assert stale == {"abandoned", "unknown"}
+    assert stale | {"running", "unreadable", "malformed"} <= set(RUN_STATES)
+    assert len(set(RUN_STATES)) == len(RUN_STATES) == 10

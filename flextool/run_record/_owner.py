@@ -106,6 +106,19 @@ WINDOWS_CTRL_C_EXIT_SIGNED = WINDOWS_CTRL_C_EXIT - 2**32
 UNREADABLE_STATE = "unreadable"
 #: The ``state`` of the status a strict read returns for a file that is damaged or has the wrong shape.
 MALFORMED_STATE = "malformed"
+#: The state shown for a ``running`` record whose process is gone and whose heartbeat is old
+#: (:func:`~flextool.run_record._status.effective_state`) ...
+ABANDONED_STATE = "abandoned"
+#: ... and for one whose heartbeat is recent (the process may be on another host, or just ended).
+UNKNOWN_STATE = "unknown"
+#: Every ``state`` a run record can hold or be shown with, in the order a listing shows them: the end states the
+#: engine writes (``succeeded``, ``failed``, ``interrupted``), the ones the supervisor writes for an engine that
+#: ended without finishing its record (:func:`classify_exit` and :func:`finalize_unfinished`: ``killed``,
+#: ``interrupted``, ``crashed``), ``running`` and the two shown for a stale ``running`` (:data:`ABANDONED_STATE`,
+#: :data:`UNKNOWN_STATE`), and the two a strict read returns (:data:`UNREADABLE_STATE`, :data:`MALFORMED_STATE`).
+#: A reader must still expect a state not listed here (a record written by a newer FlexTool).
+RUN_STATES: tuple[str, ...] = ("succeeded", "failed", "killed", "interrupted", "crashed", "running",
+                               ABANDONED_STATE, UNKNOWN_STATE, UNREADABLE_STATE, MALFORMED_STATE)
 #: A status that does not parse is taken as being written while it is younger than this, else as damaged.
 _WRITE_IN_PROGRESS_SECONDS = 10.0
 #: How long :func:`read_status_settled` keeps trying to read a status that cannot be read now.
@@ -1263,7 +1276,7 @@ def unusable_code(status: Mapping[str, Any] | None, effective: str | None = None
         return "malformed"
     state = status.get("state")
     if state == "running":
-        return "abandoned" if effective == "abandoned" else "running"
+        return "abandoned" if effective == ABANDONED_STATE else "running"
     if state != "succeeded":
         return "failed"
     parquet = (status.get("outputs") or {}).get("parquet_state")
@@ -1276,6 +1289,7 @@ __all__ = [
     "ExpectedRun",
     "LOG_HEAD_BYTES",
     "LOG_TAIL_BYTES_DEFAULT",
+    "ABANDONED_STATE",
     "MALFORMED_STATE",
     "MARKER",
     "PRE_MARKER_BUFFER_BYTES",
@@ -1287,6 +1301,8 @@ __all__ = [
     "RUN_STOP_FILE_ENV",
     "STATUS_SCHEMA",
     "STATUS_SCHEMA_VERSION",
+    "RUN_STATES",
+    "UNKNOWN_STATE",
     "UNREADABLE_STATE",
     "VERDICT_ORDER",
     "RunLogOwner",

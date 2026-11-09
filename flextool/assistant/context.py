@@ -25,6 +25,8 @@ FrontEnd = Literal["agent", "terminal", "gui"]
 
 #: The lock every tool call of this process runs under (P2 §5.5).
 TOOL_LOCK = threading.Lock()
+#: The shown state of a result folder without a run record (list_runs and get_gui_context use the same name).
+NO_RECORD_STATE = "no_record"
 
 
 @dataclass(frozen=True)
@@ -146,7 +148,8 @@ def _payload_list(out: dict[str, Any], key: str, items: Iterable[Any], render: C
 
 def _result_payload(ref: ResultRef, redact: Callable[[str], str] | None) -> dict[str, Any]:
     out = {"folder": _payload_text(ref.folder, redact), "source_number": ref.source_number,
-           "scenario": _payload_text(ref.scenario, redact), "state": ref.state,
+           "scenario": _payload_text(ref.scenario, redact),
+           "state": NO_RECORD_STATE if ref.unverified else ref.state,
            "results_usable": ref.results_usable, "unusable_code": ref.unusable_code,
            "reason": _payload_text(ref.reason, redact)}
     if ref.unverified:

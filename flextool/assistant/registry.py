@@ -85,6 +85,10 @@ class ToolOutcome:
     payload: dict | None
     message: str | None
     payload_json: str | None = None
+    #: The payload's list of answer rows (``Fit.rows_key``) and what they are (``Fit.what``): the tool line counts
+    #: them.
+    rows_key: str | None = None
+    what: str | None = None
 
     @property
     def text(self) -> str:
@@ -183,7 +187,7 @@ def call_tool(ctx: AssistantContext, name: str, args: dict | None) -> ToolOutcom
         fit = result if isinstance(result, Fit) else Fit(result)
         max_chars = int(clamped.get("max_chars") or ctx.caps.max_chars)
         text = fit_json(fit.payload, max_chars, ctx.redact, rows_key=fit.rows_key, what=fit.what, hint=fit.hint)
-        return _final(ctx, ToolOutcome(True, fit.payload, None, text), max_chars)
+        return _final(ctx, ToolOutcome(True, fit.payload, None, text, fit.rows_key, fit.what), max_chars)
     except ToolError as exc:
         return _final(ctx, ToolOutcome(False, None, exc.render(ctx.redact)), error_limit(ctx, asked))
     except Exception as exc:  # noqa: BLE001 — a fault is reported, never raised to the connection

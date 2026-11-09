@@ -26,7 +26,7 @@ from typing import Any
 
 from flextool import run_record
 from flextool.assistant import project
-from flextool.assistant.context import AssistantContext
+from flextool.assistant.context import NO_RECORD_STATE, AssistantContext
 from flextool.assistant.errors import ToolError, close_names, message, name_list
 
 RESULTS_DIR = "output_parquet"
@@ -36,13 +36,19 @@ COMPARISON_METADATA = "_metadata.json"
 COMPARISON_FORMAT = 2
 SCENARIOS_MAX = 100
 ERROR_MAX = 300
-#: The shown state of a folder without a run record (it holds result files written by an older FlexTool).
-NO_RECORD_STATE = "no_record"
+#: :data:`NO_RECORD_STATE` (from ``context``) is the shown state of a folder without a run record (it holds
+#: result files written by an older FlexTool).
 #: What every result read from a folder without a run record says (agent feedback 2026-11-09, item 8).
 NO_RECORD_NOTE = ("No run record: the run's success is not known; results may be from a failed or older run. Say "
                   "so when you use them.")
-#: The states list_runs shows, in this order.
-RUN_STATES = ("succeeded", "failed", "running", "abandoned", "unknown", "unreadable", "malformed", NO_RECORD_STATE)
+#: The states list_runs shows, in this order: the run record's own (``run_record.RUN_STATES``), then
+#: :data:`NO_RECORD_STATE`.  A state that neither lists (a record of a newer FlexTool) is shown after them.
+RUN_STATES = (*run_record.RUN_STATES, NO_RECORD_STATE)
+
+
+def state_order(state: str) -> int:
+    """Where *state* goes in a listing of states: its place in :data:`RUN_STATES`, a state not listed last."""
+    return RUN_STATES.index(state) if state in RUN_STATES else len(RUN_STATES)
 
 _status_cache: dict[str, tuple[tuple[int, int], dict | None]] = {}
 _status_lock = threading.Lock()
@@ -128,7 +134,8 @@ def _summary(ctx: AssistantContext, source: project.Source) -> dict:
 
 def list_sources(ctx: AssistantContext, scenario: str | None = None) -> list[dict]:
     """The input sources; with *scenario*, only those that have it, each with the scenario's alternatives highest
-    rank first and ``base`` (the lowest) in place of the scenario list."""
+    rank first and ``base`` (the lowest) in place of the scenario list, and those whose scenarios cannot be read
+    now (``scenarios`` null, with their ``problem``): they may have it."""
     from flextool.update_flextool import FLEXTOOL_DB_VERSION
 
     rows = []
@@ -138,8 +145,8 @@ def list_sources(ctx: AssistantContext, scenario: str | None = None) -> list[dic
         scenarios = summary["scenarios"]
         if scenario is not None:
             known += scenarios or []
-            if scenarios is None or scenario not in scenarios:
-                continue
+            if scenarios is not None and scenario not in scenarios:
+                continue                 # a source whose scenarios cannot be read stays, with its problem
         try:
             modified = _iso(source.path.stat().st_mtime)
         except OSError:
@@ -151,7 +158,7 @@ def list_sources(ctx: AssistantContext, scenario: str | None = None) -> list[dic
             "path": project.relative(ctx, source.path),
             "modified": modified,
         }
-        if scenario is None:
+        if scenario is None or scenarios is None:
             row["scenarios"] = scenarios[:SCENARIOS_MAX] if scenarios is not None else None
             row["scenarios_note"] = (f"showing {SCENARIOS_MAX} of {len(scenarios)} scenarios"
                                      if scenarios is not None and len(scenarios) > SCENARIOS_MAX else None)
@@ -322,8 +329,8 @@ def select_runs(ctx: AssistantContext, *, source: str | None = None, scenario: s
                 folders: list[str] | None = None) -> list[Run]:
     """The runs that pass every filter given (AND), in folder-name order (the order :func:`run_folders` gives,
     by the real names: a page offset counts in it).  *folders* holds names and ``*`` patterns; an exact name that
-    is no run folder is refused with the close names, a *state* that is not a shown state with the states there
-    are."""
+    is no run folder, or a pattern that matches none, is refused with the close names; a *state* that is neither
+    a known state nor one a run has, with the states there are."""
     from flextool.assistant.results._query import _matching
 
     all_runs = runs(ctx)
@@ -334,8 +341,8 @@ def select_runs(ctx: AssistantContext, *, source: str | None = None, scenario: s
     if scenario is not None:
         selected = [r for r in selected if r.entry["db_scenario"] == scenario]
     if state is not None:
-        if state not in RUN_STATES:
-            present = sorted({r.entry["state"] for r in all_runs}, key=RUN_STATES.index)
+        present = sorted({r.entry["state"] for r in all_runs}, key=lambda s: (state_order(s), s))
+        if state not in RUN_STATES and state not in present:
             raise ToolError("unknown_run_state", value=state, values=present or list(RUN_STATES))
         selected = [r for r in selected if r.entry["state"] == state]
     if results_usable is not None:
@@ -343,10 +350,13 @@ def select_runs(ctx: AssistantContext, *, source: str | None = None, scenario: s
     if folders:
         names = [r.folder.name for r in all_runs]
         for name in folders:
-            if "*" not in name and name not in names:
+            pattern = "*" in name
+            if (name not in names) if not pattern else not _matching(names, [name]):
                 if not names:
                     raise ToolError("no_runs")
-                raise ToolError("unknown_run", run=name, runs=name_list(close_names(name, names) or names))
+                close = close_names(name.replace("*", ""), names) if name.replace("*", "") else []
+                raise ToolError("no_run_matches" if pattern else "unknown_run", run=name,
+                                runs=name_list(close or names))
         keep = set(_matching([r.folder.name for r in selected], [str(f) for f in folders]))
         selected = [r for r in selected if r.folder.name in keep]
     return selected
@@ -358,12 +368,12 @@ class ResolvedRun:
     status: dict | None
     entry: dict
     run_notes: list[str]
-    run: Run | None = field(default=None, repr=False)
+    run: Run = field(repr=False)
 
     @property
     def verified(self) -> bool:
         """Whether the folder has a run record (:attr:`Run.verified`)."""
-        return self.status is not None
+        return self.run.verified
 
 
 def find_run(ctx: AssistantContext, run: str) -> Run:
@@ -490,7 +500,7 @@ def comparison_state(ctx: AssistantContext) -> dict | None:
         state["note"] = ("The comparison files were built from scenario folders outside this project; the tools "
                          "use each scenario's own results instead.")
     elif unrecorded:
-        state["note"] = (f"The comparison files cannot be matched to their runs: {', '.join(unrecorded)} "
+        state["note"] = (f"The comparison files cannot be matched to their runs: {name_list(unrecorded, 10)} "
                          f"{'has' if len(unrecorded) == 1 else 'have'} no run record. The tools use each "
                          "scenario's own results instead.")
     elif not usable:

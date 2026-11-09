@@ -89,7 +89,7 @@ def list_runs(ctx: AssistantContext, args: dict) -> Fit:
         counts[run.entry["state"]] = counts.get(run.entry["state"], 0) + 1
     payload: dict[str, Any] = {
         "total": n,
-        "counts": dict(sorted(counts.items(), key=lambda kv: (-kv[1], _runs.RUN_STATES.index(kv[0])))),
+        "counts": dict(sorted(counts.items(), key=lambda kv: (-kv[1], _runs.state_order(kv[0]), kv[0]))),
         "results_usable": sum(1 for r in selected if r.entry["results_usable"]),
     }
     changed = sum(1 for r in selected if r.entry["stale_vs_input"])

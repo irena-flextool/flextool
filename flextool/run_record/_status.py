@@ -37,12 +37,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence, TypeVar
 
 from flextool.run_record._owner import (
+    ABANDONED_STATE,
     RUN_LOG_FILE,
     RUN_STATUS_FILE,
     STATUS_SCHEMA,
     STATUS_SCHEMA_VERSION,
     STATUS_TMP_PREFIX,
     STATUS_TMP_SUFFIX,
+    UNKNOWN_STATE,
     carried_outputs,
     now_iso,
     parse_iso,
@@ -870,8 +872,8 @@ def effective_state(status: Mapping[str, Any] | None, *, now: datetime | None = 
     beat = parse_iso(status.get("heartbeat_at")) or parse_iso(status.get("started_at"))
     current = now or datetime.now().astimezone()
     if beat is not None and (current - beat).total_seconds() > ABANDONED_AFTER_SECONDS:
-        return "abandoned"
-    return "unknown"
+        return ABANDONED_STATE
+    return UNKNOWN_STATE
 
 
 def _process_alive(process: Mapping[str, Any]) -> bool:

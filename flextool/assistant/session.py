@@ -1284,11 +1284,15 @@ class Session:
 
 
 def _summary(outcome: registry.ToolOutcome) -> str:
-    """The short outcome on a tool line: ``5 results``, ``120 rows``, or the start of the error message."""
+    """The short outcome on a tool line: ``5 results``, ``120 rows`` (the payload's rows, ``ToolOutcome.rows_key``,
+    else its first list), or the start of the error message."""
     if not outcome.ok:
         first = (outcome.message or "").splitlines()[0] if outcome.message else ""
         return caps_module.cap_text(first, ARGS_PREVIEW_MAX)
     payload = outcome.payload or {}
+    rows = payload.get(outcome.rows_key) if outcome.rows_key else None
+    if isinstance(rows, list):
+        return f"{len(rows)} {(outcome.what or outcome.rows_key).replace('_', ' ')}"
     for key, value in payload.items():
         if isinstance(value, list):
             return f"{len(value)} {key.replace('_', ' ')}"
