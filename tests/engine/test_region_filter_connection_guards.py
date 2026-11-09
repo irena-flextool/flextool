@@ -71,3 +71,50 @@ def test_plain_split_has_no_guard_hit(data, caplog) -> None:
     with caplog.at_level(logging.WARNING, logger="flextool.engine.solve._region_filter"):
         assert len(split(data, regions=REGIONS, benders_uncap_cross_region=True)) == 3
     assert not [r for r in caplog.records if "integer variables" in r.getMessage()]
+
+
+# ---------------------------------------------------------------------------
+# reduce_unit_detail_method / reduce_system_detail_method lift the guards (the split runs on the reduced data)
+
+
+@pytest.mark.parametrize("field, unit, system", [
+    ("process_reserve_upDown_node_active", "none", "reserves"),
+    ("process_online_linear", "online", "none"),
+    ("process_online_integer", "online", "none"),
+    ("process_exact", "integers", "none"),
+])
+def test_cross_region_connection_splits_when_the_detail_is_left_out(data, field, unit, system) -> None:
+    """A cross-region connection with reserve, online variables or exact is refused at none and splits once the
+    solve's level leaves that detail out."""
+    from flextool.engine.preprocess._reduce_detail import apply_reduce_detail
+
+    pss = data.process_source_sink
+    if field == "process_reserve_upDown_node_active":
+        frame = pl.DataFrame({"p": ["pipe_AB"], "r": ["r1"], "ud": ["up"], "n": ["lh2_B"]}).with_columns(
+            pl.col("p").cast(pss.schema["p"]), pl.col("n").cast(pss.schema["sink"]))
+    else:
+        frame = _procs(data, ["pipe_AB"])
+    bad = _replace(data, **{field: frame})
+    with pytest.raises(FlexToolConfigError, match="pipe_AB"):
+        split(bad, regions=REGIONS, benders_uncap_cross_region=True)
+    reduced, report = apply_reduce_detail(bad, unit, system)
+    assert getattr(reduced, field) is None
+    assert len(split(reduced, regions=REGIONS, benders_uncap_cross_region=True)) == 3
+
+
+def test_integer_region_warning_is_quiet_when_integers_are_relaxed(data, caplog) -> None:
+    """A binary unit in a region warns at none, naming reduce_unit_detail_method; under integers its online
+    columns are continuous and the region gets no warning."""
+    from flextool.engine.preprocess._reduce_detail import apply_reduce_detail
+
+    ok = _replace(data, process_online_integer=_procs(data, ["electrolyser_A"]))
+    with caplog.at_level(logging.WARNING, logger="flextool.engine.solve._region_filter"):
+        split(ok, regions=REGIONS, benders_uncap_cross_region=True)
+    msgs = [r.getMessage() for r in caplog.records if "integer variables" in r.getMessage()]
+    assert len(msgs) == 1 and "reduce_unit_detail_method = integers" in msgs[0]
+    caplog.clear()
+    relaxed, _ = apply_reduce_detail(ok, "integers")
+    assert relaxed.relax_integrality is True and relaxed.process_online_integer is not None
+    with caplog.at_level(logging.WARNING, logger="flextool.engine.solve._region_filter"):
+        assert len(split(relaxed, regions=REGIONS, benders_uncap_cross_region=True)) == 3
+    assert not [r for r in caplog.records if "integer variables" in r.getMessage()]
