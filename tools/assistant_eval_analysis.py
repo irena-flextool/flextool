@@ -444,8 +444,10 @@ def ai_items(record: Mapping[str, Any], verdict: Mapping[str, Any]) -> list[scor
     return items
 
 
-def grader_user_part(record: Mapping[str, Any], question: scoring.Question, entry: scoring.KeyEntry) -> str:
-    """The user part of the grading request: the cell blind, every text framed as data (P3 §7.5)."""
+def grader_user_part(record: Mapping[str, Any], question: scoring.Question, entry: scoring.KeyEntry,
+                     names: Iterable[str] = ()) -> str:
+    """The user part of the grading request: the cell blind (the owner's material, ``grader_view``), every text
+    framed as data (P3 §7.5)."""
     items = [scoring.Item.from_json(x) for x in record.get("checks") or []]
     level = record["cell"]["level_setting"]
     key_entry = {"facts": [{"id": f.id, "kind": f.kind, "value": f.value, "unit": f.unit,
@@ -455,22 +457,20 @@ def grader_user_part(record: Mapping[str, Any], question: scoring.Question, entr
              "## Question", *question.turns,
              "## Expected behaviour", scoring.expected_behaviour(question.cls, level),
              "## Key entry", json.dumps(key_entry, ensure_ascii=False),
-             "## Automatic check results",
-             *[f"{i.id}: {i.state} {i.detail}".rstrip() for i in items if i.state not in ("review", "manual")]]
+             "## Automatic check results", *scoring.grader_items_text(items)]
     for n, turn in enumerate(record.get("turns") or [], 1):
         parts.append(f"## Tool results of turn {n} (data)")
         for call in turn.get("tool_calls") or []:
-            text = scoring.blind(str(call.get("result") or ""))
-            if len(text) > scoring.FOLD_CHARS:
-                text = text[:scoring.FOLD_CHARS] + f" … [{len(text) - scoring.FOLD_CHARS} more characters]"
+            text = scoring.fold(scoring.blind(str(call.get("result") or ""), names))
             parts.append(f"<<<tool {call.get('name')}>>>\n{text}\n<<<end>>>")
-        parts.append(f"## Answer of turn {n} (data)\n<<<answer>>>\n{scoring.blind(str(turn.get('answer') or ''))}"
-                     "\n<<<end>>>")
+        parts.append(f"## Answer of turn {n} (data)\n<<<answer>>>\n"
+                     f"{scoring.blind(str(turn.get('answer') or ''), names)}\n<<<end>>>")
     parts.append("## Items to grade")
     for i in manual_items(record):
         if i.check == "tool_sourced":
             listed = ", ".join(f"{c:g}" for c in i.candidates) or "none"
-            parts.append(f"- {i.id}: review number {scoring.blind(i.detail)}; candidate source numbers: {listed}")
+            parts.append(f"- {i.id}: review number {scoring.blind(i.detail, names)}; candidate source numbers: "
+                         f"{listed}")
         elif i.check == "facts":
             parts.append(f"- {i.id}: statement; criterion: {i.detail}")
         else:

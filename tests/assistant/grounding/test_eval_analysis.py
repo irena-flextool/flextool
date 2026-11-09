@@ -287,7 +287,8 @@ def test_grade_and_record(evaluator, grounding: Path, tmp_path: Path) -> None:
     shown: list[str] = []
 
     def grade(key: Path) -> int:
-        args = evaluator.build_parser().parse_args(["grade", str(out), "--key", str(key)])
+        args = evaluator.build_parser().parse_args(["grade", str(out), "--single-model", "--dir",
+                                                    str(tmp_path / "grading"), "--key", str(key)])
         return evaluator.cmd_grade(args, ask=lambda text: asked.append(text) or "pass", say=shown.append)
 
     def summary(*extra: str) -> int:
@@ -688,3 +689,235 @@ def test_the_calibration_tools_keep_no_acceptance() -> None:
     for path in sorted(tools.glob("assistant_eval*.py")):
         text = path.read_text(encoding="utf-8")
         assert "needs_consent" not in text and "record_consent" not in text, path.name
+
+
+# --- G14: blind grading across models (C6-M1, m2, n3) -------------------------------------------------------
+ALPHA = "vendor/alpha-one:free"
+BETA = "vendor/beta-two:free"
+
+
+def _key_file(path: Path, qids: tuple[str, ...]) -> Path:
+    """A non-placeholder key for *qids* that only exercises grading: the token coal_plant, critical."""
+    import yaml
+
+    note = "exercises the grading only"
+    path.write_text(yaml.safe_dump({
+        "format": 1, "set_version": gp.SET_VERSION, "key_version": 7, "derived_by": note, "sources": [],
+        "questions": {q: {"facts": [{"id": "unit", "kind": "token", "value": "coal_plant", "critical": True,
+                                     "derivation": note}], "manual": ["facts_vs_assumptions"]} for q in qids}}),
+        encoding="utf-8")
+    return path
+
+
+def _results(evaluator, grounding: Path, out: Path, model: str, levels: str = "basic") -> Path:
+    assert run(evaluator, grounding, out, "--questions", "G01,G03,G04", "--levels", levels, harness=Harness(),
+               model=model) == 0
+    return out
+
+
+def _grade(evaluator, key: Path, grading: Path, *folders: Path, ask, said: list[str], extra=()) -> int:
+    args = evaluator.build_parser().parse_args(["grade", *map(str, folders), "--dir", str(grading), "--key",
+                                                str(key), *extra])
+    return evaluator.cmd_grade(args, ask=ask, say=said.append)
+
+
+def _cells_shown(said: list[str]) -> list[str]:
+    return [line for line in said if line.startswith("Cell #")]
+
+
+def test_grade_shuffles_across_folders(evaluator, grounding: Path, tmp_path: Path, capsys) -> None:
+    """C6-M1: the cells of two models are graded in one blind order; nothing shown names a model or a cell."""
+    alpha = _results(evaluator, grounding, tmp_path / "res_alpha", ALPHA)
+    beta = _results(evaluator, grounding, tmp_path / "res_beta", BETA)
+    key = _key_file(tmp_path / "key.yaml", ("G01", "G03", "G04"))
+    grading = tmp_path / "grading"
+    evaluator.write_json(grading / evaluator.GRADING_FILE, {"seed": 11, "order": [], "tokens": {}})
+    said: list[str] = []
+    assert _grade(evaluator, key, grading, alpha, ask=lambda _t: "p", said=said) == 2
+    assert "Grading one model is not blind" in capsys.readouterr().err
+    assert _grade(evaluator, key, grading, alpha, beta, ask=lambda t: said.append(t) or "p", said=said) == 0
+    state = json.loads((grading / evaluator.GRADING_FILE).read_text(encoding="utf-8"))
+    order = [tuple(k) for k in state["order"]]
+    cids = ("G01__small__r1", "G03__small__r1", "G04__small__r1")
+    assert sorted(order) == sorted((str(f.resolve()), c) for f in (alpha, beta) for c in cids)
+    folders = [Path(f).name for f, _c in order]
+    assert folders != sorted(folders) and folders != sorted(folders, reverse=True)        # mixed for seed 11
+    assert _cells_shown(said) == [f"Cell #{n}" for n in range(1, 7)]
+    assert {name: tuple(k) for name, k in state["tokens"].items()} == {f"#{n}": k for n, k in enumerate(order, 1)}
+    view = "\n".join(said)
+    for hidden in ("alpha-one", "beta-two", "vendor", "openrouter", "OpenRouter", "res_alpha", "res_beta",
+                   "__small__", "small", *cids):
+        assert hidden not in view, hidden
+    for f in (alpha, beta):
+        assert all(r["outcome"] == "answered" for r in evaluator.read_cells(f).values())
+
+
+def test_late_folder_is_mixed_into_the_tail(evaluator, grounding: Path, tmp_path: Path) -> None:
+    """C6-M1: a folder added later is shuffled into the cells not yet shown, not appended as one block."""
+    alpha = _results(evaluator, grounding, tmp_path / "res_alpha", ALPHA, levels="basic,standard")
+    beta = _results(evaluator, grounding, tmp_path / "res_beta", BETA)
+    key = _key_file(tmp_path / "key.yaml", ("G01", "G03", "G04"))
+    grading = tmp_path / "grading"
+    evaluator.write_json(grading / evaluator.GRADING_FILE, {"seed": 11, "order": [], "tokens": {}})
+    said: list[str] = []
+    assert _grade(evaluator, key, grading, alpha, ask=lambda _t: "p", said=said,
+                  extra=("--single-model", "--sitting", "2")) == 0
+    first = json.loads((grading / evaluator.GRADING_FILE).read_text(encoding="utf-8"))["order"]
+    assert len(first) == 6 and _cells_shown(said) == ["Cell #1", "Cell #2"]
+    said.clear()
+    assert _grade(evaluator, key, grading, alpha, beta, ask=lambda _t: "p", said=said) == 0
+    order = json.loads((grading / evaluator.GRADING_FILE).read_text(encoding="utf-8"))["order"]
+    assert order[:2] == first[:2]
+    assert [k for k in order if k in first] == first                    # alpha's rest keeps its order
+    beta_at = [n for n, (f, _c) in enumerate(order, 1) if Path(f).name == "res_beta"]
+    assert len(beta_at) == 3 and min(beta_at) > 2 and beta_at != [7, 8, 9]     # interleaved for seed 11
+    assert _cells_shown(said) == [f"Cell #{n}" for n in range(3, 10)]
+
+
+@pytest.mark.parametrize("text, blinded", [
+    ("As Sonnet 4.5 I checked it.", "As [assistant] 4.5 I checked it."),
+    ("(Opus checked)", "([assistant] checked)"),
+    ("GPT-oss said so", "[assistant] said so"),
+    ("Kimi thinks", "[assistant] thinks"),
+    ("Your level: basic.", "Your [level]."),
+    ("the advanced level would trace it", "the [level] would trace it"),
+    ("showing 20 of 340 rows", "showing [part] of 340 rows"),
+    ("showing the first 40 of 900 characters", "showing [part] of 900 characters"),
+    ("The result is larger than 12000 characters", "The result is larger than [limit] characters"),
+    ("alpha-one wrote this", "[assistant] wrote this"),
+    ("a large share of demand", "a large share of demand"),
+    ("the metadata of a meta-analysis", "the metadata of a meta-analysis"),
+])
+def test_blind_names_and_levels(scoring, text: str, blinded: str) -> None:
+    """C6-m2: family names, level phrases, result caps and the folder's own names are blinded; ordinary words
+    stay."""
+    assert scoring.blind(text, ["alpha-one"]) == blinded
+
+
+def test_grader_view_blinds_arguments(evaluator, scoring) -> None:
+    record = _lookup_record(scoring, evaluator, "small", 6, arguments={"note": "claude"})
+    view = evaluator.grader_view(record, *_g01(scoring), evaluator.auto_check(record, *_g01_set(scoring)))
+    assert '{"note": "[assistant]"}' in view and "claude" not in view.lower()
+
+
+def _g01_set(scoring):
+    key = scoring.parse_key({"format": 1, "set_version": 3, "key_version": 1, "questions": {
+        "G01": {"facts": [{"id": "unit", "kind": "token", "value": "coal_plant", "critical": True,
+                           "derivation": "test"}], "manual": ["facts_vs_assumptions"]}}})
+    return scoring.load_set(), key
+
+
+def _g01(scoring):
+    qset, key = _g01_set(scoring)
+    return qset.questions["G01"], key.questions["G01"]
+
+
+def _lookup_record(scoring, evaluator, level: str, cap: int, *, arguments=None, answer: str = "coal_plant.") -> dict:
+    question = scoring.load_set().questions["G01"]
+    return {"format": 1, "cell": {"model": "m1", "level_setting": level, "question": "G01", "class": "lookup",
+                                  "repeat": 1},
+            "model": {"preset": "ollama", "model": "m1"}, "not_applicable": None,
+            "budget": {"caps": {"max_calls_per_turn": cap}},
+            "turns": [{"user": question.turns[0], "answer": answer, "tool_calls": [
+                {"name": "list_runs", "arguments": arguments or {}, "ok": True, "result": '{"runs": []}'}],
+                "usage": [], "rounds": 2, "calls": 1}],
+            "checks": None, "set_version": 3, "key_version": None, "ran_at": "2026-11-10T10:00:00Z"}
+
+
+def test_grader_material_has_no_cap(evaluator, analysis, scoring) -> None:
+    """C6-m2: a lookup cell at basic (cap 6) and at advanced (cap 30) looks the same to both graders."""
+    qset, key = _g01_set(scoring)
+    small = _lookup_record(scoring, evaluator, "small", 6)
+    large = _lookup_record(scoring, evaluator, "large", 30)
+    views = [evaluator.grader_view(r, *_g01(scoring), evaluator.auto_check(r, qset, key)) for r in (small, large)]
+    assert views[0] == views[1] and "cap 6" not in views[0]
+    parts = [analysis.grader_user_part(r, qset.questions["G01"], key.questions["G01"]) for r in (small, large)]
+    assert parts[0] == parts[1] and "cap 6" not in parts[0] and "calls per turn" not in parts[0]
+
+
+@pytest.mark.parametrize("leak", ["ran_at", "glued_name"])
+def test_leak_scan_blocks_grading(evaluator, grounding: Path, tmp_path: Path, capsys, leak: str) -> None:
+    """C6-m2: material the blinding cannot clean stops the whole sitting before the first question."""
+    alpha = _results(evaluator, grounding, tmp_path / "res_alpha", ALPHA)
+    path = evaluator.cell_path(alpha, "G03__small__r1")
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["turns"][0]["answer"] += (f" Checked at {record['ran_at']}." if leak == "ran_at"
+                                     else " Signed: teamalpha-one.")
+    evaluator.write_json(path, record)
+    before = {p.name: p.read_bytes() for p in (alpha / "cells").glob("*.json")}
+    key = _key_file(tmp_path / "key.yaml", ("G01", "G03", "G04"))
+    asked: list[str] = []
+    assert _grade(evaluator, key, tmp_path / "grading", alpha, ask=lambda t: asked.append(t) or "p", said=[],
+                  extra=("--single-model",)) == 2
+    err = capsys.readouterr().err
+    assert "the grader material reveals" in err and "nothing was graded" in err
+    assert ("the time of the run" if leak == "ran_at" else "the model's name") in err
+    assert "alpha-one" not in err and record["ran_at"] not in err
+    assert asked == [] and before == {p.name: p.read_bytes() for p in (alpha / "cells").glob("*.json")}
+
+
+@pytest.mark.parametrize("material, kinds", [
+    ("plain text", []),
+    ("[assistant] wrote it, showing [part] of 30 rows", []),
+    ("Sonnet wrote it", ["a model or provider name"]),
+    ("at the standard level", ["the level"]),
+    ("calls per turn [2], cap 6", ["a call cap"]),
+    ("showing 20 of 30 rows", ["a result cap"]),
+    ("The tool limit for this question is reached. Answer with what you have, and say what is still unknown.",
+     ["a level message"]),
+    ("by beta-two", ["the model's name"]),
+    ("at 2026-11-10T10:00:00Z", ["the time of the run", "a time"]),
+    ("run at 2026-01-02T03:04", ["a time"]),
+])
+def test_leak_scan_kinds(scoring, material: str, kinds: list[str]) -> None:
+    """The planted leaks: family names, levels, call and result caps, level messages, names, times."""
+    assert scoring.leak_scan(material, names=["beta-two"], stamps=["2026-11-10T10:00:00Z"]) == kinds
+    assert scoring.leak_scan("run at 2026-01-02T03:04", names=[], stamps=[], sources='{"t": "2026-01-02T03:04"}') == []
+
+
+def test_grade_interrupt_keeps_given_verdicts(evaluator, grounding: Path, tmp_path: Path, capsys,
+                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    """C6-n3: Ctrl-C keeps the verdicts already given; an interrupted re-grade changes nothing; an unknown cell
+    is refused."""
+    alpha = _results(evaluator, grounding, tmp_path / "res_alpha", ALPHA)
+    key = _key_file(tmp_path / "key.yaml", ("G01", "G03", "G04"))
+    grading = tmp_path / "grading"
+    answers: list = ["pass", KeyboardInterrupt]
+    prompts: list[str] = []
+
+    def fake_input(text: str) -> str:
+        prompts.append(text)
+        item = answers.pop(0)
+        if item is KeyboardInterrupt:
+            raise KeyboardInterrupt
+        return item
+
+    monkeypatch.setattr("builtins.input", fake_input)
+
+    def grade(*extra: str) -> int:
+        args = evaluator.build_parser().parse_args(["grade", str(alpha), "--single-model", "--dir", str(grading),
+                                                    "--key", str(key), *extra])
+        return evaluator.cmd_grade(args, say=lambda _t: None)
+
+    assert grade() == 0
+    order = json.loads((grading / evaluator.GRADING_FILE).read_text(encoding="utf-8"))["order"]
+    first = evaluator.cell_path(alpha, order[0][1])
+    record = json.loads(first.read_text(encoding="utf-8"))
+    verdicts = {i["id"]: i.get("verdict") for i in record["checks"]}
+    assert verdicts["number:1:0"] == "pass" and verdicts["facts_vs_assumptions"] is None
+    assert record["outcome"] is None
+    assert grade("--regrade", "#1") == 2 and "Grade cell #1 first." in capsys.readouterr().err
+    prompts.clear()
+    answers[:] = ["pass"] * 5
+    assert grade() == 0
+    assert len(prompts) == 5                                  # the first cell's one left, two per other cell
+    assert all(r["outcome"] == "answered" for r in evaluator.read_cells(alpha).values())
+    graded = first.read_bytes()
+    answers[:] = [KeyboardInterrupt]
+    assert grade("--regrade", "#1") == 0
+    assert first.read_bytes() == graded
+    assert grade("--regrade", "#99") == 2 and "No graded cell #99." in capsys.readouterr().err
+    answers[:] = ["fail", "pass"]
+    assert grade("--regrade", "#1") == 0
+    record = json.loads(first.read_text(encoding="utf-8"))
+    assert record["outcome"] == "answered" and record["regrades"][0]["outcome"] == "failed"

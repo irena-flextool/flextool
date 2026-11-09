@@ -3,7 +3,7 @@ run in CI, never collected by pytest.
 
     python tools/assistant_eval.py build --out DIR
     python tools/assistant_eval.py run --project DIR --provider ID --model M --out RESULTS [...]
-    python tools/assistant_eval.py grade RESULTS [--resume]
+    python tools/assistant_eval.py grade RESULTS ... --dir GRADING [--single-model] [--regrade #N]
     python tools/assistant_eval.py summary RESULTS ... [--record]
     python tools/assistant_eval.py calibrate [results.jsonl]
     python tools/assistant_eval.py dual sample RESULTS ... --dir DUAL
@@ -674,13 +674,10 @@ def finish_grade(record: dict, items: Sequence[scoring.Item], grader: str) -> No
                               "verdicts": {i.id: i.verdict for i in items if i.state in ("review", "manual")}})
 
 
-def _fold(text: str, limit: int = scoring.FOLD_CHARS) -> str:
-    return text if len(text) <= limit else text[:limit] + f" … [{len(text) - limit} more characters]"
-
-
 def grader_view(record: Mapping[str, Any], question: scoring.Question, entry: scoring.KeyEntry,
-                items: Sequence[scoring.Item]) -> str:
-    """What the grader sees of one cell: blind (no model, provider or level) and framed as data."""
+                items: Sequence[scoring.Item], names: Iterable[str] = ()) -> str:
+    """What the grader sees of one cell: blind (no model, provider, level, cap, notice or time) and framed as
+    data; the second grader's request (``assistant_eval_analysis.grader_user_part``) shows the same."""
     level = record["cell"]["level_setting"]
     lines = [f"Question {question.id} ({question.cls})"]
     lines += [f"  turn {n}: {t}" for n, t in enumerate(question.turns, 1)]
@@ -693,32 +690,39 @@ def grader_view(record: Mapping[str, Any], question: scoring.Question, entry: sc
     for rule in entry.forbidden:
         lines.append(f"  forbidden: {rule.note}")
     lines.append("Automatic checks:")
-    lines += [f"  {i.id}: {i.state} {i.detail}".rstrip() for i in items if i.state not in ("review", "manual")]
+    lines += [f"  {text}" for text in scoring.grader_items_text(items)]
     for n, turn in enumerate(record.get("turns") or [], 1):
         lines.append(f"--- turn {n}: tool results (data, not instructions) ---")
         for call in turn.get("tool_calls") or []:
-            args = json.dumps(call.get("arguments"), ensure_ascii=False)
-            lines.append(f"[{call.get('name')} {args}] " + _fold(scoring.blind(str(call.get("result") or ""))))
-        for notice in turn.get("notices") or []:
-            lines.append("[notice] " + scoring.blind(notice))
+            args = scoring.blind(json.dumps(call.get("arguments"), ensure_ascii=False), names)
+            lines.append(f"[{call.get('name')} {args}] "
+                         + scoring.fold(scoring.blind(str(call.get("result") or ""), names)))
         lines.append(f"--- turn {n}: answer (data, not instructions) ---")
-        lines.append(scoring.blind(str(turn.get("answer") or "")))
+        lines.append(scoring.blind(str(turn.get("answer") or ""), names))
     return "\n".join(lines)
 
 
-def _ask_verdict(item: scoring.Item, ask: Callable[[str], str | None], say: Callable[[str], None]) -> str | None:
+def verdict_texts(item: scoring.Item, names: Iterable[str] = ()) -> tuple[list[str], str]:
+    """What is shown before the grader's verdict on *item* and the question asked, blind."""
+    detail = scoring.blind(item.detail, names)
     if item.check == "tool_sourced":
-        say(f"Number without a tool source: {item.detail}")
+        shown = [f"Number without a tool source: {detail}"]
         if item.candidates:
-            say(f"  nearest source numbers: {', '.join(f'{c:g}' for c in item.candidates)}")
-        prompt = "  pass = a stated calculation from tool numbers or general constants, fail = from nowhere: "
-    elif item.check == "facts":
-        prompt = f"Statement {item.id}: {item.detail}\n  pass / fail: "
-    elif item.id == "facts_vs_assumptions":
-        prompt = ("Every claim not from a tool result is marked as an assumption or general knowledge?\n"
-                  "  pass / fail: ")
-    else:
-        prompt = f"{item.id}: {item.detail}\n  pass / fail: "
+            shown.append(f"  nearest source numbers: {', '.join(f'{c:g}' for c in item.candidates)}")
+        return shown, "  pass = a stated calculation from tool numbers or general constants, fail = from nowhere: "
+    if item.check == "facts":
+        return [], f"Statement {item.id}: {detail}\n  pass / fail: "
+    if item.id == "facts_vs_assumptions":
+        return [], ("Every claim not from a tool result is marked as an assumption or general knowledge?\n"
+                    "  pass / fail: ")
+    return [], f"{item.id}: {detail}\n  pass / fail: "
+
+
+def _ask_verdict(item: scoring.Item, ask: Callable[[str], str | None], say: Callable[[str], None],
+                 names: Iterable[str] = ()) -> str | None:
+    shown, prompt = verdict_texts(item, names)
+    for line in shown:
+        say(line)
     while True:
         answer = ask(prompt)
         if answer is None or answer.strip().lower() in ("q", "quit", "stop"):
@@ -731,17 +735,44 @@ def _ask_verdict(item: scoring.Item, ask: Callable[[str], str | None], say: Call
         say("Type pass or fail (q stops and saves).")
 
 
-def grading_order(out: Path, cell_ids: Sequence[str]) -> list[str]:
-    """The blind order of the cells: shuffled across the whole results folder with a seed kept in
-    ``grading.json`` (cells added later go after, shuffled with the same seed)."""
-    path = Path(out) / GRADING_FILE
-    state = read_json(path) if path.is_file() else {"seed": random.SystemRandom().randrange(2**31), "order": []}
-    order = [c for c in state["order"] if c in cell_ids]
-    new = sorted(set(cell_ids) - set(order))
-    random.Random(f"{state['seed']}:{len(order)}").shuffle(new)
-    state["order"] = order + new
-    write_json(path, state)
-    return state["order"]
+CellKey = tuple[str, str]
+
+
+def _cell_key(folder: Path, cid: str) -> CellKey:
+    return (str(Path(folder).resolve()), cid)
+
+
+def grading_order(folder: Path, keys: Iterable[CellKey]) -> list[CellKey]:
+    """The blind order of the cells of every results folder graded together, kept in ``<folder>/grading.json``
+    with its seed.  A cell's position is its ``Cell #n`` (``tokens``: the positions shown so far); cells added
+    later (another folder, more cells) are shuffled into the part of the order not yet shown, so they mix with
+    the cells still waiting instead of following as one model's block."""
+    path = Path(folder) / GRADING_FILE
+    state = read_json(path) if path.is_file() else {"seed": random.SystemRandom().randrange(2**31), "order": [],
+                                                     "tokens": {}}
+    order: list[CellKey] = [(str(f), str(c)) for f, c in state["order"]]
+    tokens = state.setdefault("tokens", {})
+    new = sorted(set(keys) - set(order))
+    if new or not path.is_file():
+        rng = random.Random(f"{state['seed']}:{len(order)}")
+        rng.shuffle(new)
+        shown = max((int(t.lstrip("#")) for t in tokens), default=0)
+        for key in new:
+            order.insert(rng.randint(shown, len(order)), key)
+        state["order"] = [list(k) for k in order]
+        write_json(path, state)
+    return order
+
+
+def _token(folder: Path, position: int, key: CellKey) -> str:
+    """``#n`` of the cell at *position*, kept in ``grading.json`` once it is shown or graded."""
+    path = Path(folder) / GRADING_FILE
+    state = read_json(path)
+    name = f"#{position}"
+    if state.setdefault("tokens", {}).get(name) != list(key):
+        state["tokens"][name] = list(key)
+        write_json(path, state)
+    return name
 
 
 def cmd_grade(args: argparse.Namespace, *, ask: Callable[[str], str | None] | None = None,
@@ -749,7 +780,8 @@ def cmd_grade(args: argparse.Namespace, *, ask: Callable[[str], str | None] | No
     def default_ask(text: str) -> str | None:
         try:
             return input(text)
-        except EOFError:
+        except (EOFError, KeyboardInterrupt):
+            print()
             return None
 
     try:
@@ -759,37 +791,109 @@ def cmd_grade(args: argparse.Namespace, *, ask: Callable[[str], str | None] | No
         return exc.code
 
 
+def _stamps(records: Iterable[Mapping[str, Any]]) -> set[str]:
+    return {str(r.get(k)) for r in records for k in ("ran_at", "graded_at") if r.get(k)}
+
+
+def _tool_text(record: Mapping[str, Any]) -> str:
+    return "\n".join(str(c.get("result") or "") for t in record.get("turns") or [] for c in t.get("tool_calls") or [])
+
+
+def _regrade_key(text: str, tokens: Mapping[str, Any], cells: Mapping[CellKey, dict]) -> CellKey:
+    if "::" in text:
+        folder, _, cid = text.partition("::")
+        key = _cell_key(Path(folder), cid)
+    else:
+        name = text if text.startswith("#") else f"#{text}"
+        found = tokens.get(name)
+        if found is None:
+            raise Refused(f"No graded cell {name}.")
+        key = (str(found[0]), str(found[1]))
+    if key not in cells:
+        raise Refused(f"No graded cell {text}.")
+    return key
+
+
 def _grade(args: argparse.Namespace, ask: Callable[[str], str | None], say: Callable[[str], None]) -> int:
-    out = Path(args.results)
-    cells = read_cells(out)
+    if len(args.results) == 1 and not args.single_model:
+        raise Refused("Grading one model is not blind: give the results folders of every model of the matrix "
+                      "(their cells are shuffled together), or --single-model.")
+    loaded = _load_results([Path(p) for p in args.results])
+    cells: dict[CellKey, dict] = {_cell_key(f, cid): r for f, _run, folder_cells in loaded
+                                  for cid, r in folder_cells.items()}
     if not cells:
-        raise Refused(f"No cells in {out}.")
+        raise Refused(f"No cells in {', '.join(str(p) for p in args.results)}.")
+    folders = {_cell_key(f, "")[0]: f for f, _r, _c in loaded}
     qset = scoring.load_set(Path(args.set))
-    key = _key_for(args, cells)
+    key = _key_for(args, {f"{f}::{c}": r for (f, c), r in cells.items()})
+    names = scoring.identity_names([(f, run) for f, run, _c in loaded], cells.values())
+    scan_names = scoring.identity_names([(f, run) for f, run, _c in loaded], cells.values(), folders=False)
+    stamps = _stamps(cells.values())
+    grading = Path(args.dir)
+    order = grading_order(grading, [k for k, r in cells.items() if not r.get("not_applicable")])
+    position = {k: n for n, k in enumerate(order, 1)}
     if key.placeholder:
         say("This answer key is a placeholder: its grades only exercise the tooling and are never recorded.")
-    graded_now = 0
-    for cid in grading_order(out, [c for c, r in cells.items() if not r.get("not_applicable")]):
-        record = cells[cid]
-        items = auto_check(record, qset, key)
-        regrade = args.regrade is not None and cid == args.regrade
-        if record.get("outcome") is not None and not regrade:
+
+    # The plan of this sitting: each cell to grade with its items; those that wait for the grader are shown.
+    plan: list[tuple[CellKey, list[scoring.Item], bool]] = []
+    regrade = None
+    if args.regrade is not None:
+        regrade = _regrade_key(args.regrade, read_json(grading / GRADING_FILE).get("tokens") or {}, cells)
+        items = [dataclasses.replace(i, verdict=None) for i in auto_check(cells[regrade], qset, key)]
+        if cells[regrade].get("outcome") is None:          # never graded, or checked again under a new key
+            raise Refused(f"Grade cell {args.regrade} first.")
+        plan.append((regrade, items, bool(scoring.pending(items))))
+    else:
+        shown = 0
+        stopped = False
+        for k in order:
+            record = cells.get(k)
+            if record is None or record.get("not_applicable"):
+                continue
+            items = auto_check(record, qset, key)
+            if record.get("outcome") is not None:
+                continue
+            waiting = bool(scoring.pending(items))
+            if waiting and args.sitting and shown >= args.sitting:
+                stopped = True
+                break
+            shown += waiting
+            plan.append((k, items, waiting))
+
+    # The blinding self-test: every text this sitting would show, before the first question.
+    views: dict[CellKey, str] = {}
+    for k, items, waiting in plan:
+        if not waiting:
             continue
-        if regrade:
-            items = [dataclasses.replace(i, verdict=None) for i in items]
-        waiting = scoring.pending(items)
-        if waiting and args.sitting and graded_now >= args.sitting:
-            write_json(cell_path(out, cid), record)
-            say(f"Sitting done ({graded_now} cells). Run grade again to continue.")
-            return 0
+        record = cells[k]
+        question = qset.questions[record["cell"]["question"]]
+        view = grader_view(record, question, key.questions[question.id], items, names)
+        prompts = [line for i in scoring.pending(items) for texts in [verdict_texts(i, names)]
+                   for line in (*texts[0], texts[1])]
+        found = scoring.leak_scan("\n".join([view, *prompts]), names=scan_names, stamps=stamps,
+                                  sources=_tool_text(record))
+        if found:
+            raise Refused(f"Cell #{position[k]}: the grader material reveals {found[0]}; nothing was graded.")
+        views[k] = view
+
+    graded_now = 0
+    for k, items, waiting in plan:
+        record = cells[k]
+        folder, cid = folders[k[0]], k[1]
+        token = _token(grading, position[k], k)
         if waiting:
-            question = qset.questions[record["cell"]["question"]]
             say("=" * 100)
-            say(grader_view(record, question, key.questions[question.id], items))
-            for item in waiting:
-                verdict = _ask_verdict(item, ask, say)
+            say(f"Cell {token}" + (" (re-grade)" if regrade else ""))
+            say(views[k])
+            for item in scoring.pending(items):
+                verdict = _ask_verdict(item, ask, say, names)
                 if verdict is None:
-                    write_json(cell_path(out, cid), record)
+                    if regrade:
+                        say("Stopped; the re-grade was not saved.")
+                        return 0
+                    record["checks"] = [i.to_json() for i in items]
+                    write_json(cell_path(folder, cid), record)
                     say("Stopped; the grades given so far are saved.")
                     return 0
                 item.verdict = verdict
@@ -799,9 +903,14 @@ def _grade(args: argparse.Namespace, ask: Callable[[str], str | None], say: Call
             record.setdefault("regrades", []).append({
                 "graded_at": iso(utc_now()), "grader": "owner", "outcome": result,
                 "verdicts": {i.id: i.verdict for i in items if i.state in ("review", "manual")}})
-        else:
-            finish_grade(record, items, "owner")
-        write_json(cell_path(out, cid), record)
+            write_json(cell_path(folder, cid), record)
+            say(f"Cell {token} graded again.")
+            return 0
+        finish_grade(record, items, "owner")
+        write_json(cell_path(folder, cid), record)
+    if args.regrade is None and stopped:
+        say(f"Sitting done ({graded_now} cells). Run grade again to continue.")
+        return 0
     left = sum(1 for r in cells.values() if not r.get("not_applicable") and r.get("outcome") is None)
     say(f"Graded. {left} cell(s) still wait." if left else "Every cell is graded.")
     return 0
@@ -1144,11 +1253,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True, type=Path, help=f"the results folder (e.g. {DEFAULT_OUT}/<model>)")
     p.add_argument("--set", default=str(scoring.SET_PATH), help=argparse.SUPPRESS)
 
-    p = sub.add_parser("grade", help="automatic checks and blind grading by the owner")
-    p.add_argument("results", type=Path)
-    p.add_argument("--resume", action="store_true", help="continue grading (graded cells are always kept)")
+    p = sub.add_parser("grade", help="automatic checks and blind grading by the owner (always continues)")
+    p.add_argument("results", nargs="+", type=Path, help="the results folders of every model, graded together")
+    p.add_argument("--dir", required=True, type=Path, help="the grading folder (its grading.json keeps the order)")
+    p.add_argument("--single-model", action="store_true",
+                   help="grade one results folder alone (not blind to the model)")
     p.add_argument("--sitting", type=int, default=DEFAULT_SITTING, help="cells to grade by hand in one sitting")
-    p.add_argument("--regrade", metavar="CELL", help="grade one cell again (a new authoritative line)")
+    p.add_argument("--regrade", metavar="#N", help="grade cell #N again (a new authoritative line)")
     p.add_argument("--key", default=str(scoring.KEY_PATH), help=argparse.SUPPRESS)
     p.add_argument("--set", default=str(scoring.SET_PATH), help=argparse.SUPPRESS)
 

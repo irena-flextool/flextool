@@ -84,7 +84,7 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
 ## Grading
 
 ```
-python tools/assistant_eval.py grade RESULTS              # repeat until every cell is graded
+python tools/assistant_eval.py grade RESULTS_M1 RESULTS_M2 ... --dir GRADING   # repeat until every cell is graded
 python tools/assistant_eval.py summary RESULTS ... --record
 ```
 
@@ -104,13 +104,20 @@ Some items need a person, and the owner grades those:
 - statement facts;
 - whether the answer separates facts from assumptions.
 
-Grading is blind. The cells are shuffled across the whole matrix, and the model, the provider and the level are
-hidden. Texts that would reveal the level are replaced with neutral placeholders. The only hint at the level is
-the expected behaviour: either "a full answer is expected" or "escalating to a higher level is acceptable". A
-model's writing style can still give it away, so the blinding is only partial.
+Grading is blind. `grade` takes the results folders of every model and shuffles their cells together, so give it
+all of them; one folder alone is refused unless `--single-model` says so. The order and its seed are kept in
+`GRADING/grading.json`. A folder added later is shuffled into the cells not yet shown. A cell is shown as
+`Cell #n`, never by its name. The model, the provider, the level, the call caps, the notices and the times are
+hidden, and model and family names become "[assistant]". Texts and phrases that would reveal the level are
+replaced with neutral placeholders, and so are the sizes of cut tool results. The only hint at the level is the
+expected behaviour: either "a full answer is expected" or "escalating to a higher level is acceptable". Before the
+first question, `grade` checks everything the sitting would show. If something still names the model, the level, a
+cap or the time of a run, it grades nothing and says which cell. A model's writing style can still give it away,
+so the blinding is only partial.
 
-A sitting is 37 cells (`--sitting N`). Grades are saved after each cell. `--regrade CELL` grades one cell again;
-the result is recorded as a new line, and the first pass is kept.
+A sitting is 37 cells (`--sitting N`). `grade` always continues where it stopped: grades are saved after each
+cell, and `q` or Ctrl-C keeps the verdicts already given for the current cell. `--regrade #n` grades cell #n
+again; the result is recorded as a new line, and the first pass is kept. An interrupted re-grade saves nothing.
 
 Each cell gets one outcome:
 

@@ -816,15 +816,33 @@ def score(items: Sequence[Item]) -> float | None:
 
 
 # --- blinding (P3 §7.4) ---------------------------------------------------------------------------------------
-#: Self-references that name a model or a provider.
+#: Self-references that name a model, a model family or a provider (whole tokens).
 _SELF_REFERENCES = re.compile(
-    r"\bas an AI (?:language )?model\b|\bclaude[\w.:-]*|\banthropic\b|\bopenai\b|\bgpt[\w.:-]*|\bgemini[\w.:-]*"
-    r"|\bqwen[\w.:-]*|\bgemma[\w.:-]*|\bllama[\w.:-]*|\bmistral[\w.:-]*|\bdeepseek[\w.:-]*", re.IGNORECASE)
+    r"\bas an AI (?:language )?model\b|\bas a large language model\b"
+    r"|\bclaude[\w.:-]*|\banthropic\b|\bsonnet[\w.:-]*|\bopus[\w.:-]*|\bhaiku[\w.:-]*"
+    r"|\bopenai\b|\bchatgpt\b|\bgpt[-\w.:]*|\bo[134](?:-mini)?\b"
+    r"|\bgemini[\w.:-]*|\bgemma[\w.:-]*|\bgoogle\b|\bdeepmind\b|\bbard\b"
+    r"|\bqwen[\w.:-]*|\bqwq[\w.:-]*|\balibaba\b|\bllama[\w.:-]*|\bmeta\b(?!-)"
+    r"|\bmistral[\w.:-]*|\bmixtral[\w.:-]*|\bministral[\w.:-]*|\bcodestral[\w.:-]*|\bmagistral[\w.:-]*"
+    r"|\bdeepseek[\w.:-]*|\bphi-?\d[\w.:-]*|\bgrok[\w.:-]*|\bxai\b|\bkimi[\w.:-]*|\bmoonshot[\w.:-]*"
+    r"|\bglm[\w.:-]*|\bzhipu\b|\bnemotron[\w.:-]*|\bcohere\b|\bcommand-r[\w.:-]*|\bollama\b"
+    r"|\bopenrouter\b|\blm studio\b", re.IGNORECASE)
+#: Phrases that name a level setting (``standard level``, ``Level: basic``).
+_LEVEL_PHRASES = re.compile(
+    r"\b(?:basic|standard|advanced|small|medium|large)\s+(?:assistant\s+)?(?:level|tier|setting)\b"
+    r"|\blevel\s*:\s*(?:basic|standard|advanced)\b", re.IGNORECASE)
+#: The size of a cut result tells the level's result caps.
+_SHOWN_PART = re.compile(r"\bshowing(?: the (?:first|last|end))? \d+ of\b")
+_LIMIT_CHARS = re.compile(r"\blarger than \d+ characters\b")
 #: The session's texts that tell the level (tool refusals, limits, the free plan), and their neutral placeholders.
 _LEVEL_MESSAGES = (("not_at_level", "[a tool call was refused]"), ("turn_limit_call", "[tool limit reached]"),
                    ("limit_call", "[tool limit reached]"), ("limit", "[tool limit reached]"),
                    ("too_many_calls", "[tool limit reached]"), ("free_plan", "[notice removed]"),
                    ("free_plan_hint", "[notice removed]"))
+#: Parts of a model id too common to blind or to look for (``vendor/model:free``).
+_NAME_STOPLIST = frozenset({"free", "latest", "instruct", "chat", "preview", "thinking", "base"})
+#: Automatic items whose detail a grader sees: texts from the key or fixed texts of the checks, never counts.
+_SHOWN_DETAILS = ("facts", "forbidden", "unknown", "successful_run_first", "escalation")
 
 
 def _message_pattern(template: str) -> re.Pattern:
@@ -839,11 +857,113 @@ def _level_texts() -> list[tuple[re.Pattern, str]]:
     return [(_message_pattern(SESSION_MESSAGES[name]), placeholder) for name, placeholder in _LEVEL_MESSAGES]
 
 
-def blind(text: str) -> str:
-    """*text* without the model's or provider's name and without the texts that tell the level."""
+def _name_pattern(name: str) -> re.Pattern:
+    return re.compile(r"(?<![\w])" + re.escape(name) + r"(?![\w])", re.IGNORECASE)
+
+
+def blind(text: str, names: Iterable[str] = ()) -> str:
+    """*text* without the model's or provider's name (a family name, or one of *names*: see
+    :func:`identity_names`), without the texts and phrases that tell the level and without the result caps."""
     for pattern, placeholder in _level_texts():
         text = pattern.sub(placeholder, text)
-    return _SELF_REFERENCES.sub("[assistant]", text)
+    for name in sorted({n for n in names if n}, key=len, reverse=True):
+        text = _name_pattern(name).sub("[assistant]", text)
+    text = _SELF_REFERENCES.sub("[assistant]", text)
+    text = _LEVEL_PHRASES.sub("[level]", text)
+    text = _SHOWN_PART.sub("showing [part] of", text)
+    return _LIMIT_CHARS.sub("larger than [limit] characters", text)
+
+
+def _name_parts(value: str) -> set[str]:
+    """*value* and its ``/``- and ``:``-parts of four or more characters that are not common words."""
+    out = {value}
+    for part in re.split(r"[/:]", value):
+        if len(part) >= 4 and part.lower() not in _NAME_STOPLIST:
+            out.add(part)
+    return out
+
+
+def identity_names(runs: Iterable[tuple[Any, Mapping[str, Any]]], records: Iterable[Mapping[str, Any]], *,
+                   folders: bool = True) -> list[str]:
+    """What names the model of a cell beyond the family names: per results folder (*runs*: ``(folder, run.json)``)
+    its provider id, the preset's label, the model, the address's host and (*folders*) the folder's name; per
+    record the model id sent and the Ollama variant; and the ``/``- and ``:``-parts of the model ids.  Names of
+    fewer than three characters are left out (four for a part).  :func:`leak_scan` looks for these without the
+    folder names, also inside words."""
+    from urllib.parse import urlparse
+
+    from flextool.assistant.providers import PRESETS
+
+    names: set[str] = set()
+    for folder, run in runs:
+        provider = str(run.get("provider") or "")
+        names.add(provider)
+        if provider in PRESETS:
+            names.add(PRESETS[provider].label)
+        if run.get("model"):
+            names |= _name_parts(str(run["model"]))
+        host = urlparse(str(run.get("base_url") or "")).hostname
+        if host:
+            names.add(host)
+        if folders:
+            names.add(Path(str(folder)).name)
+    for record in records:
+        model = record.get("model") or {}
+        for value in (model.get("model"), (model.get("ollama") or {}).get("variant")):
+            if value:
+                names |= _name_parts(str(value))
+    return sorted(n for n in names if len(n) >= 3)
+
+
+def fold(text: str, limit: int = FOLD_CHARS) -> str:
+    """A tool result shown to a grader: at most *limit* characters and the count of the rest."""
+    return text if len(text) <= limit else text[:limit] + f" … [{len(text) - limit} more characters]"
+
+
+def grader_items_text(items: Iterable[Item]) -> list[str]:
+    """The automatic items as a grader sees them (owner and second grader alike): ``id: state``, with the detail
+    only of the items whose detail comes from the key or a fixed text (``tools`` and ``health`` carry counts that
+    tell the level, so never)."""
+    return [f"{i.id}: {i.state} {i.detail}".rstrip() if i.check in _SHOWN_DETAILS else f"{i.id}: {i.state}"
+            for i in items if i.state not in ("review", "manual")]
+
+
+#: The kinds :func:`leak_scan` reports, never the text found.
+_LEAK_CHECKS = (
+    (_SELF_REFERENCES, "a model or provider name"),
+    (_LEVEL_PHRASES, "the level"),
+    (re.compile(r"\bcap \d+|\bcalls per turn\b|\bmax_calls", re.IGNORECASE), "a call cap"),
+    (re.compile(r"\bshowing(?: the (?:first|last|end))? \d+ of\b|\blarger than \d+ characters\b"),
+     "a result cap"),
+)
+_ISO_STAMP = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d")
+
+
+def leak_scan(material: str, *, names: Iterable[str], stamps: Iterable[str], sources: str = "") -> list[str]:
+    """The kinds of what the blinded grader *material* still reveals (empty when nothing): a family or provider
+    name, one of *names* (``identity_names(..., folders=False)``) anywhere, also inside a word, a run's time (*stamps*: ``ran_at`` and ``graded_at``), a
+    level phrase, a call or result cap, a level message, or a date and time that the cell's own tool results
+    (*sources*) do not hold.  The blinding self-test before any material is shown or sent."""
+    found: list[str] = []
+
+    def add(kind: str) -> None:
+        if kind not in found:
+            found.append(kind)
+
+    for pattern, kind in _LEAK_CHECKS:
+        if pattern.search(material):
+            add(kind)
+    for pattern, _placeholder in _level_texts():
+        if pattern.search(material):
+            add("a level message")
+    lowered = material.lower()
+    if any(len(n) >= 4 and n.lower() in lowered for n in names):
+        add("the model's name")
+    if any(s and s in material for s in stamps):
+        add("the time of the run")
+    if any(m.group(0) not in sources for m in _ISO_STAMP.finditer(material)):
+        add("a time")
+    return found
 
 
 # --- consistency of the set and the key (P3 test 7) -----------------------------------------------------------
