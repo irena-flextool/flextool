@@ -12,3 +12,31 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+
+/* Coefficient patterns table in reference.md: column widths follow the
+   content. Column 2 is narrowest, column 3 next; columns 1 and 4 share
+   the rest equally. */
+.md-typeset .coeff-patterns .md-typeset__scrollwrap,
+.md-typeset .coeff-patterns .md-typeset__table {
+  display: block;
+  width: 100%;
+}
+.md-typeset .coeff-patterns table:not([class]) {
+  display: table;
+  table-layout: fixed;
+  width: 100%;
+}
+.md-typeset .coeff-patterns th:nth-child(1),
+.md-typeset .coeff-patterns th:nth-child(4) {
+  width: 32%;
+}
+.md-typeset .coeff-patterns th:nth-child(2) {
+  width: 15%;
+}
+.md-typeset .coeff-patterns th:nth-child(3) {
+  width: 21%;
+}
+.md-typeset .coeff-patterns td,
+.md-typeset .coeff-patterns th {
+  overflow-wrap: anywhere;
+}
