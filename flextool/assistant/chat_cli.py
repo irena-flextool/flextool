@@ -85,7 +85,7 @@ HELP = (
     "  /model NAME    use another model of this provider (/model alone lists them)\n"
     "  /provider      choose another provider\n"
     "  /privacy       where the data goes and the privacy settings sent with each request\n"
-    "  /usage         the tokens used, by month, provider and model\n"
+    "  /usage         the tokens used today and by month, provider and model\n"
     "  /context       what the assistant is told about your choices, and the model's context size\n"
     "  /welcome       how the assistant works\n"
     "  /save          keep this provider, model and level (and --free-tier) for the next start\n"

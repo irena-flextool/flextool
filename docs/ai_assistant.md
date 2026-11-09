@@ -86,7 +86,9 @@ Each tool call is one line in the chat; click it (or press Enter on it) to see t
 characters of what was sent to the service. Under the buttons, always in view, a line gives the tokens of the last
 question and of the whole chat, rounded to thousands ("This question: 26k in, 8k out · Whole chat: 250k in, 5k
 out"; "in" counts every token sent, also the ones the service read from its cache), and the window's last line
-gives this month's tokens of the service. An error that a setting fixes
+gives the service's tokens today and this month, rounded the same way ("Anthropic today 12k in, 1k out · this month
+256k in, 9k out (this FlexTool installation)"); today is your computer's calendar date, the month is counted in
+universal time (UTC), and both count every chat and terminal session of this FlexTool installation. An error that a setting fixes
 comes with an "Open settings" button; a conversation that got too long for the model offers "New chat" and "New chat
 with summary".
 
@@ -218,7 +220,7 @@ ever read from piped text.
 | `/model NAME` | Go on with another model of the same service; `/model` alone lists the models. |
 | `/provider` | Choose another service. |
 | `/privacy` | Where the data goes, the privacy settings sent with each request, and the settings only your account can change. |
-| `/usage` | The tokens used, by month, service and model. |
+| `/usage` | The tokens used today and this month for each service, then by month, service and model. |
 | `/context` | What the assistant is told about your choices (project, input source, scenario); after the first question also the model's context size, how much one tool result may hold and how often earlier results are shortened. |
 | `/welcome` | The text on how the assistant works. |
 | `/save` | Keep this service, model and level for the next start, and the free plan when `--free-tier` was given. |
@@ -303,9 +305,10 @@ macOS.
   questions keep their tool results) — both automatic by default, from the model's context size (see
   [Budgets](#budgets)); a number overrides it — and `free_tier` (`null` automatic, `true` on, `false` off). Flags
   override the settings for one session.
-- **Usage** (`usage.json`): the tokens of each month, service and model, as each service reported them; FlexTool
-  does not estimate what a service did not report, and shows a cost only when the service reports one.
-  `flextool-assistant --usage` prints it. It contains no questions or answers and is kept when conversations are
+- **Usage** (`usage.json`): the tokens of each month, service and model, and of each of the last 40 days, as each
+  service reported them; FlexTool does not estimate what a service did not report, and shows a cost only when the
+  service reports one. `flextool-assistant --usage` prints today's and this month's tokens of each service, then
+  every month. It contains no questions or answers and is kept when conversations are
   deleted.
 - **Acknowledgements** (`acknowledgements.json`): the data notices you accepted.
 

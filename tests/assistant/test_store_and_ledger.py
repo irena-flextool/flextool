@@ -25,7 +25,8 @@ import pytest
 from flextool.assistant import _files, settings, store as store_module
 from flextool.assistant.llm_adapter import Message, ToolCall, Usage, not_reported
 from flextool.assistant.store import ConversationLocked, ConversationNotFound, Store
-from flextool.assistant.usage import Ledger, format_token_line, format_totals, format_turn_line, ledger_key, short_number
+from flextool.assistant.usage import (Ledger, format_footer, format_token_line, format_totals, format_turn_line, ledger_key,
+                                      short_number)
 from tests.assistant import store_workers
 
 ORIGIN = ("gemini", "https://generativelanguage.googleapis.com/v1beta/openai/", "model-a")
@@ -531,6 +532,96 @@ def test_cost_only_from_the_provider_and_keys_per_endpoint(root):
     assert ledger_key("mistral", "https://api.mistral.ai/v1") == "mistral"
     text = format_totals(ledger.read())
     assert "    m: 2 requests · 20 in · 4 out · cost 0.75 (reported by OpenRouter, in credits)" in text
+
+
+@pytest.fixture
+def local_time(monkeypatch):
+    """The local time zone for the test: ``local_time("Europe/Helsinki")`` (POSIX only: time.tzset)."""
+    if not hasattr(time, "tzset"):
+        pytest.skip("the local time zone can be set only where time.tzset exists")
+
+    def set_zone(zone: str) -> None:
+        monkeypatch.setenv("TZ", zone)
+        time.tzset()
+    yield set_zone
+    monkeypatch.undo()
+    time.tzset()
+
+
+def _counts(input_uncached: int, output: int, cache_read: int = 0, requests: int = 1) -> dict:
+    return {"requests": requests, "input_uncached": input_uncached, "cache_read": cache_read, "cache_write": 0,
+            "output": output, "not_reported": 0, "rejected_attempts": 0, "cost": None}
+
+
+def test_days_count_by_the_local_calendar_date(root, local_time):
+    """23:30 UTC on 8 November is 01:30 on 9 November in Helsinki (UTC+2): the day is the 9th, the month stays
+    the UTC month."""
+    local_time("EET-2")                                         # Helsinki's winter offset, no tz database needed
+    ledger = Ledger(root)
+    ledger.record("anthropic", "Anthropic", "m", Usage(100, 20, 0, 7), now=datetime(2026, 11, 8, 23, 30,
+                                                                                   tzinfo=timezone.utc))
+    ledger.record_rejected("anthropic", "Anthropic", "m", 2, now=datetime(2026, 11, 9, 8, tzinfo=timezone.utc))
+    data = ledger.read()
+    assert list(data["days"]) == ["2026-11-09"]
+    assert list(data["months"]) == ["2026-11"]
+    day = data["days"]["2026-11-09"]["anthropic"]
+    assert day["label"] == "Anthropic"
+    assert day["models"]["m"] == {"requests": 1, "input_uncached": 100, "cache_read": 20, "cache_write": 0,
+                                  "output": 7, "not_reported": 0, "rejected_attempts": 2, "cost": None}
+
+
+def test_only_the_last_40_days_are_kept(root, local_time):
+    """On 9 November the 40 days kept are 1 October … 9 November: 30 September goes, its month stays."""
+    local_time("UTC0")
+    ledger = Ledger(root)
+    for moment in (datetime(2026, 9, 30, 12), datetime(2026, 10, 1, 12), datetime(2026, 11, 9, 12)):
+        ledger.record("gemini", "Google Gemini", "m", Usage(5, 0, 0, 1), now=moment.replace(tzinfo=timezone.utc))
+    data = ledger.read()
+    assert sorted(data["days"]) == ["2026-10-01", "2026-11-09"]
+    assert sorted(data["months"]) == ["2026-09", "2026-10", "2026-11"]
+    stored = json.loads((root / "usage.json").read_text(encoding="utf-8"))
+    assert sorted(stored["days"]) == ["2026-10-01", "2026-11-09"]
+
+
+def test_a_ledger_without_days_counts_today_from_now(root, local_time, capsys):
+    """A ledger written before the days were kept is of the known form: nothing is set aside, today starts at 0."""
+    local_time("UTC0")
+    root.mkdir(parents=True, exist_ok=True)
+    (root / "usage.json").write_text(json.dumps({"format": 1, "months": {"2026-11": {"anthropic": {
+        "label": "Anthropic", "models": {"m": _counts(200_000, 9_456, cache_read=56_123)}}}}}), encoding="utf-8")
+    now = datetime(2026, 11, 9, 12, tzinfo=timezone.utc)
+    ledger = Ledger(root)
+    assert ledger.read()["days"] == {}
+    assert format_footer(ledger.read(), "Anthropic", now) == (
+        "Anthropic today 0 in, 0 out · this month 256k in, 9k out (this FlexTool installation)")
+    assert ledger.record("anthropic", "Anthropic", "m", Usage(12_345, 0, 0, 1_234), now=now) is True
+    assert not [n for n in os.listdir(root) if n.startswith("usage.json.damaged-")]
+    assert "known form" not in capsys.readouterr().err
+    data = ledger.read()
+    assert data["days"] == {"2026-11-09": {"anthropic": {"label": "Anthropic", "models": {"m": _counts(12_345, 1_234)}}}}
+    # month: 256 123 + 12 345 = 268 468 in, 9 456 + 1 234 = 10 690 out
+    assert format_footer(data, "Anthropic", now) == (
+        "Anthropic today 12k in, 1k out · this month 268k in, 11k out (this FlexTool installation)")
+
+
+def test_the_footer_and_the_usage_listing_show_today_and_this_month(root, local_time):
+    local_time("UTC0")
+    ledger = Ledger(root)
+    now = datetime(2026, 11, 9, 12, tzinfo=timezone.utc)
+    ledger.record("anthropic", "Anthropic", "a", Usage(800, 0, 0, 999), now=datetime(2026, 11, 2, tzinfo=timezone.utc))
+    ledger.record("anthropic", "Anthropic", "a", Usage(450, 0, 0, 40), now=now)
+    ledger.record_rejected("anthropic", "Anthropic", "a", 3, now=now)
+    ledger.record("gemini", "Google Gemini", "g", Usage(1_500_000, 0, 0, 2_000), now=datetime(2026, 10, 3,
+                                                                                              tzinfo=timezone.utc))
+    data = ledger.read()
+    # today 450 / 40 (exact below 1 000); this month 1 250 → 1k, 1 039 → 1k
+    assert format_footer(data, "Anthropic", now) == ("Anthropic today 450 in, 40 out · this month 1k in, 1k out · "
+                                                     "rate-limited attempts this month: 3 (this FlexTool installation)")
+    assert format_footer(data, "Google Gemini", now) == (
+        "Google Gemini this month: nothing used yet (this FlexTool installation)")
+    lines = format_totals(data, now).splitlines()
+    assert lines[:3] == [format_footer(data, "Anthropic", now), "", "2026-11"]
+    assert "2026-10" in lines and "    g: 1 requests · 1 500 000 in · 2 000 out" in lines
 
 
 def test_two_processes_count_into_one_ledger(root):

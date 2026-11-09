@@ -123,10 +123,7 @@ MODEL_LINE_NO_LEVEL = "{provider} · {model}"
 ROUTE_NOT_SHOWN = ("Where this chat's data goes can't be shown: its own provider or address can't be used now. "
                    "Nothing is sent until that is fixed.")
 
-# --- the totals and the footer ------------------------------------------------------------------------------------
-FOOTER = "{provider} this month: {input} in · {output} out"
-FOOTER_REJECTED = " · rate-limited attempts: {n}"
-FOOTER_NONE = "{provider} this month: nothing used yet"
+# --- the totals and the footer: usage.FOOTER / FOOTER_NONE (the terminal's --usage shares them) ----------------
 
 # --- the error actions (§5.6) -------------------------------------------------------------------------------------
 ACTION_OPEN_SETTINGS = "Open settings"

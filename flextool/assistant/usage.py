@@ -1,10 +1,15 @@
 """Token counts: the usage ledger (P1 §10.3) and the usage lines the front ends show.
 
-``<config>/assistant/usage.json`` counts, per UTC month, per provider and model::
+``<config>/assistant/usage.json`` counts, per UTC month, per provider and model, and the same per local calendar
+day for the last :data:`DAYS_KEPT` days::
 
     {"format": 1, "months": {"2026-11": {"<provider key>": {"label": "OpenRouter", "models": {"<model>": {
         "requests", "input_uncached", "cache_read", "cache_write", "output", "not_reported",
-        "rejected_attempts", "cost"}}}}}}
+        "rejected_attempts", "cost"}}}}},
+     "days": {"2026-11-09": {"<provider key>": {"label": …, "models": {…}}}}}
+
+A ledger written before the days were kept has no ``"days"``: it reads as one without any, and today counts from
+the first request after the update.
 
 Only what the provider reported is counted, never an estimate (D6): ``requests`` are the requests that reached
 the model, including stopped and failed ones (with whatever part of the usage was reported); a request whose input
@@ -14,15 +19,17 @@ before any output.  ``cost`` is summed only from values the provider reported (O
 including expiry 0.  Every update is a read-modify-replace under the file's lock; a failing update is a warning on
 stderr, never a failed answer.  A ledger that is not JSON, or not of the form above, is moved aside
 (``usage.json.damaged-<time>-<hex>``, kept 30 days) once two reads in a row agree; the counts of the known form are
-carried into the new ledger.
+carried into the new ledger.  The days follow the months' rules; a day whose key is not a date is not of the known
+form either.
 """
 from __future__ import annotations
 
 import json
 import math
+import re
 import sys
 from collections.abc import Iterable, Mapping
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +39,9 @@ from flextool.assistant.llm_adapter import Usage
 FILE_NAME = "usage.json"
 TOKEN_FIELDS = ("input_uncached", "cache_read", "cache_write", "output")
 COUNT_FIELDS = ("requests", *TOKEN_FIELDS, "not_reported", "rejected_attempts")
+#: The days the ledger keeps: today and the 39 before it (so the file stays small).
+DAYS_KEPT = 40
+_DAY_KEY = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def empty_counts() -> dict[str, Any]:
@@ -65,15 +75,24 @@ def clean_counts(raw: object) -> dict[str, Any]:
     return counts
 
 
-def _salvage(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
-    """The ledger *data* with only the cells of the known form; and whether it was of that form throughout."""
+def _day_key_ok(key: object) -> bool:
+    if not isinstance(key, str) or not _DAY_KEY.fullmatch(key):
+        return False
+    try:
+        date.fromisoformat(key)
+    except ValueError:
+        return False
+    return True
+
+
+def _salvage_periods(periods: object, key_ok=None) -> tuple[dict[str, Any], bool]:
+    """The cells of *periods* (months or days) that are of the known form; and whether all of them were."""
+    if not isinstance(periods, dict):
+        return {}, False
     whole = True
-    months_out: dict[str, Any] = {}
-    months = data.get("months")
-    if not isinstance(months, dict):
-        return {"format": _files.FORMAT, "months": {}}, False
-    for month, providers in months.items():
-        if not isinstance(providers, dict):
+    kept_periods: dict[str, Any] = {}
+    for period, providers in periods.items():
+        if not isinstance(providers, dict) or (key_ok is not None and not key_ok(period)):
             whole = False
             continue
         for key, provider in providers.items():
@@ -88,10 +107,19 @@ def _salvage(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
                 else:
                     whole = False
             if kept:
-                months_out.setdefault(month, {})[key] = {"label": provider.get("label") or key, "models": kept}
+                kept_periods.setdefault(period, {})[key] = {"label": provider.get("label") or key, "models": kept}
             elif models:
                 whole = False
-    return {**data, "format": data.get("format", _files.FORMAT), "months": months_out}, whole
+    return kept_periods, whole
+
+
+def _salvage(data: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    """The ledger *data* with only the cells of the known form; and whether it was of that form throughout.  A
+    ledger without ``"days"`` (written before they were kept) is whole."""
+    months, months_whole = _salvage_periods(data.get("months"))
+    days, days_whole = _salvage_periods(data.get("days", {}), _day_key_ok)
+    return ({**data, "format": data.get("format", _files.FORMAT), "months": months, "days": days},
+            months_whole and days_whole)
 
 
 def ledger_ok(data: object) -> bool:
@@ -149,6 +177,22 @@ def _month(now: datetime | None) -> str:
     return (now or _files.utc_now()).astimezone(timezone.utc).strftime("%Y-%m")
 
 
+def _local_date(now: datetime | None) -> date:
+    """The local calendar date of *now* (default: the current time)."""
+    return (now or _files.utc_now()).astimezone().date()
+
+
+def _day(now: datetime | None) -> str:
+    return _local_date(now).isoformat()
+
+
+def _prune_days(days: dict[str, Any], now: datetime | None) -> None:
+    """Drop the days before the last :data:`DAYS_KEPT` (today included)."""
+    first = (_local_date(now) - timedelta(days=DAYS_KEPT - 1)).isoformat()
+    for day in [d for d in days if d < first]:
+        del days[day]
+
+
 class Ledger:
     """The usage ledger in *config_root* (default: the user config folder)."""
 
@@ -163,7 +207,7 @@ class Ledger:
         except (OSError, _files.UnreadableFile):
             data = None
         if not data:
-            return {"format": _files.FORMAT, "months": {}}
+            return {"format": _files.FORMAT, "months": {}, "days": {}}
         return _salvage(data)[0]
 
     def _set_aside(self, problem: str) -> None:
@@ -185,11 +229,13 @@ class Ledger:
                 if not whole:
                     self._set_aside(f"{self.path.name} is not a usage record of the known form")
                     data = salvaged
-                months = data.setdefault("months", {})
-                provider = months.setdefault(_month(now), {}).setdefault(provider_key, {"label": label, "models": {}})
-                provider["label"] = label
-                counts = provider.setdefault("models", {}).setdefault(model or "(no model)", empty_counts())
-                change(counts)
+                days = data.setdefault("days", {})
+                for periods, period in ((data.setdefault("months", {}), _month(now)), (days, _day(now))):
+                    provider = periods.setdefault(period, {}).setdefault(provider_key, {"label": label, "models": {}})
+                    provider["label"] = label
+                    counts = provider.setdefault("models", {}).setdefault(model or "(no model)", empty_counts())
+                    change(counts)
+                _prune_days(days, now)
                 # Read and checked just now under the lock (a damaged file was set aside): not parsed again.
                 _files.write_json_atomic(self.path, data, format_checked=True)
             return True
@@ -293,12 +339,54 @@ def format_token_line(turn: Iterable[Usage | None] | None, conversation: Mapping
     return " · ".join(parts)
 
 
-def format_totals(data: Mapping[str, Any]) -> str:
-    """The ledger as text, newest month first (``flextool-assistant --usage``, ``/usage``)."""
+#: The usage footer (the window's last line; the first lines of ``--usage`` and ``/usage``), rounded as the token
+#: lines (:func:`short_number`).
+FOOTER = ("{provider} today {today_in} in, {today_out} out · this month {month_in} in, {month_out} out"
+          "{rejected} (this FlexTool installation)")
+FOOTER_REJECTED = " · rate-limited attempts this month: {n}"
+FOOTER_NONE = "{provider} this month: nothing used yet (this FlexTool installation)"
+
+
+def _provider_sums(cell: Mapping[str, Any] | None, label: str) -> tuple[int, int, int, bool]:
+    """Input, output and rate-limited attempts of the providers labelled *label* in one period's *cell*; and
+    whether there was one."""
+    tokens_in = tokens_out = rejected = 0
+    found = False
+    for provider in (cell or {}).values():
+        if provider.get("label") != label:
+            continue
+        found = True
+        for counts in (provider.get("models") or {}).values():
+            tokens_in += _input(counts)
+            tokens_out += int(counts.get("output") or 0)
+            rejected += int(counts.get("rejected_attempts") or 0)
+    return tokens_in, tokens_out, rejected, found
+
+
+def format_footer(data: Mapping[str, Any], label: str, now: datetime | None = None) -> str:
+    """The usage of the provider labelled *label* today (the local calendar date) and this month (UTC, as the
+    ledger's months), e.g. ``Anthropic today 12k in, 1k out · this month 256k in, 9k out (this FlexTool
+    installation)``."""
+    today_in, today_out, _rejected, today_found = _provider_sums((data.get("days") or {}).get(_day(now)), label)
+    month_in, month_out, rejected, month_found = _provider_sums((data.get("months") or {}).get(_month(now)), label)
+    if not (today_found or month_found):
+        return FOOTER_NONE.format(provider=label)
+    return FOOTER.format(provider=label, today_in=short_number(today_in), today_out=short_number(today_out),
+                         month_in=short_number(month_in), month_out=short_number(month_out),
+                         rejected=FOOTER_REJECTED.format(n=number(rejected)) if rejected else "")
+
+
+def format_totals(data: Mapping[str, Any], now: datetime | None = None) -> str:
+    """The ledger as text (``flextool-assistant --usage``, ``/usage``): the footer line of each provider used
+    today or this month, then every month, newest first."""
     months = data.get("months") or {}
     if not months:
         return "No usage recorded yet."
-    lines: list[str] = []
+    current = [(data.get("days") or {}).get(_day(now)) or {}, months.get(_month(now)) or {}]
+    labels = sorted({p.get("label") or k for cell in current for k, p in cell.items()})
+    lines: list[str] = [format_footer(data, label, now) for label in labels]
+    if lines:
+        lines.append("")
     for month in sorted(months, reverse=True):
         lines.append(month)
         for key in sorted(months[month]):

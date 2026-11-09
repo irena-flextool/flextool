@@ -251,8 +251,31 @@ def test_a_reopened_chat_on_another_provider_names_it_in_the_footer(windows, bac
     pump(window, lambda: window.tab_for(conversation_id) is not None
          and window.tab_for(conversation_id).has_messages, timeout=5)
     assert _header(window)[0].startswith("Anthropic · claude-opus-5-5")
-    pump(window, lambda: str(window.footer_label.cget("text")) == "Anthropic this month: nothing used yet",
+    pump(window, lambda: str(window.footer_label.cget("text")) == "Anthropic this month: nothing used yet (this FlexTool installation)",
          timeout=3)
+
+
+def test_the_footer_shows_today_and_this_month(windows, backends, user_config_in_tmp):
+    """The footer (owner, 2026-11-09): today's and this month's tokens, rounded as the token lines.  The month
+    held 244 000 in / 8 000 out before today was kept; one request today adds 12 345 / 1 234."""
+    from datetime import datetime, timezone
+
+    from flextool.assistant.llm_adapter import Usage
+    from flextool.assistant.usage import Ledger
+
+    month = datetime.now(timezone.utc).strftime("%Y-%m")
+    user_config_in_tmp.mkdir(parents=True, exist_ok=True)
+    (user_config_in_tmp / "usage.json").write_text(json.dumps({"format": 1, "months": {month: {"anthropic": {
+        "label": "Anthropic", "models": {"claude-opus-5-5": {
+            "requests": 9, "input_uncached": 200_000, "cache_read": 44_000, "cache_write": 0, "output": 8_000,
+            "not_reported": 0, "rejected_attempts": 0, "cost": None}}}}}}), encoding="utf-8")
+    assert Ledger().record("anthropic", "Anthropic", "claude-opus-5-5", Usage(12_345, 0, 0, 1_234)) is True
+    (conversation_id,) = _saved_chats(windows, backends, 1)
+    _set_origin(windows.project, conversation_id, ["anthropic", "https://api.anthropic.com", "claude-opus-5-5"])
+    window = windows.open(restore=False)
+    window.reopen(conversation_id)
+    expected = "Anthropic today 12k in, 1k out · this month 256k in, 9k out (this FlexTool installation)"
+    pump(window, lambda: str(window.footer_label.cget("text")) == expected, timeout=5)
 
 
 # --- a chat that opens (C7-m1) --------------------------------------------------------------------------------------
@@ -487,4 +510,4 @@ def test_the_footer_names_the_selected_chats_provider(windows, backends, monkeyp
     reads[1]()                                          # the second chat's read answers first
     reads[0]()
     pump(window, lambda: window._calls.empty(), timeout=3)
-    assert str(window.footer_label.cget("text")) == "Anthropic this month: nothing used yet"
+    assert str(window.footer_label.cget("text")) == "Anthropic this month: nothing used yet (this FlexTool installation)"

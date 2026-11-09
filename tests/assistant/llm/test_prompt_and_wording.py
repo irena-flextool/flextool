@@ -20,6 +20,7 @@ from flextool.assistant.context import ContextSnapshot, GuiState, ResultRef, Vie
 from flextool.assistant.tools import orientation
 from flextool.assistant.providers import PRESETS
 from flextool.gui.assistant import strings as gui_strings
+from flextool.assistant import usage
 
 ABBREVIATIONS = ("LLM", "ZDR", "DB", "LP", "MCP", "API")
 #: Promises about the data no text makes ("safety" as a refusal reason is not a promise).
@@ -77,6 +78,7 @@ def _texts() -> list[tuple[str, str]]:
     out += [(f"window {name}", getattr(gui_strings, name)) for name in dir(gui_strings)
             if name.isupper() and isinstance(getattr(gui_strings, name), str)]
     out.append(("window welcome", gui_strings.welcome_text()))
+    out += [(f"usage {name}", getattr(usage, name)) for name in ("FOOTER", "FOOTER_REJECTED", "FOOTER_NONE")]
     out.append(("cli DATA_NOTICE", cli.DATA_NOTICE))     # cli.EXAMPLES names the --mcp flag: test_tool_wording
     for preset in PRESETS.values():
         out.append((f"{preset.id} label", preset.label))

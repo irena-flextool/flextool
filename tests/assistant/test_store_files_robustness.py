@@ -362,6 +362,35 @@ def test_a_ledger_of_the_wrong_shape_is_set_aside_and_its_good_counts_carried(ro
     assert Ledger(root).read()["months"] == {}
 
 
+def test_days_of_the_wrong_shape_are_set_aside_and_their_good_counts_carried(root, no_wait, capsys):
+    """The days follow the months' damage and salvage rules; a day key that is not a date is not of the known
+    form.  NOV is noon UTC on 7 November, the same calendar date in every time zone within 11 hours of UTC."""
+    good = {"requests": 2, "input_uncached": 20, "cache_read": 0, "cache_write": 0, "output": 4, "not_reported": 0,
+            "rejected_attempts": 0, "cost": None}
+    months = {"2026-11": {"p": {"label": "P", "models": {"good": good}}}}
+    path = root / "usage.json"
+    root.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"format": 1, "months": months, "days": {
+        "2026-11-06": {"p": {"label": "P", "models": {"bad": {"output": -1}, "good": good}}},
+        "yesterday": {"p": {"label": "P", "models": {"good": good}}},
+        "2026-02-30": {"p": {"label": "P", "models": {"good": good}}}}}), encoding="utf-8")
+    assert Ledger(root).read()["days"] == {"2026-11-06": {"p": {"label": "P", "models": {"good": good}}}}
+    assert Ledger(root).record("gemini", "Google Gemini", "m", Usage(5, 0, 0, 1), now=NOV) is True
+    assert len(damaged_copies(root, "usage.json")) == 1
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert sorted(stored["days"]) == ["2026-11-06", "2026-11-07"]
+    assert stored["days"]["2026-11-06"] == {"p": {"label": "P", "models": {"good": good}}}
+    assert stored["days"]["2026-11-07"]["gemini"]["models"]["m"]["requests"] == 1
+    assert stored["months"]["2026-11"]["p"] == months["2026-11"]["p"]
+    assert "not a usage record of the known form" in capsys.readouterr().err
+    path.write_text(json.dumps({"format": 1, "months": months, "days": []}), encoding="utf-8")
+    assert Ledger(root).read()["months"] == months                 # damaged days do not lose the months
+    assert Ledger(root).record("gemini", "Google Gemini", "m", Usage(5, 0, 0, 1), now=NOV) is True
+    assert len(damaged_copies(root, "usage.json")) == 2
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    assert list(stored["days"]) == ["2026-11-07"] and stored["months"]["2026-11"]["p"] == months["2026-11"]["p"]
+
+
 def test_a_ledger_read_that_looks_damaged_once_is_not_set_aside(root, no_wait, monkeypatch, capsys):
     path = root / "usage.json"
     root.mkdir(parents=True, exist_ok=True)

@@ -76,7 +76,7 @@ def build_parser() -> argparse.ArgumentParser:
                       help="store the key of the AI service in the system keyring (asked in the terminal)")
     mode.add_argument("--forget-key", action="store_true", help="remove the stored key of the AI service")
     mode.add_argument("--usage", action="store_true",
-                      help="the tokens used, by month, AI service and model, as each service reported them")
+                      help="the tokens used today and by month, AI service and model, as each service reported them")
     where = parser.add_mutually_exclusive_group()
     where.add_argument("--project-path", metavar="FOLDER", help="the project folder (an absolute path)")
     where.add_argument("--project", metavar="NAME", help="the project projects/NAME under the current folder")

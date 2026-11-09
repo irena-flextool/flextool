@@ -1,8 +1,8 @@
 """The AI assistant's chat window (P2 §4): one non-modal window per project with its chats as tabs.
 
 Layout (§4.1): where the active chat's data goes, [Chats ▾] [Settings ⚙] [How this works], the relaxed privacy
-line, a note line, the ``ttk.Notebook`` of :class:`~flextool.gui.assistant.chat_tab.ChatTab`, and this month's
-usage of the active chat's provider.
+line, a note line, the ``ttk.Notebook`` of :class:`~flextool.gui.assistant.chat_tab.ChatTab`, and today's and
+this month's usage of the active chat's provider.
 
 * **Tabs** (P2-O13, §4.3).  A chat is titled with its number (or the name the user gave), with a state prefix.
   An empty "New chat" tab is always last; sending there makes it a chat and a new "New chat" appears.  Tabs that
@@ -612,7 +612,7 @@ class ChatWindow(tk.Toplevel):
         self.note_label.configure(text=text)
 
     def refresh_footer(self) -> None:
-        """This month's usage of the active chat's provider (the ledger read on a daemon thread)."""
+        """Today's and this month's usage of the active chat's provider (the ledger read on a daemon thread)."""
         label = self.current_tab().provider
         self._footer_request += 1
         request = self._footer_request
@@ -630,29 +630,11 @@ class ChatWindow(tk.Toplevel):
         run_in_thread(read, "flextool-assistant-ledger")
 
     def _show_footer(self, request: int, label: str, data: dict) -> None:
-        from flextool.assistant.usage import number
+        from flextool.assistant.usage import format_footer
 
         if request != self._footer_request:
             return                          # a later read (another chat selected, another provider) is due
-
-        month = datetime.now(timezone.utc).strftime("%Y-%m")
-        tokens_in = tokens_out = rejected = 0
-        found = False
-        for provider in (data.get("months") or {}).get(month, {}).values():
-            if provider.get("label") != label:
-                continue
-            found = True
-            for counts in (provider.get("models") or {}).values():
-                tokens_in += sum(int(counts.get(k) or 0) for k in ("input_uncached", "cache_read", "cache_write"))
-                tokens_out += int(counts.get("output") or 0)
-                rejected += int(counts.get("rejected_attempts") or 0)
-        if not found:
-            text = strings.FOOTER_NONE.format(provider=label)
-        else:
-            text = strings.FOOTER.format(provider=label, input=number(tokens_in), output=number(tokens_out))
-            if rejected:
-                text += strings.FOOTER_REJECTED.format(n=number(rejected))
-        self.footer_label.configure(text=text)
+        self.footer_label.configure(text=format_footer(data, label))
 
     # --- workers and snapshots ---------------------------------------------------------------------------------
     def make_worker(self) -> AssistantWorker:
