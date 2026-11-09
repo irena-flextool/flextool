@@ -61,10 +61,11 @@ def read_reduced_markers(output_raw: Path | str) -> dict[str, frozenset[str]]:
 
 @dataclasses.dataclass
 class ReducedCells:
-    """Per left-out feature: the ``(period, time)`` steps, the periods and the sub-solves whose cells are empty."""
+    """Per left-out feature: the ``(period, time)`` steps (a ``MultiIndex``), the periods (an ``Index``) and the
+    sub-solves whose cells are empty."""
 
-    steps: dict[str, set[tuple[str, str]]] = dataclasses.field(default_factory=dict)
-    periods: dict[str, set[str]] = dataclasses.field(default_factory=dict)
+    steps: dict[str, pd.MultiIndex] = dataclasses.field(default_factory=dict)
+    periods: dict[str, pd.Index] = dataclasses.field(default_factory=dict)
     solves: dict[str, set[str]] = dataclasses.field(default_factory=dict)
 
     def __bool__(self) -> bool:
@@ -73,10 +74,14 @@ class ReducedCells:
     def step_mask(self, feature: str, index: pd.Index) -> np.ndarray:
         """True for the rows of ``index`` (with ``period`` and ``time`` levels) at a step of ``feature``."""
         steps = self.steps.get(feature)
-        if not steps or not {"period", "time"} <= set(index.names or ()):
+        if steps is None or not len(steps) or not {"period", "time"} <= set(index.names or ()):
             return np.zeros(len(index), dtype=bool)
-        pairs = zip(index.get_level_values("period"), index.get_level_values("time"))
-        return np.fromiter(((str(d), str(t)) in steps for d, t in pairs), dtype=bool, count=len(index))
+        rows = pd.MultiIndex.from_arrays([_str_level(index, "period"), _str_level(index, "time")])
+        return np.asarray(rows.isin(steps), dtype=bool)
+
+
+def _str_level(index: pd.Index, name: str) -> pd.Index:
+    return index.get_level_values(name).astype(str)
 
 
 def reduced_cells_of(s, markers: dict[str, frozenset[str]]) -> ReducedCells:
@@ -88,39 +93,35 @@ def reduced_cells_of(s, markers: dict[str, frozenset[str]]) -> ReducedCells:
     cells = ReducedCells()
     if not markers:
         return cells
-    for solve, features in markers.items():
-        for f in features:
-            cells.solves.setdefault(f, set()).add(solve)
+    left_out = pd.DataFrame([(solve, f) for solve, features in markers.items() for f in features],
+                            columns=["solve", "feature"])
+    cells.solves = {f: set(g["solve"]) for f, g in left_out.groupby("feature", sort=False)}
     dt = getattr(s, "dt_realize_dispatch", None)
     if dt is not None and len(dt) and "solve" in (dt.names or ()):
-        owner: dict[tuple[str, str], str] = {}
-        for solve, d, t in zip(dt.get_level_values("solve"), dt.get_level_values("period"),
-                               dt.get_level_values("time")):
-            owner[(str(d), str(t))] = str(solve)
-        for step, solve in owner.items():
-            for f in markers.get(solve, ()):
-                cells.steps.setdefault(f, set()).add(step)
+        owner = pd.DataFrame({k: _str_level(dt, k) for k in ("solve", "period", "time")}) \
+            .drop_duplicates(["period", "time"], keep="last")
+        hit = owner.merge(left_out, on="solve")
+        cells.steps = {f: pd.MultiIndex.from_frame(g[["period", "time"]]) for f, g in hit.groupby("feature", sort=False)}
     dp = getattr(s, "d_realized_period", None)
     if dp is not None and len(dp) and "solve" in (dp.names or ()):
-        by_period: dict[str, set[str]] = {}
-        for solve, d in zip(dp.get_level_values("solve"), dp.get_level_values("period")):
-            by_period.setdefault(str(d), set()).add(str(solve))
-        for d, solves in by_period.items():
-            for f in set.intersection(*(set(markers.get(x, ())) for x in solves)):
-                cells.periods.setdefault(f, set()).add(d)
+        realised = pd.DataFrame({k: _str_level(dp, k) for k in ("solve", "period")}).drop_duplicates()
+        n_solves = realised.groupby("period").size().rename("n_solves")
+        hit = realised.merge(left_out, on="solve").groupby(["feature", "period"]).size().rename("n_left_out") \
+            .reset_index().merge(n_solves, left_on="period", right_index=True)
+        every = hit[hit["n_left_out"] == hit["n_solves"]]
+        cells.periods = {f: pd.Index(g["period"], name="period") for f, g in every.groupby("feature", sort=False)}
     return cells
 
 
 def _row_mask(df: pd.DataFrame, feature: str, cells: ReducedCells) -> np.ndarray:
     names = set(df.index.names or ())
     if "solve" in names:
-        solves = cells.solves.get(feature, set())
-        return np.asarray([str(x) in solves for x in df.index.get_level_values("solve")], dtype=bool)
+        return np.asarray(_str_level(df.index, "solve").isin(list(cells.solves.get(feature, ()))), dtype=bool)
     if "time" in names:
         return cells.step_mask(feature, df.index)
     if "period" in names:
-        periods = cells.periods.get(feature, set())
-        return np.asarray([str(x) in periods for x in df.index.get_level_values("period")], dtype=bool)
+        periods = cells.periods.get(feature, pd.Index([]))
+        return np.asarray(_str_level(df.index, "period").isin(periods), dtype=bool)
     return np.zeros(len(df), dtype=bool)
 
 
@@ -134,7 +135,10 @@ def mask_reduced_cells(results: dict, cells: ReducedCells) -> None:
             continue
         for name in tables:
             df = results.get(name)
-            if not isinstance(df, pd.DataFrame) or df.empty or df.shape[1] == 0:
+            if df is None:
+                continue
+            assert isinstance(df, pd.DataFrame), f"{name}: a feature table must be a DataFrame to be masked"
+            if df.empty or df.shape[1] == 0:
                 continue
             mask = _row_mask(df, feature, cells)
             if mask.any():

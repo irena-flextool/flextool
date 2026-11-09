@@ -57,13 +57,20 @@ ENTITIES = [["node", "elec", None], ["node", "fuel", None], ["commodity", "fuelc
             ["reserve__upDown__unit__node", ["rsv", "up", "g1", "elec"], None],
             ["timeset", "tsA", None], ["timeset", "tsB", None], ["solve", "sA", None], ["solve", "sB", None]]
 
+#: ``dc``: node elec2 (demand 10 MW) behind DC power-flow line c (elec -> elec2, 100 MW, reactance 0.1 p.u.) and
+#: node elec3 (demand 5 MW) behind connection c2 (elec -> elec3, 100 MW, binary start-up; outside the DC group).
+DC_ENTITIES = [["node", "elec2", None], ["group", "ac", None], ["group__node", ["ac", "elec"], None],
+               ["group__node", ["ac", "elec2"], None], ["connection", "c", None],
+               ["connection__node__node", ["c", "elec", "elec2"], None], ["node", "elec3", None],
+               ["connection", "c2", None], ["connection__node__node", ["c2", "elec", "elec3"], None]]
+
 
 PERIOD = {"sA": "p2020", "sB": "p2020"}
 PERIODS2 = {"sA": "p2020", "sB": "p2025"}
 
 
 def _values(levels: dict[str, tuple[str, str]], *, periods: dict[str, str] = PERIOD, inertia: bool = False,
-            non_synchronous: bool = False, timesets: dict[str, str] | None = None) -> list:
+            non_synchronous: bool = False, dc: bool = False, timesets: dict[str, str] | None = None) -> list:
     out, grp, key = "unit__outputNode", ["rsv", "up", "electricity"], ["rsv", "up", "g1", "elec"]
     vals = [["model", "flexTool", "solves", b64({"value_type": "str", "data": ["sA", "sB"]}, "array")],
             ["timeset", "tsA", "timeline", _s("y2020")], ["timeset", "tsA", "timeset_duration", _ts("t0001")],
@@ -89,6 +96,12 @@ def _values(levels: dict[str, tuple[str, str]], *, periods: dict[str, str] = PER
                  ["group", "electricity", "non_synchronous_limit", _f(0.8)],
                  ["group", "electricity", "penalty_non_synchronous", _f(1000.0)],
                  [out, ["g1", "elec"], "is_non_synchronous", _s("yes")]]
+    if dc:
+        vals += [["node", "elec2", "node_type", _s("balance")], ["node", "elec2", "inflow", _f(-10.0)],
+                 ["group", "ac", "transfer_method", _s("dc_power_flow_with_angles")],
+                 ["connection", "c", "existing", _f(100.0)], ["connection", "c", "reactance", _f(0.1)],
+                 ["node", "elec3", "node_type", _s("balance")], ["node", "elec3", "inflow", _f(-5.0)],
+                 ["connection", "c2", "existing", _f(100.0)], ["connection", "c2", "startup_method", _s("binary")]]
     for solve, ts in (timesets or {"sA": "tsA", "sB": "tsB"}).items():
         vals += [["solve", solve, "period_timeset", _period_map(ts, periods[solve])],
                  ["solve", solve, "realized_periods", b64({"value_type": "str", "data": [periods[solve]]}, "array")],
@@ -102,8 +115,9 @@ def _values(levels: dict[str, tuple[str, str]], *, periods: dict[str, str] = PER
 def _run(tmp_path_factory, alt: str, levels: dict, *, keep_solutions: bool = True, **fixture):
     from flextool.engine import run_chain_from_db
 
+    entities = ENTITIES + (DC_ENTITIES if fixture.get("dc") else [])
     url, scen = make_db(tmp_path_factory, alt=alt, values=_values(levels, **fixture), base_chain=["init"],
-                        entities=ENTITIES)
+                        entities=entities)
     wf = tmp_path_factory.mktemp(f"{alt}_w")
     steps = run_chain_from_db(url, scen, work_folder=wf, keep_solutions=keep_solutions)
     assert list(steps) == ["sA", "sB"], list(steps)
@@ -382,14 +396,16 @@ def _assert_cells(out: Path, name: str, column: str, full: str, reduced: str, va
 @pytest.mark.parametrize("in_memory", [True, False])
 def test_left_out_cells_are_empty_after_a_full_solve(tmp_path_factory, in_memory) -> None:
     """sA full (realises p2020), sB online + reserves + inertia + non-synchronous (realises p2025), with an inertia
-    limit of 50 on group electricity: the online, start-up, reserve and inertia tables keep sA's values (1 unit
-    online, 0 start-ups: its first step links to its last, units.md, and 1 unit is online throughout; 10 MW of
-    reserve and 0 reserve shortfall; largest flow 50 MW and 0 inertia shortfall) and leave sB's cells empty, per
-    step and per period.  Fuel of the min_load_efficiency unit in p2025 is output / 0.5 = 100 MW (125 MW in p2020).
+    limit of 50 on group electricity and a non-synchronous limit of 0.8 with g1 non-synchronous: the online,
+    start-up, reserve, inertia and non-synchronous tables keep sA's values and leave sB's cells empty, per step and
+    per period.  sA: 1 unit online, 0 start-ups (its first step links to its last, units.md, and 1 unit is online
+    throughout); 10 MW of reserve, 0 reserve shortfall and a reserve price of 0 (50 MW of online headroom); largest
+    flow 50 MW, inertia 2 s · 100 MW online = 200 MWs (all of it g1's) and 0 inertia shortfall; non-synchronous
+    shortfall 50 − 0.8 · 50 = 10 MW per step, per period 10 MW · 2 h · 8760 h / 2 h = 87600 MWh.  Fuel of the min_load_efficiency unit in p2025 is output / 0.5 = 100 MW (125 MW in p2020).
     Both output paths: the in-memory steps and the persisted per-roll slices."""
     steps, wf, scen = _run(tmp_path_factory, f"rdc_cells_{in_memory}",
                            {"sB": ("online", "reserves_inertia_non_synchronous")}, periods=PERIODS2, inertia=True,
-                           keep_solutions=in_memory)
+                           non_synchronous=True, keep_solutions=in_memory)
     out = _write_outputs(steps, wf, scen, in_memory=in_memory)
     _assert_cells(out, "unit_online__dt.csv", "g1", "sA", "sB", 1.0)
     _assert_cells(out, "unit_online__d_average.csv", "g1", "sA", "sB", 1.0, per_period=True)
@@ -399,6 +415,13 @@ def test_left_out_cells_are_empty_after_a_full_solve(tmp_path_factory, in_memory
     _assert_cells(out, "slack__reserve__upDown__group__dt.csv", "rsv", "sA", "sB", 0.0)
     _assert_cells(out, "group_inertia_largest_flow__dt.csv", "electricity", "sA", "sB", 50.0)
     _assert_cells(out, "slack__inertia_group__dt.csv", "electricity", "sA", "sB", 0.0)
+    _assert_cells(out, "reserve_price__upDown__group__dt.csv", "rsv", "sA", "sB", 0.0)
+    _assert_cells(out, "slack__reserve__upDown__group__d.csv", "rsv", "sA", "sB", 0.0, per_period=True)
+    _assert_cells(out, "slack__inertia_group__d.csv", "electricity", "sA", "sB", 0.0, per_period=True)
+    _assert_cells(out, "group_inertia__dt.csv", "electricity", "sA", "sB", 200.0)
+    _assert_cells(out, "group__unit__node_inertia__dt.csv", "electricity", "sA", "sB", 200.0)
+    _assert_cells(out, "slack__nonsync_group__dt.csv", "electricity", "sA", "sB", 10.0)
+    _assert_cells(out, "slack__nonsync_group__d.csv", "electricity", "sA", "sB", 87600.0, per_period=True)
     fuel = _raw(out, "unit__inputNode__dt.csv", "g1")
     assert {k: float(v) for k, v in fuel.items()} == pytest.approx(
         {**{k: FUEL["full"] for k in DT["sA"]}, **{k: FUEL["online"] for k in DT["sB"]}}, abs=1e-6)
@@ -444,7 +467,8 @@ def test_reduced_cells_rules() -> None:
     from types import SimpleNamespace
     cells = reduced_cells_of(SimpleNamespace(dt_realize_dispatch=dt, d_realized_period=dp),
                              {"b": frozenset({"online"})})
-    assert cells.steps == {"online": {("p1", "t2"), ("p2", "t3")}} and cells.periods == {"online": {"p2"}}
+    assert {f: set(x) for f, x in cells.steps.items()} == {"online": {("p1", "t2"), ("p2", "t3")}}
+    assert {f: set(x) for f, x in cells.periods.items()} == {"online": {"p2"}}
     step_idx = pd.MultiIndex.from_tuples([("p1", "t1"), ("p1", "t2"), ("p2", "t3")], names=["period", "time"])
     period_idx = pd.Index(["p1", "p2"], name="period")
     results = {"unit_online_dt_e": pd.DataFrame({"g1": [1.0, 1.0, 1.0]}, index=step_idx),
@@ -477,3 +501,17 @@ def test_left_out_on_the_steps_of_a_full_solve(tmp_path_factory, system, in_memo
               "non_synchronous": [("slack__nonsync_group__dt.csv", "electricity")]}[system]
     for name, column in tables:
         assert _raw(out, name, column) == {("p2020", "t0001"): "", ("p2020", "t0002"): ""}, name
+
+
+def test_left_out_connection_online_and_dc_angles(tmp_path_factory) -> None:
+    """``dc`` fixture, sA full (p2020), sB online + dc_power_flow (p2025): sA keeps 1 unit of c2 online, 0 start-ups
+    (first step linked to the last, 1 unit online throughout), the voltage angle 0 at elec (the reference) and
+    −10 MW · 0.1 p.u. / 100 MVA = −0.01 rad at elec2, the angle difference 0.01 rad on c; sB's cells are empty."""
+    steps, wf, scen = _run(tmp_path_factory, "rdc_dc", {"sB": ("online", "dc_power_flow")}, periods=PERIODS2, dc=True)
+    out = _write_outputs(steps, wf, scen, in_memory=True)
+    _assert_cells(out, "connection_online__dt.csv", "c2", "sA", "sB", 1.0)
+    _assert_cells(out, "connection_online__d_average.csv", "c2", "sA", "sB", 1.0, per_period=True)
+    _assert_cells(out, "connection_startup__d.csv", "c2", "sA", "sB", 0.0, per_period=True)
+    _assert_cells(out, "dc_angle_dt_e.csv", "elec", "sA", "sB", 0.0)
+    _assert_cells(out, "dc_angle_dt_e.csv", "elec2", "sA", "sB", -0.01)
+    _assert_cells(out, "dc_angle_diff_dt_e.csv", "c", "sA", "sB", 0.01)
