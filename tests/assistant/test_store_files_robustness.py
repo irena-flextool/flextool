@@ -139,6 +139,42 @@ def make_old(path: Path, seconds: float = 120.0) -> None:
     os.utime(path, (then, then))
 
 
+# --- macOS: EINVAL when the folder is removed while the lock file is created ---------------------------------------
+def _open_failing(monkeypatch, path: Path, times: int) -> list[int]:
+    """``os.open`` of *path* raises EINVAL *times* times, as macOS does when a purge removes the folder that moment
+    (CI of PR #362); the calls are counted."""
+    import errno
+
+    real_open = os.open
+    calls: list[int] = []
+
+    def fake_open(file, flags, mode=0o777, *args, **kwargs):
+        if Path(file) == path:
+            calls.append(flags)
+            if len(calls) <= times:
+                raise OSError(errno.EINVAL, "Invalid argument", str(file))
+        return real_open(file, flags, mode, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", fake_open)
+    return calls
+
+
+def test_a_lock_created_while_its_folder_is_removed_is_taken_on_the_second_try(tmp_path, monkeypatch):
+    lock = _files.PidLock(tmp_path / "conversations" / "p" / "c.json.lock")
+    calls = _open_failing(monkeypatch, lock.path, times=1)
+    assert lock.try_acquire()
+    assert len(calls) == 2 and lock_data(lock.path)["token"] == lock.token
+    lock.release()
+
+
+def test_an_einval_that_persists_is_raised(tmp_path, monkeypatch):
+    lock = _files.PidLock(tmp_path / "c.json.lock")
+    calls = _open_failing(monkeypatch, lock.path, times=2)
+    with pytest.raises(OSError, match="Invalid argument"):
+        lock.try_acquire()
+    assert len(calls) == 2 and lock.token is None
+
+
 # --- C5-2: Windows PermissionError on lock delete and create ------------------------------------------------------
 def test_a_release_retries_a_sharing_violation(tmp_path, monkeypatch, windows):
     lock = _files.PidLock(tmp_path / "usage.json.lock", stale_after=30)

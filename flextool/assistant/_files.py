@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import atexit
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -645,7 +646,7 @@ class PidLock:
         """Take the lock: ``True`` when this process now holds it.  On Windows a lock file that is being deleted
         (or read) this moment counts as taken; the caller's poll tries again."""
         deadline = self._deadline if self._deadline is not None else _clock() + _SHARING_TOTAL
-        for _ in range(2):
+        for attempt in range(2):
             self.token = secrets.token_hex(8)
             content = self._content().encode("utf-8")
             try:
@@ -665,6 +666,14 @@ class PidLock:
                 if not _WINDOWS:
                     raise
                 return False
+            except OSError as exc:
+                # macOS answers EINVAL, not ENOENT, when the folder is removed while the file is created in it (a
+                # purge removing an empty project folder: CI of PR #362).  Once more, as for ENOENT; a second
+                # EINVAL is a real one.
+                if exc.errno == errno.EINVAL and attempt == 0:
+                    continue
+                self.token = None
+                raise
             try:
                 os.write(fd, content)
             finally:
