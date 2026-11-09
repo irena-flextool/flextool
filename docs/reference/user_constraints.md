@@ -1,6 +1,8 @@
 # User constraints
 
-## Additional entities for further functionality
+A user constraint is a linear row that you write yourself. It ties flows, storage states and capacities of nodes, units and connections together, for example a fixed ratio between two capacities or a minimum share of a flow.
+
+## The `constraint` entity
 
 - `constraint`: a user-defined linear constraint between flow, state, and capacity variables on nodes, units and connections. The left-hand side is assembled by tagging the relevant entities with the matching coefficient parameter (`constraint_flow_coeff` on `unit__inputNode` / `unit__outputNode` / `connection__node`, `constraint_state_coeff` on `node`, `constraint_invested_capacity_coeff` / `constraint_in_construction_capacity_coeff` / `constraint_cumulative_pre_built_capacity_coeff` / `constraint_capacity_coeff` / `constraint_retired_capacity_coeff` on `node` / `unit` / `connection`); the constraint entity itself carries:
 
@@ -11,3 +13,52 @@
 
   A constraint with only capacity terms is written once per period, otherwise once per time step (rows `process_constraint_{equal,less_than,greater_than}_period` with dimensions (constraint, period) in the `output_horizon` raw dump, instead of (constraint, period, time)). For plain sums of capacity with a period trajectory, the group parameters (`invest_max_period`, `retire_max_period`, `cumulative_max_capacity` and their minimum counterparts) are simpler: user constraints are for weighted, cross-class and ratio forms.
 
+## The coefficient parameters
+
+**Map parameters.** Every coefficient is a map: the index is the name of a `constraint`, the value is the coefficient. One entity can take part in several constraints with different coefficients. An entity takes part in a constraint only if it has a coefficient for it.
+
+**The row.** The model multiplies each variable by its coefficient and adds the terms up on the left-hand side. The `sense` compares that sum with the `constant`. The unit of the row is your choice: the coefficients carry it (for example, a coefficient of 1 on a flow keeps the row in MW).
+
+| Parameter | Set on | Term it puts in the row | Unit of the variable |
+|---|---|---|---|
+| `constraint_flow_coeff` | `unit__inputNode`, `unit__outputNode`, `connection__node` | The flow between the unit or connection and the node, in each time step. | MW |
+| `constraint_state_coeff` | `node` (storage) | The storage state of the node, in each time step. | MWh |
+| `constraint_invested_capacity_coeff` | `node`, `unit`, `connection` | The capacity that comes online in the period. Without a construction lead time, this is the capacity invested in that period. | MW (MWh for a storage node) |
+| `constraint_in_construction_capacity_coeff` | `node`, `unit`, `connection` | The capacity in construction in the period: decided, but not yet online. It is zero without a construction lead time. | MW (MWh for a storage node) |
+| `constraint_retired_capacity_coeff` | `node`, `unit`, `connection` | The capacity retired in the period. | MW (MWh for a storage node) |
+| `constraint_cumulative_pre_built_capacity_coeff` | `node`, `unit`, `connection` | The capacity in service at the start of the period: existing capacity plus capacity that came online in earlier periods, minus earlier retirements. | MW (MWh for a storage node) |
+| `constraint_capacity_coeff` | `node`, `unit`, `connection` | The capacity in service in the period: existing plus investments still in service minus retirements. Capacity in construction is not included. | MW (MWh for a storage node) |
+
+The full descriptions are with each entity: [nodes](nodes.md#data-for-nodes), [units](units.md#investment-parameters-for-capacity-expansion), [unit flows](units.md#properties-of-unit-inputnode-and-unit-outputnode-entities) and [connections](connections.md#investment-parameters-for-connections).
+
+## Rows per period or per time step
+
+**Capacity terms only.** A constraint that has only capacity terms is the same in every time step of a period. The model writes it once per period, and a period map in `constant` gives each period its own right-hand side.
+
+**Flow or state terms.** A constraint with at least one `constraint_flow_coeff` or `constraint_state_coeff` is written once per time step. Any capacity terms in it take the value of their period in each of those time steps.
+
+## Example: storage size tied to turbine capacity
+
+**Goal.** A pumped-hydro reservoir must hold 6 hours of its turbine capacity: storage capacity (MWh) = 6 × turbine capacity (MW). Both can be invested in.
+
+**Data.**
+
+- `constraint` *reservoir_6h*: `sense` *equal*, `constant` 0
+- `node` *reservoir*: `constraint_capacity_coeff` Map (*reservoir_6h* | 1)
+- `unit` *turbine*: `constraint_capacity_coeff` Map (*reservoir_6h* | -6)
+
+**The row.** In each period: 1 × reservoir capacity (MWh) − 6 × turbine capacity (MW) = 0. The row has only capacity terms, so it is written once per period. It counts existing capacity, investments and retirements, so it holds for the whole capacity in service, not only for the new build. To tie only the new build, use `constraint_invested_capacity_coeff` instead.
+
+## Example: minimum share of a flow
+
+**Goal.** In every time step, at least 40 % of the electricity flowing into node *elec* comes from unit *wind*. The only other unit that feeds *elec* is *coal_plant*.
+
+**The algebra.** wind ≥ 0.4 × (wind + coal) is the same as 0.6 × wind − 0.4 × coal ≥ 0.
+
+**Data.**
+
+- `constraint` *wind_share*: `sense` *greater_than*, `constant` 0
+- `unit__outputNode` (*wind* | *elec*): `constraint_flow_coeff` Map (*wind_share* | 0.6)
+- `unit__outputNode` (*coal_plant* | *elec*): `constraint_flow_coeff` Map (*wind_share* | -0.4)
+
+**The row.** The row has flow terms, so it is written once per time step: the share must hold in each time step, not only on average. Every unit that feeds the node has to be in the constraint, or its flow is left out of the total.
