@@ -120,6 +120,7 @@ from flextool.assistant.llm_errors import (
 from flextool.assistant.llm_retry import Pacing, RetryPolicy, call_with_retries
 from flextool.assistant.pacing import PROCESS_PACER, Pacer, pace_key
 from flextool.assistant.providers import pacing_seed, schemas_sent
+from flextool.assistant.thoughts import stream_visible
 from flextool.assistant.usage import add_usage, ledger_key
 
 logger = logging.getLogger(__name__)
@@ -771,8 +772,8 @@ class Session:
             text_part, tool_part = budget_module.request_parts(req, self.backend.origin,
                                                                schemas=schemas_sent(self.preset, tool_choice))
             try:
-                reply = call_with_retries(lambda: self.backend.stream(req, emit, cancel), self.retry_policy, emit,
-                                          cancel, sleep=self._sleep, clock=self._clock, rng=self._rng,
+                reply = call_with_retries(lambda: stream_visible(self.backend, req, emit, cancel), self.retry_policy,
+                                          emit, cancel, sleep=self._sleep, clock=self._clock, rng=self._rng,
                                           on_rejected=self._rejected, pacing=pacing)
             except LLMError as err:
                 if isinstance(err, RateLimited) and err.retry_after is not None:

@@ -543,6 +543,7 @@ def grade_with_ai(record: Mapping[str, Any], question: scoring.Question, entry: 
     import threading
 
     from flextool.assistant.llm_adapter import Message, Request
+    from flextool.assistant.thoughts import strip_thoughts
 
     ids = [i.id for i in manual_items(record)]
     messages = [Message("user", grader_user_part(record, question, entry, names))]
@@ -553,7 +554,7 @@ def grade_with_ai(record: Mapping[str, Any], question: scoring.Question, entry: 
                       max_output_tokens=GRADER_MAX_OUTPUT, tool_choice="none")
         reply = backend.stream(req, lambda _event: None, threading.Event())
         usage.append(reply.usage)
-        last = reply.message.text if reply.message is not None else ""
+        last = strip_thoughts(reply.message.text) if reply.message is not None else ""
         parsed = parse_verdicts(last, ids)
         if parsed is not None:
             return {**parsed, "usage": usage, "attempts": attempt + 1}
