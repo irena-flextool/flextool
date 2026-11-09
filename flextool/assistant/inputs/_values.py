@@ -13,6 +13,7 @@ the index values when it runs (``_param_shapes.resolve_param_shape``), so the to
 """
 from __future__ import annotations
 
+import datetime
 import json
 import math
 from typing import Any
@@ -27,7 +28,8 @@ RUN_TIME_NOTE = ("The index levels are not named; FlexTool decides period or tim
 
 
 def _plain(x: Any) -> Any:
-    """A JSON-friendly copy of one index or leaf."""
+    """A JSON-friendly copy of one index or leaf; a datetime (a time series index, a spinedb ``DateTime``) in ISO
+    form, ``2020-01-01T00:00:00``."""
     try:
         import numpy as np
 
@@ -39,6 +41,12 @@ def _plain(x: Any) -> Any:
         return str(x)
     if isinstance(x, (str, int, float, bool)) or x is None:
         return x
+    if isinstance(x, (datetime.date, datetime.time)):
+        return x.isoformat()
+    from spinedb_api import DateTime
+
+    if isinstance(x, DateTime):
+        return x.value.isoformat()
     return str(x)
 
 
@@ -104,6 +112,42 @@ def _time_level(names: list[str | None]) -> int:
     return max(len(names) - 1, 0)
 
 
+def _as_datetime(text: Any) -> datetime.datetime | None:
+    if not isinstance(text, str):
+        return None
+    try:
+        return datetime.datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _names_bound(value: Any, bound: str) -> bool:
+    """Whether the index value *value* is the one *bound* names: the same text, or the same datetime
+    (``2020-01-01T00:00``, ``2020-01-01 00:00`` and ``2020-01-01`` all name midnight)."""
+    if str(value) == bound:
+        return True
+    when = _as_datetime(bound)
+    return when is not None and _as_datetime(value) == when
+
+
+def select_time_range(rows: list[list[Any]], level: int, lo: str, hi: str) -> list[list[Any]]:
+    """The rows whose index at *level* is from *lo* to *hi*, both included, by position in the series (as the
+    results tools select): the level's distinct values in order of first appearance, the slice between the two
+    bounds (reversed bounds swapped), every row with a value in it.  Rows without a value at *level* (a ragged
+    map) are dropped.  A bound the level does not have raises ``bad_input_time_step``."""
+    values = list(dict.fromkeys(r[level] for r in rows if r[level] is not None))
+    positions = []
+    for bound in (lo, hi):
+        at = next((i for i, v in enumerate(values) if _names_bound(v, bound)), None)
+        if at is None:
+            raise ToolError("bad_input_time_step", value=bound, first=values[0] if values else "-",
+                            last=values[-1] if values else "-")
+        positions.append(at)
+    a, b = positions
+    kept = set(values[min(a, b):max(a, b) + 1])
+    return [r for r in rows if r[level] is not None and r[level] in kept]
+
+
 def parse_time_range(time_range: Any) -> tuple[str, str] | None:
     if time_range is None:
         return None
@@ -126,7 +170,7 @@ def summarize(value: Any, *, max_rows: int, time_range: tuple[str, str] | None =
     if time_range is not None:
         level = _time_level(names)
         lo, hi = time_range
-        rows = [r for r in rows if r[level] is not None and lo <= str(r[level]) <= hi]
+        rows = select_time_range(rows, level, lo, hi)
         out["time_range"] = {"from": lo, "to": hi, "level": level}
     out["n"] = len(rows)
     if len(rows) <= max_rows:
@@ -198,13 +242,15 @@ def _levels_text(n: int) -> str:
 
 
 def stored_shape(value: Any) -> str:
-    """The shape of a stored value in words: ``constant``, ``array`` or ``map, 2 index levels (period, x)``."""
+    """The shape of a stored value in words, with an article as ``allowed_shapes_in_words`` has: ``a constant``,
+    ``an array, 1 index level (sequence_index)`` or ``a map, 2 index levels (period, x)``."""
     kind = kind_of(value)
     if kind in ("constant", "text", "none"):
-        return "constant"
+        return "a constant"
     names = index_names(value)
     shown = ", ".join("(unnamed)" if not n else str(n) for n in names)
-    return f"{kind.replace('_', ' ')}, {_levels_text(len(names))} ({shown})"
+    article = "an" if kind == "array" else "a"
+    return f"{article} {kind.replace('_', ' ')}, {_levels_text(len(names))} ({shown})"
 
 
 def shape_of(entity_class: str, parameter: str, entity: str, value: Any) -> tuple[str, str | None]:

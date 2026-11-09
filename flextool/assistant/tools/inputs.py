@@ -463,8 +463,16 @@ def _cell(db: _db.InputDB, view: _db.ScenarioView, entity_class: str, byname: tu
     if unit_reason:
         notes.append(unit_reason)
     notes += notes_for(entity_class, parameter, value_of=_value_of(view, entity_class, byname))
-    return {"value": _cell_value(value, row_limit, time_range) if value is not None else None, "shape": shape,
-            "from_alternative": alternative, "is_default": is_default, "unit": unit, "notes": notes}
+    shown = None
+    if value is not None:
+        try:
+            shown = _cell_value(value, row_limit, time_range)
+        except ToolError as exc:           # a time_range bound this value lacks: no numbers, the reason in notes
+            if exc.key != "bad_input_time_step":
+                raise
+            notes.append(str(exc))
+    return {"value": shown, "shape": shape, "from_alternative": alternative, "is_default": is_default,
+            "unit": unit, "notes": notes}
 
 
 def _parameter_table(ctx: AssistantContext, args: dict) -> Fit:
@@ -756,7 +764,9 @@ TOOLS = [
                      "summarised), shape, the alternative it comes from or the default; units and shared notes "
                      "once per parameter. Without entities: every active entity. An entity is its names, one per "
                      "dimension. parameter and entity (one each) give one value in full, with the alternatives it "
-                     'overrides. time_range {"from": …, "to": …} keeps part of a series. ' + _SOURCE_TEXT),
+                     'overrides. time_range {"from": …, "to": …} keeps the steps from one to the other, both included, '
+                     "in the series' order; they are index values (time step names such as t0001, or datetimes "
+                     "such as 2020-01-01T00:00). " + _SOURCE_TEXT),
         properties={"entity_class": {"type": "string"}, "parameters": _NAMES, "entities": _ENTITIES,
                     "parameter": {"type": "string"}, "entity": _ENTITY,
                     "scenario": _SCENARIO, "source": _SOURCE, "time_range": _TIME_RANGE,

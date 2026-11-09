@@ -158,3 +158,30 @@ def test_at_a_small_result_cap_the_notes_give_way_to_the_rows(ctx) -> None:
     table = json.loads(out.text)
     assert len(table["rows"]) == 6 and "notes_by_parameter" not in table
     assert NOTES_LEFT_OUT in table["notes"] and all(row[-1] == [] for row in table["rows"])
+
+
+def test_a_time_range_bound_missing_in_one_cell(ctx) -> None:
+    """C3-M3.  tests.json, alternative init (in scenario coal; class timeset is active by default): timeset 5weeks
+    timeset_duration is a map t0001 4, t0009 4, t0013 4, t0025 4, t0037 4; timeset 2day's is t0001 48."""
+    out = _call(ctx, entity_class="timeset", parameters=["timeset_duration"], entities=[["5weeks"], ["2day"]],
+                scenario="coal", time_range={"from": "t0009", "to": "t0025"})
+    cells = _cells(out)
+    assert cells["5weeks", "timeset_duration"]["value"]["table"] == [["t0009", 4.0], ["t0013", 4.0],
+                                                                      ["t0025", 4.0]]
+    two_day = cells["2day", "timeset_duration"]
+    assert two_day["value"] is None
+    assert ("time_range: the value has no index 't0009' at that level. Its index runs from t0001 to t0001."
+            in two_day["notes"])
+
+
+def test_shapes_are_worded_alike_inside_and_outside_the_registry(ctx) -> None:
+    """C3-n2.  tests.json, scenario coal: unit coal_plant existing 500 and efficiency 0.4 (alternative coal), both
+    constants; existing is outside the shape registry, efficiency inside."""
+    from flextool.engine.input._param_shapes import PARAM_ALLOWED_SHAPES
+
+    assert ("unit", "existing") not in PARAM_ALLOWED_SHAPES and ("unit", "efficiency") in PARAM_ALLOWED_SHAPES
+    out = _call(ctx, entity_class="unit", parameters=["existing", "efficiency"], entities=[["coal_plant"]],
+                scenario="coal")
+    cells = _cells(out)
+    assert cells["coal_plant", "existing"]["shape"] == "a constant"
+    assert cells["coal_plant", "efficiency"]["shape"] == "a constant"

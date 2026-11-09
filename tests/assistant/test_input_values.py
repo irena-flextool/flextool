@@ -79,7 +79,7 @@ def test_series_summary(ctx) -> None:
     assert rec["first"] == ["t0001", -589.0] and rec["last"] == ["t0072", -635.0]
     assert "table" not in rec
     # (node, inflow) is not in the shape registry; the shipped schema types it float or map rank 1 or 3.
-    assert rec["shape"] == "map, 1 index level (time)"
+    assert rec["shape"] == "a map, 1 index level (time)"
     assert rec["shape_note"].startswith("FlexTool reads this parameter as a constant, or a map with 1 or 3 index "
                                         "levels.")
     assert rec["unit"] == "MWh per time step (default convention)"
@@ -221,3 +221,71 @@ def test_closest_names() -> None:
     assert closest_names("zzz", names) == []
     assert did_you_mean("existng", ["existing", "efficiency"]) == " Did you mean: existing?"
     assert did_you_mean("zzz", names) == ""
+
+
+# ---------------------------------------------------------------------------------------------------------
+# time_range selects by position in the series (C3-M3), on synthetic spinedb_api values
+
+
+def _steps(n: int, name: str = "time"):
+    """A map t1…t<n> (unpadded names) whose value at t<k> is k."""
+    from spinedb_api import Map
+
+    return Map([f"t{k}" for k in range(1, n + 1)], [float(k) for k in range(1, n + 1)], index_name=name)
+
+
+def test_time_range_keeps_the_steps_between_its_bounds_in_series_order() -> None:
+    from flextool.assistant.inputs._values import summarize
+
+    out = summarize(_steps(200), max_rows=100, time_range=("t1", "t24"))
+    # t1…t24 in the series' order (string order would add t100…t199 and t3…t9 would be missing).
+    assert out["n"] == 24
+    assert out["table"] == [[f"t{k}", float(k)] for k in range(1, 25)]
+    summary = summarize(_steps(200), max_rows=10, time_range=("t1", "t24"))
+    assert summary["n"] == 24 and summary["mean"] == 12.5          # (1 + 24) / 2
+    assert summary["first"] == ["t1", 1.0] and summary["last"] == ["t24", 24.0]
+
+
+def test_time_range_on_a_time_series_takes_iso_bounds() -> None:
+    from spinedb_api import TimeSeriesFixedResolution
+
+    from flextool.assistant.inputs._values import summarize
+
+    series = TimeSeriesFixedResolution("2020-01-01T00:00", "1h", [float(h) for h in range(48)], False, False)
+    out = summarize(series, max_rows=100, time_range=("2020-01-01T00:00", "2020-01-01T23:00"))
+    # Hours 0…23 of 1 January (value = hour), the index in ISO form.
+    assert out["n"] == 24
+    assert out["table"][0] == ["2020-01-01T00:00:00", 0.0]
+    assert out["table"][-1] == ["2020-01-01T23:00:00", 23.0]
+    summary = summarize(series, max_rows=10, time_range=("2020-01-01T00:00", "2020-01-01T23:00"))
+    assert summary["n"] == 24 and summary["max"] == 23.0
+    assert summary["first"] == ["2020-01-01T00:00:00", 0.0] and summary["last"] == ["2020-01-01T23:00:00", 23.0]
+    # The same instants named another way: a date alone is midnight, a space for the T.
+    same = summarize(series, max_rows=100, time_range=("2020-01-01", "2020-01-01 23:00"))
+    assert same["table"] == out["table"]
+
+
+def test_time_range_bounds_reversed_or_missing() -> None:
+    from flextool.assistant.errors import ToolError
+    from flextool.assistant.inputs._values import summarize
+
+    forward = summarize(_steps(200), max_rows=100, time_range=("t1", "t24"))
+    backward = summarize(_steps(200), max_rows=100, time_range=("t24", "t1"))
+    assert backward["table"] == forward["table"]
+    with pytest.raises(ToolError) as caught:
+        summarize(_steps(200), max_rows=100, time_range=("t1", "t999"))
+    assert caught.value.key == "bad_input_time_step"
+    assert str(caught.value) == ("time_range: the value has no index 't999' at that level. Its index runs from t1 "
+                                 "to t200.")
+
+
+def test_time_range_on_a_period_time_map_keeps_every_period() -> None:
+    from spinedb_api import Map
+
+    from flextool.assistant.inputs._values import summarize
+
+    value = Map(["p1", "p2"], [_steps(30), _steps(30)], index_name="period")
+    out = summarize(value, max_rows=100, time_range=("t5", "t7"))
+    # Steps t5, t6, t7 of each of the two periods.
+    assert out["table"] == [["p1", "t5", 5.0], ["p1", "t6", 6.0], ["p1", "t7", 7.0],
+                            ["p2", "t5", 5.0], ["p2", "t6", 6.0], ["p2", "t7", 7.0]]

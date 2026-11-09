@@ -55,6 +55,8 @@ MESSAGES: dict[str, str] = {
                        "entities; this one names {parameters} parameters and {entities} entities. Split it into "
                        "smaller calls, which can go in the same step."),
     "bad_time_range": "time_range takes {{\"from\": first index, \"to\": last index}}, for example {example}.",
+    "bad_input_time_step": ("time_range: the value has no index '{value}' at that level. Its index runs from {first} "
+                            "to {last}."),
     # Runs
     "no_runs": "The project has no scenario results (no folders in output_parquet).",
     "bad_run_name": "'{run}' is not a result folder name; use a folder name that list_runs gives.",
