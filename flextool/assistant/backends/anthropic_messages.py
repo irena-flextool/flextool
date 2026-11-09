@@ -35,8 +35,10 @@ from flextool.assistant.llm_adapter import (
 )
 from flextool.assistant.llm_errors import (
     LLMError,
+    Truncated,
     cancelled,
     classify_anthropic,
+    make_error,
     refusal_reason,
     render,
 )
@@ -190,6 +192,10 @@ class AnthropicMessagesBackend:
             progress.usage = stream.current_message_snapshot.usage
 
     def _reply(self, final: Any, progress: _Progress, on_event: OnEvent) -> Reply:
+        if final.stop_reason is None:
+            # The stream ended before ``message_delta`` gave a stop reason: the connection broke off mid-answer.
+            raise make_error(Truncated, "length_no_finish", self.ctx, streamed=progress.streamed,
+                             partial_text=progress.text, partial_usage=progress.partial_usage())
         blocks = [b.to_dict() for b in final.content]
         text = "".join(b.get("text", "") for b in blocks if b.get("type") == "text")
         calls = []
@@ -202,7 +208,7 @@ class AnthropicMessagesBackend:
             calls.append(ToolCall(id=block["id"], name=block["name"], arguments=parse_arguments(raw),
                                   raw_arguments=raw))
         reason = final.stop_reason
-        stop = STOPS.get(reason or "")
+        stop = STOPS.get(reason)
         if stop is None:
             stop = "end"
             on_event(Notice(render("unknown_stop", self.ctx, reason=reason)))

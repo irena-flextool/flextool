@@ -255,3 +255,29 @@ def test_the_model_list_carries_the_context_window():
     backend, recorder = backend_for([json_response(200, models)])
     assert [(m.id, m.context_window) for m in backend.list_models()] == [("example-model", 200000)]
     assert recorder.last.url.startswith("https://api.anthropic.com/v1/models")
+
+
+@pytest.mark.parametrize("cut", ["text", "tool"])
+def test_a_stream_cut_before_message_stop_is_truncated(cut):
+    """The connection broke off mid-answer, before ``message_delta`` gave a stop reason: the answer is incomplete
+    (as on the Chat Completions backend), never a finished turn with a half-written answer or tool call."""
+    events: list[dict] = [{"type": "message_start", "message": {
+        "id": "msg_cut", "type": "message", "role": "assistant", "model": "example-model", "content": [],
+        "stop_reason": None, "stop_sequence": None, "usage": {"input_tokens": 10, "output_tokens": 1}}}]
+    if cut == "text":
+        events += [{"type": "content_block_start", "index": 0, "content_block": {"type": "text", "text": ""}},
+                   {"type": "content_block_delta", "index": 0, "delta": {"type": "text_delta", "text": "Half"}}]
+    else:
+        events += [{"type": "content_block_start", "index": 0,
+                    "content_block": {"type": "tool_use", "id": "toolu_cut", "name": "get_entity", "input": {}}},
+                   {"type": "content_block_delta", "index": 0,
+                    "delta": {"type": "input_json_delta", "partial_json": '{"a":'}}]
+    backend, _ = backend_for([sse_response(anthropic_sse(events))])
+    seen, on_event = collect()
+    with pytest.raises(E.Truncated) as info:
+        backend.stream(request(ask()), on_event, threading.Event())
+    err = info.value
+    assert err.user_message == "The connection ended before the answer was complete."
+    assert err.streamed is True and err.partial_text == ("Half" if cut == "text" else "")
+    assert err.partial_usage.input_uncached == 10 and err.partial_usage.output is None
+    assert not [e for e in seen if isinstance(e, Notice)]

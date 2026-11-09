@@ -6,6 +6,7 @@ import socket
 import threading
 import time
 
+import httpx2
 import pytest
 
 from flextool.assistant import llm_errors as E
@@ -479,3 +480,76 @@ def test_replies_are_new_objects_each_time():
     a = backend.stream(request(ask()), lambda e: None, threading.Event())
     b = backend.stream(request(ask()), lambda e: None, threading.Event())
     assert a.message is not b.message and dataclasses.asdict(a.message) == dataclasses.asdict(b.message)
+
+
+# --- an answer typed application/json (C4-m4) ---------------------------------------------------------------------
+def test_a_200_json_error_is_classified():
+    """A server that rejects a streamed request with HTTP 200 and a JSON error body: the provider's error is
+    classified (here by its type), not reported as a broken connection; a JSON body without an error is still an
+    incomplete answer."""
+    backend, _ = backend_for("openai", [json_response(200, {"error": {"type": "authentication_error",
+                                                                      "message": "invalid key"}})])
+    with pytest.raises(E.AuthFailed):
+        backend.stream(request(ask()), lambda e: None, threading.Event())
+    backend, _ = backend_for("openai", [json_response(200, {"id": "x"})])
+    with pytest.raises(E.Truncated):
+        backend.stream(request(ask()), lambda e: None, threading.Event())
+
+
+def test_an_event_stream_sent_as_json_still_streams():
+    """A pin (it held before C4-m4): an event stream that a server or proxy labels ``application/json`` is read as
+    events as they arrive, its first bytes included."""
+    chunks = payload("openai", "text_usage")["chunks"]
+    parts = [b"\n", openai_sse(chunks[:1], done=False), openai_sse(chunks[1:])]
+    response = httpx2.Response(200, headers={"content-type": "application/json"},
+                               stream=_Parts(parts))
+    backend, _ = backend_for("openai", [response])
+    events, on_event = collect()
+    reply = backend.stream(request(ask()), on_event, threading.Event())
+    expected = "".join(c["choices"][0]["delta"].get("content") or "" for c in chunks if c.get("choices"))
+    assert reply.stop == "end" and reply.message.text == expected
+    assert "".join(e.text for e in events if isinstance(e, TextDelta)) == expected
+    assert reply.usage.output == chunks[-1]["usage"]["completion_tokens"]
+
+
+class _Parts(httpx2.SyncByteStream):
+    def __init__(self, parts: list[bytes]) -> None:
+        self._parts = parts
+
+    def __iter__(self):
+        yield from self._parts
+
+
+# --- tool-call fragments without an index (C4-m9) -----------------------------------------------------------------
+def _call_chunks(fragments: list[dict]) -> bytes:
+    chunks = [{"id": "c", "object": "chat.completion.chunk", "created": 1, "model": "m",
+               "choices": [{"index": 0, "delta": {"tool_calls": [f]}, "finish_reason": None}]} for f in fragments]
+    chunks.append({"id": "c", "object": "chat.completion.chunk", "created": 1, "model": "m",
+                   "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]})
+    return openai_sse(chunks)
+
+
+@pytest.mark.parametrize("fragments,expected", [
+    pytest.param([{"id": "a", "type": "function", "function": {"name": "get_entity", "arguments": '{"name":'}},
+                  {"function": {"arguments": '"west"}'}}],
+                 [("a", "get_entity", {"name": "west"})], id="continuation"),
+    pytest.param([{"id": "a", "type": "function", "function": {"name": "get_entity", "arguments": '{"name":'}},
+                  {"id": "a", "function": {"arguments": '"west"}'}}],
+                 [("a", "get_entity", {"name": "west"})], id="continuation_with_the_id"),
+    pytest.param([{"id": "a", "type": "function", "function": {"name": "get_entity", "arguments": '{"name":"west"}'}},
+                  {"id": "b", "type": "function", "function": {"name": "search_docs", "arguments": '{"query":"x"}'}}],
+                 [("a", "get_entity", {"name": "west"}), ("b", "search_docs", {"query": "x"})], id="two_calls"),
+    pytest.param([{"id": "call_0", "type": "function", "function": {"name": "get_entity",
+                                                                     "arguments": '{"name":"west"}'}},
+                  {"id": "call_0", "type": "function", "function": {"name": "search_docs",
+                                                                     "arguments": '{"query":"x"}'}}],
+                 [("call_0", "get_entity", {"name": "west"}), ("call_0", "search_docs", {"query": "x"})],
+                 id="two_calls_sharing_an_id"),
+])
+def test_index_less_fragments_continue_the_last_call(fragments, expected):
+    """A server that leaves ``index`` out: a fragment without an id or a name continues the last call; one with a
+    new id or a name opens a call, and two calls that share an id (some servers reuse one) stay two."""
+    backend, _ = backend_for("openai", [sse_response(_call_chunks(fragments))])
+    reply = backend.stream(request(ask()), lambda e: None, threading.Event())
+    assert reply.stop == "tools"
+    assert [(c.id, c.name, c.arguments) for c in reply.message.tool_calls] == expected

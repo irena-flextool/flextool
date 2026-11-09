@@ -10,7 +10,10 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import itertools
+import json
 import threading
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -104,6 +107,53 @@ def merge_reasoning(items: list, fragments: list) -> None:
                 existing[key] = (existing.get(key) or "") + value
             elif value is not None:
                 existing[key] = copy.deepcopy(value)
+
+
+def _json_typed(response: Any) -> bool:
+    return response.headers.get("content-type", "").lower().startswith("application/json")
+
+
+def _sse_data(parts: Iterable[bytes]) -> Iterator[str]:
+    """The ``data`` of each server-sent event in the byte *parts*: events end at a blank line, ``data:`` lines of
+    one event are joined with a newline, other fields and comments are skipped."""
+    buffer = b""
+    data: list[str] = []
+    for part in parts:
+        buffer += part
+        *lines, buffer = buffer.split(b"\n")
+        for line in lines:
+            text = line.rstrip(b"\r").decode("utf-8", errors="replace")
+            if not text:
+                if data:
+                    yield "\n".join(data)
+                data = []
+            elif text.startswith("data:"):
+                data.append(text[5:].removeprefix(" "))
+    if buffer.strip():
+        text = buffer.rstrip(b"\r").decode("utf-8", errors="replace")
+        if text.startswith("data:"):
+            data.append(text[5:].removeprefix(" "))
+    if data:
+        yield "\n".join(data)
+
+
+def _index_for(part: dict, function: dict, calls: dict[int, _Call]) -> int:
+    """The call a tool-call fragment without an ``index`` belongs to.  A fragment with a known id continues that
+    call, unless it names a function and that call is already named (some servers give every call of an answer
+    the same id).  Any other fragment with an id or a name opens a new call; a fragment with neither continues the
+    last call.  A server that repeats the name on every fragment and sends no id still splits the call (a known
+    limit: nothing tells such fragments apart)."""
+    call_id = part.get("id")
+    name = function.get("name")
+    if call_id:
+        for index in sorted(calls, reverse=True):
+            if calls[index].id == call_id:
+                if name and calls[index].name:
+                    break
+                return index
+    if call_id or name or not calls:
+        return max(calls, default=-1) + 1
+    return max(calls)
 
 
 class OpenAIChatBackend:
@@ -210,11 +260,14 @@ class OpenAIChatBackend:
                 raise classify_openai(exc, self.ctx) from exc
             self._inflight.set(stream.response)
             try:
-                for chunk in stream:
-                    timer.touch()
-                    if cancel.is_set() or self._inflight.aborted.is_set():
-                        raise self._cancelled(state)
-                    self._consume(chunk.to_dict(), state, on_event)
+                if _json_typed(stream.response):
+                    self._read_json_typed(stream.response, state, on_event, timer, cancel)
+                else:
+                    for chunk in stream:
+                        timer.touch()
+                        if cancel.is_set() or self._inflight.aborted.is_set():
+                            raise self._cancelled(state)
+                        self._consume(chunk.to_dict(), state, on_event)
             except LLMError:
                 raise
             except Exception as exc:
@@ -233,6 +286,42 @@ class OpenAIChatBackend:
                 with contextlib.suppress(Exception) if self._inflight.aborted.is_set() else contextlib.nullcontext():
                     stream.close()
         return self._reply(state, on_event)
+
+    def _read_json_typed(self, response: Any, state: _State, on_event: OnEvent, timer: SilenceTimer,
+                         cancel: threading.Event) -> None:
+        """Read an answer typed ``application/json``: a JSON object with ``error`` (an error answered with HTTP
+        200) is classified; an event stream sent under that type (some servers and proxies do) is read as one, as
+        it arrives.  The first bytes are only looked at, never lost: they start the events."""
+        parts = response.iter_bytes()
+        head = b""
+        for part in parts:
+            timer.touch()
+            head += part
+            if head.strip():
+                break
+        if head.lstrip().startswith(b"{"):
+            raw = head + b"".join(parts)
+            try:
+                body: Any = json.loads(raw)
+            except ValueError:
+                body = raw.decode("utf-8", errors="replace")
+            if isinstance(body, dict) and "error" in body:
+                raise classify_status(None, body, response.headers, self.ctx,
+                                      fallback_text="the answer was an error")
+            return                  # no events: the answer is incomplete (_reply)
+        for data in _sse_data(itertools.chain([head], parts)):
+            timer.touch()
+            if cancel.is_set() or self._inflight.aborted.is_set():
+                raise self._cancelled(state)
+            if data.startswith("[DONE]"):
+                break
+            chunk = json.loads(data)
+            if isinstance(chunk, dict) and chunk.get("error"):
+                raise classify_status(None, chunk, response.headers, self.ctx, streamed=state.streamed,
+                                      partial_text=state.text, partial_usage=self._usage(state),
+                                      fallback_text="the answer ended with an error")
+            if isinstance(chunk, dict):
+                self._consume(chunk, state, on_event)
 
     def _cancelled(self, state: _State) -> LLMError:
         return cancelled(self.ctx, streamed=state.streamed, partial_text=state.text,
@@ -274,13 +363,13 @@ class OpenAIChatBackend:
                     state.error_chunk = chunk
 
     def _consume_call(self, part: dict, state: _State, on_event: OnEvent) -> None:
+        function = part.get("function") or {}
         index = part.get("index")
         if not isinstance(index, int):
-            index = len(state.calls)
+            index = _index_for(part, function, state.calls)
         call = state.calls.setdefault(index, _Call(index))
         if part.get("id"):
             call.id = part["id"]
-        function = part.get("function") or {}
         if function.get("name") and not call.name:
             call.name = function["name"]
         if call.name and not call.started:
