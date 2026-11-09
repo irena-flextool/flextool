@@ -15,7 +15,9 @@ import sys
 from pathlib import Path
 
 import pytest
+import yaml
 
+from flextool.assistant import docs_store
 from flextool.docs_build import (
     PrivateNameError,
     default_private_names_path,
@@ -23,6 +25,7 @@ from flextool.docs_build import (
     scope,
     write_pages,
 )
+from flextool.docs_build.__main__ import main as docs_build_main
 from flextool.docs_build.catalogue import records, stems, unmatched_bullets
 
 REPO = Path(__file__).resolve().parents[2]
@@ -184,3 +187,49 @@ def test_the_sdist_and_the_package_data_carry_the_scope() -> None:
         path = f"assistant/_docs/md/{rel}"
         # setuptools globs do not cross folders: "*" must not match a "/".
         assert any(fnmatch.fnmatch(path, g) and path.count("/") == g.count("/") for g in globs), path
+
+
+def _nav_pages(entries: list) -> list[str]:
+    out: list[str] = []
+    for entry in entries:
+        value = next(iter(entry.values())) if isinstance(entry, dict) else entry
+        out += _nav_pages(value) if isinstance(value, list) else [value]
+    return out
+
+
+def test_every_user_page_of_the_nav_is_in_the_scope() -> None:
+    """The user sections of the mkdocs nav (all but the developer guide, the changelog and the archive) are
+    USER_DOCS plus the generated pages, in the same order (review C2-10: the AI assistant page was missing)."""
+
+    class _Loader(yaml.SafeLoader):
+        pass
+
+    _Loader.add_multi_constructor("tag:yaml.org,2002:python/", lambda loader, suffix, node: None)
+    nav = yaml.load((REPO / "mkdocs.yml").read_text(encoding="utf-8"), Loader=_Loader)["nav"]
+    skipped = {"Developer guide", "Changelog", "Archived"}
+    user = _nav_pages([e for e in nav if not (isinstance(e, dict) and next(iter(e)) in skipped)])
+    assert [p for p in user if p not in scope.GENERATED_PAGES] == list(scope.USER_DOCS)
+
+
+def test_the_command_defaults_to_the_installed_documentation(tmp_path: Path, monkeypatch, capsys) -> None:
+    """Without --docs-dir the command reads ``docs_store.markdown_root()`` (a wheel's packaged copy), not a docs/
+    next to the package; a folder it cannot build from gives one line on stderr and exit 1 (review C2-2)."""
+    packaged = tmp_path / "md"
+    (packaged / "dev").mkdir(parents=True)          # no dev/engine.md: the build cannot read its preamble
+    monkeypatch.setattr(docs_store, "markdown_root", lambda package_dir=docs_store.PACKAGE_DIR: packaged)
+    assert docs_build_main(["--out", str(tmp_path / "out"), "--private-names", str(tmp_path / "absent")]) == 1
+    err = capsys.readouterr().err.strip()
+    assert len(err.splitlines()) == 1 and "Traceback" not in err
+    assert err.startswith("python -m flextool.docs_build: ") and str(packaged / "dev" / "engine.md") in err
+
+    monkeypatch.setattr(docs_store, "markdown_root", lambda package_dir=docs_store.PACKAGE_DIR: None)
+    assert docs_build_main(["--out", str(tmp_path / "out")]) == 1
+    err = capsys.readouterr().err.strip()
+    assert err == ("python -m flextool.docs_build: this installation has no documentation; give its folder "
+                   "with --docs-dir")
+
+    missing = tmp_path / "no_docs"
+    assert docs_build_main(["--out", str(tmp_path / "out"), "--docs-dir", str(missing)]) == 1
+    assert capsys.readouterr().err.strip() == (
+        f"python -m flextool.docs_build: the documentation folder {missing} does not exist")
+    assert not (tmp_path / "out").exists()

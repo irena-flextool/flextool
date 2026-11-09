@@ -1,7 +1,8 @@
 """The documentation the assistant reads and searches, generated on first use and cached per user.
 
-Markdown root (:func:`markdown_root`): a ``flextool`` package that sits in a clone (``mkdocs.yml`` and
-``docs/`` next to it: an editable install, also the Toolbox bundle) reads the clone's ``docs/``; any other
+Markdown root (:func:`markdown_root`): a ``flextool`` package with a ``docs/`` folder next to it that holds the
+scope file ``docs/dev/engine.md`` (``scope.ENGINE_DOC``: a clone, an editable install, also of an unpacked sdist,
+which carries the scope's Markdown but no ``mkdocs.yml``, and the Toolbox bundle) reads that ``docs/``; any other
 install reads the copy the build step put in the package (``flextool/assistant/_docs/md``, from
 ``_flextool_build.py``).  Neither → :data:`NOT_INCLUDED`.
 
@@ -59,9 +60,9 @@ class DocsUnavailable(RuntimeError):
 
 def markdown_root(package_dir: Path = PACKAGE_DIR) -> Path | None:
     """The folder the curated Markdown is read from, or ``None`` when the installation has none."""
-    clone = package_dir.parent
-    if (clone / "mkdocs.yml").is_file() and (clone / "docs").is_dir():
-        return clone / "docs"
+    docs = package_dir.parent / "docs"
+    if (docs / scope.ENGINE_DOC).is_file():
+        return docs
     packaged = package_dir / PACKAGED_MARKDOWN
     if packaged.is_dir():
         return packaged

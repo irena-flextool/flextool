@@ -77,11 +77,19 @@ def test_anchors_are_those_of_the_web_docs() -> None:
 
 
 def test_markdown_root_of_a_clone_and_of_a_packaged_install(tmp_path: Path) -> None:
-    clone = tmp_path / "clone"
-    (clone / "flextool").mkdir(parents=True)
-    (clone / "docs").mkdir()
-    (clone / "mkdocs.yml").write_text("site_name: x\n", encoding="utf-8")
-    assert docs_store.markdown_root(clone / "flextool") == clone / "docs"
+    """A clone, or an unpacked sdist (the scope's Markdown, no mkdocs.yml), is found by the scope file
+    ``docs/dev/engine.md``; a ``docs/`` folder without it is not a clone (review C2-6)."""
+    sdist = tmp_path / "flextool-4.2.2"
+    (sdist / "flextool").mkdir(parents=True)
+    (sdist / "docs" / "dev").mkdir(parents=True)
+    (sdist / "docs" / scope.ENGINE_DOC).write_text("# The engine\n", encoding="utf-8")
+    assert not (sdist / "mkdocs.yml").exists()
+    assert docs_store.markdown_root(sdist / "flextool") == sdist / "docs"
+    other = tmp_path / "other"
+    (other / "flextool").mkdir(parents=True)
+    (other / "docs").mkdir()
+    (other / "mkdocs.yml").write_text("site_name: x\n", encoding="utf-8")
+    assert docs_store.markdown_root(other / "flextool") is None
     site = tmp_path / "site-packages"
     packaged = site / "flextool" / "assistant" / "_docs" / "md"
     packaged.mkdir(parents=True)

@@ -21,6 +21,7 @@ USER_DOCS: tuple[str, ...] = (
     "spine_database.md",
     "excel_interface.md",
     "terminal_workflow.md",
+    "ai_assistant.md",
     "env_vars.md",
     "solvers/index.md",
     "solvers/highs.md",

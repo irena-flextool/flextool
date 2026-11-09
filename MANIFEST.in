@@ -16,6 +16,7 @@ include docs/spine_toolbox.md
 include docs/spine_database.md
 include docs/excel_interface.md
 include docs/terminal_workflow.md
+include docs/ai_assistant.md
 include docs/env_vars.md
 include docs/solvers/index.md
 include docs/solvers/highs.md
