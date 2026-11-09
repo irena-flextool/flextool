@@ -408,8 +408,9 @@ def _eq_cumulative_capacity(b: _Build) -> None:
                 continue
             check_max_cap(rows, cap_dt, axis, True, param_name=param_name)
         else:
-            # Min rows: only the periods an explicit value is given for (a missing min is simply "no
-            # floor", not an error).
+            # Min rows: the periods with a value other than 0 (a min of 0 is no floor).  A period
+            # map that leaves out an investment period never gets here: pass 1b refuses it
+            # (``require_period_coverage``).
             rows = rows_src.join(cap_dt.select(axis, "d").unique(), on=[axis, "d"], how="semi")
             if rows.height == 0:
                 continue
@@ -708,10 +709,11 @@ def _eq_group_invest_cumulative(b: _Build) -> None:
     # the cap at all (any period), restricted to periods the group actually has a candidate
     # (g, d) row for; FA-12 (check_max_cap) then catches a period that same group's own map
     # leaves out — mirrors the entity-level cumulative row (previously this
-    # family had no FA-12 check at all, unlike the entity-level row).  Min rows: only the
-    # periods an explicit value is given for (a missing min is simply "no floor", not an
-    # error).  Capacity invested by earlier solves of a chain is not counted (pre-existing,
-    # separate item).
+    # family had no FA-12 check at all, unlike the entity-level row).  Min rows: the periods
+    # with a value other than 0 (a min of 0 is no floor).  A period map that leaves out an
+    # investment period of the solve cannot reach here: pass 1b refuses it
+    # (``require_period_coverage``).  Capacity invested by earlier solves of a chain is not
+    # counted (pre-existing, separate item).
     # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
     #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
     for name, sense, cap, param_name in (

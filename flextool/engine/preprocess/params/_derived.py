@@ -4491,6 +4491,9 @@ def p_entity_max_units_from_source(source: "InputSource",
                 continue  # defensive; piu is the period_in_use list
             if (e, d) in ed_invest_cumulative:
                 if e in cmc_authors:
+                    # A period map that leaves out an investment period of the solve never gets here:
+                    # pass 1b refuses it (``require_period_coverage``).  The 0.0 is only reached for
+                    # a period the solve does not invest in.
                     v = cmc_map.get((e, d), 0.0)
                 else:
                     # A cumulative_limits entity that never authors
