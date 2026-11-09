@@ -243,6 +243,7 @@ _OPEN: dict[tuple[str, str, str], Conversation] = {}
 _OPEN_GUARD = threading.RLock()
 # Chat numbers counted in memory when nothing is saved (expiry 0), per (root, project key).
 _MEMORY_NUMBERS: dict[tuple[str, str], int] = {}
+_sleep = time.sleep         # an opener's wait for a cleanup's lock (tests replace it)
 
 
 def _warn(text: str) -> None:
@@ -416,13 +417,14 @@ class Store:
             if lock.try_acquire():
                 return lock
             owner = lock.owner()
-            if owner is not None and owner.purpose != "owner" and time.monotonic() < deadline:
-                time.sleep(0.02)
+            # A cleanup lets go within moments; a released lock (Windows: not deleted yet) is broken by the next try.
+            if owner is not None and (owner.purpose != "owner" or owner.released) and time.monotonic() < deadline:
+                _sleep(0.02)
                 continue
             if owner is not None and owner.this_process:
                 return "this_process"
             if owner is None and lock.path.exists() and time.monotonic() < deadline:
-                time.sleep(0.02)        # being written this moment
+                _sleep(0.02)            # being written this moment
                 continue
             if owner is None and not lock.path.exists() and time.monotonic() < deadline:
                 continue                # released in between: try again

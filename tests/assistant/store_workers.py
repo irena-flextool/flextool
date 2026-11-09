@@ -117,3 +117,31 @@ def record_consents(root: str, tag: str, count: int, ready, go, out) -> None:
         route = endpoint.route_for(preset, base_url)
         endpoint.record_consent(endpoint.consent_key(preset.id, base_url, route), Path(root))
     out.put(count)
+
+
+def take_stale_lock(lock_path: str, go, taken, finish, out) -> None:
+    """When *go* is set, take the short lock at *lock_path* (the test has made it older than the stale age), report
+    the new lock's token and keep it until *finish*."""
+    from flextool.assistant._files import LOCK_STALE_AFTER, PidLock
+
+    go.wait(30)
+    lock = PidLock(Path(lock_path), stale_after=LOCK_STALE_AFTER)
+    lock.acquire(10)
+    out.put(lock.token)
+    taken.set()
+    finish.wait(30)
+    lock.release()
+
+
+def new_unsaved_chat(root: str, project: str, ready, finish, out) -> None:
+    """Allocate a chat number and start that chat without saving it (as the window does at a first question);
+    report the number and keep the chat open until *finish*."""
+    from flextool.assistant.store import Store
+
+    store = Store(Path(root))
+    number = store.allocate_chat_number(Path(project))
+    conv = store.new_conversation(Path(project), None, None, number=number)
+    out.put(number)
+    ready.set()
+    finish.wait(30)
+    store.close(conv)

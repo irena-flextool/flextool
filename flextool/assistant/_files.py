@@ -1,9 +1,10 @@
 """The assistant's own files in the user config folder (P1 §10): where they are, how they are written and locked.
 
 Every file is UTF-8 JSON with LF line ends and a ``"format"`` number.  A file is never written in place: the text
-goes to a temp file ``<name>.<pid>.<random>.tmp`` next to it, which then replaces the file (``os.replace``), so a
-reader or a killed writer never sees half a file.  A file of a newer format (written by a newer FlexTool) is read
-but never overwritten (:class:`NewerFormat`).
+goes to a temp file ``<name>.<pid>-<start ms>.<random>.tmp`` next to it, which then replaces the file
+(``os.replace``), so a reader or a killed writer never sees half a file.  A file of a newer format (written by a newer
+FlexTool) is read but never overwritten (:class:`NewerFormat`).  A file found damaged twice in a row, with the same
+bytes, is moved aside as ``<name>.damaged-<unix seconds>-<hex>`` (:func:`quarantine`).
 
 Two kinds of lock file guard what several processes (the terminal chat, the FlexTool window, the agent
 connection) and threads share:
@@ -15,35 +16,53 @@ connection) and threads share:
 
 A lock file holds the owner's process id, its start time and a random token; the token makes a release remove
 only its own lock, and breaking a stale lock is itself serialised (``<lock>.break``), so two processes that both
-find the same stale lock never both take it.  All times are UTC (P1-D11).
+find the same stale lock never both take it; a release removes its lock the same way.  On Windows a file another
+process reads cannot be deleted for that moment: such a call is retried for a bounded time (at most
+:data:`LOCK_TIMEOUT` plus 0.63 s in one operation); a lock that still cannot be removed is marked ``released``
+through the handle its token was checked on (every process then breaks it at once), and when even that write fails a
+background thread tries again for 30 seconds.  All times are UTC (P1-D11).
 
 Only the standard library is imported at module level (``platformdirs`` and ``psutil`` inside functions), so the
 agent connection's start-up purge stays cheap.
 """
 from __future__ import annotations
 
+import atexit
 import contextlib
 import hashlib
 import json
 import os
+import re
 import secrets
 import socket
 import sys
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, TypeVar
 
 FORMAT = 1
 LOCK_TIMEOUT = 2.0          # seconds a writer waits for a short lock
 LOCK_STALE_AFTER = 30.0     # seconds after which a short lock counts as left behind
 _POLL = 0.01
 _BREAK_STALE_AFTER = 5.0    # a break marker older than this was left by a killed breaker
-_WINDOWS_RETRIES = 5        # os.replace on Windows fails while another process reads the target
-_WINDOWS_RETRY_WAIT = 0.05
+_WINDOWS = sys.platform == "win32"
+# On Windows a delete, replace or create fails while another process has the file open (a sharing violation, or a
+# delete still pending): retried after each of these waits (0.63 s in all), then the PermissionError is raised.
+_SHARING_WAITS = (0.01, 0.02, 0.04, 0.08, 0.16, 0.32)
+_SHARING_TOTAL = sum(_SHARING_WAITS)
+_sleep = time.sleep           # tests replace both
+_clock = time.monotonic
+_RETRY_EVERY = 0.05         # a lock that could not be released is tried again this often ...
+_RETRY_FOR = 30.0           # ... for this long (then it is stale for every other process anyway)
+_STABLE_WAIT = 0.05         # a damaged file is looked at again after this wait before it is set aside
+TEMP_ORPHAN_AGE = 60.0      # a temp file whose writer's start time differs is removed only when older than this
+DAMAGED = re.compile(r"^(?P<base>.+)\.damaged-(?P<time>\d+)(?:-[0-9a-f]+)?$")
+
+T = TypeVar("T")
 
 
 class NewerFormat(Exception):
@@ -61,6 +80,14 @@ class UnreadableFile(Exception):
 
     def __init__(self, path: Path, reason: str) -> None:
         super().__init__(f"{path.name} could not be read: {reason}")
+        self.path = path
+
+
+class TransientRead(OSError):
+    """A file that read as damaged once but not twice in a row with the same bytes: left as it is, not written."""
+
+    def __init__(self, path: Path) -> None:
+        super().__init__(f"{path.name} could not be read just now (it was changing); it was left as it is.")
         self.path = path
 
 
@@ -96,17 +123,73 @@ def iso(moment: datetime) -> str:
 
 
 # --- writing ----------------------------------------------------------------------------------------------------
+def _retry_sharing(op: Callable[[], T], *, missing_ok: bool = False, deadline: float | None = None) -> T | None:
+    """Run *op*; on Windows a ``PermissionError`` is retried after each wait of :data:`_SHARING_WAITS` that ends
+    before *deadline* (``time.monotonic``), then raised.  ``FileNotFoundError``: ``None`` with *missing_ok*, else
+    raised.  Not on Windows *op* runs once: a POSIX ``PermissionError`` is a permission problem, not a sharing one."""
+    waits = iter(_SHARING_WAITS if _WINDOWS else ())
+    while True:
+        try:
+            return op()
+        except FileNotFoundError:
+            if missing_ok:
+                return None
+            raise
+        except PermissionError:
+            wait = next(waits, None)
+            if wait is None or (deadline is not None and _clock() + wait > deadline):
+                raise
+            _sleep(wait)
+
+
+def unlink_retrying(path: Path, *, deadline: float | None = None) -> bool:
+    """Delete *path*: ``True`` when removed, ``False`` when it was already gone; the last ``PermissionError`` of
+    the retries (:func:`_retry_sharing`) is raised."""
+    def unlink() -> bool:
+        os.unlink(path)
+        return True
+    return bool(_retry_sharing(unlink, missing_ok=True, deadline=deadline))
+
+
 def temp_name(path: Path) -> Path:
-    """The temp file a writer of *path* uses: ``<name>.<pid>.<random>.tmp`` in the same folder."""
-    return path.with_name(f"{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp")
+    """The temp file a writer of *path* uses: ``<name>.<pid>-<start ms>.<random>.tmp`` in the same folder (``<pid>``
+    alone when the process's start time cannot be read)."""
+    start = _own_start()
+    writer = f"{os.getpid()}-{int(start * 1000)}" if start is not None else str(os.getpid())
+    return path.with_name(f"{path.name}.{writer}.{secrets.token_hex(4)}.tmp")
+
+
+def temp_writer(name: str) -> tuple[int, float | None] | None:
+    """The writer's process id and start time (seconds, ``None`` when the name has none) in a temp file name, or
+    ``None`` for a name that is not one.  Names of both forms (with and without the start time) are read."""
+    parts = name.rsplit(".", 3)
+    if len(parts) != 4 or parts[3] != "tmp":
+        return None
+    pid, dash, start = parts[1].partition("-")
+    if not pid.isdigit() or (dash and not start.isdigit()):
+        return None
+    return int(pid), (int(start) / 1000.0 if dash else None)
 
 
 def temp_writer_pid(name: str) -> int | None:
     """The writer's process id in a temp file name, or ``None`` for a name that is not one."""
-    parts = name.rsplit(".", 3)
-    if len(parts) != 4 or parts[3] != "tmp" or not parts[1].isdigit():
-        return None
-    return int(parts[1])
+    writer = temp_writer(name)
+    return None if writer is None else writer[0]
+
+
+def temp_orphan(path: Path) -> bool:
+    """Whether *path* is a temp file whose writer is gone: its process does not run, or (a reused process id) runs
+    with another start time and the file is older than :data:`TEMP_ORPHAN_AGE` seconds."""
+    writer = temp_writer(path.name)
+    if writer is None:
+        return False
+    pid, started = writer
+    if not pid_alive(pid):
+        return True
+    if started is None or pid_alive(pid, started):
+        return False
+    age = _age(path)
+    return age is not None and age > TEMP_ORPHAN_AGE
 
 
 def _create_temp(path: Path, data: bytes, private: bool) -> Path:
@@ -127,16 +210,12 @@ def _create_temp(path: Path, data: bytes, private: bool) -> Path:
 
 
 def _replace(temp: Path, path: Path) -> None:
-    for attempt in range(_WINDOWS_RETRIES + 1):
-        try:
-            os.replace(temp, path)
-            return
-        except PermissionError:
-            if sys.platform != "win32" or attempt == _WINDOWS_RETRIES:
-                with contextlib.suppress(OSError):
-                    temp.unlink()
-                raise
-            time.sleep(_WINDOWS_RETRY_WAIT)
+    try:
+        _retry_sharing(lambda: os.replace(temp, path))
+    except PermissionError:
+        with contextlib.suppress(OSError):
+            os.unlink(temp)
+        raise
 
 
 def write_text_atomic(path: Path, text: str, *, private: bool = False) -> None:
@@ -162,13 +241,18 @@ def dumps(data: dict[str, Any]) -> str:
     return json.dumps(data, ensure_ascii=False, indent=1) + "\n"
 
 
-def write_json_atomic(path: Path, data: dict[str, Any], *, private: bool = False) -> None:
-    """Write *data* as JSON; refuses (:class:`NewerFormat`) to replace a file of a newer format."""
-    current = read_json(path, missing_ok=True, check_format=False)
-    if current is not None:
-        found = current.get("format")
-        if isinstance(found, int) and found > FORMAT:
-            raise NewerFormat(path, found)
+def write_json_atomic(path: Path, data: dict[str, Any], *, private: bool = False,
+                      format_checked: bool = False) -> None:
+    """Write *data* as JSON; refuses (:class:`NewerFormat`) to replace a file of a newer format, and
+    (:class:`UnreadableFile`) one that is not a JSON object.  *format_checked*: the caller has just read the file
+    under the lock that guards it and checked :func:`is_newer` (or set an unreadable one aside), so it is not
+    parsed again here."""
+    if not format_checked:
+        current = read_json(path, missing_ok=True, check_format=False)
+        if current is not None:
+            found = current.get("format")
+            if isinstance(found, int) and found > FORMAT:
+                raise NewerFormat(path, found)
     write_text_atomic(path, dumps(data), private=private)
 
 
@@ -199,6 +283,40 @@ def is_newer(data: dict[str, Any] | None) -> bool:
     """Whether *data* was written in a newer format than this FlexTool writes."""
     found = None if data is None else data.get("format")
     return isinstance(found, int) and found > FORMAT
+
+
+def _snapshot(path: Path) -> tuple[bytes, int, int] | None:
+    try:
+        before = os.stat(path)
+        data = path.read_bytes()
+    except FileNotFoundError:
+        return None
+    return data, before.st_mtime_ns, before.st_size
+
+
+def quarantine(path: Path, still_damaged: Callable[[bytes], bool]) -> Path:
+    """Move a damaged *path* aside as ``<name>.damaged-<unix seconds>-<4 hex>`` and return the new path.
+
+    Damage is decided on stable evidence only: the file is read twice, :data:`_STABLE_WAIT` apart, and set aside
+    only when both reads give the same bytes with the same modification time and size, and *still_damaged* holds
+    for them.  Otherwise :class:`TransientRead` (an ``OSError``: the caller writes nothing this time).  A move that
+    fails raises its ``OSError`` and leaves the file in place; the caller never writes over it then."""
+    first = _snapshot(path)
+    _sleep(_STABLE_WAIT)
+    second = _snapshot(path)
+    if first is None or first != second or not still_damaged(second[0]):
+        raise TransientRead(path)
+    aside = path.with_name(f"{path.name}.damaged-{int(time.time())}-{secrets.token_hex(2)}")
+    _retry_sharing(lambda: os.replace(path, aside))
+    return aside
+
+
+def not_a_json_object(raw: bytes) -> bool:
+    """Whether *raw* is not UTF-8 JSON text of an object (what :func:`read_json` refuses)."""
+    try:
+        return not isinstance(json.loads(raw.decode("utf-8")), dict)
+    except ValueError:
+        return True
 
 
 # --- processes ---------------------------------------------------------------------------------------------------
@@ -279,6 +397,7 @@ class LockOwner:
     started: float | None
     token: str
     purpose: str = "owner"      # "owner", or a short cleanup ("purge", "delete", "rename", "forget")
+    released: bool = False      # let go, but the file could not be deleted yet (Windows): stale for everyone
 
     @property
     def this_process(self) -> bool:
@@ -291,57 +410,202 @@ class LockOwner:
         return pid_alive(self.pid, self.started)
 
 
-def read_owner(lock_path: Path) -> tuple[LockOwner | None, str | None]:
-    """The owner of *lock_path* and the file's raw text; ``(None, None)`` when there is no lock file."""
+def _parse_owner(raw: str) -> LockOwner | None:
     try:
-        raw = lock_path.read_text(encoding="utf-8")
+        data = json.loads(raw)
+        return LockOwner(int(data["pid"]), str(data["host"]),
+                         float(data["started"]) if data.get("started") is not None else None, str(data["token"]),
+                         str(data.get("purpose") or "owner"), data.get("released") is True)
+    except (ValueError, KeyError, TypeError, AttributeError):
+        # Being written right now (created but not yet filled), or damaged: the caller judges it by its age.
+        return None
+
+
+def _read_lock_text(lock_path: Path) -> str:
+    return lock_path.read_text(encoding="utf-8", errors="replace")
+
+
+def read_owner(lock_path: Path, *, retry: bool = False, deadline: float | None = None
+               ) -> tuple[LockOwner | None, str | None]:
+    """The owner of *lock_path* and the file's raw text; ``(None, None)`` when there is no lock file and
+    ``(None, "")`` when it cannot be read.  *retry*: a Windows sharing violation is retried
+    (:func:`_retry_sharing`) before it counts as unreadable (not inside a polling loop, which retries anyway)."""
+    try:
+        raw = _retry_sharing(lambda: _read_lock_text(lock_path), deadline=deadline) if retry \
+            else _read_lock_text(lock_path)
     except FileNotFoundError:
         return None, None
     except OSError:
         return None, ""
-    try:
-        data = json.loads(raw)
-        owner = LockOwner(int(data["pid"]), str(data["host"]),
-                          float(data["started"]) if data.get("started") is not None else None, str(data["token"]),
-                          str(data.get("purpose") or "owner"))
-    except (ValueError, KeyError, TypeError):
-        # Being written right now (created but not yet filled), or damaged: the caller judges it by its age.
-        return None, raw
-    return owner, raw
+    assert raw is not None
+    return _parse_owner(raw), raw
 
 
 def _age(path: Path) -> float | None:
     try:
         return time.time() - path.stat().st_mtime
-    except FileNotFoundError:
+    except OSError:
         return None
 
 
-def _break_stale(lock_path: Path, seen: str) -> None:
-    """Remove *lock_path* if it still holds exactly *seen*, serialised with every other breaker of this lock."""
+RemoveResult = Literal["removed", "changed", "busy"]
+
+
+def _remove_if_same(lock_path: Path, seen: str, deadline: float | None = None) -> RemoveResult:
+    """Remove *lock_path* if it still holds exactly *seen*, serialised with every other breaker (and releaser) of
+    this lock through ``<lock>.break``: ``"removed"`` (also when it was gone), ``"changed"`` (it holds something
+    else now: left alone), ``"busy"`` (another breaker is at it, or Windows would not let go of the file)."""
     marker = lock_path.with_name(lock_path.name + ".break")
     try:
         fd = os.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o666)
     except FileExistsError:
         age = _age(marker)
         if age is not None and age > _BREAK_STALE_AFTER:
-            with contextlib.suppress(FileNotFoundError):
-                marker.unlink()
-        return
+            with contextlib.suppress(OSError):
+                unlink_retrying(marker, deadline=deadline)
+        return "busy"
     except FileNotFoundError:
-        return
+        return "removed"        # the folder is gone, and the lock with it
+    except PermissionError:
+        if not _WINDOWS:
+            raise
+        return "busy"           # a marker being deleted this moment
     os.close(fd)
     try:
         try:
-            current = lock_path.read_text(encoding="utf-8")
+            current = _retry_sharing(lambda: _read_lock_text(lock_path), deadline=deadline)
         except FileNotFoundError:
-            return
-        if current == seen:
-            with contextlib.suppress(FileNotFoundError):
-                lock_path.unlink()
+            return "removed"
+        except PermissionError:
+            return "busy"
+        if current != seen:
+            return "changed"
+        try:
+            unlink_retrying(lock_path, deadline=deadline)
+        except PermissionError:
+            return "busy"
+        return "removed"
     finally:
-        with contextlib.suppress(FileNotFoundError):
-            marker.unlink()
+        with contextlib.suppress(OSError):      # a marker left behind is taken over after 5 s
+            unlink_retrying(marker, deadline=deadline)
+
+
+def _break_stale(lock_path: Path, seen: str, deadline: float | None = None) -> None:
+    """Remove the stale *lock_path* if it still holds exactly *seen* (:func:`_remove_if_same`)."""
+    _remove_if_same(lock_path, seen, deadline)
+
+
+def _read_fd(fd: int) -> str:
+    os.lseek(fd, 0, os.SEEK_SET)
+    chunks = []
+    while True:
+        chunk = os.read(fd, 65536)
+        if not chunk:
+            return b"".join(chunks).decode("utf-8", errors="replace")
+        chunks.append(chunk)
+
+
+def _mark_released(lock_path: Path, token: str, deadline: float | None) -> bool:
+    """Mark the lock of *token* released in place, so every process breaks it at once; ``True`` when *lock_path*
+    is no live lock of *token* any more (marked, gone, or another owner's, which is left untouched), ``False``
+    when it could not even be opened or written.
+
+    The token is checked and the mark written through one handle, so both act on the same file: a lock that was
+    broken and taken by another owner in between is a different file, never written over."""
+    flags = os.O_RDWR | getattr(os, "O_BINARY", 0)
+    try:
+        fd = _retry_sharing(lambda: os.open(lock_path, flags), missing_ok=True, deadline=deadline)
+    except OSError:
+        return False
+    if fd is None:
+        return True
+    try:
+        raw = _read_fd(fd)
+        owner = _parse_owner(raw)
+        if owner is None or owner.token != token:
+            return True             # another owner's lock (or one being written this moment): not ours
+        if owner.released:
+            return True
+        data = json.loads(raw)
+        data["released"] = True
+        os.ftruncate(fd, 0)
+        os.lseek(fd, 0, os.SEEK_SET)
+        os.write(fd, json.dumps(data).encode("utf-8"))
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(fd)
+
+
+def _release_owned(lock_path: Path, token: str, deadline: float | None) -> bool:
+    """Remove the lock of *token* (only while the file still holds that token), else mark it released;
+    ``True`` when nothing more is to be done, ``False`` when it should be tried again."""
+    owner, raw = read_owner(lock_path, retry=True, deadline=deadline)
+    if raw is None:
+        return True                 # gone
+    if owner is not None:
+        if owner.token != token:
+            return True             # broken as stale and taken by another owner since: not ours
+        if _remove_if_same(lock_path, raw, deadline) != "busy":
+            return True
+    return _mark_released(lock_path, token, deadline)
+
+
+# Locks this process let go of but could neither remove nor mark released: (normcase path, token) -> (path, the
+# monotonic time to give up).  A daemon thread retries them; a last try at exit.
+_PENDING: dict[tuple[str, str], tuple[Path, float]] = {}
+_PENDING_GUARD = threading.Lock()
+_PENDING_THREAD: threading.Thread | None = None
+
+
+def _queue_release(lock_path: Path, token: str) -> None:
+    with _PENDING_GUARD:
+        _PENDING[(os.path.normcase(str(lock_path)), token)] = (lock_path, _clock() + _RETRY_FOR)
+    _start_retry_thread()
+
+
+def retry_pending_releases() -> int:
+    """One more try (no waiting) at each lock this process could not release; returns how many are left."""
+    with _PENDING_GUARD:
+        items = list(_PENDING.items())
+    for key, (path, give_up) in items:
+        try:
+            done = _release_owned(path, key[1], deadline=_clock())
+        except OSError:
+            done = False
+        if done or _clock() > give_up:
+            if not done:
+                print(f"Warning: the lock file {path.name} could not be removed; other FlexTool windows treat it as "
+                      "left behind once it is old.", file=sys.stderr)
+            with _PENDING_GUARD:
+                _PENDING.pop(key, None)
+    with _PENDING_GUARD:
+        return len(_PENDING)
+
+
+def _retry_loop() -> None:
+    global _PENDING_THREAD
+    wait = threading.Event()
+    while True:
+        wait.wait(_RETRY_EVERY)
+        retry_pending_releases()
+        with _PENDING_GUARD:
+            if not _PENDING:
+                _PENDING_THREAD = None
+                return
+
+
+def _start_retry_thread() -> None:
+    global _PENDING_THREAD
+    with _PENDING_GUARD:
+        if _PENDING_THREAD is not None:
+            return
+        _PENDING_THREAD = threading.Thread(target=_retry_loop, name="flextool-lock-release", daemon=True)
+        _PENDING_THREAD.start()
+
+
+atexit.register(retry_pending_releases)
 
 
 class PidLock:
@@ -349,19 +613,23 @@ class PidLock:
 
     :meth:`try_acquire` takes the lock if it is free or stale; *stale_after* (seconds) makes an old lock stale
     even when its process runs (``None``: only a gone process makes it stale).  *purpose* tells a process that
-    finds the lock taken whether an owner holds it or a cleanup that lets go within moments.
+    finds the lock taken whether an owner holds it or a cleanup that lets go within moments.  *extra* adds fields
+    to the lock file (a conversation's chat number, read by :meth:`Store._seed_number`).
     """
 
-    def __init__(self, lock_path: Path, *, stale_after: float | None = None, purpose: str = "owner") -> None:
+    def __init__(self, lock_path: Path, *, stale_after: float | None = None, purpose: str = "owner",
+                 extra: Mapping[str, Any] | None = None) -> None:
         self.path = lock_path
         self.stale_after = stale_after
         self.purpose = purpose
+        self.extra = dict(extra or {})
         self.token: str | None = None
+        self._deadline: float | None = None     # set by acquire: bounds the Windows retries of each try
 
     def _content(self) -> str:
         assert self.token is not None
-        return json.dumps({"pid": os.getpid(), "host": _HOST, "started": _own_start(), "token": self.token,
-                           "purpose": self.purpose})
+        return json.dumps({**self.extra, "pid": os.getpid(), "host": _HOST, "started": _own_start(),
+                           "token": self.token, "purpose": self.purpose})
 
     def owner(self) -> LockOwner | None:
         return read_owner(self.path)[0]
@@ -373,12 +641,16 @@ class PidLock:
         if owner is None:
             # A lock file without a readable owner is being written (milliseconds) or was left half-written.
             return age is not None and age > 1.0
+        if owner.released:
+            return True
         if self.stale_after is not None and age is not None and age > self.stale_after:
             return True
         return not owner.alive()
 
     def try_acquire(self) -> bool:
-        """Take the lock: ``True`` when this process now holds it."""
+        """Take the lock: ``True`` when this process now holds it.  On Windows a lock file that is being deleted
+        (or read) this moment counts as taken; the caller's poll tries again."""
+        deadline = self._deadline if self._deadline is not None else _clock() + _SHARING_TOTAL
         for _ in range(2):
             self.token = secrets.token_hex(8)
             content = self._content().encode("utf-8")
@@ -388,12 +660,17 @@ class PidLock:
             except FileExistsError:
                 owner, raw = read_owner(self.path)
                 if raw is not None and self.is_stale(owner, raw):
-                    _break_stale(self.path, raw)
+                    _break_stale(self.path, raw, deadline)
                     continue
                 self.token = None
                 return False
             except FileNotFoundError:
                 continue        # the folder was removed between mkdir and open; once more
+            except PermissionError:
+                self.token = None
+                if not _WINDOWS:
+                    raise
+                return False
             try:
                 os.write(fd, content)
             finally:
@@ -403,30 +680,34 @@ class PidLock:
         return False
 
     def acquire(self, timeout: float = LOCK_TIMEOUT) -> None:
-        deadline = time.monotonic() + timeout
-        while not self.try_acquire():
-            if time.monotonic() >= deadline:
-                raise LockTimeout(self.path)
-            time.sleep(_POLL)
+        deadline = _clock() + timeout
+        self._deadline = deadline
+        try:
+            while not self.try_acquire():
+                if _clock() >= deadline:
+                    raise LockTimeout(self.path)
+                _sleep(_POLL)
+        finally:
+            self._deadline = None
 
     def held(self) -> bool:
         """Whether this object still holds its lock (the file holds its token)."""
         if self.token is None:
             return False
-        owner = self.owner()
-        return owner is not None and owner.token == self.token
+        owner = read_owner(self.path, retry=True)[0]
+        return owner is not None and owner.token == self.token and not owner.released
 
     def release(self) -> None:
-        """Remove the lock file if it is still this object's lock."""
-        if self.token is None:
+        """Remove the lock file if it is still this object's lock; never raises.  When Windows does not let go of
+        the file it is marked released in place, and when even that fails it is tried again in the background."""
+        token, self.token = self.token, None
+        if token is None:
             return
         try:
-            if self.held():
-                self.path.unlink()
-        except FileNotFoundError:
-            pass
-        finally:
-            self.token = None
+            if not _release_owned(self.path, token, _clock() + _SHARING_TOTAL):
+                _queue_release(self.path, token)
+        except OSError as exc:
+            print(f"Warning: the lock file {self.path.name} could not be removed: {exc}", file=sys.stderr)
 
 
 # One threading lock per locked path in this process: threads of one process queue here first, so they do not
