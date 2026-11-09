@@ -2170,18 +2170,24 @@ def _validate_cross_region_connections(data: FlexData, cross: pl.DataFrame,
 
 def _warn_integer_region(region: str, rdata: FlexData) -> None:
     """Warn when a region subproblem has integer columns (binary online status, exact direction switch): the
-    Benders cuts use the subproblem's duals, which are not valid for a mixed-integer subproblem."""
+    Benders cuts use the subproblem's duals, which are not valid for a mixed-integer subproblem.  Quiet when the
+    solve's ``reduce_unit_detail_method`` relaxes integers (``relax_integrality``: the binary online columns are
+    continuous, and ``process_exact`` is already cleared)."""
     pss = getattr(rdata, "process_source_sink", None)
     in_region = ({str(p) for p in pss.get_column("p").to_list()} if pss is not None and pss.height > 0 else set())
-    names = sorted(in_region & {str(p) for f in (getattr(rdata, "process_online_integer", None),
-                                                 getattr(rdata, "process_exact", None))
+    integer_sets = [getattr(rdata, "process_exact", None)]
+    if not getattr(rdata, "relax_integrality", False):
+        integer_sets.append(getattr(rdata, "process_online_integer", None))
+    names = sorted(in_region & {str(p) for f in integer_sets
                                 if f is not None and f.height > 0 for p in f.get_column("p").to_list()})
     if names:
-        _logger.warning(
-            "Benders: region %s has integer variables (binary startup_method or exact transfer method: %s). "
-            "Benders cuts come from the duals of the region subproblem, which are not valid for a mixed-integer "
-            "subproblem; the decomposition may stop at a wrong solution. Use startup_method linear and a "
-            "non-exact transfer method in decomposed regions.", region, ", ".join(names))
+        msg = (f"Benders: region {region} has integer variables (binary startup_method or exact transfer method: "
+               f"{', '.join(names)}). Benders cuts come from the duals of the region subproblem, which are not "
+               "valid for a mixed-integer subproblem; the decomposition may stop at a wrong solution. Set "
+               "reduce_unit_detail_method = integers (or a level that contains it) on the solve to solve the "
+               "regions as LPs, or use startup_method linear and a non-exact transfer method in decomposed regions.")
+        _logger.warning(msg)
+        print(f"Warning: {msg}", flush=True)
 
 
 def split(

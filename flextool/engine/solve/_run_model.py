@@ -1587,10 +1587,14 @@ def native_run_model(state, solver) -> int:
             sub_solve_provider.put(
                 _key, _routed_state if _routed_state is not None
                 else _provider_translators._empty_handoff_frame(_key))
+        _step_carriers = carry_router.step_carriers(solve, _first_step)
         _provider_translators.translate_handoff_to_provider(
-            _carry_routing.RoutedCarriers(carry_router.step_carriers(solve, _first_step)), sub_solve_provider,
+            _carry_routing.RoutedCarriers(_step_carriers), sub_solve_provider,
             fields=frozenset(_carry_routing.STEP_FIELDS),
         )
+        # The routed carriers' producer level: a solve that keeps online variables starts the ramp and the
+        # commitment of its online units cold when the producer left them out (preprocess._reduce_detail).
+        state.current_carry_unit_detail = _step_carriers["unit_detail"]
         # Phase 5b — external overrides shadow handoff via the
         # ``override/*`` Provider layer.  The callable is set by
         # external code wrapping the runner (file-watch / ZeroMQ /

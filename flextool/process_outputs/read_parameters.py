@@ -1738,6 +1738,19 @@ def _has_solve_level(obj) -> bool:
     return False
 
 
+def read_parameters_static(flex_data: "FlexData", solution, *, solve_name: str = "solve") -> SimpleNamespace:
+    """:func:`read_parameters` of ``flex_data``, with the static parameters of its output static view when the
+    cascade reduced its detail (``read_sets.with_static_attrs``); the plain :func:`read_parameters` otherwise."""
+    from flextool.engine.preprocess._reduce_detail import static_data
+    from flextool.process_outputs.read_sets import with_static_attrs
+
+    ns = read_parameters(flex_data, solution, solve_name=solve_name)
+    view = static_data(flex_data)
+    if view is flex_data:
+        return ns
+    return with_static_attrs(ns, read_parameters(view, solution, solve_name=solve_name), _has_solve_level)
+
+
 def read_parameters_multi(
     steps: "list[tuple[str, FlexData, Solution]] | list[tuple[str, FlexData]]",
     solution: "Solution | None" = None,
@@ -1785,8 +1798,10 @@ def read_parameters_multi(
 
     per_step = [
         (s[0], read_parameters(s[1], _step_solution(s), solve_name=s[0]))
-        for s in steps
+        for s in steps[:-1]
     ]
+    per_step.append((steps[-1][0], read_parameters_static(steps[-1][1], _step_solution(steps[-1]),
+                                                          solve_name=steps[-1][0])))
     last_ns = per_step[-1][1]
     if len(per_step) == 1:
         return last_ns

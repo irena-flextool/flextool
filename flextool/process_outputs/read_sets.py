@@ -1249,6 +1249,35 @@ def _series_or_df_has_solve(obj) -> bool:
     return False
 
 
+def _set_is_solve_keyed(obj) -> bool:
+    return _multi_index_has_solve(obj) or _series_or_df_has_solve(obj)
+
+
+def with_static_attrs(ns: SimpleNamespace, static_ns: SimpleNamespace, solve_keyed) -> SimpleNamespace:
+    """``ns`` with every attribute that is not solve-keyed (``solve_keyed(value)`` False) taken from ``static_ns``.
+
+    The static sets / parameters of a sub-solve whose ``reduce_*_detail_method`` reduced its data come from its
+    pre-transform data (``preprocess._reduce_detail.output_static_view``), the solve-keyed ones from the reduced
+    data, so a reduced last solve does not erase the tables of earlier full solves."""
+    out = SimpleNamespace()
+    for attr, value in vars(ns).items():
+        setattr(out, attr, value if solve_keyed(value) or not hasattr(static_ns, attr)
+                else getattr(static_ns, attr))
+    return out
+
+
+def read_sets_static(flex_data: "FlexData", solution, *, solve_name: str = "solve") -> SimpleNamespace:
+    """:func:`read_sets` of ``flex_data``, with the static sets of its output static view when the cascade reduced
+    its detail (:func:`with_static_attrs`); the plain :func:`read_sets` otherwise."""
+    from flextool.engine.preprocess._reduce_detail import static_data
+
+    ns = read_sets(flex_data, solution, solve_name=solve_name)
+    view = static_data(flex_data)
+    if view is flex_data:
+        return ns
+    return with_static_attrs(ns, read_sets(view, solution, solve_name=solve_name), _set_is_solve_keyed)
+
+
 def read_sets_multi(
     steps: "list[tuple[str, FlexData, Solution]] | list[tuple[str, FlexData]]",
     solution: "Solution | None" = None,
@@ -1260,7 +1289,8 @@ def read_sets_multi(
     (``period``, ``dt``, ``d_realized_period``, ``dt_realize_dispatch``,
     ``d_realize_invest``, ``ed_invest``, ``dtttdt``, etc.) are unioned
     across sub-solves; static set attributes (``node``, ``process``,
-    ``upDown``, …) are taken from the last step (invariant).
+    ``upDown``, …) are taken from the last step (invariant), from its
+    pre-transform data when its detail was reduced (:func:`read_sets_static`).
     """
     if not steps:
         raise ValueError("read_sets_multi: steps must be non-empty")
@@ -1277,8 +1307,10 @@ def read_sets_multi(
 
     per_step = [
         (s[0], read_sets(s[1], _step_solution(s), solve_name=s[0]))
-        for s in steps
+        for s in steps[:-1]
     ]
+    per_step.append((steps[-1][0], read_sets_static(steps[-1][1], _step_solution(steps[-1]),
+                                                    solve_name=steps[-1][0])))
     last_ns = per_step[-1][1]
     if len(per_step) == 1:
         return last_ns

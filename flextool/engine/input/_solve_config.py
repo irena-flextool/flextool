@@ -1140,6 +1140,28 @@ class SolveConfig:
                 f"solve '{owner}': {param} = '{raw}' is not one of {', '.join(valid)}.")
         return value
 
+    def reduce_detail_overridden(self, realization_solve: str) -> list[str]:
+        """The levels an author set on the realization solve *realization_solve* that its parent's levels override
+        (one line per parameter whose authored value differs from the parent's): a realization solve pins units
+        online and reserves to its parent's values, so it uses the parent's levels.  Empty when it sets none, or
+        the same."""
+        parent = self.realized_dispatch_parent.get(realization_solve)
+        if parent is None:
+            return []
+        out = []
+        for param, values, resolve in (
+                ("reduce_unit_detail_method", self.reduce_unit_detail_method, self.reduce_unit_detail_for),
+                ("reduce_system_detail_method", self.reduce_system_detail_method, self.reduce_system_detail_for)):
+            raw = values.get(realization_solve)
+            if raw is None or str(raw).strip() == "":
+                continue
+            own, used = str(raw).strip().lower(), resolve(realization_solve)
+            if own != used:
+                out.append(f"realization solve '{realization_solve}' sets {param} = '{raw}', but it uses "
+                           f"'{used}', the value of its parent solve '{parent}' (it takes the parent's units "
+                           "online and reserves).")
+        return out
+
     def reduce_unit_detail_for(self, solve_name: str) -> str:
         """Resolve ``solve.reduce_unit_detail_method`` for *solve_name* (a roll ``<solve>_roll_N`` and a
         realization solve take the base solve's / the parent's value).  ``"none"`` when not authored."""

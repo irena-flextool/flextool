@@ -10,10 +10,20 @@
   part load), ramp limits apply to the capacity, and a user constraint with a `constraint_online_coeff` term is
   left out of the solve, with a warning naming it. *online_ramps* is *online* without ramps. A level never adds
   detail. Every roll of a rolling solve uses the solve's level, and a realization solve uses its parent solve's
-  levels, whatever is set on the realization solve itself. The companion
-  `reduce_system_detail_method` (reserves, inertia, non-synchronous limits, DC power flow) is added to the
-  database in the same version. Databases are migrated automatically; models that do not set the parameters are
-  unchanged.
+  levels, whatever is set on the realization solve itself (a warning names a different value set on a declared
+  realization solve). Databases are migrated automatically; models that do not set the parameters are unchanged.
+- **New: a solve can leave out system detail (`reduce_system_detail_method`, database version 81).** *reserves*
+  leaves out the reserve requirements (and with them the units' reserve limits and the reserve ties of a
+  stochastic solve), *inertia* the inertia limits, *non_synchronous* the non-synchronous share limits, and
+  *dc_power_flow* the angles of `dc_power_flow_with_angles` groups: their lines become lossless transport limited
+  by their capacity, so loop flows disappear. *inertia_non_synchronous*, *reserves_inertia_non_synchronous* and
+  *reserves_inertia_non_synchronous_dc_power_flow* combine them. The capacity margin is always kept. An
+  investment solve without reserves invests less in flexible capacity. With either parameter set, the result
+  tables of earlier full solves keep their online, reserve, inertia and DC columns when a later solve leaves them
+  out, a dispatch solve that continues the ramp of a solve without online variables starts its commitment and
+  ramp cold (an info line) instead of stopping, and a Benders decomposition can split connections whose reserve,
+  online variables or `exact` method the solve leaves out (its warning about integer variables now points to
+  *integers*).
 - **New: `ramp_cost` is charged (database version 80).** A unit flow with `ramp_method` *ramp_cost* or *both* pays
   `ramp_cost` [CUR/MW] for every MW its step-average flow changes from the previous time step, up and down alike.
   A change is an event, like a start-up, so the step length does not enter: ramping 0 → X → 0 costs

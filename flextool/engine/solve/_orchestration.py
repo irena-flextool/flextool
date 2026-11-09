@@ -1935,6 +1935,13 @@ def _spawn_realized_dispatch_siblings(
                     "registered author-declared realization solve '%s' for "
                     "stochastic solve '%s'", configured, p,
                 )
+            # A realization solve takes its parent's detail levels (it pins
+            # the parent's units online and reserves): name an authored
+            # value that is overridden.
+            for _line in solve_cfg.reduce_detail_overridden(configured):
+                if logger is not None:
+                    logger.warning(_line)
+                print(f"Warning: {_line}", flush=True)
             continue
         if not _realization.designation_reaches_committed_window(solve_cfg, p):
             continue
@@ -3131,16 +3138,23 @@ def _drive_cascade(
             # realization checks, Benders, the cold / warm build, the handoff
             # and the outputs — reads the reduced data.  A roll and a
             # realization solve take their base / parent solve's levels.
-            from flextool.engine.preprocess._reduce_detail import apply_reduce_detail
+            from flextool.engine.preprocess._reduce_detail import (
+                apply_reduce_detail,
+                cold_start_online_flow_carry,
+                output_static_view,
+                unit_parts,
+            )
             from flextool.engine.preprocess.params._ramp_links import check_online_ramp_carry
+            _unit_level = self.state.solve.reduce_unit_detail_for(complete_solve_name)
+            _unreduced = data
             data, _reduce_report = apply_reduce_detail(
                 data,
-                self.state.solve.reduce_unit_detail_for(complete_solve_name),
+                _unit_level,
                 self.state.solve.reduce_system_detail_for(complete_solve_name),
             )
+            _reduce_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
             if _reduce_report.warnings:
                 _warned = self.__dict__.setdefault("_reduce_detail_warned", set())
-                _reduce_base = re.sub(r"_roll_\d+$", "", complete_solve_name)
                 # One warning per chain: a realization solve repeats its parent's.
                 _warn_key = (getattr(self.state.solve, "realized_dispatch_parent", {}) or {}).get(
                     _reduce_base, _reduce_base)
@@ -3149,6 +3163,31 @@ def _drive_cascade(
                     for _line in _reduce_report.warnings:
                         self.state.logger.warning("Solve %s: %s", _reduce_base, _line)
                         print(f"Warning: solve {_reduce_base}: {_line}", flush=True)
+            # The outputs read static sets from the last sub-solve: give
+            # them the pre-transform data, except the fields every
+            # sub-solve so far reduced, so a reduced solve never erases the
+            # tables of a full one (_reduce_detail.output_static_view).
+            _everywhere = self.__dict__.get("_reduce_everywhere")
+            _everywhere = (_reduce_report.fields if _everywhere is None
+                           else _everywhere & _reduce_report.fields)
+            self._reduce_everywhere = _everywhere
+            if data is not _unreduced:
+                data.output_static_data = output_static_view(data, _unreduced, _everywhere)
+            # A ramp-carry flow from a producer that left out online
+            # variables has no online carry: those online units start
+            # their ramp and commitment cold (the carry routing is kept).
+            if "online" in unit_parts(getattr(self.state, "current_carry_unit_detail", "none") or "none"):
+                data, _cold = cold_start_online_flow_carry(data)
+                if _cold:
+                    _cold_msg = (
+                        f"Solve {complete_solve_name}: ramp and commitment of {', '.join(_cold)} start cold "
+                        "(the solve it continues from left out online variables, "
+                        "reduce_unit_detail_method).")
+                    self.state.logger.info(_cold_msg)
+                    _cold_seen = self.__dict__.setdefault("_reduce_cold_printed", set())
+                    if _reduce_base not in _cold_seen:
+                        _cold_seen.add(_reduce_base)
+                        print(_cold_msg, flush=True)
             # The online carry and the ramp carry / ramp link must agree on the
             # reduced sets (params._ramp_links): raise instead of silently
             # falling back to a predecessor of 0.
@@ -4302,6 +4341,9 @@ def _drive_cascade(
                     seconds=time.perf_counter() - _t_bhf_start,
                     t_start=_t_bhf_start,
                 )
+            # The producer's unit level travels with the routed carriers
+            # (a later solve that keeps online variables starts cold).
+            handoff.unit_detail = _unit_level
             # Deposit so the next iteration's translator picks it up
             # AND we have it for the result dict.
             self.state.handoffs[complete_solve_name] = handoff

@@ -26,8 +26,22 @@ Unit detail (``reduce_unit_detail_method``; the parts each value takes are in :d
 The carried roll-end flow is kept under ``integers`` / ``online`` without ``ramps``: the ramp limits and the ramp
 cost still need it at a continuation roll's first step.
 
-System detail (``reduce_system_detail_method``) is parsed and validated (:func:`system_parts`) and recorded in the
-report; this module changes no system field.
+System detail (``reduce_system_detail_method``; the value is its parts joined in the fixed order of
+:data:`SYSTEM_TOKENS`, :func:`system_parts`):
+
+* ``reserves`` — every reserve field (:data:`RESERVE_FIELDS`): the reserve groups (the gate of every reserve row),
+  the per-process reserve sets and parameters, the realization pin ``p_fix_reserve`` and with them the reserve
+  non-anticipativity ties.  The units' coupling to reserves (maxFlow, the floors, the ramp reserve rows) is gated
+  on the reserve variables and drops out.
+* ``inertia`` — the inertia groups, arcs, constants, limits and penalties (:data:`INERTIA_FIELDS`).
+* ``non_synchronous`` — the non-synchronous groups, arcs, limits and penalties (:data:`NON_SYNC_FIELDS`).
+* ``dc_power_flow`` — the angle model (:data:`DC_FIELDS`).  The lines of a ``dc_power_flow_with_angles`` group were
+  given ``no_losses_no_variable_cost`` by the input derivation, so they keep their two-way flow, capacity and
+  node-balance terms: lossless transport limited by their capacity.
+
+The capacity margin is never reduced.  The report's ``notes`` name the interactions of the two levels (units whose
+reserve now comes from built capacity, inertia groups counted from flows, downward reserve reaching down to zero
+flow).
 """
 from __future__ import annotations
 
@@ -80,6 +94,34 @@ ONLINE_FIELDS: tuple[str, ...] = (
     "pdt_online_linear", "pdt_online_integer", "p_roll_continue_online", "dt_online_carry", "p_fix_online",
 )
 
+#: FlexData fields cleared (set to None) by each system part.
+RESERVE_FIELDS: tuple[str, ...] = (
+    "reserve_upDown_group", "reserve_upDown_group_method_timeseries", "reserve_upDown_group_method_dynamic",
+    "reserve_upDown_group_method_n_1", "prundt", "process_reserve_upDown_node_active", "p_fix_reserve",
+    "process_reserve_upDown_node_increase_reserve_ratio", "process_reserve_upDown_node_large_failure_ratio",
+    "p_process_reserve_upDown_node_reliability", "pdtReserve_upDown_group_reservation",
+    "p_reserve_upDown_group_penalty_reserve", "p_reserve_upDown_group_reserve_duration",
+    "p_reserve_upDown_group_increase_reserve_ratio", "p_process_reserve_upDown_node_max_share",
+    "p_process_reserve_upDown_node_large_failure_ratio_value",
+    "p_process_reserve_upDown_node_increase_reserve_ratio_value",
+)
+INERTIA_FIELDS: tuple[str, ...] = (
+    "groupInertia", "process_sink_inertia", "process_source_inertia", "pdGroup_inertia_limit",
+    "pdGroup_penalty_inertia", "p_process_sink_inertia_constant", "p_process_source_inertia_constant",
+)
+NON_SYNC_FIELDS: tuple[str, ...] = (
+    "groupNonSync", "process_sink_nonSync", "process_group_inside_nonSync", "pdGroup_non_synchronous_limit",
+    "pdGroup_penalty_non_synchronous",
+)
+DC_FIELDS: tuple[str, ...] = (
+    "node_dc_power_flow", "connection_dc_power_flow", "node_reference_angle", "p_connection_susceptance",
+    "process_source_toSink_dc",
+)
+SYSTEM_FIELDS: dict[str, tuple[str, ...]] = {
+    "reserves": RESERVE_FIELDS, "inertia": INERTIA_FIELDS, "non_synchronous": NON_SYNC_FIELDS,
+    "dc_power_flow": DC_FIELDS,
+}
+
 
 @dataclasses.dataclass
 class ReduceReport:
@@ -89,9 +131,15 @@ class ReduceReport:
     ``user_constraints``) it was left out for; only features with something left out appear.  Keys: ``integer_online``
     (binary units / connections now continuous), ``exact`` (exact connections now regular), ``ramp_limits``,
     ``ramp_costs``, ``min_load``, ``capacity_min_coeff``, ``min_up_down``, ``online``, ``min_load_efficiency``
-    (folded to full-load efficiency), ``user_constraints`` (left out whole).  ``notes``: interaction facts for the
-    run log (``fractional_online_constraints``: user constraints that now count fractional units online).
-    ``warnings``: the lines to log as warnings (a user constraint left out).
+    (folded to full-load efficiency), ``user_constraints`` (left out whole); system keys ``reserves`` (the reserve
+    groups as ``reserve__upDown__group``), ``inertia`` / ``non_synchronous`` (the groups), ``dc_power_flow`` (the
+    connections now lossless transport).  ``notes``: interaction facts for the run log, each present only when both
+    sides are in the solve: ``fractional_online_constraints`` (user constraints that now count fractional units
+    online), ``reserves_from_capacity`` (units / connections left without online variables that keep a reserve:
+    it now comes from built capacity, not online capacity), ``inertia_from_flows`` (inertia groups whose providers
+    lost their online variables: inertia is counted from flows), ``downward_reserve_to_zero`` (processes left
+    without min load that keep a downward reserve: it now reaches down to zero flow).  ``warnings``: the lines to
+    log as warnings (a user constraint left out).  ``fields``: the FlexData fields the transform changed.
     """
 
     unit: str = "none"
@@ -99,6 +147,7 @@ class ReduceReport:
     removed: dict[str, list[str]] = dataclasses.field(default_factory=dict)
     notes: dict[str, list[str]] = dataclasses.field(default_factory=dict)
     warnings: list[str] = dataclasses.field(default_factory=list)
+    fields: frozenset[str] = frozenset()
 
     @property
     def changed(self) -> bool:
@@ -313,6 +362,56 @@ def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport) -> 
     return new
 
 
+def _reduce_system(d: "FlexData", parts: frozenset[str], report: ReduceReport) -> dict:
+    """The changed fields of the system parts ``parts`` (field -> None); fills ``report.removed``."""
+    removed = report.removed
+    if "reserves" in parts and _has_rows(d.reserve_upDown_group):
+        # The groups with a requirement (a reserve method); the gate also lists groups without one.
+        groups = {"__".join(row) for f in (d.reserve_upDown_group_method_timeseries,
+                                           d.reserve_upDown_group_method_dynamic, d.reserve_upDown_group_method_n_1)
+                  if _has_rows(f)
+                  for row in _frame(f).select(*(pl.col(c).cast(pl.Utf8) for c in ("r", "ud", "g"))).iter_rows()}
+        if groups:
+            removed["reserves"] = sorted(groups)
+    if "inertia" in parts and _names(d.groupInertia, "g"):
+        removed["inertia"] = sorted(_names(d.groupInertia, "g"))
+    if "non_synchronous" in parts and _names(d.groupNonSync, "g"):
+        removed["non_synchronous"] = sorted(_names(d.groupNonSync, "g"))
+    if "dc_power_flow" in parts and _has_rows(d.node_dc_power_flow) and _names(d.connection_dc_power_flow):
+        removed["dc_power_flow"] = sorted(_names(d.connection_dc_power_flow))
+    return {f: None for part in SYSTEM_TOKENS if part in parts for f in SYSTEM_FIELDS[part]
+            if getattr(d, f) is not None}
+
+
+def _interaction_notes(d: "FlexData", uparts: frozenset[str], sparts: frozenset[str],
+                       report: ReduceReport) -> None:
+    """The interactions of the unit level with the system detail the solve keeps (``report.notes``)."""
+    online_gone = set(report.removed.get("online", ()))
+    reserve = _frame(d.process_reserve_upDown_node_active)
+    if "reserves" not in sparts and _has_rows(d.reserve_upDown_group) and reserve is not None:
+        if online_gone:
+            hit = sorted(online_gone & _names(reserve))
+            if hit:
+                report.notes["reserves_from_capacity"] = hit
+        min_load_gone = set(report.removed.get("min_load", ()))
+        if min_load_gone:
+            down = _names(reserve.filter(pl.col("ud").cast(pl.Utf8) == "down"))
+            hit = sorted(min_load_gone & down)
+            if hit:
+                report.notes["downward_reserve_to_zero"] = hit
+    if "inertia" not in sparts and online_gone and _names(d.groupInertia, "g") and d.group_node is not None:
+        group_node = _frame(d.group_node).select(pl.col("g").cast(pl.Utf8), pl.col("n").cast(pl.Utf8))
+        arcs = [f.select(pl.col("p").cast(pl.Utf8), pl.col(side).cast(pl.Utf8).alias("n"))
+                for f, side in ((_frame(d.process_sink_inertia), "sink"), (_frame(d.process_source_inertia), "source"))
+                if f is not None and f.height > 0]
+        if arcs:
+            providers = pl.concat(arcs).filter(pl.col("p").is_in(sorted(online_gone)))
+            groups = (providers.join(group_node, on="n", how="inner").get_column("g").unique().to_list())
+            hit = sorted(set(groups) & _names(d.groupInertia, "g"))
+            if hit:
+                report.notes["inertia_from_flows"] = hit
+
+
 def apply_reduce_detail(d: "FlexData", unit: str = "none", system: str = "none") -> tuple["FlexData", ReduceReport]:
     """The reduced data of one sub-solve and what was left out.
 
@@ -323,13 +422,71 @@ def apply_reduce_detail(d: "FlexData", unit: str = "none", system: str = "none")
     """
     report = ReduceReport(unit=unit, system=system)
     uparts = unit_parts(unit)
-    system_parts(system)
-    if not uparts:
+    sparts = system_parts(system)
+    if not uparts and not sparts:
         return d, report
-    new = _reduce_unit(d, uparts, report)
+    new = _reduce_unit(d, uparts, report) if uparts else {}
+    new.update(_reduce_system(d, sparts, report))
+    _interaction_notes(d, uparts, sparts, report)
     if not new:
         return d, report
     out = copy.copy(d)
     for f, v in new.items():
         setattr(out, f, v)
+    report.fields = frozenset(new)
     return out, report
+
+
+# ---------------------------------------------------------------------------
+# across solves of different levels
+
+
+def cold_start_online_flow_carry(d: "FlexData") -> tuple["FlexData", list[str]]:
+    """Drop the carried roll-end flow of the online processes that have no online carry.
+
+    For a solve that keeps online variables and continues from a solve whose ``reduce_unit_detail_method`` left
+    them out (``online*``): the producer realised the flows of its ramp arcs but no units online, so this solve's
+    online processes get a ramp-carry flow without an online carry, which
+    ``params._ramp_links.check_online_ramp_carry_consistency`` refuses (the ramp split would read a false "0 units
+    online before").  Their carried flow is dropped instead, so their ramp and commitment start cold, as at the
+    start of a solve.  The carry routing itself is unchanged.  Other processes keep their carried flow.  Returns the
+    data (``d`` itself when nothing is dropped) and the sorted names of the processes that start cold.
+    """
+    flow = d.p_roll_continue_flow
+    if flow is None:
+        return d, []
+    online = _names(d.process_online)
+    cold = sorted((_names(flow) & online) - _names(d.p_roll_continue_online))
+    if not cold:
+        return d, []
+    out = copy.copy(d)
+    for name in ("p_roll_continue_flow", "p_roll_continue_flow_duration"):
+        prm = getattr(d, name)
+        if prm is None:
+            continue
+        kept = _frame(prm).filter(~pl.col("p").cast(pl.Utf8).is_in(cold))
+        setattr(out, name, Param(prm.dims, kept, name=prm.name) if kept.height > 0 else None)
+    return out, cold
+
+
+def output_static_view(d: "FlexData", unreduced: "FlexData", reduced_everywhere: "frozenset[str]") -> "FlexData":
+    """The data the outputs read their static (solve-invariant) sets and parameters from, for a reduced sub-solve.
+
+    The outputs take the solve-keyed sets and parameters of each sub-solve from its own (reduced) data, but the
+    static ones (``process_online``, the reserve sets, ``groupInertia``, the DC sets, ...) from the last sub-solve
+    only.  A reduced last solve would otherwise erase the tables of earlier full solves.  The view is the
+    pre-transform data of the solve, except for the fields every sub-solve of the run so far reduced
+    (``reduced_everywhere``): a feature no solve kept has no values to show and keeps no table.
+    """
+    if d is unreduced:
+        return d
+    view = copy.copy(unreduced)
+    for f in reduced_everywhere:
+        setattr(view, f, getattr(d, f))
+    return view
+
+
+def static_data(d: "FlexData") -> "FlexData":
+    """The data of :func:`output_static_view` attached to ``d`` by the cascade (``d`` itself when none)."""
+    view = getattr(d, "output_static_data", None)
+    return d if view is None else view

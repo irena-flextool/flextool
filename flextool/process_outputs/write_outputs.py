@@ -48,13 +48,13 @@ from flextool.process_outputs.out_group import (
 from flextool.process_outputs.out_node import node_summary, node_additional_results
 from flextool.process_outputs.process_results import post_process_results
 from flextool.process_outputs.read_parameters import (
-    read_parameters,
     read_parameters_multi,
+    read_parameters_static,
     warn_if_run_fields_missing,
 )
 from flextool.process_outputs.read_sets import (
-    read_sets,
     read_sets_multi,
+    read_sets_static,
 )
 from flextool.process_outputs.read_variables import read_variables
 from flextool.process_outputs.union_realized_slice import (
@@ -431,10 +431,10 @@ def _read_outputs(
         and solution is not None
         and has_persisted_slices(output_dir)
     ):
-        last_par = read_parameters(
+        last_par = read_parameters_static(
             flex_data, solution, solve_name=solve_name or "solve"
         )
-        last_s = read_sets(
+        last_s = read_sets_static(
             flex_data, solution, solve_name=solve_name or "solve"
         )
         p = union_params(last_par, output_dir)
@@ -457,8 +457,8 @@ def _read_outputs(
             "_read_outputs requires flex_data and solution; "
             "the CSV-based read_parameters / read_sets path is gone."
         )
-    p = read_parameters(flex_data, solution, solve_name=solve_name or "solve")
-    s = read_sets(flex_data, solution, solve_name=solve_name or "solve")
+    p = read_parameters_static(flex_data, solution, solve_name=solve_name or "solve")
+    s = read_sets_static(flex_data, solution, solve_name=solve_name or "solve")
     _backfill_group_indicator_sets(s, output_dir, provider=flex_data_provider)
     v = read_variables(output_dir, group_entity_invest=_group_entity_invest(flex_data_provider))
     return p, s, v
