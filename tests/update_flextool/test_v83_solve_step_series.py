@@ -2,7 +2,8 @@
 
 Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
 ``tests/fixtures/stoch_two_period.json``) migrated to 82, then to 83.  The step
-rewrites the ``node.energy_margin_adder`` description, changes no other
+rewrites the ``node.energy_margin_adder`` description and the ``unit.efficiency`` /
+``efficiency_at_min_load`` descriptions (may be above 1, C-6), changes no other
 definition and no value, writes the behaviour-change markers only on a database
 whose results change (a solve with ``new_stepduration``; with also an
 ``energy_margin_adder`` value, the adder marker too), and a rerun commits
@@ -70,16 +71,21 @@ def plain(tmp_path_factory: pytest.TempPathFactory) -> dict:
     return _migrate(tmp_path_factory, "v83_plain", {})
 
 
-def test_rewrites_the_adder_description_only(plain) -> None:
+def test_rewrites_the_adder_and_unit_efficiency_descriptions_only(plain) -> None:
     with open(package_data_path("schemas/spinedb_schema.json"), encoding="utf-8") as f:
         schema = json.load(f)
     shipped = {(r[0], r[1]): r[4] for r in schema["parameter_definitions"]}
     key = ("node", "energy_margin_adder")
     assert plain["after"][key][2] == shipped[key] == m._V83_ENERGY_MARGIN_ADDER_DESCRIPTION
     assert "sum of the values of the time steps it combines" in shipped[key]
-    assert plain["before"][key][2] != shipped[key]
-    assert plain["after"][key][:2] + plain["after"][key][3:] == plain["before"][key][:2] + plain["before"][key][3:]
-    skip = {key, ("model", "version")}
+    efficiency_keys = {("unit", name) for name in m._V83_UNIT_EFFICIENCY_DESCRIPTIONS}
+    for k in efficiency_keys:
+        assert plain["after"][k][2] == shipped[k] == m._V83_UNIT_EFFICIENCY_DESCRIPTIONS[k[1]]
+        assert shipped[k].startswith("[-] ") and "above 1" in shipped[k]
+    for k in {key} | efficiency_keys:
+        assert plain["before"][k][2] != shipped[k]
+        assert plain["after"][k][:2] + plain["after"][k][3:] == plain["before"][k][:2] + plain["before"][k][3:]
+    skip = {key, ("model", "version")} | efficiency_keys
     assert ({k: v for k, v in plain["after"].items() if k not in skip}
             == {k: v for k, v in plain["before"].items() if k not in skip})
 

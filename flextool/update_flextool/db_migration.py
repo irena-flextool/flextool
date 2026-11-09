@@ -5978,11 +5978,28 @@ _V83_ENERGY_MARGIN_ADDER_DESCRIPTION = (
     "affected. 0 = off. Constant, period or period+time.")
 
 
+#: v83 (C-6): ``unit.efficiency`` and ``efficiency_at_min_load`` may be above 1 (heat-pump COP, m³ per MWh).
+_V83_UNIT_EFFICIENCY_DESCRIPTIONS = {
+    "efficiency": (
+        "[-] Efficiency of the unit at full load: outputs / inputs, each flow weighted by its conversion_flow_coeff "
+        "(default 1, giving plain sum of outputs / sum of inputs). May be above 1: a heat pump with COP 3 has 3; a "
+        "unit with an output in another unit (e.g. m³ of water per MWh of electricity) uses that ratio. A "
+        "min_load_efficiency unit can have different efficiency below full load (see efficiency_at_min_load). No "
+        "effect on a unit without inputs or without outputs. Constant, period, time, period+time or stochastic "
+        "time."),
+    "efficiency_at_min_load": (
+        "[-] e.g. 0.4 means 40% (may be above 1, like efficiency). Efficiency of a min_load_efficiency unit at its "
+        "minimum load. Fuel use is a straight line from minimum load (this efficiency) to full load (efficiency). "
+        "Has no effect when min_load is 0: the efficiency at zero output is not defined. No value: efficiency "
+        "applies at minimum load too. Constant, period, time or period+time."),
+}
+
 def _migrate_v83_solve_step_series(db) -> None:
     """A solve's ``new_stepduration`` combines every time series by its kind (v82 -> v83).
 
     No value is rewritten.  The ``node.energy_margin_adder`` description is rewritten (an energy per time step of
-    the timeline, summed over a new_stepduration step).  Behaviour-change markers, only on a database whose
+    the timeline, summed over a new_stepduration step), and ``unit.efficiency`` / ``efficiency_at_min_load`` say
+    they may be above 1 (C-6).  Behaviour-change markers, only on a database whose
     results change: ``solve_step_series_combined`` when some solve has a ``new_stepduration`` value, and
     ``energy_margin_adder_per_original_step`` when also some node has an ``energy_margin_adder`` value (the
     marker value lists the solves / nodes).  Idempotent: a rerun finds the description and the markers written.
@@ -5990,6 +6007,10 @@ def _migrate_v83_solve_step_series(db) -> None:
     pdef = _pdef_or_none(db, "node", "energy_margin_adder")
     if pdef is not None and (pdef["description"] or "") != _V83_ENERGY_MARGIN_ADDER_DESCRIPTION:
         db.update_parameter_definition(id=pdef["id"], description=_V83_ENERGY_MARGIN_ADDER_DESCRIPTION)
+    for name, text in _V83_UNIT_EFFICIENCY_DESCRIPTIONS.items():
+        pdef = _pdef_or_none(db, "unit", name)
+        if pdef is not None and (pdef["description"] or "") != text:
+            db.update_parameter_definition(id=pdef["id"], description=text)
     solves = sorted({pv["entity_byname"][0] for pv in db.find_parameter_values(
         entity_class_name="solve", parameter_definition_name="new_stepduration")
         if from_database(pv["value"], pv["type"]) is not None})

@@ -33,6 +33,9 @@
   `new_stepduration` and `energy_margin_adder`, writes a notice marker; to keep the old demand, divide the value by
   the number of time steps a solve step combines. A time-only `energy_margin_adder` map (no period level), which
   was silently ignored, now stops the run with an error naming the shapes the parameter takes.
+- **Docs: a unit `efficiency` may be above 1** (no change in results). A heat pump with COP 3 has `efficiency` 3;
+  a desalination unit with an electricity input and a water output in m³ uses the m³ per MWh ratio (e.g. 250). The
+  database upgrade to version 83 rewrites the `efficiency` and `efficiency_at_min_load` descriptions to say so.
 - **New: `inertia_limit` and `non_synchronous_limit` per time step (database version 82).** Both group limits now
   take a constant, a period map, a time map or a period+time map (before: constant or period), e.g. a
   non-synchronous share that steps up by hour or season, or an inertia requirement that is higher in some hours.
