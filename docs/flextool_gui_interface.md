@@ -128,7 +128,7 @@ The **Png settings** dialog has separate sections for **scenario** and **scenari
 
 - **Start timestep** — first timestep to include in the plot range.
 - **Duration** — number of timesteps to plot (0 = until the end of the data).
-- **Plot config file** — YAML config defining what plots to render and how. The shipped defaults live under `templates/`.
+- **Plot config file** — YAML config defining what plots to render and how. The shipped default is the bundled `flextool/schemas/default_plots.yaml`.
 - **Active configs** — checkbox list of named configurations from the chosen file. Only checked configs are rendered.
 - **Dispatch plots** *(comparison section only)* — toggle whether dispatch time-series plots are included in comparisons. The companion **Edit dispatch plots…** button opens a YAML editor for the dispatch config.
 

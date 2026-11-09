@@ -9,7 +9,7 @@ The result tables are stored as **parquet** (the canonical store) and a configur
 | `output_parquet/<scenario>/*.parquet` | parquet | always (canonical) | one file per result table; read by the GUI, the scenario-comparison tools, and `read_parquet_dir=True` re-runs |
 | `output_csv/<scenario>/*.csv` | CSV | when `output-csv` is enabled | one CSV per parquet, plus `summary_solve.csv` (diagnostic overview) |
 | `output_excel/output_<scenario>.xlsx` | Excel | when `output-excel` is enabled | one workbook per scenario; alphabetically ordered sheets |
-| `output_plots/<scenario>/*.png` (or svg/pdf) | image | when `output-plot` is enabled | driven by `templates/default_plots.yaml` |
+| `output_plots/<scenario>/*.png` (or svg/pdf) | image | when `output-plot` is enabled | driven by the bundled `flextool/schemas/default_plots.yaml` |
 | `<output-location>/results.sqlite` (or `--results-db-url`) | SpineDB | when `output-spinedb` is enabled (`--write-methods spinedb`) | the processed result tables written into a SpineDB using the FlexTool results schema (`flextool/schemas/spinedb_results_schema.json`); one Spine **alternative** per run (named after the scenario) so multiple runs coexist in one file. Time series land as nested Spine `Map` values on the model entity classes (node / unit / connection / group / model). |
 
 `output_parquet/<scenario>/timeline_breaks.parquet` (columns `period`, `time`) lists the realized steps at which time-series plots start a new line, so a plot leaves a gap there instead of drawing a straight line across it: the step after a gap in the timeline, the start of every representative period (also when two representative periods are adjacent on the timeline, since they represent different base periods), and the first step of a period that does not continue the previous one (also a later year that reuses the same timeset). Rolling windows that follow each other on the timeline, and periods that continue the previous one, are drawn as one line. The file is written also when there are no breaks. Results saved before this file had the `period` and `time` columns are drawn without gaps until the scenario is run again. In scenario comparison plots the scenarios share one time axis, so a break of any selected scenario cuts every scenario's line at that step.
@@ -71,6 +71,7 @@ With `output_horizon = yes` (a debug option), `output_parquet/<scenario>/horizon
     capacity). They are reported only for capacity whose investment cost is reported (see the next section). For these
     columns the annualized value is therefore not the discounted value divided by the period's discount factor,
     which holds for the other columns.
+
 - `model` entity `cost_t` parameter — [CUR] (currency, not millions) same categories as above but per timestep: the cost incurred during the step, with the step duration and timestep weight applied but not scaled to a full year (no investment / fixed terms). The CSV / parquet output `costs__dt` has the same values and unit.
 - `model` entity `cost_discounted_solve` parameter — M[CUR] costs for the solve considering discounting and years represented (NPV currency)
 - `model` entity `cost_discounted_total` parameter — M[CUR] same, totalled over all realised periods
@@ -251,13 +252,14 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
     In combined solves (e.g. a chain of solves, or invest then dispatch), each realized investment is counted once, in the period it comes online.
 
     Period axis covers every period in which an investment **or** a divestment decision occurs (both the invest-eligible and divest-eligible periods feed into `d_realize_invest`), so divest-only periods are visible even when no new capacity is added.
+
 - `unit`, `connection`, `node` entities `invest_marginal` parameter — [CUR/MW or MWh] effective dual of the investment decision: zero means the model is at the unconstrained optimum; positive means an active upper bound (per-entity, per-group, period, total or cumulative caps are summed automatically); negative means the entity is not built and is unprofitable to build (the v_invest column's own reduced cost) — this is the ordinary reading for an unbuilt entity, not an artefact; a numerical artefact instead looks like a non-zero value on a *built* (or at-bound) entity, or an inconsistent sign across these regimes, and is worth investigating
 
 ## CO2 emissions
 
 - table `CO2__` (not in the results database) — [Mt] horizon-total CO2 across all groups and units (uses `years_represented_d` to convert annualized emissions to horizon totals). In a stochastic solve with more than one scenario path this is reported per path (one column per path) instead of pooling every path's emissions into one number — the anchor's shared pre-reveal history and each forecast branch's own periods are alternative futures, not consecutive years to add together.
-- `group` entity `CO2_annualized` parameter — [Mt/yr] annualized CO2 emissions caused (or removed) by units and connections in the group
-- `unit` entity `CO2_annualized` parameter — [Mt/yr] annualized CO2 emissions of the unit's flows, by commodity and node
+- `group` entity `CO2_annualized` parameter — [t/yr] annualized CO2 emissions caused (or removed) by units and connections in the group
+- `unit` entity `CO2_annualized` parameter — [t/yr] annualized CO2 emissions of the unit's flows, by commodity and node
 
 ## Reserves
 

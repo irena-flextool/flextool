@@ -21,17 +21,19 @@ The model grows one **alternative** at a time. Each alternative is a self-contai
 
 ## Setting up the project
 
-1. **Launch the FlexTool GUI** from the FlexTool installation directory:
+1. **Launch the FlexTool GUI** from the FlexTool installation directory, with its virtual environment active:
 
     ```
-    python -m flextool.gui
+    flextool-gui
     ```
+
+    (`python -m flextool.gui` does the same.)
 
 2. **Create a new project.** From the **Project** menu choose *New project*, name it `tutorial`, and pick a location. The GUI creates `projects/tutorial/` with an empty `input_sources/` folder and a `settings.yaml`.
 
-3. **Add the seed input source.** Click **Add** in the **Input sources** panel and pick `templates/time_settings_only.sqlite` from the FlexTool repository. The GUI copies the file into your project's `input_sources/` (migrating it to the current schema version if needed) and renames it to whatever you typed in the dialog — `tutorial.sqlite` is a good name. This seed database already contains the basic time settings (`init` and `init_2day-test` alternatives) that every FlexTool model needs. See [How to create basic time settings](how_to.md) if you want to know how those were built.
+3. **Add the seed input source.** Click **Add** in the **Input sources** panel and pick `templates/time_settings_only.sqlite` from the FlexTool installation directory. The GUI copies the file into your project's `input_sources/` (migrating it to the current schema version if needed) and renames it to whatever you typed in the dialog — `tutorial.sqlite` is a good name. This seed database already contains the basic time settings (`init` and `init_2day-test` alternatives) that every FlexTool model needs. See [How to create basic time settings](how_to.md) if you want to know how those were built.
 
-4. **Open the input source in the Spine database editor.** Double-click the `tutorial.sqlite` row in **Input sources** (or select it and press **Edit**). The Spine database editor opens in its own window — that is where the rest of the modelling steps happen.
+4. **Open the input source in the Spine database editor.** Double-click the `tutorial.sqlite` row in **Input sources** (or select it and press **Edit**). The Spine database editor opens in its own window — that is where the rest of the modelling steps happen. It comes with the recommended install (`flextool[toolbox]`); the lighter install without Spine Toolbox does not have it.
 
 !!! warning "Always commit before running"
     The Spine database editor stages changes locally until you **commit** them with **Ctrl-Enter** (or *Session → Commit…* from the menu). Until you commit, the FlexTool GUI sees the previous, uncommitted state. Every step below ends with a commit reminder for this reason.

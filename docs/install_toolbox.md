@@ -4,9 +4,6 @@ This page describes the **Spine Toolbox** installation path for IRENA FlexTool. 
 
 Most users do not need this path. If your work is centred on FlexTool itself — building scenarios, running them, inspecting results — follow [Install with FlexTool GUI](install_gui.md) instead. The Spine Toolbox path is intended for users who already use Spine Toolbox or who combine FlexTool with other Spine-based models. See [Choosing an interface](interface_overview.md) for the side-by-side comparison.
 
-!!! note "v4 is in alpha"
-    FlexTool v4 is currently in alpha (`4.0.0a1`, released 2026-05-26). The release is published as a PEP 440 pre-release on PyPI, so pip needs the `--pre` flag to resolve it — e.g. `pip install --pre "flextool[toolbox]"`. Parity with the 3.47.x line is expected; reports against scenarios that worked on 3.47.0 but misbehave on 4.0.0a1 are especially welcome.
-
 ## Requirements
 
 - **Python ≥ 3.11** (see `requires-python` in `pyproject.toml` for up-to-date requirement)
@@ -20,7 +17,7 @@ Most users do not need this path. If your work is centred on FlexTool itself —
 
 Download and install Python from [python.org](https://www.python.org/downloads/). Make sure to check **"Add Python to PATH"** during installation on Windows.
 
-> **Note:** If you already have Python in your PATH (check with `python --version` in a terminal) and it is older than 3.9, you need to install a supported version. On Windows, you may need to use the full path to the new Python (e.g. `C:\Python312\python.exe`) unless you update your PATH to point to it.
+> **Note:** If you already have Python in your PATH (check with `python --version` in a terminal) and it is older than 3.11, you need to install a supported version. On Windows, you may need to use the full path to the new Python (e.g. `C:\Python312\python.exe`) unless you update your PATH to point to it.
 
 ### 2. Install Git (optional)
 
@@ -78,7 +75,7 @@ Windows:
 
 ### 6. Install FlexTool with Spine Toolbox
 
-Install FlexTool and the `toolbox` extra. This pulls in Spine Toolbox alongside FlexTool's core dependencies (declared in `pyproject.toml` — `requirements.txt` is no longer used):
+Install FlexTool and the `toolbox` extra. This pulls in Spine Toolbox alongside FlexTool's core dependencies (declared in `pyproject.toml`):
 
 ```bash
 pip install ".[toolbox]"
@@ -86,10 +83,10 @@ pip install ".[toolbox]"
 
 The extra brings in Spine Toolbox itself, Spine DB Editor, Spine Items, Spine Engine, PySide6, and the rest of Spine Toolbox's runtime stack. On a slow link you may want `--timeout=10000`.
 
-If you would rather pull from PyPI than work from a clone, the same extra works on the pre-release wheel:
+If you would rather install from PyPI than work from a clone, the same extra works there:
 
 ```bash
-pip install --pre "flextool[toolbox]"
+pip install "flextool[toolbox]"
 ```
 
 ### 7. Initialize FlexTool
@@ -137,13 +134,10 @@ If you installed from a zip file, download the latest zip, extract it over the e
 python update_flextool.py --skip-git
 ```
 
-`update_flextool.py` migrates the input databases to the current schema version without destroying data (a backup is still good practice). The databases that get migrated are:
+`update_flextool.py` brings the databases to the current schema version without destroying data (a backup is still good practice):
 
-- the database currently selected as input data in the project,
-- `init.sqlite`,
-- `input_data_template.sqlite`,
-- `time_settings_only.sqlite`,
-- the how-to example databases.
+- it migrates the database selected as **Input data** in the project, `input_data.sqlite` and `templates/input_data_template.sqlite`;
+- it rebuilds the example databases (`templates/examples.sqlite`, `templates/time_settings_only.sqlite` and the databases in `how to example databases/`) from the current templates.
 
 To migrate any other database separately:
 
@@ -160,7 +154,7 @@ pip install --upgrade spinetoolbox
 ### Update troubleshooting
 
 - If git reports merge conflicts, it is almost always because the template files were modified locally. Restore the tree with `git restore .` and re-run `git pull`, then `python update_flextool.py`.
-- `Results.sqlite` only ever receives additive changes (to protect data), which leaves old parameter definitions lingering. To clear them, replace the database with a copy of the up-to-date `Results_template.sqlite`.
+- `results.sqlite` only ever receives additive changes (to protect data), which leaves old parameter definitions lingering. To clear them, replace the database with a copy of the up-to-date `templates/results_template.sqlite`.
 
 ## Troubleshooting
 
@@ -170,7 +164,7 @@ Make sure your virtual environment is activated. Spine Toolbox and the `flextool
 
 ### Linux / macOS notes
 
-FlexTool calls HiGHS through the `highspy` Python bindings, which install automatically as a dependency, so no separate solver binary is needed on x64 Linux or Intel macOS. On other Linux architectures or Apple Silicon, a prebuilt `highspy` wheel may not be available; in that case you will need to build HiGHS / highspy from source for your platform.
+FlexTool calls HiGHS through the `highspy` Python bindings, which install automatically as a dependency, so no separate solver binary is needed. Prebuilt `highspy` wheels cover x86-64 Linux, Windows and macOS, and ARM64 Linux and macOS (Apple Silicon). On other platforms you need to build HiGHS / highspy from source.
 
 Spine Toolbox runs on Linux and macOS as well, with occasional minor graphical glitches on macOS.
 

@@ -179,7 +179,7 @@ solver's native output and any crash dump.
 | `--output-spreadsheet PATH` | Save results to a spreadsheet file |
 | `--write-methods METHOD [...]` | Output formats: `plot`, `parquet`, `excel`, `csv`, `spinedb` (default: `plot parquet`) |
 | `--results-db-url URL` | Target SpineDB for the `spinedb` write-method (default: `<output-location>/results.sqlite`) |
-| `--output-config PATH` | Path to output configuration YAML (default: `templates/default_plots.yaml`) |
+| `--output-config PATH` | Path to output configuration YAML (default: the bundled `flextool/schemas/default_plots.yaml`) |
 | `--active-configs NAME [...]` | Which plot configuration sets to use (default: `default`) |
 | `--plot-rows START END` | First and last row to plot in time series (default: `0 167`) |
 | `--output-location DIR` | Override output location path |
@@ -264,7 +264,7 @@ All arguments are optional. When run from the terminal, you typically provide `-
 | `--output-locations-db-url URL` | Output-locations DB holding paths of existing outputs (re-plotting from Toolbox) |
 | `--settings-db-url URL` | Settings DB consulted for unset parameters |
 | `--read-parquet-dir DIR` | Read from existing parquet files instead of raw CSVs (faster) |
-| `--config-path PATH` | Output configuration YAML (default: `templates/default_plots.yaml`) |
+| `--config-path PATH` | Output configuration YAML (default: the bundled `flextool/schemas/default_plots.yaml`) |
 | `--active-configs NAME [...]` | Which plot configuration sets to use (default: `default`) |
 | `--write-methods METHOD [...]` | Output formats: `plot`, `parquet`, `excel`, `csv`, `spinedb` (default: `plot parquet excel`) |
 | `--results-db-url URL` | Target SpineDB for the `spinedb` write-method (default: `<output-location>/results.sqlite`). Note: `spinedb` needs the native solve path, so it is skipped (with a warning) when re-rendering via `--read-parquet-dir`. |
@@ -328,7 +328,7 @@ python scenario_results.py [DB_URL] [options]
 | `--write-to-xlsx` | Write combined results to Excel file |
 | `--write-dispatch-xlsx` | Write dispatch data to Excel in the plot directory |
 | `--write-to-ods` | Write combined results to ODS file |
-| `--output-config-path PATH` | Comparison plot configuration YAML (default: `templates/default_comparison_plots.yaml`) |
+| `--output-config-path PATH` | Plot configuration YAML (default: the bundled `flextool/schemas/default_plots.yaml`, which also holds the comparison plots) |
 | `--active-configs NAME [...]` | Which plot configuration sets to use (default: `default`) |
 | `--plot-rows START END` | First and last row to plot in time series (default: `0 167`) |
 | `--plot-dir DIR` | Directory for comparison plots (default: `output_plot_comparisons`) |
@@ -546,22 +546,23 @@ python -m flextool.cli.cmd_read_self_describing_tabular_input \
 After running the workflow, outputs are organized as follows:
 
 ```
-flextool/
-  output_plots/<scenario>/     # PNG plot files
-  output_parquet/<scenario>/   # Parquet data files
-  output_csv/<scenario>/       # CSV data files
-  output_excel/<scenario>/     # Excel summary files
-  output_plot_comparisons/     # Cross-scenario comparison plots
-  solve_data/                  # Solver progress and timing
+<output location>/
+  output_plots/<scenario>/          # PNG plot files
+  output_parquet/<scenario>/        # Parquet data files
+  output_csv/<scenario>/            # CSV data files
+  output_excel/output_<scenario>.xlsx  # Excel workbook, one per scenario
+  output_plot_comparisons/          # Cross-scenario comparison plots
+  solve_data/                       # Solver progress and timing
 ```
+
+The output location is the current directory, or the path given with `--output-location`. The FlexTool GUI writes into the project folder (`projects/<Name>/`), and its folder names carry the input source number (`<scenario>_<src#>`).
 
 ## Configuration
 
 Output plots are controlled by YAML configuration files:
 
-- `templates/default_plots.yaml` &mdash; single-scenario plot configuration
-- `templates/default_comparison_plots.yaml` &mdash; cross-scenario comparison plot configuration
+- `flextool/schemas/default_plots.yaml` &mdash; the bundled plot configuration, for single-scenario plots and cross-scenario comparison plots alike (each plot's `scenario_rule` decides where it is drawn)
 
-These files define which results to plot, plot types, layout, and styling. You can create custom configuration files and pass them via `--output-config` or `--output-config-path`.
+The file defines which results to plot, plot types, layout, and styling. You can create custom configuration files and pass them via `--output-config` or `--output-config-path`. An old setting that points to `templates/default_plots.yaml` or `default_comparison_plots.yaml` uses the bundled file.
 
-Dispatch plot colors and stacking order are defined in `output_plot_comparisons/config.yaml`, which is auto-generated on first run and can be edited via the GUI or any text editor.
+Dispatch plot colors and stacking order are defined in the project's `plot_settings.yaml` (`projects/<Name>/plot_settings.yaml`), which is created from the bundled `flextool/schemas/default_plot_settings.yaml` and can be edited via the GUI or any text editor.
