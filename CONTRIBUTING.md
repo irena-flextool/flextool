@@ -286,6 +286,17 @@ elif next_version == N:
 - **`add_value_list_manual` commits internally** — don't call `db.commit_session()` right after it unless you have other uncommitted changes.
 - **Entity classes** — the main entity classes are: `model`, `solve`, `node`, `unit`, `connection`, `commodity`, `group`, `constraint`, `profile`. Relationship classes include `unit__node`, `connection__node`, `reserve__upDown__group`, etc.
 
+## Documentation style
+
+The user docs live in `docs/` and are built with MkDocs Material (`mkdocs build --strict`). Write them like this:
+
+- **Plain English.** Use short sentences and everyday words. Say what the model does, not how the code is organised.
+- **Exact names.** Write parameter, method and table names exactly as in the data, in backticks (`conversion_flow_coeff`, `new_stepduration`). Link to a long parameter description instead of repeating it.
+- **Short paragraphs.** Split a paragraph longer than 3–5 sentences. Start each new paragraph with a few **bolded words** that say what it is about.
+- **Long list items.** Keep the bullet itself to one line, then continue in paragraphs indented by 4 spaces under it. Where breaking the item would mess up the indentation, use an admonition (`!!! note` or `!!! tip`) instead.
+- **Blank line before a list.** A list that follows a paragraph line directly renders as part of that paragraph. Always leave a blank line between them, also before a nested list.
+- **No version history.** Describe what the current version does. Mention an older version or data version only when it still matters to a current user, for example when the database migration silently changed a behaviour.
+
 ## Pull Requests
 
 ### Branching
