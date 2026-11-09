@@ -231,7 +231,7 @@ def list_entities(ctx: AssistantContext, args: dict) -> Fit:
     entity_class = str(args["entity_class"])
     _check_class(db, entity_class)
     scenario = None
-    if args.get("scenario") is not None or ctx.default_scenario is not None:
+    if args.get("scenario") is not None or project.default_scenario_for(ctx, source, db) is not None:
         scenario = _scenario(ctx, source, db, args)
     contains = (args.get("name_contains") or "").lower()
     member = args.get("member")
@@ -394,7 +394,7 @@ def prepare_parameter_args(args: dict) -> dict:
     """The forgiving forms of get_parameter's arguments in the schema's: ``parameters`` or ``parameter`` as one name
     or a list, ``entities`` as one name, a list of names or a list of name lists, ``entity`` as one name."""
     out = dict(args)
-    if isinstance(out.get("parameter"), list):
+    if isinstance(out.get("parameter"), list) and _listable(out.get("parameters")):
         out["parameters"] = [*out.pop("parameter"), *(_as_list(out.get("parameters")))]
     if isinstance(out.get("parameters"), str):
         out["parameters"] = [out["parameters"]]
@@ -406,6 +406,12 @@ def prepare_parameter_args(args: dict) -> dict:
     elif isinstance(entities, list):
         out["entities"] = [[e] if isinstance(e, str) else e for e in entities]
     return out
+
+
+def _listable(value: Any) -> bool:
+    """Whether *value* is a form :func:`prepare_parameter_args` rewrites (none, one name or a list); anything else
+    is left for the schema check to report."""
+    return value is None or isinstance(value, (str, list))
 
 
 def _as_list(value: Any) -> list:
@@ -682,10 +688,12 @@ def compare_inputs(ctx: AssistantContext, args: dict) -> Fit:
         if not (va.active(cls, byname)[0] or vb.active(cls, byname)[0]):
             continue
         ia, ib = wa.get(key), wb.get(key)
+        if ia is not None and ib is not None and (ia is ib or (ia.type == ib.type and ia.value == ib.value)):
+            continue                       # the same stored value: nothing to parse
         pa = ia.parsed() if ia is not None else None
         pb = ib.parsed() if ib is not None else None
-        if ia is not None and ib is not None and (ia is ib or _values.same_value(pa, pb)):
-            continue
+        if ia is not None and ib is not None and _values.same_value(pa, pb):
+            continue                       # equal once parsed (1 and 1.0)
         differences.append({
             "entity_class": cls, "entity": _names(byname), "parameter": param,
             "a": _values.compact(pa) if ia is not None else None,

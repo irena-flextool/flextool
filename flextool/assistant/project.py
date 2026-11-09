@@ -143,12 +143,32 @@ def open_source(ctx: AssistantContext, source: Source):
     return _db.load(source.database_path(ctx.project_path)), notes
 
 
+def default_scenario_for(ctx: AssistantContext, source: Source, db) -> str | None:
+    """The connection's default scenario where it applies to *source*, else ``None``.
+
+    With a default source (the FlexTool window's, or ``--input-source``) the default scenario belongs to it: it
+    applies to that source only.  Without one (``--scenario`` alone names no source) it applies to any source that
+    has that scenario.
+    """
+    wanted = ctx.default_scenario
+    if wanted is None:
+        return None
+    if ctx.default_source is not None:
+        try:
+            default = resolve_source(ctx, None)
+        except ToolError:
+            return None
+        return wanted if default.path == source.path else None
+    return wanted if wanted in db.scenario_names() else None
+
+
 def resolve_scenario(ctx: AssistantContext, source: Source, db, scenario: str | None) -> str:
-    """The scenario named *scenario*; without one the connection's default, else the only scenario."""
+    """The scenario named *scenario*; without one the connection's default where it applies to *source*
+    (:func:`default_scenario_for`), else the only scenario."""
     names = db.scenario_names()
     if not names:
         raise ToolError("no_scenarios", source=source.name)
-    wanted = scenario if scenario is not None else ctx.default_scenario
+    wanted = scenario if scenario is not None else default_scenario_for(ctx, source, db)
     if wanted is None:
         if len(names) == 1:
             return names[0]

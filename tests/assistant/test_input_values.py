@@ -323,3 +323,61 @@ def test_entity_lookups_use_the_index_of_stored_parameters(ctx, monkeypatch) -> 
     assert [(p["parameter"], p["value"], p["from_alternative"]) for p in unit["parameters"]] == [
         ("efficiency", 0.4, "coal"), ("existing", 500.0, "coal")]
     assert db.stored_parameters("unit", ("coal_plant",)) == COAL_PLANT_STORED
+
+
+def _scenarios_sharing_values(path):
+    """Two scenarios A = [base, x] and B = [base, y] on a copy of tests.json, over new commodities c1…c6 (class
+    commodity is active by default): c1–c3 price only in base; c4 price 7.0 in x and in y (same bytes); c5 1 in x
+    and 1.0 in y; c6 5.0 in x and 6.0 in y."""
+    from spinedb_api import to_database
+
+    from flextool.update_flextool.db_handle import open_database_mapping
+
+    def put(db, entity: str, alternative: str, value) -> None:
+        raw, value_type = to_database(value)
+        db.add_parameter_value_item(entity_class_name="commodity", entity_byname=(entity,),
+                                    parameter_definition_name="price", alternative_name=alternative, value=raw,
+                                    type=value_type)
+
+    with open_database_mapping(f"sqlite:///{path.as_posix()}") as db:
+        for alt in ("base", "x", "y"):
+            db.add_alternative_item(name=alt)
+        for scenario, alts in (("A", ("base", "x")), ("B", ("base", "y"))):
+            db.add_scenario_item(name=scenario)
+            for rank, alt in enumerate(alts, start=1):
+                db.add_scenario_alternative_item(scenario_name=scenario, alternative_name=alt, rank=rank)
+        for k in range(1, 7):
+            db.add_entity_item(entity_class_name="commodity", name=f"c{k}")
+        for k in (1, 2, 3):
+            put(db, f"c{k}", "base", float(k))
+        put(db, "c4", "x", 7.0)
+        put(db, "c4", "y", 7.0)
+        put(db, "c5", "x", 1)
+        put(db, "c5", "y", 1.0)
+        put(db, "c6", "x", 5.0)
+        put(db, "c6", "y", 6.0)
+        db.commit_session("test: two scenarios sharing values")
+
+
+def test_compare_inputs_parses_only_values_that_differ(tmp_path, tests_db, monkeypatch) -> None:
+    """C3-m7.  Shared values (the same item, or the same stored bytes) are never parsed: only c5 (1 vs 1.0,
+    equal once parsed) and c6 (5 vs 6, the one difference) are, two parses each."""
+    from flextool.assistant.context import make_context
+    from flextool.assistant.inputs import _db
+    from tests.assistant.conftest import make_project
+
+    project = make_project(tmp_path, tests_db)
+    _scenarios_sharing_values(project / "input_sources" / "tests.sqlite")
+    ctx = make_context(project)
+    _db.load(project / "input_sources" / "tests.sqlite")
+    parses = []
+    real = _db.ValueItem.parsed
+
+    def counted(self):
+        parses.append(self)
+        return real(self)
+
+    monkeypatch.setattr(_db.ValueItem, "parsed", counted)
+    out = _call(ctx, "compare_inputs", scenario_a="A", scenario_b="B", entity_class="commodity")
+    assert [(d["entity"], d["a"], d["b"]) for d in out["differences"]] == [(["c6"], 5.0, 6.0)]
+    assert len(parses) == 4

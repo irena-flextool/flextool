@@ -548,6 +548,8 @@ class AssistantWorker:
         snapshot = job.snapshot
         ctx = self._context()
         ctx.gui_snapshot = snapshot
+        # The scenario default belongs to the source default (context.primary_defaults); the tools apply it to
+        # that source only (project.default_scenario_for).
         ctx.default_source = snapshot.input_source if snapshot is not None else None
         ctx.default_scenario = snapshot.scenario if snapshot is not None else None
         self._emit(jid, TurnStarted(jid))

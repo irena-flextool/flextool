@@ -116,3 +116,26 @@ def test_snapshots_differing_only_in_their_time_give_the_same_block():
     assert first != later
     assert prompt.context_block(first) == prompt.context_block(later)
     assert "10:00" not in prompt.context_block(first)
+
+
+def _defaults(state: GuiState) -> tuple[str | None, str | None]:
+    snap = gui_snapshot("p", state, taken_at="2026-11-09T00:00:00Z")
+    return snap.input_source, snap.scenario
+
+
+def test_the_default_scenario_belongs_to_the_default_source():
+    """C3-m6.  The scenario default is of the source default, never of another source."""
+    two = (("a.sqlite", 1), ("b.sqlite", 2))
+    # Source a highlighted, scenario row (b, base) highlighted: base is b's, so a gets no scenario.
+    assert _defaults(gui(sources_checked=two, source_selected="a.sqlite", scenarios_checked=(),
+                         scenario_selected=("b.sqlite", "base"))) == ("a.sqlite", None)
+    # No source highlighted, two checked: the highlighted scenario row names its source.
+    assert _defaults(gui(sources_checked=two, source_selected=None, scenarios_checked=(),
+                         scenario_selected=("b.sqlite", "base"))) == ("b.sqlite", "base")
+    # Source a highlighted, the one checked scenario is b's.
+    assert _defaults(gui(sources_checked=two, source_selected="a.sqlite",
+                         scenarios_checked=(("b.sqlite", "base"),), scenario_selected=None)) == ("a.sqlite", None)
+    # The one checked scenario of the default source, among others' checked scenarios.
+    assert _defaults(gui(sources_checked=two, source_selected="a.sqlite",
+                         scenarios_checked=(("a.sqlite", "coal"), ("b.sqlite", "base")),
+                         scenario_selected=None)) == ("a.sqlite", "coal")

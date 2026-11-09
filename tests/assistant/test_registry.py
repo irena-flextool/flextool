@@ -58,3 +58,24 @@ def test_long_results_drop_whole_rows(ctx, monkeypatch) -> None:
     k = len(data["rows"])
     assert data["rows"] == rows[:k] and 0 < k < 500
     assert data["truncated"] == f"showing {k} of 500 rows — add filters, group_by or top_n"
+
+
+def test_odd_argument_forms_never_fault(ctx) -> None:
+    """C3-n1.  A parameter list with a non-list parameters is a bad argument, not a fault; Infinity and NaN caps
+    (Python's JSON reads them) are clamped."""
+    import json
+
+    from flextool.assistant.caps import CapArg, preset
+    from flextool.assistant.registry import call_tool
+
+    out = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameter": ["a"], "parameters": 5})
+    assert not out.ok and out.message.startswith("The arguments of get_parameter are not valid: ")
+    caps = preset("medium")
+    rule = CapArg("max_rows")
+    assert rule.resolve(float("inf"), caps) == rule.limit(caps)
+    assert rule.resolve(float("-inf"), caps) == 1
+    assert rule.resolve(float("nan"), caps) == caps.max_rows
+    big = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameter": "existing", "entity": ["coal_plant"],
+                                           "scenario": "coal", "max_rows": float("inf")})
+    assert big.ok, big.message
+    assert json.loads(big.text)["value"] == 500.0

@@ -89,18 +89,26 @@ class ContextSnapshot:
 PAYLOAD_LIST_MAX = 20
 
 
-def primary_source(gui: GuiState) -> str | None:
-    """The input source the tools use by default: the highlighted source row, else the only checked one."""
+def primary_defaults(gui: GuiState) -> tuple[str | None, str | None]:
+    """``(input source, scenario)`` the tools use by default; the scenario always belongs to that source.
+
+    Source: the highlighted source row, else the source of the highlighted scenario row, else the only checked
+    source.  Scenario: the highlighted scenario row when it is of that source, else the one checked scenario of
+    that source; ``None`` without a source.
+    """
+    selected = gui.scenario_selected
     if gui.source_selected:
-        return gui.source_selected
-    return gui.sources_checked[0][0] if len(gui.sources_checked) == 1 else None
-
-
-def primary_scenario(gui: GuiState) -> str | None:
-    """The scenario the tools use by default: the highlighted available-scenario row, else the only checked one."""
-    if gui.scenario_selected is not None:
-        return gui.scenario_selected[1]
-    return gui.scenarios_checked[0][1] if len(gui.scenarios_checked) == 1 else None
+        source: str | None = gui.source_selected
+    elif selected is not None:
+        source = selected[0]
+    else:
+        source = gui.sources_checked[0][0] if len(gui.sources_checked) == 1 else None
+    if source is None:
+        return None, None
+    if selected is not None and selected[0] == source:
+        return source, selected[1]
+    mine = [name for src, name in gui.scenarios_checked if src == source]
+    return source, (mine[0] if len(mine) == 1 else None)
 
 
 def gui_snapshot(project: str, gui: GuiState | None, *, taken_at: str | None = None) -> ContextSnapshot:
@@ -108,8 +116,9 @@ def gui_snapshot(project: str, gui: GuiState | None, *, taken_at: str | None = N
     when = taken_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     if gui is None:
         return ContextSnapshot(project=project, front_end="gui", taken_at=when)
-    return ContextSnapshot(project=project, input_source=primary_source(gui), scenario=primary_scenario(gui),
-                           front_end="gui", gui=gui, taken_at=when)
+    source, scenario = primary_defaults(gui)
+    return ContextSnapshot(project=project, input_source=source, scenario=scenario, front_end="gui", gui=gui,
+                           taken_at=when)
 
 
 def _payload_text(value: object, redact: Callable[[str], str] | None) -> str | None:
