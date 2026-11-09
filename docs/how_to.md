@@ -87,15 +87,16 @@ The tool includes some assumptions about the time structure, in case something i
 These three power plant types don't use any commodities (i.e. fuels), but are instead dependant on a timeseries profile.
 To create these plants one needs an output node, an unit and a profile.
 
-The unit needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
+The unit needs to be added to an alternative in the `Entity Alternative` sheet. 
 
 The unit only needs parameters:
 
 - `existing`: [The maximum capacity of the plant] 
+
 Additionally these parameters should be at their default values:
+
 - `conversion_method`: *constant_efficiency*
 - `efficiency`: 1
-- `is_active`: *yes* (if Toolbox 0.7, before 5/2024)
 
 The `profile` entity only has one parameter: `profile`. It is a timeseries map which tells what fraction of the capacity the plant can produce at each timestep.
 
@@ -119,13 +120,12 @@ Typically nodes are used to maintain an energy balance and therefore they are us
 - `connection`
 - `connection__node__node` to tie these three together.
 
-The `connection` and `nodes` need to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
+The `connection` and `nodes` need to be added to an alternative in the `Entity Alternative` sheet. 
 
 The connection needs parameters:
 
 - `existing`: The maximum capacity of the connection [MW]. Applies to both directions.
 - `efficiency`: represents the losses in transferring the energy. Same in both directions.
-- `is_active`: *yes* (if Toolbox 0.7, before 5/2024)
 
 Optional parameters:
 
@@ -161,6 +161,7 @@ The inflow parameter accepts two types of data:
 - Timeseries map
 
 If the model is using multiple periods, then the same timeseries profile is used for every period. However, the inflow can be scaled for different periods with the `inflow_method` parameter:
+
 - `scale_to_annual_flow`: This will multiply the demand with a constant to make the summed inflow to match the `annual_flow`. This requires the node parameter `annual_flow` that is a map of periods containing the annual flow for each period. The sum of inflows is divided by the period's share of the year (hours in period /8760) before scaling (so that the annual energy demand/supply matches the `annual_flow` no matter what parts of the year are used to represent the full year). 
 - `scale_in_proportion`: calculates a scaling factor by dividing `annual_flow` with the sum of time series inflow (after it has been annualized using `timeline_duration_in_years`). This does not force the demand/supply to match annual flow in case the representative periods are not representing the full year, but the time series will still be scaled to capture the proportional change in the `annual_flow` parameter. 
 - `scale_to_annual_and_peak_flow`: The inflow scaled so that the peak is at the given `peak_flow` and the inflow sums to annual flow of the period. This is done by the following equation:
@@ -189,7 +190,7 @@ In the example, the *wind_plant* alone is not able to meet the load in all condi
 
 In FlexTool, only `nodes` can have storage. `Nodes` can therefore be demand nodes, storage nodes or both. 
 
-The `node` needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
+The `node` needs to be added to an alternative in the `Entity Alternative` sheet. 
 
 To make a storage node one the required parameters are:
 
@@ -197,7 +198,6 @@ To make a storage node one the required parameters are:
 - `existing`: The maximum storage size of battery as the potential energy [MWh]
 - `penalty_up`: a large number to prefer not creating energy from nowhere
 - `penalty_down`: a large number to prefer not creating energy from nowhere
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 Additional parameters:
 
@@ -233,13 +233,12 @@ Battery also needs charging and discharging capabilities. These could be present
 
 The `transfer_method` can be used by all types of connections, but in this case it is best to choose *regular*, which tries to avoid simultaneous charging and discharing, but can still do it when the model needs to dissipate energy. *exact* method would prevent that, but it would require integer variables and make the storage computationally much more expensive. Model leakage will be reported in the results (forthcoming).
 
-The `connection` needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
+The `connection` needs to be added to an alternative in the `Entity Alternative` sheet. 
 
 The required paremeters of the connection are:
 
 - `existing`: The capacity of energy transsmission [MW]
 - `transfer_method`: (see above)
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 Additional parameters:
 
@@ -293,7 +292,8 @@ Additional parameters:
   - `previous_seam` — the period start before.
   - `next_seam` — the period start after.
 
-  **Construction lead time and stochastics compose automatically.** Under recourse (`stochastic_invest_method = recourse`) with an invest non-anticipativity window (`shared_invest_periods`, see the stochastics how-to), a long-lead technology that must be online *after* the branch reveal has to be *ordered* before it — in a pre-reveal, tied period — so its investment is a single shared here-and-now decision, while a short-lead technology can be ordered at/after the reveal and react per scenario. This staging is emergent (no extra parameter): set the window to the pre-reveal periods and the lead time stages the technologies for you. Note the two knobs stay orthogonal — the window is the *information* boundary (which order periods are shared), the lead time is the *physics* (how early you must order); you need both, set consistently, for staging.
+    **Construction lead time and stochastics compose automatically.** Under recourse (`stochastic_invest_method = recourse`) with an invest non-anticipativity window (`shared_invest_periods`, see the stochastics how-to), a long-lead technology that must be online *after* the branch reveal has to be *ordered* before it — in a pre-reveal, tied period — so its investment is a single shared here-and-now decision, while a short-lead technology can be ordered at/after the reveal and react per scenario. This staging is emergent (no extra parameter): set the window to the pre-reveal periods and the lead time stages the technologies for you. Note the two knobs stay orthogonal — the window is the *information* boundary (which order periods are shared), the lead time is the *physics* (how early you must order); you need both, set consistently, for staging.
+
 - `salvage_value`: Sets the extra value that can be gained for retiring [CUR/kW]. Only capacity that existed before the model run (`existing`) can be retired, until its end of life; the retirement saves its fixed cost over the periods it counts in and earns the salvage value as an annuity over `lifetime` (see [retirements](reference.md#retirements)).
 - `fixed_cost`: Annual cost for capacity [CUR/kW]
 
@@ -301,9 +301,9 @@ In many cases some of the investment decisions are tied to each other. Here the 
 
 To model this, a new constraint needs to be created that ties together the storage capacity of the *battery* and the charging/discharging capacity of the *battery_inverter*. 
 
-A new `constraint` entity *battery_tie_kW_kWh* is created and added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
+A new `constraint` entity *battery_tie_kW_kWh* is created and added to an alternative in the `Entity Alternative` sheet.
 
-It is given parameters `constant`, `sense` and `is_active` (if Toolbox 0.7, before 5/2024). Constant could be left out, since it is zero. The `sense` of the constraint must be *equal* to enforce the kw/kWh relation.
+It is given parameters `constant` and `sense`. Constant could be left out, since it is zero. The `sense` of the constraint must be *equal* to enforce the kw/kWh relation.
 
 Both *battery_inverter* and *battery* need a coefficient to tell the model how they relate to each other. The equation has the capacity variables on the left side of the equation and the constant on the right side.
 
@@ -316,7 +316,7 @@ When the `constraint_invested_capacity_coeff` for *battery* is set at 1 and for 
 
 ```1 x *battery* = 8 x *battery_inverter*, which can be true only if *battery_inverter* is 1/8 of *battery*```
 
-`constraint_invested_capacity_coeff` is not a parameter with a single value, but a map type parameter (index: constraint name, value: coefficient). It allows the entity to participate in multiple constraints. (This parameter was previously named `constraint_capacity_coefficient`; migration v32 renames existing DBs automatically. The old expression summed `v_invest` once per active investment period — incorrect in multi-period models — and has been fixed to emit just the current period's `v_invest`.)
+`constraint_invested_capacity_coeff` is not a parameter with a single value, but a map type parameter (index: constraint name, value: coefficient). It allows the entity to participate in multiple constraints. (In older databases this parameter was `constraint_capacity_coefficient`; migration renames it.)
 
 To tie cumulative, built-up capacity rather than the current period's new build, use `constraint_cumulative_pre_built_capacity_coeff`. It takes the capacity in service at the start of the period: existing capacity plus the capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term (`constraint_invested_capacity_coeff`, the capacity that comes online in the period; without a construction lead time, the capacity invested in that period). Paired with `constraint_invested_capacity_coeff`, it expresses period-over-period growth limits:
 
@@ -357,7 +357,7 @@ Finally, FlexTool can mix several types of constraint coefficients: `constraint_
 
 First, a new *heat* `node` is added with the necessary parameters. The `nodes` can be used for energy form of energy or matter, so the heat demand node does not differ from the electricity demand node. 
 
-The *heat* `node` needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
+The *heat* `node` needs to be added to an alternative in the `Entity Alternative` sheet. 
 
 The required parameters are:
 
@@ -365,7 +365,6 @@ The required parameters are:
 - `inflow`: Map for the heat demand (negative) [MW]
 - `penalty_up`: a large number to prefer not creating energy from nowhere
 - `penalty_down`: a large number to prefer not creating energy from nowhere
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 The heating systems tend to have some level of storage capability, so one could also add storage parameters to the node as well, but here they are not used.
 
@@ -377,11 +376,10 @@ For extraction CHP specifically, the `unit__inputNode` / `unit__outputNode` coef
 
 Electricity and heat outputs are fixed by adding a new `constraint` *coal_chp_fix* where the heat and power co-efficients are fixed. You need to create the two entities `unit__outputNode`, for *coal_chp--heat* and *coal_chp--west*. As can be seen in the bottom part of the figure below, the `constraint_flow_coeff` parameter for the *coal_chp--heat* and *coal_chp--west* is set as a map value where the `constraint` name matches with the *coal_chp_fix* `constraint` entity name. The values are set so that the constraint equation forces the heat output to be twice as large as the electricity output.
 
-Create constraint *coal_chp_fix*, add it to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024) and add parameters:
+Create constraint *coal_chp_fix*, add it to an alternative in the `Entity Alternative` sheet and add parameters:
 
 - `sense`: equal
 - `constant`: 0.0
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 Create `unit_outputNode` (coal_chp|heat):
 
@@ -424,7 +422,7 @@ For the other option of converting the volume to potential energy in the reservo
 
 In this implementation of reservoir hydro power, there is an option to spill water from the storage so that it does not run through the plant. The simplest way of allowing spilling is setting the downward penalty of the node to 0. This way the energy can disappear from the storage without a cost. The quantity of spilled water can be seen from the results as the 'downward slack' of the node.
 
-Add the *reservoir* node to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
+Add the *reservoir* node to an alternative in the `Entity Alternative` sheet. 
 
 The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
 
@@ -434,15 +432,13 @@ The required parameters of the reservoir node are (node_c and node_t sheets if u
 - `penalty_up`: a larger number than with the demand node to not allow creating extra water if not enough electricity is being created
 - `penalty_down`: 0 or a large number (spilling or not)
 - a `storage_method` to set the behaviour on how the storage levels should be managed - for short duration storages *bind_within_timeblock* may be best and for seasonal storages it could be best to use *bind_within_solve*. If historical storage level time series are available, it can be beneficial to use *fix_start* in the `storage_start_end_method` together with `storage_solve_horizon_method` *use_reference_value*, which will pick the storage level at the end of each solve from the time series provided as a reference (*storage_state_reference_value*). See `flextool/schemas/spinedb_schema.json` for the full enumeration of `storage_binding_method` values and the silent-degrade behaviour of the `*_blended_weights` variants; DB migration v55 renamed several legacy names (e.g. `bind_within_timeset` → `bind_within_timeblock`).
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 The `unit` is connected to the *reservoir* `node` and the output `node` *demand_node* (unit_c and unit_node_c in excel):
 
-- Add the unit to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
+- Add the unit to an alternative in the `Entity Alternative` sheet.
 - The `efficiency` of the plant is the coefficient of transfering an unit of volume to an unit of electricity (using piecewise linear efficiency is naturally possible), here we use 0.57. 
 - Set `existing` capacity [MW]
 - Create entities `unit__inputNode`: *hydro_plant*|*reservoir* and `unit__outputNode`: *hydro_plant*|*demand_node*.
-- `is_active`: yes  (if Toolbox 0.7, before 5/2024)
 
 ![Hydro reservoir](./img/concept/hydro_reservoir.png)
 
@@ -458,12 +454,11 @@ Let's start with the downriver demand.
 
 The downriver node represents the requirement to pass a minimum amount of water through the plant to not dry out the river. The downriver node needs:
 
-- To be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
+- To be added to an alternative in the `Entity Alternative` sheet.
 - `node_type`: balance
 - `inflow`: Minimum requirement of water flow as the potential power (Map or constant)[m^3/h]
 - `penalty_up`: a large number to prefer not creating energy from nowhere
 - `penalty_down`: 0, this makes the requirement to be at least the amount of water as the demand, not the equal to it
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 The hydro plant unit now also needs the relation `unit_outputNode`: *hydro_plant*|*downriver* . 
 
@@ -471,13 +466,12 @@ The hydro plant now needs to both pass the water to downriver and the electricit
 
 - `efficiency`: 1 + coefficient
 
-Now the unit creates enough stuff to output, but the model can still choose how it will distribute it between the two output nodes. We still need to fix the ratio of output flows. This is done with an user constraint. Here we call this constraint *hydro_split*. First, it needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
+Now the unit creates enough stuff to output, but the model can still choose how it will distribute it between the two output nodes. We still need to fix the ratio of output flows. This is done with an user constraint. Here we call this constraint *hydro_split*. First, it needs to be added to an alternative in the `Entity Alternative` sheet.
 
 The constraint needs parameters:
 
 - `sense`: equal
 - `constant`: 0
--  `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 As we are fixing the output flows, the we need to add the flows with their coefficients to this constraint. This is done with the unit_outputNode parameter `constraint_flow_coeff`:
 
@@ -493,16 +487,16 @@ The capacity of an unit is the sum of outputs. With the electrical capacity of 5
 
 To add a spill option to the reservoir we need to create another unit. This is because just making extra water disappear with the `penalty_down`: 0, will not transfer this water to the downriver node to fulfil its needs. 
 This spill unit has to be in entities:
+
 - `unit_inputNode` (*spill_unit*|*reservoir*)
 - `unit_outputNode` (*spill_unit*|*downriver*)
 
-It needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
+It needs to be added to an alternative in the `Entity Alternative` sheet.
 
 And parameters:
 
 - `efficiency`: 1
 - `existing`: A large enough number to not be a limit
--  `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 ![Hydro reservoir with downriver](./img/concept/hydro_reservoir_with_downriver.png)
 
@@ -528,7 +522,7 @@ There are two ways to handle the water to electricity coefficient. Here, we conv
 The inflow should be the energy that can be created from the incoming water of each time step at maximum efficiency [MWh] per time step (on hourly steps, the potential power in MW). In the same way, the existing storage capacity should be the maximum amount of stored energy that the reservoir can hold [MWh].
 In this implementation of reservoir hydro power, there is an option to spill water (energy) from the storage so that it does not run through the plant. The simplest way of allowing spilling is setting the downward penalty of the node to 0. This way the energy can disappear from the storage without a cost. The quantity of spilled energy can be seen from the results as the 'downward slack' of the node.
 
-The *reservoir* `node` needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
+The *reservoir* `node` needs to be added to an alternative in the `Entity Alternative` sheet.
 
 The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
 
@@ -538,25 +532,22 @@ The required parameters of the reservoir node are (node_c and node_t sheets if u
 - `penalty_up`: a large number to prefer not creating energy from nowhere
 - `penalty_down`: 0 or a large number (spilling or not)
 - a `storage_method` to set the behaviour on how the storage levels should be managed - for short duration storages *bind_within_timeblock* may be best and for seasonal storages it could be best to use *bind_within_solve*. If historical storage level time series are available, it can be beneficial to use *fix_start* in the `storage_start_end_method` together with `storage_solve_horizon_method` *use_reference_value*, which will pick the storage level at the end of each solve from the time series provided as a reference (*storage_state_reference_value*). See `flextool/schemas/spinedb_schema.json` for the full enumeration of `storage_binding_method` values and the silent-degrade behaviour of the `*_blended_weights` variants; DB migration v55 renamed several legacy names (e.g. `bind_within_timeset` → `bind_within_timeblock`).
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 The `unit` is connected to the *reservoir* `node` and the output `node` *nodeA* (unit_c and unit_node_c in excel):
 
-- It needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
+- It needs to be added to an alternative in the `Entity Alternative` sheet.
 - The `efficiency` of the unit can be set to 1 as the inflow time series are directly expressed in MWh (using piecewise linear efficiency is naturally possible).
 - Set `existing` capacity [MW]
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 - Create entities `unit__inputNode`: *hydro_plant*|*reservoir* and `unit__outputNode`: *hydro_plant*|*nodeA*.
 
 ![Hydro reservoir for pump](./img/concept/hydro_reservoir_for_pump.png)
 
-Next create the pump_storage. This is the downstream storage from the hydro plant. Again it should be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024) and have same the parameters as the reservoir:
+Next create the pump_storage. This is the downstream storage from the hydro plant. Again it should be added to an alternative in the `Entity Alternative` sheet and have same the parameters as the reservoir:
 
 - `node_type`: storage
 - `existing`: The maximum size of the storage [MWh]. Note that this really represents the mass of the water and it should be converted as the potential of the energy of the reservoir-plant system. So that 1 liter of water has the same energy in both storages.
 - `penalty_up`: a large number to avoid creating energy from nowhere
 - `penalty_down`: 0
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 In this example database, we have both a closed system and a river system. The difference is that in the closed system the inflow is zero in both reservoir and pump_storage. In river system we have the incoming water for the reservoir as in the reservoir example. In the downstream pump storage, we implement an outflow as the negative inflow representing the minimum amount of water that has to flow out of the system at each timestep to not dry out the river. The `penalty_down` is set as 0 to allow it let more water go when it needs to, otherwise the storages will keep filling up if the incoming water is larger than the minimum outgoing water.
 
@@ -568,13 +559,12 @@ The storage level fixes should be the same in both storages (reservoir and pump 
 
 This sets the starting storage levels to be 50%. The binding will also constrain the state of the storage at the end of of each timeset to be the same as in the beginning of the timeset.
 
-Then create the pump unit and add it to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024). 
+Then create the pump unit and add it to an alternative in the `Entity Alternative` sheet. 
 
 It only needs three parameters:
 
 - `efficiency` = 1, The real efficiency of the pump is set elsewhere, so use 1.0 here. 
 - `existing`: The wanted capacity
-- `is_active`: *yes* (if Toolbox 0.7, before 5/2024)
 
 Set the entities as follows:
 
@@ -591,11 +581,10 @@ For the hydro plant:
 
 - `Efficiency`:  2 
 
-Create a new constraint (here *plant_storage_nodeA_split*), add it to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024) and add the parameters:
+Create a new constraint (here *plant_storage_nodeA_split*), add it to an alternative in the `Entity Alternative` sheet and add the parameters:
 
 - `sense`: equal
 - `constant`: 0.0
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 And for the `unit_outputNodes`:
 
@@ -610,17 +599,17 @@ As for the pump storage, we will have to make sure that the same amount of water
 First to prevent the energy from the demand node from increasing the water flow, add a coefficient to the flow between the demand node and the pump.
 
 `unit_inputNode` (hydro_pump|nodeA):
+
 - `Coefficient`: 0 (Default is 1) 
 
 This prevents the water amount from increasing as:
 ```
 unit_output_flow = coeff1 * unit_input_flow1 + coeff2 * unit_input_flow2.
 ```
-We still have to make the unit to consume electricity even though it does not affect the unit output directly. This is done by setting a new constraint to tie the flows to the pump unit from pump storage and the nodeA. Add a constraint (here *pump_storage_nodeA_fix*), add it to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024) , and add the parameters:
+We still have to make the unit to consume electricity even though it does not affect the unit output directly. This is done by setting a new constraint to tie the flows to the pump unit from pump storage and the nodeA. Add a constraint (here *pump_storage_nodeA_fix*), add it to an alternative in the `Entity Alternative` sheet , and add the parameters:
 
 - `sense`: equal
 - `constant`: 0.0
-- `is_active`: yes (if Toolbox 0.7, before 5/2024)
 
 And setting parameters for `unit_inputNode`:
 
@@ -689,6 +678,7 @@ Next we will add ramp limits. With the ramping limits, the user can force the ch
 - `ramp_speed_down`: Limit on how fast the plant can ramp down. (fraction of unit / min) ie. Value 0.01 allows the change of 60% of capacity per hour.
 
 The first time step of a solve, the first step after a gap in the timeline and the first step of a representative period have no ramp limit (there is no previous step to ramp from). A rolling window ramps from the flow of the previous window where it continues the previous window's last realized step on the timeline; a solve with longer time steps continues the finer step that ends where its own previous step ends (by position in time). Unlike the online status, the ramp has no cyclic link from the first step of a stretch to its last step.
+
 - `ramp_cost`: NOT YET IMPLEMENTED. The cost of ramping the capacity. [CUR/MW] 
 
 ![Add min_load](./img/tutorial/coal_min_load.png)
@@ -759,9 +749,11 @@ When having a connection to a storage from a node with this constraint, the best
 Then set which plants and connections are considered non-synchronous by adding parameters:
 
 `unit_outputNode`:
+
 - `is_non_synchronous`: yes 
 
 `Connection_node_node`:
+
 - `is_DC`: yes 
 
 Here the (wind_plant|nodeA) relation has the `is_non_synchronous` parameter and battery connection `is_DC` parameter. Because the battery node is in *nodeA_group*, the battery connection runs inside the group and its `is_DC` has no effect; it would count if the battery node were left out of the group.
@@ -979,6 +971,7 @@ Each of these have their pros and cons:
 The investment decisions with less information are always less optimal than with complete solves. Therefore, when they are passed to the dispatch solve, it will in some cases cause penalties in the results when the invested portfolio is not sufficient to meet the demand at all times.
 
 The long term storage solve can be implemented using a lower resolution solve. The storage state behaviour from the storage solve is used as a target for the dispatch solve. There are three options for doing this: 
+
 - *fix_quantity* creates a constraint that forces the end storage state to be the same as in the storage solve at this timestep.
 - *fix_usage* does the same but not taking into account the inflow or slacks. Forces the summed usage of the storage during the dispatch solve to be the same as during the same time span in the storage solve. This avoids infeasibilities when modelling inflow stochastics in comparison to the *fix_quantity*.
 - *fix_price* takes the storage node's price (`price_t`, the value of one more MWh of stored energy) from the storage solve at the end timestep of the dispatch solve and uses it in the objective function to give a value to the stored energy at the end of the horizon. 
@@ -1019,6 +1012,7 @@ The other model parameters apply to *all* of the solves. Therefore, the consider
 - Do not use `bind_within_solve`
 
 The recommended storage parameters with nested solves are:
+
 - `storage_start_end_method`: *fix_start*
 - `storage_solve_horizon_method`: *fix_quantity*
 - `storage_state_start` and `storage_state_reference_value`: use the same value
@@ -1307,7 +1301,7 @@ The pre-reveal periods stay single real-named periods with one shared `v_invest`
 
 CPLEX remains wireable as an advanced option for licensed users. Using CPLEX requires that you have installed the software, have a licence for it and have added it to PATH or to the environment where you are using the FlexTool, so that the tool can find the solver.
 
-CPLEX is invoked via the **solve** parameter *solver*. FlexTool now builds the LP in memory through polars + polar-high, so the on-disk MPS handoff that previous versions used is no longer the default flow — the CPLEX path passes the problem to the [Interactive Optimizer](https://www.ibm.com/docs/en/icos/12.8.0.0?topic=cplex-interactive-optimizer) and produces two additional files in the work directory: a CPLEX log file and the solution file in CPLEX format.
+CPLEX is invoked via the **solve** parameter *solver*. FlexTool builds the LP in memory through polars + polar-high. The CPLEX path passes the problem to the [Interactive Optimizer](https://www.ibm.com/docs/en/icos/12.8.0.0?topic=cplex-interactive-optimizer) and produces two additional files in the work directory: a CPLEX log file and the solution file in CPLEX format.
 
 Additional parameters:
 
@@ -1511,4 +1505,4 @@ These provide the structural backbone of any FlexTool model. Implementation: `fl
 
 ## How to use representative-period clustering with scalar profiles
 
-The representative-period preprocessor in `flextool/representative_periods/preprocess.py` builds its clustering matrix from time-varying `profile` and `node.inflow` series. Constant-valued (scalar) profiles and inflows are now dropped from the clustering input on the way in — a constant series has zero variance, contributes no information to the period-similarity distance, and was previously causing per-character iteration crashes when `params_to_dict` returned the scalar as a string. The preprocessor prints a one-line note such as `Skipping 3 scalar profile(s) and 1 scalar inflow(s) — clustering only considers time-varying series.` so you can see exactly how many series were filtered out. There is nothing to configure: scalar profiles and inflows are still used by the model as constants, they just no longer participate in choosing the representative periods.
+The representative-period preprocessor in `flextool/representative_periods/preprocess.py` builds its clustering matrix from time-varying `profile` and `node.inflow` series. Constant-valued (scalar) profiles and inflows are dropped from the clustering input: a constant series has zero variance and contributes no information to the period-similarity distance. The preprocessor prints a one-line note such as `Skipping 3 scalar profile(s) and 1 scalar inflow(s) — clustering only considers time-varying series.` so you can see exactly how many series were filtered out. There is nothing to configure: scalar profiles and inflows are still used by the model as constants, they just do not take part in choosing the representative periods.

@@ -42,6 +42,7 @@ Economic values can be expressed in two ways:
 - **Nominal (current prices)**: Values include inflation. The same plant might cost 1300 EUR/kW in 2040 at 2% annual inflation, even though its real cost hasn't changed.
 
 **Example**: A coal plant costs 1500 EUR/kW today. At 2% inflation:
+
 - Real cost in 2035: 1500 EUR/kW (unchanged)
 - Nominal cost in 2035: 1500 x (1.02)^10 = 1829 EUR/kW approximately
 
@@ -72,6 +73,7 @@ annual_payment = 800 * 0.05 / (1 - 1/1.05^25) = 800 * 0.0710 = 56.8 EUR/kW/year 
 ```
 
 Different technologies can have different discount rates reflecting their risk profiles:
+
 - Low risk (e.g., established solar PV): 3-5%
 - Medium risk (e.g., natural gas turbine): 5-7%
 - High risk (e.g., novel technology): 8-12%
