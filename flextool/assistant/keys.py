@@ -7,7 +7,9 @@ key came from ("from the environment variable GEMINI_API_KEY").
 * **Environment**: :func:`read_key_env` is the only function under ``flextool/assistant/`` that reads the
   environment, and only by a variable name a preset gives (``tests/test_env_knob_registry.py`` checks both).
 * **Keyring**: every call runs in a daemon thread that is given up after 5 seconds, because a stuck D-Bus or
-  Keychain call never returns.  A keyring that cannot keep a key safely is not used: the fail and null backends
+  Keychain call never returns.  A store that was given up may still land later: FlexTool then puts the keyring
+  back to what the user chose last in this process (:func:`_reconcile_late_store`) — the key stored since, or no
+  entry when the key went to the file or was removed (only if the keyring still holds that late key).  A keyring that cannot keep a key safely is not used: the fail and null backends
   (a Linux computer without a Secret Service gives the fail backend), any ``keyrings.alt`` backend and any backend
   that stores keys unencrypted (for example one chosen with ``PYTHON_KEYRING_BACKEND``), a priority below 1, a
   chain without usable backends.
@@ -28,6 +30,7 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import os
 import secrets
 import threading
@@ -51,6 +54,8 @@ FINGERPRINT_LENGTH = 12
 KEYRING_TIMEOUT = 5.0
 
 KEYRING_SLOW = "The system keyring did not answer within {seconds} seconds."
+KEYRING_MAY_LAND = (" It may still store the key later; if you store the key in the file instead or remove it, "
+                    "FlexTool removes that keyring entry once the keyring answers.")
 KEYRING_PLAINTEXT = ("The keyring setting points to a backend that stores keys unencrypted; FlexTool does not use "
                      "it. Use --key-file if you accept an unencrypted file.")
 KEYRING_NONE = ("There is no usable system keyring on this computer ({backend}). Set the environment variable for "
@@ -68,6 +73,8 @@ _WINDOW_ADVICE = (
 )
 
 T = TypeVar("T")
+
+_log = logging.getLogger(__name__)
 
 
 def for_window(text: str) -> str:
@@ -132,7 +139,10 @@ def key_file_warning(config_root: Path | None = None) -> str:
 
 
 # --- the keyring, in a thread that may be given up ---------------------------------------------------------------
-def _with_timeout(fn: Callable[[], T], timeout: float) -> T:
+def _with_timeout(fn: Callable[[], T], timeout: float,
+                  late: Callable[[threading.Event], None] | None = None) -> T:
+    """*fn*'s value, from a daemon thread given up after *timeout* seconds (:class:`KeyringTimeout`); *late* is
+    then handed the thread's event, which is set once *fn* has returned after all."""
     box: dict[str, Any] = {}
     done = threading.Event()
 
@@ -146,6 +156,8 @@ def _with_timeout(fn: Callable[[], T], timeout: float) -> T:
 
     threading.Thread(target=run, name="flextool-assistant-keyring", daemon=True).start()
     if not done.wait(timeout):
+        if late is not None:
+            late(done)
         raise KeyringTimeout(KEYRING_SLOW.format(seconds=f"{timeout:g}"))
     if "error" in box:
         raise box["error"]
@@ -209,16 +221,75 @@ def keyring_status(timeout: float | None = None) -> tuple[bool, str]:
     return True, f"The system keyring is used ({getattr(backend, 'name', _name(backend))})."
 
 
-def _keyring_call(action: str, fn: Callable[[Any], T], timeout: float | None) -> T:
+def _keyring_call(action: str, fn: Callable[[Any], T], timeout: float | None,
+                  late: Callable[[threading.Event], None] | None = None) -> T:
     def run() -> T:
         return fn(_usable_backend())
     try:
-        return _with_timeout(run, KEYRING_TIMEOUT if timeout is None else timeout)
+        return _with_timeout(run, KEYRING_TIMEOUT if timeout is None else timeout, late)
     except KeyringUnavailable:
         raise
     except Exception as exc:                # noqa: BLE001  (locked collection, dismissed prompt, D-Bus error)
         raise KeyringUnavailable(KEYRING_FAILED.format(action=action, reason=str(exc) or type(exc).__name__)) \
             from None
+
+
+# --- keyring stores that land after they were given up -----------------------------------------------------------
+#: What the user chose last for each account in this process: ``("keyring", key)``, ``("file", None)`` (the key
+#: went to the key file) or ``("none", None)`` (removed).  A late keyring store is reconciled against it.
+_INTENT: dict[str, tuple[str, str | None]] = {}
+#: Serialises the public calls with the reconciling of a late store, so a compare-and-delete sees no store between.
+_ORDER = threading.RLock()
+
+
+def _set_intent(account: str, where: str, key: str | None = None) -> None:
+    _INTENT[account] = (where, key)
+
+
+def _reconcile_late_store(account: str, key: str, backend: Any) -> None:
+    """Put *backend* back to the user's last choice after a given-up store of *key* landed: the key stored since
+    (when the keyring no longer holds it), or no entry for a key now in the file or removed — deleted only when
+    the keyring still holds exactly the late *key*, so a key stored later is never removed.  Keyring failures are
+    logged and dropped (the next store or removal decides again)."""
+    with _ORDER:
+        where, wanted = _INTENT.get(account, ("keyring", key))
+        try:
+            current = _with_timeout(lambda: backend.get_password(SERVICE, account), KEYRING_TIMEOUT)
+            if where == "keyring":
+                if wanted is not None and current != wanted:
+                    _with_timeout(lambda: backend.set_password(SERVICE, account, wanted), KEYRING_TIMEOUT)
+                    _log.info("a late keyring store was replaced by the key stored since")
+            elif current == key:
+                _with_timeout(lambda: _delete(backend, account), KEYRING_TIMEOUT)
+                _log.info("a late keyring store was removed: the key was put in the key file or removed since")
+        except Exception as exc:            # noqa: BLE001  (a keyring that fails again: nothing more to do here)
+            _log.info("a late keyring store could not be reconciled: %s", type(exc).__name__)
+
+
+def _store_in_keyring(account: str, key: str, timeout: float | None) -> None:
+    """Store *key* in the keyring and make it the account's choice (also when the call is given up and may still
+    land: a waiter then reconciles it, :func:`_reconcile_late_store`); a keyring that fails leaves the choice."""
+    used: dict[str, Any] = {}
+
+    def store(backend: Any) -> None:
+        used["backend"] = backend
+        backend.set_password(SERVICE, account, key)
+
+    def late(done: threading.Event) -> None:
+        def wait() -> None:
+            done.wait()
+            if "backend" in used:
+                _reconcile_late_store(account, key, used["backend"])
+        threading.Thread(target=wait, name="flextool-assistant-keyring-late", daemon=True).start()
+
+    try:
+        _keyring_call("store", store, timeout, late)
+    except KeyringTimeout as exc:
+        _set_intent(account, "keyring", key)
+        raise KeyStoreError(str(exc) + KEYRING_MAY_LAND) from None
+    except KeyringUnavailable as exc:
+        raise KeyStoreError(str(exc)) from None
+    _set_intent(account, "keyring", key)
 
 
 # --- the key file ------------------------------------------------------------------------------------------------
@@ -326,22 +397,21 @@ def store_key(preset: Preset, endpoint: str | None, key: str, *, to_file: bool =
     if not key:
         raise KeyStoreError("The key is empty.")
     account = key_account(preset, endpoint)
-    if to_file:
-        def put(keys: dict[str, str]) -> bool:
-            keys[account] = key
-            return True
-        _change_file(config_root, put)
-        try:
-            _keyring_call("remove", lambda backend: _delete(backend, account), timeout)
-        except KeyringUnavailable:
-            pass                            # no keyring here, so nothing there to shadow the file
-        return KeySource.FILE
-    try:
-        _keyring_call("store", lambda backend: backend.set_password(SERVICE, account, key), timeout)
-    except KeyringUnavailable as exc:
-        raise KeyStoreError(str(exc)) from None
-    _remove_from_file(config_root, account)
-    return KeySource.KEYRING
+    with _ORDER:
+        if to_file:
+            def put(keys: dict[str, str]) -> bool:
+                keys[account] = key
+                return True
+            _change_file(config_root, put)
+            _set_intent(account, "file")
+            try:
+                _keyring_call("remove", lambda backend: _delete(backend, account), timeout)
+            except KeyringUnavailable:
+                pass                        # no keyring here, so nothing there to shadow the file
+            return KeySource.FILE
+        _store_in_keyring(account, key, timeout)
+        _remove_from_file(config_root, account)
+        return KeySource.KEYRING
 
 
 def _delete(backend: Any, account: str) -> None:
@@ -359,9 +429,11 @@ def forget_key(preset: Preset, endpoint: str | None = None, *, config_root: Path
     keyring could not be reached (a key may then still be there)."""
     account = key_account(preset, endpoint)
     note = None
-    try:
-        _keyring_call("remove", lambda backend: _delete(backend, account), timeout)
-    except KeyringUnavailable as exc:
-        note = str(exc)
-    _remove_from_file(config_root, account)
+    with _ORDER:
+        _set_intent(account, "none")
+        try:
+            _keyring_call("remove", lambda backend: _delete(backend, account), timeout)
+        except KeyringUnavailable as exc:
+            note = str(exc)
+        _remove_from_file(config_root, account)
     return note

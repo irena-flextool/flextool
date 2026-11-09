@@ -144,6 +144,75 @@ def test_a_keyring_that_does_not_answer_is_given_up(fake_keyring, root):
     assert keys.KEYRING_TIMEOUT == 5.0
 
 
+class SlowFirstStore(FakeKeyring):
+    """A keyring whose store of one key waits for :attr:`gate` (a store that is given up and lands later); every
+    other call answers at once."""
+
+    def __init__(self, slow_key: str) -> None:
+        super().__init__()
+        self.slow_key = slow_key
+        self.gate = threading.Event()
+        self.landed = threading.Event()
+
+    def set_password(self, service: str, username: str, password: str) -> None:
+        if password == self.slow_key:
+            self.gate.wait(30)
+            super().set_password(service, username, password)
+            self.landed.set()
+            return
+        super().set_password(service, username, password)
+
+
+@pytest.fixture
+def slow_keyring(monkeypatch) -> object:
+    fake = SlowFirstStore("late-key-A")
+    monkeypatch.setattr(keyring.core, "_keyring_backend", fake)
+    yield fake
+    fake.gate.set()
+
+
+def _settled(fake: SlowFirstStore, expected: dict) -> bool:
+    """Whether the keyring holds *expected* within 2 s after the late store landed."""
+    assert fake.landed.wait(2.0)
+    deadline = time.monotonic() + 2.0
+    while time.monotonic() < deadline:
+        if fake.passwords == expected:
+            return True
+        time.sleep(0.01)
+    return fake.passwords == expected
+
+
+def test_a_late_keyring_store_does_not_shadow_the_file(slow_keyring, root):
+    """C4-n1: a store that was given up lands after the key went to the file; the keyring entry is removed."""
+    with pytest.raises(KeyStoreError, match="It may still store the key later"):
+        store_key(GEMINI, None, "late-key-A", config_root=root, timeout=0.05)
+    assert store_key(GEMINI, None, "file-key", to_file=True, config_root=root) is KeySource.FILE
+    slow_keyring.gate.set()
+    assert _settled(slow_keyring, {})
+    assert resolve_key(GEMINI, config_root=root) == ("file-key", KeySource.FILE, None)
+
+
+def test_a_late_keyring_store_never_removes_a_key_stored_since(slow_keyring, root):
+    """The late key A lands after the user put a key in the file and then key B in the keyring: B stays (a
+    compare-and-delete, never a blind removal), and A does not replace it."""
+    with pytest.raises(KeyStoreError, match="did not answer"):
+        store_key(GEMINI, None, "late-key-A", config_root=root, timeout=0.05)
+    store_key(GEMINI, None, "file-key", to_file=True, config_root=root)
+    assert store_key(GEMINI, None, "key-B", config_root=root) is KeySource.KEYRING
+    slow_keyring.gate.set()
+    assert _settled(slow_keyring, {("flextool-assistant", "gemini"): "key-B"})
+    assert resolve_key(GEMINI, config_root=root) == ("key-B", KeySource.KEYRING, None)
+
+
+def test_a_late_keyring_store_after_a_removal_is_removed(slow_keyring, root):
+    with pytest.raises(KeyStoreError):
+        store_key(GEMINI, None, "late-key-A", config_root=root, timeout=0.05)
+    keys.forget_key(GEMINI, config_root=root)
+    slow_keyring.gate.set()
+    assert _settled(slow_keyring, {})
+    assert resolve_key(GEMINI, config_root=root)[1] is KeySource.NONE
+
+
 def test_the_key_file_only_after_the_choice_owner_only(fake_keyring, root, monkeypatch):
     assert keys.key_file_warning(root) == (
         f"The key will be stored unencrypted at {root / 'keys.json'}. Anyone who can read your files can read it. "
