@@ -464,10 +464,10 @@ def inertia_results(par, s, v, r, debug):
     group_unit_inertia = pd.DataFrame(index=s.dt_realize_dispatch, columns=pd.MultiIndex.from_tuples([], names=['group', 'process', 'node']), dtype=float)
 
     for g in s.groupInertia:
-        # Get (process, node) pairs for this group
-        group_pn = s.group_node[s.group_node.get_level_values('group') == g].droplevel('group')
-        # Filter unit_inertia to these columns
-        cols = unit_inertia.columns.intersection(group_pn)
+        # The (process, node) columns of unit_inertia whose node is in the group (as in inertia_constraint: the
+        # arcs whose inertia side node is in g).
+        group_nodes = s.group_node[s.group_node.get_level_values('group') == g].get_level_values('node')
+        cols = unit_inertia.columns[unit_inertia.columns.get_level_values('node').isin(group_nodes)]
         # Add group level to columns
         group_cols = pd.MultiIndex.from_arrays(
             [[g] * len(cols), cols.get_level_values(0), cols.get_level_values(1)],

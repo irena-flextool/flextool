@@ -49,6 +49,7 @@ _RUNS = RunCache()
 def _free_runs():
     yield
     _RUNS.clear()
+    _TOY.clear()
 
 
 @pytest.fixture(autouse=True)
@@ -285,7 +286,17 @@ def _toy_values() -> list:
             ["unit__outputNode", ["coal_plant", "west"], "inertia_constant", scalar(1.0)]]
 
 
+_TOY: dict = {}
+
+
 def _toy_outputs(tmp_path_factory) -> tuple[dict, Path]:
+    """The toy solved once per module with its CSV outputs: ``(steps, folder of the CSV files)``."""
+    if "out" not in _TOY:
+        _TOY["out"] = _toy_solve(tmp_path_factory)
+    return _TOY["out"]
+
+
+def _toy_solve(tmp_path_factory) -> tuple[dict, Path]:
     from flextool.engine import run_chain_from_db
     from flextool.process_outputs.write_outputs import write_outputs
     from tests.engine._unit_db import make_db
@@ -326,3 +337,18 @@ def test_time_map_binds_in_one_hour_only(tmp_path_factory) -> None:
     cost = {r["time"]: float(r["inertia slack penalty"]) for r in _csv(out, "costs__dt.csv")}
     assert cost[HOUR] == pytest.approx(300.0 * PENALTY * 1.0 * 1.0, rel=1e-9)
     assert all(abs(v) < 1e-6 for t, v in cost.items() if t != HOUR)
+
+
+def test_inertia_output_tables(tmp_path_factory) -> None:
+    """The group inertia tables hold the inertia the row counts: coal_plant's flow 500 MW · inertia_constant 1 =
+    500 MWs in every hour, in group_inertia__dt (electricity) and group__unit__node_inertia__dt
+    (electricity, coal_plant, west).  Before the fix both tables were empty (the (process, node) columns were
+    compared with the group's node names)."""
+    _steps, out = _toy_outputs(tmp_path_factory)
+    group = {r["time"]: float(r["electricity"]) for r in _csv(out, "group_inertia__dt.csv")}
+    assert set(group) == set(T48) and all(v == pytest.approx(500.0, rel=1e-9) for v in group.values())
+    with open(out / "group__unit__node_inertia__dt.csv", newline="") as fh:
+        rows = list(csv.reader(fh))
+    assert rows[0][3:] == ["electricity"] and rows[1][3:] == ["coal_plant"] and rows[2][3:] == ["west"]
+    data = {r[2]: float(r[3]) for r in rows[3:]}
+    assert set(data) == set(T48) and all(v == pytest.approx(500.0, rel=1e-9) for v in data.values())

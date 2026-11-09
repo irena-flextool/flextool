@@ -1242,3 +1242,20 @@ regenerated values of every other column and row matched the previous goldens wi
 (largest relative difference 1.2e-5, solver noise against the frozen references), so the previous files were kept
 and only the zero column / row was added; the other files the regeneration rewrote (header spelling, number
 formatting, `summary_solve.csv` timestamps) were put back.
+
+## 2026-11-09 — `coal_wind_inertia/group_inertia__dt.csv` (the inertia tables were always empty)
+
+**Context.** `inertia_results` (`flextool/process_outputs/out_ancillary.py`) picked the `(process, node)`
+columns of a group by intersecting them with the group's node names only, so no column matched and
+`group_inertia__dt` and `group__unit__node_inertia__dt` were empty in every run (the golden had the index
+columns and no value column).  The columns are now those whose node is in the group, as in `inertia_constraint`.
+
+- `group_inertia__dt.csv`: a column `electricity`, = coal_plant's output flow × its `inertia_constant` 5 (coal_plant
+  has no online variable, so its flow counts): hand-checked t0001 209 MW × 5 = 1045 MWs, t0002 137 MW × 5 = 685 MWs,
+  t0003 76 MW × 5 = 380 MWs.
+- The LP and every other output are unchanged.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate coal_wind_inertia`.  The other two files the
+regeneration rewrote (`costs__dt.csv`, `unit__outputNode__dt.csv`) had the same values (header spelling only) and
+were put back.  `all`, `test_a_lot` and `online_bin_lin` also have an inertia group but no inertia golden; their
+goldens still match.
