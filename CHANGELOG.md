@@ -14,20 +14,25 @@
   has (a warning names the parameter), and a `min_load` that varies within a new step makes the
   `min_load_efficiency` curve of that step approximate (a warning names the units). Results change for models
   that combine a solve-level `new_stepduration` with such time maps; models without a solve-level
-  `new_stepduration`, and time series that are constant within each new step, give the same model as before.
-  Stochastic (branch) time series are combined the same way, each branch on its own (a branch inflow is summed),
-  and a rolling solve's rolls use the combined values too. A database upgraded to version 83 that has a solve
-  with `new_stepduration` prints a notice naming the parameters and entities whose values change.
+  `new_stepduration`, and time series other than stochastic (branch) inflow that are constant within each new
+  step, give the same model as before. Stochastic (branch) time series are combined the same way, each branch on
+  its own, and a rolling solve's rolls use the combined values too. A stochastic (branch) inflow used to take its
+  first time step's value once; it is now summed like a deterministic inflow, so it grows by the number of time
+  steps each new step combines. The step means are exact (before, a profile whose hours in a step were equal was
+  rounded to 6 decimals; it now keeps the exact value, a change of at most 5e-7). A database upgraded to version
+  83 that has a solve with `new_stepduration` prints a notice naming the parameters and entities whose values
+  change.
 - **Fix: `energy_margin_adder` is summed over a solve's `new_stepduration` step (database version 83, results
   change).** The adder is MWh per time step of the timeline. When the investment solve has `new_stepduration`, a
   solve step now gets the sum of the values of the time steps it combines: a period+time map is summed, and a
   constant or period value counts once per time step (on 4 h solve steps of an hourly timeline, a constant 10
   adds 40 MWh to each solve step). Before, a solve step added the value of its first time step once, so a coarse
-  investment solve added a fraction of the intended demand. The adequacy calibrator already sized the adder per
-  time step of the timeline, so its correction now injects the demand it computes on coarse investment solves
-  too. The database upgrade rewrites the parameter description and, on a database with both `new_stepduration`
-  and `energy_margin_adder`, writes a notice marker; to keep the old demand, divide the value by the number of
-  time steps a solve step combines.
+  investment solve added a fraction of the intended demand. The adequacy calibrator's uniform sizing already sized
+  the adder per time step of the timeline, so its correction now injects the demand it computes on coarse
+  investment solves too. The database upgrade rewrites the parameter description and, on a database with both
+  `new_stepduration` and `energy_margin_adder`, writes a notice marker; to keep the old demand, divide the value by
+  the number of time steps a solve step combines. A time-only `energy_margin_adder` map (no period level), which
+  was silently ignored, now stops the run with an error naming the shapes the parameter takes.
 - **New: `inertia_limit` and `non_synchronous_limit` per time step (database version 82).** Both group limits now
   take a constant, a period map, a time map or a period+time map (before: constant or period), e.g. a
   non-synchronous share that steps up by hour or season, or an inertia requirement that is higher in some hours.

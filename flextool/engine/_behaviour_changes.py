@@ -214,7 +214,9 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "mean, efficiencies the harmonic mean (exact fuel use at a constant flow), inflow the sum and "
                      "storage_state_reference_value the value at the end of the step. Before, these took the value "
                      "of the step's first time step; only time-map profiles and inflow were combined "
-                     "(results change)."),
+                     "(results change). A stochastic (branch) inflow used to take its first time step's value "
+                     "once; it is now summed like a deterministic inflow, so it grows by the number of time steps "
+                     "each new step combines, also where it is constant within the step."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "solve_step_series_combined"),
         ),
         BehaviourChange(

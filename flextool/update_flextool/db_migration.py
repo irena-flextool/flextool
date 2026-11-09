@@ -5996,11 +5996,19 @@ def _migrate_v83_solve_step_series(db) -> None:
     if solves:
         _v77_set_marker(db, "solve_step_series_combined", json.dumps({"since": 83, "solves": solves}))
         nodes = sorted({pv["entity_byname"][0] for pv in db.find_parameter_values(
-            entity_class_name="node", parameter_definition_name="energy_margin_adder")})
+            entity_class_name="node", parameter_definition_name="energy_margin_adder")
+            if _v83_adder_has_value(from_database(pv["value"], pv["type"]))})
         if nodes:
             _v77_set_marker(db, "energy_margin_adder_per_original_step",
                             json.dumps({"since": 83, "solves": solves, "nodes": nodes}))
     _commit_step(db, "v83: time series combined over a solve's new_stepduration step")
+
+
+def _v83_adder_has_value(value) -> bool:
+    """An ``energy_margin_adder`` value that adds demand: not null and not a constant 0 (a map counts)."""
+    if value is None:
+        return False
+    return not (isinstance(value, (int, float)) and float(value) == 0.0)
 
 
 _V70_MAX_FLOW_UNCONSTRAINED_DESCRIPTION = (

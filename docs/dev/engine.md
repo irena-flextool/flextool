@@ -473,14 +473,16 @@ Two rules keep the rendered output exact:
   many lookup rows). Always lift from the dict.
 
 The time-series sources of the folds (`pt_*`, `pbt_*`, `pdt_process`,
-`pdt_node`, `pdt_energy_margin_adder`) are read from `solve_data/`, never
-from `input/`: `create_averaged_timeseries` writes them there, combined
+`pdt_node`, `pdt_energy_margin_adder`, and `pd_energy_margin_adder`, passed
+through verbatim) are read from `solve_data/`, never from `input/`: `create_averaged_timeseries` writes them there, combined
 to the solve's steps when the solve has `new_stepduration` (one rule per
 parameter, `TIME_AGGREGATION`; see docs/dev/architecture.md "Solve-step
 aggregation") and verbatim otherwise. A derive and its `_vectorized`
 twin switch a source in the same commit, and their parity fixtures
 seed the `solve_data/` key. The `input/pt_node_inflow` reads of the
-peak scaling stay on `input/`: `peak_inflow` is per original step.
+peak scaling stay on `input/`: `peak_inflow` is per original step; so does
+the `input/pbt_node_inflow` read of the inflow-scaling checks, which takes
+only the node names (the same in both folders).
 
 ### Writer → emitter rename (Phases 1–5)
 

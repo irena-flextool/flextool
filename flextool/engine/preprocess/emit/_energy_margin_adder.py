@@ -264,7 +264,7 @@ def emit_energy_margin_adder(
     adder_dt = pl.concat(parts) if len(parts) > 1 else parts[0]
     if adder_dt.height == 0:
         return
-    if n_of:
+    if any(v != 1.0 for v in n_of.values()):
         # Earlier releases added the value of a solve step's first original step once (behaviour-change
         # notice; printed only while the input database carries the marker).
         from flextool.engine import _behaviour_changes

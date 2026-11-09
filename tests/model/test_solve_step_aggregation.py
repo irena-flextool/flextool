@@ -391,19 +391,28 @@ def test_stochastic_branch_series_combine_by_kind(tmp_path_factory) -> None:
 
     hydro_reservoir inflow (SUM): realized −100 / −300 → −400; upper −200 / −400 → −600; lower −50 / −70 → −120;
     mid −10 / −30 → −40.  wind_plant availability (MEAN): 0.9 / 0.7 → 0.8; 0.6 / 0.4 → 0.5; 0.5 / 0.3 → 0.4;
-    1.0 / 0.8 → 0.9.  wind profile (MEAN): 0.2 / 0.4 → 0.3; 0.1 / 0.3 → 0.2; 0.5 / 0.7 → 0.6; 0.0 / 0.2 → 0.1."""
+    1.0 / 0.8 → 0.9.  wind profile (MEAN): 0.2 / 0.4 → 0.3; 0.1 / 0.3 → 0.2; 0.5 / 0.7 → 0.6; 0.0 / 0.2 → 0.1.
+    coal_plant efficiency (HARMONIC, the slope 1/η is the mean of 1/η; values worked out by a separate agent):
+    0.4 / 0.5 → (2.5 + 2.0)/2 = 2.25; 0.5 / 0.5 → 2.0; 0.25 / 0.5 → (4.0 + 2.0)/2 = 3.0; 0.8 / 0.4 →
+    (1.25 + 2.5)/2 = 1.875.  (storage_state_reference_value, the LAST kind, takes no stochastic-time map: it is
+    not a STOCHASTIC_TIME_PARAMS key.)"""
     inflow = {"realized": (-100.0, -300.0), "upper": (-200.0, -400.0), "lower": (-50.0, -70.0), "mid": (-10.0, -30.0)}
     avail = {"realized": (0.9, 0.7), "upper": (0.6, 0.4), "lower": (0.5, 0.3), "mid": (1.0, 0.8)}
     prof = {"realized": (0.2, 0.4), "upper": (0.1, 0.3), "lower": (0.5, 0.7), "mid": (0.0, 0.2)}
+    eff = {"realized": (0.4, 0.5), "upper": (0.5, 0.5), "lower": (0.25, 0.5), "mid": (0.8, 0.4)}
     values = [["solve", "2day_dispatch", "new_stepduration", S(2.0)],
               ["node", "hydro_reservoir", "inflow", _branch_map(inflow)],
               ["unit", "wind_plant", "availability", _branch_map(avail)],
-              ["profile", "wind", "profile", _branch_map(prof)]]
-    fd = last_stochastic(_run(tmp_path_factory, "c13_stoch_branch", values, STOCH_CHAIN, STOCHASTICS_JSON)).flex_data
+              ["profile", "wind", "profile", _branch_map(prof)],
+              ["unit", "coal_plant", "efficiency", _branch_map(eff)]]
+    # coal_plant joins the include_stochastics group so that each forecast reads its own branch.
+    fd = last_stochastic(_run(tmp_path_factory, "c13_stoch_branch", values, STOCH_CHAIN, STOCHASTICS_JSON,
+                              [["group__unit", ["add_stochastics", "coal_plant"], None]])).flex_data
     expected = {
         ("p_inflow", "n", "hydro_reservoir"): {"realized": -400.0, "upper": -600.0, "lower": -120.0, "mid": -40.0},
         ("p_process_availability", "p", "wind_plant"): {"realized": 0.8, "upper": 0.5, "lower": 0.4, "mid": 0.9},
         ("p_profile_value", "f", "wind"): {"realized": 0.3, "upper": 0.2, "lower": 0.6, "mid": 0.1},
+        ("p_slope", "p", "coal_plant"): {"realized": 2.25, "upper": 2.0, "lower": 3.0, "mid": 1.875},
     }
     for (field, dim, name), per_branch in expected.items():
         frame = utf8(promote_param_to_dt(getattr(fd, field), fd.dt).collect()).filter(pl.col(dim) == name)
