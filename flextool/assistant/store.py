@@ -27,6 +27,7 @@ Imports only the standard library, :mod:`._files`, :mod:`.settings` and the neut
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import re
 import secrets
@@ -243,6 +244,23 @@ class ConversationInfo:
     locked: LockedBy | None
 
 
+@dataclass(frozen=True)
+class _Summary:
+    """What a listing (and chat-number seeding) needs of a conversation file."""
+
+    number: int | None
+    created: str
+    updated: str
+    origin: Origin | None
+    first_question: str
+
+
+# Summaries of conversation files, keyed by the file's normcase path; valid while (mtime_ns, size) are unchanged.
+# A listing drops the entries of its project's files that are gone, so the dict is bounded by the files on disk.
+_SUMMARIES: dict[str, tuple[tuple[int, int], _Summary | None]] = {}
+_SUMMARIES_GUARD = threading.Lock()
+
+
 # --- the registry of conversations open in this process -----------------------------------------------------------
 _OPEN: dict[tuple[str, str, str], Conversation] = {}
 _OPEN_GUARD = threading.RLock()
@@ -279,8 +297,12 @@ class Store:
         return (folder / f"{conversation_id}.json", folder / f"{conversation_id}.json.lock",
                 folder / f"{conversation_id}.title.json")
 
-    def _lock(self, key: str, conversation_id: str, purpose: str = "owner") -> _files.PidLock:
-        return _files.PidLock(self._paths(key, conversation_id)[1], purpose=purpose)
+    def _lock(self, key: str, conversation_id: str, purpose: str = "owner", number: int | None = None
+              ) -> _files.PidLock:
+        """The conversation's lock; *number* (the chat number) is written into it, so another process seeding
+        numbers sees a chat that is not saved yet."""
+        return _files.PidLock(self._paths(key, conversation_id)[1], purpose=purpose,
+                              extra={"number": number} if number is not None else None)
 
     def _registered(self, key: str, conversation_id: str) -> Conversation | None:
         with _OPEN_GUARD:
@@ -363,7 +385,7 @@ class Store:
         saving = self.expiry_days() > 0
         while True:
             conversation_id = new_id()
-            lock = self._lock(key, conversation_id) if saving else None
+            lock = self._lock(key, conversation_id, number=number) if saving else None
             if self._registered(key, conversation_id) is None and not self._paths(key, conversation_id)[0].exists():
                 if lock is None or lock.try_acquire():
                     break
@@ -460,29 +482,30 @@ class Store:
         file, _lock_path, title_file = self._paths(key, conversation_id)
         if not file.exists():
             raise ConversationNotFound(conversation_id)
-        with _OPEN_GUARD:
-            registered = self._registered(key, conversation_id)
-            held: _files.PidLock | LockedBy = "this_process" if registered is not None else \
-                self._acquire_for_open(key, conversation_id)
-            if not isinstance(held, _files.PidLock):
-                if not file.exists():
-                    raise ConversationNotFound(conversation_id)
-                if if_locked == "raise":
-                    raise ConversationLocked(held)
-                data = self._peek(file)
-                return self.new_conversation(project_path, _origin((data or {}).get("origin")),
-                                             (data or {}).get("level"), notice=LOCKED_NEW)
-            try:
-                conv = self._read_conversation(file, path, name, key, conversation_id)
-                conv.title = self._read_title(title_file)
-                if conv.read_only:
-                    held.release()
-                    return conv
-                conv._lock = held
-                self._register(conv)
-            except BaseException:
+        # The registry is checked (and later written) under the guard, but the lock is taken outside it: that
+        # can wait for a cleanup for up to CLEANUP_WAIT, and the lock file itself serialises the threads (a second
+        # thread finds it held by this process).
+        held: _files.PidLock | LockedBy = "this_process" if self._registered(key, conversation_id) is not None \
+            else self._acquire_for_open(key, conversation_id)
+        if not isinstance(held, _files.PidLock):
+            if not file.exists():
+                raise ConversationNotFound(conversation_id)
+            if if_locked == "raise":
+                raise ConversationLocked(held)
+            data = self._peek(file)
+            return self.new_conversation(project_path, _origin((data or {}).get("origin")),
+                                         (data or {}).get("level"), notice=LOCKED_NEW)
+        try:
+            conv = self._read_conversation(file, path, name, key, conversation_id)
+            conv.title = self._read_title(title_file)
+            if conv.read_only:
                 held.release()
-                raise
+                return conv
+            conv._lock = held
+            self._register(conv)
+        except BaseException:
+            held.release()
+            raise
         self._touch_project(path, name, key)
         return conv
 
@@ -559,8 +582,12 @@ class Store:
                 return False
             if self.expiry_days() == 0:
                 return False
-            if conv._lock is None or not conv._lock.held():
-                lock = conv._lock or self._lock(conv.project_key, conv.id)
+            # Steady state: this process has held the lock since the conversation was opened or first saved, and a
+            # file of a newer FlexTool is opened read-only (never saved), so none can be under it: the file is not
+            # parsed again before the write.  A lock taken again (it was lost) gets the full check.
+            steady = conv._lock is not None and conv._lock.held()
+            if not steady:
+                lock = conv._lock or self._lock(conv.project_key, conv.id, number=conv.number)
                 if not lock.try_acquire():
                     _warn(f"the conversation {conv.id} is open in another FlexTool window or terminal, so it was "
                           "not saved here.")
@@ -571,7 +598,12 @@ class Store:
                     self._touch_project(conv.project_path, conv.project_name, conv.project_key)
             file, _lock, title_file = self._paths(conv.project_key, conv.id)
             conv.updated = _files.iso(_files.utc_now())
-            _files.write_json_atomic(file, conv.to_json())
+            try:
+                _files.write_json_atomic(file, conv.to_json(), format_checked=steady)
+            except _files.NewerFormat as exc:
+                conv.read_only = True
+                _warn(f"{exc} The conversation {conv.id} is not saved here any more.")
+                return False
             if conv._title_pending:
                 self._write_title(title_file, conv.title)
                 conv._title_pending = False
@@ -585,24 +617,55 @@ class Store:
                 conv._lock.release()
             self._unregister(conv)
 
+    def _summary(self, file: Path) -> _Summary | None:
+        """The summary of a conversation file (``None``: not one that can be listed), parsed again only when its
+        modification time or size changed."""
+        try:
+            stat = os.stat(file)
+        except OSError:
+            return None
+        stamp = (stat.st_mtime_ns, stat.st_size)
+        key = os.path.normcase(str(file))
+        with _SUMMARIES_GUARD:
+            hit = _SUMMARIES.get(key)
+        if hit is not None and hit[0] == stamp:
+            return hit[1]
+        data = self._peek(file)
+        summary = None
+        if data is not None and isinstance(data.get("messages") or [], list):
+            number = data.get("number")
+            summary = _Summary(
+                number=number if isinstance(number, int) and not isinstance(number, bool) else None,
+                created=str(data.get("created", "")), updated=str(data.get("updated", "")),
+                origin=_origin(data.get("origin")),
+                first_question=first_question([m for m in data.get("messages") or [] if isinstance(m, dict)]))
+        with _SUMMARIES_GUARD:
+            _SUMMARIES[key] = (stamp, summary)
+        return summary
+
+    def _forget_summaries(self, key: str, files: list[tuple[str, Path]]) -> None:
+        prefix = os.path.normcase(str(self.project_dir(key))) + os.sep
+        listed = {os.path.normcase(str(file)) for _cid, file in files}
+        with _SUMMARIES_GUARD:
+            for cached in [k for k in _SUMMARIES if k.startswith(prefix) and k not in listed]:
+                del _SUMMARIES[cached]
+
     def list_conversations(self, project_path: Any) -> list[ConversationInfo]:
         """The saved conversations of the project, the most recently changed first."""
         _path, _name, key = self._project(project_path)
+        files = self._conversation_files(key)
+        self._forget_summaries(key, files)
         out = []
-        for conversation_id, file in self._conversation_files(key):
-            data = self._peek(file)
-            if data is None or not isinstance(data.get("messages") or [], list):
+        for conversation_id, file in files:
+            summary = self._summary(file)
+            if summary is None:
                 continue
-            messages = [m for m in data.get("messages") or [] if isinstance(m, dict)]
-            question = first_question(messages)
             title = self._read_title(self._paths(key, conversation_id)[2])
-            number = data.get("number")
             out.append((self._last_change(conversation_id, file), ConversationInfo(
-                id=conversation_id,
-                number=number if isinstance(number, int) and not isinstance(number, bool) else None,
-                title=title or question, named=title is not None, first_question=question,
-                created=str(data.get("created", "")), updated=str(data.get("updated", "")),
-                origin=_origin(data.get("origin")), locked=self._locked_by(key, conversation_id))))
+                id=conversation_id, number=summary.number,
+                title=title or summary.first_question, named=title is not None,
+                first_question=summary.first_question, created=summary.created, updated=summary.updated,
+                origin=summary.origin, locked=self._locked_by(key, conversation_id))))
         out.sort(key=lambda item: (item[0], item[1].id), reverse=True)
         return [info for _when, info in out]
 
@@ -636,13 +699,55 @@ class Store:
         self._write_title(title_file, text)
         return True
 
+    def _seed_number(self, key: str) -> int:
+        """The next chat number when the stored one is lost (a damaged or deleted ``projects.json``): one above
+        every number in use, saved (the conversation files), open in this process but not saved yet (the
+        registry), counted in memory, or held by a chat of another process that is not saved yet (the number in
+        its lock file)."""
+        highest = 0
+        for _cid, file in self._conversation_files(key):
+            summary = self._summary(file)
+            if summary is not None and summary.number is not None:
+                highest = max(highest, summary.number)
+        with _OPEN_GUARD:
+            for (root, conv_key, _cid), conv in _OPEN.items():
+                if root == self._root_key and conv_key == key and isinstance(conv.number, int):
+                    highest = max(highest, conv.number)
+            highest = max(highest, _MEMORY_NUMBERS.get((self._root_key, key), 1) - 1)
+        folder = self.project_dir(key)
+        try:
+            names = os.listdir(folder)
+        except (FileNotFoundError, NotADirectoryError):
+            names = []
+        for entry in names:
+            if not entry.endswith(".json.lock"):
+                continue
+            lock = _files.PidLock(folder / entry)
+            owner, raw = _files.read_owner(lock.path)
+            if owner is None or raw is None or lock.is_stale(owner, raw):
+                continue
+            try:
+                number = json.loads(raw).get("number")
+            except (ValueError, AttributeError):
+                continue
+            if isinstance(number, int) and not isinstance(number, bool):
+                highest = max(highest, number)
+        return highest + 1
+
+    @staticmethod
+    def _valid_number(value: object) -> bool:
+        return isinstance(value, int) and not isinstance(value, bool) and value > 0
+
     def allocate_chat_number(self, project_path: Any) -> int:
-        """The next chat number of the project: increasing, never given twice.  Kept in the project's row; at
-        expiry 0 counted in memory from the stored value."""
+        """The next chat number of the project: increasing, never given twice.  Kept in the project's row (seeded
+        from the numbers in use when the row has none); at expiry 0 counted in memory from the stored value.  When
+        ``projects.json`` cannot be changed (busy, newer, unwritable) the number is seeded and counted in memory,
+        with a warning: the chat still starts."""
         path, name, key = self._project(project_path)
         if self.expiry_days() == 0:
             row = self._read_projects().get(key) or {}
-            stored = row.get("next_chat_number") if isinstance(row.get("next_chat_number"), int) else 1
+            stored = row.get("next_chat_number")
+            stored = stored if self._valid_number(stored) else self._seed_number(key)
             with _OPEN_GUARD:
                 number = max(stored, _MEMORY_NUMBERS.get((self._root_key, key), 1))
                 _MEMORY_NUMBERS[(self._root_key, key)] = number + 1
@@ -651,13 +756,22 @@ class Store:
         def change(rows: dict[str, Any]) -> int:
             row = rows.setdefault(key, {})
             current = row.get("next_chat_number")
-            number = current if isinstance(current, int) and not isinstance(current, bool) and current > 0 else 1
+            number = current if self._valid_number(current) else self._seed_number(key)
             with _OPEN_GUARD:
                 number = max(number, _MEMORY_NUMBERS.pop((self._root_key, key), 1))
             row.update({"path": str(path), "name": name, "last_used": _files.iso(_files.utc_now()),
                         "next_chat_number": number + 1})
             return number
-        return self._change_projects(change)
+        try:
+            return self._change_projects(change)
+        except (OSError, _files.NewerFormat) as exc:        # LockTimeout is an OSError
+            stored = (self._read_projects().get(key) or {}).get("next_chat_number")
+            number = max(self._seed_number(key), stored if self._valid_number(stored) else 1)
+            with _OPEN_GUARD:
+                number = max(number, _MEMORY_NUMBERS.get((self._root_key, key), 1))
+                _MEMORY_NUMBERS[(self._root_key, key)] = number + 1
+            _warn(f"the chat number could not be kept ({exc}); this chat is number {number}.")
+            return number
 
     def open_chats(self, project_path: Any) -> dict[str, Any]:
         """The chats the window had open for the project: ``{"ids": [...], "selected": id | None}``."""

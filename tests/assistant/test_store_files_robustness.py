@@ -9,6 +9,7 @@ with bounded timeouts.  Expected values are worked out by hand from the docstrin
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import multiprocessing
 import os
@@ -458,3 +459,141 @@ def test_a_conversation_of_a_newer_flextool_opens_read_only_with_unknown_message
     assert opened.read_only and [m.text for m in opened.messages] == ["first"]
     assert not (file.parent / f"{conv.id}.json.lock").exists()
     assert file.read_bytes() == before and damaged_copies(file.parent, f"{conv.id}.json") == []
+
+
+# --- C5-7: chat numbers after projects.json is lost ---------------------------------------------------------------
+def numbered_chats(st: Store, project: Path, count: int) -> list[store_module.Conversation]:
+    convs = []
+    for _ in range(count):
+        number = st.allocate_chat_number(project)
+        convs.append(saved(st, project, f"chat {number}", number=number))
+    return convs
+
+
+def test_numbers_go_on_from_the_saved_and_open_chats_after_projects_json_is_lost(st, root, project, no_wait):
+    convs = numbered_chats(st, project, 3)
+    assert [c.number for c in convs] == [1, 2, 3]
+    for conv in convs:
+        st.close(conv)
+    (root / "projects.json").write_text("{", encoding="utf-8")
+    assert st.allocate_chat_number(project) == 4
+    (root / "projects.json").unlink()
+    unsaved = st.new_conversation(project, ORIGIN, None, number=4)     # registered, never saved
+    assert st.allocate_chat_number(project) == 5
+    st.close(unsaved)
+
+
+def test_numbers_go_on_from_an_unsaved_chat_of_another_process(st, root, project):
+    for conv in numbered_chats(st, project, 2):
+        st.close(conv)
+    ready, finish, out = SPAWN.Event(), SPAWN.Event(), SPAWN.Queue()
+    proc = SPAWN.Process(target=store_workers.new_unsaved_chat, args=(str(root), str(project), ready, finish, out))
+    proc.start()
+    try:
+        assert out.get(timeout=60) == 3
+        assert ready.wait(30)
+        (root / "projects.json").unlink()
+        assert st.allocate_chat_number(project) == 4       # 3 is only in the other process's lock file
+    finally:
+        finish.set()
+        proc.join(30)
+    assert proc.exitcode == 0
+
+
+def test_a_busy_project_list_still_gives_a_new_chat_its_number(st, root, project, monkeypatch, capsys):
+    for conv in numbered_chats(st, project, 2):
+        st.close(conv)
+
+    def busy(path, **kwargs):
+        raise _files.LockTimeout(path)
+    monkeypatch.setattr(_files, "locked", busy)
+    assert [st.allocate_chat_number(project) for _ in range(2)] == [3, 4]
+    assert "this chat is number 3" in capsys.readouterr().err
+    monkeypatch.undo()
+    assert st.allocate_chat_number(project) == 5           # the numbers counted in memory are not given again
+
+
+# --- C5-12: no parse before a steady save; listings parse a file once; open does not block the registry ----------
+def test_a_save_of_an_open_chat_does_not_parse_the_file_again(st, project, monkeypatch):
+    conv = saved(st, project)
+    file = st.project_dir(conv.project_key) / f"{conv.id}.json"
+    real = _files.read_json
+    reads: list[Path] = []
+
+    def spy(path, *args, **kwargs):
+        reads.append(Path(path))
+        return real(path, *args, **kwargs)
+    monkeypatch.setattr(_files, "read_json", spy)
+    conv.messages.append(Message("user", "again"))
+    assert st.save(conv)
+    assert file not in reads
+    monkeypatch.undo()
+    st.close(conv)
+
+
+def test_a_save_after_the_lock_was_lost_keeps_a_newer_flextools_file(st, project, capsys):
+    conv = saved(st, project)
+    folder = st.project_dir(conv.project_key)
+    (folder / f"{conv.id}.json.lock").unlink()               # lost (removed by another FlexTool)
+    file = folder / f"{conv.id}.json"
+    data = json.loads(file.read_text(encoding="utf-8"))
+    data["format"] = 2
+    file.write_text(json.dumps(data), encoding="utf-8")       # a newer FlexTool opened, wrote and closed it
+    before = file.read_bytes()
+    conv.messages.append(Message("user", "after the loss"))
+    assert st.save(conv) is False
+    assert file.read_bytes() == before and conv.read_only
+    assert "newer FlexTool" in capsys.readouterr().err
+    st.close(conv)
+
+
+def test_listing_parses_a_conversation_file_again_only_after_it_changed(st, project, monkeypatch):
+    conv = saved(st, project)
+    file = st.project_dir(conv.project_key) / f"{conv.id}.json"
+    real = _files.read_json
+    reads: list[Path] = []
+
+    def spy(path, *args, **kwargs):
+        reads.append(Path(path))
+        return real(path, *args, **kwargs)
+    monkeypatch.setattr(_files, "read_json", spy)
+    assert [i.first_question for i in st.list_conversations(project)] == ["Miksi?"]
+    assert [i.first_question for i in st.list_conversations(project)] == ["Miksi?"]
+    assert reads.count(file) == 1
+    conv.messages.append(Message("assistant", "Siksi, ja vähän pidempi vastaus."))
+    assert st.save(conv)
+    st.list_conversations(project)
+    assert reads.count(file) == 2
+    st.close(conv)
+
+
+def test_an_opener_waiting_for_a_cleanup_does_not_block_the_registry(st, project, monkeypatch):
+    conv = saved(st, project)
+    st.close(conv)
+    lock_path = st.project_dir(conv.project_key) / f"{conv.id}.json.lock"
+    lock_path.write_text(json.dumps({"pid": os.getppid(), "host": socket.gethostname(), "started": None,
+                                     "token": "cleanup", "purpose": "purge"}), encoding="utf-8")
+    entered, let_go = threading.Event(), threading.Event()
+
+    def wait(_seconds: float) -> None:      # the opener waits for the cleanup here, until the test lets it go
+        entered.set()
+        assert let_go.wait(30)
+        with contextlib.suppress(FileNotFoundError):
+            lock_path.unlink()              # the cleanup is done
+    monkeypatch.setattr(store_module, "_sleep", wait, raising=False)
+    opened: list = []
+    opener = threading.Thread(target=lambda: opened.append(st.open(project, conv.id, if_locked="raise")))
+    opener.start()
+    try:
+        assert entered.wait(30)
+        looked: list = []
+        reader = threading.Thread(target=lambda: looked.append(st._registered(conv.project_key, conv.id)))
+        reader.start()
+        reader.join(10)
+        assert not reader.is_alive() and looked == [None]      # finished while the opener still waited
+        assert not let_go.is_set()
+    finally:
+        let_go.set()
+        opener.join(30)
+    assert opened and opened[0].id == conv.id
+    st.close(opened[0])
