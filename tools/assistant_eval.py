@@ -1322,16 +1322,22 @@ def cmd_dual(args: argparse.Namespace, *, backend_factory: BackendFactory | None
 
 
 # --- the command line -----------------------------------------------------------------------------------------
+def _abs_path(text: str) -> Path:
+    """A command-line path made absolute at once: the runs of ``build`` work in other folders, so a relative path
+    would point elsewhere there."""
+    return Path(text).expanduser().resolve()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="assistant_eval.py", description=__doc__.split("\n\n")[0],
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("build", help="build the synthetic grounding project and its marker (solves)")
-    p.add_argument("--out", required=True, type=Path, help="the folder to build the project in")
+    p.add_argument("--out", required=True, type=_abs_path, help="the folder to build the project in")
 
     p = sub.add_parser("run", help="ask the grounding questions at every level setting")
-    p.add_argument("--project", required=True, type=Path, help="a project made by build")
+    p.add_argument("--project", required=True, type=_abs_path, help="a project made by build")
     p.add_argument("--provider", required=True, help="the provider preset id (ollama, openrouter, gemini, ...)")
     p.add_argument("--model", required=True)
     p.add_argument("--base-url", help="the address, for a custom endpoint or a model server elsewhere")
@@ -1349,12 +1355,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--accept-data-notice", action="store_true",
                    help="accept the provider's data notice for this run only (only for a grounding project)")
     p.add_argument("--resume", action="store_true", help="continue a results folder")
-    p.add_argument("--out", required=True, type=Path, help=f"the results folder (e.g. {DEFAULT_OUT}/<model>)")
+    p.add_argument("--out", required=True, type=_abs_path, help=f"the results folder (e.g. {DEFAULT_OUT}/<model>)")
     p.add_argument("--set", default=str(scoring.SET_PATH), help=argparse.SUPPRESS)
 
     p = sub.add_parser("grade", help="automatic checks and blind grading by the owner (always continues)")
-    p.add_argument("results", nargs="+", type=Path, help="the results folders of every model, graded together")
-    p.add_argument("--dir", required=True, type=Path, help="the grading folder (its grading.json keeps the order)")
+    p.add_argument("results", nargs="+", type=_abs_path, help="the results folders of every model, graded together")
+    p.add_argument("--dir", required=True, type=_abs_path, help="the grading folder (its grading.json keeps the order)")
     p.add_argument("--single-model", action="store_true",
                    help="grade one results folder alone (not blind to the model)")
     p.add_argument("--sitting", type=int, default=DEFAULT_SITTING, help="cells to grade by hand in one sitting")
@@ -1363,7 +1369,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--set", default=str(scoring.SET_PATH), help=argparse.SUPPRESS)
 
     p = sub.add_parser("summary", help="rates per level and class; --record appends results.jsonl")
-    p.add_argument("results", nargs="+", type=Path)
+    p.add_argument("results", nargs="+", type=_abs_path)
     p.add_argument("--record", action="store_true")
     p.add_argument("--results-file", default=str(scoring.RESULTS_PATH), help=argparse.SUPPRESS)
 
@@ -1372,8 +1378,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser("dual", help="the second grader on a subset: sample, grade-ai, report")
     p.add_argument("action", choices=("sample", "grade-ai", "report"))
-    p.add_argument("results", nargs="*", type=Path, help="sample: the results folders of the matrix")
-    p.add_argument("--dir", required=True, type=Path, help="the dual grading folder")
+    p.add_argument("results", nargs="*", type=_abs_path, help="sample: the results folders of the matrix")
+    p.add_argument("--dir", required=True, type=_abs_path, help="the dual grading folder")
     p.add_argument("--seed", type=int, help="sample: the seed (default: a random one, recorded)")
     p.add_argument("--accept-data-notice", action="store_true", help="grade-ai: accept Anthropic's data notice for this run only")
     p.add_argument("--record", action="store_true", help="report: append the second grader's lines")

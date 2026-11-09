@@ -328,6 +328,7 @@ def build_grounding_project(root: Path, *, solve: bool = True) -> GroundingProje
     """The grounding project under *root* (``<root>/Grounding project ä``, which must not exist): the inputs, the
     source numbered as the window numbers it, the runs of :data:`RUN_ORDER` (``solve=False``: the first build's
     inputs only, no runs, and a marker the runner refuses unless a test allows it) and the marker."""
+    root = Path(root).expanduser().resolve()  # the runs work in other folders: a relative root would break them
     project = _new_project(root)
     source = build_inputs(project, build=1)
     number = _number_sources(project)

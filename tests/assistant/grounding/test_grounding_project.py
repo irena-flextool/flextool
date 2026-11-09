@@ -92,3 +92,26 @@ def test_inputs_only_without_solve(tmp_path: Path) -> None:
 def test_the_runner_accepts_the_build(built: gp.GroundingProject, evaluator) -> None:
     """C6-m7: the marker checks pass on a genuine solved build (its result folders, the source's sidecars)."""
     assert evaluator.check_marker(built.path)["solved"] is True
+
+
+def test_a_relative_folder_is_made_absolute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # `build --out <relative>` broke every run: flextool-run works in another folder, so a relative database URL
+    # and output folder pointed elsewhere. The builder and the command line now resolve paths at once.
+    monkeypatch.chdir(tmp_path)
+    project = gp.build_grounding_project(Path("rel") / "build", solve=False)
+    assert project.path.is_absolute()
+    assert project.path == (tmp_path / "rel" / "build" / project.path.name).resolve()
+
+
+def test_the_command_line_makes_its_folders_absolute(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import importlib.util
+    import sys
+
+    spec = importlib.util.spec_from_file_location(
+        "assistant_eval_cli", Path(__file__).resolve().parents[3] / "tools" / "assistant_eval.py")
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    monkeypatch.chdir(tmp_path)
+    args = module.build_parser().parse_args(["build", "--out", "rel/build"])
+    assert args.out == (tmp_path / "rel" / "build").resolve()
