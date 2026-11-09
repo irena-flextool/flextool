@@ -662,10 +662,22 @@ class AssistantSettingsDialog(_AssistantDialog):
         self._check_key()
 
     def forget_key(self) -> None:
-        """[Forget key]: remove the stored key from the keyring and the key file."""
+        """[Forget key]: after its question (Cancel is the default), remove the stored key from the keyring and the
+        key file."""
         preset = self._preset
         if preset is None:
             return
+
+        def answered(remove: bool) -> None:
+            self.confirm = None
+            if remove:
+                self._forget(preset)
+
+        self.confirm = ConfirmDialog(self, strings.FORGET_KEY_TITLE,
+                                     strings.FORGET_KEY_CONFIRM.format(provider=preset.label),
+                                     strings.FORGET_KEY_BUTTON, answered)
+
+    def _forget(self, preset: Preset) -> None:
         generation = self.generation
         endpoint = self._key_endpoint()
         list_url = self._checked_address()

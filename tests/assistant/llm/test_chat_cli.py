@@ -495,6 +495,42 @@ def test_set_key_needs_a_terminal_and_stores_in_the_keyring(fake_keyring):
     assert keys.resolve_key(PRESETS["mistral"])[0] == "sk-typed-key"
 
 
+@pytest.mark.parametrize(("lines", "flags", "tty", "code", "removed"), [
+    (["y"], [], True, 0, True),
+    (["Y"], [], True, 0, True),
+    (["n"], [], True, 1, False),
+    ([""], [], True, 1, False),                 # Enter: the default is No
+    ([], [], True, 1, False),                   # the end of the input (Ctrl-D)
+    ([], ["--yes"], True, 0, True),
+    ([], ["--yes"], False, 0, True),            # a script: --yes needs no terminal
+    (["y"], [], False, 2, False),               # piped text never answers the question
+])
+def test_forget_key_asks_first(fake_keyring, lines, flags, tty, code, removed):
+    """``--forget-key`` asks "Remove the stored … key? [y/N]"; only y removes it, ``--yes`` skips the question and
+    without a terminal and ``--yes`` it refuses with exit 2.  Before, the key was removed without asking."""
+    fake_keyring.passwords[("flextool-assistant", "mistral")] = "sk-stored"
+    term = terminal(lines, tty=tty)
+    assert chat_cli.main(["--forget-key", "--provider", "mistral", *flags], terminal=term) == code
+    assert (("flextool-assistant", "mistral") not in fake_keyring.passwords) is removed
+    out = term.stdout.getvalue()
+    asked = "Remove the stored Mistral key? [y/N] " in out
+    assert asked is (tty and not flags)
+    if removed:
+        assert "The stored key for Mistral is removed." in out
+    elif code == 1:
+        assert "The stored key for Mistral is kept." in out
+    else:
+        assert "add --yes to remove it without asking" in term.stderr.getvalue()
+
+
+def test_yes_goes_only_with_forget_key(fake_keyring, capsys):
+    with pytest.raises(SystemExit) as exc:
+        chat_cli.main(["--set-key", "--provider", "mistral", "--yes"], terminal=terminal(["sk-x"]))
+    assert exc.value.code == 2
+    assert "--yes goes with --forget-key." in capsys.readouterr().err
+    assert fake_keyring.passwords == {}
+
+
 # --- Ctrl-C while the model has not answered yet --------------------------------------------------------------------
 class SlowServer:
     """A loopback chat endpoint that holds every request until released (as a loading model would)."""

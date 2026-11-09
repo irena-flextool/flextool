@@ -116,6 +116,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--key-file", action="store_true",
                         help="with --set-key: store the key unencrypted in a file of your user folder instead of "
                              "the system keyring")
+    parser.add_argument("-y", "--yes", action="store_true",
+                        help="with --forget-key: remove the key without asking (for scripts)")
     parser.add_argument("--no-color", action="store_true", help="no colours in the terminal")
     parser.add_argument("--threads", type=_threads, default=1, metavar="N",
                         help="threads for FlexTool's own processing in this process (default 1)")

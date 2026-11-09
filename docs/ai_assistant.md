@@ -261,7 +261,7 @@ The chat looks for the key of the service in this order and says where it found 
 `flextool-assistant --set-key --provider gemini` asks for the key without showing it and stores it in the system
 keyring. Where there is no usable keyring, `--set-key --key-file` stores it unencrypted in `keys.json` in the
 assistant's folder (on Linux and macOS readable by you only), after a warning. `flextool-assistant --forget-key --provider gemini`
-removes a stored key. A key is never written to a project folder or a conversation, and never shown in a message.
+removes a stored key after asking `[y/N]` (add `--yes` to skip the question in a script); **Forget key** in the settings asks too, with Cancel as the default. A key is never written to a project folder or a conversation, and never shown in a message.
 
 ### Models on this computer
 

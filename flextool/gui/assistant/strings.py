@@ -217,6 +217,9 @@ KEY_FILE_TITLE = "Store the key in a file"
 KEY_FILE_CONFIRM = ("The key will be stored unencrypted at {path}. Anyone who can read your files can read it. Store "
                     "it there?")
 KEY_FILE_BUTTON = "Store in the file"
+FORGET_KEY_TITLE = "Forget the key"
+FORGET_KEY_CONFIRM = "Remove the stored {provider} key? You can store it again later."
+FORGET_KEY_BUTTON = "Remove"
 RELAX_TITLE = "Privacy setting"
 RELAX_CONFIRM = ("Turn off “{label}”? Requests will then be sent without this setting, and the chat window will show "
                  "that the privacy setting is relaxed.")

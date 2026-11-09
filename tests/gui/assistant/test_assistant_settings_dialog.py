@@ -708,8 +708,43 @@ def test_keyring_stores_directly_and_the_file_needs_its_question(open_dialog, ho
     assert ("flextool-assistant", "mistral") not in fake_keyring.passwords
 
     dialog.forget_key()
+    _open_confirm(dialog, host).action_button.invoke()
     pump(host, lambda: dialog.key_status.cget("text") == "No key stored.")
     assert not key_file.exists()
+
+
+def test_forget_key_asks_first_and_enter_keeps_the_key(open_dialog, host, fake_keyring):
+    """[Forget key] asks "Remove the stored … key?" with Cancel as the default: Cancel and Return keep the key,
+    only [Remove] removes it.  Before, the key was removed at once."""
+    from tests.gui.assistant.tk_helpers import key
+
+    fake_keyring.passwords[("flextool-assistant", "mistral")] = "mistral-key"
+    dialog = open_dialog()
+    dialog.select_preset("mistral")
+    assert _key_status(dialog, host) == "Using the key stored in the system keyring."
+
+    dialog.forget_key()
+    confirm = _open_confirm(dialog, host)
+    assert confirm.message_label.cget("text") == "Remove the stored Mistral key? You can store it again later."
+    assert confirm.action_button.cget("text") == "Remove"
+    assert confirm.cancel_button.cget("text") == "Cancel"
+    assert confirm.focus_lastfor() is confirm.cancel_button
+    confirm.cancel_button.invoke()
+    pump(host, timeout=0.2)
+    assert dialog.confirm is None
+    assert fake_keyring.passwords[("flextool-assistant", "mistral")] == "mistral-key"
+
+    dialog.forget_key()
+    confirm = _open_confirm(dialog, host)
+    key(confirm.cancel_button, "<Return>")
+    key(confirm, "<Return>")
+    pump(host, timeout=0.2)
+    assert fake_keyring.passwords[("flextool-assistant", "mistral")] == "mistral-key"
+    assert dialog.confirm is confirm and confirm.winfo_exists()
+
+    confirm.action_button.invoke()
+    pump(host, lambda: dialog.key_status.cget("text") == "No key stored.")
+    assert ("flextool-assistant", "mistral") not in fake_keyring.passwords
 
 
 def test_an_unusable_keyring_is_greyed_with_the_reason(open_dialog, host, monkeypatch):

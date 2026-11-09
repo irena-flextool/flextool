@@ -123,6 +123,11 @@ TEXTS: dict[str, str] = {
     "key_file_question": "Type yes to store it there, anything else to use it for this session only: ",
     "key_session": "The key is used for this session only.",
     "key_removed": "The stored key for {provider} is removed.",
+    "forget_question": "Remove the stored {provider} key? [y/N] ",
+    "forget_kept": "The stored key for {provider} is kept.",
+    "forget_terminal": ("Removing the stored key asks first, and there is no terminal to ask in; add --yes to "
+                        "remove it without asking."),
+    "yes_only_with_forget": "--yes goes with --forget-key.",
     "key_terminal": "Storing a key needs a terminal, so the key is never read from piped text.",
     "key_file_only_with_set": "--key-file goes with --set-key.",
     "key_not_needed": "{provider} needs no key.",
@@ -1335,11 +1340,22 @@ def cmd_forget_key(args: argparse.Namespace, term: Terminal) -> int:
     from flextool.assistant.settings import load_settings
 
     choice = _need_choice(args, load_settings(), term)
+    provider = choice.preset.label
+    if not args.yes:
+        if not term.interactive:
+            term.say(TEXTS["forget_terminal"], err=True)
+            return 2
+        answer = term.read_line(TEXTS["forget_question"].format(provider=provider))
+        if answer is None:                      # the end of the input: the line the question left open
+            term.say("")
+        if answer is None or answer.strip().lower() not in ("y", "yes"):
+            term.say(TEXTS["forget_kept"].format(provider=provider))
+            return 1
     from flextool.assistant import model_list_cache
 
     note = keys.forget_key(choice.preset, choice.base_url)
     model_list_cache.clear_marks(choice.preset.id, choice.base_url)
-    term.say(TEXTS["key_removed"].format(provider=choice.preset.label))
+    term.say(TEXTS["key_removed"].format(provider=provider))
     if note:
         term.say(note, err=True)
     return 0
@@ -1366,6 +1382,8 @@ def run(args: argparse.Namespace, parser: argparse.ArgumentParser, *, backend_fa
     factory = backend_factory or default_backend_factory(args.verbose)
     if args.key_file and not args.set_key:
         parser.error(TEXTS["key_file_only_with_set"])
+    if args.yes and not args.forget_key:
+        parser.error(TEXTS["yes_only_with_forget"])
     if args.all_models and not args.list_models:
         parser.error(TEXTS["all_only_with_list"])
     try:
