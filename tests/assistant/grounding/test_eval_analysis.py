@@ -102,6 +102,80 @@ def test_resume_refuses_another_model_or_project(evaluator, grounding: Path, tmp
     assert harness.requests == 1
 
 
+def _openrouter_key(model: str):
+    from flextool.assistant import endpoint
+    from flextool.assistant.providers import PRESETS
+
+    preset = PRESETS["openrouter"]
+    return endpoint.consent_key("openrouter", preset.base_url, endpoint.route_for(preset, preset.base_url,
+                                                                                  model=model))
+
+
+def test_accept_data_notice_is_not_kept(evaluator, grounding: Path, tmp_path: Path) -> None:
+    """C6-M2: the calibration's acceptance is for that run only; the chat still asks."""
+    from flextool.assistant import endpoint
+
+    harness = Harness()
+    assert run(evaluator, grounding, tmp_path / "out", "--questions", "G01", "--levels", "basic",
+               harness=harness) == 0
+    assert harness.requests == 1
+    assert not endpoint.acks_path().exists()
+    assert endpoint.needs_consent(_openrouter_key("other/model"))
+
+
+def test_a_chat_acceptance_does_not_cover_the_calibration(evaluator, grounding: Path, tmp_path: Path,
+                                                         capsys) -> None:
+    """C6-M2: an acceptance kept by the chat is not read by the calibration, and a refused first run writes no
+    results folder (the rerun with the flag is not refused as "has results")."""
+    from flextool.assistant import endpoint
+
+    endpoint.record_consent(_openrouter_key(MODEL))
+    harness = Harness()
+    out = tmp_path / "out"
+    args = evaluator.build_parser().parse_args(
+        ["run", "--project", str(grounding), "--provider", "openrouter", "--model", MODEL, "--out", str(out),
+         "--questions", "G01", "--levels", "basic"])
+    assert evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
+                             say=lambda _t: None) == 3
+    err = capsys.readouterr().err
+    assert "Run again with --accept-data-notice" in err
+    assert harness.requests == 0 and harness.probes == 0
+    assert not (out / evaluator.RUN_FILE).exists()
+    assert run(evaluator, grounding, out, "--questions", "G01", "--levels", "basic", harness=harness) == 0
+    assert harness.requests == 1
+
+
+def test_a_forwarded_ollama_model_asks_the_notice(evaluator, grounding: Path, tmp_path: Path, capsys) -> None:
+    """C6-m1: the probe shows that the local Ollama forwards the model to Ollama cloud; that route's notice is
+    asked before any question is sent, and accepting it keeps nothing."""
+    from flextool.assistant import endpoint
+    from flextool.assistant.probes import ModelFacts
+
+    harness = Harness()
+
+    def prober(preset, conn, cancel, *, needed):
+        harness.probes += 1
+        return ModelFacts(context_window=131_072, tools=True, remote_host="ollama.com", source="ollama")
+
+    out = tmp_path / "out"
+
+    def go(*extra: str) -> int:
+        args = evaluator.build_parser().parse_args(
+            ["run", "--project", str(grounding), "--provider", "ollama", "--model", "gpt-oss:120b", "--out",
+             str(out), "--questions", "G01", "--levels", "basic", *extra])
+        return evaluator.cmd_run(args, backend_factory=harness.factory, prober=prober, info=None,
+                                 say=lambda _t: None)
+
+    assert go() == 3
+    err = capsys.readouterr().err
+    assert "Ollama cloud" in err and "--resume --accept-data-notice" in err
+    assert harness.probes == 1 and harness.requests == 0
+    assert go("--resume", "--accept-data-notice") == 0
+    assert harness.requests == 1
+    assert harness.backends[0].origin[0] == "ollama"
+    assert not endpoint.acks_path().exists()
+
+
 def test_daily_budget_stops_and_resumes_next_day(evaluator, grounding: Path, tmp_path: Path,
                                                  monkeypatch: pytest.MonkeyPatch) -> None:
     out = tmp_path / "out"
@@ -117,11 +191,11 @@ def test_daily_budget_stops_and_resumes_next_day(evaluator, grounding: Path, tmp
                                  say=said.append)
 
     assert go() == 0
-    assert said[-1] == evaluator.DAILY_DONE
+    assert said[-1] == evaluator.DAILY_DONE_REMOTE                  # OpenRouter: the rerun needs the flag again
     assert sorted(p.stem for p in (out / "cells").glob("*.json")) == ["G01__small__r1", "G03__small__r1"]
     assert harness.requests == 2
     assert go("--resume") == 0                              # the same day: nothing more is sent
-    assert said[-1] == evaluator.DAILY_DONE and harness.requests == 2
+    assert said[-1] == evaluator.DAILY_DONE_REMOTE and harness.requests == 2
     tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
     monkeypatch.setattr(evaluator, "utc_now", lambda: tomorrow)
     assert go("--resume") == 0
@@ -561,6 +635,9 @@ def test_dual_end_to_end(analysis, scoring, evaluator, tmp_path: Path, monkeypat
 
     assert dual_cmd("grade-ai", "--accept-data-notice", backend_factory=factory) == 0
     assert len(backends[0].requests) == 12 and backends[0].closed
+    from flextool.assistant import endpoint
+
+    assert not endpoint.acks_path().exists()                    # C6-M2: the acceptance was for that run only
     assert dual_cmd("report") == 2
     assert "The owner grades the sampled cells first" in capsys.readouterr().err
     for qid, (owner, _grader) in DUAL_TABLE.items():
@@ -603,3 +680,11 @@ def test_evidence_level(analysis) -> None:
     (ev,) = analysis.evidence(basic + lines(6, 8, "medium", "lookup")
                               + lines(1, 2, "medium", "interpret")).values()           # interpret 50 % < 75 %
     assert analysis.evidence_level(ev) == "small"
+
+
+def test_the_calibration_tools_keep_no_acceptance() -> None:
+    """C6-M2: no calibration path reads or writes the chat's acknowledgements."""
+    tools = Path(__file__).resolve().parents[3] / "tools"
+    for path in sorted(tools.glob("assistant_eval*.py")):
+        text = path.read_text(encoding="utf-8")
+        assert "needs_consent" not in text and "record_consent" not in text, path.name

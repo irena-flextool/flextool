@@ -66,6 +66,7 @@ OLLAMA_CONTEXTS = {"small": 16_384, "medium": 32_768, "large": 65_536}
 NOT_GROUNDING = "This is not a grounding project made by assistant_eval build."
 OTHER_RESULTS = "These results belong to another model or project; use a new --out folder."
 DAILY_DONE = "Daily request budget used. Run again with --resume tomorrow."
+DAILY_DONE_REMOTE = "Daily request budget used. Run again with --resume --accept-data-notice tomorrow."
 HAS_RESULTS = "This folder has results already: add --resume to continue them, or use a new --out folder."
 
 
@@ -75,6 +76,24 @@ class Refused(Exception):
     def __init__(self, text: str, code: int = 2) -> None:
         super().__init__(text)
         self.code = code
+
+
+def accept_route(preset: Any, base_url: str, route: Any, accepted: set, *, accept: bool, again: str,
+                 what: str) -> None:
+    """The data notice of a remote *route*, accepted for this process only (*accepted*): the calibration neither
+    reads nor writes the chat's acknowledgements, so an acceptance here never covers a real chat and one given in
+    the chat never covers a calibration.  :class:`Refused` (exit 3) when ``--accept-data-notice`` was not given;
+    *again* is the command-line addition the rerun needs."""
+    from flextool.assistant import endpoint
+
+    key = endpoint.consent_key(preset.id, base_url, route)
+    if not key.remote or key in accepted:
+        return
+    print(endpoint.consent_notice(route, required_headers=preset.required_headers), file=sys.stderr)
+    print(endpoint.indicator_text(route), file=sys.stderr)
+    if not accept:
+        raise Refused(f"Nothing was sent. Run again with {again} to accept this notice for {what}.", code=3)
+    accepted.add(key)
 
 
 class DailyBudgetUsed(Exception):
@@ -525,6 +544,12 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     except net.BaseUrlRefused as exc:
         raise Refused(str(exc)) from None
     out = Path(args.out)
+    # The notice before run.json is written, so a refused first run can simply be run again with the flag.
+    accepted: set = set()
+    route = endpoint.route_for(preset, base_url, model=args.model)
+    what = "the synthetic grounding project"
+    accept_route(preset, base_url, route, accepted, accept=args.accept_data_notice,
+                 again="--resume --accept-data-notice" if args.resume else "--accept-data-notice", what=what)
     identity = {"provider": preset.id, "model": args.model, "base_url": base_url,
                 "project_fingerprint": marker["fingerprint"], "set_version": qset.set_version,
                 "knobs_relaxed": bool(args.relax_data_collection)}
@@ -543,14 +568,6 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     if preset.key_required and not key:
         conn = conn_for(args.model, endpoint.route_for(preset, base_url, model=args.model))
         raise Refused(render("no_key", error_context(preset, conn)) + (f" ({note})" if note else ""))
-    route = endpoint.route_for(preset, base_url, model=args.model)
-    consent = endpoint.consent_key(preset.id, base_url, route)
-    if endpoint.needs_consent(consent):
-        print(endpoint.consent_notice(route, required_headers=preset.required_headers), file=sys.stderr)
-        if not args.accept_data_notice:
-            raise Refused("Nothing was sent. Run again with --accept-data-notice to accept this notice for the "
-                          "synthetic grounding project.", code=3)
-        endpoint.record_consent(consent)
     free_setting = {"on": True, "off": False, "auto": None}[args.free_tier]
     free = budget.free_tier_on(preset.id, args.model, free_setting)
     daily = daily_budget(preset.id, args.model, args.max_requests_per_day)
@@ -567,6 +584,12 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
         setting = _setting(level, model, preset=preset, base_url=base_url, conn_for=conn_for, prober=prober,
                            info=info if level in contexts else None, wanted_context=contexts.get(level),
                            free_tier=free, cache=probed)
+        if not setting.not_applicable:
+            # The probe can show that the model is forwarded (Ollama cloud): that route's notice is asked too.
+            # The probe sent only the model name, to the local server.
+            accept_route(preset, base_url, setting.route, accepted, accept=args.accept_data_notice,
+                         again="--resume --accept-data-notice", what=what)
+        done = DAILY_DONE_REMOTE if accepted else DAILY_DONE
         for qid in wanted:
             question = qset.questions[qid]
             if question.automatic_level_only and (setting.choice is None or level != setting.choice.automatic):
@@ -583,7 +606,7 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                     say(f"{cid}: not applicable ({setting.not_applicable})")
                     continue
                 if budget_used():
-                    say(DAILY_DONE)
+                    say(done)
                     return 0
                 backend = backend_factory(preset, conn_for(setting.model, setting.route))
                 try:
@@ -591,7 +614,7 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                                      ledger=ledger, say=say)["turns"]
                 except DailyBudgetUsed as exc:
                     say(str(exc))
-                    say(DAILY_DONE)
+                    say(done)
                     return 0
                 finally:
                     backend.close()
@@ -601,7 +624,7 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 cells[cid] = record
                 say(f"{cid}: saved")
                 if budget_used():
-                    say(DAILY_DONE)
+                    say(done)
                     return 0
     say(f"All cells of {args.model} are in {out}.")
     return 0
@@ -996,13 +1019,8 @@ def dual_grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say
                       key_source=source.describe(preset) if api_key else "", knobs={}, route=route)
     if not api_key:
         raise Refused(render("no_key", error_context(preset, conn)) + (f" ({note})" if note else ""))
-    consent = endpoint.consent_key(preset.id, base_url, route)
-    if endpoint.needs_consent(consent):
-        print(endpoint.consent_notice(route, required_headers=preset.required_headers), file=sys.stderr)
-        if not args.accept_data_notice:
-            raise Refused("Nothing was sent. Run again with --accept-data-notice to accept this notice for the "
-                          "synthetic grounding answers.", code=3)
-        endpoint.record_consent(consent)
+    accept_route(preset, base_url, route, set(), accept=args.accept_data_notice, again="--accept-data-notice",
+                 what="the synthetic grounding answers")
     sealed_path = folder / analysis.SEALED_FILE
     sealed = read_json(sealed_path) if sealed_path.is_file() else {}
     ledger = CalibrationLedger(Ledger())
@@ -1121,7 +1139,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--questions", help="comma-separated question ids (default: all)")
     p.add_argument("--repeat", type=int, default=1)
     p.add_argument("--accept-data-notice", action="store_true",
-                   help="accept the provider's data notice (only for a grounding project)")
+                   help="accept the provider's data notice for this run only (only for a grounding project)")
     p.add_argument("--resume", action="store_true", help="continue a results folder")
     p.add_argument("--out", required=True, type=Path, help=f"the results folder (e.g. {DEFAULT_OUT}/<model>)")
     p.add_argument("--set", default=str(scoring.SET_PATH), help=argparse.SUPPRESS)
@@ -1147,7 +1165,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("results", nargs="*", type=Path, help="sample: the results folders of the matrix")
     p.add_argument("--dir", required=True, type=Path, help="the dual grading folder")
     p.add_argument("--seed", type=int, help="sample: the seed (default: a random one, recorded)")
-    p.add_argument("--accept-data-notice", action="store_true", help="grade-ai: accept Anthropic's data notice")
+    p.add_argument("--accept-data-notice", action="store_true", help="grade-ai: accept Anthropic's data notice for this run only")
     p.add_argument("--record", action="store_true", help="report: append the second grader's lines")
     p.add_argument("--results-file", default=str(scoring.RESULTS_PATH), help=argparse.SUPPRESS)
     p.add_argument("--key", default=str(scoring.KEY_PATH), help=argparse.SUPPRESS)

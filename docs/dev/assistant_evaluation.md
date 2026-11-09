@@ -58,8 +58,10 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
 
 - **Keys** are read from the system keyring or from the provider's environment variable. They are never given on
   the command line or in a file.
-- **The data notice** is the one the chat shows. `--accept-data-notice` accepts it, and only for a grounding
-  project.
+- **The data notice** is the one the chat shows. `--accept-data-notice` accepts it for this run only, and only for
+  a grounding project: nothing is kept, so every run on a remote service needs the flag (also with `--resume`), an
+  acceptance in the chat does not cover a calibration, and the chat still asks. When the probe shows that a model
+  is forwarded (an Ollama cloud model), that route's notice is asked as well.
 - **One record per cell.** A cell is one model at one level setting answering one question. The records go to the
   `--out` folder. They are redacted, and they stay local: `_audit_reports/` is git-ignored. Each question gets a
   fresh conversation. The eight turns of S01 share one conversation, and S01 runs only at the model's automatic
@@ -74,7 +76,7 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
 - **OpenRouter free models.** `--relax-data-collection` lets OpenRouter use providers that keep the data of the
   requests. The data is synthetic, and each cell records this. The runner stops after a daily number of requests:
   45 for a `:free` model by default, or `--max-requests-per-day N`. When it stops, it prints "Daily request budget
-  used. Run again with --resume tomorrow." A provider's "quota used" reply stops it in the same way. `--resume`
+  used. Run again with --resume --accept-data-notice tomorrow." (without the flag for a local model). A provider's "quota used" reply stops it in the same way. `--resume`
   skips finished cells. It refuses to continue a folder made with another model or another project.
 - **Usage.** The requests are counted in the usage ledger under the provider's name with "(calibration)" added,
   apart from chat use.
