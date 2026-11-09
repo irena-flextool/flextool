@@ -461,6 +461,18 @@ def _normalised(value: object, case_free: bool = False) -> object:
     return value
 
 
+def _redacted_values(value: object, redact: Callable[[str], str]) -> object:
+    """*value* (tool arguments) with every text in it redacted, before it is quoted as JSON: quoting doubles a
+    Windows path's backslashes, and the doubled spelling is no longer a path the redaction knows."""
+    if isinstance(value, str):
+        return redact(value)
+    if isinstance(value, dict):
+        return {_redacted_values(key, redact): _redacted_values(item, redact) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_redacted_values(item, redact) for item in value]
+    return value
+
+
 def call_signature(call: ToolCall) -> str:
     """The tool and its normalised arguments: two calls with the same signature ask the same thing."""
     if call.arguments is None:
@@ -953,7 +965,7 @@ class Session:
             key = "not_at_level" if name in registry.all_tools() else "unknown_tool"
             return self._result(call, registry.error_outcome(self.ctx, key, name=name, names=names).text,
                                 is_error=True, turn=turn)
-        arguments = self.ctx.redact(json.dumps(call.arguments, ensure_ascii=False))
+        arguments = json.dumps(_redacted_values(call.arguments, self.ctx.redact), ensure_ascii=False)
         self._acquire_tool_lock(name, cancel, emit)
         try:
             emit(ToolRunning(name, caps_module.cap_text(arguments, ARGS_PREVIEW_MAX)))

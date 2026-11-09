@@ -243,6 +243,12 @@ class _Asker:
 
     def _connection_error(self, exc: BaseException, timeout: float) -> LLMError:
         reason = exc.reason if isinstance(exc, urllib.error.URLError) else exc
+        if self.local and isinstance(exc, urllib.error.URLError) and isinstance(reason, (socket.timeout,
+                                                                                          TimeoutError)):
+            # The connect itself timed out (urllib wraps only the connect and the send; a slow answer raises the
+            # timeout bare).  A server listening on this computer or the local network accepts at once, so this
+            # is nothing listening: Windows retries a refused connect for about 2 s instead of refusing it.
+            return make_error(Unreachable, "connection_local" if self.ctx.local else "connection_remote", self.ctx)
         if isinstance(reason, (socket.timeout, TimeoutError)):
             return make_error(TimedOut, "timeout", self.ctx, message_fields={"seconds": f"{timeout:g}"})
         if isinstance(reason, OSError):

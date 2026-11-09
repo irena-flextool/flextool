@@ -214,13 +214,15 @@ def test_every_user_page_of_the_nav_is_in_the_scope() -> None:
 def test_the_command_defaults_to_the_installed_documentation(tmp_path: Path, monkeypatch, capsys) -> None:
     """Without --docs-dir the command reads ``docs_store.markdown_root()`` (a wheel's packaged copy), not a docs/
     next to the package; a folder it cannot build from gives one line on stderr and exit 1 (review C2-2)."""
-    packaged = tmp_path / "md"
+    # A backslash in the path (the separator on Windows, a plain character elsewhere): the message gives the path
+    # as it is, not with the doubled backslashes of Python's quoting (CI of PR #362, Windows).
+    packaged = tmp_path / "docs\\md"
     (packaged / "dev").mkdir(parents=True)          # no dev/engine.md: the build cannot read its preamble
     monkeypatch.setattr(docs_store, "markdown_root", lambda package_dir=docs_store.PACKAGE_DIR: packaged)
     assert docs_build_main(["--out", str(tmp_path / "out"), "--private-names", str(tmp_path / "absent")]) == 1
     err = capsys.readouterr().err.strip()
     assert len(err.splitlines()) == 1 and "Traceback" not in err
-    assert err.startswith("python -m flextool.docs_build: ") and str(packaged / "dev" / "engine.md") in err
+    assert err == f"python -m flextool.docs_build: No such file or directory: {packaged / 'dev' / 'engine.md'}"
 
     monkeypatch.setattr(docs_store, "markdown_root", lambda package_dir=docs_store.PACKAGE_DIR: None)
     assert docs_build_main(["--out", str(tmp_path / "out")]) == 1

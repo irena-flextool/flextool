@@ -47,7 +47,12 @@ def main(argv: list[str] | None = None) -> int:
     except PrivateNameError as exc:
         print(exc, file=sys.stderr)
         return 1
-    except (OSError, ValueError) as exc:        # a missing or unreadable page; HeaderGrammarError is a ValueError
+    except OSError as exc:                      # a missing or unreadable page
+        # The path as it is, not as Python quotes it (doubled backslashes on Windows).
+        reason = f"{exc.strerror}: {exc.filename}" if exc.strerror and exc.filename else str(exc)
+        print(f"{PROG}: {reason}", file=sys.stderr)
+        return 1
+    except ValueError as exc:                   # HeaderGrammarError is a ValueError
         print(f"{PROG}: {exc}", file=sys.stderr)
         return 1
     for bullet in unmatched:

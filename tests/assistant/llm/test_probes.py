@@ -27,6 +27,7 @@ from flextool.assistant.llm_errors import (
     ContextTooSmall,
     ProviderError,
     ServerBusy,
+    TimedOut,
     ToolsUnsupported,
     LLMError,
     Unreachable,
@@ -156,6 +157,34 @@ def test_no_server_is_unreachable():
     with pytest.raises(Unreachable) as info:
         probes.probe(preset, conn, threading.Event())
     assert info.value.user_message == "Nothing answers at 127.0.0.1:9. Start Ollama and try again."
+
+
+def test_a_connect_that_times_out_on_this_computer_is_unreachable(monkeypatch):
+    """Windows answers a connect to a closed port on this computer only after about 2 s of retries, past the
+    probe's 2 s timeout (CI of PR #362): the timed-out connect still means nothing answers there."""
+    def connect_times_out(*args, **kwargs):
+        raise TimeoutError("timed out")
+
+    monkeypatch.setattr(socket, "create_connection", connect_times_out)
+    preset, conn = _conn("ollama", "http://127.0.0.1:9/v1", "kimi:cloud")
+    with pytest.raises(Unreachable) as info:
+        probes.probe(preset, conn, threading.Event())
+    assert info.value.user_message == "Nothing answers at 127.0.0.1:9. Start Ollama and try again."
+
+
+def test_a_server_that_accepts_but_does_not_answer_times_out(monkeypatch):
+    """A server that took the connection but sends nothing within the timeout is slow, not absent."""
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen()
+    port = listener.getsockname()[1]
+    monkeypatch.setattr(probes, "LOCAL_TIMEOUT", 0.3)
+    preset, conn = _conn("ollama", f"http://127.0.0.1:{port}/v1", "kimi:cloud")
+    try:
+        with pytest.raises(TimedOut):
+            probes.probe(preset, conn, threading.Event())
+    finally:
+        listener.close()
 
 
 def test_probes_ignore_the_proxy_variables(server, monkeypatch):

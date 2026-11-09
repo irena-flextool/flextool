@@ -183,6 +183,18 @@ def test_the_window_tool_line_gets_redacted_capped_arguments_and_what_was_sent(r
     assert r.backend.requests[1].messages[2].text == result.text
 
 
+def test_a_windows_path_in_the_arguments_is_redacted_before_it_is_quoted(rig, tools):
+    """Quoting the arguments as JSON doubles a Windows path's backslashes, which the redaction does not read as a
+    path (CI of PR #362: the project folder reached the window's tool line on Windows), so the texts are redacted
+    first.  The path here is no folder of this machine: it shrinks to its last part, as any path outside the
+    project."""
+    r = rig([calls(call(text=r"C:\Users\alice\clients\Acme Corp\model.sqlite has 3 units")), say("Done.")])
+    assert r.ask().ok
+    [running] = [e for e in r.events if isinstance(e, ToolRunning)]
+    [done] = [e for e in r.events if isinstance(e, ToolDone)]
+    assert running.args_preview == done.arguments == '{"text": "model.sqlite has 3 units"}'
+
+
 def test_round_cap_then_an_answer_without_tools(rig, tools):
     r = rig([calls(call()), calls(call()), say("What I have.")], caps=TurnCaps(max_rounds=2))
     result = r.ask()
