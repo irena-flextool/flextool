@@ -370,3 +370,54 @@ def test_refuse_mode_refuses_remote_http_only(monkeypatch, no_proxy_variables):
         assert net.check_base_url(url) == url
     with pytest.raises(net.BaseUrlRefused):
         net.build_http_client(connection("openai_compatible", url=PLAIN), backend="openai", api_key=KEY)
+
+
+# --- the sockets a Stop shuts (C4-M1, C4-m7) ----------------------------------------------------------------------
+class _FakeStream:
+    def __init__(self) -> None:
+        self.shut = 0
+
+    def shutdown(self) -> None:
+        self.shut += 1
+
+
+def test_a_stream_added_after_a_stop_is_shut_at_once():
+    """A connection whose connect was under way when Stop came is shut as it opens; after the next request
+    begins, a new connection is left alone."""
+    registry = net._SocketRegistry()
+    registry.shutdown_all()                         # a Stop, with no connection open yet
+    late = _FakeStream()
+    registry.add(late)
+    assert late.shut == 1
+    registry.begin()
+    fresh = _FakeStream()
+    registry.add(fresh)
+    assert fresh.shut == 0
+
+
+def test_close_shuts_the_socket_down_first_and_closes_once():
+    """Closing a tracked stream shuts its socket down before closing it, so a close from another thread wakes a
+    blocked read: the peer sees the end although another descriptor still holds the socket open.  A second close
+    and a later Stop do nothing, and nothing raises."""
+    import socket
+
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen()
+    registry = net._SocketRegistry()
+    stream = net._tracked_backend(registry).connect_tcp("127.0.0.1", server.getsockname()[1], timeout=5)
+    peer, _ = server.accept()
+    held = stream.get_extra_info("socket").dup()    # keeps the connection open past the close
+    try:
+        assert len(registry._streams) == 1
+        stream.close()
+        peer.settimeout(2)
+        assert peer.recv(10) == b""                 # the shutdown's end of stream, not a timeout
+        stream.close()
+        registry.shutdown_all()
+        assert len(registry._streams) == 0
+        assert stream.get_extra_info("socket").fileno() == -1
+    finally:
+        held.close()
+        peer.close()
+        server.close()

@@ -23,13 +23,19 @@ FlexTool, not the library, decides what a request carries and where it goes:
 * **Response headers**: only the request-limit headers of :data:`~flextool.assistant.pacing.RATE_HEADERS` are
   read, by a response hook, for the pacing (P1 §5.1); they are kept as counts and times, never logged.
 * **Cancel**: :meth:`HttpSession.abort_connections` shuts the open sockets down, which wakes a read that is
-  waiting for the first byte (closing a socket from another thread does not).
+  blocked on one (closing a socket from another thread does not), whether it waits for the first byte or for
+  the next part of an answer that went quiet.  Every close shuts the socket down first, so closing the response
+  from another thread wakes the reader too.  A TLS handshake is woken through a duplicate of the socket's
+  descriptor (the library's wrapping takes the descriptor away from the plain socket before the handshake
+  starts).  After a Stop, a connection that opens later (its connect was under way) is shut as it opens, until
+  the next request starts: each backend method that sends a request calls :meth:`HttpSession.begin_request`.
 """
 from __future__ import annotations
 
 import contextlib
 import ipaddress
 import socket
+import ssl
 import threading
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, field
@@ -219,14 +225,76 @@ def route_for(base_url: str, label: str, *, forwarded_to: str | None = None) -> 
 
 
 # --- sockets that can be shut down from another thread ------------------------------------------------------------
+class _ShutOnce:
+    """A socket that any thread may shut down, never after it is closed: the shutdown and the close take one lock,
+    so a shutdown never reaches a closed descriptor (or one the system has given to another file)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._closed = False
+
+    def _socket(self) -> Any:
+        raise NotImplementedError
+
+    def _shut(self) -> None:
+        # A socket already shut, or one that is not connected, has nothing left to shut.
+        with contextlib.suppress(Exception):
+            sock = self._socket()
+            if sock is not None:
+                sock.shutdown(socket.SHUT_RDWR)
+
+    def shutdown(self) -> None:
+        with self._lock:
+            if not self._closed:
+                self._shut()
+
+
+class _HandshakeGuard(_ShutOnce):
+    """A duplicate of a plain socket's descriptor, kept while its TLS handshake runs: wrapping the socket for TLS
+    takes the descriptor away from the plain socket before the handshake starts, so only the duplicate can still
+    shut the connection down.  ``None`` stands in when the socket cannot be duplicated (a socket that is already
+    TLS, a tunnel through an https proxy: its stream stays registered and shuts it itself)."""
+
+    def __init__(self, sock: Any) -> None:
+        super().__init__()
+        self._dup: socket.socket | None = None
+        if isinstance(sock, socket.socket) and not isinstance(sock, ssl.SSLSocket):
+            with contextlib.suppress(OSError):
+                self._dup = sock.dup()
+
+    def _socket(self) -> Any:
+        return self._dup
+
+    def close(self) -> None:
+        """Close the duplicate (never shut it down: the connection goes on over the TLS socket)."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+        if self._dup is not None:
+            self._dup.close()
+
+
 class _SocketRegistry:
+    """The open streams of one session, so that a Stop on another thread can shut them down.  After a Stop
+    (:meth:`shutdown_all`), a stream added later (a connection whose connect was under way) is shut at once, until
+    the next request begins (:meth:`begin`)."""
+
     def __init__(self) -> None:
         self._streams: set[Any] = set()
         self._lock = threading.Lock()
+        self._aborted = False
+
+    def begin(self) -> None:
+        with self._lock:
+            self._aborted = False
 
     def add(self, stream: Any) -> None:
         with self._lock:
             self._streams.add(stream)
+            aborted = self._aborted
+        if aborted:
+            stream.shutdown()
 
     def discard(self, stream: Any) -> None:
         with self._lock:
@@ -234,22 +302,23 @@ class _SocketRegistry:
 
     def shutdown_all(self) -> None:
         with self._lock:
+            self._aborted = True
             streams = list(self._streams)
         for stream in streams:
-            # A stream that is gone, or a socket already shut, has nothing left to shut.
-            with contextlib.suppress(Exception):
-                sock = stream.get_extra_info("socket")
-                if sock is not None:
-                    sock.shutdown(socket.SHUT_RDWR)
+            stream.shutdown()
 
 
 def _tracked_backend(registry: _SocketRegistry):
     import httpcore2
 
-    class TrackedStream(httpcore2.NetworkStream):
+    class TrackedStream(_ShutOnce, httpcore2.NetworkStream):
         def __init__(self, inner: httpcore2.NetworkStream) -> None:
+            super().__init__()
             self._inner = inner
             registry.add(self)
+
+        def _socket(self) -> Any:
+            return self._inner.get_extra_info("socket")
 
         def read(self, max_bytes: int, timeout: float | None = None) -> bytes:
             return self._inner.read(max_bytes, timeout)
@@ -258,12 +327,28 @@ def _tracked_backend(registry: _SocketRegistry):
             self._inner.write(buffer, timeout)
 
         def close(self) -> None:
+            # Shut down before closing: a close from another thread (a Stop closing the response, the pool, the
+            # client) then wakes a read that is blocked on this socket.  Exactly one caller closes.
+            with self._lock:
+                if self._closed:
+                    return
+                self._closed = True
+                self._shut()
             registry.discard(self)
             self._inner.close()
 
         def start_tls(self, ssl_context, server_hostname=None, timeout=None):
-            registry.discard(self)
-            return TrackedStream(self._inner.start_tls(ssl_context, server_hostname, timeout))
+            # This stream stays registered during the handshake (for a tunnel that is already TLS it shuts the
+            # connection itself); the guard's duplicate descriptor shuts a plain socket that the wrapping took
+            # over.  Both leave the registry, and the duplicate is closed, however the handshake ends.
+            guard = _HandshakeGuard(self._socket())
+            registry.add(guard)
+            try:
+                return TrackedStream(self._inner.start_tls(ssl_context, server_hostname, timeout))
+            finally:
+                registry.discard(guard)
+                guard.close()
+                registry.discard(self)
 
         def get_extra_info(self, info: str) -> Any:
             return self._inner.get_extra_info(info)
@@ -310,8 +395,13 @@ class HttpSession:
             found, self._rate = self._rate, None
         return found
 
+    def begin_request(self) -> None:
+        """A request starts: a Stop from before it no longer shuts the connections it opens."""
+        self._registry.begin()
+
     def abort_connections(self) -> None:
-        """Shut every open connection down at once; a request waiting on one fails immediately."""
+        """Shut every open connection down at once; a request waiting on one fails immediately, and a connection
+        opened later is shut as it opens, until :meth:`begin_request`."""
         self._registry.shutdown_all()
 
     def close(self) -> None:

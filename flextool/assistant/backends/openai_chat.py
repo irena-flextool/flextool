@@ -8,6 +8,7 @@ top level of the body).  The answer streams: text deltas are shown as they come,
 """
 from __future__ import annotations
 
+import contextlib
 import copy
 import threading
 from dataclasses import dataclass, field
@@ -193,6 +194,9 @@ class OpenAIChatBackend:
         extra_body = {k: v for k, v in body.items() if k not in _NAMED_FIELDS and k not in CORE_FIELDS}
         state = _State()
         self._inflight.begin()
+        self._http.begin_request()
+        if cancel.is_set():         # a Stop from before the request started
+            raise cancelled(self.ctx)
         timer = SilenceTimer(on_event, interval=self.wait_interval).start()
         stream = None
         try:
@@ -224,7 +228,10 @@ class OpenAIChatBackend:
             timer.stop()
             self._inflight.clear()
             if stream is not None:
-                stream.close()
+                # After a Stop the response may already be closed from the other thread, and a second close can
+                # fail; without a Stop a close error surfaces.
+                with contextlib.suppress(Exception) if self._inflight.aborted.is_set() else contextlib.nullcontext():
+                    stream.close()
         return self._reply(state, on_event)
 
     def _cancelled(self, state: _State) -> LLMError:
@@ -342,14 +349,18 @@ class OpenAIChatBackend:
 
     # --- the rest -------------------------------------------------------------------------------------------------
     def abort(self) -> None:
-        self._inflight.abort()
+        # The flag first, so the read the shutdown wakes counts as a Stop; the shutdown before the response
+        # close, so the socket is still in the registry.
+        self._inflight.aborted.set()
         self._http.abort_connections()
+        self._inflight.abort()
 
     def rate_headers(self) -> dict[str, str] | None:
         """The request-limit headers of the last response, for the pacing (P1 §5.1)."""
         return self._http.take_rate_headers()
 
     def list_models(self) -> list[ModelEntry]:
+        self._http.begin_request()
         try:
             page = self._client.models.list()
             items = [m.to_dict() for m in page]

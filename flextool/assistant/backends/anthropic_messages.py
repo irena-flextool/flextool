@@ -8,6 +8,7 @@ message is rebuilt from its text and tool calls.  Consecutive tool results go in
 """
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import threading
@@ -120,6 +121,9 @@ class AnthropicMessagesBackend:
     def stream(self, req: Request, on_event: OnEvent, cancel: threading.Event) -> Reply:
         params = self.request_params(req)
         self._inflight.begin()
+        self._http.begin_request()
+        if cancel.is_set():         # a Stop from before the request started
+            raise cancelled(self.ctx)
         timer = SilenceTimer(on_event, interval=self.wait_interval).start()
         progress = _Progress()
         try:
@@ -149,7 +153,10 @@ class AnthropicMessagesBackend:
                 raise classify_anthropic(exc, self.ctx, streamed=progress.streamed, partial_text=progress.text,
                                          partial_usage=progress.partial_usage()) from exc
             finally:
-                manager.__exit__(None, None, None)
+                # After a Stop the response may already be closed from the other thread, and a second close can
+                # fail; without a Stop a close error surfaces.
+                with contextlib.suppress(Exception) if self._inflight.aborted.is_set() else contextlib.nullcontext():
+                    manager.__exit__(None, None, None)
         finally:
             timer.stop()
             self._inflight.clear()
@@ -214,8 +221,11 @@ class AnthropicMessagesBackend:
 
     # --- the rest -------------------------------------------------------------------------------------------------
     def abort(self) -> None:
-        self._inflight.abort()
+        # The flag first, so the read the shutdown wakes counts as a Stop; the shutdown before the response
+        # close, so the socket is still in the registry.
+        self._inflight.aborted.set()
         self._http.abort_connections()
+        self._inflight.abort()
 
     def rate_headers(self) -> dict[str, str] | None:
         """The request-limit headers of the last response, for the pacing (P1 §5.1)."""
@@ -224,6 +234,7 @@ class AnthropicMessagesBackend:
     def context_window(self) -> int | None:
         """The model's input limit in tokens (``models.retrieve(model).max_input_tokens``), ``None`` when the
         answer has none."""
+        self._http.begin_request()
         try:
             info = self._client.models.retrieve(self.conn.model)
         except Exception as exc:
@@ -232,6 +243,7 @@ class AnthropicMessagesBackend:
         return value if isinstance(value, int) and not isinstance(value, bool) else None
 
     def list_models(self) -> list[ModelEntry]:
+        self._http.begin_request()
         try:
             items = [m.to_dict() for m in self._client.models.list()]
         except Exception as exc:
