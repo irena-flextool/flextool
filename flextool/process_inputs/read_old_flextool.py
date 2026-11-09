@@ -58,7 +58,7 @@ _UNIT_COLUMN_MAP: dict[str, str] = {
     "output2 lt constant": "output2_lt_constant",
     "output2 max capacity": "output2_max_capacity",
     "output2 max capacity (mw)": "output2_max_capacity",
-    "output2 max capacity ratio": "output2_max_capacity",
+    "output2 max capacity ratio": "output2_max_capacity_ratio",
     "fueluse increase eq x output2": "fueluse_increase_eq",
     "inflow multiplier": "inflow_multiplier",
 }
@@ -182,6 +182,9 @@ class UnitInstance:
     fueluse_increase_eq: float | None
     inflow_multiplier: float | None
     extra_params: dict[str, float | None] = field(default_factory=dict)
+    #: FT2 ``output2_max_capacity_ratio``: output2 <= ratio x capacity.
+    #: (``output2_max_capacity`` is the MW form of older workbooks.)
+    output2_max_capacity_ratio: float | None = None
 
 
 @dataclass
@@ -569,8 +572,11 @@ def _read_units(wb: openpyxl.Workbook) -> list[UnitInstance]:
     # Build header-to-index mapping
     raw_headers = rows[0]
     headers: list[str | None] = [_safe_str(h) for h in raw_headers]
+    # Lower case, underscores as spaces: FT2 workbooks spell some headers
+    # with underscores (``use_min_generation``, ``output2_max_capacity_ratio``).
     normalized_headers: list[str | None] = [
-        h.strip().lower() if h is not None else None for h in headers
+        " ".join(h.strip().lower().replace("_", " ").split()) if h is not None
+        else None for h in headers
     ]
 
     result: list[UnitInstance] = []
@@ -610,6 +616,7 @@ def _read_units(wb: openpyxl.Workbook) -> list[UnitInstance]:
             "output2_lt_coeff": None,
             "output2_lt_constant": None,
             "output2_max_capacity": None,
+            "output2_max_capacity_ratio": None,
             "fueluse_increase_eq": None,
             "inflow_multiplier": None,
         }
@@ -671,6 +678,7 @@ def _read_units(wb: openpyxl.Workbook) -> list[UnitInstance]:
             output2_lt_coeff=field_values["output2_lt_coeff"],
             output2_lt_constant=field_values["output2_lt_constant"],
             output2_max_capacity=field_values["output2_max_capacity"],
+            output2_max_capacity_ratio=field_values["output2_max_capacity_ratio"],
             fueluse_increase_eq=field_values["fueluse_increase_eq"],
             inflow_multiplier=field_values["inflow_multiplier"],
             extra_params=extra,
@@ -1069,7 +1077,8 @@ def _require_input_data_workbook(wb: openpyxl.Workbook, file_path: str) -> None:
             f"'{file_path}' is the FlexTool 2 master workbook (it has the "
             "'Sensitivity definitions' sheet), not an input data workbook. "
             "Give one of its InputData/*.xlsm files as the input file, and "
-            "this master workbook with --master to import its sensitivities."
+            "this workbook as the master workbook to import its "
+            "sensitivities (on the command line: --master)."
         )
     raise ValueError(
         f"'{file_path}' has no 'master' sheet, so it is not a FlexTool 2 "

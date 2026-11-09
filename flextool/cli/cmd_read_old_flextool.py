@@ -15,6 +15,7 @@ import sys
 
 from flextool.cli._console import run_tool
 from flextool.process_inputs.write_old_flextool_to_db import (
+    ImportStrictError,
     import_old_flextool_xlsm,
 )
 
@@ -62,6 +63,14 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--strict",
+        action="store_true",
+        help=(
+            "Stop with an error (and no database) when a value cannot be "
+            "written, instead of listing it in the report"
+        ),
+    )
+    parser.add_argument(
         "--verbose", "-v",
         action="store_true",
         help="Enable verbose (DEBUG) logging",
@@ -85,8 +94,9 @@ def main() -> int:
             purge=not args.no_purge,
             migrate=not args.no_migrate,
             master=args.master,
+            strict=args.strict,
         )
-    except ValueError as exc:
+    except (ValueError, ImportStrictError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
     print(report.format())

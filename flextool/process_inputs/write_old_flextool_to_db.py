@@ -41,9 +41,20 @@ logger = logging.getLogger(__name__)
 # Counters for summary logging
 # ---------------------------------------------------------------------------
 
+#: Report topics, in the order the report lists them (by FT2 sheet).
+_TOPICS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Time and costs", ("master",)),
+    ("Units", ("unit_type", "units", "ts_unit")),
+    ("Nodes and connections", ("gridNode", "nodeGroup", "nodeNode")),
+    ("Time series", ("ts_cf", "ts_inflow")),
+)
+
+
 @dataclass
 class UnmappedItem:
-    """A FlexTool 2 input the importer could not translate."""
+    """A FlexTool 2 input the importer could not translate (or that works
+    differently in FlexTool 4).  ``reason`` is a plain sentence: what it means
+    for the model and what to do."""
     sheet: str
     column: str
     entities: list[str]
@@ -51,7 +62,16 @@ class UnmappedItem:
 
     def line(self) -> str:
         where = f" ({', '.join(self.entities)})" if self.entities else ""
-        return f"{self.sheet} '{self.column}'{where}: {self.reason}"
+        return f"'{self.column}' on sheet {self.sheet}{where}: {self.reason}"
+
+    @property
+    def topic(self) -> str:
+        if self.sheet.startswith("Sensitivity"):
+            return "Sensitivities"
+        for topic, sheets in _TOPICS:
+            if self.sheet in sheets:
+                return topic
+        return "Other inputs"
 
 
 class ImportStrictError(RuntimeError):
@@ -88,6 +108,8 @@ class ImportReport:
     failed: list[str] = field(default_factory=list)
     unmapped: list[UnmappedItem] = field(default_factory=list)
     assumptions: list[str] = field(default_factory=list)
+    #: Behaviour-change markers the migration wrote and the import removed.
+    markers_removed: list[str] = field(default_factory=list)
 
     def add(self, label: str, counters: _Counters) -> None:
         self.written.append(f"{label}: {counters.summary()}")
@@ -96,15 +118,34 @@ class ImportReport:
         self.assumptions.extend(counters.assumptions)
 
     def format(self) -> str:
-        lines = ["FlexTool 2 import report", "Written:"]
+        """The report as plain text for a reader who is not a modeller."""
+        lines = ["FlexTool 2 import report", "", "Written to the database:"]
         lines += [f"  {w}" for w in self.written]
-        lines.append(f"Failed writes: {len(self.failed)}")
-        lines += [f"  {f}" for f in self.failed]
-        lines.append(f"Not translated: {len(self.unmapped)}")
-        lines += [f"  {u.line()}" for u in self.unmapped]
+        if self.failed:
+            lines += ["", f"{len(self.failed)} value(s) could not be written. "
+                      "They are missing from the database; the list below "
+                      "names them. Please report this, with the workbook, as "
+                      "an importer bug."]
+            lines += [f"  - {f}" for f in self.failed]
+        lines.append("")
+        if not self.unmapped and not self.assumptions:
+            lines.append("Every FlexTool 2 input in the workbook was carried over.")
+            return "\n".join(lines)
+        lines.append(
+            "These FlexTool 2 inputs were not carried over, or work "
+            "differently in FlexTool 4, so the FlexTool 4 model differs from "
+            "the FlexTool 2 model where listed. Each line says what it means "
+            "and what to do.")
+        topics = [t for t, _ in _TOPICS] + ["Sensitivities", "Other inputs"]
+        for topic in topics:
+            items = [u for u in self.unmapped if u.topic == topic]
+            if not items:
+                continue
+            lines += ["", f"{topic}:"]
+            lines += [f"  - {u.line()}" for u in items]
         if self.assumptions:
-            lines.append("Interpretation (FlexTool 2 and 4 differ):")
-            lines += [f"  {a}" for a in self.assumptions]
+            lines += ["", "How some inputs were read:"]
+            lines += [f"  - {a}" for a in self.assumptions]
         return "\n".join(lines)
 
 
@@ -420,25 +461,26 @@ def _write_generation_limits(
             # its capacity is on the input side; fix_unit_generation is not
             # defined for conversion units at all.
             counters.unmapped.append(UnmappedItem(
-                "units", column, [process],
-                "on a conversion unit (input from a node) FT2 bounds the input "
-                "flow (fix unit generation: ignored); not mapped",
+                "units", column, [process], _CONVERSION_UNIT_LIMIT[column],
             ))
             continue
         if method == "upper_limit" and unit.cf_profile:
             counters.unmapped.append(UnmappedItem(
                 "units", column, [process],
-                "FT2 ignores max_generation when the unit has a cf profile "
-                "(the cf profile is the upper limit); not mapped",
+                "FlexTool 2 ignores the maximum generation of a unit with a "
+                "capacity factor profile (the profile is its upper limit), so "
+                "the import ignores it too. Nothing to do.",
             ))
             continue
         uts = _find_unit_ts(data, unit, ts_param)
         if uts is None or not uts.data:
             counters.unmapped.append(UnmappedItem(
                 "units", column, [process],
-                f"the flag is set but ts_unit has no '{ts_param}' series for "
-                f"{unit.output_grid}/{output_node}/{unit.unit_type}; no limit "
-                "was written",
+                f"the column is 1, but sheet ts_unit has no '{ts_param}' "
+                f"series for {unit.output_grid}/{output_node}/"
+                f"{unit.unit_type}, so the unit got no limit. Add the series "
+                "to the workbook and import again, or give the FlexTool 4 "
+                "unit a profile by hand.",
             ))
             continue
         profile = f"{process}_{ts_param}"
@@ -451,12 +493,49 @@ def _write_generation_limits(
                           entities_added, entity_alts_added)
         _add_param(db, "unit__node__profile", link, "profile_method", method,
                    alt_name, counters)
-        avail = _get_unit_type_param(data, unit, "availability")
-        if avail is not None and avail < 1.0:
+        if method == "upper_limit" and _unit_has_online(data, unit):
             counters.assumptions.append(
-                f"{process}: FT4 multiplies the {ts_param} profile by the "
-                f"availability ({avail:g}); FT2 did not"
+                f"{process}: FlexTool 2 also limits the online capacity by "
+                "'max_generation'; FlexTool 4 limits only the generation. The "
+                "minimum load, start-ups and reserves of the unit can differ "
+                "a little where the series is below 1."
             )
+
+
+def _unit_has_online(data: OldFlexToolData, unit: UnitInstance) -> bool:
+    """FT2 ``unit_online`` (``flexModel.mod``): master ``use_online`` and a
+    min load, min up / down time or ``use min online`` on the unit (dispatch
+    runs only, which is where FT2 has online variables)."""
+    if _get_master_param(data, "use online") != 1:
+        return False
+    return any(
+        (_get_unit_type_param(data, unit, key) or 0) > 0
+        for key in ("min load", "min uptime (h)", "min downtime (h)")
+    ) or bool(_unit_flag(unit, "use min online"))
+
+
+#: The generation-limit columns on a conversion unit (input from a node):
+#: FT2 bounds v_convert, the INPUT flow, there, and its capacity is on the
+#: input side; ``fix_unit_generation`` is not defined for conversion units.
+_CONVERSION_UNIT_LIMIT: dict[str, str] = {
+    "fix unit generation": (
+        "FlexTool 2 has no fixed generation for a unit that takes its input "
+        "from a node (a conversion unit such as a heat pump), so the column "
+        "had no effect there and the import ignores it. Nothing to do."
+    ),
+    "use min generation": (
+        "on a unit that takes its input from a node, FlexTool 2 sets the "
+        "minimum on the input flow, not on the output. Not carried over: to "
+        "keep it, give the FlexTool 4 unit a lower_limit profile on its input "
+        "node by hand."
+    ),
+    "use max generation": (
+        "on a unit that takes its input from a node, FlexTool 2 sets the "
+        "maximum on the input flow, not on the output. Not carried over: to "
+        "keep it, give the FlexTool 4 unit an upper_limit profile on its "
+        "input node by hand."
+    ),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -489,44 +568,66 @@ _UNITS_EXTRA_MAPPED = frozenset(column for column, _, _ in _GENERATION_LIMITS)
 _TS_UNIT_MAPPED = frozenset({"efficiency"} | {p for _, p, _ in _GENERATION_LIMITS})
 
 #: Known FT2 inputs without an FT4 counterpart the v56 importer can write.
-#: (sheet, normalised column) → reason.
+#: (sheet, normalised column) → plain-language reason with what to do.
 _UNMAPPED: dict[tuple[str, str], str] = {
-    ("master", "time in years"): (
-        "FT2 treats the whole time series as this many years and scales every "
-        "annual cost (and the cf / inflow scaling) by it. FT4 has no such "
-        "input: it annualises from the timeline itself. Costs, and so "
-        "investments, will not match FT2; set the period weighting by hand "
-        "(solve years_represented) before comparing"
-    ),
     ("master", "curtailment penalty"): (
-        "FT2 charges this per MWh of curtailed cf / inflow generation; FT4 has "
-        "no curtailment cost, so curtailment is free"
+        "FlexTool 2 charges this price for each MWh of wind, solar or inflow "
+        "energy that is curtailed. FlexTool 4 has no curtailment cost, so "
+        "curtailment is free there. Nothing to set; expect more curtailment "
+        "where FlexTool 2 avoided it because of the cost."
     ),
     ("master", "reserve duration"): (
-        "FT2 limits the reserve of a storage by its state / reserve_duration. "
-        "FT4 has reserve__upDown__group.reserve_duration, which the v56 "
-        "importer cannot write; set it by hand after the import"
+        "FlexTool 2 lets a storage hold reserve only while it has energy for "
+        "this many hours. The import cannot write this. To keep it, set "
+        "reserve_duration on the reserve__upDown__group entity of each "
+        "reserve in FlexTool 4 by hand."
     ),
     ("unit_type", "conversion eff"): (
-        "FT2 uses it as the output / input ratio of a unit that takes its "
-        "input from a node (e.g. a heat pump COP). Not mapped: set the FT4 "
-        "unit efficiency to it where the unit has no efficiency time series"
+        "FlexTool 2 uses it as the output / input ratio of a unit that takes "
+        "its input from a node (for example the COP of a heat pump). Not "
+        "carried over: set the FlexTool 4 unit's efficiency to this value by "
+        "hand (where the unit has no efficiency time series)."
+    ),
+    ("unit_type", "availability"): (
+        "FlexTool 2 uses availability only in the capacity margin: a unit "
+        "counts there with availability x capacity. It does not reduce the "
+        "unit's generation. FlexTool 4 has no input for a unit's share in the "
+        "capacity margin, so the import leaves availability out: generation "
+        "is as in FlexTool 2, but in the capacity margin these units count "
+        "with their full capacity. This matters only when the capacity margin "
+        "is used; then raise the group's capacity_margin by the capacity the "
+        "availability took away, or lower the units' capacity by hand."
     ),
     ("units", "use min online"): (
-        "FT2 sets a floor on the online capacity from ts_unit min_online; "
-        "FT4 has no time series floor on online units"
+        "FlexTool 2 keeps at least the ts_unit 'min_online' share of the "
+        "capacity online. FlexTool 4 has no time series for the minimum "
+        "online capacity, so the unit can go offline there. To keep a "
+        "minimum, give the unit a lower_limit profile on its output by hand "
+        "(it limits the generation, not the online capacity)."
     ),
     ("units", "fueluse increase eq x output2"): (
-        "FT2 adds this fuel use per MWh of output2; FT4 has no such term, so "
-        "the CHP fuel use is lower"
+        "FlexTool 2's model (the fuel use equation in flexModel.mod) adds "
+        "this fuel only when output2 is on the unit's own output node, so in "
+        "this workbook it adds no fuel in FlexTool 2 either, and the import "
+        "ignores it. Nothing to do, unless your FlexTool 2 version did add "
+        "the fuel: then compare the fuel use of the unit."
     ),
-    ("gridNode", "import (MWh)"): (
-        "FT2 adds the ts_import series, scaled to this annual energy, to the "
-        "node; FT4 gets no import"
+    ("gridNode", "import (mwh)"): (
+        "FlexTool 2 adds the ts_import series, scaled to this annual energy, "
+        "to the node. Not carried over, so the node gets no import. To keep "
+        "it, add the import as a positive inflow of the node by hand (or as "
+        "a unit with a fixed profile)."
     ),
 }
 
-_GENERIC_REASON = "not read by the importer"
+_GENERIC_REASON = (
+    "the importer does not read this column, so it is not in the FlexTool 4 "
+    "model. Check whether it matters for your study; if it does, set the "
+    "FlexTool 4 counterpart by hand."
+)
+
+#: Relative difference above which two time scalings count as different.
+_SCALING_TOLERANCE = 0.01
 
 
 def _is_cosmetic(column: str) -> bool:
@@ -536,6 +637,115 @@ def _is_cosmetic(column: str) -> bool:
 
 def _nonzero(value: Any) -> bool:
     return value is not None and value != 0 and value != ""
+
+
+def _time_in_years_item(data: OldFlexToolData) -> UnmappedItem | None:
+    """``time_in_years`` that differs from the hours the time series covers.
+
+    FT2 (``flexModel.mod``): ``time_in_use_in_years = |time_in_use| / |time|
+    × time_in_years`` and ``scale_to_annual = (time_period_duration / 60) /
+    time_in_use_in_years`` multiplies the operating costs (fuel, CO2, O&M,
+    start-ups and every penalty) in the objective; investment annuities and
+    fixed costs are annual and not scaled.  FT4 scales the operating costs of
+    a period by ``1 / period_share`` with ``period_share = Σ step_duration /
+    8760``.  Per MW in a step in use the two weights are
+    ``dur·|time| / (|time_in_use|·time_in_years)`` (FT2) and
+    ``8760 / |time_in_use|`` (FT4), so they agree exactly when
+    ``time_in_years = |time| × dur / 8760``.  FT4 derives ``period_share``
+    from the step durations only (``timeset_weights`` and representative
+    period weights are normalised), so it has no input for this: report it.
+    """
+    tiy = _get_master_param(data, "time in years", default=1.0)
+    n_steps = len(data.time_steps)
+    if not n_steps or not tiy or tiy <= 0:
+        return None
+    duration = _get_master_param(data, "time period duration")
+    duration_h = duration / 60.0 if duration > 0 else 1.0
+    covered = n_steps * duration_h / 8760.0
+    factor = tiy / covered
+    if abs(factor - 1.0) <= _SCALING_TOLERANCE:
+        return None
+    heavier = "more" if factor > 1 else "less"
+    return UnmappedItem(
+        "master", f"time_in_years = {tiy:g}", [],
+        f"FlexTool 2 counts the {n_steps} time steps of {duration_h:g} h as "
+        f"{tiy:g} year(s), but they cover {covered:.4g} year(s). FlexTool 4 "
+        "always uses the hours the time steps cover and scales their "
+        "operating costs (fuel, CO2, O&M, start-ups, penalties) to a full "
+        f"year. So FlexTool 4 weighs the operating costs {factor:.4g} times "
+        f"as much as FlexTool 2 did ({heavier} than FlexTool 2), compared with "
+        "the investment and fixed costs, and it will choose other "
+        "investments. FlexTool 4 has no input that changes this. To get "
+        "FlexTool 2's balance, multiply the investment and fixed costs "
+        "(invest_cost and fixed_cost of the units, connections and storage "
+        f"nodes) by {factor:.4g}; the reported investment and fixed costs are "
+        f"then {factor:.4g} times FlexTool 2's.",
+    )
+
+
+def _profile_scaling_items(data: OldFlexToolData) -> list[UnmappedItem]:
+    """cf and inflow profiles that FT2 rescales over the time steps in use.
+
+    FT2 (``flexModel.mod`` ``p_scaleCf`` / ``p_scaleInflow``) multiplies a
+    capacity factor or inflow series by ``mean over the whole series / mean
+    over the steps in use``, so a sample of the year keeps the annual mean.
+    FT4 uses the values as they are.  The steps in use are those of the run:
+    ``in_use_invest`` in an investment run, ``in_use`` in a dispatch run.
+    """
+    steps = data.time_steps
+    runs: list[tuple[str, set[str]]] = []
+    if _get_master_param(data, "mode invest") == 1:
+        runs.append(("investment", {t.time_id for t in steps if t.in_use_invest}))
+    if _get_master_param(data, "mode dispatch") == 1 or not runs:
+        runs.append(("dispatch", {t.time_id for t in steps if t.in_use}))
+    items: list[UnmappedItem] = []
+    for sheet, kind, profiles in (("ts_cf", "capacity factor", data.cf_profiles),
+                                  ("ts_inflow", "inflow", data.inflow_profiles)):
+        for profile in profiles:
+            values = list(profile.data.values())
+            if not values or not sum(values):
+                continue
+            mean_all = sum(values) / len(values)
+            factors: dict[str, str] = {}
+            for run, in_use in runs:
+                used = [v for t, v in profile.data.items() if t in in_use]
+                if not used or len(used) == len(values) or not sum(used):
+                    continue
+                factor = mean_all / (sum(used) / len(used))
+                if abs(factor - 1.0) > _SCALING_TOLERANCE:
+                    factors[run] = f"{factor:.4g}"
+            if factors:
+                if len(factors) > 1 and len(set(factors.values())) == 1:
+                    by = f"{next(iter(factors.values()))} in both runs"
+                else:
+                    by = " and ".join(f"{f} in the {run} run"
+                                      for run, f in factors.items())
+                items.append(UnmappedItem(
+                    sheet, profile.name, [],
+                    f"FlexTool 2 multiplies this {kind} series by "
+                    f"{by}, so that its mean over the time "
+                    "steps in use equals its mean over the whole series. "
+                    "FlexTool 4 uses the values as they are, so this source "
+                    "gives a different amount of energy. To match FlexTool 2, "
+                    "multiply the FlexTool 4 profile (or inflow) by that "
+                    "factor.",
+                ))
+    return items
+
+
+def _availability_item(data: OldFlexToolData) -> UnmappedItem | None:
+    """Units whose FT2 ``availability`` < 1 (FT2: capacity margin only)."""
+    names = []
+    for unit in data.units:
+        if unit.cf_profile:
+            continue  # FT2 counts a cf unit by its generation, not availability
+        avail = _get_unit_type_param(data, unit, "availability")
+        if avail is not None and avail < 1.0:
+            names.append(f"{_get_unit_name(unit)} {avail:g}")
+    if not names:
+        return None
+    return UnmappedItem("unit_type", "availability", names,
+                        _UNMAPPED[("unit_type", "availability")])
 
 
 def _collect_unmapped(data: OldFlexToolData) -> list[UnmappedItem]:
@@ -554,11 +764,7 @@ def _collect_unmapped(data: OldFlexToolData) -> list[UnmappedItem]:
 
     for key, value in data.master.params.items():
         column = _norm_key(key)
-        if column in _MASTER_MAPPED or _is_cosmetic(column):
-            continue
-        if column == "time in years":
-            if value is not None and value != 1:
-                note("master", column, None, label=f"{key} = {value:g}")
+        if column in _MASTER_MAPPED or column == "time in years" or _is_cosmetic(column):
             continue
         if _nonzero(value):
             note("master", column, None)
@@ -581,10 +787,22 @@ def _collect_unmapped(data: OldFlexToolData) -> list[UnmappedItem]:
                 note("units", column, name)
         if _nonzero(unit.fueluse_increase_eq):
             note("units", "fueluse increase eq x output2", name)
+        if _needs_charger_discharger(unit, data):
+            for column, _, _ in _GENERATION_LIMITS:
+                if _unit_flag(unit, column):
+                    found.setdefault(("units", column + " (storage)"), UnmappedItem(
+                        "units", column, [],
+                        "the import does not carry the generation limits of a "
+                        "storage unit (it becomes a charger and a discharger "
+                        "in FlexTool 4). To keep the limit, give the "
+                        "discharger a profile on its output node by hand.",
+                    )).entities.append(name)
 
     for uts in data.unit_ts:
         param = _norm_key(uts.param_name).replace(" ", "_")
-        if param in _TS_UNIT_MAPPED:
+        # min_online: FT2 reads it only with the unit's 'use min online' flag,
+        # and that flag is reported above (its reason covers the series).
+        if param in _TS_UNIT_MAPPED or param == "min_online":
             continue
         if any(_nonzero(v) for v in uts.data.values()):
             note("ts_unit", uts.param_name,
@@ -592,11 +810,16 @@ def _collect_unmapped(data: OldFlexToolData) -> list[UnmappedItem]:
 
     for gn in data.grid_nodes:
         if _nonzero(gn.import_mwh):
-            note("gridNode", "import (MWh)", gn.node)
+            note("gridNode", "import (mwh)", gn.node, label="import (MWh)")
 
-    # time_in_years first: it changes every cost.
-    return sorted(found.values(),
-                  key=lambda u: _norm_key(u.column.split("=")[0]) != "time in years")
+    items = list(found.values())
+    availability = _availability_item(data)
+    if availability is not None:
+        items.append(availability)
+    items.extend(_profile_scaling_items(data))
+    # time_in_years first: it changes the balance of every cost.
+    tiy = _time_in_years_item(data)
+    return ([tiy] if tiy is not None else []) + items
 
 
 def _write_storage_start_end(
@@ -842,10 +1065,8 @@ def _write_storage_units(
         _add_param(db, "unit", (charger_name,), "efficiency",
                    eff_charge if eff_charge is not None else 1.0, alt_name, counters)
 
-        avail = _get_unit_type_param(data, unit, "availability")
-        if avail is not None and avail < 1.0:
-            _add_param(db, "unit", (charger_name,), "availability", avail,
-                       alt_name, counters)
+        # FT2 'availability' enters only the capacity margin; it is reported,
+        # not written as FT4 unit.availability (which derates every flow).
 
         # Charger relationships
         _add_relationship(db, "unit__inputNode", (charger_name, output_node),
@@ -911,10 +1132,6 @@ def _write_storage_units(
 
         _add_param(db, "unit", (discharger_name,), "efficiency",
                    eff_val if eff_val is not None else 1.0, alt_name, counters)
-
-        if avail is not None and avail < 1.0:
-            _add_param(db, "unit", (discharger_name,), "availability", avail,
-                       alt_name, counters)
 
         # Discharger startup (only on discharger)
         startup_cost = _get_unit_type_param(data, unit, "startup cost")
@@ -1169,11 +1386,10 @@ def _write_units(
             _add_param_if_set(db, "unit", (unit_name,), "efficiency_at_min_load",
                               eff_at_min, alt_name, counters)
 
-        # -- availability --
-        avail = _get_unit_type_param(data, unit, "availability")
-        if avail is not None and avail < 1.0:
-            _add_param(db, "unit", (unit_name,), "availability", avail,
-                       alt_name, counters)
+        # -- availability: FT2 uses it only in the capacity margin
+        # (flexModel.mod capacityMarginNode / ...NodeGroup); FT4
+        # unit.availability would derate dispatch, so it is reported instead
+        # (_availability_item). --
 
         # -- startup parameters --
         startup_cost = _get_unit_type_param(data, unit, "startup cost")
@@ -1257,13 +1473,15 @@ def _write_units(
         if unit.output2_node:
             _add_relationship(db, "unit__outputNode", (unit_name, unit.output2_node),
                               alt_name, counters, entities_added, entity_alts_added)
-            # Set coefficient for secondary output capacity scaling
-            # output2_max_capacity / existing gives the ratio of secondary to primary capacity
-            if unit.output2_max_capacity and existing and existing > 0:
-                coeff = unit.output2_max_capacity / existing
-                _add_param(db, "unit__outputNode",
-                           (unit_name, unit.output2_node),
-                           "conversion_flow_coeff", coeff, alt_name, counters)
+            # FT2 output2 (flexModel.mod): it has no fuel (the fueluse
+            # equation has only the primary v_gen), is not in the unit's
+            # capacity limit, min load, ramps or reserves, and is tied to the
+            # primary output only by the eq / gt / lt rows and the
+            # output2_max_capacity_ratio cap (_write_chp_constraints).  FT4
+            # conversion_flow_coeff = 0 is that edge: out of the conversion
+            # equation and of the capacity, ramp and min-load constraints.
+            _add_param(db, "unit__outputNode", (unit_name, unit.output2_node),
+                       "conversion_flow_coeff", 0.0, alt_name, counters)
 
         # -- unit__outputNode parameters (on primary output) --
         om_cost = _get_unit_type_param(data, unit, "o&m cost/mwh")
@@ -1462,6 +1680,8 @@ def _write_inflow_units(
                    alt_name, counters)
         _add_param(db, "node", (node_name,), "storage_binding_method",
                    "bind_within_solve", alt_name, counters)
+        _add_param(db, "node", (node_name,), "storage_start_end_method",
+                   "fix_nothing", alt_name, counters)
         _add_param(db, "node", (node_name,), "inflow", inflow_map,
                    alt_name, counters)
         _add_param(db, "node", (node_name,), "inflow_method",
@@ -1934,80 +2154,84 @@ def _write_chp_constraints(
     entities_added: set[tuple[str, tuple[str, ...]]],
     entity_alts_added: set[tuple[str, tuple[str, ...], str]],
 ) -> None:
-    """Write CHP constraints for units with output2 (Section 9).
+    """FT2 output2 rows → FT4 user constraints (Section 9).
 
-    Collects all constraint names/coefficients per (unit, node) pair and writes
-    a single Map per unit__outputNode, so multiple constraints don't overwrite
-    each other.
+    FT2 (``flexModel.mod`` ``output2_equals_output1_times_x``,
+    ``output2_greater_than_output1_times_x``, ``output2_less_than_...``,
+    ``upwardLimitOutput2``), with C = capacity + invested capacity +
+    v_invest of the primary output::
+
+        output2  =, >=, <=  coeff × output1 + constant × C
+        output2  <=         output2_max_capacity_ratio × C
+
+    A row exists when its coeff or its constant is non-zero.  In FT4 the row
+    is ``output2 − coeff × output1 − constant × invested  {sense}  constant ×
+    existing``: the existing part of C is a constant, the invested part a
+    ``constraint_invested_capacity_coeff`` on the unit (FT2 has one
+    investment period, so the capacity invested in it is all of v_invest).
+    The MW form ``output2 max capacity (MW)`` of older workbooks is a plain
+    cap.  All coefficients of a unit go into one Map per edge.
     """
     count = 0
     for unit in data.units:
         if not unit.output2_node or not unit.output_node:
             continue
+        if _needs_charger_discharger(unit, data):
+            continue
 
         unit_name = _get_unit_name(unit)
-        primary_node = unit.output_node
-        secondary_node = unit.output2_node
+        existing = (unit.capacity_mw if unit.capacity_mw is not None
+                    else unit.invested_capacity_mw) or 0.0
 
-        # Collect coefficients: {(unit_name, node): {constraint_name: coeff}}
         primary_coeffs: dict[str, float] = {}
         secondary_coeffs: dict[str, float] = {}
+        invested_coeffs: dict[str, float] = {}
 
-        # Equal constraint
-        if unit.output2_eq_coeff is not None and unit.output2_eq_coeff != 0:
-            cname = f"{unit_name}_eq"
+        def row(cname: str, sense: str, coeff: float, per_capacity: float,
+                constant: float = 0.0) -> None:
             _add_entity(db, "constraint", cname, alt_name, counters,
-                         entities_added, entity_alts_added)
-            _add_param(db, "constraint", (cname,), "sense", "equal",
+                        entities_added, entity_alts_added)
+            _add_param(db, "constraint", (cname,), "sense", sense,
                        alt_name, counters)
-            constant = unit.output2_eq_constant if unit.output2_eq_constant is not None else 0.0
-            _add_param(db, "constraint", (cname,), "constant", constant,
-                       alt_name, counters)
-            primary_coeffs[cname] = 1.0
-            secondary_coeffs[cname] = -unit.output2_eq_coeff
+            _add_param(db, "constraint", (cname,), "constant",
+                       constant + per_capacity * existing, alt_name, counters)
+            secondary_coeffs[cname] = 1.0
+            if coeff:
+                primary_coeffs[cname] = -coeff
+            if per_capacity:
+                invested_coeffs[cname] = -per_capacity
+
+        for suffix, sense, coeff, constant in (
+            ("eq", "equal", unit.output2_eq_coeff, unit.output2_eq_constant),
+            ("gt", "greater_than", unit.output2_gt_coeff, unit.output2_gt_constant),
+            ("lt", "less_than", unit.output2_lt_coeff, unit.output2_lt_constant),
+        ):
+            if not coeff and not constant:
+                continue
+            row(f"{unit_name}_{suffix}", sense, coeff or 0.0, constant or 0.0)
+            count += 1
+        if unit.output2_max_capacity_ratio:
+            row(f"{unit_name}_output2_max", "less_than", 0.0,
+                unit.output2_max_capacity_ratio)
+            count += 1
+        elif unit.output2_max_capacity:
+            row(f"{unit_name}_output2_max", "less_than", 0.0, 0.0,
+                constant=unit.output2_max_capacity)
             count += 1
 
-        # Greater-than constraint
-        if unit.output2_gt_coeff is not None and unit.output2_gt_coeff != 0:
-            cname = f"{unit_name}_gt"
-            _add_entity(db, "constraint", cname, alt_name, counters,
-                         entities_added, entity_alts_added)
-            _add_param(db, "constraint", (cname,), "sense", "greater_than",
+        for cls, edge, coeffs in (
+            ("unit__outputNode", (unit_name, unit.output_node), primary_coeffs),
+            ("unit__outputNode", (unit_name, unit.output2_node), secondary_coeffs),
+            ("unit", (unit_name,), invested_coeffs),
+        ):
+            if not coeffs:
+                continue
+            names = list(coeffs)
+            param = ("constraint_invested_capacity_coeff" if cls == "unit"
+                     else "constraint_flow_coeff")
+            _add_param(db, cls, edge, param,
+                       Map(names, [coeffs[n] for n in names], index_name="constraint"),
                        alt_name, counters)
-            constant = unit.output2_gt_constant if unit.output2_gt_constant is not None else 0.0
-            _add_param(db, "constraint", (cname,), "constant", constant,
-                       alt_name, counters)
-            primary_coeffs[cname] = 1.0
-            secondary_coeffs[cname] = -unit.output2_gt_coeff
-            count += 1
-
-        # Less-than constraint
-        if unit.output2_lt_coeff is not None and unit.output2_lt_coeff != 0:
-            cname = f"{unit_name}_lt"
-            _add_entity(db, "constraint", cname, alt_name, counters,
-                         entities_added, entity_alts_added)
-            _add_param(db, "constraint", (cname,), "sense", "less_than",
-                       alt_name, counters)
-            constant = unit.output2_lt_constant if unit.output2_lt_constant is not None else 0.0
-            _add_param(db, "constraint", (cname,), "constant", constant,
-                       alt_name, counters)
-            primary_coeffs[cname] = 1.0
-            secondary_coeffs[cname] = -unit.output2_lt_coeff
-            count += 1
-
-        # Write combined Maps for constraint_flow_coeff
-        if primary_coeffs:
-            names = list(primary_coeffs.keys())
-            pmap = Map(names, [primary_coeffs[n] for n in names],
-                       index_name="constraint")
-            _add_param(db, "unit__outputNode", (unit_name, primary_node),
-                       "constraint_flow_coeff", pmap, alt_name, counters)
-
-            snames = list(secondary_coeffs.keys())
-            smap = Map(snames, [secondary_coeffs[n] for n in snames],
-                       index_name="constraint")
-            _add_param(db, "unit__outputNode", (unit_name, secondary_node),
-                       "constraint_flow_coeff", smap, alt_name, counters)
 
     logger.info("Wrote %d CHP constraints.", count)
 
@@ -2333,9 +2557,16 @@ def _unknown_sensitivity(
     entities = [f"{entity} [{scenario}]" if entity else f"[{scenario}]"]
     logger.warning("Sensitivity %s: %s '%s' is not translated", scenario,
                    section, param)
+    column = _norm_key(param)
+    reason = _UNMAPPED.get((section, column))
+    if reason is None:
+        reason = (
+            "the sensitivity import does not translate this column (the base "
+            "import may). Set the FlexTool 4 value by hand in alternative "
+            f"'{scenario}'."
+        )
     counters.unmapped.append(UnmappedItem(
-        f"Sensitivity definitions / {section}", param, entities,
-        _UNMAPPED.get((section, _norm_key(param)), _GENERIC_REASON),
+        f"Sensitivity definitions / {section}", param, entities, reason,
     ))
 
 
@@ -2650,11 +2881,12 @@ def _apply_unit_type_override(
             target = discharger if is_storage else unit_name
             _add_param(db, "unit", (target,), "min_load", value, alt_name, counters)
         elif "availability" == param_lower:
-            if is_storage:
-                _add_param(db, "unit", (charger,), "availability", value, alt_name, counters)
-                _add_param(db, "unit", (discharger,), "availability", value, alt_name, counters)
-            else:
-                _add_param(db, "unit", (unit_name,), "availability", value, alt_name, counters)
+            # Capacity margin only in FT2; not FT4 unit.availability.
+            counters.unmapped.append(UnmappedItem(
+                "Sensitivity definitions / unit_type", ov.param_name,
+                [f"{unit_name} [{alt_name}]"],
+                _UNMAPPED[("unit_type", "availability")],
+            ))
         elif "inv.cost/kw" in param_lower or "inv cost" in param_lower:
             target = discharger if is_storage else unit_name
             _add_param(db, "unit", (target,), "invest_cost", value, alt_name, counters)
@@ -3389,11 +3621,17 @@ def _sqlite_path_from_url(db_url: str) -> str | None:
     return None
 
 
-def _db_version(db_url: str) -> int | None:
-    """``model.version`` of a FlexTool DB, or ``None`` if it is not one.
+#: :func:`_db_version` of a database that has data but no FlexTool schema.
+_NOT_FLEXTOOL = -1
 
-    A missing file, an empty file or a database without the FlexTool schema
-    all give ``None``.
+
+def _db_version(db_url: str) -> int | None:
+    """``model.version`` of a FlexTool DB; ``None`` for a new (missing or
+    empty) database; :data:`_NOT_FLEXTOOL` for a database with entity
+    classes but no FlexTool version.
+
+    A file that cannot be opened as a database is a ``ValueError``: the
+    importer must not initialise over (and on failure delete) a user's file.
     """
     path = _sqlite_path_from_url(db_url)
     if path is not None:
@@ -3406,15 +3644,20 @@ def _db_version(db_url: str) -> int | None:
             pdef = db.get_parameter_definition_item(
                 entity_class_name="model", name="version"
             )
-            if not pdef:
-                return None
-            return int(api.from_database(pdef["default_value"], pdef["default_type"]))
-    except SpineDBAPIError:
-        return None
+            if pdef:
+                return int(api.from_database(pdef["default_value"],
+                                             pdef["default_type"]))
+            return _NOT_FLEXTOOL if db.get_items("entity_class") else None
+    except Exception as exc:  # noqa: BLE001 - any open failure is reported
+        raise ValueError(
+            f"Could not open {db_url} as a database ({exc}). Give a new file "
+            "name for the import."
+        ) from exc
 
 
 def _require_import_version(db_url: str) -> None:
-    """Refuse a FlexTool DB that is not at the import schema version (56).
+    """Refuse a FlexTool DB that is not at the import schema version (56),
+    and a database that is not a FlexTool database.
 
     The importer writes v56 names and values; only ``migrate_database`` may
     carry them to a later version (it renames parameters *and* rewrites
@@ -3426,6 +3669,12 @@ def _require_import_version(db_url: str) -> None:
     version = _db_version(db_url)
     if version is None or version == OLD_FLEXTOOL_IMPORT_SCHEMA_VERSION:
         return
+    if version == _NOT_FLEXTOOL:
+        raise ValueError(
+            f"{db_url} is a database with data but not a FlexTool database, "
+            "so the FlexTool 2 import will not write into it. Give a new file "
+            "name for the import."
+        )
     raise ValueError(
         f"{db_url} is a FlexTool database at version {version}. The FlexTool 2 "
         f"importer writes version {OLD_FLEXTOOL_IMPORT_SCHEMA_VERSION} data, "
@@ -3493,6 +3742,7 @@ def import_old_flextool_xlsm(
         read_old_flextool_sensitivities,
     )
     from flextool.update_flextool.db_migration import (
+        BEHAVIOUR_CHANGE_MARKER_PREFIX,
         migrate_database,
         remove_behaviour_change_markers,
     )
@@ -3510,6 +3760,11 @@ def import_old_flextool_xlsm(
 
     initialised_here = False
     sqlite_path = _sqlite_path_from_url(target_db_url)
+    from pathlib import Path
+
+    # Delete on failure only a file this import created (never a user's file).
+    created_file = sqlite_path is not None and not (
+        Path(sqlite_path).exists() and Path(sqlite_path).stat().st_size > 0)
     if _db_version(target_db_url) is None:
         if sqlite_path is None:
             raise ValueError(
@@ -3539,15 +3794,16 @@ def import_old_flextool_xlsm(
             migrate_database(target_db_url)
             if initialised_here or purge:
                 with open_database_mapping(target_db_url) as db:
+                    report.markers_removed = sorted(
+                        str(md["name"]) for md in db.get_items("metadata")
+                        if str(md["name"]).startswith(BEHAVIOUR_CHANGE_MARKER_PREFIX))
                     if remove_behaviour_change_markers(db):
                         db.commit_session(
                             "Removed behaviour-change markers (new FlexTool 2 import)"
                         )
     except BaseException:
-        if initialised_here and sqlite_path is not None:
+        if initialised_here and created_file and sqlite_path is not None:
             # A half-written database created here is worse than none.
-            from pathlib import Path
-
             Path(sqlite_path).unlink(missing_ok=True)
         raise
     return report
