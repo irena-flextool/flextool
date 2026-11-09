@@ -576,12 +576,15 @@ parameter of the schema is in exactly one of the two (`tests/engine/test_time_ag
 **A new time-series parameter needs a `TIME_AGGREGATION` entry**; while a solve's steps are active, a
 broadcast of a key without one raises.
 
-One function, `aggregate_to_solve_steps`, does the arithmetic (a step whose base values are all equal keeps
-the value itself; `MEAN` / `HARMONIC` round to 6 decimals; `LAST` follows the timeline position). It
-serves three places:
+One vectorised function, `aggregate_to_solve_steps`, does the arithmetic (a step whose base values are all
+equal keeps the value itself; the means are exact, only the profile keeps its earlier 6-decimal rounding
+(`ROUND6_KEYS`); `SUM` is `math.fsum`, so n equal values give n·v like a constant; `LAST` follows the timeline
+position); `combine` is its per-step reference (`test_vectorised_kernel_equals_combine`). A roll aggregates
+only the base steps of its own solve steps (`aggregate_if_active(steps=...)`). It serves three places:
 
 - the provider's frames: `TimelineConfig.create_averaged_timeseries` writes `solve_data/pt_*`, `pbt_*`,
-  `pdt_process`, `pdt_node` and `pdt_energy_margin_adder` (kinds by (file, parameter)) and
+  `pdt_process`, `pdt_node`, `pdt_energy_margin_adder` and (verbatim) `pd_energy_margin_adder` (kinds by
+  (file, parameter)) and
   `solve_data/new_step_base_steps` (base step, new step, count, duration, position); without
   `new_stepduration` the `input/` frames pass through verbatim. The per-solve emit folds read these
   `solve_data/` frames, never `input/` (see docs/dev/engine.md "Vectorized per-roll emit"), and

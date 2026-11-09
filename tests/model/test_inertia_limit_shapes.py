@@ -323,6 +323,25 @@ def test_non_synchronous_limit_varies_by_hour(tmp_path_factory, mode) -> None:
         assert len([k for k in steps if "_roll_" in k]) >= 3
 
 
+def test_non_synchronous_map_outside_a_roll_has_no_limit(tmp_path_factory) -> None:
+    """(C-13 WP-A M1) A non_synchronous_limit time map 0.5 on t0001-t0012 only, in the 48 h solve rolled with a 24 h
+    horizon and a 12 h jump.  The roll that starts at t0001 has non_sync_constraint rows at exactly t0001-t0012 (its
+    hours t0013-t0024 are left out by the map: no limit).  Every later roll holds none of the authored hours: the
+    group still has a value (in the input), so those hours have no limit either, i.e. no rows, not a row with
+    limit 0 at every step (what a group without any value gets)."""
+    ns = tmap({t: 0.5 for t in T48[:12]})
+    steps = _run(tmp_path_factory, "c13_ns_partial_rolling", TESTS_JSON, DET_CHAIN,
+                 ROLLING + _det_values(scalar(L_INERTIA), ns))
+    rolls = [k for k in steps if "_roll_" in k]
+    assert len(rolls) >= 3
+    first = [k for k in rolls if "t0001" in set(utf8(steps[k].flex_data.dt).get_column("t").to_list())]
+    assert len(first) == 1
+    for name in rolls:
+        rows = {r for r in _lp(steps[name].flex_data)["rows"] if r.startswith("non_sync_constraint[")}
+        want = ({f"non_sync_constraint[electricity,p2020,{t}]" for t in T48[:12]} if name in first else set())
+        assert rows == want, (name, sorted(rows)[:5])
+
+
 # ---------------------------------------------------------------------------
 # Binding hour (hand-derived)
 

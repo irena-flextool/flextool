@@ -4,8 +4,8 @@ A solve with ``new_stepduration`` combines the time steps of its timeline into l
 original step).  Every time series takes one value per new step by its parameter's kind
 (``_solve_step_aggregation.TIME_AGGREGATION``):
 
-    MEAN      v_s = Σ v·Δ / Σ Δ (rounded to 6 decimals)        prices, limits, availability, ...
-    HARMONIC  v_s = 1 / (Σ Δ/v / Σ Δ)  (the mean of 1/v rounded)  efficiencies
+    MEAN      v_s = Σ v·Δ / Σ Δ (the profile rounded to 6 dec.) prices, limits, availability, ...
+    HARMONIC  v_s = 1 / (Σ Δ/v / Σ Δ)  (exact, not rounded)       efficiencies
     SUM       v_s = Σ v                                        inflow, energy_margin_adder
     LAST      v_s = the value of the last base step with one   storage_state_reference_value
     and MEAN / HARMONIC / LAST: all values equal → the value itself
@@ -184,7 +184,7 @@ def test_partial_step_takes_the_steps_it_has(caplog) -> None:
     with caplog.at_level(logging.WARNING):
         out = aggregate_to_solve_steps(frame, Agg.MEAN, ["name"], base, keys=("unit", "availability"), notes=notes)
         aggregate_to_solve_steps(frame, Agg.MEAN, ["name"], base, keys=("unit", "availability"), notes=notes)
-    assert out.rows() == [("u", "h1", 0.5), ("u", "h3", 0.3), ("v", "h1", 0.9)]
+    assert out.rows() == [("u", "h1", 0.5), ("u", "h3", (0.2 + 0.4) / 2), ("v", "h1", 0.9)]  # unrounded
     msgs = [r.message for r in caplog.records if "unit.availability" in r.message]
     assert len(msgs) == 1 and "only some of its time steps" in msgs[0]
 
@@ -324,5 +324,236 @@ def test_behaviour_change_notice_names_the_changed_entities(capsys) -> None:
         out = capsys.readouterr().out
         assert "Affected parameters: unit.availability of u." in out
         assert "of v" not in out
+    finally:
+        bc.start_run(None)
+
+
+# ---------------------------------------------------------------------------
+# C-13 WP-A fix pass: exact means, the vectorised kernel, the roll's steps, timeline edge cases
+
+
+def test_harmonic_is_exact_for_large_efficiencies() -> None:
+    """(M2) HARMONIC is the reciprocal of the exact mean of 1/η, without rounding: η 250 / 300 → 2/(1/250 + 1/300)
+    = 2/(0.004 + 0.0033̅) = 2/0.0073̅ = 272.7272̅ (rounding 1/η to 6 decimals gave 272.7025); η 2e6 / 3e6 →
+    2/(5e-7 + 3.3̅e-7) = 2/8.3̅e-7 = 2.4e6 (rounding made the mean 0: ZeroDivisionError)."""
+    assert combine(Agg.HARMONIC, [250.0, 300.0], [1.0, 1.0]) == pytest.approx(3000.0 / 11.0, rel=1e-12)
+    assert combine(Agg.HARMONIC, [2e6, 3e6], [1.0, 1.0]) == pytest.approx(2.4e6, rel=1e-12)
+    base = _base([("h1", "h1", 1.0), ("h2", "h1", 1.0)])
+    out = aggregate_to_solve_steps(pl.DataFrame({"name": ["u", "u"], "t": ["h1", "h2"], "value": [2e6, 3e6]}),
+                                   Agg.HARMONIC, ["name"], base, keys=("unit", "efficiency"))
+    assert out.get_column("value")[0] == pytest.approx(2.4e6, rel=1e-12)
+
+
+def test_harmonic_of_equal_non_positive_values_raises() -> None:
+    """(N9) An all-0 HARMONIC step fails like 0 / 0.4 does (the positivity check runs before the equal-values
+    shortcut)."""
+    with pytest.raises(ValueError, match="positive"):
+        combine(Agg.HARMONIC, [0.0, 0.0], [1.0, 1.0])
+    base = _base([("h1", "h1", 1.0), ("h2", "h1", 1.0)])
+    with pytest.raises(FlexToolConfigError, match="unit.efficiency: a harmonic mean needs positive values"):
+        aggregate_to_solve_steps(pl.DataFrame({"name": ["u", "u"], "t": ["h1", "h2"], "value": [0.0, 0.0]}),
+                                 Agg.HARMONIC, ["name"], base, keys=("unit", "efficiency"))
+
+
+def test_mean_is_rounded_only_for_the_profile() -> None:
+    """(S4) self_discharge_loss 1.2e-7 / 1.4e-7 per hour → 1.3e-7 (rounding to 6 decimals made it 0); the profile
+    keeps the rounding of its earlier CSV path: 0.1234561 / 0.1234564 → round(0.12345625, 6) = 0.123456."""
+    base = _base([("h1", "h1", 1.0), ("h2", "h1", 1.0)])
+    loss = aggregate_to_solve_steps(pl.DataFrame({"name": ["n", "n"], "t": ["h1", "h2"], "value": [1.2e-7, 1.4e-7]}),
+                                    Agg.MEAN, ["name"], base, keys=("node", "self_discharge_loss"))
+    assert loss.get_column("value")[0] == pytest.approx(1.3e-7, rel=1e-12)
+    prof = aggregate_to_solve_steps(pl.DataFrame({"name": ["f", "f"], "t": ["h1", "h2"],
+                                                  "value": [0.1234561, 0.1234564]}),
+                                    Agg.MEAN, ["name"], base, keys=("profile", "profile"))
+    assert prof.get_column("value")[0] == 0.123456
+
+
+def test_sum_of_equal_values_is_the_constant_times_n() -> None:
+    """(WP-B S2) SUM is the correctly rounded sum (math.fsum), so n equal hours give exactly n·v: the value a constant
+    gets (v times the number of base steps), on every Python version."""
+    for v in (0.1, 0.7, -589.3, 1.0 / 3.0, 123.456789):
+        for n in (3, 6, 24):
+            assert combine(Agg.SUM, [v] * n, [1.0] * n) == v * n
+            base = _base([(f"h{i}", "h0", 1.0) for i in range(n)])
+            out = aggregate_to_solve_steps(pl.DataFrame({"name": ["n"] * n, "t": [f"h{i}" for i in range(n)],
+                                                         "value": [v] * n}),
+                                           Agg.SUM, ["name"], base, keys=("node", "inflow"))
+            assert out.get_column("value")[0] == v * n
+
+
+def _reference(frame: pl.DataFrame, kinds: dict, keys: dict, base: pl.DataFrame) -> pl.DataFrame:
+    """The per-step Python reference: combine over each (name, param, step) in timeline order."""
+    pos = {t: (s, d, i) for t, s, d, i in base.select("time", "new_step", "duration", "pos").iter_rows()}
+    groups: dict = {}
+    for row, (name, param, t, v) in enumerate(frame.select("name", "param", "t", "value").iter_rows()):
+        if v is None or t not in pos:
+            continue
+        s, d, i = pos[t]
+        g = groups.setdefault((name, param, s), {"row": row, "items": []})
+        g["items"].append((i, v, d))
+    out = []
+    for (name, param, s), g in sorted(groups.items(), key=lambda kv: kv[1]["row"]):
+        items = sorted(g["items"])
+        value = combine(kinds[param], [v for _i, v, _d in items], [d for _i, _v, d in items],
+                        round6=keys[param] in {("profile", "profile")})
+        out.append((name, param, s, value))
+    return pl.DataFrame(out, schema={"name": pl.Utf8, "param": pl.Utf8, "t": pl.Utf8, "value": pl.Float64},
+                        orient="row")
+
+
+@pytest.mark.parametrize("seed", range(6))
+def test_vectorised_kernel_equals_combine(seed) -> None:
+    """(M3) The vectorised aggregation gives the bits of :func:`combine` applied per step (``.equals``): random
+    frames of all four kinds and the profile's rounding, steps of 1-5 base steps with mixed durations, partial
+    steps, equal-valued steps, rows in random order."""
+    import random
+
+    rng = random.Random(seed)
+    rows, t = [], 0
+    while t < 120:
+        n = rng.randint(1, 5)
+        rows.extend((f"h{t + j}", f"h{t}", float(rng.choice([1, 1, 2, 3]))) for j in range(n))
+        t += n
+    base = _base(rows)
+    kinds = {"availability": Agg.MEAN, "efficiency": Agg.HARMONIC, "inflow": Agg.SUM,
+             "storage_state_reference_value": Agg.LAST, "profile": Agg.MEAN}
+    keys = {"availability": ("unit", "availability"), "efficiency": ("unit", "efficiency"),
+            "inflow": ("node", "inflow"), "storage_state_reference_value": ("node", "storage_state_reference_value"),
+            "profile": ("profile", "profile")}
+    data = []
+    for name in ("a", "b", "c"):
+        for param in kinds:
+            for tt, _s, _d in rows:
+                if rng.random() < 0.15:
+                    continue                                   # partial steps
+                if param == "efficiency":
+                    v = rng.choice([0.4, 0.4, rng.uniform(0.2, 0.6), rng.uniform(100, 3000)])
+                else:
+                    v = rng.choice([1.0, 1.0, rng.uniform(-500, 500), rng.uniform(0, 1) * 1e-6, 0.1, 0.2])
+                data.append((name, param, tt, v))
+    rng.shuffle(data)
+    frame = pl.DataFrame(data, schema={"name": pl.Utf8, "param": pl.Utf8, "t": pl.Utf8, "value": pl.Float64},
+                         orient="row")
+    got = aggregate_to_solve_steps(frame, "param", ["name", "param"], base, keys=keys, kind_values=kinds,
+                                   report_changes=False)
+    assert got.equals(_reference(frame, kinds, keys, base))
+
+
+def test_roll_aggregates_only_its_steps() -> None:
+    """(M3a) ``aggregate_if_active(steps=...)`` aggregates only the base steps of the roll's solve steps: steps t1
+    (t1, t2) and t3 (t3, t4), the roll holds t3 → one row (30 + 50)/2 = 40."""
+    from flextool.engine.input._solve_step_aggregation import aggregate_if_active
+
+    base = _base([("t1", "t1", 1.0), ("t2", "t1", 1.0), ("t3", "t3", 1.0), ("t4", "t3", 1.0)])
+    frame = pl.DataFrame({"name": ["g"] * 4, "t": ["t1", "t2", "t3", "t4"], "value": [10.0, 20.0, 30.0, 50.0]})
+    tok = _armed(base)
+    try:
+        out = aggregate_if_active(frame, ("group", "co2_price"), steps=pl.Series(["t3"]))
+    finally:
+        deactivate_solve_step_aggregation(tok)
+    assert out.rows() == [("g", "t3", 40.0)]
+
+
+def test_aggregation_runs_before_the_enum_cast() -> None:
+    """(S7) Under a global t vocabulary that holds only the solve-step label t1, a time map t1 = 10, t2 = 30 (one
+    2 h step t1) gives (10 + 30)/2 = 20; aggregating after the axis cast would drop t2 (not in the vocabulary)
+    and give 10."""
+    from flextool.engine.input._axis_enums import reset_global_axis_enums, set_global_axis_enums
+
+    t_enum, d_enum = pl.Enum(["t1"]), pl.Enum(["p1"])
+    base = _base([("t1", "t1", 1.0), ("t2", "t1", 1.0)])
+    dt = pl.DataFrame({"d": pl.Series(["p1"], dtype=d_enum), "t": pl.Series(["t1"], dtype=t_enum)})
+    enum_tok = set_global_axis_enums({"d": d_enum, "t": t_enum})
+    tok = _armed(base)
+    try:
+        out = _collect(broadcast_to_period_time(
+            _resolved(pl.DataFrame({"name": ["g", "g"], "t": ["t1", "t2"], "value": [10.0, 30.0]}),
+                      ("group", "co2_price")), "g", dt))
+    finally:
+        deactivate_solve_step_aggregation(tok)
+        reset_global_axis_enums(enum_tok)
+    assert out.rows() == [("g", "t1", 20.0)]
+
+
+def test_short_last_block_is_not_partial(caplog) -> None:
+    """(S8) 5 base steps in 2 h steps: h1 (h1, h2), h3 (h3, h4), h5 (h5 alone, n = 1).  Availability 0.2 / 0.4 /
+    0.6 / 0.8 / 0.9 → 0.3, 0.7 and 0.9; the one-step last block has every value it can have: no partial warning."""
+    base = _base([("h1", "h1", 1.0), ("h2", "h1", 1.0), ("h3", "h3", 1.0), ("h4", "h3", 1.0), ("h5", "h5", 1.0)])
+    frame = pl.DataFrame({"name": ["u"] * 5, "t": ["h1", "h2", "h3", "h4", "h5"],
+                          "value": [0.2, 0.4, 0.6, 0.8, 0.9]})
+    with caplog.at_level(logging.WARNING):
+        out = aggregate_to_solve_steps(frame, Agg.MEAN, ["name"], base, keys=("unit", "availability"), notes=set())
+    assert out.rows() == [("u", "h1", (0.2 + 0.4) / 2), ("u", "h3", (0.6 + 0.8) / 2), ("u", "h5", 0.9)]
+    assert not [r for r in caplog.records if "only some of its time steps" in r.message]
+
+
+def test_timeline_gap_does_not_merge_blocks() -> None:
+    """(S8) Two timeset blocks with a gap (h1-h2, then h7-h8; h3-h6 are not in the solve): the new steps h1 and h7
+    each take their own two hours, inflow −10 −20 = −30 and −70 −80 = −150; the hours of the gap (authored, but
+    in no new step) are dropped, never merged across the gap."""
+    base = _base([("h1", "h1", 1.0), ("h2", "h1", 1.0), ("h7", "h7", 1.0), ("h8", "h7", 1.0)])
+    frame = pl.DataFrame({"name": ["n"] * 6, "t": ["h1", "h2", "h3", "h6", "h7", "h8"],
+                          "value": [-10.0, -20.0, -30.0, -60.0, -70.0, -80.0]})
+    out = aggregate_to_solve_steps(frame, Agg.SUM, ["name"], base, keys=("node", "inflow"))
+    assert out.rows() == [("n", "h1", -30.0), ("n", "h7", -150.0)]
+
+
+def test_min_load_warning_names_only_min_load_efficiency_units(caplog) -> None:
+    """(S5) A varying min_load is approximate only on min_load_efficiency units: with ``approx_entities`` {u}, a
+    varying min_load of u warns (naming u), one of v (not in the set) alone is silent."""
+    base = _base([("h1", "h1", 1.0), ("h2", "h1", 1.0)])
+    key = ("unit", "min_load")
+    approx = {key: frozenset({"u"})}
+    with caplog.at_level(logging.WARNING):
+        aggregate_to_solve_steps(pl.DataFrame({"name": ["v", "v"], "t": ["h1", "h2"], "value": [0.3, 0.5]}),
+                                 Agg.MEAN, ["name"], base, keys=key, notes=set(), approx_entities=approx)
+        assert not [r for r in caplog.records if "min_load varies" in r.message]
+        aggregate_to_solve_steps(pl.DataFrame({"name": ["u", "u", "v", "v"], "t": ["h1", "h2", "h1", "h2"],
+                                               "value": [0.3, 0.5, 0.3, 0.5]}),
+                                 Agg.MEAN, ["name"], base, keys=key, notes=set(), approx_entities=approx)
+    msgs = [r.message for r in caplog.records if "min_load varies" in r.message]
+    assert len(msgs) == 1 and "min_load_efficiency: u)" in msgs[0]
+
+
+def test_one_dedupe_set_serves_both_paths(caplog) -> None:
+    """(S6) The CSV frames and the DB-direct broadcast share the run's dedupe set: a partial availability step
+    warns once, not once per path."""
+    base = _base([("t1", "t1", 1.0), ("t2", "t1", 1.0)])
+    notes: set = set()
+    with caplog.at_level(logging.WARNING):
+        _aggregate_csv_series("pt_process.csv", pl.DataFrame(
+            {"process": ["u"], "processParam": ["availability"], "time": ["t1"], "pt_process": ["0.5"]}), base, notes)
+        tok = activate_solve_step_aggregation(base, notes)
+        try:
+            broadcast_to_period_time(
+                _resolved(pl.DataFrame({"name": ["u"], "t": ["t1"], "value": [0.5]}), ("unit", "availability")),
+                "p", pl.DataFrame({"d": ["p1"], "t": ["t1"]}))
+        finally:
+            deactivate_solve_step_aggregation(tok)
+    assert len([r for r in caplog.records if "only some of its time steps" in r.message]) == 1
+
+
+def test_timeline_config_keeps_one_dedupe_set() -> None:
+    """(S6) TimelineConfig carries the run's dedupe set (the orchestration replaces it by the reader's memo)."""
+    from collections import defaultdict
+
+    from flextool.engine.input._timeline import TimelineConfig
+
+    cfg = TimelineConfig(defaultdict(list), [], defaultdict(str), defaultdict(list), {})
+    assert cfg.solve_step_notes == set()
+
+
+def test_notice_names_a_step_whose_first_hour_is_missing(capsys) -> None:
+    """(WP-B N5) Earlier releases took the value of the step's first base step (its default where that hour has no
+    value): availability authored only at h2 = 0.6 of step h1 (h1, h2) keeps 0.6, but differs from what earlier
+    releases used at h1, so the notice names it."""
+    from flextool.engine import _behaviour_changes as bc
+
+    base = _base([("h1", "h1", 1.0), ("h2", "h1", 1.0)])
+    try:
+        bc.start_run({"solve_step_series_combined": "83"})
+        aggregate_to_solve_steps(pl.DataFrame({"name": ["u"], "t": ["h2"], "value": [0.6]}), Agg.MEAN, ["name"],
+                                 base, keys=("unit", "availability"), notes=set())
+        assert "Affected parameters: unit.availability of u." in capsys.readouterr().out
     finally:
         bc.start_run(None)

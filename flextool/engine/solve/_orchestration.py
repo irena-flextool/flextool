@@ -2471,6 +2471,12 @@ def _drive_cascade(
             "cascade_spinedb_reader_constructed", _drive_logger,
             user_label="Inputs prepared",
         )
+    # One dedupe set for the solve-step aggregation warnings of the run: the CSV frames
+    # (TimelineConfig.create_averaged_timeseries, once per complete solve) and the DB-direct readers
+    # (load_flextool arms the reader's memo) warn once per run between them.
+    _timeline_cfg = getattr(runner.state, "timeline", None)
+    if _timeline_cfg is not None:
+        _timeline_cfg.solve_step_notes = cascade_db_reader.run_memo(("solve_step_aggregation_notes",), set)
 
     # ``input/p_all_entity_unitsize`` — solve-invariant entity-unitsize
     # cascade (virtual_unitsize OR existing OR 1000.0) over ALL entities

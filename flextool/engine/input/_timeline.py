@@ -148,6 +148,10 @@ class TimelineConfig:
         # create_timeline_from_timestep_duration call.
         self._raw_timeset_durations: dict[str, list] | None = None
         self._raw_timesets__timeline: dict[str, str] = {}
+        # The run's dedupe set of the solve-step aggregation warnings: the orchestration shares it with the
+        # DB-direct readers (the reader's ``solve_step_aggregation_notes`` memo), so a warning is printed once per
+        # run, not once per path and per complete solve.
+        self.solve_step_notes: set = set()
 
     # ------------------------------------------------------------------
     # Factories
@@ -697,8 +701,8 @@ class TimelineConfig:
         arithmetic): ``inflow`` is summed, efficiencies take the harmonic
         mean, ``storage_state_reference_value`` the value of the step's
         last original step, every other series the duration-weighted mean
-        (rounded to 6 decimals; a step whose values are all equal keeps
-        the value itself).  ``solve_data/new_step_base_steps`` lists the
+        (only the profile rounded to 6 decimals; a step whose values are
+        all equal keeps the value itself).  ``solve_data/new_step_base_steps`` lists the
         original steps (``time``), their new step, its number of original
         steps, their hours and timeline positions.
 
@@ -819,7 +823,8 @@ class TimelineConfig:
                 if len(row) >= 3 and row[1] == "inflow":
                     node__inflow.append([row[0], row[2]])
 
-        notes: set = set()
+        notes = self.solve_step_notes
+        approx = _approx_entities_from_provider(provider, wf)
         for timeseries in _CSV_SERIES:
             src_path = wf / "input" / timeseries
             dst_path = wf / "solve_data" / timeseries
@@ -833,7 +838,7 @@ class TimelineConfig:
                 # No time column — pass through verbatim.
                 _put(dst_key, src_frame)
                 continue
-            out_rows = _aggregate_csv_series(timeseries, src_frame, base_steps, notes)
+            out_rows = _aggregate_csv_series(timeseries, src_frame, base_steps, notes, approx)
 
             # Append per-step inflow contributions from p_node to
             # pt_node_inflow only; times the number of time steps each new
@@ -984,9 +989,23 @@ def csv_series_kind(file: str, parameter: str) -> "tuple[tuple[str, str], Agg]":
     return found[0]
 
 
-def _aggregate_csv_series(file: str, frame: pl.DataFrame, base_steps: pl.DataFrame, notes: set) -> list[list]:
+def _approx_entities_from_provider(provider: "FlexDataProvider", wf: Path) -> "dict[tuple[str, str], frozenset[str]]":
+    """The units whose varying ``min_load`` makes a solve step approximate (``_APPROXIMATE_WHEN_VARYING``): the
+    ``min_load_efficiency`` units of ``input/process__ct_method.csv`` (none when the frame is absent)."""
+    frame = _provider_get_or_read(provider, _provider_key(wf / "input" / "process__ct_method.csv"),
+                                  wf / "input" / "process__ct_method.csv")
+    units: frozenset[str] = frozenset()
+    if frame is not None and frame.height > 0 and frame.width >= 2:
+        units = frozenset(frame.filter(pl.col(frame.columns[1]).cast(pl.Utf8) == "min_load_efficiency")
+                          .get_column(frame.columns[0]).cast(pl.Utf8).to_list())
+    return {("unit", "min_load"): units}
+
+
+def _aggregate_csv_series(file: str, frame: pl.DataFrame, base_steps: pl.DataFrame, notes: set,
+                          approx_entities: "dict[tuple[str, str], frozenset[str]] | None" = None) -> list[list]:
     """The rows of the provider frame ``file`` combined to the solve's steps (:func:`aggregate_to_solve_steps`):
-    one row per (columns before ``time``, solve step), the value last; every value as a float."""
+    one row per (columns before ``time``, solve step), the value last; every value as a float.
+    ``approx_entities``: see :func:`aggregate_to_solve_steps`."""
     headers = frame.columns
     ti = headers.index("time")
     group_cols = headers[:ti]
@@ -996,7 +1015,8 @@ def _aggregate_csv_series(file: str, frame: pl.DataFrame, base_steps: pl.DataFra
     if fixed is not None:
         key, kind = csv_series_kind(file, fixed)
         out = aggregate_to_solve_steps(frame, kind, group_cols, base_steps, time_col="time",
-                                       value_col=value_col, keys=key, notes=notes, report_changes=report)
+                                       value_col=value_col, keys=key, notes=notes, report_changes=report,
+                                       approx_entities=approx_entities)
     else:
         param_col = next((c for c in group_cols if c.endswith("Param")), None)
         if param_col is None:
@@ -1006,7 +1026,8 @@ def _aggregate_csv_series(file: str, frame: pl.DataFrame, base_steps: pl.DataFra
         out = aggregate_to_solve_steps(
             frame, param_col, group_cols, base_steps, time_col="time", value_col=value_col,
             keys={p: key for p, (key, _k) in resolved.items()},
-            kind_values={p: k for p, (_key, k) in resolved.items()}, notes=notes, report_changes=report)
+            kind_values={p: k for p, (_key, k) in resolved.items()}, notes=notes, report_changes=report,
+            approx_entities=approx_entities)
     return [list(r) for r in out.select(*group_cols, "time", value_col).iter_rows()]
 
 

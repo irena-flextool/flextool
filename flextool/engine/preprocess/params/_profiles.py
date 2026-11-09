@@ -394,7 +394,7 @@ def _profile_period_time_lf(source: "InputSource",
     # A solve with new_stepduration: one value per solve step, the step mean (_solve_step_aggregation).
     raw = aggregate_if_active(
         raw.select("name", "period", t_col, pl.col("value").cast(pl.Float64, strict=False)),
-        ("profile", "profile"), time_col=t_col)
+        ("profile", "profile"), time_col=t_col, steps=dt_lf.select("t").collect().get_column("t"))
     raw_lf = (raw.lazy()
                   .select(alias_to_axis("name", "f"),
                           alias_to_axis(pl.col("period").cast(pl.Utf8), "d"),

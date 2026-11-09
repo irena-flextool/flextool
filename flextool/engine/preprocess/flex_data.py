@@ -1562,6 +1562,7 @@ class FlexData:
     pdtGroup_inertia_limit: Param | None = None          # authored dims ⊆ (g, d, t)
     pdGroup_penalty_inertia: Param | None = None         # (g, d)
     pdtGroup_non_synchronous_limit: Param | None = None  # authored dims ⊆ (g, d, t)
+    groupNonSync_valued: pl.DataFrame | None = None      # (g,) groups with any non_synchronous_limit value
     pdGroup_penalty_non_synchronous: Param | None = None # (g, d)
     p_process_sink_inertia_constant: Param | None = None    # (p, sink)
     p_process_source_inertia_constant: Param | None = None  # (p, source)
@@ -4895,9 +4896,19 @@ def load_flextool(source: "Path | str | FlexInputSource",
             # The solve's new_stepduration steps (empty without one): the DB-direct readers combine a time
             # series to them by its TIME_AGGREGATION kind.
             _steps_key = _provider_key(Path("solve_data") / NEW_STEP_BASE_STEPS)
+            # A varying min_load is approximate only on the min_load_efficiency units (their curve).
+            from flextool.engine.preprocess.params._direct import _names_with_method
+
+            def _mle_units() -> "dict[tuple[str, str], frozenset[str]]":
+                return {("unit", "min_load"): frozenset(_names_with_method(
+                    db_reader, "unit", "conversion_method", frozenset({"min_load_efficiency"})))}
+
+            _steps = provider.get(_steps_key) if provider.has(_steps_key) else None
+            _approx = None
+            if _steps is not None and _steps.height > 0:
+                _approx = _memo(("solve_step_approx_entities",), _mle_units) if _memo is not None else _mle_units()
             _steps_tok = activate_solve_step_aggregation(
-                provider.get(_steps_key) if provider.has(_steps_key) else None,
-                _memo(("solve_step_aggregation_notes",), set) if _memo is not None else None)
+                _steps, _memo(("solve_step_aggregation_notes",), set) if _memo is not None else None, _approx)
 
         # Reuse the recorder bound at the function entry above so the
         # sub-checkpoints (axis_enums / SpineDbReader / load_flextool

@@ -5,7 +5,7 @@ each combines two hours of equal length.  Every time map below alternates a (odd
 2 h step takes, by the kind of its parameter (``_solve_step_aggregation.TIME_AGGREGATION``):
 
     MEAN      (a + b)/2
-    HARMONIC  1/η = round((1/a + 1/b)/2, 6)       (the step's fuel per output; η = its reciprocal)
+    HARMONIC  1/η = (1/a + 1/b)/2                 (the step's fuel per output; η = its reciprocal; exact)
     SUM       a + b
     LAST      b                                   (the step ends at its second hour)
 
@@ -112,9 +112,9 @@ SERIES_B = [
     ("node", "battery", "self_discharge_loss", tm(0.01, 0.03), 0.02),
     ("node", "battery", "storage_state_reference_value", tm(0.5, 0.7), 0.7),
     ("reserve__upDown__group", ["primary", "up", "electricity"], "reservation", tm(10.0, 30.0), 20.0),
-    ("unit", "coal_plant", "efficiency_at_min_load", tm(0.3, 0.36), 1.0 / 3.055556),
+    ("unit", "coal_plant", "efficiency_at_min_load", tm(0.3, 0.36), 1.0 / ((1 / 0.3 + 1 / 0.36) / 2)),
     ("connection", "west_east", "availability", tm(0.9, 0.7), 0.8),
-    ("connection", "west_east", "efficiency", tm(0.95, 0.85), 1.0 / 1.114551),
+    ("connection", "west_east", "efficiency", tm(0.95, 0.85), 1.0 / ((1 / 0.95 + 1 / 0.85) / 2)),
     ("connection", "west_east", "other_operational_cost", tm(1.0, 3.0), 2.0),
     ("unit__inputNode", ["coal_plant", "coal_market"], "other_operational_cost", tm(2.0, 4.0), 3.0),
 ]
@@ -184,13 +184,14 @@ FIELDS: dict[tuple[str, str], tuple[str, str, dict, float]] = {
     # (10 + 30)/2
     ("reserve__upDown__group", "reservation"): ("B", "pdtReserve_upDown_group_reservation",
                                                 {"r": "primary", "ud": "up", "g": "electricity"}, 20.0),
-    # 1/η_min = round((1/0.3 + 1/0.36)/2, 6) = round((3.3333333 + 2.7777778)/2, 6) = 3.055556; the min-load section
-    # with efficiency 0.4 and min_load 0.3: 0.3 · (3.055556 − 2.5) / 0.7 = 0.2380954…
-    ("unit", "efficiency_at_min_load"): ("B", "p_section", {"p": "coal_plant"}, 0.3 * (3.055556 - 2.5) * (1 / 0.7)),
+    # 1/η_min = (1/0.3 + 1/0.36)/2 = (3.3333333 + 2.7777778)/2 = 3.0555556 (exact, not rounded); the min-load
+    # section with efficiency 0.4 and min_load 0.3: 0.3 · (3.0555556 − 2.5) / 0.7 = 0.2380952…
+    ("unit", "efficiency_at_min_load"): ("B", "p_section", {"p": "coal_plant"},
+                                         0.3 * ((1 / 0.3 + 1 / 0.36) / 2 - 2.5) * (1 / 0.7)),
     # (0.9 + 0.7)/2
     ("connection", "availability"): ("B", "p_process_availability", {"p": "west_east"}, 0.8),
-    # 1/η = round((1/0.95 + 1/0.85)/2, 6) = round((1.0526316 + 1.1764706)/2, 6) = 1.114551
-    ("connection", "efficiency"): ("B", "p_slope", {"p": "west_east"}, 1.114551),
+    # 1/η = (1/0.95 + 1/0.85)/2 = (1.0526316 + 1.1764706)/2 = 1.1145511 (exact, not rounded)
+    ("connection", "efficiency"): ("B", "p_slope", {"p": "west_east"}, (1 / 0.95 + 1 / 0.85) / 2),
     # (1 + 3)/2
     ("connection", "other_operational_cost"): ("B", "p_pdt_varCost_process", {"p": "west_east"}, 2.0),
     # (2 + 4)/2
@@ -273,6 +274,29 @@ def test_energy_margin_adder_sums_over_the_step(tmp_path_factory, label, adder, 
     steps = _run(tmp_path_factory, f"c13_adder_{label}", values, ["init", "west", "coal"])
     fd = list(steps.values())[-1].flex_data
     assert _cells(fd, "p_inflow", {"n": "west"})["t0001"] == pytest.approx(expected, rel=1e-12)
+
+
+@pytest.mark.parametrize("index_name", ["time", None], ids=["time", "silent_x"])
+def test_energy_margin_adder_time_map_is_refused(tmp_path_factory, index_name) -> None:
+    """A time-only energy_margin_adder map (one index level of time steps, named ``time`` or left unnamed) has no
+    ingestion path and was silently ignored: the shape allow-list refuses it, naming the node and the allowed
+    shapes (a constant, a period map, a period + time map)."""
+    from flextool.engine import run_chain_from_db
+    from flextool.engine.input._solve_state import FlexToolConfigError
+    from tests.engine._unit_db import make_db
+
+    data = {"index_type": "str", "data": [[t, 10.0] for t in T48]}
+    if index_name is not None:
+        data["index_name"] = index_name
+    values = [["solve", SOLVE, "invest_periods", b64({"value_type": "str", "data": ["p2020"],
+                                                      "index_name": "period"}, "array")],
+              ["node", "west", "energy_margin_method", b64("inflow_adder", "str")],
+              ["node", "west", "energy_margin_adder", b64(data, "map")]]
+    url, scen = make_db(tmp_path_factory, alt=f"c13_adder_time_{index_name}", values=values,
+                        base_chain=["init", "west", "coal"], fixture_json=TESTS_JSON)
+    with pytest.raises(FlexToolConfigError, match=r"energy_margin_adder.*west|west.*energy_margin_adder") as exc:
+        run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("c13_adder_time_w"))
+    assert "1d_map(period)" in str(exc.value) or "a map over periods" in str(exc.value), str(exc.value)
 
 
 # ---------------------------------------------------------------------------

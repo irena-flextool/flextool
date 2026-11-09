@@ -57,7 +57,7 @@ _FIELDS: tuple[str, ...] = (
     "p_inv_group_cap", "p_group_capacity_for_scaling",
     "pdGroup_capacity_margin", "pdGroup_penalty_capacity_margin",
     "pdtGroup_inertia_limit", "pdGroup_penalty_inertia",
-    "pdtGroup_non_synchronous_limit", "pdGroup_penalty_non_synchronous",
+    "pdtGroup_non_synchronous_limit", "pdGroup_penalty_non_synchronous", "groupNonSync_valued",
     "p_process_sink_inertia_constant", "p_process_source_inertia_constant",
     "p_positive_inflow", "p_negative_inflow",
     "pdtNodeInflow_per_step",
@@ -701,15 +701,29 @@ def _non_sync_rows(d, limit: "Param | None") -> pl.DataFrame:
     """``(g, d, t)`` of the non_sync_constraint rows: every (d, t) of a flagged group, less the time steps that its
     time or period + time map leaves out (no limit there).  A group without any value keeps every step (limit 0).
 
-        rows = { (g,d,t) ∈ groupNonSync × dt : limit[g,d,t] has a value  or  g has no value at all }
+        rows = { (g,d,t) ∈ groupNonSync × dt : limit[g,d,t] has a value  or  g ∉ groupNonSync_valued }
+
+    ``groupNonSync_valued`` is read from the whole input, before the solve's dt: a roll (or a coarse step, or a
+    solve whose timeline the map's labels miss) that holds none of a group's authored hours has no rows for it,
+    not the limit 0 of a group without any value.  Without the field (a reader-less load) a group counts as
+    valued when this solve has a value of it.
     """
     over = d.groupNonSync.join(d.dt, how="cross")
-    if limit is None or "t" not in limit.dims:
+    valued_groups = getattr(d, "groupNonSync_valued", None)
+    if valued_groups is None and (limit is None or "t" not in limit.dims):
         return over
-    cells = promote_param_to_dt(limit, d.dt).select("g", "d", "t").collect()
-    cells, over_k = align_join_dtypes(cells, over, ("g", "d", "t"))
-    valued = over_k.join(cells.unique(), on=["g", "d", "t"], how="semi")
-    without = over_k.join(cells.select("g").unique(), on="g", how="anti")
+    keys = ("g", "d", "t")
+    if limit is None:
+        cells = over.clear().select(*keys)
+    else:
+        cells = promote_param_to_dt(limit, d.dt).select(*keys).collect()
+    cells, over_k = align_join_dtypes(cells, over, keys)
+    valued = over_k.join(cells.unique(), on=list(keys), how="semi")
+    has_value = cells.select("g")
+    if valued_groups is not None:
+        vg, has_value = align_join_dtypes(valued_groups.select("g"), has_value, ("g",))
+        has_value = pl.concat([has_value, vg])
+    without = over_k.join(has_value.unique(), on="g", how="anti")
     rows = pl.concat([valued, without])
     return rows.select(*(pl.col(c).cast(over.schema[c]) for c in over.columns))
 

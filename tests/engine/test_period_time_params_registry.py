@@ -28,12 +28,15 @@ def test_derivation_rule_matches_registry():
     assert set(PERIOD_TIME_PARAMS) == expected
 
 
-def test_count_is_62_split_21_dual_1_time_only_40_period_only():
-    assert len(PERIOD_TIME_PARAMS) == 62
-    # 21 dual-axis: 20 with the full 2-D shape + commodity.price (two 1-D).
+def test_count_is_63_split_22_dual_1_time_only_40_period_only():
+    assert len(PERIOD_TIME_PARAMS) == 63
+    # 22 dual-axis: 21 with the full 2-D shape (incl. node.energy_margin_adder, which has no time-only map) +
+    # commodity.price (two 1-D).
     dual_2d = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                if Shape.MAP_PERIOD_TIME in v}
-    assert len(dual_2d) == 20
+    assert len(dual_2d) == 21
+    assert PARAM_ALLOWED_SHAPES[("node", "energy_margin_adder")] == {
+        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_PERIOD_TIME}
     commodity_price = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                        if Shape.MAP_TIME in v and Shape.MAP_PERIOD_TIME not in v
                        and Shape.MAP_PERIOD in v}

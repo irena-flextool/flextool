@@ -34,7 +34,9 @@ from flextool.engine.input._axis_enums import (cast_frame_axes,
                                                  get_global_axis_enums,
                                                  rename_to_axis)
 from flextool.engine.input._param_shapes import (
+    PARAM_ALLOWED_SHAPES,
     Shape,
+    allowed_shapes_in_words,
     broadcast_to_period,
     broadcast_to_period_time,
     facet_long_frame,
@@ -45,6 +47,7 @@ from flextool.engine.input._param_shapes import (
     require_period_coverage_time,
     resolve_facet_groups,
     resolve_param_shape,
+    stochastic_time_entities,
 )
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess.emit._leaf_sets import _CO2_MAX_PERIOD_METHOD, _CO2_MAX_TOTAL_METHOD
@@ -1059,6 +1062,65 @@ def pdtGroup_non_synchronous_limit_from_source(source: "InputSource",
     return require_period_coverage_time(
         resolved, "g", period_filter, entity_class="group", parameter_name="non_synchronous_limit",
         need_periods=need_periods, active=active, filter_zero=False)
+
+
+def check_energy_margin_adder_shape(source: "InputSource", period_filter: pl.DataFrame | None) -> None:
+    """Refuse a ``node.energy_margin_adder`` shape outside :data:`PARAM_ALLOWED_SHAPES` (a constant, a period map or
+    a period + time map), raising :class:`FlexToolConfigError` that names the nodes and the allowed shapes.
+
+    :func:`resolve_param_shape` refuses a map whose index levels are named outside the allow-list (a ``time`` map).
+    A one-level map with Spine's silent label reads as a period map (the only one-level shape); its keys show
+    what it is: a node whose keys hold a time step of the model (``period_filter`` or the axis vocabulary) and
+    no period is a time map.  The values themselves are applied by the per-solve emit
+    (``emit/_energy_margin_adder.py``), where a time map has no ingestion spec and was silently ignored.
+    """
+    resolved = resolve_param_shape(source, "node", "energy_margin_adder", period_filter=period_filter)
+    if resolved is None or resolved.frame is None or resolved.period_index_column is None:
+        return
+    if resolved.time_index_column is not None and resolved.frame.get_column(resolved.time_index_column).is_not_null().any():
+        return
+    periods: set[str] = set()
+    times: set[str] = set()
+    if period_filter is not None and {"d", "t"} <= set(period_filter.columns):
+        periods |= set(period_filter.get_column("d").cast(pl.Utf8).to_list())
+        times |= set(period_filter.get_column("t").cast(pl.Utf8).to_list())
+    enums = get_global_axis_enums() or {}
+    if "d" in enums:
+        periods |= set(enums["d"].categories.to_list())
+    if "t" in enums:
+        times |= set(enums["t"].categories.to_list())
+    ent = resolved.entity_dim_columns[0]
+    keys = (resolved.frame.select(pl.col(ent).cast(pl.Utf8).alias("name"),
+                                  pl.col(resolved.period_index_column).cast(pl.Utf8).alias("k"))
+            .filter(pl.col("k").is_not_null())
+            .group_by("name", maintain_order=True)
+            .agg(timed=pl.col("k").is_in(list(times)).any(), periodic=pl.col("k").is_in(list(periods)).any()))
+    bad = sorted(keys.filter(pl.col("timed") & ~pl.col("periodic")).get_column("name").to_list())
+    if bad:
+        raise FlexToolConfigError(
+            f"node {', '.join(repr(b) for b in bad[:5])}, parameter 'energy_margin_adder': the value is a map over "
+            f"time steps (its keys are time steps, not periods). This parameter takes "
+            f"{allowed_shapes_in_words(PARAM_ALLOWED_SHAPES[('node', 'energy_margin_adder')])}; name the map's "
+            f"index levels 'period' / 'time'.")
+
+
+def groupNonSync_valued_from_source(source: "InputSource") -> pl.DataFrame:
+    """``(g,)``: the groups whose ``non_synchronous_limit`` has a value anywhere in the input.
+
+        valued = { g : g authors a non-null non_synchronous_limit (any shape, any period or time step) }
+
+    Read from the authored rows, before any solve's dt: a roll whose window holds none of a time map's hours
+    still knows that the group has a value, so those steps have no limit (no ``non_sync_constraint`` row) instead
+    of the limit 0 of a group without any value (``_group_slack._non_sync_rows``).  The parameter has no default.
+    """
+    names: set[str] = {str(e[0]) for e in stochastic_time_entities(source, "group", "non_synchronous_limit")}
+    try:
+        df = source.parameter_explicit("group", "non_synchronous_limit")
+    except (KeyError, AttributeError):
+        df = None
+    if df is not None and df.height > 0 and "value" in df.columns:
+        names |= set(df.filter(pl.col("value").is_not_null()).get_column("name").cast(pl.Utf8).to_list())
+    return pl.DataFrame({"g": sorted(names)}, schema={"g": pl.Utf8})
 
 
 def pdGroup_penalty_non_synchronous_from_source(source: "InputSource",
@@ -2609,6 +2671,8 @@ def apply_direct_params_b(source: "InputSource",
     ):
         setattr(flex_data, field,
                 _filter_param_by_periods(fn(source, period_filter=dt, need_periods=need), dt))
+    flex_data.groupNonSync_valued = groupNonSync_valued_from_source(source)
+    check_energy_margin_adder_shape(source, dt)
     for fn, field in (
         (pdGroup_penalty_capacity_margin_from_source,
             "pdGroup_penalty_capacity_margin"),

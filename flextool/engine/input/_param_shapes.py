@@ -361,6 +361,13 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("node", "storage_state_reference_value"): {
         Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_TIME, Shape.MAP_PERIOD_TIME,
     },
+    # Additive energy margin [MWh per time step] of the investment solve: a constant, a period map or a period + time
+    # map (ingested by input_derivation/_specs.py, applied by emit/_energy_margin_adder.py).  A time-only map has
+    # no ingestion spec and would be silently ignored: the allow-list refuses it
+    # (params/_direct.check_energy_margin_adder_shape).
+    ("node", "energy_margin_adder"): {
+        Shape.SCALAR, Shape.MAP_PERIOD, Shape.MAP_PERIOD_TIME,
+    },
     # Self-discharge loss per hour (schema: "Constant or time"; GMPL NODE_TIME_PARAM).  Consumer: the per-step
     # loss weights of model/_self_discharge.py.
     ("node", "self_discharge_loss"): {
@@ -2657,8 +2664,10 @@ def broadcast_to_period_time(
     # A solve with new_stepduration: the time-keyed rows take one value per solve step by the parameter's
     # aggregation kind (_solve_step_aggregation).  Before the zero filter (a 0 hour is part of the step mean)
     # and before the axis cast (the original steps that are not solve-step labels are not in the vocabulary).
+    # Only the steps of this solve's dt are aggregated (a roll pays for its own steps).
     if resolved.time_index_column is not None and active_base_steps() is not None:
-        lf = aggregate_if_active(lf.collect(), resolved.key, time_col=resolved.time_index_column).lazy()
+        lf = aggregate_if_active(lf.collect(), resolved.key, time_col=resolved.time_index_column,
+                                 steps=period_filter.get_column("t")).lazy()
     if filter_zero:
         lf = lf.filter(pl.col("value") != 0.0)
     # Phase 4 — align producer-side dim dtypes to the canonical Enum

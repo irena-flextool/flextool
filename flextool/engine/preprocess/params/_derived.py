@@ -1127,7 +1127,7 @@ def p_timestep_weight_from_source(
         # A solve with new_stepduration: one weight per solve step, the step mean (_solve_step_aggregation).
         tw = aggregate_if_active(
             tw.select("name", resolved_tw.time_index_column, pl.col("value").cast(pl.Float64)),
-            ("timeset", "timeset_weights"), time_col=resolved_tw.time_index_column)
+            ("timeset", "timeset_weights"), time_col=resolved_tw.time_index_column, steps=dt.get_column("t"))
     if tw is None or tw.height == 0:
         # No flat ``timeset_weights`` — but this may be an RP solve.
         # ``representative_period_weights`` are folded into
@@ -1271,85 +1271,6 @@ def pdt_branch_weight_from_source(
 
 
 # ---------------------------------------------------------------------------
-# §3.2.1 — p_inflow (scaling step over node.inflow)
-# ---------------------------------------------------------------------------
-
-
-def p_inflow_from_source(
-    source: "InputSource",
-    dt: pl.DataFrame,
-    step_dur: Param,
-) -> Param | None:
-    """Per-(n, d, t) node inflow with scaling applied.
-
-    Audit §3.2.1 algorithm:
-
-    1. ``p_inflow_raw`` = unrolled ``node.inflow`` (Map / TimeSeries /
-       3d_map for stochastic).  Source already produces this.
-    2. ``inflow_method`` decides the scaling:
-       * ``use_original`` — pass-through.
-       * ``no_inflow`` — drop.
-       * ``scale_to_annual_flow`` — scale so sum_t (raw * step_dur) =
-         annual_flow * period_share.
-       * ``scale_to_peak_inflow`` / ``use_peak_inflow`` — scale so
-         max_t raw' = peak_inflow * availability.
-       * ``scale_to_annual_and_peak`` — combination.
-
-    For Γ.3.A: cover the **default ``use_original``** path which
-    requires no scaling.  This handles all non-time-scaled inflow
-    fixtures (most of the suite).  The scaling cascade for
-    ``scale_to_*`` methods is deferred to Batch B; fixtures that
-    activate it retain their CSV-loaded value.
-
-    Returns ``None`` if the helper can't safely override (any
-    non-default ``inflow_method`` present, or the source frame's shape
-    doesn't match what the simple path expects).
-    """
-    if dt is None:
-        return None
-    method = _try_param(source, "node", "inflow_method")
-    if method is not None and method.height > 0:
-        # Any non-`use_original` (and non-default) method → scaling path.
-        # We don't yet implement scaling — defer to CSV.
-        non_trivial = method.filter(
-            ~pl.col("value").is_in(["use_original"])
-        )
-        if non_trivial.height > 0:
-            return None
-    raw = _try_param(source, "node", "inflow")
-    if raw is None:
-        return None
-    cols = raw.columns
-    # Expected 1d-period-keyed Map(t) → cols ['name', 'period', 't', 'value']
-    # or 3d_map ['name','period','branch','t','value'] (stochastic).
-    if "branch" in cols:
-        # Stochastic — defer (Batch C scope).
-        return None
-    if not {"name", "period", "t", "value"}.issubset(cols):
-        return None
-    out = (raw.lazy()
-              .select(alias_to_axis("name", "n"),
-                      alias_to_axis("period", "d"),
-                      pl.col("t"),
-                      pl.col("value").cast(pl.Float64))
-              # Restrict to the active solve's (d, t) — matches CSV-side
-              # which only emits rows for periods/timesteps in dt.
-              # Defensive re-cast: align d/t to canonical Enum so this
-              # inner-join composes cleanly against the alias_to_axis-cast
-              # base above even when ``dt`` arrives with Utf8 d/t.
-              .join(dt.lazy()
-                       .select(alias_to_axis("d", "d"),
-                               alias_to_axis("t", "t"))
-                       .unique(),
-                    on=["d", "t"], how="inner")
-              .sort("n", "d", "t")
-              .collect())
-    if out.height == 0:
-        return None
-    return Param(("n", "d", "t"), out)
-
-
-# ---------------------------------------------------------------------------
 # §3.6.2 — p_process_existing_count
 # ---------------------------------------------------------------------------
 
@@ -1480,114 +1401,6 @@ def p_process_existing_count_from_source(
     if out.height == 0:
         return None
     return Param(("p", "d"), out)
-
-
-# ---------------------------------------------------------------------------
-# §3.6.1 — p_profile_value (alternative cascade)
-# ---------------------------------------------------------------------------
-
-
-def p_profile_value_from_source(
-    source: "InputSource",
-    dt: pl.DataFrame,
-) -> Param | None:
-    """Per-(f, d, t) profile value, resolved across the alternative
-    cascade.
-
-    Audit §3.6.1 algorithm:
-        ``profile.profile`` parameter cascades scalar → period → time-of-
-        period → branch.  Each tier is the next narrower index space.
-
-    Implementation strategy (single-collect lazy chain):
-
-    1. Pull ``source.parameter("profile", "profile")``.  The source has
-       already collapsed alternative ranks into a single per-entity
-       view.  The shape depends on the value's runtime type:
-        - scalar → ``[name, value]`` (broadcast over (d, t) of dt).
-        - 1d_map(period) → ``[name, period, value]``
-          (broadcast over t of dt for matching periods).
-        - time_series → ``[name, t, value]``
-          (broadcast over d of dt for matching t).
-        - 2d_map(period, t) → ``[name, period, t, value]`` (direct).
-        - 3d_map(period, branch, t) → ``[name, period, branch, t, value]``
-          (stochastic — drops branch dim downstream via period_branch).
-
-    The cascade is per-entity, not within an entity: each profile picks
-    one tier based on the alternative chain's resolution.  The returned
-    frame is ``[f, d, t, value]`` with one row per (profile × dt).
-
-    Stochastic 3d_map case is deferred (Batch C scope) — caller falls
-    back to CSV when the source returns a branch-dim'd profile frame.
-    """
-    if dt is None:
-        return None
-    raw = _try_param(source, "profile", "profile")
-    if raw is None:
-        return None
-    cols = raw.columns
-    if "branch" in cols:
-        # Stochastic 3d_map (named branch column) — deferred.
-        return None
-    # Δ.7: dropped the ``_check_canonical_keys`` predicate (per the
-    # Δ.6 close-stanza TODO #5).  The Δ.7 ``_profiles`` module
-    # owns the canonical cascade; this legacy helper is preserved as a
-    # ``parameter()``-only fast path that handles the deterministic
-    # period/t/scalar cases via column-name detection (still useful as
-    # a fallback when the new cascade can't be wired — eg. ad-hoc
-    # callers in the test suite).  Generic ``x`` / ``i`` keys are now
-    # tolerated and routed through the time-axis branch by the column
-    # detector below.
-    # Defensive re-cast: ensure d/t are canonical Enum so the joins
-    # below against alias_to_axis-cast raw frames compose cleanly.
-    dt_lf = dt.lazy().with_columns(
-        alias_to_axis(pl.col("d"), "d"),
-        alias_to_axis(pl.col("t"), "t"),
-    )
-    # Detect tier by which columns are present.
-    has_period = "period" in cols
-    has_t = "t" in cols
-    if has_period and has_t:
-        # 2d_map: direct (f, d, t, value).
-        out = (raw.lazy()
-                  .select(alias_to_axis("name", "f"),
-                          alias_to_axis("period", "d"),
-                          pl.col("t"),
-                          pl.col("value").cast(pl.Float64))
-                  .join(dt_lf, on=["d", "t"], how="inner")
-                  .sort("f", "d", "t")
-                  .collect())
-    elif has_period:
-        # 1d_map(period): broadcast over t of dt for matching periods.
-        out = (raw.lazy()
-                  .select(alias_to_axis("name", "f"),
-                          alias_to_axis("period", "d"),
-                          pl.col("value").cast(pl.Float64))
-                  .join(dt_lf, on="d", how="inner")
-                  .select("f", "d", "t", "value")
-                  .sort("f", "d", "t")
-                  .collect())
-    elif has_t:
-        # time_series: broadcast over d for matching t.
-        out = (raw.lazy()
-                  .select(alias_to_axis("name", "f"),
-                          pl.col("t"),
-                          pl.col("value").cast(pl.Float64))
-                  .join(dt_lf, on="t", how="inner")
-                  .select("f", "d", "t", "value")
-                  .sort("f", "d", "t")
-                  .collect())
-    else:
-        # Scalar — broadcast over the full dt × profiles grid.
-        out = (raw.lazy()
-                  .select(alias_to_axis("name", "f"),
-                          pl.col("value").cast(pl.Float64))
-                  .join(dt_lf, how="cross")
-                  .select("f", "d", "t", "value")
-                  .sort("f", "d", "t")
-                  .collect())
-    if out.height == 0:
-        return None
-    return Param(("f", "d", "t"), out)
 
 
 # ---------------------------------------------------------------------------
