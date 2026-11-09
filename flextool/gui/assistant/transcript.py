@@ -10,13 +10,18 @@ The widget takes no typing: keys that change text are dropped (copy, select all 
 Shift+Tab move the focus on, Escape stops the answer, Enter or space on a tool line opens or closes it, and a click
 on a tool line does the same.  It draws no insertion cursor (only the input box has one): while it has the focus,
 the tool or context line the keyboard is on is shaded instead, so Enter and space still show what they open.  Its
-tags take their colours from the widget's own theme colours.
+tags take their colours from the widget's own theme colours.  On macOS Command+C copies and Command+A selects all.
+
+A long chat stays cheap to lay out (review G19, C7-m10): every tool and context line shares a few tags (``tool`` or
+``context`` with the click bindings once, ``tooldetail``, and one elided ``detail_closed`` on each closed detail), and
+each line is found by one mark at its start (``tool_{n}``, ``context_{n}``; a question ``user_{n}``).
 
 Fonts (owner decisions 2026-11-08, :mod:`flextool.gui.assistant.fonts`): the text is in the chat's base font
 (FlexTool's body text font one point larger; a ``tk.Text`` would otherwise use the fixed-width font, and bold text
 in the proportional font then looked smaller).  Bold, italic and the headings are its family, code, tables and the
 details of a tool call the fixed-width family at its size.  :func:`sync_fonts` sets them from the body font again —
-at every answer and on a theme change — so a changed font size reaches them.
+at every answer and on a theme change — so a changed font size reaches them (a font is configured only when a
+value differs).
 """
 from __future__ import annotations
 
@@ -30,6 +35,7 @@ from flextool.gui.assistant import strings
 from flextool.gui.assistant.fonts import CHAT_FONT, sync_fonts
 from flextool.gui.assistant.markdown_stream import Line, MarkdownStream
 from flextool.gui.assistant.markdown_stream import render as render_markdown
+from flextool.gui.assistant.notices import is_aqua
 
 if TYPE_CHECKING:
     from flextool.assistant.llm_adapter import Message
@@ -39,6 +45,10 @@ NAV_KEYSYMS = frozenset({"Left", "Right", "Up", "Down", "Home", "End", "Prior", 
                          "Control_L", "Control_R", "Alt_L", "Alt_R", "Meta_L", "Meta_R", "Super_L", "Super_R"})
 #: The tag shading the tool or context line the keyboard is on (the transcript draws no insertion cursor).
 KEYBOARD_LINE = "keyboard_line"
+#: The shared elided tag on the detail of a tool or context line while it is closed.
+DETAIL_CLOSED = "detail_closed"
+#: The prefixes of the marks at the start of a tool or context line (the keys of :meth:`Transcript.toggle`).
+LINE_PREFIXES = ("tool_", "context_")
 TOOL_OPEN = "▾"
 TOOL_CLOSED = "▸"
 DETAIL_INDENT = "    "
@@ -70,7 +80,9 @@ class Transcript(ttk.Frame):
         self._user_count = 0
         self._tool_headers: dict[int, str] = {}
         self._example = False
+        self._aqua = is_aqua(self.text)
         self._configure_tags()
+        self._bind_lines()
         self._bind_keys(bind_commands)
         # A new theme: the colours and the fonts again (a changed body font size reaches the derived fonts).
         self.text.bind("<<ThemeChanged>>", lambda _e: self._configure_tags(), add="+")
@@ -111,6 +123,7 @@ class Transcript(ttk.Frame):
         txt.tag_configure("md_h3", font=bold, spacing1=2)
         txt.tag_configure("md_list", lmargin1=8, lmargin2=20)
         txt.tag_configure(KEYBOARD_LINE, background=blend_rgb(bg, "#4aa3ff", 0.16))
+        txt.tag_configure(DETAIL_CLOSED, elide=True)
         txt.tag_raise("sel")
 
     # --- keys -----------------------------------------------------------------------------------------------
@@ -129,18 +142,22 @@ class Transcript(ttk.Frame):
         txt.bind("<space>", self._toggle_at_insert)
         txt.bind("<Control-a>", self._select_all)
         txt.bind("<Control-A>", self._select_all)
+        if self._aqua:
+            txt.bind("<Command-a>", self._select_all)
         # After the class bindings have moved the insert mark (KeyRelease, ButtonRelease) and on focus changes.
         for sequence in ("<KeyRelease>", "<ButtonRelease-1>", "<FocusIn>", "<FocusOut>"):
             txt.bind(sequence, lambda _e: self.mark_keyboard_line(), add="+")
         for virtual in ("<<Paste>>", "<<Cut>>", "<<Clear>>", "<<PasteSelection>>", "<<Undo>>", "<<Redo>>"):
             txt.bind(virtual, lambda _e: "break")
-        if txt.tk.call("tk", "windowingsystem") != "aqua":
+        if not self._aqua:
             txt.bind("<Button-2>", lambda _e: "break")          # middle click pastes on X11 and Windows
         if bind_commands is not None:
             bind_commands(txt)
 
     def _on_key(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
-        if event.state & 0x4 and event.keysym in ("c", "C", "a", "A", "Insert"):
+        # Control, or on macOS Command (Mod1 there; on X11 Mod1 is Alt): copy and select all reach the class binding.
+        modifiers = 0x4 | 0x8 if self._aqua else 0x4
+        if event.state & modifiers and event.keysym in ("c", "C", "a", "A", "Insert"):
             return None
         if event.keysym in NAV_KEYSYMS:
             return None
@@ -162,16 +179,39 @@ class Transcript(ttk.Frame):
         return "break"
 
     def _toggle_at_insert(self, _event: tk.Event) -> str:  # type: ignore[type-arg]
-        tag = self._line_tag_at_insert()
-        if tag is not None:
-            self.toggle(tag)
+        key = self._line_tag_at_insert()
+        if key is not None:
+            self.toggle(key)
         return "break"
 
-    def _line_tag_at_insert(self) -> str | None:
-        for tag in self.text.tag_names("insert"):
-            if tag.startswith("tool_") or tag.startswith("context_"):
-                return tag
+    def _line_at(self, index: str) -> str | None:
+        """The key of the tool or context line holding *index* (the mark at its line start), or None."""
+        txt = self.text
+        try:
+            if not (set(txt.tag_names(f"{index} linestart")) & {"tool", "context"}):
+                return None
+            for kind, name, _where in txt.dump(f"{index} linestart", f"{index} linestart + 1 chars", mark=True):
+                if kind == "mark" and name.startswith(LINE_PREFIXES):
+                    return name
+        except tk.TclError:
+            pass
         return None
+
+    def _line_tag_at_insert(self) -> str | None:
+        return self._line_at("insert")
+
+    def _bind_lines(self) -> None:
+        """The click bindings of every tool and context line, once on their shared tags."""
+        txt = self.text
+        txt.tag_bind("tool", "<Button-1>", self._click_line)
+        txt.tag_bind("tool", "<Enter>", lambda _e: txt.configure(cursor="hand2"))
+        txt.tag_bind("tool", "<Leave>", lambda _e: txt.configure(cursor="arrow"))
+        txt.tag_bind("context", "<Button-1>", self._click_line)
+
+    def _click_line(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        key = self._line_at(f"@{event.x},{event.y}")
+        if key is not None:
+            self.toggle(key)
 
     def mark_keyboard_line(self) -> None:
         """Shade the tool or context line holding the insert mark while the transcript has the focus."""
@@ -203,6 +243,10 @@ class Transcript(ttk.Frame):
 
     def clear(self) -> None:
         self.text.delete("1.0", "end")
+        stale = [m for m in self.text.mark_names() if str(m).startswith(LINE_PREFIXES + ("user_",))]
+        if stale:
+            self.text.mark_unset(*stale)
+        self._tool_headers.clear()
         self._md = MarkdownStream()
         self._answer_open = False
         self._in_turn = False
@@ -225,34 +269,42 @@ class Transcript(ttk.Frame):
         self._ensure_newline()
         self._user_count += 1
         n = self._user_count
-        tag = f"user_{n}"
-        self._insert(strings.YOU + "  ", ("speaker", tag))
-        self._insert(text, ("user_pending" if pending else "user", tag))
+        start = self.text.index("end-1c")
+        self._insert(strings.YOU + "  ", ("speaker",))
+        self._insert(text, ("user_pending" if pending else "user",))
         self.text.mark_set(f"user_{n}_end", "end-1c")
         self.text.mark_gravity(f"user_{n}_end", "left")
-        self._insert("\n", (tag,))
+        self._insert("\n")
+        self._line_mark(f"user_{n}", start)
         self._in_turn = False
         self.text.see("end")
         return n
 
     def mark_user(self, line: int, state: str) -> None:
         """*state*: ``"sent"`` (no longer dim) or ``"not_sent"`` ("Not sent." after it)."""
-        tag = f"user_{line}"
-        ranges = self.text.tag_ranges(tag)
-        if not ranges:
+        if not self._has_mark(f"user_{line}"):
             return
-        self.text.tag_remove("user_pending", ranges[0], ranges[-1])
-        self.text.tag_add("user", ranges[0], ranges[-1])
+        start = self.text.index(f"user_{line} + {len(strings.YOU) + 2} chars")
+        self.text.tag_remove("user_pending", start, f"user_{line}_end")
+        self.text.tag_add("user", start, f"user_{line}_end")
         if state == "not_sent":
-            self.text.insert(f"user_{line}_end", "  " + strings.NOT_SENT, ("notice", tag))
+            self.text.insert(f"user_{line}_end", "  " + strings.NOT_SENT, ("notice",))
 
     def user_text(self, line: int) -> str:
         """The question of *line* as shown (without the speaker and any "Not sent.")."""
-        ranges = self.text.tag_ranges(f"user_{line}")
-        if not ranges:
+        if not self._has_mark(f"user_{line}"):
             return ""
-        start = self.text.index(f"{ranges[0]} + {len(strings.YOU) + 2} chars")
+        start = self.text.index(f"user_{line} + {len(strings.YOU) + 2} chars")
         return self.text.get(start, f"user_{line}_end")
+
+    def _has_mark(self, name: str) -> bool:
+        return name in self.text.mark_names()
+
+    def _line_mark(self, name: str, index: str) -> None:
+        """The mark *name* at the start of a line (right gravity: a detail inserted just before the line, at the end
+        of the line above, moves it on; set again after every edit at the line's start)."""
+        self.text.mark_set(name, index)
+        self.text.mark_gravity(name, "right")
 
     def begin_answer(self) -> None:
         if self._answer_open:
@@ -317,8 +369,9 @@ class Transcript(ttk.Frame):
         n = self._tool_count
         header = f"{name} {args_text(args_preview)}".rstrip()
         self._tool_headers[n] = header
-        self._insert(f"{TOOL_CLOSED} {header}…\n", ("tool", f"tool_{n}"))
-        self._bind_tool(n)
+        start = self.text.index("end-1c")
+        self._insert(f"{TOOL_CLOSED} {header}…\n", ("tool",))
+        self._line_mark(f"tool_{n}", start)
         self._follow(at_end)
         return n
 
@@ -328,59 +381,64 @@ class Transcript(ttk.Frame):
         from flextool.assistant.usage import number
 
         at_end = self._at_end()
-        tag = f"tool_{line}"
-        ranges = self.text.tag_ranges(tag)
-        if not ranges:
+        key = f"tool_{line}"
+        header = self._tool_headers.pop(line, None)
+        if not self._has_mark(key):
             return
-        header = self._tool_headers.get(line) or f"{args_text(arguments)}"
+        header = header or f"{args_text(arguments)}"
         outcome = summary if ok else f"{strings.TOOL_ERROR}: {summary}"
-        self.text.delete(ranges[0], ranges[-1])
-        start = ranges[0]
-        self.text.insert(start, f"{TOOL_CLOSED} {header} → {outcome} ({seconds:.1f} s)\n", ("tool", tag))
+        start = self.text.index(key)
+        self.text.delete(start, f"{start} lineend + 1 chars")
+        self.text.insert(start, f"{TOOL_CLOSED} {header} → {outcome} ({seconds:.1f} s)\n", ("tool",))
+        self._line_mark(key, start)
         end = self.text.index(f"{start} lineend + 1 chars")
         detail = (f"{DETAIL_INDENT}{strings.ARGUMENTS} {arguments}\n"
                   f"{DETAIL_INDENT}{strings.SENT_TO.format(provider=provider, n=number(4000))} {result_preview}\n")
-        self.text.insert(end, detail, ("tooldetail", f"tooldetail_{line}"))
-        self.text.tag_configure(f"tooldetail_{line}", elide=True)
+        self.text.insert(end, detail, ("tooldetail", DETAIL_CLOSED))
         self._follow(at_end)
 
-    def _bind_tool(self, n: int) -> None:
-        tag = f"tool_{n}"
-        self.text.tag_bind(tag, "<Button-1>", lambda _e, t=tag: self.toggle(t))
-        self.text.tag_bind(tag, "<Enter>", lambda _e: self.text.configure(cursor="hand2"))
-        self.text.tag_bind(tag, "<Leave>", lambda _e: self.text.configure(cursor="arrow"))
+    def line_range(self, key: str) -> tuple[str, str] | None:
+        """The text of the tool (or context) line *key*, its newline left out; None when there is no such line."""
+        if not self._has_mark(key):
+            return None
+        start = self.text.index(key)
+        return start, self.text.index(f"{start} lineend")
 
-    def toggle(self, tag: str) -> None:
-        """Open or close the detail of the tool (or context) line *tag*."""
-        detail = self._detail_tag(tag)
-        if not self.text.tag_ranges(detail):
+    def detail_range(self, key: str) -> tuple[str, str] | None:
+        """The detail of the tool (or context) line *key* (the ``tooldetail`` run starting on the next line), or
+        None while it has none (a tool still running)."""
+        line = self.line_range(key)
+        if line is None:
+            return None
+        start = self.text.index(f"{line[1]} + 1 chars")
+        if "tooldetail" not in self.text.tag_names(start):
+            return None
+        found = self.text.tag_nextrange("tooldetail", start)
+        if not found or self.text.compare(found[0], "!=", start):
+            return None
+        return str(found[0]), str(found[1])
+
+    def toggle(self, key: str) -> None:
+        """Open or close the detail of the tool (or context) line *key*."""
+        detail = self.detail_range(key)
+        if detail is None:
             return
-        hidden = self._elided(detail)
-        self.text.tag_configure(detail, elide=not hidden)
-        ranges = self.text.tag_ranges(tag)
-        if ranges:
-            first = self.text.get(ranges[0], f"{ranges[0]} + 1 chars")
-            if first in (TOOL_OPEN, TOOL_CLOSED):
-                tags = ("tool", tag) if tag.startswith("tool_") else ("context", tag)
-                self.text.delete(ranges[0], f"{ranges[0]} + 1 chars")
-                self.text.insert(ranges[0], TOOL_OPEN if hidden else TOOL_CLOSED, tags)
+        hidden = DETAIL_CLOSED in self.text.tag_names(detail[0])
+        if hidden:
+            self.text.tag_remove(DETAIL_CLOSED, *detail)
+        else:
+            self.text.tag_add(DETAIL_CLOSED, *detail)
+        start = self.text.index(key)
+        if self.text.get(start, f"{start} + 1 chars") in (TOOL_OPEN, TOOL_CLOSED):
+            tags = ("tool",) if key.startswith("tool_") else ("context",)
+            # The new arrow after the old one, then the old one out: the line's mark stays at the line start.
+            self.text.insert(f"{start} + 1 chars", TOOL_OPEN if hidden else TOOL_CLOSED, tags)
+            self.text.delete(start, f"{start} + 1 chars")
 
-    def _elided(self, tag: str) -> bool:
-        value = self.text.tag_cget(tag, "elide")
-        try:
-            return bool(self.text.tk.getboolean(value)) if value not in ("", None) else False
-        except (tk.TclError, ValueError):
-            return False
-
-    @staticmethod
-    def _detail_tag(tag: str) -> str:
-        return tag.replace("tool_", "tooldetail_", 1) if tag.startswith("tool_") else \
-            tag.replace("context_", "contextdetail_", 1)
-
-    def is_open(self, tag: str) -> bool:
-        """Whether the detail of the tool (or context) line *tag* is shown."""
-        detail = self._detail_tag(tag)
-        return bool(self.text.tag_ranges(detail)) and not self._elided(detail)
+    def is_open(self, key: str) -> bool:
+        """Whether the detail of the tool (or context) line *key* is shown."""
+        detail = self.detail_range(key)
+        return detail is not None and DETAIL_CLOSED not in self.text.tag_names(detail[0])
 
     def notice(self, text: str) -> None:
         at_end = self._at_end()
@@ -447,11 +505,10 @@ class Transcript(ttk.Frame):
         self._ensure_newline()
         self._tool_count += 1
         n = self._tool_count
-        tag = f"context_{n}"
-        self._insert(strings.CONTEXT_SENT + "\n", ("context", tag))
-        self._insert(block + "\n", ("tooldetail", f"contextdetail_{n}"))
-        self.text.tag_configure(f"contextdetail_{n}", elide=True)
-        self.text.tag_bind(tag, "<Button-1>", lambda _e, t=tag: self.toggle(t))
+        start = self.text.index("end-1c")
+        self._insert(strings.CONTEXT_SENT + "\n", ("context",))
+        self._line_mark(f"context_{n}", start)
+        self._insert(block + "\n", ("tooldetail", DETAIL_CLOSED))
 
     def _history_tool(self, call, result: Message | None, provider: str) -> None:  # noqa: ANN001 — a ToolCall
         from flextool.assistant.usage import number
@@ -468,14 +525,13 @@ class Transcript(ttk.Frame):
             outcome = strings.TOOL_DONE
         if result is not None and result.compacted:
             outcome += f" · {strings.COMPACTED}"
-        self._tool_headers[n] = header
-        self._insert(f"{TOOL_CLOSED} {header} → {outcome}\n", ("tool", f"tool_{n}"))
-        self._bind_tool(n)
+        start = self.text.index("end-1c")
+        self._insert(f"{TOOL_CLOSED} {header} → {outcome}\n", ("tool",))
+        self._line_mark(f"tool_{n}", start)
         preview = (result.text if result is not None else "")[:4000]
         detail = (f"{DETAIL_INDENT}{strings.ARGUMENTS} {call.raw_arguments}\n"
                   f"{DETAIL_INDENT}{strings.SENT_TO.format(provider=provider, n=number(4000))} {preview}\n")
-        self._insert(detail, ("tooldetail", f"tooldetail_{n}"))
-        self.text.tag_configure(f"tooldetail_{n}", elide=True)
+        self._insert(detail, ("tooldetail", DETAIL_CLOSED))
 
     def contents(self) -> str:
         """The visible text (for the tests)."""

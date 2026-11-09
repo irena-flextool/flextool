@@ -182,7 +182,7 @@ def test_enter_on_a_tool_line_opens_it_and_it_says_what_was_sent(windows, backen
     tab = ask(window, "question")
     wait_idle(window, tab)
     text = tab.transcript.text
-    (start, end) = text.tag_ranges("tool_1")[:2]
+    (start, end) = tab.transcript.line_range("tool_1")
     header = text.get(start, end)
     assert header.startswith("▸ echo text=\"north\" → 1 items (")
     assert not tab.transcript.is_open("tool_1")
@@ -190,7 +190,7 @@ def test_enter_on_a_tool_line_opens_it_and_it_says_what_was_sent(windows, backen
     key(text, "<Return>")
     assert tab.transcript.is_open("tool_1")
     assert text.get(start, f"{start} + 1 chars") == "▾"
-    detail = text.get(*text.tag_ranges("tooldetail_1")[:2])
+    detail = text.get(*tab.transcript.detail_range("tool_1"))
     assert 'Arguments: {"text": "north"}' in detail
     assert "Sent to Custom endpoint (first 4 000 characters): " in detail
     key(text, "<Return>")
@@ -199,7 +199,7 @@ def test_enter_on_a_tool_line_opens_it_and_it_says_what_was_sent(windows, backen
     key(text, "<Key-x>")                                       # read-only
     key(text, "<BackSpace>")
     assert tab.transcript.contents() == before
-    assert text.get(*text.tag_ranges("tool_1")[:2]) == header
+    assert text.get(*tab.transcript.line_range("tool_1")) == header
 
 
 def test_the_transcript_draws_no_cursor_but_copies_and_shows_the_keyboard_line(windows, backends):
@@ -223,7 +223,7 @@ def test_the_transcript_draws_no_cursor_but_copies_and_shows_the_keyboard_line(w
     key(text, "<Control-c>")
     assert window.clipboard_get() == "The north"
     # The keyboard on a tool line: the line is shaded while the transcript has the focus.
-    (line_start, line_end) = text.tag_ranges("tool_1")[:2]
+    (line_start, line_end) = tab.transcript.line_range("tool_1")
     text.mark_set("insert", f"{line_start} + 2 chars")
     key(text, "<KeyRelease-Right>")
     shaded = text.tag_ranges("keyboard_line")
@@ -373,7 +373,7 @@ def test_a_reopened_chat_shows_context_lines_and_compacted_results(windows, back
     assert window.notebook.tab(tab, "text") == "4"
     assert not tab.transcript.is_open("context_1")
     text = tab.transcript.text
-    text.mark_set("insert", f"{text.tag_ranges('context_1')[0]} + 2 chars")
+    text.mark_set("insert", f"{tab.transcript.line_range('context_1')[0]} + 2 chars")
     key(text, "<Return>")
     assert tab.transcript.is_open("context_1")
 
@@ -500,3 +500,110 @@ def test_a_reopened_chat_hides_the_limit_instruction_by_kind_not_by_text(host):
         transcript.destroy()
     assert shown.count(limit) == 1 and "What does this line mean?" in shown
     assert "first question" in shown and "What I have." in shown
+
+
+# --- review G19: macOS keys, fonts configured on a change only, shared tool-line tags -----------------------------
+def test_command_c_copies_and_command_a_selects_all_on_macos(host, monkeypatch):
+    """On aqua Command is Mod1 and ``<<Copy>>`` is ``<Command-c>`` (C7-m6); simulated with a patched windowing
+    check and aqua's ``<<Copy>>`` sequence."""
+    from flextool.gui.assistant import transcript as module
+
+    monkeypatch.setattr(module, "is_aqua", lambda _widget: True, raising=False)
+    host.event_add("<<Copy>>", "<Mod1-c>")
+    transcript = module.Transcript(host)
+    try:
+        transcript.pack()
+        transcript.notice("Ask about the north node.")
+        text = transcript.text
+        text.tag_add("sel", "1.0", "1.9")
+        host.clipboard_clear()
+        key(text, "<Mod1-c>")
+        assert host.clipboard_get() == "Ask about"
+        text.tag_remove("sel", "1.0", "end")
+        key(text, "<Mod1-a>")
+        assert text.tag_ranges("sel") and text.get("sel.first", "sel.last") == transcript.contents()
+    finally:
+        host.event_delete("<<Copy>>", "<Mod1-c>")
+        transcript.destroy()
+
+
+def test_sync_fonts_configures_a_font_only_when_a_value_changed(host, monkeypatch):
+    """Every font configure re-lays out every text widget, so the per-answer sync sets nothing when nothing changed
+    (C7-m8); a changed body size still reaches all six fonts, and only their size is set."""
+    import tkinter.font as tkfont
+
+    from flextool.gui.assistant.fonts import CHAT_FONT, FONTS, sync_fonts
+
+    body = tkfont.nametofont("TkTextFont", root=host)
+    old_size = body.cget("size")
+    calls: list[tuple[str, dict]] = []
+    original = tkfont.Font.configure
+
+    def counting(self, **options):
+        if options:
+            calls.append((self.name, options))
+        return original(self, **options)
+
+    monkeypatch.setattr(tkfont.Font, "configure", counting)
+    try:
+        body.configure(size=10)
+        sync_fonts(host)
+        calls.clear()
+        sync_fonts(host)
+        assert calls == []
+        body.configure(size=12)
+        calls.clear()
+        sync_fonts(host)
+        assert sorted(name for name, _ in calls) == sorted([CHAT_FONT, *FONTS.values()])
+        assert all(set(options) == {"size"} for _, options in calls)
+        assert tkfont.nametofont(CHAT_FONT, root=host).actual("size") == 13      # body 12 + 1
+    finally:
+        body.configure(size=old_size)
+
+
+def test_tool_lines_share_their_tags_and_still_open_one_by_one(host):
+    """No tag, binding or elided tag per tool line or question (C7-m10): 20 tool lines started together and finished
+    in order, one opened by click, one by toggle; the others stay closed and the question keeps its text."""
+    from flextool.gui.assistant import strings
+    from flextool.gui.assistant.transcript import Transcript
+
+    transcript = Transcript(host)
+    try:
+        transcript.pack(fill="both", expand=True)
+        host.update()
+        text = transcript.text
+        question = transcript.append_user("first question", pending=True)
+        ids = [transcript.tool_running("echo", '{"text": "a"}') for _ in range(20)]
+        for n in ids:
+            transcript.tool_done(n, True, f"{n} items", 0.1, '{"text": "a"}', f"result {n}", "Custom endpoint")
+        assert not [tag for tag in text.tag_names() if tag.rsplit("_", 1)[-1].isdigit()]
+        bound = [tag for tag in text.tag_names() if text.tk.call(text._w, "tag", "bind", tag)]
+        assert sorted(bound) == ["context", "tool"]
+        assert transcript._tool_headers == {}
+        for n in ids:
+            assert text.get(*transcript.line_range(f"tool_{n}")) == f'▸ echo text="a" → {n} items (0.1 s)'
+            assert f"result {n}" in text.get(*transcript.detail_range(f"tool_{n}"))
+        transcript.toggle("tool_3")
+        assert [n for n in ids if transcript.is_open(f"tool_{n}")] == [3]
+        shown = str(text.tk.call(text._w, "get", "-displaychars", "1.0", "end-1c"))
+        assert shown.count("result ") == 1 and "result 3\n" in shown
+        assert text.get(*transcript.line_range("tool_3")).startswith("▾ echo")
+        # A click on the 7th line opens it (one binding on the shared tag finds the line).
+        start = transcript.line_range("tool_7")[0]
+        text.see(start)
+        host.update()
+        x, y, _w, _h = text.bbox(f"{start} + 3 chars")
+        text.event_generate("<Motion>", x=x + 1, y=y + 1)      # the text's "current" character follows the pointer
+        text.event_generate("<Button-1>", x=x + 1, y=y + 1)
+        assert [n for n in ids if transcript.is_open(f"tool_{n}")] == [3, 7]
+        transcript.toggle("tool_3")
+        assert [n for n in ids if transcript.is_open(f"tool_{n}")] == [7]
+        transcript.mark_user(question, "not_sent")
+        assert transcript.user_text(question) == "first question"
+        assert f"You  first question  {strings.NOT_SENT}\n" in transcript.contents()
+        assert not text.tag_ranges("user_pending")
+        transcript.clear()
+        assert not [m for m in text.mark_names() if m.startswith(("tool_", "context_", "user_"))]
+        assert transcript.line_range("tool_1") is None and not transcript.is_open("tool_1")
+    finally:
+        transcript.destroy()

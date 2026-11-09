@@ -10,7 +10,8 @@ taller ascent than DejaVu Sans Mono, whose letters are not smaller); the heading
 (:data:`HEADING_SCALE`).  Buttons, tabs and the status lines keep the theme's font, as in the rest of FlexTool.
 
 :func:`sync_fonts` sets them all from the body font as it is now; the transcript calls it at every answer and on a
-theme change, so a changed font size reaches them.  The fonts are shared by every chat and dialog of the process
+theme change, so a changed font size reaches them.  It configures a font only when a value differs (a configure
+re-lays out every text widget of the application).  The fonts are shared by every chat and dialog of the process
 and never deleted (a named font deleted while a widget uses it falls back to the default font).  Tk thread only.
 """
 from __future__ import annotations
@@ -34,7 +35,12 @@ HEADING_SCALE = {"h1": 1.3, "h2": 1.15}
 def _named(widget: tk.Misc, name: str, **options: object) -> tkfont.Font:
     try:
         font = tkfont.Font(root=widget, name=name, exists=True)
-        font.configure(**options)
+        # Only what differs: Tk re-lays out every widget using the font at any configure, even with the same values
+        # (review G19, C7-m8), and this runs at every answer.
+        current = font.configure()
+        changed = {key: value for key, value in options.items() if str(current.get(key)) != str(value)}
+        if changed:
+            font.configure(**changed)
     except tk.TclError:
         font = tkfont.Font(root=widget, name=name, **options)
         # Kept for the process: a Font object left to the garbage collector would delete the named font (on
