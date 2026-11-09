@@ -554,6 +554,7 @@ def _prepare(b: _Build) -> None:
         _check_covers_dt(d, "p_years_represented_d", "co2_max_total")
     if b.has_user_cstr:
         _check(d, USER_CSTR, "user_constraints")
+        _validate_online_constraint_coeff(d)
     if b.has_profile:
         _check(d, PROFILES, "profile_flow")
     if b.has_storage:
@@ -665,6 +666,30 @@ def _validate_no_online_dc_lines(d) -> None:
     hit = sorted({str(x) for x in dc.get_column("p").to_list()} & on_p)
     if hit:
         raise FlexToolConfigError(DC_ONLINE_MESSAGE.format(names=", ".join(hit)))
+
+
+def _validate_online_constraint_coeff(d) -> None:
+    """Raise when a unit / connection of the solve has a ``constraint_online_coeff`` but no online variables.
+
+    Dropping the term instead could tighten the row (``flow − 100·online ≤ 0`` would become ``flow ≤ 0``), so
+    it is a configuration error.  The online set holds the ``minimum_time_method`` promotion; coefficients on
+    processes not in the solve are ignored, as for the other coefficients.
+    """
+    coef = d.p_process_constraint_online_coeff
+    if coef is None or not _has_rows(d.process_source_sink):
+        return
+    rows = _collected(coef.frame).select(pl.col("p").cast(pl.Utf8), pl.col("cn").cast(pl.Utf8))
+    in_solve = {str(x) for x in d.process_source_sink.get_column("p").to_list()}
+    online = {str(x) for f in (d.process_online_linear, d.process_online_integer) if _has_rows(f)
+              for x in f.get_column("p").to_list()}
+    units = ({str(x) for x in d.process_unit.get_column("p").to_list()} if _has_rows(d.process_unit) else set())
+    missing = sorted({(p, cn) for p, cn in rows.iter_rows() if p in in_solve and p not in online})
+    if missing:
+        shown = ", ".join(f"{'unit' if p in units else 'connection'} '{p}' in constraint '{cn}'"
+                          for p, cn in missing)
+        raise FlexToolConfigError(
+            f"constraint_online_coeff needs online variables, but these have none: {shown}. Set startup_method "
+            "linear or binary (or a minimum_time_method), or remove the coefficient.")
 
 
 def _validate_storage_binding_disjoint(d) -> None:
@@ -3407,8 +3432,9 @@ def _eq_user_constraints(b: _Build) -> None:
     #   + Σ_e v_divest[e,d]·us[e]·retired_coef[e,cn]
     #   + Σ_e pre[e,d]·prebuilt_coef[e,cn]
     #   + Σ_e cap[e,d]·capacity_coef[e,cn]
+    #   + Σ_{p ∈ process_online} v_online[p,d,t]·online_coef[p,cn]
     #   = / ≤ / ≥  constant[cn] (or constant[cn,d] for a period map)
-    #   ∀ (cn,d,t) ∈ cdt_{eq,le,ge} with a flow or state coefficient   (process_constraint_*)
+    #   ∀ (cn,d,t) ∈ cdt_{eq,le,ge} with a flow, state or online coefficient   (process_constraint_*)
     #   ∀ (cn,d) of the other constraints of cdt_{eq,le,ge}             (process_constraint_*_period)
     # where, for e a process p (us = unitsize, existing = capacity = existing_count·unitsize) or a storage node n
     # (us = state_unitsize, existing = capacity, the storage capacity), MW (MWh):
@@ -3428,20 +3454,23 @@ def _eq_user_constraints(b: _Build) -> None:
     # cumulative-capacity rows.  cap = pre + inv − retired, with or without a lead time.  carried_* are the
     # investments earlier solves of a chain decided with a lead time (constants; existing holds them from their
     # start of operation, so pre subtracts the part coming online in d).
+    # The online term counts the units online (of unitsize) in each step; integer with binary startup, continuous
+    # with linear.  v_online is the variable of the process's UC class (v_online_linear / v_online_integer).
     # Terms without data are absent.  The existing-capacity terms are constants and enter as Param terms.
-    # A constraint without flow and state terms is the same in every step of a period, so it gets one row per
-    # period (the _period family) instead of one per step.  The constraint axis is cn (c is the commodity
-    # axis).  Dims: flow and state terms (cn, d, t); every capacity term (cn, d), broadcast over t on the
+    # A constraint without flow, state and online terms is the same in every step of a period, so it gets one row
+    # per period (the _period family) instead of one per step.  The constraint axis is cn (c is the commodity
+    # axis).  Dims: flow, state and online terms (cn, d, t); every capacity term (cn, d), broadcast over t on the
     # per-step rows.  A row whose terms all vanish in the solve (its entities have no flow, state, investment
     # or retirement there) is left out: a configuration error when the remaining existing-capacity constant
     # sense constant cannot hold, else a warning naming the constraint.
     # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
     #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
-    # Row rule (coarse steps): a per-step constraint whose flow terms are all on coarse processes and whose state
-    # terms are on coarse nodes gets one row per coarse step, process_constraint_*_coarse = the row's Δt-weighted
+    # Row rule (coarse steps): a per-step constraint whose flow and online terms are all on coarse processes and
+    # whose state terms are on coarse nodes gets one row per coarse step, process_constraint_*_coarse = the row's Δt-weighted
     # mean over the step (_coarse_flows.add_cstr); its coefficients are constant, so it is the per-step row itself
-    # on one flow per step.  A constraint with a fine flow or state term keeps its rows per solve step and reads
-    # the coarse flows at their constant value.
+    # on one flow per step (the units online of a coarse process are one level per coarse step).  A constraint
+    # with a fine flow, online or state term keeps its rows per solve step and reads the coarse flows and units
+    # online at their constant value.
     flow_terms: list = []
     if _has_rows(d.flow_constraint_idx):
         flow_terms.append(Sum(
@@ -3498,6 +3527,24 @@ def _eq_user_constraints(b: _Build) -> None:
             over=("n",),
         ))
         state_cns = _collected(coef.frame).get_column("cn").cast(pl.Utf8).unique().to_list()
+
+    online_terms: list = []
+    online_cns: list = []
+    online_coef = d.p_process_constraint_online_coeff
+    if b.has_online and online_coef is not None:
+        coef_frame = _collected(online_coef.frame)
+        for kind, _p_idx, online_set, v_online, _v_su, _v_sd in _online.uc_classes(b):
+            # The coefficient covers both UC classes (Utf8 p); each v_online_* carries its own p vocabulary.
+            p_dtype = _online.online_rows(b, kind).schema["p"]
+            members = online_set.select(pl.col("p").cast(pl.Utf8)).unique()
+            coef_k = (coef_frame.with_columns(pl.col("p").cast(pl.Utf8))
+                      .join(members, on="p", how="semi")
+                      .with_columns(pl.col("p").cast(p_dtype)))
+            if coef_k.height == 0:
+                continue
+            coef_k_param = Param(("p", "cn"), coef_k)
+            online_terms.append(Sum(Where(v_online, coef_k.select("p", "cn")) * coef_k_param, over=("p",)))
+            online_cns.extend(coef_k.get_column("cn").cast(pl.Utf8).unique().to_list())
 
     const_terms: list = []
     node_pre = d.p_node_constraint_prebuilt_capacity_coeff
@@ -3586,15 +3633,15 @@ def _eq_user_constraints(b: _Build) -> None:
         _behaviour_changes.notice("user_constraint_prebuilt_nets_retirements", "user constraints", sorted(netted),
                                   detail="Results change only if the model retires capacity.")
 
-    # Term order of the per-step rows: flow, invested, state, pre-built, then the newer capacity terms.
-    step_terms = flow_terms + invest_terms + state_terms + capacity_terms
+    # Term order of the per-step rows: flow, invested, state, pre-built, the newer capacity terms, then online.
+    step_terms = flow_terms + invest_terms + state_terms + capacity_terms + online_terms
     period_terms = invest_terms + capacity_terms
-    op_cns = set(state_cns)
+    op_cns = set(state_cns) | set(online_cns)
     if flow_terms:
         op_cns.update(d.flow_constraint_idx.get_column("cn").cast(pl.Utf8).unique().to_list())
     # The (cn, d) that keep a variable in this solve; a row elsewhere would read constant sense constant.
     live_period = _user_constraint_live_keys(period_terms)
-    live_step = live_period | _user_constraint_live_keys(flow_terms + state_terms)
+    live_step = live_period | _user_constraint_live_keys(flow_terms + state_terms + online_terms)
     empty_rows: list[tuple[pl.DataFrame, str]] = []
     uc_members = None
     if b.has_coarse_proc:
@@ -3705,8 +3752,8 @@ def _check_user_constraints_without_terms(b: _Build, empty_rows: list[tuple[pl.D
     if failing:
         raise FlexToolConfigError(
             f"User constraints without any variable in {where} cannot hold: {', '.join(failing)}. Their "
-            "coefficients only refer to flows, storage states, investments or retirements that this solve does "
-            "not have. Remove the constraint from the solve, or give it a term that the solve has.")
+            "coefficients only refer to flows, storage states, units online, investments or retirements that this "
+            "solve does not have. Remove the constraint from the solve, or give it a term that the solve has.")
     from flextool.engine import _behaviour_changes
     for cn, cases in sorted(holding.items()):
         _behaviour_changes.warn_once(

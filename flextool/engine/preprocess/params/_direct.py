@@ -2387,6 +2387,9 @@ def apply_direct_params_a(source: "InputSource",
                 _node_constraint_coef(source, f"constraint_{kind}_coeff"))
         setattr(flex_data, f"p_process_constraint_{kind}_coeff",
                 _process_constraint_coef(source, f"constraint_{kind}_coeff"))
+    # Units online (count of unitsize) — constant per (p, cn); no (d,t) axis.
+    flex_data.p_process_constraint_online_coeff = (
+        _process_constraint_coef(source, "constraint_online_coeff"))
 
     # ─── §5.2.1 invest/divest total caps (entity-unioned) ───────────────
     # Max variants: keyed on entityInvest (resp. entityDivest), one row

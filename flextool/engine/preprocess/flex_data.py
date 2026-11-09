@@ -817,7 +817,8 @@ def coarse_row_members(flex_data: "FlexData", family: str) -> pl.DataFrame:
     * ``inertia`` (``g``): the processes with an inertia constant on a side at a node of g;
     * ``non_sync`` (``g``): the processes with an arc at a node of g, without those inside g;
     * ``instant_flow`` (``g``): the processes of the flow group (``group_process_node``);
-    * ``user_constraint`` (``cn``): the processes with a flow coefficient and the nodes with a state coefficient;
+    * ``user_constraint`` (``cn``): the processes with a flow coefficient, the processes of the solve with an
+      online coefficient (``constraint_online_coeff``) and the nodes with a state coefficient;
     * ``storage_use`` (``n``): the processes with an arc at the stochastic node n."""
     d = flex_data
     key = {"user_constraint": "cn", "storage_use": "n"}.get(family, "g")
@@ -870,6 +871,9 @@ def coarse_row_members(flex_data: "FlexData", family: str) -> pl.DataFrame:
         procs(gpn.filter(pl.col("g").is_in(sorted(gs))))
     elif family == "user_constraint":
         procs(_utf8_frame(getattr(d, "flow_constraint_idx", None), ("cn", "p")))
+        online = _utf8_frame(_param_frame(getattr(d, "p_process_constraint_online_coeff", None)), ("cn", "p"))
+        if online is not None and pss is not None:
+            procs(online.join(pss.select("p").unique(), on="p", how="semi"))
         state = _utf8_frame(_param_frame(getattr(d, "p_node_constraint_state_coeff", None)), ("cn", "n"))
         if state is not None:
             parts.append(state.select("cn", kind=pl.lit("n"), e=pl.col("n")))
@@ -1203,6 +1207,7 @@ class FlexData:
     p_process_constraint_retired_capacity_coeff: Param | None = None  # (p, cn) — capacity retired in d
     p_node_constraint_in_construction_capacity_coeff: Param | None = None  # (n, cn) — storage in construction
     p_process_constraint_in_construction_capacity_coeff: Param | None = None  # (p, cn) — capacity in construction
+    p_process_constraint_online_coeff: Param | None = None  # (p, cn) — units online (count of unitsize)
 
     # ─── Profiles ─────────────────────────────────────────────────────────
     process_profile_upper: pl.DataFrame | None = None    # (p, source, sink, f)

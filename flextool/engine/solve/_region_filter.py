@@ -602,7 +602,8 @@ def _user_constraint_sides(
                 "p_process_constraint_prebuilt_capacity_coeff",
                 "p_process_constraint_capacity_coeff",
                 "p_process_constraint_retired_capacity_coeff",
-                "p_process_constraint_in_construction_capacity_coeff"):
+                "p_process_constraint_in_construction_capacity_coeff",
+                "p_process_constraint_online_coeff"):
         f = _frame_of(getattr(data, fld, None))
         if f is None or "cn" not in f.columns:
             continue
@@ -1532,6 +1533,7 @@ _MASTER_NODE_FIELDS: tuple[str, ...] = (
     "p_process_constraint_retired_capacity_coeff",
     "p_node_constraint_in_construction_capacity_coeff",
     "p_process_constraint_in_construction_capacity_coeff",
+    "p_process_constraint_online_coeff",
     "groupCapacityMargin", "groupInertia", "groupNonSync", "group_node",
     "process_sink_inertia", "process_source_inertia",
     "process_sink_nonSync", "process_group_inside_nonSync",
@@ -1593,6 +1595,7 @@ _MASTER_CN_KEYED_FIELDS: tuple[str, ...] = (
     "p_process_constraint_retired_capacity_coeff",
     "p_node_constraint_in_construction_capacity_coeff",
     "p_process_constraint_in_construction_capacity_coeff",
+    "p_process_constraint_online_coeff",
 )
 
 #: Arc-keyed CO2-priced flow frames → keep master-local arc rows
