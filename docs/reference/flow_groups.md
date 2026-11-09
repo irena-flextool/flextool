@@ -4,12 +4,12 @@ A `flowGroup` aggregates a set of *flows* — where each flow is a `(process, no
 
 ## Cumulative and instant flow limits
 
-- `max_cumulative_flow` - [MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.
-- `min_cumulative_flow` - [MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period.
-- `max_instant_flow` - [MW] Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.
-- `min_instant_flow` - [MW] Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time.
+- `max_cumulative_flow` - [MW] Maximum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period. A period map must give a value for every period of the solve, look-ahead periods included (a missing period is an error). An explicit 0 is a limit of 0 (the net flow into the group can be negative).
+- `min_cumulative_flow` - [MW] Minimum average flow, which limits the cumulative flow for a group of connection_nodes and/or unit_nodes. The average value is multiplied by the model duration to get the cumulative limit (e.g. by 8760 if a single year is modelled). Applied for each solve. Constant or period. A period map must give a value for every period of the solve, look-ahead periods included (a missing period is an error). An explicit 0 is a limit of 0 (the net flow into the group can be negative).
+- `max_instant_flow` - [MW] Maximum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time. A period map, or the period level of a period+time map, must give a value for every period of the solve, look-ahead periods included (a missing period is an error). An explicit 0, also at a single time step, is a limit of 0.
+- `min_instant_flow` - [MW] Minimum instantenous flow for the aggregated flow of all group members. Constant, period, time or period+time. A period map, or the period level of a period+time map, must give a value for every period of the solve, look-ahead periods included (a missing period is an error). An explicit 0, also at a single time step, is a limit of 0.
 
-When authoring `min_instant_flow` / `max_instant_flow` as a Map, set the Map's `index_name` to `period` or `time` so the period-vs-time axis is unambiguous — see [the note on naming the Map index](entities_and_time.md#timesteps-and-periods) above.
+When authoring `min_instant_flow` / `max_instant_flow` as a Map, set the Map's `index_name` to `period` or `time` so the period-vs-time axis is unambiguous — see [the note on naming the Map index](entities_and_time.md#timesteps-and-periods) above. A map without that name whose keys are none of the solve's periods is read as giving no value for the solve, so a missing period is not caught there.
 
 ## Flow aggregation method
 

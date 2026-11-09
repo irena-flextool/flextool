@@ -1,5 +1,21 @@
 ## Unreleased
 
+- **Fixed: a limit given as a period map no longer drops the periods it leaves out without a word.** A period
+  the solve uses (look-ahead periods included) but a period map does not cover is now an error naming the entity,
+  the parameter and the missing periods. Before, such a period got a CO2 cap of 0 (`co2_max_period`), no
+  inertia requirement, no limit or floor (`cumulative_min_capacity`, `invest_min_period`, cumulative and instant
+  flow limits), an error about another entity (the investment maxima), or a capacity margin of 0. This covers
+  `co2_max_period`, `inertia_limit`, `non_synchronous_limit`, `capacity_margin`, the per-period investment and
+  retirement limits, `cumulative_max_capacity` / `cumulative_min_capacity` and the flow group limits; the
+  investment limits and the capacity margin need a value in the investment periods of the solve only. Only limits
+  that are switched on are checked, and a constant still applies to every period. Fill in the missing periods if
+  a model now stops with this error.
+- **Fixed: an explicit 0 in a flow group limit is a limit of 0.** `max_cumulative_flow`, `min_cumulative_flow`,
+  `max_instant_flow` and `min_instant_flow` dropped a value of 0 (also one time step of a time map), so there was
+  no limit at all. The net flow into a flow group can be negative, so a 0 limit now binds.
+- **Fixed: a CO2 cap method without its value is an error.** A group whose `co2_method` has *period* in it and no
+  `co2_max_period` got a cap of 0 in every period (or the run stopped with an internal error); a *total* method
+  without `co2_max_total` had no cap. Both now stop with an error naming the group, the method and the parameter.
 - **Fixed: a chat in the AI assistant window changed model after the settings changed.** An open or reopened chat
   took the model saved later for new chats at its next question (and that model's level). A chat now keeps the
   service and model that answered in it, and its level unless you change the level of that same model; new chats
