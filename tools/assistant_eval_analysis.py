@@ -152,14 +152,19 @@ def read_lines(path: Path) -> list[dict]:
 
 
 def authoritative(lines: Iterable[Mapping[str, Any]]) -> list[dict]:
-    """The authoritative lines, the latest per cell (a re-grade replaces the first pass)."""
+    """The authoritative lines, the latest per cell (a re-grade replaces the first pass).  A cell is the model with
+    its free-plan setting, the versions, the level setting, the question and the repeat; a ``not_applicable``
+    line of a cell is dropped once a later line of that cell exists (it ran after all, under any key version)."""
     latest: dict[tuple, dict] = {}
     for line in lines:
         if not line.get("authoritative"):
             continue
-        cell = (line.get("provider"), line.get("model"), line.get("set_version"), line.get("key_version"),
+        base = (line.get("provider"), line.get("model"), bool(line.get("free_tier")), line.get("set_version"),
                 line.get("level_setting"), line.get("question"), line.get("repeat", 1))
-        latest[cell] = dict(line)
+        if line.get("outcome") != "not_applicable":
+            for cell in [c for c, x in latest.items() if c[:-1] == base and x.get("outcome") == "not_applicable"]:
+                del latest[cell]
+        latest[(*base, line.get("key_version"))] = dict(line)
     return list(latest.values())
 
 

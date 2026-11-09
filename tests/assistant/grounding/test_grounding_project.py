@@ -70,7 +70,12 @@ def test_project_folder_and_marker(built: gp.GroundingProject) -> None:
     assert built.source == built.path / "input_sources" / gp.SOURCE_NAME
     marker = json.loads((built.path / gp.MARKER_FILE).read_text(encoding="utf-8"))
     assert marker == {"format": gp.MARKER_FORMAT, "set_version": gp.SET_VERSION,
-                      "fingerprint": built.fingerprint, "source_sha256": gp.sha256_file(built.source)}
+                      "fingerprint": built.fingerprint, "source_sha256": gp.sha256_file(built.source),
+                      "solved": True, "runs": {r.folder: r.run_id for r in built.runs}}
+    assert sorted(marker["runs"]) == ["coal_1", "coal_co2_price_1", "demand_update_test_1", "invest_2day_test_1"]
+    # the folder of the failed second run keeps that run's id, which its status holds
+    failed = next(r for r in built.runs if (r.scenario, r.build) == gp.FAILED_RUN)
+    assert marker["runs"]["demand_update_test_1"] == failed.run_id
     assert built.fingerprint == gp.fingerprint(marker["source_sha256"], [r.run_id for r in built.runs])
     assert "input_source_numbers" in (built.path / "settings.yaml").read_text(encoding="utf-8")
 
@@ -81,3 +86,8 @@ def test_inputs_only_without_solve(tmp_path: Path) -> None:
     assert not any((project.path / "output_parquet").iterdir())
     assert (project.path / gp.MARKER_FILE).is_file()
     assert project.fingerprint == gp.fingerprint(project.source_sha256, [])
+
+
+def test_the_runner_accepts_the_build(built: gp.GroundingProject, evaluator) -> None:
+    """C6-m7: the marker checks pass on a genuine solved build (its result folders, the source's sidecars)."""
+    assert evaluator.check_marker(built.path)["solved"] is True

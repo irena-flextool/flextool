@@ -40,9 +40,10 @@ FIXTURE_JSON = FLEXTOOL_ROOT / "tests" / "fixtures" / "tests.json"
 #: The project folder's name (a space and an ``ä``: paths the tools must handle).
 PROJECT_NAME = "Grounding project ä"
 SOURCE_NAME = "grounding.sqlite"
-#: The marker the runner requires (P3-D10): ``{format, set_version, fingerprint, source_sha256}``.
+#: The marker the runner requires (P3-D10): ``{format, set_version, fingerprint, source_sha256, solved, runs}``;
+#: ``runs`` maps each ``output_parquet`` folder to the ``run_id`` of its final status.
 MARKER_FILE = ".flextool_grounding_project.json"
-MARKER_FORMAT = 1
+MARKER_FORMAT = 2
 #: The version of the question set this project is built for (``grounding_set.yaml`` ``set_version``).
 SET_VERSION = 3
 #: The ``--threads`` of every run (the window sends its "Threads per run").
@@ -314,18 +315,19 @@ def _run(project: Path, source: Path, scenario: str, build: int, number: int) ->
     return run
 
 
-def write_marker(project: Path, *, fingerprint_value: str, source_sha256: str) -> Path:
+def write_marker(project: Path, *, fingerprint_value: str, source_sha256: str, solved: bool,
+                 runs: dict[str, str | None]) -> Path:
     path = project / MARKER_FILE
     path.write_text(json.dumps({"format": MARKER_FORMAT, "set_version": SET_VERSION,
-                                "fingerprint": fingerprint_value, "source_sha256": source_sha256},
-                               indent=1) + "\n", encoding="utf-8")
+                                "fingerprint": fingerprint_value, "source_sha256": source_sha256,
+                                "solved": solved, "runs": runs}, indent=1) + "\n", encoding="utf-8")
     return path
 
 
 def build_grounding_project(root: Path, *, solve: bool = True) -> GroundingProject:
     """The grounding project under *root* (``<root>/Grounding project ä``, which must not exist): the inputs, the
     source numbered as the window numbers it, the runs of :data:`RUN_ORDER` (``solve=False``: the first build's
-    inputs only, no runs) and the marker."""
+    inputs only, no runs, and a marker the runner refuses unless a test allows it) and the marker."""
     project = _new_project(root)
     source = build_inputs(project, build=1)
     number = _number_sources(project)
@@ -339,7 +341,9 @@ def build_grounding_project(root: Path, *, solve: bool = True) -> GroundingProje
             runs.append(_run(project, source, scenario, build, number))
     source_sha = sha256_file(source)
     value = fingerprint(source_sha, [r.run_id for r in runs])
-    write_marker(project, fingerprint_value=value, source_sha256=source_sha)
+    # A folder's final status is its last run's (demand_update_test_1 holds the failed second run).
+    write_marker(project, fingerprint_value=value, source_sha256=source_sha, solved=solve,
+                 runs={r.folder: r.run_id for r in runs})
     return GroundingProject(path=project, source=source, source_number=number, runs=tuple(runs),
                             fingerprint=value, source_sha256=source_sha)
 

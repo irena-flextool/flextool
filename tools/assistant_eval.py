@@ -23,7 +23,8 @@ can judge; ``summary`` prints the rates and with ``--record`` appends the graded
 the evidence tables for the owner and ``dual`` runs the second grader on a subset and reports the agreement
 (``tools/assistant_eval_analysis.py``).  How to run and read it: ``docs/dev/assistant_evaluation.md``.
 
-Exit codes: 0 done (also: the daily request budget is used, run again with --resume) · 1 failed · 2 usage or a
+Exit codes: 0 done (also: the daily request budget is used, run again with --resume) · 1 failed (also: an error
+that is not the model's behaviour stopped a cell, which is not saved: run again with --resume) · 2 usage or a
 refused project / results folder · 3 the data notice was not accepted.
 """
 from __future__ import annotations
@@ -55,6 +56,16 @@ RECORD_FORMAT = 1
 RUN_FILE = "run.json"
 CELLS_DIR = "cells"
 GRADING_FILE = "grading.json"
+#: The requests of the cells that stopped without a record (``[{"ran_at", "requests", "cell", "code"}]``): they
+#: count against the daily budget like the requests of the saved cells.
+SPENT_FILE = "spent.json"
+#: The turn stops that are the model's or the budget's behaviour and so a graded outcome: cut off, still too long
+#: for the context (the fit refusal), the provider's refusal.  Any other error stops the cell unsaved (C6-M5).
+GRADED_STOPS = frozenset({"length", "context", "refused"})
+#: What a results folder's ``run.json`` must match to be continued; the levels, questions and repeats only pick
+#: the cells.
+IDENTITY_KEYS = ("provider", "model", "base_url", "free_tier", "ollama_context", "knobs_relaxed",
+                 "project_fingerprint", "set_version")
 DEFAULT_OUT = ROOT / "_audit_reports" / "assistant_eval"
 #: The daily request budget of an OpenRouter ``:free`` model (P3 §7.2).
 FREE_DAILY_REQUESTS = 45
@@ -64,6 +75,8 @@ CALIBRATION_SUFFIX = "#calibration"
 OLLAMA_CONTEXTS = {"small": 16_384, "medium": 32_768, "large": 65_536}
 
 NOT_GROUNDING = "This is not a grounding project made by assistant_eval build."
+CHANGED_GROUNDING = "This is not a grounding project made by assistant_eval build (it has changed since: {what})."
+UNSOLVED_GROUNDING = "This grounding project was built without its runs: build it again with assistant_eval build."
 OTHER_RESULTS = "These results belong to another model or project; use a new --out folder."
 DAILY_DONE = "Daily request budget used. Run again with --resume tomorrow."
 DAILY_DONE_REMOTE = "Daily request budget used. Run again with --resume --accept-data-notice tomorrow."
@@ -96,8 +109,19 @@ def accept_route(preset: Any, base_url: str, route: Any, accepted: set, *, accep
     accepted.add(key)
 
 
-class DailyBudgetUsed(Exception):
-    """The route's calibration requests of this UTC day reached the budget, or the provider's quota is used."""
+class CellStopped(Exception):
+    """A turn of the cell ended in an error that is not the model's behaviour (connection, timeout, busy, key,
+    model or routing, a fault): the cell is not saved and ``--resume`` asks it again.  *requests_sent*: the
+    requests that reached the provider before the stop (they count against the daily budget)."""
+
+    def __init__(self, text: str, requests_sent: int = 0, code: str = "") -> None:
+        super().__init__(text)
+        self.requests_sent = requests_sent
+        self.code = code
+
+
+class DailyBudgetUsed(CellStopped):
+    """The provider's quota is used: the run stops as when the daily budget is used (exit 0, D-Q4)."""
 
 
 # --- small helpers --------------------------------------------------------------------------------------------
@@ -192,19 +216,43 @@ def cmd_build(args: argparse.Namespace) -> int:
     return 0
 
 
-def check_marker(project: Path) -> dict[str, Any]:
-    """The marker of a grounding project whose source database is the one ``build`` made; else :class:`Refused`
-    (exit 2, before any request)."""
+def check_marker(project: Path, *, allow_unsolved: bool = False) -> dict[str, Any]:
+    """The marker of a grounding project as ``build`` left it; else :class:`Refused` (exit 2, before any request).
+    Checked: the marker's format, that the project was solved (*allow_unsolved*: the tests' inputs-only project),
+    the source database's hash, no other input source, no result folder of another run and every run's id."""
+    from flextool import run_record
     from tests.assistant import grounding_projects as gp
 
+    project = Path(project)
     try:
-        marker = read_json(Path(project) / gp.MARKER_FILE)
+        marker = read_json(project / gp.MARKER_FILE)
     except (OSError, ValueError):
         raise Refused(NOT_GROUNDING) from None
-    source = Path(project) / "input_sources" / gp.SOURCE_NAME
-    if not isinstance(marker, dict) or marker.get("format") != gp.MARKER_FORMAT or not source.is_file() \
-            or gp.sha256_file(source) != marker.get("source_sha256"):
+    if not isinstance(marker, dict) or marker.get("format") != gp.MARKER_FORMAT \
+            or not isinstance(marker.get("runs"), dict):
         raise Refused(NOT_GROUNDING)
+    if not marker.get("solved") and not allow_unsolved:
+        raise Refused(UNSOLVED_GROUNDING)
+
+    def changed(what: str) -> Refused:
+        return Refused(CHANGED_GROUNDING.format(what=what))
+
+    source = project / "input_sources" / gp.SOURCE_NAME
+    if not source.is_file() or gp.sha256_file(source) != marker.get("source_sha256"):
+        raise changed("its source database")
+    allowed = {gp.SOURCE_NAME, *(gp.SOURCE_NAME + tail for tail in ("-journal", "-wal", "-shm"))}
+    for entry in sorted((project / "input_sources").iterdir()):
+        if entry.name not in allowed:
+            raise changed(f"another input source {entry.name}")
+    runs: dict[str, Any] = marker["runs"]
+    for output in sorted(p for p in project.glob("output_*") if p.is_dir()):
+        for sub in sorted(p for p in output.iterdir() if p.is_dir()):
+            if sub.name not in runs and any(sub.iterdir()):
+                raise changed(f"results {output.name}/{sub.name} of another run")
+    for folder, run_id in sorted(runs.items()):
+        status = run_record.read_status_file(project / "output_parquet" / folder) or {}
+        if status.get("run_id") != run_id:
+            raise changed(f"the run in output_parquet/{folder}")
     return marker
 
 
@@ -224,9 +272,24 @@ def read_cells(out: Path) -> dict[str, dict]:
     return {p.stem: read_json(p) for p in sorted(folder.glob("*.json"))}
 
 
-def requests_today(cells: Iterable[Mapping[str, Any]], today: str) -> int:
-    """The requests this results folder sent on the UTC day *today* (``YYYY-MM-DD``)."""
-    return sum(int(c.get("requests_sent") or 0) for c in cells if str(c.get("ran_at") or "").startswith(today))
+def requests_today(cells: Iterable[Mapping[str, Any]], today: str, spent: Iterable[Mapping[str, Any]] = ()) -> int:
+    """The requests this results folder sent on the UTC day *today* (``YYYY-MM-DD``): those of its saved cells
+    and those of the cells that stopped unsaved or were replaced (*spent*)."""
+    return sum(int(c.get("requests_sent") or 0) for c in cells if str(c.get("ran_at") or "").startswith(today)) \
+        + sum(int(e.get("requests") or 0) for e in spent if str(e.get("ran_at") or "").startswith(today))
+
+
+def read_spent(out: Path) -> list[dict]:
+    path = Path(out) / SPENT_FILE
+    return list(read_json(path)) if path.is_file() else []
+
+
+def finished(record: Mapping[str, Any]) -> bool:
+    """Whether a saved cell is done: run (not ``not_applicable``) and no turn stopped by an error other than the
+    graded stops (an older folder can hold a cell saved with a connection error: ``--resume`` asks it again)."""
+    if record.get("not_applicable"):
+        return False
+    return all((t.get("error") or {}).get("code") in (None, *GRADED_STOPS) for t in record.get("turns") or [])
 
 
 def daily_budget(preset_id: str, model: str, given: int | None) -> int | None:
@@ -247,7 +310,7 @@ def _open_results(out: Path, identity: dict[str, Any], resume: bool) -> None:
         if not resume:
             raise Refused(HAS_RESULTS)
         saved = read_json(run_file)
-        if any(saved.get(k) != identity[k] for k in ("provider", "model", "project_fingerprint", "set_version")):
+        if any(k not in saved or saved[k] != identity[k] for k in IDENTITY_KEYS):
             raise Refused(OTHER_RESULTS)
         return
     if (Path(out) / CELLS_DIR).is_dir() and any((Path(out) / CELLS_DIR).iterdir()):
@@ -350,7 +413,8 @@ def _prompt_ratio(requests: Sequence[Mapping[str, Any]]) -> dict[str, float | No
 def run_cell(project: Path, qset: scoring.QuestionSet, question: scoring.Question, setting: Setting, *,
              backend: Any, preset: Any, ledger: Any, say: Callable[[str], None]) -> dict[str, Any]:
     """Ask *question* in a fresh conversation (S01: one conversation for its turns) at *setting*; the turns of
-    the record, redacted.  Raises :class:`DailyBudgetUsed` when the provider says the quota is used."""
+    the record, redacted.  Raises :class:`CellStopped` when a turn ends in an error that is not a graded stop
+    (:data:`GRADED_STOPS`), :class:`DailyBudgetUsed` when the provider says the quota is used."""
     from flextool.assistant.context import make_context
     from flextool.assistant.llm_adapter import Notice
     from flextool.assistant.llm_errors import message_for
@@ -381,8 +445,10 @@ def run_cell(project: Path, qset: scoring.QuestionSet, question: scoring.Questio
         started = time.monotonic()
         result = session.run_turn(text, on_event, threading.Event())
         seconds = round(time.monotonic() - started, 2)
-        if result.error is not None and result.error.code == "quota":
-            raise DailyBudgetUsed(message_for(result.error, "terminal"))
+        if result.error is not None and result.error.code not in GRADED_STOPS:
+            sent = sum(len(t["usage"]) for t in turns) + len(result.usage)
+            stop = DailyBudgetUsed if result.error.code == "quota" else CellStopped
+            raise stop(message_for(result.error, "terminal"), sent, result.error.code)
         messages = [m for m in conversation.messages if m.turn == number]
         results = {m.tool_call_id: m for m in messages if m.role == "tool"}
         calls = []
@@ -500,17 +566,18 @@ def _setting(level: str, model: str, *, preset: Any, base_url: str, conn_for: Ca
 
 def cmd_run(args: argparse.Namespace, *, backend_factory: BackendFactory | None = None,
             prober: Prober | None = None, info: OllamaInfo | None = None,
-            say: Callable[[str], None] = print) -> int:
+            say: Callable[[str], None] = print, allow_unsolved: bool = False) -> int:
+    """``run``; *allow_unsolved* (no command-line flag) lets the tests use an inputs-only grounding project."""
     try:
         return _run(args, backend_factory or _default_backend_factory, prober or _default_prober,
-                    info if info is not None else ollama_info, say)
+                    info if info is not None else ollama_info, say, allow_unsolved=allow_unsolved)
     except Refused as exc:
         print(str(exc), file=sys.stderr)
         return exc.code
 
 
 def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prober, info: OllamaInfo,
-         say: Callable[[str], None]) -> int:
+         say: Callable[[str], None], *, allow_unsolved: bool = False) -> int:
     from flextool.assistant import budget, endpoint, keys, net, providers
     from flextool.assistant.backends._common import error_context
     from flextool.assistant.llm_adapter import Connection
@@ -519,7 +586,7 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     from flextool.assistant.usage import Ledger
 
     project = Path(args.project).absolute()
-    marker = check_marker(project)                      # first: nothing is read or sent for another project
+    marker = check_marker(project, allow_unsolved=allow_unsolved)   # first: nothing is read or sent elsewhere
     qset = scoring.load_set(Path(args.set))
     if marker.get("set_version") != qset.set_version:
         raise Refused(f"The project was built for question set {marker.get('set_version')}, the set is "
@@ -550,9 +617,11 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     what = "the synthetic grounding project"
     accept_route(preset, base_url, route, accepted, accept=args.accept_data_notice,
                  again="--resume --accept-data-notice" if args.resume else "--accept-data-notice", what=what)
-    identity = {"provider": preset.id, "model": args.model, "base_url": base_url,
-                "project_fingerprint": marker["fingerprint"], "set_version": qset.set_version,
-                "knobs_relaxed": bool(args.relax_data_collection)}
+    free_setting = {"on": True, "off": False, "auto": None}[args.free_tier]
+    free = budget.free_tier_on(preset.id, args.model, free_setting)
+    identity = {"provider": preset.id, "model": args.model, "base_url": base_url, "free_tier": free,
+                "ollama_context": contexts, "knobs_relaxed": bool(args.relax_data_collection),
+                "project_fingerprint": marker["fingerprint"], "set_version": qset.set_version}
     _open_results(out, identity, args.resume)
 
     key, source, note = keys.resolve_key(preset, base_url)
@@ -568,15 +637,18 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     if preset.key_required and not key:
         conn = conn_for(args.model, endpoint.route_for(preset, base_url, model=args.model))
         raise Refused(render("no_key", error_context(preset, conn)) + (f" ({note})" if note else ""))
-    free_setting = {"on": True, "off": False, "auto": None}[args.free_tier]
-    free = budget.free_tier_on(preset.id, args.model, free_setting)
     daily = daily_budget(preset.id, args.model, args.max_requests_per_day)
     ledger = CalibrationLedger(Ledger())
     git = git_state()
     cells = read_cells(out)
+    spent = read_spent(out)
 
     def budget_used() -> bool:
-        return daily is not None and requests_today(cells.values(), iso(utc_now())[:10]) >= daily
+        return daily is not None and requests_today(cells.values(), iso(utc_now())[:10], spent) >= daily
+
+    def spend(entry: dict[str, Any]) -> None:
+        spent.append(entry)
+        write_json(out / SPENT_FILE, spent)
 
     probed: dict[str, Any] = {}
     for level in levels:
@@ -596,8 +668,10 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 continue
             for repeat in range(1, args.repeat + 1):
                 cid = cell_id(qid, level, repeat)
-                if cid in cells:
-                    continue
+                saved = cells.get(cid)
+                if saved is not None and (finished(saved) or (saved.get("not_applicable")
+                                                              and setting.not_applicable)):
+                    continue                       # done, or still not applicable (kept with its recorded tags)
                 if setting.not_applicable:
                     record = _record(question, setting, repeat, preset=preset, identity=identity,
                                      knobs_sent=knobs_sent, free_tier=free, git=git, turns=None)
@@ -608,14 +682,27 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 if budget_used():
                     say(done)
                     return 0
+                if saved is not None:
+                    # Asked again (an error stop of an older folder, or now applicable): its requests stay
+                    # counted for their day before the record goes.
+                    if int(saved.get("requests_sent") or 0):
+                        spend({"ran_at": saved.get("ran_at"), "requests": int(saved["requests_sent"]), "cell": cid,
+                               "code": "replaced"})
+                    cell_path(out, cid).unlink(missing_ok=True)
+                    del cells[cid]
                 backend = backend_factory(preset, conn_for(setting.model, setting.route))
                 try:
                     turns = run_cell(project, qset, question, setting, backend=backend, preset=preset,
                                      ledger=ledger, say=say)["turns"]
-                except DailyBudgetUsed as exc:
+                except CellStopped as exc:
+                    spend({"ran_at": iso(utc_now()), "requests": exc.requests_sent, "cell": cid, "code": exc.code})
                     say(str(exc))
-                    say(done)
-                    return 0
+                    if isinstance(exc, DailyBudgetUsed):
+                        say(done)
+                        return 0
+                    say(f"{cid}: nothing was saved for this cell. Run again with --resume"
+                        + (" --accept-data-notice." if accepted else "."))
+                    return 1
                 finally:
                     backend.close()
                 record = _record(question, setting, repeat, preset=preset, identity=identity,

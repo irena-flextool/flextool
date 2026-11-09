@@ -56,7 +56,7 @@ def run(evaluator, project: Path, out: Path, *extra: str, harness: Harness, mode
         ["run", "--project", str(project), "--provider", "openrouter", "--model", model, "--out", str(out),
          "--accept-data-notice", *extra])
     return evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
-                             say=lambda _text: None)
+                             say=lambda _text: None, allow_unsolved=True)
 
 
 @pytest.fixture(autouse=True)
@@ -79,7 +79,7 @@ def test_changed_source_refused(evaluator, tmp_path: Path, capsys) -> None:
         f.write(b"\0")
     harness = Harness()
     assert run(evaluator, project, tmp_path / "out", harness=harness) == 2
-    assert evaluator.NOT_GROUNDING in capsys.readouterr().err
+    assert "This is not a grounding project made by assistant_eval build" in capsys.readouterr().err
     assert harness.probes == 0 and harness.backends == []
 
 
@@ -136,7 +136,7 @@ def test_a_chat_acceptance_does_not_cover_the_calibration(evaluator, grounding: 
         ["run", "--project", str(grounding), "--provider", "openrouter", "--model", MODEL, "--out", str(out),
          "--questions", "G01", "--levels", "basic"])
     assert evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
-                             say=lambda _t: None) == 3
+                             say=lambda _t: None, allow_unsolved=True) == 3
     err = capsys.readouterr().err
     assert "Run again with --accept-data-notice" in err
     assert harness.requests == 0 and harness.probes == 0
@@ -164,7 +164,7 @@ def test_a_forwarded_ollama_model_asks_the_notice(evaluator, grounding: Path, tm
             ["run", "--project", str(grounding), "--provider", "ollama", "--model", "gpt-oss:120b", "--out",
              str(out), "--questions", "G01", "--levels", "basic", *extra])
         return evaluator.cmd_run(args, backend_factory=harness.factory, prober=prober, info=None,
-                                 say=lambda _t: None)
+                                 say=lambda _t: None, allow_unsolved=True)
 
     assert go() == 3
     err = capsys.readouterr().err
@@ -188,7 +188,7 @@ def test_daily_budget_stops_and_resumes_next_day(evaluator, grounding: Path, tmp
              "--accept-data-notice", "--questions", "G01,G03,G04", "--levels", "basic",
              "--max-requests-per-day", "2", *extra])
         return evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
-                                 say=said.append)
+                                 say=said.append, allow_unsolved=True)
 
     assert go() == 0
     assert said[-1] == evaluator.DAILY_DONE_REMOTE                  # OpenRouter: the rerun needs the flag again
@@ -254,7 +254,7 @@ def test_ollama_context_not_applicable(evaluator, grounding: Path, tmp_path: Pat
         ["run", "--project", str(grounding), "--provider", "ollama", "--model", "gpt-oss:20b", "--out", str(out),
          "--questions", "G01", "--levels", "basic,standard", "--ollama-context", "basic=16384,standard=32768"])
     assert evaluator.cmd_run(args, backend_factory=harness.factory, prober=prober, info=info,
-                             say=lambda _t: None) == 0
+                             say=lambda _t: None, allow_unsolved=True) == 0
     basic = json.loads((out / "cells" / "G01__small__r1.json").read_text(encoding="utf-8"))
     standard = json.loads((out / "cells" / "G01__medium__r1.json").read_text(encoding="utf-8"))
     assert basic["not_applicable"] is None and basic["model"]["model"] == "gpt-oss-20b-16k"
@@ -338,7 +338,7 @@ def test_not_applicable_cells_are_recorded_apart(evaluator, grounding: Path, tmp
          "--questions", "G01", "--levels", "standard", "--ollama-context", "standard=32768"])
     sizes = {"num_ctx": 32_768, "size": 14_000, "size_vram": 14_000}
     assert evaluator.cmd_run(args, backend_factory=Harness().factory, prober=prober, info=lambda _b, _m: sizes,
-                             say=lambda _t: None) == 0
+                             say=lambda _t: None, allow_unsolved=True) == 0
     results = tmp_path / "results.jsonl"
     args = evaluator.build_parser().parse_args(["summary", str(out), "--record", "--results-file", str(results)])
     assert evaluator.cmd_summary(args, say=lambda _t: None) == 0
@@ -692,8 +692,10 @@ def test_the_calibration_tools_keep_no_acceptance() -> None:
 
 
 # --- G14: blind grading across models (C6-M1, m2, n3) -------------------------------------------------------
-ALPHA = "vendor/alpha-one:free"
-BETA = "vendor/beta-two:free"
+#: Not free-plan models, so their requests are not paced.
+ALPHA = "vendor/alpha-one"
+BETA = "vendor/beta-two"
+PAID = "vendor/model-a"
 
 
 def _key_file(path: Path, qids: tuple[str, ...]) -> Path:
@@ -1053,3 +1055,246 @@ def test_dual_grade_ai_leak_scan_sends_nothing(analysis, scoring, evaluator, tmp
     err = capsys.readouterr().err
     assert "the grader material reveals the model's name; nothing was sent" in err
     assert backends == [] and not (dual / analysis.SEALED_FILE).exists()
+
+
+# --- G15: runs, resume and the marker (C6-M5, m4, m7) -------------------------------------------------------
+class Scripted(Harness):
+    """Each backend takes the next script of *scripts* (one list of items per cell); then plain answers."""
+
+    def __init__(self, scripts: list[list]) -> None:
+        super().__init__()
+        self.scripts = list(scripts)
+
+    def factory(self, preset, conn):
+        if not self.scripts:
+            return super().factory(preset, conn)
+        backend = FakeBackend(self.scripts.pop(0), origin=(preset.id, conn.base_url, conn.model))
+        self.backends.append(backend)
+        return backend
+
+
+def _answer(text: str = "coal_plant has 500 MW."):
+    from flextool.assistant.llm_adapter import Message, Reply, Usage
+
+    return Reply(Message("assistant", text), "end", None, Usage(1200, 0, 0, 20))
+
+
+def _error(code: str):
+    from flextool.assistant import llm_errors
+
+    cls = {"connection": llm_errors.Unreachable, "timeout": llm_errors.TimedOut, "busy": llm_errors.ServerBusy,
+           "auth": llm_errors.AuthFailed, "model": llm_errors.ModelNotFound,
+           "routing": llm_errors.NoMatchingEndpoint}[code]
+    key = "connection_remote" if code == "connection" else code
+    return llm_errors.make_error(cls, key, llm_errors.ErrorContext(provider="OpenRouter", host="openrouter.ai"))
+
+
+@pytest.fixture
+def no_waits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The session's own retries without their waits (a connection retry after 0 s, no busy retries)."""
+    import functools
+
+    from flextool.assistant import session
+    from flextool.assistant.llm_retry import RetryPolicy
+
+    monkeypatch.setattr(session, "RetryPolicy", functools.partial(RetryPolicy, max_retries=0, connection_wait=0.0))
+
+
+@pytest.mark.parametrize("code", ["connection", "timeout", "busy", "auth", "model", "routing"])
+def test_transient_error_not_saved_and_resumed(evaluator, grounding: Path, tmp_path: Path, code: str,
+                                               no_waits) -> None:
+    """C6-M5: an error that is not the model's behaviour stops the run with the cell unsaved; --resume asks it."""
+    out = tmp_path / "out"
+    said: list[str] = []
+    harness = Scripted([[_answer()], [_error(code)] * 4])
+
+    def go(*extra: str) -> int:
+        args = evaluator.build_parser().parse_args(
+            ["run", "--project", str(grounding), "--provider", "openrouter", "--model", PAID, "--out", str(out),
+             "--accept-data-notice", "--questions", "G01,G03,G04", "--levels", "basic", *extra])
+        return evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
+                                 say=said.append, allow_unsolved=True)
+
+    assert go() == 1
+    assert sorted(p.stem for p in (out / "cells").glob("*.json")) == ["G01__small__r1"]
+    assert said[-1] == ("G03__small__r1: nothing was saved for this cell. Run again with --resume "
+                        "--accept-data-notice.")
+    assert go("--resume") == 0                                    # the fixed backend: plain answers
+    cells = evaluator.read_cells(out)
+    assert sorted(cells) == ["G01__small__r1", "G03__small__r1", "G04__small__r1"]
+    assert all(t["stop"] == "end" for r in cells.values() for t in r["turns"])
+
+
+def test_saved_error_cell_reruns_and_graded_stop_kept(evaluator, grounding: Path, tmp_path: Path) -> None:
+    """C6-M5: a cell an older folder saved with a connection stop is asked again; a length stop is a graded
+    outcome and kept."""
+    out = tmp_path / "out"
+    harness = Harness()
+    assert run(evaluator, grounding, out, "--questions", "G01,G03", "--levels", "basic", harness=harness, model=PAID) == 0
+    for cid, code in (("G01__small__r1", "connection"), ("G03__small__r1", "length")):
+        path = evaluator.cell_path(out, cid)
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["turns"][0].update(stop=code, error={"code": code, "message": "scripted"})
+        evaluator.write_json(path, record)
+    length_before = evaluator.cell_path(out, "G03__small__r1").read_bytes()
+    assert run(evaluator, grounding, out, "--resume", "--questions", "G01,G03", "--levels", "basic",
+               harness=harness, model=PAID) == 0
+    assert harness.requests == 3
+    assert json.loads(evaluator.cell_path(out, "G01__small__r1").read_text())["turns"][0]["stop"] == "end"
+    assert evaluator.cell_path(out, "G03__small__r1").read_bytes() == length_before
+    spent = json.loads((out / evaluator.SPENT_FILE).read_text(encoding="utf-8"))
+    assert [(e["cell"], e["requests"], e["code"]) for e in spent] == [("G01__small__r1", 1, "replaced")]
+
+
+def test_spend_of_a_failed_cell_counts(evaluator, grounding: Path, tmp_path: Path, no_waits) -> None:
+    """C6-M5: the requests a stopped cell sent count against the day: 1 (the tool call) + 1 (the resumed cell)
+    reaches the budget of 2."""
+    from flextool.assistant.llm_adapter import Message, Reply, ToolCall, Usage
+
+    out = tmp_path / "out"
+    said: list[str] = []
+    call = Reply(Message("assistant", "", tool_calls=[ToolCall("c1", "list_runs", {}, "{}")]), "tools", None,
+                 Usage(1500, 0, 0, 10))
+    harness = Scripted([[call, _error("connection"), _error("connection"), _error("connection")]])
+
+    def go(*extra: str) -> int:
+        args = evaluator.build_parser().parse_args(
+            ["run", "--project", str(grounding), "--provider", "openrouter", "--model", PAID, "--out", str(out),
+             "--accept-data-notice", "--questions", "G01,G03", "--levels", "basic", "--max-requests-per-day", "2",
+             *extra])
+        return evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
+                                 say=said.append, allow_unsolved=True)
+
+    assert go() == 1
+    spent = json.loads((out / evaluator.SPENT_FILE).read_text(encoding="utf-8"))
+    assert [(e["cell"], e["requests"], e["code"]) for e in spent] == [("G01__small__r1", 1, "connection")]
+    assert not (out / "cells").exists() or not any((out / "cells").iterdir())
+    sent = harness.requests
+    assert go("--resume") == 0
+    assert harness.requests - sent == 1 and said[-1] == evaluator.DAILY_DONE_REMOTE
+    assert sorted(p.stem for p in (out / "cells").glob("*.json")) == ["G01__small__r1"]
+
+
+def test_resume_identity(evaluator, grounding: Path, tmp_path: Path, capsys) -> None:
+    """C6-m4: the address, the free plan, the Ollama contexts and the data-collection knob are part of a folder's
+    identity; the levels only pick cells."""
+    from flextool.assistant.probes import ModelFacts
+
+    out = tmp_path / "out"
+    harness = Harness()
+    assert run(evaluator, grounding, out, "--questions", "G01", "--levels", "basic", harness=harness,
+               model=PAID) == 0
+    capsys.readouterr()
+    for extra in (("--base-url", "https://proxy.example.test/api/v1"), ("--free-tier", "on"),
+                  ("--relax-data-collection",)):
+        assert run(evaluator, grounding, out, "--resume", "--questions", "G01", "--levels", "basic", *extra,
+                   harness=harness, model=PAID) == 2, extra
+        assert evaluator.OTHER_RESULTS in capsys.readouterr().err
+    assert harness.requests == 1 and harness.probes == 1
+    assert run(evaluator, grounding, out, "--resume", "--questions", "G01", "--levels", "basic,standard",
+               harness=harness, model=PAID) == 0
+    assert harness.requests == 2
+    # an older run.json without the new fields is never continued
+    run_file = out / evaluator.RUN_FILE
+    saved = json.loads(run_file.read_text(encoding="utf-8"))
+    run_file.write_text(json.dumps({k: v for k, v in saved.items() if k != "ollama_context"}), encoding="utf-8")
+    assert run(evaluator, grounding, out, "--resume", "--questions", "G01", harness=harness, model=PAID) == 2
+    assert evaluator.OTHER_RESULTS in capsys.readouterr().err
+
+    def prober(preset, conn, cancel, *, needed):
+        return ModelFacts(context_window=131_072, loaded_context=16_384, tools=True, source="ollama")
+
+    local = tmp_path / "local"
+
+    def ollama(*extra: str) -> int:
+        args = evaluator.build_parser().parse_args(
+            ["run", "--project", str(grounding), "--provider", "ollama", "--model", "gpt-oss:20b", "--out",
+             str(local), "--questions", "G01", "--levels", "basic", *extra])
+        return evaluator.cmd_run(args, backend_factory=harness.factory, prober=prober,
+                                 info=lambda _b, _m: {"num_ctx": 16_384, "size": 1, "size_vram": 1},
+                                 say=lambda _t: None, allow_unsolved=True)
+
+    assert ollama() == 0
+    sent = harness.requests
+    assert ollama("--resume", "--ollama-context", "basic=16384") == 2
+    assert evaluator.OTHER_RESULTS in capsys.readouterr().err and harness.requests == sent
+
+
+def test_not_applicable_rerun(evaluator, analysis, grounding: Path, tmp_path: Path) -> None:
+    """C6-m4: --resume runs a not-applicable cell whose setting now fits; a later line of a cell replaces its
+    not_applicable line, and two free-plan settings stay apart."""
+    from flextool.assistant.probes import ModelFacts
+
+    out = tmp_path / "out"
+    harness = Harness()
+    sizes = {"num_ctx": 16_384, "size": 14_000, "size_vram": 10_000}           # does not fit in graphics memory
+
+    def prober(preset, conn, cancel, *, needed):
+        return ModelFacts(context_window=131_072, loaded_context=16_384, tools=True, source="ollama")
+
+    def go(*extra: str) -> int:
+        args = evaluator.build_parser().parse_args(
+            ["run", "--project", str(grounding), "--provider", "ollama", "--model", "gpt-oss:20b", "--out",
+             str(out), "--questions", "G01,G03", "--levels", "basic", "--ollama-context", "basic=16384", *extra])
+        return evaluator.cmd_run(args, backend_factory=harness.factory, prober=prober, info=lambda _b, _m: sizes,
+                                 say=lambda _t: None, allow_unsolved=True)
+
+    assert go() == 0
+    assert all(r["not_applicable"] == "context" for r in evaluator.read_cells(out).values())
+    assert harness.requests == 0
+    still = evaluator.cell_path(out, "G01__small__r1").read_bytes()
+    assert go("--resume") == 0 and harness.requests == 0                      # still not applicable: kept
+    assert evaluator.cell_path(out, "G01__small__r1").read_bytes() == still
+    sizes["size_vram"] = 14_000
+    assert go("--resume") == 0 and harness.requests == 2
+    assert all(r["not_applicable"] is None and r["turns"] for r in evaluator.read_cells(out).values())
+
+    na = _line(question="G01", outcome="not_applicable", key_version=None, score=None)
+    answered = _line(question="G01", outcome="answered", key_version=2)
+    assert analysis.authoritative([na, answered]) == [answered]
+    free = _line(question="G01", free_tier=True)
+    assert len(analysis.authoritative([_line(question="G01"), free])) == 2
+
+
+def _write_status(folder: Path, run_id: str) -> None:
+    from flextool.run_record._owner import RUN_STATUS_FILE
+
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / RUN_STATUS_FILE).write_text(json.dumps({"run_id": run_id, "state": "succeeded"}), encoding="utf-8")
+
+
+def test_marker_checks(evaluator, tmp_path: Path, capsys) -> None:
+    """C6-m7: an unsolved build, another input source, another run's results and a changed run are refused;
+    the marker's own runs and the database's sidecar files are not."""
+    project = gp.build_grounding_project(tmp_path / "p", solve=False).path
+    with pytest.raises(evaluator.Refused, match="built without its runs"):
+        evaluator.check_marker(project)
+    assert evaluator.check_marker(project, allow_unsolved=True)["solved"] is False
+    marker_path = project / gp.MARKER_FILE
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker_path.write_text(json.dumps({**marker, "solved": True, "runs": {"coal_1": "id-a"}}), encoding="utf-8")
+    _write_status(project / "output_parquet" / "coal_1", "id-b")
+    with pytest.raises(evaluator.Refused, match=r"changed since: the run in output_parquet/coal_1"):
+        evaluator.check_marker(project)
+    _write_status(project / "output_parquet" / "coal_1", "id-a")
+    (project / "input_sources" / (gp.SOURCE_NAME + "-journal")).write_bytes(b"")
+    (project / "output_csv" / "empty_1").mkdir()
+    assert evaluator.check_marker(project)["runs"] == {"coal_1": "id-a"}
+    _write_status(project / "output_parquet" / "x_1", "id-x")
+    with pytest.raises(evaluator.Refused, match=r"changed since: results output_parquet/x_1 of another run"):
+        evaluator.check_marker(project)
+    for f in (project / "output_parquet" / "x_1").iterdir():
+        f.unlink()
+    (project / "input_sources" / "other.sqlite").write_bytes(b"")
+    with pytest.raises(evaluator.Refused, match="changed since: another input source other.sqlite"):
+        evaluator.check_marker(project)
+    marker_path.write_text(json.dumps({**marker, "format": 1}), encoding="utf-8")
+    with pytest.raises(evaluator.Refused, match=r"^This is not a grounding project made by assistant_eval build\.$"):
+        evaluator.check_marker(project)
+    harness = Harness()
+    args = evaluator.build_parser().parse_args(
+        ["run", "--project", str(project), "--provider", "openrouter", "--model", PAID, "--out",
+         str(tmp_path / "out"), "--accept-data-notice"])
+    assert evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
+                             say=lambda _t: None) == 2
+    assert harness.requests == 0 and harness.probes == 0

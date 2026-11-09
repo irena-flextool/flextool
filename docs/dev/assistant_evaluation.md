@@ -44,10 +44,11 @@ half a minute). The project uses `tests/fixtures/tests.json` with three override
 The fixture's scenarios `coal` and `coal_co2_price` are solved as they are. The project folder name has a space
 and an `ä` in it.
 
-`build` writes a marker file, `.flextool_grounding_project.json`. The marker holds a hash of the source database
-and a fingerprint of the source, the overrides and the run ids. `run` refuses a project without a valid marker,
-or one whose database has changed since it was built. Data from a real project therefore never reaches a
-calibration model.
+`build` writes a marker file, `.flextool_grounding_project.json`. The marker holds a hash of the source database,
+the run id of each result folder, and a fingerprint of the source, the overrides and the run ids. `run` refuses a
+project without a valid marker, and one that has changed since it was built: another database, another input
+source, results of another run, or a run of its own made again. It also refuses a project built without its runs.
+Data from a real project therefore never reaches a calibration model.
 
 ## Running the models
 
@@ -76,8 +77,16 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
 - **OpenRouter free models.** `--relax-data-collection` lets OpenRouter use providers that keep the data of the
   requests. The data is synthetic, and each cell records this. The runner stops after a daily number of requests:
   45 for a `:free` model by default, or `--max-requests-per-day N`. When it stops, it prints "Daily request budget
-  used. Run again with --resume --accept-data-notice tomorrow." (without the flag for a local model). A provider's "quota used" reply stops it in the same way. `--resume`
-  skips finished cells. It refuses to continue a folder made with another model or another project.
+  used. Run again with --resume --accept-data-notice tomorrow." (without the flag for a local model). A provider's
+  "quota used" reply stops it in the same way.
+- **Errors.** A cell whose answer was cut off, was still too long for the context, or was refused by the provider
+  is a graded outcome and is saved. Any other error (no connection, a timeout, a busy service, a key, model or
+  routing error) stops the run with exit code 1. That cell is not saved, and the message says to run again with
+  `--resume`. The requests it sent still count towards the day's budget (`spent.json` in the results folder).
+- **`--resume`** skips finished cells and asks again the cells that stopped with such an error. It also runs a
+  cell recorded as not applicable once its setting fits. It refuses to continue a folder made with another model,
+  provider, address, free-plan setting, Ollama contexts, data-collection setting or project. Other levels,
+  questions or repeats are fine.
 - **Usage.** The requests are counted in the usage ledger under the provider's name with "(calibration)" added,
   apart from chat use.
 
