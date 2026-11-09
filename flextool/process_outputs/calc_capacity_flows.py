@@ -71,9 +71,15 @@ def compute_capacity_and_flows(par, s, v, r) -> None:
             # ``_derive_conversion_trio``), so no separate coefficient division is applied here.
             flow_val = flow_val.mul(slope[p], axis=0)
             if (p, 'min_load_efficiency') in s.process__ct_method:
+                online_p = r.process_online_dt[p]
                 # A solve whose reduce_unit_detail_method left out online variables has no units online (NaN)
-                # and a section folded to 0 (_reduce_detail): its fuel is output × slope alone.
-                flow_val = flow_val.add(r.process_online_dt[p].fillna(0.0) * section[p] * unitsize[p], axis=0)
+                # and a section folded to 0 (_reduce_detail): its fuel is output × slope alone.  Only its steps
+                # are filled; a missing online cell of any other solve stays NaN.
+                left_out = getattr(s, 'reduced_cells', None)
+                if left_out:
+                    online_p = online_p.reindex(flow_val.index)
+                    online_p = online_p.mask(left_out.step_mask('online', online_p.index) & online_p.isna(), 0.0)
+                flow_val = flow_val.add(online_p * section[p] * unitsize[p], axis=0)
         r.flow_dt[p, always_source, always_sink] = flow_val
 
     # ramp_dt: flow change from the step each step's ramp is measured from (s.ramp_link: the adjacent

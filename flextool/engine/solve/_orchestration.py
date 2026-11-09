@@ -3189,6 +3189,11 @@ def _drive_cascade(
             self._reduce_everywhere = _everywhere
             if data is not _unreduced:
                 data.output_static_data = output_static_view(data, _unreduced, _everywhere)
+                # Only the last sub-solve's view is read: release the views of the stored earlier steps.
+                for _prev in (getattr(self, "_all_steps", None) or {}).values():
+                    _prev_fd = getattr(_prev, "flex_data", None)
+                    if _prev_fd is not None and getattr(_prev_fd, "output_static_data", None) is not None:
+                        _prev_fd.output_static_data = None
             # A ramp-carry flow from a producer that left out online
             # variables has no online carry: those online units start
             # their ramp and commitment cold (the carry routing is kept).

@@ -2164,8 +2164,9 @@ def _validate_cross_region_connections(data: FlexData, cross: pl.DataFrame,
         raise FlexToolConfigError(
             "Benders decomposition: connection(s) between regions (or between a region and the master) cannot "
             "have online variables, the exact transfer method or reserve, because the split replaces them with "
-            "half-flows in each region: " + "; ".join(problems) + ".  Remove these from the connections, or put "
-            "both of their nodes in one region.")
+            "half-flows in each region: " + "; ".join(problems) + ".  Remove these from the connections, put "
+            "both of their nodes in one region, or leave them out of the solve (reduce_system_detail_method "
+            "reserves, reduce_unit_detail_method integers for exact, online for online variables).")
 
 
 def _warn_integer_region(region: str, rdata: FlexData) -> None:

@@ -230,6 +230,49 @@ def test_field_lists_cover_the_system_fields(tmp_path_factory) -> None:
         assert getattr(reduced, name) is None, name
 
 
+def _frames(fd) -> dict[str, pl.DataFrame]:
+    """The non-empty set frames and Params of a FlexData, by field name."""
+    import dataclasses
+
+    from polar_high import Param
+
+    from flextool.engine.preprocess.flex_data import FlexData
+
+    out = {}
+    for f in dataclasses.fields(FlexData):
+        x = getattr(fd, f.name)
+        if isinstance(x, Param):
+            x = x.frame
+        if isinstance(x, pl.LazyFrame):
+            x = x.collect()
+        if isinstance(x, pl.DataFrame) and x.height > 0:
+            out[f.name] = x
+    return out
+
+
+def test_field_lists_cover_the_system_frames_by_their_columns(tmp_path_factory) -> None:
+    """The field lists by what the frames hold, not by their names, so a new field named outside the name patterns
+    is caught too.  On sys_full: every frame with both a reserve and an upDown column (r, ud) is a reserve field;
+    every frame keyed by group (g) whose groups are all inertia / non-synchronous groups is in the reserve,
+    inertia or non-synchronous lists.  On dc_triangle: every frame that exists only because of the
+    dc_power_flow_with_angles group (empty for the same lines as plain connections) is a DC field, except the
+    two-way one-variable arcs the lines keep as lossless transport."""
+    frames = _frames(_solve(tmp_path_factory, "rs_full", *_sys_full()).flex_data)
+    reserve = {n for n, f in frames.items() if {"r", "ud"} <= set(f.columns)}
+    assert reserve and reserve <= set(RESERVE_FIELDS), reserve - set(RESERVE_FIELDS)
+    groups = {"electricity"}       # the inertia and non-synchronous group of sys_full (also its reserve group)
+    by_group = {n for n, f in frames.items()
+                if "g" in f.columns and set(f.get_column("g").cast(pl.Utf8).to_list()) <= groups}
+    listed = set(RESERVE_FIELDS) | set(INERTIA_FIELDS) | set(NON_SYNC_FIELDS)
+    assert {"groupInertia", "groupNonSync"} <= by_group and by_group <= listed, by_group - listed
+    dc = _frames(_solve(tmp_path_factory, "rs_dc_None", *_dc_triangle()).flex_data)
+    ents, vals = _dc_triangle()
+    plain = _frames(_solve(tmp_path_factory, "rs_dc_plain", ents,
+                           [v for v in vals if v[2] != "transfer_method"]).flex_data)
+    only_dc = set(dc) - set(plain)
+    assert only_dc - {"process_source_sink_2way_1var"} == set(DC_FIELDS), only_dc ^ set(DC_FIELDS)
+
+
 def test_interaction_notes(tmp_path_factory) -> None:
     """online with reserves and inertia kept: g1's reserve comes from built capacity, the inertia of electricity
     is counted from flows, and g1's downward reserve reaches down to zero flow (its min load is left out).  Each
@@ -288,6 +331,10 @@ def test_dc_lines_become_lossless_transport(tmp_path_factory, level, delivered, 
         assert {"maxFlow", "maxFlow_back", "nodeBalance_eq"} <= rows
         for name in DC_FIELDS:
             assert getattr(step.flex_data, name) is None, name
+        # Each line keeps its reverse flow as v_flow_back (the method_2way_1var_off arcs), not a free column.
+        from flextool.engine.model.core import _two_way_one_var_arcs
+        arcs = utf8(_two_way_one_var_arcs(step.flex_data))
+        assert set(arcs["p"].to_list()) == {"c12", "c23", "c13"}
     c12, c23, c13 = (_net_flow(step, c) for c in ("c12", "c23", "c13"))
     gen = _gen(step, "g", "n1")
     for k in range(2):

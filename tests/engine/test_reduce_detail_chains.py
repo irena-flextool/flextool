@@ -148,10 +148,11 @@ def test_reduced_last_solve_keeps_the_tables_of_the_full_one(tmp_path_factory, i
     fuel = _table(out, "unit__inputNode__dt.csv", "g1")
     assert fuel == pytest.approx({"t0001": FUEL["full"], "t0002": FUEL["full"],
                                   "t0003": FUEL["online"], "t0004": FUEL["online"]}, abs=1e-6)
+    # sB's own cells are empty (not 0): _table leaves them out.
     online = _table(out, "unit_online__dt.csv", "g1")
-    assert online is not None and online["t0001"] == pytest.approx(1.0) and online["t0002"] == pytest.approx(1.0)
+    assert online == pytest.approx({"t0001": 1.0, "t0002": 1.0})
     reserve = _table(out, "process__reserve__upDown__node__dt.csv", "g1")
-    assert reserve is not None and reserve["t0001"] == pytest.approx(10.0) and reserve["t0002"] == pytest.approx(10.0)
+    assert reserve == pytest.approx({"t0001": 10.0, "t0002": 10.0})
 
 
 def test_reduced_first_solve_full_last(tmp_path_factory) -> None:
@@ -161,10 +162,9 @@ def test_reduced_first_solve_full_last(tmp_path_factory) -> None:
     out = _write_outputs(steps, wf, scen, in_memory=True)
     assert _table(out, "unit__inputNode__dt.csv", "g1") == pytest.approx(
         {"t0001": FUEL["online"], "t0002": FUEL["online"], "t0003": FUEL["full"], "t0004": FUEL["full"]}, abs=1e-6)
-    online = _table(out, "unit_online__dt.csv", "g1")
-    assert online["t0003"] == pytest.approx(1.0) and online["t0004"] == pytest.approx(1.0)
-    reserve = _table(out, "process__reserve__upDown__node__dt.csv", "g1")
-    assert reserve["t0003"] == pytest.approx(10.0) and reserve["t0004"] == pytest.approx(10.0)
+    # sA's own cells are empty (not 0): _table leaves them out.
+    assert _table(out, "unit_online__dt.csv", "g1") == pytest.approx({"t0003": 1.0, "t0004": 1.0})
+    assert _table(out, "process__reserve__upDown__node__dt.csv", "g1") == pytest.approx({"t0003": 10.0, "t0004": 10.0})
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +303,27 @@ def test_separate_dispatch_sibling_takes_the_parents_integers(tmp_path_factory) 
     assert vo["value"].min() == pytest.approx(2.0, abs=1e-9) and vo["value"].max() == pytest.approx(2.0, abs=1e-9)
     obj = float(pl.read_parquet(wf / "output_raw" / "v_obj__stoch_rd__realized_dispatch.parquet")["objective"][0])
     assert obj == pytest.approx(4_380_000.0, rel=1e-6)
+
+
+REALIZED = Path(__file__).resolve().parents[1] / "fixtures" / "stoch_realized_dispatch.json"
+
+
+def test_declared_realization_solve_warning_from_the_run(tmp_path_factory, capsys) -> None:
+    """stoch_rd (level none) with its author-declared realization solve stoch_rd_realized_dispatch, which sets
+    reduce_system_detail_method = reserves: the run prints one warning that the realization solve uses its
+    parent's none, and the realization solve runs at none."""
+    from flextool.engine import run_chain_from_db
+
+    vals = [["solve", "stoch_rd_realized_dispatch", "reduce_system_detail_method", _s("reserves")]]
+    url, scen = make_db(tmp_path_factory, alt="rdc_declared", values=vals, base_chain=["init", "base", "stoch"],
+                        fixture_json=REALIZED)
+    steps = run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("rdc_declared_w"), warm=False,
+                              keep_solutions=True)
+    lines = [ln for ln in capsys.readouterr().out.splitlines() if ln.startswith("Warning: realization solve")]
+    assert lines == ["Warning: realization solve 'stoch_rd_realized_dispatch' sets reduce_system_detail_method = "
+                     "'reserves', but it uses 'none', the value of its parent solve 'stoch_rd' (it takes the "
+                     "parent's units online and reserves)."]
+    assert all(s.optimal for s in steps.values()), list(steps)
 
 
 def test_declared_realization_solve_warns_when_its_own_level_is_overridden() -> None:
