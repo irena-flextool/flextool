@@ -479,7 +479,7 @@ def load(path: Path) -> InputDB:
     try:
         key = source_key(path)
     except FileNotFoundError:
-        raise ToolError("source_missing", source=Path(path).name, path=str(path)) from None
+        raise ToolError("source_missing", source=Path(path).name, path=Path(path).name) from None
     with _cache_lock:
         hit = _cache.get(key)
         if hit is not None:

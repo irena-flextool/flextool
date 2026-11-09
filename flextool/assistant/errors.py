@@ -171,8 +171,14 @@ def quoted(value: object, redact: Redact = _same, limit: int = NAME_MAX) -> str:
     """*value* as a quoted name: cleaned, on one line (a name cannot start a line), redacted, cut to *limit*, then
     JSON-quoted (an inner ``"`` becomes ``\\"``), so the name can never close its quotes.  Redaction comes before
     the quoting: the quoting doubles backslashes, which a path pattern would then no longer read as the text
-    meant, and before the cut: a path cut first could leave part of a folder name."""
-    return json.dumps(cap_text(redact(one_line(value)), limit), ensure_ascii=False)
+    meant, and before the cut: a path cut first could leave part of a folder name.
+
+    The name is redacted inside the quotes it will have, so a name that is a path (``/srv/Acme Ltd/x``) is read as
+    a quoted path, with its spaces, as a later reader of the quoted text would read it."""
+    text = one_line(value)
+    wrapped = redact(f'"{text}"')
+    text = wrapped[1:-1] if len(wrapped) >= 2 and wrapped[0] == wrapped[-1] == '"' else redact(text)
+    return json.dumps(cap_text(text, limit), ensure_ascii=False)
 
 
 @dataclass(frozen=True)

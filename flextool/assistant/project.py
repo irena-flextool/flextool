@@ -9,7 +9,6 @@ of its scenarios runs.
 """
 from __future__ import annotations
 
-import os
 import time
 from dataclasses import dataclass
 from datetime import datetime
@@ -49,7 +48,8 @@ def settings(ctx: AssistantContext):
 
 
 def sources(ctx: AssistantContext) -> list[Source]:
-    """Every input source of the project, in the window's order."""
+    """Every input source of the project, in the window's order.  A source from outside the project is registered
+    with the redaction: its path becomes its file name in every text sent (review G7)."""
     from flextool.gui.input_sources import InputSourceManager
 
     project_settings = settings(ctx)
@@ -65,6 +65,8 @@ def sources(ctx: AssistantContext) -> list[Source]:
             number = by_path.get(rel)
         out.append(Source(info.name, int(number) if number is not None else None, info.file_type, path,
                           bool(info.external_rel_path)))
+        if info.external_rel_path:
+            ctx.redactor.add_known(path)
     return out
 
 
@@ -139,7 +141,7 @@ def open_source(ctx: AssistantContext, source: Source):
             notes.append(f"The spreadsheet was changed after its last conversion ({conversion['converted_at']}); "
                          "these are the values of that conversion. Run a scenario of it to convert it again.")
     elif not source.path.is_file():
-        raise ToolError("source_missing", source=source.name, path=str(source.path))
+        raise ToolError("source_missing", source=source.name, path=source.path.name)
     return _db.load(source.database_path(ctx.project_path)), notes
 
 
@@ -180,8 +182,10 @@ def resolve_scenario(ctx: AssistantContext, source: Source, db, scenario: str | 
 
 
 def relative(ctx: AssistantContext, path: Path) -> str:
-    """*path* relative to the project (POSIX), or its name when it is elsewhere."""
+    """*path* relative to the project (POSIX) when it lies in the project, else its name: a path that climbs out
+    (``../../clients/Acme Corp/model.sqlite``), one on another drive or a symlink out names folders of the user's
+    computer (review G7)."""
     try:
-        return Path(os.path.relpath(path, ctx.project_path)).as_posix()
-    except ValueError:
-        return path.name
+        return Path(path).resolve().relative_to(Path(ctx.project_path).resolve()).as_posix()
+    except (ValueError, OSError, RuntimeError):
+        return Path(path).name

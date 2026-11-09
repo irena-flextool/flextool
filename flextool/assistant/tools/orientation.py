@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import re
 
-from flextool.assistant.caps import CapArg
+from flextool.assistant.caps import CapArg, Rendered, clean
 from flextool.assistant.context import AssistantContext
 from flextool.assistant.errors import NameList, ToolError, close_names, docs_error, name_list, similar_text
 from flextool.assistant.registry import Fit, make_tool
@@ -63,11 +63,23 @@ def get_gui_context(ctx: AssistantContext, args: dict) -> dict:
     return _startup_options(ctx, NOT_SHARED)
 
 
+def _shipped(value):
+    """The texts of FlexTool's own documentation, cleaned but not redacted (they hold no data of the user's;
+    redaction would cut their relative links and ``sqlite:///`` examples to a last part)."""
+    if isinstance(value, str):
+        return value if isinstance(value, Rendered) else Rendered(clean(value))
+    if isinstance(value, dict):
+        return {k: _shipped(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_shipped(v) for v in value]
+    return value
+
+
 def search_docs(ctx: AssistantContext, args: dict) -> Fit:
     query = str(args["query"])[:QUERY_MAX]
     kind = args.get("kind", "all")
     hits = _store().search(query, kind=kind, max_results=args["max_results"])
-    return Fit({"query": query, "kind": kind, "results": hits}, rows_key="results", what="results",
+    return Fit({"query": query, "kind": kind, "results": _shipped(hits)}, rows_key="results", what="results",
                hint="ask for fewer results")
 
 
@@ -93,7 +105,7 @@ def read_doc(ctx: AssistantContext, args: dict) -> Fit | dict:
     section = args.get("section")
     if not section:
         outline = [{"level": h.level, "title": h.title, "anchor": h.anchor} for h in hs]
-        return Fit({"doc": doc, "outline": outline, "note": "Ask for a section by its title or anchor."},
+        return Fit({"doc": doc, "outline": _shipped(outline), "note": "Ask for a section by its title or anchor."},
                    rows_key="outline", what="headings", hint="ask for a section to read it")
     wanted = str(section).strip().lstrip("#").lower()
     hit = next((k for k, h in enumerate(hs) if wanted in (h.title.lower(), h.anchor.lower())), None)
@@ -119,7 +131,7 @@ def read_doc(ctx: AssistantContext, args: dict) -> Fit | dict:
                                 + " or a larger max_chars")
     else:
         payload["text"] = text
-    return payload
+    return _shipped(payload)
 
 
 def get_formulation(ctx: AssistantContext, args: dict) -> dict:
@@ -135,7 +147,7 @@ def get_formulation(ctx: AssistantContext, args: dict) -> dict:
     stem = _stem(record["name"])
     related = [r["name"] for r in store.formulations
                if r is not record and r["module"] == record["module"] and _stem(r["name"]) == stem][:RELATED_MAX]
-    return {
+    return _shipped({
         "name": record["name"],
         "names": record["names"],
         "kind": record["kind"],
@@ -145,7 +157,7 @@ def get_formulation(ctx: AssistantContext, args: dict) -> dict:
         "source": f"{record['file']}:{record['line']}",
         "function": record["function"],
         "related": related,
-    }
+    })
 
 
 _KINDS = ["docs", "formulations", "all"]
