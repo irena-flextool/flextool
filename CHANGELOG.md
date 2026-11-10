@@ -72,17 +72,31 @@
   that capacity was lost; with `capacity (MW)` empty it was also written as `existing`, so counted twice; and a
   `max invest` beside it was dropped. Now `existing` is capacity + invested capacity (units, storage, connections,
   also in sensitivities) and `max invest` stays the investment limit. FlexTool 2 adds the annuity of that
-  capacity to its total cost, FlexTool 4 does not: the import report lists the entities.
+  capacity to its total cost, FlexTool 4 does not: the import report lists the entities that have an investment
+  cost (base data and sensitivities). A sensitivity that sets `invested storage (MWh)` or `storage (MWh)` to 0
+  keeps a storage that can still invest (`max invest (MWh)`) a storage node; before, it became a balance node and
+  lost the investment.
+- **Fix: a FlexTool 2 storage with only one `max invest` can invest.** FlexTool 2 derives the other limit through
+  the `fixed kW/kWh ratio` (MW = ratio × MWh); the import left that side without an investment option, so the
+  ratio link held both at 0. Now both limits are written (also when a sensitivity changes one). A sensitivity on
+  `inv.cost/kWh` sets the storage node's cost (before: the discharger's cost per kW). A storage that can invest in
+  MWh with neither a cost per kWh nor a ratio is listed in the import report: FlexTool 2 adds it at no cost,
+  FlexTool 4 does not invest in it.
+- **Fix: a FlexTool 2 workbook with no time step in use is refused with a message.** When no `ts_time` step has
+  `in_use` (or `in_use_invest` for an investment run) 1, the import stopped with a SpineDB error after creating
+  the database; now it says which column is empty, before writing anything.
 - **Fix: an invested FlexTool 2 CHP keeps its output2 in the dispatch solve.** The output2 constraints counted
   only the capacity invested in the same solve, so in the dispatch solve after the investment solve the heat was
   limited to 0. They now use the capacity in service (pre-built + invested). The import report notes output2
   constants in workbooks with the older `output2 max capacity (MW)` column (read as shares of capacity, as in
   FlexTool 2's model) and an output2 without any row (free heat).
-- **Fix: a user constraint without capacity terms lost its `constant` when another constraint had one.** When
-  some constraint used `constraint_cumulative_pre_built_capacity_coeff` or `constraint_capacity_coeff` (whose
-  existing capacity moves to the right-hand side) and `constant` was a single value, every constraint without such
-  a term got a right-hand side of 0 instead of its `constant` (e.g. `flow ≤ 800` became `flow ≤ 0`). Models
-  without capacity terms, or with a period-map `constant`, are unchanged.
+- **Fix: a user constraint without capacity terms lost its `constant` when another constraint had one** (since
+  4.0). When some constraint used `constraint_cumulative_pre_built_capacity_coeff` or `constraint_capacity_coeff`
+  (whose existing capacity moves to the right-hand side) or, in a chain of solves with a construction lead time,
+  `constraint_invested_capacity_coeff` or `constraint_in_construction_capacity_coeff` (capacity an earlier solve
+  decided), and `constant` was a single value, every constraint without such a term got a right-hand side of 0
+  instead of its `constant` (e.g. `flow ≤ 800` became `flow ≤ 0`), in per-step and once-per-period rows alike.
+  Models without these terms, or with a period-map `constant`, are unchanged.
 - **Fix: a FlexTool 2 sensitivity that turns `use_ramps` off is imported** (it wrote a ramp method the import's
   database version does not have, and the import stopped).
 - **Fix: the FlexTool 2 `fixed kW/kWh ratio` was inverted.** FlexTool 2 sets invested MW = ratio × invested MWh;

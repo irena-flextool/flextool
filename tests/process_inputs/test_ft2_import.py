@@ -564,9 +564,11 @@ def test_invested_capacity_without_capacity_is_not_counted_twice(tmp_path: Path)
     ``capacity (MW)`` empty and ``invested capacity (MW)`` = 25, C = 25 MW: existing
     25 and no investment (before: existing 25 and a forced 25 MW investment).  The
     CHP's output2 row ``heat <= 1.6 C`` has constant 0 and -1.6 on the capacity in
-    service (hand values)."""
+    service (hand values).  The annuity report line lists only the peaker: the CHP
+    has no investment cost, so FT2 adds no annuity for it."""
     sheets = ft2_sheets()
-    sheets["unit_type"].append(_unit_type("peaker", efficiency=0.4, availability=1))
+    sheets["unit_type"].append(_unit_type("peaker", **{
+        "efficiency": 0.4, "availability": 1, "inv.cost/kW": 500}))
     sheets["unit_type"].append(_unit_type("chp_new", efficiency=0.4, availability=1))
     sheets["units"].append(_unit(**{
         "unit type": "peaker", "fuel": "gas", "output grid": "elec",
@@ -590,7 +592,7 @@ def test_invested_capacity_without_capacity_is_not_counted_twice(tmp_path: Path)
     coeffs = _values(url, "unit", "constraint_cumulative_pre_built_capacity_coeff")[((chp,), "base")]
     assert dict(zip(coeffs.indexes, coeffs.values)) == pytest.approx({f"{chp}_output2_max": -1.6})
     found = {(u.sheet, u.column): u for u in report.unmapped}
-    assert found[("units", "invested capacity (MW)")].entities == ["peaker_nodeA", "chp_new_nodeA"]
+    assert found[("units", "invested capacity (MW)")].entities == ["peaker_nodeA"]
     assert "annuity" in found[("units", "invested capacity (MW)")].reason
 
 
@@ -704,3 +706,181 @@ def test_dispatch_only_workbook_keeps_invested_capacity(
     flow = pl.read_parquet(raw / "v_flow__dispatch.parquet")
     peaker = flow["('peaker_nodeA', 'gas_market', 'nodeA')"] * 60
     assert peaker.to_list() == pytest.approx([60.0] * 24, abs=1e-6)
+
+
+def test_storage_max_invest_derived_through_the_kw_kwh_ratio(tmp_path: Path) -> None:
+    """FT2 p_unit_max_invest_MW / _MWh (flexModel.mod): a limit not given is the
+    other one through the ratio (MW = ratio x MWh).  Ratio 0.25: max invest 10 MW
+    alone gives 40 MWh; 40 MWh alone gives 10 MW (before: the side not given had no
+    invest_method, so the storage link forced both to 0).  A storage with a
+    max invest (MWh), no cost per kWh and no ratio cannot invest in FT4 (FT2 adds
+    it for free): the report says so."""
+    sheets = ft2_sheets()
+    for name in ("bat_mw", "bat_mwh"):
+        sheets["unit_type"].append(_unit_type(name, **{
+            "efficiency": 0.9, "eff charge": 0.9, "availability": 1,
+            "inv.cost/kW": 300, "fixed kW/kWh ratio": 0.25}))
+    sheets["unit_type"].append(_unit_type("bat_free", **{
+        "efficiency": 0.9, "eff charge": 0.9, "availability": 1, "inv.cost/kW": 300}))
+    sheets["units"].append(_unit(**{
+        "unit type": "bat_mw", "output grid": "elec", "output node": "nodeA",
+        "max invest (MW)": 10}))
+    sheets["units"].append(_unit(**{
+        "unit type": "bat_mwh", "output grid": "elec", "output node": "nodeA",
+        "max invest (MWh)": 40}))
+    sheets["units"].append(_unit(**{
+        "unit type": "bat_free", "output grid": "elec", "output node": "nodeA",
+        "max invest (MW)": 10, "max invest (MWh)": 40}))
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    master = write_workbook(tmp_path / "flexTool.xlsx", {
+        "Sensitivity definitions": [
+            ["Scenario definitions units:", "Sheet", "unittype", "output node",
+             "max invest (MW)", "max invest (MWh)"],
+            ["BigMW", "units", "bat_mw", "nodeA", 20, None],
+            ["BigMWh", "units", "bat_mwh", "nodeA", None, 80],
+            [],
+        ]})
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    report = import_old_flextool_xlsm(str(xlsm), url, master=str(master), strict=True)
+    assert not report.failed
+
+    node_max = _values(url, "node", "invest_max_total")
+    unit_max = _values(url, "unit", "invest_max_total")
+    node_method = _values(url, "node", "invest_method")
+    assert node_max[(("bat_mw_nodeA_storage",), "base")] == pytest.approx(40.0)
+    assert node_method[(("bat_mw_nodeA_storage",), "base")] == "invest_total"
+    assert node_max[(("bat_mw_nodeA_storage",), "BigMW")] == pytest.approx(80.0)
+    for part in ("charger", "discharger"):
+        assert unit_max[((f"bat_mwh_nodeA_{part}",), "base")] == pytest.approx(10.0)
+        assert unit_max[((f"bat_mwh_nodeA_{part}",), "BigMWh")] == pytest.approx(20.0)
+        assert unit_max[((f"bat_mw_nodeA_{part}",), "BigMW")] == pytest.approx(20.0)
+    assert node_max[(("bat_mwh_nodeA_storage",), "BigMWh")] == pytest.approx(80.0)
+    found = {(u.sheet, u.column): u for u in report.unmapped}
+    assert found[("units", "max invest (MWh)")].entities == ["bat_free_nodeA"]
+
+
+def _write_sensitivity_master(path: Path) -> Path:
+    """Overrides whose interplay the import must get right in one scenario."""
+    return write_workbook(path, {
+        "Sensitivity definitions": [
+            ["Scenario definitions master:", "Sheet", "use_ramps"],
+            ["NoRamps", "master", 0],
+            ["Ramps", "master", 1],
+            [],
+            ["Scenario definitions unit_type:", "Sheet", "unit type", "inv.cost/kWh"],
+            ["CheapBat", "unit_type", "battery", 50],
+            [],
+            ["Scenario definitions units:", "Sheet", "unittype", "output node",
+             "invested storage (MWh)", "max invest (MWh)", "storage (MWh)",
+             "invested capacity (MW)"],
+            ["NoInvested", "units", "battery", "nodeA", 0, None, None, None],
+            ["NoStorage", "units", "battery", "nodeA", 0, 0, None, None],
+            ["StorageZero", "units", "battery", "nodeA", None, None, 0, None],
+            ["MoreCap", "units", "battery", "nodeA", None, None, None, 5],
+            ["MoreCap", "units", "coal", "nodeA", None, None, None, 5],
+            [],
+            ["Scenario definitions nodeNode:", "Sheet", "node1", "node2",
+             "cap.rightward (MW)", "invested capacity (MW)"],
+            ["Both", "nodeNode", "nodeA", "nodeB", 70, 20],
+            ["NoInv", "nodeNode", "nodeA", "nodeB", None, 0],
+            [],
+        ]})
+
+
+@pytest.fixture(scope="module")
+def sensitivity_imported(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> tuple[str, ImportReport]:
+    """The test workbook with ramps on coal and a connection nodeA -> nodeB
+    (50 / 40 MW, invested capacity 10, inv.cost/kW 100), and the overrides of
+    :func:`_write_sensitivity_master`."""
+    sheets = ft2_sheets()
+    sheets["unit_type"][1][UNIT_TYPE_HEADER.index("ramp up (p.u. per min)")] = 0.5
+    sheets["gridNode"].append(["elec", "nodeB", None, None, None, None, None,
+                               None, None, 0, 0, 1])
+    sheets["nodeNode"].append(["elec", "nodeA", "nodeB", 50, 40, 10, None, 0.01,
+                               100, 40, 0.05, None, 0])
+    folder = tmp_path_factory.mktemp("ft2_sensitivities")
+    xlsm = write_workbook(folder / "model.xlsx", sheets)
+    master = _write_sensitivity_master(folder / "flexTool.xlsx")
+    url = f"sqlite:///{folder / 'model.sqlite'}"
+    report = import_old_flextool_xlsm(str(xlsm), url, master=str(master), strict=True)
+    assert not report.failed
+    return url, report
+
+
+def test_zero_invested_storage_keeps_an_investable_storage(
+    sensitivity_imported: tuple[str, ImportReport],
+) -> None:
+    """Battery: invested storage 20, max invest (MWh) 100.  Invested storage 0
+    leaves FT2 C = 0 + v_investStorage <= 100: still a storage (before: balance,
+    the investment lost).  Also max invest 0: nothing to store, balance.  Storage
+    (MWh) 0: C = 0 + 20, a storage."""
+    url, _ = sensitivity_imported
+    node = ("battery_nodeA_storage",)
+    node_type = _values(url, "node", "node_type")
+    existing = _values(url, "node", "existing")
+    assert node_type[(node, "NoInvested")] == "storage"
+    assert existing[(node, "NoInvested")] == 0
+    assert node_type[(node, "NoStorage")] == "balance"
+    assert _values(url, "node", "invest_max_total")[(node, "NoStorage")] == 0
+    assert node_type[(node, "StorageZero")] == "storage"
+    assert existing[(node, "StorageZero")] == 20
+    assert _values(url, "node", "invest_cost")[(node, "CheapBat")] == 50
+    assert (("battery_nodeA_discharger",), "CheapBat") not in _values(url, "unit", "invest_cost")
+
+
+def test_use_ramps_sensitivity_switches_the_ramp_method(
+    sensitivity_imported: tuple[str, ImportReport],
+) -> None:
+    """use_ramps 0 writes the v56 method 'none' (before: 'no_ramp', not in v56,
+    and the import crashed)."""
+    url, _ = sensitivity_imported
+    method = _values(url, "unit__outputNode", "ramp_method")
+    edge = ("coal_nodeA", "nodeA")
+    assert method[(edge, "NoRamps")] == "none"
+    assert method[(edge, "Ramps")] == "ramp_limit"
+
+
+def test_connection_capacity_and_invested_capacity_in_one_scenario(
+    sensitivity_imported: tuple[str, ImportReport],
+) -> None:
+    """FT2 C = larger direction + invested capacity.  Base 50 + 10 = 60; scenario
+    Both (rightward 70, invested 20) 90, written once; NoInv 50 + 0."""
+    url, _ = sensitivity_imported
+    existing = _values(url, "connection", "existing")
+    conn = ("nodeA_nodeB",)
+    assert existing[(conn, "base")] == 60
+    assert existing[(conn, "Both")] == 90
+    assert existing[(conn, "NoInv")] == 50
+
+
+def test_annuity_report_covers_sensitivity_capacity(
+    sensitivity_imported: tuple[str, ImportReport],
+) -> None:
+    """Invested capacity with an investment cost has an FT2 annuity: battery
+    (storage 20, 100 per kWh), the connection (100 per kW) and, from MoreCap, the
+    battery's 5 MW (300 per kW) and the connection's 20 MW in Both.  Not coal: no
+    investment cost.  NoInv's 0 MW is no capacity."""
+    _, report = sensitivity_imported
+    found = {(u.sheet, u.column): u.entities for u in report.unmapped}
+    assert found[("units", "invested storage (MWh)")] == ["battery_nodeA"]
+    assert found[("nodeNode", "invested capacity (MW)")] == ["nodeA_nodeB"]
+    assert found[("Sensitivity definitions / units", "invested capacity (MW)")] == [
+        "battery_nodeA [MoreCap]"]
+    assert found[("Sensitivity definitions / nodeNode", "invested capacity (MW)")] == [
+        "nodeA_nodeB [Both]"]
+    assert ("units", "invested capacity (MW)") not in found
+
+
+def test_workbook_without_time_in_use_refused(tmp_path: Path) -> None:
+    """FT2 solves the ts_time steps with in_use (flexModel.mod time_in_use): with none
+    there is nothing to solve.  The import says so and writes no database (before: a
+    SpineDB error on an empty timeset map, after the database was created)."""
+    sheets = ft2_sheets()
+    sheets["ts_time"] = sheets["ts_time"][:1] + [[t, 0, 0, 0, 0] for t in STEPS]
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    target = tmp_path / "model.sqlite"
+    with pytest.raises(ValueError, match="no time step in use: column 'in_use'"):
+        import_old_flextool_xlsm(str(xlsm), f"sqlite:///{target}")
+    assert not target.exists()

@@ -342,6 +342,24 @@ def _ft2_capacity(capacity: float | None, invested: float | None) -> float | Non
     return (capacity or 0.0) + (invested or 0.0)
 
 
+def _storage_max_invest(
+    max_mw: float | None, max_mwh: float | None, ratio: float | None,
+) -> tuple[float, float]:
+    """(MW, MWh) investment limits of an FT2 storage unit.
+
+    ``flexModel.mod`` ``p_unit_max_invest_MW`` / ``p_unit_max_invest_MWh``:
+    each is its own ``max invest`` when given, else the other one through the
+    ``fixed kW/kWh ratio`` (MW = ratio x MWh), else 0.  (The unitGroup
+    fallback is not per unit.)
+    """
+    mw = max_mw if max_mw is not None and max_mw > 0 else 0.0
+    mwh = max_mwh if max_mwh is not None and max_mwh > 0 else 0.0
+    has_ratio = ratio is not None and ratio > 0
+    out_mw = mw if mw > 0 else (mwh * ratio if has_ratio and mwh > 0 else 0.0)
+    out_mwh = mwh if mwh > 0 else (mw / ratio if has_ratio and mw > 0 else 0.0)
+    return out_mw, out_mwh
+
+
 def _get_unit_node_name(unit: UnitInstance) -> str:
     """Generate the input node name for a non-charger/discharger unit.
 
@@ -764,31 +782,118 @@ def _availability_item(data: OldFlexToolData) -> UnmappedItem | None:
                         _UNMAPPED[("unit_type", "availability")])
 
 
+_INVESTED_CAPACITY_REASON = (
+    "imported as existing capacity (added to 'capacity'), so it is in "
+    "every solve, as in FlexTool 2. FlexTool 2 also adds its investment "
+    "annuity to the total cost; FlexTool 4 does not, so the FlexTool 4 "
+    "total cost is lower by that fixed amount. The dispatch and the other "
+    "investments are the same. Nothing to do, unless you compare total "
+    "costs."
+)
+
+
+def _positive(value: Any) -> bool:
+    return isinstance(value, (int, float)) and value > 0
+
+
 def _invested_capacity_items(data: OldFlexToolData) -> list[UnmappedItem]:
     """FT2 ``invested capacity (MW)`` / ``invested storage (MWh)``: imported as
     existing capacity (:func:`_ft2_capacity`); FT2 adds its annuity to the
-    objective as a constant, FT4 does not."""
-    reason = (
-        "imported as existing capacity (added to 'capacity'), so it is in "
-        "every solve, as in FlexTool 2. FlexTool 2 also adds its investment "
-        "annuity to the total cost; FlexTool 4 does not, so the FlexTool 4 "
-        "total cost is lower by that fixed amount. The dispatch and the other "
-        "investments are the same. Nothing to do, unless you compare total "
-        "costs."
-    )
+    objective as a constant, FT4 does not.  Only where that annuity is not 0
+    (an investment cost is given)."""
     items = []
     units_mw = [_get_unit_name(u) for u in data.units
-                if u.invested_capacity_mw and u.invested_capacity_mw > 0]
+                if _positive(u.invested_capacity_mw)
+                and _positive(_get_unit_type_param(data, u, "inv.cost/kw"))]
     units_mwh = [_get_unit_name(u) for u in data.units
-                 if u.invested_storage_mwh and u.invested_storage_mwh > 0]
+                 if _positive(u.invested_storage_mwh)
+                 and _positive(_get_unit_type_param(data, u, "inv.cost/kwh"))]
     conns = [f"{c.node1}_{c.node2}" for c in data.connections
-             if c.invested_capacity_mw and c.invested_capacity_mw > 0]
+             if _positive(c.invested_capacity_mw) and _positive(c.invest_cost_per_kw)]
     for sheet, column, names in (("units", "invested capacity (MW)", units_mw),
                                  ("units", "invested storage (MWh)", units_mwh),
                                  ("nodeNode", "invested capacity (MW)", conns)):
         if names:
-            items.append(UnmappedItem(sheet, column, names, reason))
+            items.append(UnmappedItem(sheet, column, names, _INVESTED_CAPACITY_REASON))
     return items
+
+
+def _sensitivity_invested_capacity_items(
+    sensitivities: dict[str, list[SensitivityOverride]], data: OldFlexToolData,
+) -> list[UnmappedItem]:
+    """:func:`_invested_capacity_items` for the invested capacity a
+    sensitivity gives (the base import reports its own): an override > 0 of
+    an entity with an investment cost (the scenario's unit_type / nodeNode
+    cost override, else the base cost)."""
+    found: dict[tuple[str, str], list[str]] = {}
+    for scenario, overrides in sensitivities.items():
+        for ov in overrides:
+            param = ov.param_name.lower()
+            if not _positive(ov.value) or "invested" not in param:
+                continue
+            if ov.section == "units":
+                unit_type = ov.entity_ids.get("unittype")
+                unit = next((u for u in data.units if u.unit_type == unit_type
+                             and u.output_node == ov.entity_ids.get("output node")), None)
+                if unit is None:
+                    continue
+                storage = "invested storage" in param
+                cost_column = "inv.cost/kwh" if storage else "inv.cost/kw"
+                cost = _get_unit_type_param(data, unit, cost_column)
+                for other in overrides:
+                    if (other.section == "unit_type"
+                            and other.entity_ids.get("unit type") == unit_type
+                            and _norm_key(other.param_name) == cost_column):
+                        cost = other.value
+                key = ("units", "invested storage (MWh)" if storage
+                       else "invested capacity (MW)")
+                name = _get_unit_name(unit)
+            elif ov.section == "nodeNode" and "invested capacity" in param:
+                node1, node2 = ov.entity_ids.get("node1"), ov.entity_ids.get("node2")
+                conn = next((c for c in data.connections
+                             if c.node1 == node1 and c.node2 == node2), None)
+                cost = None if conn is None else conn.invest_cost_per_kw
+                for other in overrides:
+                    if (other.section == "nodeNode"
+                            and other.entity_ids.get("node1") == node1
+                            and other.entity_ids.get("node2") == node2
+                            and ("inv.cost/kw" in other.param_name.lower()
+                                 or "inv cost" in other.param_name.lower())):
+                        cost = other.value
+                key = ("nodeNode", "invested capacity (MW)")
+                name = f"{node1}_{node2}"
+            else:
+                continue
+            if _positive(cost):
+                found.setdefault(key, []).append(f"{name} [{scenario}]")
+    return [UnmappedItem(f"Sensitivity definitions / {sheet}", column, names,
+                         _INVESTED_CAPACITY_REASON)
+            for (sheet, column), names in found.items()]
+
+
+def _free_storage_investment_items(data: OldFlexToolData) -> list[UnmappedItem]:
+    """A storage that can invest in MWh with no ``inv.cost/kWh`` and no
+    ``fixed kW/kWh ratio``: FT2 adds that storage at no cost (up to its
+    limit); an FT4 node invests only with an investment cost or a
+    user-constraint coefficient on its investment."""
+    names = []
+    for unit in data.units:
+        if not _needs_charger_discharger(unit, data):
+            continue
+        ratio = _get_unit_type_param(data, unit, "fixed kw/kwh ratio")
+        _, max_mwh = _storage_max_invest(unit.max_invest_mw, unit.max_invest_mwh, ratio)
+        if (max_mwh > 0 and not _positive(ratio)
+                and not _positive(_get_unit_type_param(data, unit, "inv.cost/kwh"))):
+            names.append(_get_unit_name(unit))
+    if not names:
+        return []
+    return [UnmappedItem(
+        "units", "max invest (MWh)", names,
+        "the storage has no 'inv.cost/kWh' and no 'fixed kW/kWh ratio'. "
+        "FlexTool 2 adds that storage at no cost, up to 'max invest (MWh)'; "
+        "FlexTool 4 invests in a storage only when it has an investment "
+        "cost, so it adds none. To let it invest, give the storage node a "
+        "small 'invest_cost' (or the unit type an 'inv.cost/kWh').")]
 
 
 def _collect_unmapped(data: OldFlexToolData) -> list[UnmappedItem]:
@@ -861,6 +966,7 @@ def _collect_unmapped(data: OldFlexToolData) -> list[UnmappedItem]:
         items.append(availability)
     items.extend(_profile_scaling_items(data))
     items.extend(_invested_capacity_items(data))
+    items.extend(_free_storage_investment_items(data))
     # time_in_years first: it changes the balance of every cost.
     tiy = _time_in_years_item(data)
     return ([tiy] if tiy is not None else []) + items
@@ -1255,18 +1361,22 @@ def _write_storage_units(
                           interest, alt_name, counters)
 
         # 'invested capacity (MW)' / 'invested storage (MWh)' are in existing
-        # (_ft2_capacity); 'max invest' is the FT2 v_invest limit.
-        if unit.max_invest_mw is not None and unit.max_invest_mw > 0:
+        # (_ft2_capacity); 'max invest' is the FT2 v_invest limit, the one
+        # not given derived through the kW/kWh ratio (_storage_max_invest).
+        kw_kwh_ratio = _get_unit_type_param(data, unit, "fixed kw/kwh ratio")
+        max_mw, max_mwh = _storage_max_invest(
+            unit.max_invest_mw, unit.max_invest_mwh, kw_kwh_ratio)
+        if max_mw > 0:
             for target in (discharger_name, charger_name):
                 _add_param(db, "unit", (target,), "invest_method",
                            "invest_total", alt_name, counters)
                 _add_param(db, "unit", (target,), "invest_max_total",
-                           unit.max_invest_mw, alt_name, counters)
-        if unit.max_invest_mwh is not None and unit.max_invest_mwh > 0:
+                           max_mw, alt_name, counters)
+        if max_mwh > 0:
             _add_param(db, "node", (storage_node,), "invest_method",
                        "invest_total", alt_name, counters)
             _add_param(db, "node", (storage_node,), "invest_max_total",
-                       unit.max_invest_mwh, alt_name, counters)
+                       max_mwh, alt_name, counters)
 
         # ── Charger ↔ Discharger investment constraint ────────────
         # FT2 has one unit, so one v_invest: the charger invests what the
@@ -1289,7 +1399,6 @@ def _write_storage_units(
         # ── kW/kWh constraint (discharger ↔ storage node) ────────
         # FT2 investStorage_kW_per_kWh: v_invest (MW) = ratio × v_investStorage
         # (MWh), on v_invest only ('invested ...' capacities are existing).
-        kw_kwh_ratio = _get_unit_type_param(data, unit, "fixed kw/kwh ratio")
         if kw_kwh_ratio is not None and kw_kwh_ratio > 0:
             storage_link = f"{unit_name}_storage_link"
             _add_entity(db, "constraint", storage_link, alt_name, counters,
@@ -2292,7 +2401,9 @@ def _write_timeline_and_solve(
     _add_param(db, "timeset", ("dispatch_set",), "timeline", "y2020",
                alt_name, counters)
 
-    # Build timeset_duration from contiguous blocks of in_use=True
+    # Build timeset_duration from contiguous blocks of in_use=True (none when
+    # no step is in use: only allowed where the modes do not use the set,
+    # _require_time_in_use).
     dispatch_duration = _build_timeset_duration(data.time_steps, "dispatch", duration_hours)
     _add_param(db, "timeset", ("dispatch_set",), "timeset_duration",
                dispatch_duration, alt_name, counters)
@@ -2382,7 +2493,7 @@ def _build_timeset_duration(
     time_steps: list,
     mode: str,
     duration_hours: float,
-) -> Map:
+) -> Map | None:
     """Build a timeset_duration Map from contiguous blocks of in_use steps.
 
     Args:
@@ -2392,7 +2503,8 @@ def _build_timeset_duration(
 
     Returns:
         A Map where each key is the start time_id of a contiguous block
-        and each value is the total duration of that block in hours.
+        and each value is the total duration of that block in hours;
+        ``None`` when no step is in use.
     """
 
     starts: list[str] = []
@@ -2420,7 +2532,37 @@ def _build_timeset_duration(
         starts.append(block_start)
         durations.append(block_count * duration_hours)
 
+    if not starts:
+        return None
     return Map(starts, durations, index_name="time")
+
+
+def _require_time_in_use(data: OldFlexToolData, xlsm_path: str) -> None:
+    """Refuse a workbook whose solves have no time step in use.
+
+    FT2 (``flexModel.mod`` ``time_in_use``) solves the ``ts_time`` steps with
+    ``in_use`` (dispatch) or, with ``mode_invest``, ``in_use_invest``; a
+    workbook without any has nothing to solve (and FT4 no timeset).
+    """
+    mode_invest = _get_master_param(data, "mode invest") == 1
+    mode_dispatch = _get_master_param(data, "mode dispatch") == 1
+    needed = []
+    if mode_dispatch or not mode_invest:
+        needed.append(("in_use", "dispatch"))
+    if mode_invest:
+        needed.append(("in_use_invest", "invest"))
+    for column, mode in needed:
+        attr = "in_use" if mode == "dispatch" else "in_use_invest"
+        if not any(getattr(ts, attr) for ts in data.time_steps):
+            raise ValueError(
+                f"'{xlsm_path}' has no time step in use: column '{column}' of "
+                f"its 'ts_time' sheet has no 1 ({len(data.time_steps)} steps), "
+                f"so the {mode} solve has nothing to solve, in FlexTool 2 as "
+                "well. A FlexTool 2 master workbook can take ts_time from its "
+                "time series folder instead (ts/<input file name>/ts_time.csv, "
+                "see 'Time series filter' on its 'Settings and filters' sheet). "
+                f"Mark the steps to solve with 1 in '{column}' and import again."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -2910,6 +3052,14 @@ def _apply_unit_type_override(
                 [f"{unit_name} [{alt_name}]"],
                 _UNMAPPED[("unit_type", "availability")],
             ))
+        elif "inv.cost/kwh" in param_lower:
+            # The storage cost: on the storage node, as in the base import.
+            if is_storage:
+                _add_param(db, "node", (f"{unit_name}_storage",), "invest_cost",
+                           value, alt_name, counters)
+            else:
+                _unknown_sensitivity(counters, alt_name, "unit_type",
+                                     ov.param_name, unit_name)
         elif "inv.cost/kw" in param_lower or "inv cost" in param_lower:
             target = discharger if is_storage else unit_name
             _add_param(db, "unit", (target,), "invest_cost", value, alt_name, counters)
@@ -3055,18 +3205,18 @@ def _apply_unit_group_override(
 
 
 def _units_override_kind(param_lower: str) -> str | None:
-    """The capacity column a units override sets (the order of the
-    :func:`_apply_units_override` branches), else ``None``."""
+    """The capacity or investment-limit column a units override sets (the
+    order of the :func:`_apply_units_override` branches), else ``None``."""
     if param_lower in ("capacity (mw)", "capacity"):
         return "capacity"
     if "invested capacity" in param_lower:
         return "invested_mw"
     if "max invest (mw)" in param_lower and "mwh" not in param_lower:
-        return None
+        return "max_invest_mw"
     if "invested storage" in param_lower:
         return "invested_mwh"
     if "max invest (mwh)" in param_lower:
-        return None
+        return "max_invest_mwh"
     if "storage (mwh)" in param_lower or (
         "storage" in param_lower and "invest" not in param_lower
         and "start" not in param_lower and "finish" not in param_lower
@@ -3154,6 +3304,54 @@ def _apply_units_override(
         mine = float(value) if isinstance(value, (int, float)) else None
         return _ft2_capacity(mine, other_value)
 
+    def base_of(attr: str) -> float | None:
+        return None if base_unit is None else getattr(base_unit, attr)
+
+    ratio = (None if base_unit is None
+             else _get_unit_type_param(data, base_unit, "fixed kw/kwh ratio"))
+    has_ratio = ratio is not None and ratio > 0
+
+    def max_invest() -> tuple[float, float, bool, bool]:
+        """The scenario's (MW, MWh) investment limits (_storage_max_invest)
+        and whether the scenario overrides each ``max invest``."""
+        mw, mw_ov = _scenario_override(overrides, ids, "max_invest_mw",
+                                       base_of("max_invest_mw"))
+        mwh, mwh_ov = _scenario_override(overrides, ids, "max_invest_mwh",
+                                         base_of("max_invest_mwh"))
+        max_mw, max_mwh = _storage_max_invest(mw, mwh, ratio)
+        return max_mw, max_mwh, mw_ov, mwh_ov
+
+    def write_invest_limit(class_name: str, targets: tuple[str, ...],
+                           limit: float) -> None:
+        for target in targets:
+            _add_param(db, class_name, (target,), "invest_max_total", limit,
+                       alt_name, counters)
+            if limit > 0:
+                _add_param(db, class_name, (target,), "invest_method",
+                           "invest_total", alt_name, counters)
+
+    def write_node_type(storage_target: str) -> None:
+        """``storage`` while the node has capacity or can invest in it, else
+        ``balance`` (no state variable).  Written once per scenario, by the
+        last of its storage / invested storage / max invest (MWh) overrides."""
+        last = None
+        for other in overrides:
+            if (other.section == "units"
+                    and all(other.entity_ids.get(k) == v for k, v in ids.items())
+                    and _units_override_kind(other.param_name.lower())
+                    in ("storage_mwh", "invested_mwh", "max_invest_mwh")):
+                last = other
+        if last is not ov:
+            return
+        storage, _ = _scenario_override(overrides, ids, "storage_mwh",
+                                        base_of("storage_mwh"))
+        invested, _ = _scenario_override(overrides, ids, "invested_mwh",
+                                         base_of("invested_storage_mwh"))
+        _, max_mwh, _, _ = max_invest()
+        has_storage = (_ft2_capacity(storage, invested) or 0.0) > 0 or max_mwh > 0
+        _add_param(db, "node", (storage_target,), "node_type",
+                   "storage" if has_storage else "balance", alt_name, counters)
+
     if "capacity (mw)" == param_lower or param_lower == "capacity" or (
         "invested capacity" in param_lower
     ):
@@ -3168,11 +3366,13 @@ def _apply_units_override(
                 _add_param(db, "unit", (target,), "existing", existing, alt_name, counters)
     elif "max invest (mw)" in param_lower and "mwh" not in param_lower:
         if is_storage:
-            for target in (charger, discharger):
-                _add_param(db, "unit", (target,), "invest_max_total", value, alt_name, counters)
-                if isinstance(value, (int, float)) and float(value) > 0:
-                    _add_param(db, "unit", (target,), "invest_method", "invest_total",
-                               alt_name, counters)
+            # FT2 derives the MWh limit from this one (kW/kWh ratio) when the
+            # scenario and the base give no 'max invest (MWh)'.
+            max_mw, max_mwh, _, mwh_ov = max_invest()
+            write_invest_limit("unit", (charger, discharger), max_mw)
+            if has_ratio and not mwh_ov and _entity_exists(
+                    existing_entities, "node", (storage_node,)):
+                write_invest_limit("node", (storage_node,), max_mwh)
         else:
             _add_param(db, "unit", (unit_name,), "invest_max_total", value, alt_name, counters)
             if isinstance(value, (int, float)) and float(value) > 0:
@@ -3183,20 +3383,21 @@ def _apply_units_override(
         existing = capacity_pair(
             "invested_mwh", "storage_mwh",
             None if base_unit is None else base_unit.storage_mwh)
-        if existing is not None and _entity_exists(existing_entities, "node", (storage_target,)):
-            _add_param(db, "node", (storage_target,), "existing", existing,
-                       alt_name, counters)
-            _add_param(db, "node", (storage_target,), "node_type",
-                       "storage" if existing > 0 else "balance", alt_name, counters)
+        if _entity_exists(existing_entities, "node", (storage_target,)):
+            if existing is not None:
+                _add_param(db, "node", (storage_target,), "existing", existing,
+                           alt_name, counters)
+            write_node_type(storage_target)
     elif "max invest (mwh)" in param_lower:
         storage_target = storage_node if is_storage else _get_unit_node_name(base_unit)
         if _entity_exists(existing_entities, "node", (storage_target,)):
-            _add_param(db, "node", (storage_target,), "node_type", "storage",
-                       alt_name, counters)
-            _add_param(db, "node", (storage_target,), "invest_max_total", value,
-                       alt_name, counters)
-            _add_param(db, "node", (storage_target,), "invest_method", "invest_total",
-                       alt_name, counters)
+            max_mw, max_mwh, mw_ov, _ = max_invest()
+            write_invest_limit("node", (storage_target,), max_mwh)
+            write_node_type(storage_target)
+            # FT2 derives the MW limit from this one (kW/kWh ratio) when the
+            # scenario and the base give no 'max invest (MW)'.
+            if is_storage and has_ratio and not mw_ov:
+                write_invest_limit("unit", (charger, discharger), max_mw)
     elif "storage (mwh)" in param_lower or (
         "storage" in param_lower and "invest" not in param_lower and "start" not in param_lower and "finish" not in param_lower
     ):
@@ -3207,14 +3408,7 @@ def _apply_units_override(
         if _entity_exists(existing_entities, "node", (storage_target,)):
             _add_param(db, "node", (storage_target,), "existing", existing,
                        alt_name, counters)
-            if (existing or 0.0) > 0:
-                _add_param(db, "node", (storage_target,), "node_type", "storage",
-                           alt_name, counters)
-            else:
-                # Existing capacity == 0 — downgrade from storage to a
-                # plain balance node (drops the state variable).
-                _add_param(db, "node", (storage_target,), "node_type", "balance",
-                           alt_name, counters)
+            write_node_type(storage_target)
     elif "inv.cost/kw" in param_lower or "inv cost" in param_lower:
         target = discharger if is_storage else unit_name
         _add_param(db, "unit", (target,), "invest_cost", value, alt_name, counters)
@@ -3553,6 +3747,9 @@ def write_sensitivities_to_db(
             logger.info("Created scenario '%s' with alternatives: [%s, %s]",
                         scenario_name, base_alternative, scenario_name)
 
+        counters.unmapped.extend(
+            _sensitivity_invested_capacity_items(sensitivities, data))
+
         # Commit everything
         try:
             db.commit_session("Import sensitivity overrides")
@@ -3739,6 +3936,7 @@ def import_old_flextool_xlsm(
     # Read everything before creating or writing anything: a wrong file
     # (e.g. the master workbook as the input) fails here and leaves no DB.
     data = read_old_flextool(xlsm_path)
+    _require_time_in_use(data, xlsm_path)
     sensitivities: dict[str, list[SensitivityOverride]] = {}
     if master:
         _require_master_workbook(master)
