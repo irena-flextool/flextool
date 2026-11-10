@@ -924,3 +924,48 @@ def test_reuse(evaluator) -> None:
     from flextool.assistant import _files
 
     assert evaluator.iso is _files.iso and evaluator.utc_now is _files.utc_now
+
+
+# --- run --skip / --unskip (the owner leaves a cell that never completes out) -----------------------------------
+def test_skip_then_unskip_and_resume_asks_the_cell(evaluator, grounding: Path, tmp_path: Path, no_waits) -> None:
+    """G03 stops (1 attempt in spent.json); --skip records it and asks nothing (no probe, no request); --resume
+    leaves it out; --unskip takes it back and the next --resume asks and saves it."""
+    out = tmp_path / "out"
+    harness = Scripted([[_answer()], [_error("connection")] * 4])
+    said: list[str] = []
+
+    def go(*extra: str) -> int:
+        args = evaluator.build_parser().parse_args(
+            ["run", "--project", str(grounding), "--provider", "openrouter", "--model", PAID, "--out", str(out),
+             "--questions", "G01,G03", "--levels", "basic", *extra])
+        return evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
+                                 say=said.append, allow_unsolved=True)
+
+    assert go("--accept-data-notice") == 1
+    probes, sent = harness.probes, harness.requests
+    assert go("--resume", "--skip", "G03__small__r1", "--skip-reason", "the endpoint breaks off") == 0
+    assert (harness.probes, harness.requests) == (probes, sent)
+    run_json = json.loads((out / evaluator.RUN_FILE).read_text(encoding="utf-8"))
+    assert run_json["skipped"]["G03__small__r1"]["attempts"] == 1
+    assert go("--resume", "--accept-data-notice") == 0                     # resume is not refused
+    assert harness.requests == sent and "G03__small__r1" not in evaluator.read_cells(out)
+    assert said[-1] == f"All cells of {PAID} are in {out} (1 skipped by the owner)."
+    assert go("--resume", "--unskip", "G03__small__r1") == 0
+    run_json = json.loads((out / evaluator.RUN_FILE).read_text(encoding="utf-8"))
+    assert run_json["skipped"] == {} and [e["cell"] for e in run_json["unskipped"]] == ["G03__small__r1"]
+    assert go("--resume", "--accept-data-notice") == 0
+    assert harness.requests == sent + 1
+    assert evaluator.read_cells(out)["G03__small__r1"]["turns"][0]["stop"] == "end"
+
+
+def test_skip_of_an_unknown_cell_is_refused(evaluator, grounding: Path, tmp_path: Path, capsys) -> None:
+    """A cell id the folder cannot have is refused with the closest ids; nothing is written."""
+    out = tmp_path / "out"
+    harness = Harness()
+    assert run(evaluator, grounding, out, "--questions", "G01,G03", "--levels", "basic", harness=harness,
+               model=PAID) == 0
+    before = (out / evaluator.RUN_FILE).read_bytes()
+    assert run(evaluator, grounding, out, "--resume", "--skip", "G03__smal__r1", "--skip-reason", "x",
+               harness=harness, model=PAID) == 2
+    assert "No cell G03__smal__r1 in out (closest: G03__small__r1" in capsys.readouterr().err
+    assert (out / evaluator.RUN_FILE).read_bytes() == before

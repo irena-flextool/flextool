@@ -100,6 +100,25 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
   questions, levels and repeats every run of the folder planned (its `matrix`), before any cell is asked. It refuses to continue a folder made with another model,
   provider, address, free-plan setting, Ollama contexts, CPU-offload setting, data-collection setting or project. Other levels,
   questions or repeats are fine.
+- **Skipping a cell that never completes.** Each request of a cell can fail, and a failure discards the whole
+  cell, so a cell of many requests (the eight turns of S01) on a flaky endpoint may never finish. The owner can
+  leave it out:
+
+  ```
+  python tools/assistant_eval.py run --resume --project DIR/"Grounding project ä" --provider PRESET \
+      --model MODEL --out RESULTS --skip S01__small__r1 --skip-reason "the endpoint breaks off"
+  ```
+
+  with the other options of the folder's first run (its identity is checked as for `--resume`). `--skip` can be
+  given more than once. Nothing is asked and no notice or key is needed: `run.json` records each cell as "not
+  applicable (skipped by owner)" (its `skipped` entry) with the reason, the time and the attempts and requests
+  `spent.json` and a saved record show (null when nothing tells). The skip is part of the folder's record, not of
+  its identity, so a later `--resume` is not refused; it leaves the cell out. A cell id the folder cannot have is
+  refused, with the closest ids named; a finished or not-applicable cell cannot be skipped. `--unskip CELL` takes
+  a skip back (the entry moves to `unskipped`) and the next `--resume` asks the cell again. `grade-ai`, `review`
+  and `summary` accept a folder whose only gaps are skipped cells: a skipped cell is in no rate and no agreement
+  figure. `summary` prints it apart ("skipped: 1", with the cell and the reason), `summary --record` appends it as
+  outcome `skipped` (with `skip_reason` and `skip_attempts`) and `calibrate` lists it apart in the same way.
 - **Usage.** The requests are counted in the usage ledger under the provider's name with "(calibration)" added,
   apart from chat use.
 
@@ -188,8 +207,8 @@ The key comes from the keyring or `ANTHROPIC_API_KEY`; `--accept-data-notice` ac
 this run only. The requests are counted in the usage ledger as "Anthropic (calibration)". Give it the results
 folders of every model; one folder alone is refused unless `--single-model`. The folder set is fixed by the first
 `grade-ai`. It refuses results folders that miss a planned cell (one of the `run.json` matrix; for a folder from
-before the matrix, any question, level or repeat another graded folder has) or have cells that are not finished.
-The refusal names the cells and each folder's `run --resume` command. A cell that came back later would change
+before the matrix, any question, level or repeat another graded folder has) or have cells that are not finished
+(a cell the owner skipped with `run --skip` is no gap). The refusal names the cells and each folder's `run --resume` command. A cell that came back later would change
 the grading's cells, so `grade-ai`, `review` and `summary` refuse until every folder is complete.
 
 Run the same command again to continue: a cell that was graded from the same material is skipped. If a cell's

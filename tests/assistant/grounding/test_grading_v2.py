@@ -1065,3 +1065,82 @@ def test_grader_requests_are_not_cached(scoring, evaluator, tmp_path: Path) -> N
     opus = Opus()
     assert grade_ai(evaluator, tmp_path / "grading", key, alpha, beta, opus=opus) == 0
     assert [r.cache for r in opus.requests] == [False, False, False]
+
+
+# --- run --skip: a cell the owner leaves out ---------------------------------------------------------------------
+def _with_skipped_s01(scoring, evaluator, tmp_path: Path) -> tuple[Path, Path]:
+    """A folder whose matrix plans G01, G03 and the automatic-level S01 at small: G01 and G03 saved, S01 never
+    finished (two stops in spent.json: 3 + 2 requests), then skipped by the owner through ``mark_skipped``."""
+    plan = {"questions": ["G01", "G03", "S01"], "levels": ["small"], "repeat": 1, "automatic_at": {"small": True}}
+    folder = results(evaluator, tmp_path / "res", {"G01__small__r1": make_record(scoring, "G01"),
+                                                   "G03__small__r1": make_record(scoring, "G03")}, matrix=plan)
+    evaluator.write_json(folder / evaluator.SPENT_FILE, [
+        {"ran_at": "2026-11-09T10:00:00Z", "requests": 3, "cell": "S01__small__r1", "code": "busy"},
+        {"ran_at": "2026-11-10T09:00:00Z", "requests": 2, "cell": "S01__small__r1", "code": "connection"}])
+    return folder, write_key(tmp_path / "key.yaml")
+
+
+def _skip(evaluator, folder: Path, *cells: str, reason: str = "the endpoint breaks off", unskip=()) -> list[str]:
+    run = json.loads((folder / evaluator.RUN_FILE).read_text(encoding="utf-8"))
+    identity = {k: run.get(k, evaluator.IDENTITY_DEFAULTS.get(k)) for k in evaluator.IDENTITY_KEYS}
+    evaluator.write_json(folder / evaluator.RUN_FILE, {**identity, **run})        # a run.json as run writes it
+    said: list[str] = []
+    evaluator.mark_skipped(folder, identity, list(cells), list(unskip), reason if cells else None, said.append)
+    return said
+
+
+def test_skip_lets_grade_ai_accept_the_folder(scoring, evaluator, tmp_path: Path, capsys) -> None:
+    """Before the skip grade-ai refuses (S01 missing); the skip is recorded in run.json (2 attempts, 5 requests,
+    from spent.json) and grade-ai grades the 2 other cells only: 2 requests, no S01 material."""
+    folder, key = _with_skipped_s01(scoring, evaluator, tmp_path)
+    grading = tmp_path / "grading"
+    opus = Opus()
+    assert grade_ai(evaluator, grading, key, folder, opus=opus, extra=("--single-model",)) == 2
+    assert "res: S01__small__r1 (missing)" in capsys.readouterr().err
+    _skip(evaluator, folder, "S01__small__r1")
+    entry = json.loads((folder / evaluator.RUN_FILE).read_text(encoding="utf-8"))["skipped"]["S01__small__r1"]
+    assert {k: entry[k] for k in ("status", "reason", "attempts", "requests")} == {
+        "status": "not applicable (skipped by owner)", "reason": "the endpoint breaks off", "attempts": 2,
+        "requests": 5}
+    assert entry["skipped_at"]
+    assert grade_ai(evaluator, grading, key, folder, opus=opus, extra=("--single-model",)) == 0
+    assert len(opus.requests) == 2
+    assert not any("Which node does coal_plant feed" in r.messages[0].text for r in opus.requests)
+
+
+def test_summary_and_calibrate_leave_a_skipped_cell_out(scoring, evaluator, analysis, tmp_path: Path) -> None:
+    """summary: the small lookup row counts n 2 (G01, G03; S01 left out) and a line "skipped: 1"; --record appends
+    S01 as outcome skipped; calibrate: answered 2/2 for small lookup and "skipped: 1"."""
+    folder, key = _with_skipped_s01(scoring, evaluator, tmp_path)
+    _skip(evaluator, folder, "S01__small__r1")
+    grading = tmp_path / "grading"
+    assert grade_ai(evaluator, grading, key, folder, opus=Opus(), extra=("--single-model",)) == 0
+    out = tmp_path / "results.jsonl"
+    said: list[str] = []
+    assert summary(evaluator, grading, key, out, said=said) == 0
+    (row,) = [x for x in said if x.startswith("  small   lookup")]
+    assert row.split()[2:4] == ["n", "2"]
+    assert "  skipped: 1 (by the owner, in no rate: S01__small__r1: the endpoint breaks off)" in said
+    # the review (as in test_summary_line_fields: both cells queued, the owner agrees with Opus)
+    plan = {"G01": ["r", "r", "1"], "G03": ["r", "r", "1"]}
+    current: list[str] = []
+
+    def say(text: str) -> None:
+        for qid, q in (("G01", "coal_plant have"), ("G03", "coal_chp")):
+            if q in text:
+                current[:] = [qid]
+
+    args = evaluator.build_parser().parse_args(["review", "--dir", str(grading), "--key", str(key), "--all"])
+    assert evaluator.cmd_review(args, ask=lambda _t: plan[current[0]].pop(0) if plan[current[0]] else "",
+                                say=say) == 0
+    assert summary(evaluator, grading, key, out, "--record") == 0
+    assert summary(evaluator, grading, key, out, "--record") == 0                 # the second appends nothing
+    lines = {x["question"]: x for x in map(json.loads, out.read_text(encoding="utf-8").splitlines())}
+    assert sorted(lines) == ["G01", "G03", "S01"]
+    assert (lines["S01"]["outcome"], lines["S01"]["skip_reason"], lines["S01"]["skip_attempts"]) == (
+        "skipped", "the endpoint breaks off", 2)
+    report = analysis.calibrate_report([*lines.values()])
+    (cal,) = [x for x in report.splitlines() if x.startswith("  small    lookup")]
+    assert cal.split()[2] == "2/2"
+    assert "  skipped: 1 (by the owner, in no rate: S01 at small)" in report
+    assert "small: 2 cells, 2 answered" in report

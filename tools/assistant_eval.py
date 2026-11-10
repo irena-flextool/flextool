@@ -3,6 +3,7 @@ run in CI, never collected by pytest.
 
     python tools/assistant_eval.py build --out DIR
     python tools/assistant_eval.py run --project DIR --provider ID --model M --out RESULTS [...]
+    python tools/assistant_eval.py run ... --out RESULTS --skip CELL --skip-reason TEXT  (or --unskip CELL)
     python tools/assistant_eval.py grade-ai RESULTS ... --dir GRADING [--accept-data-notice] [--changed]
     python tools/assistant_eval.py review --dir GRADING [--sitting N] [--regrade #N] [--all]
     python tools/assistant_eval.py summary --dir GRADING [--record]
@@ -419,6 +420,114 @@ def expected_cells(run: Mapping[str, Any], cells: Mapping[str, Mapping[str, Any]
     return expected, unknown
 
 
+#: run.json's record of the cells the owner skipped (``run --skip``): cell id → ``{status, reason, skipped_at,
+#: attempts, requests}``.  Part of the folder's record, not of its identity (:data:`IDENTITY_KEYS`): a later
+#: ``--resume`` is not refused, it leaves the cell out.  ``run --unskip`` moves an entry to :data:`UNSKIPPED_KEY`
+#: with its ``unskipped_at``, and the next ``--resume`` asks the cell.
+SKIPPED_KEY = "skipped"
+UNSKIPPED_KEY = "unskipped"
+SKIPPED_STATUS = "not applicable (skipped by owner)"
+
+
+def skipped_cells(run: Mapping[str, Any]) -> dict[str, dict]:
+    """The cells of a results folder the owner skipped (its run.json), cell id → entry."""
+    return dict(run.get(SKIPPED_KEY) or {})
+
+
+def parse_cell_id(cid: str) -> tuple[str, str, int]:
+    """``(question, level, repeat)`` of a cell id ``G01__small__r1``."""
+    question, level, repeat = cid.split("__")
+    return question, level, int(repeat.removeprefix("r"))
+
+
+def known_cells(run: Mapping[str, Any], cells: Mapping[str, Mapping[str, Any]]) -> set[str]:
+    """Every cell id a results folder can have: each question × level × repeat of its run.json matrix (the
+    automatic-level question at every level), or of its saved cells for a folder from before the matrix, and the
+    saved and skipped cells."""
+    matrix = run.get(MATRIX_KEY)
+    if matrix is None:
+        seen = [r["cell"] for r in cells.values()]
+        matrix = {"questions": {c["question"] for c in seen}, "levels": {c["level_setting"] for c in seen},
+                  "repeat": max((int(c.get("repeat") or 1) for c in seen), default=1)}
+    planned = {cell_id(q, lv, r) for q in matrix["questions"] for lv in matrix["levels"]
+               for r in range(1, int(matrix["repeat"]) + 1)}
+    return planned | set(cells) | set(skipped_cells(run))
+
+
+def _attempts(cid: str, spent: Sequence[Mapping[str, Any]], spent_known: bool, saved: Mapping[str, Any] | None
+              ) -> tuple[int | None, int | None]:
+    """``(attempts, requests)`` a cell took: every stop and replaced record of spent.json and the saved record;
+    ``(None, None)`` when nothing tells (no spent.json, a folder from before it, and no record)."""
+    entries = [e for e in spent if e.get("cell") == cid]
+    if not spent_known and saved is None:
+        return None, None
+    requests = sum(int(e.get("requests") or 0) for e in entries) + int((saved or {}).get("requests_sent") or 0)
+    return len(entries) + (saved is not None), requests
+
+
+def _closest(cid: str, known: Iterable[str]) -> str:
+    import difflib
+
+    close = difflib.get_close_matches(cid, sorted(known), n=3, cutoff=0.6)
+    return f" (closest: {', '.join(close)})" if close else " (a cell id is like G01__small__r1)"
+
+
+def mark_skipped(out: Path, identity: Mapping[str, Any], skip: Sequence[str], unskip: Sequence[str],
+                 reason: str | None, say: Callable[[str], None]) -> None:
+    """``run --skip`` / ``--unskip``: record in run.json that the owner leaves the cells *skip* out (with *reason*,
+    the time and the attempts spent.json and the saved records show) and that *unskip* are asked again by the next
+    ``--resume``.  Nothing is asked.  :class:`Refused` before anything is written for a folder of another model
+    or project, an unknown cell id (the closest named), a finished or not-applicable cell to skip, a cell
+    skipped already, or one to unskip that is not skipped."""
+    run_file = Path(out) / RUN_FILE
+    if not run_file.is_file():
+        raise Refused(f"No results in {out}: --skip and --unskip are for a results folder of assistant_eval run.")
+    run = read_json(run_file)
+    missing = object()
+    if any(run.get(k, IDENTITY_DEFAULTS.get(k, missing)) != identity[k] for k in IDENTITY_KEYS):
+        raise Refused(OTHER_RESULTS)
+    if skip and not (reason or "").strip():
+        raise Refused("Give the reason with --skip-reason TEXT; it is kept with the skip.")
+    if reason and not skip:
+        raise Refused("--skip-reason goes with --skip.")
+    both = sorted(set(skip) & set(unskip))
+    if both:
+        raise Refused(f"Both --skip and --unskip: {', '.join(both)}.")
+    cells = read_cells(out)
+    known = known_cells(run, cells)
+    unknown = [cid for cid in [*skip, *unskip] if cid not in known]
+    if unknown:
+        raise Refused("\n".join(f"No cell {cid} in {Path(out).name}{_closest(cid, known)}." for cid in unknown))
+    skipped = skipped_cells(run)
+    problems = []
+    for cid in skip:
+        saved = cells.get(cid)
+        if cid in skipped:
+            problems.append(f"{cid} is skipped already ({skipped[cid].get('reason')}); --unskip it first.")
+        elif saved is not None and saved.get("not_applicable"):
+            problems.append(f"{cid} is not applicable already ({saved['not_applicable']}).")
+        elif saved is not None and finished(saved):
+            problems.append(f"{cid} is finished: a finished cell is graded, not skipped.")
+    problems += [f"{cid} is not skipped." for cid in unskip if cid not in skipped]
+    if problems:
+        raise Refused("\n".join(problems))
+    spent_known = (Path(out) / SPENT_FILE).is_file()
+    spent = read_spent(out)
+    now = iso(utc_now())
+    for cid in dict.fromkeys(skip):
+        attempts, requests = _attempts(cid, spent, spent_known, cells.get(cid))
+        skipped[cid] = {"status": SKIPPED_STATUS, "reason": reason.strip(), "skipped_at": now, "attempts": attempts,
+                        "requests": requests}
+        say(f"{cid}: {SKIPPED_STATUS}: {reason.strip()} (attempts: "
+            f"{'not known' if attempts is None else attempts}).")
+    for cid in dict.fromkeys(unskip):
+        run[UNSKIPPED_KEY] = [*(run.get(UNSKIPPED_KEY) or []), {"cell": cid, **skipped.pop(cid), "unskipped_at": now}]
+        say(f"{cid}: no longer skipped; run --resume asks it.")
+    run[SKIPPED_KEY] = skipped
+    write_json(run_file, run)
+    say("Nothing was asked.")
+
+
 # --- run ------------------------------------------------------------------------------------------------------
 Prober = Callable[..., Any]
 BackendFactory = Callable[..., Any]
@@ -724,17 +833,20 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     except net.BaseUrlRefused as exc:
         raise Refused(str(exc)) from None
     out = Path(args.out)
+    free = budget.free_tier_on(preset.id, args.model, FREE_TIER_FLAG[args.free_tier])
+    identity = {"provider": preset.id, "model": args.model, "base_url": base_url, "free_tier": free,
+                "ollama_context": contexts, "knobs_relaxed": bool(args.relax_data_collection),
+                "project_fingerprint": marker["fingerprint"], "set_version": qset.set_version,
+                "cpu_offload_allowed": bool(args.allow_cpu_offload)}
+    if args.skip or args.unskip or args.skip_reason:
+        mark_skipped(out, identity, args.skip or [], args.unskip or [], args.skip_reason, say)   # sends nothing
+        return 0
     # The notice before run.json is written, so a refused first run can simply be run again with the flag.
     accepted: set = set()
     route = endpoint.route_for(preset, base_url, model=args.model)
     what = "the synthetic grounding project"
     accept_route(preset, base_url, route, accepted, accept=args.accept_data_notice,
                  again="--resume --accept-data-notice" if args.resume else "--accept-data-notice", what=what)
-    free = budget.free_tier_on(preset.id, args.model, FREE_TIER_FLAG[args.free_tier])
-    identity = {"provider": preset.id, "model": args.model, "base_url": base_url, "free_tier": free,
-                "ollama_context": contexts, "knobs_relaxed": bool(args.relax_data_collection),
-                "project_fingerprint": marker["fingerprint"], "set_version": qset.set_version,
-                "cpu_offload_allowed": bool(args.allow_cpu_offload)}
     _open_results(out, identity, args.resume)
     _plan_matrix(out, wanted, levels, args.repeat)
 
@@ -752,6 +864,7 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     git = git_state()
     cells = read_cells(out)
     spent = read_spent(out)
+    skipped = skipped_cells(read_json(out / RUN_FILE))
     failed = sorted(cid for cid, record in cells.items() if misclassified(record))
     if failed:
         say(f"{len(failed)} saved cell(s) are a provider failure saved as cut off (the answer broke off before "
@@ -784,6 +897,9 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 continue
             for repeat in range(1, args.repeat + 1):
                 cid = cell_id(qid, level, repeat)
+                if cid in skipped:
+                    say(f"{cid}: {SKIPPED_STATUS} ({skipped[cid].get('reason')}); run --unskip {cid} to ask it")
+                    continue
                 saved = cells.get(cid)
                 if saved is not None and (finished(saved) or (saved.get("not_applicable")
                                                               and setting.not_applicable)):
@@ -831,7 +947,8 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 if budget_used():
                     say(done)
                     return 0
-    say(f"All cells of {args.model} are in {out}.")
+    say(f"All cells of {args.model} are in {out}"
+        + (f" ({len(skipped)} skipped by the owner)." if skipped else "."))
     return 0
 
 
@@ -970,6 +1087,17 @@ def request_hash(material: str, key: scoring.AnswerKey) -> str:
 
 
 @dataclasses.dataclass
+class SkippedCell:
+    """A cell the owner skipped: its results folder and run.json, its id, its run.json entry and its question."""
+
+    folder: Path
+    run: dict
+    cid: str
+    entry: dict
+    question: scoring.Question
+
+
+@dataclasses.dataclass
 class Grading:
     folder: Path
     state: dict
@@ -980,6 +1108,8 @@ class Grading:
     stamps: set[str]
     key: scoring.AnswerKey
     old_grades: int
+    #: The cells the owner skipped (``run --skip``): left out of every rate and agreement figure.
+    skipped: list[SkippedCell] = dataclasses.field(default_factory=list)
 
 
 def load_grading(args: argparse.Namespace, *, create: bool) -> Grading:
@@ -998,13 +1128,17 @@ def load_grading(args: argparse.Namespace, *, create: bool) -> Grading:
     wanted = sorted(str(Path(p).resolve()) for p in results)
     if state is not None and args.results and wanted != sorted(state["results"]):
         raise Refused(OTHER_FOLDERS)
-    loaded = _load_results([Path(p) for p in wanted])
+    raw = _load_results([Path(p) for p in wanted])
+    # A cell the owner skipped is no gap and no cell of the grading (a record it has, unfinished, is not read).
+    loaded = [(f, run, {cid: r for cid, r in cells.items() if cid not in skipped_cells(run)}) for f, run, cells in raw]
     records = {_cell_key(f, cid): r for f, _run, cells in loaded for cid, r in cells.items()}
     runs = {_cell_key(f, "")[0]: run for f, run, _cells in loaded}
     if not records:
         raise Refused(f"No cells in {', '.join(wanted)}.")
     qset = scoring.load_set(Path(args.set))
     _refuse_incomplete(loaded, qset)
+    skipped = [SkippedCell(Path(f), run, cid, dict(entry), qset.questions[parse_cell_id(cid)[0]])
+               for f, run, _cells in loaded for cid, entry in sorted(skipped_cells(run).items())]
     key = _key_for(args, records.values())
     applicable = sorted(k for k, r in records.items() if not r.get("not_applicable"))
     if state is None:
@@ -1046,7 +1180,8 @@ def load_grading(args: argparse.Namespace, *, create: bool) -> Grading:
                                  read_json(path) if path.is_file() else None))
     not_applicable = [(Path(f), runs[f], r, cid) for (f, cid), r in sorted(records.items()) if r.get("not_applicable")]
     old = sum(1 for r in records.values() if r.get("outcome") is not None or r.get("checks"))
-    return Grading(folder, state, cells, not_applicable, names, scan_names, _stamps(records.values()), key, old)
+    return Grading(folder, state, cells, not_applicable, names, scan_names, _stamps(records.values()), key, old,
+                   skipped)
 
 
 def _refuse_incomplete(loaded: Sequence[tuple[Path, dict, dict[str, dict]]], qset: scoring.QuestionSet) -> None:
@@ -1061,8 +1196,11 @@ def _refuse_incomplete(loaded: Sequence[tuple[Path, dict, dict[str, dict]]], qse
     total = 0
     for folder, run, cells in loaded:
         expected, unknown = expected_cells(run, cells, qset, fallback)
-        missing = sorted(expected - set(cells))
-        unfinished = sorted(cid for cid, r in cells.items() if not r.get("not_applicable") and not finished(r))
+        skipped = skipped_cells(run)                  # the owner's skips are no gap
+        unknown = [u for u in unknown if u.split(" ", 1)[0] not in skipped]
+        missing = sorted(expected - set(cells) - set(skipped))
+        unfinished = sorted(cid for cid, r in cells.items()
+                            if cid not in skipped and not r.get("not_applicable") and not finished(r))
         named = [f"{cid} (missing)" for cid in missing] + unknown + [f"{cid} (not finished)" for cid in unfinished]
         if not named:
             continue
@@ -1627,6 +1765,19 @@ def summary_line(record: Mapping[str, Any], run: Mapping[str, Any], *, key_versi
     }
 
 
+def skipped_line(cell: SkippedCell, *, key_version: int | None) -> dict[str, Any]:
+    """The ``results.jsonl`` line of a cell the owner skipped: outcome ``skipped`` with the reason and attempts,
+    left out of every rate (``calibrate`` lists it apart)."""
+    question, level, repeat = parse_cell_id(cell.cid)
+    record = {"cell": {"model": cell.run.get("model"), "level_setting": level, "question": question,
+                       "class": cell.question.cls, "repeat": repeat},
+              "model": {"preset": cell.run.get("provider"), "free_tier": cell.run.get("free_tier")},
+              "set_version": cell.run.get("set_version"), "ran_at": cell.entry.get("skipped_at"), "turns": []}
+    line = summary_line(record, cell.run, key_version=key_version)
+    line.update(outcome="skipped", skip_reason=cell.entry.get("reason"), skip_attempts=cell.entry.get("attempts"))
+    return line
+
+
 def _load_results(folders: Sequence[Path]) -> list[tuple[Path, dict, dict[str, dict]]]:
     loaded = []
     prints = set()
@@ -1726,6 +1877,10 @@ def _summary(args: argparse.Namespace, say: Callable[[str], None]) -> int:
         na = sum(1 for f, _r, _rec, _c in grading.not_applicable if str(f) == folder)
         if na:
             say(f"  not applicable (context): {na}")
+        skips = [s for s in grading.skipped if str(s.folder) == folder]
+        if skips:
+            say(f"  skipped: {len(skips)} (by the owner, in no rate: "
+                + "; ".join(f"{s.cid}: {s.entry.get('reason')}" for s in skips) + ")")
     if review is None:
         say(f"Opus has graded {graded} of {len(grading.cells)} cells; run grade-ai first.")
     else:
@@ -1754,12 +1909,19 @@ def _summary(args: argparse.Namespace, say: Callable[[str], None]) -> int:
     done_na = {tuple(x) for x in grading.state.get("recorded_not_applicable") or []}
     na_lines = [((str(f), cid), summary_line(r, run, key_version=grading.key.key_version))
                 for f, run, r, cid in grading.not_applicable if (str(f), cid) not in done_na]
-    total = append_lines(Path(args.results_file), [line for _c, _t, line in lines] + [x for _k, x in na_lines])
+    done_skip = {tuple(x) for x in grading.state.get("recorded_skipped") or []}
+    skip_lines = [((str(s.folder), s.cid), skipped_line(s, key_version=grading.key.key_version))
+                  for s in grading.skipped if (str(s.folder), s.cid) not in done_skip]
+    total = append_lines(Path(args.results_file), [line for _c, _t, line in lines] + [x for _k, x in na_lines]
+                         + [x for _k, x in skip_lines])
     for c, tag, _line in lines:
         c.state.setdefault("recorded", []).append(tag)
         write_json(c.path, c.state)
     if na_lines:
         grading.state["recorded_not_applicable"] = sorted([*map(list, done_na), *(list(k) for k, _x in na_lines)])
+    if skip_lines:
+        grading.state["recorded_skipped"] = sorted([*map(list, done_skip), *(list(k) for k, _x in skip_lines)])
+    if na_lines or skip_lines:
         write_json(grading.folder / GRADING_FILE, grading.state)
     say(f"{total} line(s) appended to {args.results_file}.")
     return 0
@@ -1809,6 +1971,12 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--accept-data-notice", action="store_true",
                    help="accept the provider's data notice for this run only (only for a grounding project)")
     p.add_argument("--resume", action="store_true", help="continue a results folder")
+    p.add_argument("--skip", action="append", metavar="CELL",
+                   help="record the cell (e.g. S01__small__r1) as not applicable, skipped by the owner, with "
+                        "--skip-reason; nothing is asked (repeat for more cells)")
+    p.add_argument("--skip-reason", metavar="TEXT", help="why the --skip cells are left out (kept with them)")
+    p.add_argument("--unskip", action="append", metavar="CELL",
+                   help="take a skipped cell back: the next --resume asks it (nothing is asked now)")
     p.add_argument("--out", required=True, type=_abs_path, help=f"the results folder (e.g. {DEFAULT_OUT}/<model>)")
     p.add_argument("--set", default=str(scoring.SET_PATH), help=argparse.SUPPRESS)
 

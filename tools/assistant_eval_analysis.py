@@ -6,7 +6,8 @@ command line.
 grade) and prints, per model, a setting × class table of ``answered_rate`` (answered / applicable),
 ``incomplete_rate`` (incomplete / applicable: nothing false said, something left out; never safe) and
 ``safe_rate`` (answered or escalated with no invented number), each with n and a Wilson 95 % interval, the windows
-of each setting and the cells left out as not applicable; per model the cells incomplete on a critical item, the
+of each setting and the cells left out as not applicable or skipped by the owner (``run --skip``: in no rate,
+listed apart); per model the cells incomplete on a critical item, the
 cells without an answer and the share the owner graded; per setting the calls, rounds and output tokens of
 answered cells (median, 90th percentile by nearest rank), cap hits, length stops, fit compactions, truncations, the
 prompt ratios and the understandability ratings; the free-plan cells in a block of their own, not used for the
@@ -163,18 +164,23 @@ def read_lines(path: Path) -> list[dict]:
 def authoritative(lines: Iterable[Mapping[str, Any]]) -> list[dict]:
     """The authoritative lines, the latest per cell (a re-grade replaces the first pass).  A cell is the model with
     its free-plan setting, the versions, the level setting, the question and the repeat; a ``not_applicable``
-    line of a cell is dropped once a later line of that cell exists (it ran after all, under any key version)."""
+    or ``skipped`` line of a cell is dropped once a later line of that cell exists (it ran after all, under any
+    key version)."""
     latest: dict[tuple, dict] = {}
     for line in lines:
         if not line.get("authoritative"):
             continue
         base = (line.get("provider"), line.get("model"), bool(line.get("free_tier")), line.get("set_version"),
                 line.get("level_setting"), line.get("question"), line.get("repeat", 1))
-        if line.get("outcome") != "not_applicable":
-            for cell in [c for c, x in latest.items() if c[:-1] == base and x.get("outcome") == "not_applicable"]:
+        if line.get("outcome") not in LEFT_OUT:
+            for cell in [c for c, x in latest.items() if c[:-1] == base and x.get("outcome") in LEFT_OUT]:
                 del latest[cell]
         latest[(*base, line.get("key_version"))] = dict(line)
     return list(latest.values())
+
+
+#: The outcomes of the cells left out of every rate: not run for their context, skipped by the owner.
+LEFT_OUT = frozenset({"not_applicable", "skipped"})
 
 
 @dataclass
@@ -204,6 +210,7 @@ class ModelEvidence:
     invented: dict[tuple[str, str], int] = field(default_factory=dict)
     windows: dict[str, list[int]] = field(default_factory=dict)
     not_applicable: list[str] = field(default_factory=list)
+    skipped: list[str] = field(default_factory=list)
     #: Cells incomplete on a critical item, cells without a final answer, cells the owner graded.
     critical_incomplete: int = 0
     no_answer: int = 0
@@ -223,6 +230,9 @@ def evidence(lines: Sequence[Mapping[str, Any]]) -> dict[tuple[str, str, bool], 
         cell = (line["level_setting"], line["class"])
         if line.get("outcome") == "not_applicable":
             ev.not_applicable.append(f"{line['question']} at {line['level_setting']}")
+            continue
+        if line.get("outcome") == "skipped":
+            ev.skipped.append(f"{line['question']} at {line['level_setting']}")
             continue
         if line.get("window") is not None and line["window"] not in ev.windows.setdefault(line["level_setting"], []):
             ev.windows[line["level_setting"]].append(line["window"])
@@ -255,7 +265,7 @@ def _pct(rate: Rate) -> str:
 def setting_stats(lines: Sequence[Mapping[str, Any]], level: str) -> dict[str, Any]:
     """The answered cells' calls, rounds and output tokens (median, 90th percentile) and the health counts of
     one level setting."""
-    rows = [x for x in lines if x["level_setting"] == level and x.get("outcome") != "not_applicable"]
+    rows = [x for x in lines if x["level_setting"] == level and x.get("outcome") not in LEFT_OUT]
     answered = [x for x in rows if x["outcome"] == "answered"]
 
     def spread(name: str) -> tuple[float | None, float | None]:
@@ -362,6 +372,8 @@ def calibrate_report(lines: Sequence[Mapping[str, Any]]) -> str:
                        f"{GRADER_MODEL})")
             if m.not_applicable:
                 out.append("  not applicable (context): " + ", ".join(m.not_applicable))
+            if m.skipped:
+                out.append(f"  skipped: {len(m.skipped)} (by the owner, in no rate: " + ", ".join(m.skipped) + ")")
             level = evidence_level(m)
             note = "" if level == m.automatic_level else \
                 (f" — differs from its automatic level {m.automatic_level}: propose a seed change for its name "
