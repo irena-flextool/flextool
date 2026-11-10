@@ -73,7 +73,8 @@ def create_project(name: str) -> Path:
 def list_projects() -> list[str]:
     """Return a sorted list of project directory names.
 
-    Returns an empty list if the projects directory does not exist.
+    Returns an empty list if the projects directory does not exist.  Folders whose name starts with ``.`` are
+    not projects: a project import unpacks into ``.<name>.partial`` and a stopped import can leave one behind.
     """
     projects_dir = get_projects_dir()
     if not projects_dir.exists():
@@ -81,7 +82,7 @@ def list_projects() -> list[str]:
     return sorted(
         entry.name
         for entry in projects_dir.iterdir()
-        if entry.is_dir()
+        if entry.is_dir() and not entry.name.startswith(".")
     )
 
 

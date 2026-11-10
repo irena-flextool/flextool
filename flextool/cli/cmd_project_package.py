@@ -1,8 +1,8 @@
 """``flextool-project``: export a FlexTool project to one zip file, import one, or check one.
 
-``flextool-project export <project> [-o FILE] [--results none|all|RUN,RUN] [--no-external]`` writes the inputs,
-the portable settings, the plot settings, the workspace's solver option files and the chosen result runs, with a
-manifest of versions and checksums.  ``flextool-project import FILE [--name NAME]`` unpacks it into ``projects/``
+``flextool-project export <project> [-o FILE] [--results none|all|RUN,RUN] [--no-external] [--keep-run-records]
+[--force]`` writes the inputs, the portable settings, the plot settings, the workspace's solver option files and
+the chosen result runs, with a manifest of versions and checksums.  ``flextool-project import FILE [--name NAME]`` unpacks it into ``projects/``
 (exit code 3 when the name is taken).  ``flextool-project verify FILE`` checks the checksums and versions without
 unpacking anything.
 """
@@ -35,6 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
                              "folders (e.g. base_1,coal_1)")
     export.add_argument("--no-external", action="store_true",
                         help="Do not copy the external input files into the package")
+    export.add_argument("--keep-run-records", action="store_true",
+                        help="Ship each run's _run_status.json and _run.log as they are, with this computer's "
+                             "folder paths, user name and host name (default: replace them in the record and leave "
+                             "the log out)")
+    export.add_argument("--force", action="store_true", help="Replace the package file when it exists")
     export.add_argument("--solver-config-dir",
                         help="The folder of the solver .opt files (default: $FLEXTOOL_SOLVER_CONFIG_DIR, else "
                              "./solver_config)")
@@ -69,7 +74,15 @@ def _export(args: argparse.Namespace) -> int:
     if choice == "none":
         runs: list[str] = []
     elif choice == "all":
-        runs = [r.name for r in pp.list_runs(project_dir)]
+        try:
+            listed = pp.list_runs(project_dir)
+        except (pp.PackageError, OSError) as exc:
+            print(str(exc), file=sys.stderr)
+            return EXIT_PROBLEM
+        runs = [r.name for r in listed if not r.active]
+        active = [r.name for r in listed if r.active]
+        if active:
+            print(f"Left out, still being written: {', '.join(active)}")
     else:
         runs = [r.strip() for r in choice.split(",") if r.strip()]
     output = Path(args.output) if args.output else Path.cwd() / pp.default_package_name(project_dir.name)
@@ -77,7 +90,11 @@ def _export(args: argparse.Namespace) -> int:
         manifest = pp.export_project(
             project_dir, output, runs, include_external=not args.no_external,
             solver_config_dir=Path(args.solver_config_dir) if args.solver_config_dir else None,
+            overwrite=args.force, scrub_run_records=not args.keep_run_records,
         )
+    except pp.PackageExistsError as exc:
+        print(f"{exc} Use --force to replace it, or -o to write another file.", file=sys.stderr)
+        return EXIT_PROBLEM
     except pp.PackageError as exc:
         print(str(exc), file=sys.stderr)
         return EXIT_PROBLEM
@@ -93,6 +110,13 @@ def _export(args: argparse.Namespace) -> int:
     for run in manifest.stale_runs:
         print(f"Warning: the input of run {run} changed after the run; its results do not match the shipped "
               "input.")
+    for warning in manifest.export_warnings:
+        print(f"Warning: {warning}")
+    if manifest.results:
+        print("Run records: " + ("this computer's paths, user and host name replaced; run logs left out."
+                                 if manifest.run_records_scrubbed else
+                                 "shipped as they are, with this computer's paths, user and host name, and the "
+                                 "run logs."))
     return EXIT_OK
 
 
@@ -125,8 +149,9 @@ def _verify(args: argparse.Namespace) -> int:
             print("Solver options: " + ", ".join(manifest.solver_config)
                   + f" (unpacked to {pp.IMPORTED_SOLVER_CONFIG_DIR}/; copy them to the workspace's solver_config "
                     f"folder or set FLEXTOOL_SOLVER_CONFIG_DIR to use them)")
-        if manifest.flextool:
-            print(f"To run with the same FlexTool: pip install flextool=={manifest.flextool}")
+        line = pp.pip_line(manifest)
+        if line:
+            print(f"To run with the same FlexTool and solver libraries: {line}")
     for warning in report.warnings:
         print(f"Warning: {warning}")
     for problem in report.problems:
