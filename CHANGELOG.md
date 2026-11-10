@@ -23,6 +23,8 @@
   alternative builds its operating area.
 - **Fix (docs): the period potential and curtailment of VRE units** (`unit_VRE_potential_outputNode_d_ee`,
   `unit_curtailment_outputNode_d_ee`) are sums over the period's time steps, not annualised as Model outputs said.
+- **Fix: the *Curtailment amount* plot labelled the period curtailment "MWh (annualized)";** it is now
+  "MWh (period total)", and its total over the periods "MWh (sum of the period totals)".
 - **Fix (docs): the ramp-limit text in Units no longer names the internal `p_fix_online`** as something a user
   sets; it names the online status a stochastic realization fixes and a user constraint on the units online.
 - **Fix: the reported input of a unit with a profile** (`unit__node__profile` on a unit that also has an input)

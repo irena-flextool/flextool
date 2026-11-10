@@ -429,7 +429,7 @@ plots:
         value_label: dynamic
         skip_data_with_only_zeroes: true
         axis_tick_format: '1,.0f'
-        xlabel: MWh (annualized)
+        xlabel: MWh (period total)
         comparison_overrides:
           map_dimensions_for_plots: [d_see, b_gee]
           max_items_per_plot: 40
@@ -443,7 +443,7 @@ plots:
         value_label: dynamic
         skip_data_with_only_zeroes: true
         axis_tick_format: '1,.0f'
-        xlabel: MWh (horizon total)
+        xlabel: MWh (sum of the period totals)
         scenario_rule: g
         comparison_overrides:
           max_items_per_plot: 40
