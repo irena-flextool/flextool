@@ -87,6 +87,16 @@ if TYPE_CHECKING:
     from flextool.engine.input._solve_config import SolveConfig
 
 
+# The timeset blocks already warned about in this run (:meth:`TimelineConfig.validate_timeset_blocks` runs at
+# both TimelineConfig construction sites of a run). :func:`run_chain_from_db` resets it at the start of a run.
+_TIMESET_BLOCK_WARNED: set[tuple] = set()
+
+
+def reset_timeset_block_warnings() -> None:
+    """Forget the timeset block warnings printed so far: a new run prints them again."""
+    _TIMESET_BLOCK_WARNED.clear()
+
+
 # ---------------------------------------------------------------------------
 # TimelineConfig — main container
 # ---------------------------------------------------------------------------
@@ -441,6 +451,87 @@ class TimelineConfig:
                 for ts in tl_timesets:
                     self.timeset_durations[ts] = block_chunks[ts]
                     self.timesets__timeline[ts] = new_timeline_name
+
+    def validate_timeset_blocks(self, solve_config: "SolveConfig") -> None:
+        """Check the ``timeset_duration`` blocks of the timesets the model's solves use, against their timelines.
+
+        Runs on the original blocks, after :meth:`create_assumptive_parts` and before
+        :meth:`create_timeline_from_timestep_duration` (the ``new_stepduration`` aggregation). Only the timesets
+        in ``solve_config.timesets_used_by_solves`` (the solves of the model) are checked: a timeset no solve
+        uses does not stop the run. The steps are taken in the order of the timeline's list, the order
+        :func:`get_active_time` expands the blocks in.
+
+        - A block whose start is not a step of the timeline → :class:`FlexToolConfigError` (with a
+          case-insensitive suggestion). Before this check, such a block was skipped without a word.
+        - A block that runs past the end of the timeline → a warning (printed once per run, see
+          :func:`reset_timeset_block_warnings`); the expansion cuts it at the end of the timeline, as before.
+          On a representative-period timeset (one with ``representative_period_weights``) the block cannot be
+          cut (the base-period mapping needs whole blocks) → error.
+        - A used timeset with blocks whose timeline has no steps (not a timeline of the scenario) → error.
+
+        All the errors go into one :class:`FlexToolConfigError` (up to 5 shown).
+        """
+        solve_of: dict[str, str] = {}
+        for solve_name, pairs in solve_config.timesets_used_by_solves.items():
+            for _period, ts in pairs:
+                solve_of.setdefault(ts, solve_name)
+        errors: list[str] = []
+        warnings: list[tuple[tuple, str]] = []
+        for ts, solve_name in solve_of.items():
+            blocks = self.timeset_durations.get(ts)
+            if not blocks:
+                continue
+            where = f"Timeset {ts!r} (solve {solve_name!r})"
+            timeline_id = self.timesets__timeline.get(ts)
+            steps = [s for s, _d in self.timelines.get(timeline_id, [])] if timeline_id else []
+            if not steps:
+                if timeline_id:
+                    errors.append(
+                        f"{where}: its timeline {timeline_id!r} is not a timeline of the scenario (it has no "
+                        "timestep_duration). Check the name of the timeline (case sensitive) and that the "
+                        "alternative of its timestep_duration is in the scenario.")
+                else:
+                    errors.append(
+                        f"{where}: it has no timeline. Set the timeset's 'timeline' parameter.")
+                continue
+            index_of = {s: i for i, s in enumerate(steps)}
+            lower = {}
+            for s in steps:
+                lower.setdefault(str(s).lower(), s)
+            for start, count in blocks:
+                n = int(float(count))
+                idx = index_of.get(start)
+                if idx is None:
+                    hint = lower.get(str(start).lower())
+                    hint_txt = f" Did you mean {hint!r}?" if hint is not None else ""
+                    errors.append(
+                        f"{where}: the block starting {str(start)!r} does not start at a time step of timeline "
+                        f"{timeline_id!r} ({steps[0]!r} .. {steps[-1]!r}).{hint_txt} Time step names are case "
+                        "sensitive.")
+                    continue
+                left = len(steps) - idx
+                if n <= left:
+                    continue
+                if ts in self.rp_weights:
+                    errors.append(
+                        f"{where}: the block starting {start!r} has {n} time steps, but timeline "
+                        f"{timeline_id!r} has only {left} time steps from {start!r} (to {steps[-1]!r}). A "
+                        "representative-period block cannot be cut: shorten the block or start it earlier.")
+                    continue
+                warnings.append((
+                    (ts, timeline_id, start, n),
+                    f"Warning: timeset {ts!r} (solve {solve_name!r}): the block starting {start!r} has {n} time "
+                    f"steps, but timeline {timeline_id!r} has only {left} from {start!r} (to {steps[-1]!r}); "
+                    f"the last {n - left} are not used."))
+        if errors:
+            shown = errors[:5]
+            more = f" (+{len(errors) - 5} more)" if len(errors) > 5 else ""
+            raise FlexToolConfigError("timeset_duration: " + " ".join(shown) + more)
+        for key, text in warnings:
+            if key in _TIMESET_BLOCK_WARNED:
+                continue
+            _TIMESET_BLOCK_WARNED.add(key)
+            print(text, flush=True)
 
     def create_assumptive_parts(self, solve_config: "SolveConfig") -> None:
         """Fill in missing time-structure parts from assumptions when
