@@ -111,7 +111,7 @@ INERTIA_FIELDS: tuple[str, ...] = (
 )
 NON_SYNC_FIELDS: tuple[str, ...] = (
     "groupNonSync", "process_sink_nonSync", "process_group_inside_nonSync", "pdtGroup_non_synchronous_limit",
-    "pdGroup_penalty_non_synchronous", "groupNonSync_valued",
+    "pdGroup_penalty_non_synchronous",
 )
 DC_FIELDS: tuple[str, ...] = (
     "node_dc_power_flow", "connection_dc_power_flow", "node_reference_angle", "p_connection_susceptance",

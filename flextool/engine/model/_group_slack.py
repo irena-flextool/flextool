@@ -57,7 +57,7 @@ _FIELDS: tuple[str, ...] = (
     "p_inv_group_cap", "p_group_capacity_for_scaling",
     "pdGroup_capacity_margin", "pdGroup_penalty_capacity_margin",
     "pdtGroup_inertia_limit", "pdGroup_penalty_inertia",
-    "pdtGroup_non_synchronous_limit", "pdGroup_penalty_non_synchronous", "groupNonSync_valued",
+    "pdtGroup_non_synchronous_limit", "pdGroup_penalty_non_synchronous",
     "p_process_sink_inertia_constant", "p_process_source_inertia_constant",
     "p_positive_inflow", "p_negative_inflow",
     "pdtNodeInflow_per_step",
@@ -508,8 +508,9 @@ def _eq_inertia(b: _Build) -> None:
     #   ≥ inertia_limit[g,d,t]
     #   ∀ g ∈ groupInertia, (d,t) ∈ dt
     #   groupInertia = groups with has_inertia = yes;  inertia_limit[g,d,t] = the authored constant, period, time
-    #   or period + time value, 0 where not authored or authored 0 (no requirement: the row reads Σ … ≥ 0 and its
-    #   slack is in no row)
+    #   or period + time value (a time map covers every time step of the solve: a gap is an input error,
+    #   _direct.check_group_limit_time_coverage), 0 for a group without any value or an authored 0 (no requirement:
+    #   the row reads Σ … ≥ 0 and its slack is in no row)
     #   arcs_side(g) = arcs whose side node is in g and that carry an inertia constant on that side
     #   x = v_online[p,d,t] for p ∈ process_online (linear or integer), else v_flow[p,s,k,d,t]
     # Synchronous machines connected to the group's nodes supply inertia (MWs)
@@ -518,9 +519,8 @@ def _eq_inertia(b: _Build) -> None:
     # the limit.
     # Row rule (coarse steps): a group whose inertia providers are all coarse processes gets one row per coarse
     # step, inertia_constraint_coarse = the row's mean over the step (_coarse_flows.add_cstr), on one slack per
-    # step; the limit enters as its Δt-weighted step mean (a time step the limit leaves out counts as 0), and a
-    # limit that varies within a coarse step is named in the coarse-flow behaviour notice.  Otherwise per solve
-    # step.
+    # step; the limit enters as its Δt-weighted step mean, and a limit that varies within a coarse step is named
+    # in the coarse-flow behaviour notice.  Otherwise per solve step.
     lhs: dict = {"slack": b.vq_inertia * d.pdtGroup_inertia_limit}
     for side in ("source", "sink"):
         side_idx = getattr(d, f"process_{side}_inertia", None)
@@ -584,12 +584,12 @@ def _eq_non_sync(b: _Build) -> None:
     #                                       v_online[p,d,t] · section[p] · unitsize[p] · Δt[d,t]
     #                                 + Σ_{(p,s,k) ∈ back_out(g)} v_flow_back[p,s,k,d,t] · unitsize[p] · Δt[d,t]
     #                                 − Σ_{n ∈ N(g)} negative_inflow[n,d,t] )
-    #   ∀ g ∈ groupNonSync, (d,t) ∈ dt, unless g has a time or period + time map without a value at (d,t)
+    #   ∀ g ∈ groupNonSync, (d,t) ∈ dt
     #   groupNonSync = groups with has_non_synchronous = yes
     #   N(g) = nodes of g;  icap = inv_group_cap;  ns_limit = non_synchronous_limit (constant, period, time or
     #   period + time); a group without any value, and an authored 0, read as 0 (the right-hand side then
-    #   vanishes: no non-synchronous infeed without the penalised slack); a time step that a group's time map
-    #   leaves out has no limit (no row; its slack is in no row and costs, so it stays 0)
+    #   vanishes: no non-synchronous infeed without the penalised slack); a time map covers every time step of
+    #   the solve (a gap is an input error)
     #   in_ns(g)      = arcs (p,s,k), k ∈ N(g), (p,k) ∈ process_sink_nonSync, (p,g) ∉ inside
     #   back_in_ns(g) = twoway1var_arcs (p,s,k), s ∈ N(g), (p,s) ∈ process_sink_nonSync, (p,g) ∉ inside
     #   out_*(g)      = arcs (p,s,k), s ∈ N(g), (p,g) ∉ inside
@@ -692,40 +692,11 @@ def _eq_non_sync(b: _Build) -> None:
         if exo_out.height > 0:
             rhs["exo_demand"] = Param(("g", "d", "t"), exo_out)
 
-    over = _non_sync_rows(d, pgns_all)
+    # Rows on every (d, t): a time map covers every time step of the solve (a gap is an input error,
+    # _direct.check_group_limit_time_coverage).
+    over = d.groupNonSync.join(d.dt, how="cross")
     _coarse_flows.add_row_rule_cstr(b, "non_sync_constraint", over=over, sense="<=", lhs_terms=lhs, rhs_terms=rhs,
                                     partition=_row_partition(b, "non_sync", over))
-
-
-def _non_sync_rows(d, limit: "Param | None") -> pl.DataFrame:
-    """``(g, d, t)`` of the non_sync_constraint rows: every (d, t) of a flagged group, less the time steps that its
-    time or period + time map leaves out (no limit there).  A group without any value keeps every step (limit 0).
-
-        rows = { (g,d,t) ∈ groupNonSync × dt : limit[g,d,t] has a value  or  g ∉ groupNonSync_valued }
-
-    ``groupNonSync_valued`` is read from the whole input, before the solve's dt: a roll (or a coarse step, or a
-    solve whose timeline the map's labels miss) that holds none of a group's authored hours has no rows for it,
-    not the limit 0 of a group without any value.  Without the field (a reader-less load) a group counts as
-    valued when this solve has a value of it.
-    """
-    over = d.groupNonSync.join(d.dt, how="cross")
-    valued_groups = getattr(d, "groupNonSync_valued", None)
-    if valued_groups is None and (limit is None or "t" not in limit.dims):
-        return over
-    keys = ("g", "d", "t")
-    if limit is None:
-        cells = over.clear().select(*keys)
-    else:
-        cells = promote_param_to_dt(limit, d.dt).select(*keys).collect()
-    cells, over_k = align_join_dtypes(cells, over, keys)
-    valued = over_k.join(cells.unique(), on=list(keys), how="semi")
-    has_value = cells.select("g")
-    if valued_groups is not None:
-        vg, has_value = align_join_dtypes(valued_groups.select("g"), has_value, ("g",))
-        has_value = pl.concat([has_value, vg])
-    without = over_k.join(has_value.unique(), on="g", how="anti")
-    rows = pl.concat([valued, without])
-    return rows.select(*(pl.col(c).cast(over.schema[c]) for c in over.columns))
 
 
 # ---------------------------------------------------------------------------

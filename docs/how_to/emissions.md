@@ -122,8 +122,9 @@ and *wind_flow* `flowGroup` with `flowGroup__unit__node` relation wind_flow|wind
 - `inertia_limit` [MWs]: the minimum inertia, here 200. Constant, period, time or period+time.
 - `penalty_inertia` [CUR per MWs and hour]: the cost of a shortfall, default 5000.
 
-    A time map can set the requirement hour by hour. A time step that the map leaves out has no requirement. A
-    period map must give a value for every period of the solve.
+    A time map can set the requirement hour by hour. It must give a value for every time step of the solve (a
+    missing one is an error); give 0 for an hour without a requirement. A period map must give a value for every
+    period of the solve.
 
 **Which machines give inertia.** Give each synchronous machine an `inertia_constant` [MWs/MW] on the arc to the node it is connected to: on `unit__outputNode` for a generator (here *coal_plant* 5, *coal_chp* 4), on `unit__inputNode` for a synchronous motor load such as a pump (here *water_pump* 3). Wind, solar and batteries get none.
 

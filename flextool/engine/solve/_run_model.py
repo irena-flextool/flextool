@@ -80,6 +80,7 @@ from flextool.engine.solve._stochastic import StochasticSolver
 from flextool.engine.solve import _carry_routing
 from flextool.engine.solve import _realization
 from flextool.engine.input._timeline import (
+    _new_step_of_base_steps,
     get_active_time,
     make_step_jump,
     make_period_block,
@@ -403,6 +404,50 @@ def project_realized_branch_time_branch_rows(
         for (period, branch) in parent_time_branch_list
         if (period, period) in period_branch_set
     ]
+
+
+def run_time_steps(all_solves: list, active_time_lists: dict, complete_solve: dict, solve_config,
+                   timeline_config) -> "dict[str, pl.DataFrame]":
+    """The original time steps each solve of the run uses: complete solve name -> ``(d, t)`` (Utf8, timeline order).
+
+        steps[c] = ∪ { (d, b) : s ∈ all_solves, complete_solve[s] = c, e ∈ active_time_lists[s][d],
+                                 b ∈ base(e.timestep) }
+
+    every roll with its look-ahead; ``base`` is the step itself, or for a solve with ``new_stepduration`` the time
+    steps of the original timeline that the solve step combines (the timeline of the period's timeset in
+    ``timesets_used_by_solves``).  Read by the run's input checks before the first solve
+    (``check_run_inputs`` of the solver).
+    """
+    timelines = getattr(timeline_config, "timelines", None) or {}
+    original_of = getattr(timeline_config, "original_timeline", None) or {}
+    timeline_of_timeset = getattr(timeline_config, "timesets__timeline", None) or {}
+    used = getattr(solve_config, "timesets_used_by_solves", None) or {}
+    base_cache: dict[str, dict[str, list[str]]] = {}
+
+    def _base_of(timeline: "str | None") -> "dict[str, list[str]] | None":
+        original = original_of.get(timeline) if timeline is not None else None
+        if original is None or original not in timelines or timeline not in timelines:
+            return None
+        if timeline not in base_cache:
+            out: dict[str, list[str]] = {}
+            for t, new in _new_step_of_base_steps(timelines[original], timelines[timeline]):
+                out.setdefault(new, []).append(t)
+            base_cache[timeline] = out
+        return base_cache[timeline]
+
+    pairs: dict[str, dict[tuple[str, str], None]] = {}
+    for solve in all_solves:
+        cs = complete_solve.get(solve, solve)
+        timeline_of_period = {d: timeline_of_timeset.get(ts) for d, ts in used.get(cs, ())}
+        seen = pairs.setdefault(cs, {})
+        for d, entries in (active_time_lists.get(solve) or {}).items():
+            base = _base_of(timeline_of_period.get(d))
+            for e in entries:
+                for b in (base.get(e.timestep, [e.timestep]) if base is not None else (e.timestep,)):
+                    seen[(str(d), str(b))] = None
+    return {cs: pl.DataFrame({"d": [d for d, _ in p], "t": [t for _, t in p]},
+                             schema={"d": pl.Utf8, "t": pl.Utf8})
+            for cs, p in pairs.items()}
 
 
 def native_run_model(state, solver) -> int:
@@ -860,6 +905,15 @@ def native_run_model(state, solver) -> int:
     # state in each of them, owner decision Q-c15f-D).
     storage_solve_at_model_end = _carry_routing.reaches_model_end(
         all_solves, active_time_lists, period__branch_lists, siblings=_siblings, **_time_args)
+
+    # ------------------------------------------------------------------
+    # 4c. Input checks against every time step of the run, before the first solve: a rolling run stops before
+    # its first roll, not at the roll that reaches a gap (a time map of a group limit that leaves out a step).
+    # ------------------------------------------------------------------
+    _check_run_inputs = getattr(solver, "check_run_inputs", None)
+    if _check_run_inputs is not None:
+        _check_run_inputs(run_time_steps(all_solves, active_time_lists, complete_solve, state.solve,
+                                         state.timeline))
 
     # ------------------------------------------------------------------
     # 5. Per-solve loop.

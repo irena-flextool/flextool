@@ -148,8 +148,8 @@ _STRUCTURAL_FIELDS: tuple[str, ...] = (
     # Variable cost partitions.
     "pssdt_varCost_noEff", "pssdt_varCost_eff_unit_source",
     "pssdt_varCost_eff_unit_sink", "pssdt_varCost_eff_connection",
-    # Group slack (groupNonSync_valued decides which steps of a group have a non-sync row).
-    "groupCapacityMargin", "groupInertia", "groupNonSync", "groupNonSync_valued",
+    # Group slack.
+    "groupCapacityMargin", "groupInertia", "groupNonSync",
     # Capacity-margin periods: constant within one solve's rolls; a height change forces a cold rebuild.
     "period_invest",
     "group_node", "process_unit",

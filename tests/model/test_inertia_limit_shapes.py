@@ -8,7 +8,9 @@ Both limits take a constant, a period map, a time map or a period + time map.  T
 
 The criterion (CLAUDE.md, a parameter that accepts several shapes): a constant and the same value as a period,
 time or period + time map (and as a period map with Spine's silent ``x`` index) give the same LP — every row,
-column bound and objective coefficient — in a single, a rolling and a stochastic solve.
+column bound and objective coefficient — in a single, a rolling and a stochastic solve.  A time map (or the time
+level of a period + time map) must give a value for every time step of the solve: a gap stops the run before its
+first solve, naming the group, the parameter and the missing time steps.
 
 Vehicles (databases built from JSON, never a checked-in ``.sqlite``):
 - ``coal_wind_inertia`` (``tests/fixtures/tests.json``): group electricity (west) with the inertia of coal_plant
@@ -21,7 +23,8 @@ Vehicles (databases built from JSON, never a checked-in ``.sqlite``):
 - The binding-hour toy: ``tests.json`` init / west / coal (coal_plant 500 MW, the only supply) with a demand of
   600 MW, so coal_plant runs at its full 500 MW in every hour and cannot run up to buy inertia (no spare capacity:
   the over-production route through the downward slack is closed).  inertia_constant 1 → 500 MWs of inertia.
-  electricity's limit is a time map without t0010; a second group g2 (west) has a constant limit (mixed shapes).
+  electricity's limit is a time map with an authored 0 at t0010 (no requirement there); a second group g2 (west)
+  has a constant limit (mixed shapes).
 - The online toy: the same with coal_min_load (coal_plant has a linear online variable) and a demand of 300 MW,
   so the inertia comes from the units online, not from the flow.
 """
@@ -34,7 +37,8 @@ from pathlib import Path
 import polars as pl
 import pytest
 
-from flextool.engine.input._param_shapes import promote_param_to_dt
+from flextool.engine.input._param_shapes import ResolvedShape, Shape, promote_param_to_dt, require_time_coverage
+from flextool.engine.input._solve_state import FlexToolConfigError
 from tests.engine._unit_db import RunCache, b64, build, flow, utf8
 
 pytestmark = pytest.mark.solver
@@ -277,14 +281,12 @@ def test_solve_step_aggregation_takes_the_step_mean(tmp_path_factory) -> None:
 # west's inflow in tests.json (MW): its negative part is the group's real demand, the right-hand side's only term
 # in coal_wind_inertia (no flow leaves west).
 WEST_DEMAND = {"t0001": 589.0, "t0002": 537.0, "t0013": 572.0, "t0014": 564.0, "t0025": 436.0, "t0026": 446.0}
-NS_MISSING = "t0007"
 NS_ZERO = "t0008"
 
 
 def _ns_alternating() -> list:
-    """0.2 in the odd hours, 0.6 in the even hours, no value at t0007 and an authored 0 at t0008."""
-    return tmap({t: (0.0 if t == NS_ZERO else 0.2 if i % 2 == 0 else 0.6)
-                 for i, t in enumerate(T48) if t != NS_MISSING})
+    """0.2 in the odd hours, 0.6 in the even hours and an authored 0 at t0008."""
+    return tmap({t: (0.0 if t == NS_ZERO else 0.2 if i % 2 == 0 else 0.6) for i, t in enumerate(T48)})
 
 
 def _ns_expected_ub(t: str) -> float:
@@ -297,17 +299,17 @@ def _ns_expected_ub(t: str) -> float:
 def test_non_synchronous_limit_varies_by_hour(tmp_path_factory, mode) -> None:
     """Hand derivation: t0001 0.2 · 589 = 117.8 MWh, t0002 0.6 · 537 = 322.2 MWh, and in the rolls t0013 0.2 · 572 =
     114.4, t0014 0.6 · 564 = 338.4, t0025 0.2 · 436 = 87.2, t0026 0.6 · 446 = 267.6.  A limit joined to the
-    wrong hour would swap 0.2 and 0.6.  At t0007 the map has no value, so that hour has no limit: no
-    non_sync_constraint row (groups.md, non_synchronous_limit), like an inertia time map without an hour (no
-    requirement).  At t0008 the authored 0 is a limit of 0: the right-hand side 0 · demand = 0, so any wind
-    infeed there is slack."""
+    wrong hour would swap 0.2 and 0.6.  Every hour has a row.  At t0008 the authored 0 is a limit of 0: the
+    right-hand side 0 · demand = 0, so any wind infeed there is slack."""
     extra = ROLLING if mode == "rolling" else []
     steps = _run(tmp_path_factory, f"c5_ns_tmap_{mode}", TESTS_JSON, DET_CHAIN,
                  extra + _det_values(scalar(L_INERTIA), _ns_alternating()))
     checked = set()
     for step in steps.values():
         rows = _lp(step.flex_data)["rows"]
-        assert f"non_sync_constraint[electricity,p2020,{NS_MISSING}]" not in rows
+        dt = utf8(step.flex_data.dt)
+        assert {r for r in rows if r.startswith("non_sync_constraint[")} == {
+            f"non_sync_constraint[electricity,{d},{t}]" for d, t in dt.select("d", "t").iter_rows()}
         for t in WEST_DEMAND.keys() | {NS_ZERO}:
             name = f"non_sync_constraint[electricity,p2020,{t}]"
             if name not in rows:
@@ -323,23 +325,77 @@ def test_non_synchronous_limit_varies_by_hour(tmp_path_factory, mode) -> None:
         assert len([k for k in steps if "_roll_" in k]) >= 3
 
 
-def test_non_synchronous_map_outside_a_roll_has_no_limit(tmp_path_factory) -> None:
-    """(C-13 WP-A M1) A non_synchronous_limit time map 0.5 on t0001-t0012 only, in the 48 h solve rolled with a 24 h
-    horizon and a 12 h jump.  The roll that starts at t0001 has non_sync_constraint rows at exactly t0001-t0012 (its
-    hours t0013-t0024 are left out by the map: no limit).  Every later roll holds none of the authored hours: the
-    group still has a value (in the input), so those hours have no limit either, i.e. no rows, not a row with
-    limit 0 at every step (what a group without any value gets)."""
-    ns = tmap({t: 0.5 for t in T48[:12]})
-    steps = _run(tmp_path_factory, "c13_ns_partial_rolling", TESTS_JSON, DET_CHAIN,
-                 ROLLING + _det_values(scalar(L_INERTIA), ns))
-    rolls = [k for k in steps if "_roll_" in k]
-    assert len(rolls) >= 3
-    first = [k for k in rolls if "t0001" in set(utf8(steps[k].flex_data.dt).get_column("t").to_list())]
-    assert len(first) == 1
-    for name in rolls:
-        rows = {r for r in _lp(steps[name].flex_data)["rows"] if r.startswith("non_sync_constraint[")}
-        want = ({f"non_sync_constraint[electricity,p2020,{t}]" for t in T48[:12]} if name in first else set())
-        assert rows == want, (name, sorted(rows)[:5])
+# ---------------------------------------------------------------------------
+# A time map must cover every time step of the solve
+
+
+def _run_expecting_error(tmp_path_factory, monkeypatch, alt: str, values: list) -> tuple[str, int]:
+    """Run ``values`` on coal_wind_inertia; return the FlexToolConfigError's message and how many LPs were built."""
+    import flextool.engine.model.core as core
+    from flextool.engine import run_chain_from_db
+    from tests.engine._unit_db import make_db
+
+    built = []
+    real = core.build_flextool
+    monkeypatch.setattr(core, "build_flextool", lambda *a, **k: built.append(1) or real(*a, **k))
+    url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=DET_CHAIN)
+    with pytest.raises(FlexToolConfigError) as err:
+        run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_out"))
+    return str(err.value), len(built)
+
+
+def test_rolling_time_map_gap_stops_the_run_before_the_first_roll(tmp_path_factory, monkeypatch) -> None:
+    """A non_synchronous_limit time map 0.5 on t0001-t0012 only, in the 48 h solve rolled with a 24 h horizon and a
+    12 h jump.  The first roll (t0001-t0024) already misses t0013-t0024, the later rolls every hour: the run stops
+    before any LP is built, naming the group, the parameter, the first five missing hours and their count
+    (48 - 12 = 36)."""
+    msg, built = _run_expecting_error(tmp_path_factory, monkeypatch, "c13_ns_partial_rolling",
+                                      ROLLING + _det_values(scalar(L_INERTIA), tmap({t: 0.5 for t in T48[:12]})))
+    assert built == 0, msg
+    assert "group 'electricity', parameter 'non_synchronous_limit'" in msg
+    assert "36 time step(s) used by solve 'y2020_2day_dispatch': t0013, t0014, t0015, t0016, t0017 and 31 more" in msg
+
+
+@pytest.mark.parametrize("mode", ["single", "step2"])
+def test_inertia_time_map_gap_is_an_error(tmp_path_factory, monkeypatch, mode) -> None:
+    """An inertia_limit time map without t0007 and t0030: an error naming both hours (count 2).  With the solve's
+    new_stepduration = 2 h the check is on the original hours, so the same two hours are named (t0007 is inside
+    the 2 h step t0007-t0008, not one of its labels)."""
+    extra = STEP2 if mode == "step2" else []
+    lim = tmap({t: L_INERTIA for t in T48 if t not in ("t0007", "t0030")})
+    msg, built = _run_expecting_error(tmp_path_factory, monkeypatch, f"c5_gap_inertia_{mode}",
+                                      extra + _det_values(lim, scalar(L_NS)))
+    assert built == 0, msg
+    assert ("group 'electricity', parameter 'inertia_limit': the time map has no value for 2 time step(s) used by "
+            "solve 'y2020_2day_dispatch': t0007, t0030.") in msg
+
+
+def test_period_time_map_gap_is_an_error(tmp_path_factory, monkeypatch) -> None:
+    """The time level of a period + time map must cover the solve too: p2020 without t0048 is named as p2020/t0048."""
+    lim = ptmap({"p2020": {t: L_NS for t in T48[:-1]}})
+    msg, _ = _run_expecting_error(tmp_path_factory, monkeypatch, "c5_gap_ns_pt", _det_values(scalar(L_INERTIA), lim))
+    assert "parameter 'non_synchronous_limit': the time map has no value for 1 time step(s)" in msg
+    assert "p2020/t0048" in msg
+
+
+def _resolved_time_map(values: dict[str, dict[str, float]]) -> ResolvedShape:
+    rows = [(g, t, v) for g, tv in values.items() for t, v in tv.items()]
+    frame = pl.DataFrame(rows, schema={"name": pl.Utf8, "t": pl.Utf8, "value": pl.Float64}, orient="row")
+    return ResolvedShape(Shape.MAP_TIME, frame, ("name",), None, "t")
+
+
+def test_time_coverage_checks_only_the_flagged_groups_and_counts_zero_as_a_value() -> None:
+    """g1 gives every step (one of them an authored 0), g2 leaves out t3 and has a NaN at t2, g3 leaves out
+    everything but is not flagged: only g2 is named, with t2 and t3."""
+    steps = pl.DataFrame({"d": ["p"] * 3, "t": ["t1", "t2", "t3"]})
+    resolved = _resolved_time_map({"g1": {"t1": 1.0, "t2": 0.0, "t3": 1.0}, "g2": {"t1": 1.0, "t2": float("nan")},
+                                   "g3": {"t1": 1.0}})
+    require_time_coverage(resolved, steps, entity_class="group", parameter_name="inertia_limit", active={"g1"})
+    with pytest.raises(FlexToolConfigError) as err:
+        require_time_coverage(resolved, steps, entity_class="group", parameter_name="inertia_limit",
+                              active={"g1", "g2"}, solve="s_roll_2")
+    assert str(err.value).startswith("group 'g2', parameter 'inertia_limit': the time map has no value for 2 time "
+                                     "step(s) used by solve 's', roll 2: t2, t3.")
 
 
 # ---------------------------------------------------------------------------
@@ -347,14 +403,14 @@ def test_non_synchronous_map_outside_a_roll_has_no_limit(tmp_path_factory) -> No
 
 TOY_CHAIN = ["init", "west", "coal"]
 HOUR = "t0005"
-NO_LIMIT = "t0010"          # left out of electricity's time map: no requirement there
+NO_LIMIT = "t0010"          # authored 0 in electricity's time map: no requirement there
 PENALTY = 5000.0            # CUR/MWs
 G2_LIMIT = 300.0            # MWs, constant: met by coal_plant's 500 MWs in every hour
 TOY_ENTITIES = [["group", "g2", None], ["group__node", ["g2", "west"], None]]
 
 
-def _toy_values(hour: str = HOUR, *, missing: tuple[str, ...] = (NO_LIMIT,)) -> list:
-    limit = tmap({t: (800.0 if t == hour else 200.0) for t in T48 if t not in missing})
+def _toy_values(hour: str = HOUR, *, zero: tuple[str, ...] = (NO_LIMIT,)) -> list:
+    limit = tmap({t: (0.0 if t in zero else 800.0 if t == hour else 200.0) for t in T48})
     return [["node", "west", "inflow", scalar(-600.0)],
             ["group", "electricity", "has_inertia", b64("yes", "str")],
             ["group", "electricity", "inertia_limit", limit],
@@ -409,7 +465,7 @@ def test_time_map_binds_in_one_hour_only(tmp_path_factory) -> None:
     """Hand derivation (oracle in the design's critique): coal_plant gives 1 · 500 MW = 500 MWs in every hour.
     Outside t0005: 500 + vq · 200 ≥ 200 → vq = 0.  At t0005: 500 + vq · 800 ≥ 800 → vq = 300/800 = 0.375, a
     shortfall of 300 MWs, priced 300 · 5000 · Δt (1 h) · timestep_weight (1) = 1.5e6 CUR in that hour.
-    At t0010 the map has no value: no requirement, the slack is reported as 0 MWs (not blank) and costs 0.
+    At t0010 the map gives 0: no requirement, the slack is reported as 0 MWs (not blank) and costs 0.
     g2 (constant 300 MWs ≤ 500 MWs) has no shortfall."""
     steps, out = _toy_outputs(tmp_path_factory)
     step = list(steps.values())[-1]
@@ -432,9 +488,10 @@ def test_time_map_binds_in_one_hour_only(tmp_path_factory) -> None:
     assert all(abs(v) < 1e-6 for t, v in cost.items() if t != HOUR)
 
 
-def test_mixed_shapes_and_a_time_map_without_an_hour(tmp_path_factory) -> None:
+def test_mixed_shapes_and_an_authored_zero_hour(tmp_path_factory) -> None:
     """One parameter, two shapes: g2's constant reaches every (d, t), electricity's time map its own hours (800 at
-    t0005, 200 elsewhere, none at t0010).  The t0010 row of electricity is Σ inertia ≥ 0 without the slack."""
+    t0005, 200 elsewhere, an authored 0 at t0010, dropped as no requirement).  The t0010 row of electricity is
+    Σ inertia ≥ 0 without the slack."""
     steps, _ = _toy_outputs(tmp_path_factory)
     fd = list(steps.values())[-1].flex_data
     cells = _cells(fd, "pdtGroup_inertia_limit")
@@ -463,7 +520,7 @@ def test_rolling_time_map_binds_in_its_hour(tmp_path_factory) -> None:
     and 0 elsewhere, the other rolls have no shortfall.  A roll whose t axis were shifted would bind another
     hour."""
     steps = _run(tmp_path_factory, "c5_toy_roll", TESTS_JSON, TOY_CHAIN,
-                 ROLLING + _toy_values(ROLL_HOUR, missing=()), TOY_ENTITIES)
+                 ROLLING + _toy_values(ROLL_HOUR, zero=()), TOY_ENTITIES)
     rolls = [k for k in steps if "_roll_" in k]
     assert len(rolls) == 4, list(steps)
     binding = []

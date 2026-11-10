@@ -2999,6 +2999,20 @@ def _drive_cascade(
             self._prev_step_key = complete_solve_name
             return 0
 
+        def check_run_inputs(self, steps_by_solve: dict) -> None:
+            """Before the first solve: a group limit's time map covers every time step of the run's solves
+            (:func:`~flextool.engine.preprocess.params._direct.check_group_limit_time_coverage`, read through the
+            run's reader, in the cascade's axis vocabulary like the per-solve loads)."""
+            from flextool.engine.input._axis_enums import reset_global_axis_enums, set_global_axis_enums
+            from flextool.engine.preprocess.params._direct import check_group_limit_time_coverage
+
+            token = (set_global_axis_enums(_cascade_axis_enums) if _cascade_axis_enums is not None else None)
+            try:
+                check_group_limit_time_coverage(cascade_db_reader, steps_by_solve)
+            finally:
+                if token is not None:
+                    reset_global_axis_enums(token)
+
         def run(self, complete_solve_name: str) -> int:
             _phase_prof("run_enter")
             # Slice D Guard 1 (authoritative): validate the RAW authored

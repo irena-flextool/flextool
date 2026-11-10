@@ -5954,15 +5954,14 @@ def _v79_reduce_detail_methods(db) -> None:
 _V79_GROUP_LIMIT_TYPES: tuple[str, ...] = ("float", "1d_map", "2d_map")
 _V79_GROUP_LIMIT_DESCRIPTIONS: dict[tuple[str, str], str] = {
     ("group", "inertia_limit"): (
-        "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value means no "
-        "requirement. Constant, period, time or period+time. Over a coarse time step the row uses the step mean "
-        "(a time step without a value counts as 0)."),
+        "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value (or 0) means "
+        "no requirement. Constant, period, time or period+time. A time map must give a value for every time step "
+        "of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean."),
     ("group", "non_synchronous_limit"): (
         "[-] e.g. 0.8 means 80%. Largest share of non-synchronous supply in the group, measured against the real "
         "demand. Flows between the group's nodes do not count. Used only when has_non_synchronous is yes; no "
-        "value means 0. Constant, period, time or period+time. A time step that a time map leaves out has no "
-        "limit. Over a coarse time step the row uses the step mean; a map without values for some time steps of "
-        "a coarse step keeps the rows at the time steps it covers."),
+        "value means 0. Constant, period, time or period+time. A time map must give a value for every time step "
+        "of the solve (a missing time step is an error). Over a coarse time step the row uses the step mean."),
 }
 
 

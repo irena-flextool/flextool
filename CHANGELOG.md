@@ -240,10 +240,12 @@
 - **New: `inertia_limit` and `non_synchronous_limit` per time step (database version 79).** Both group limits now
   take a constant, a period map, a time map or a period+time map (before: constant or period), e.g. a
   non-synchronous share that steps up by hour or season, or an inertia requirement that is higher in some hours.
-  A time step that a time map leaves out has no inertia requirement and no non-synchronous limit (an authored 0
-  is a limit of 0). Over a coarse time step (group `new_stepduration`) the averaged row uses the step mean of the
-  limit (a `non_synchronous_limit` map that leaves out some hours of a coarse step keeps the rows of the hours it
-  covers), and the coarse-flow info line names a limit that varies within a coarse step. The hourly inertia shortfall table shows 0 instead of an
+  A time map (or the time level of a period+time map) must give a value for every time step of the solve,
+  look-ahead included: a missing time step stops the run before its first solve (also in a rolling solve) with
+  an error naming the group, the parameter and the missing time steps. An authored 0 is no inertia requirement
+  and a non-synchronous limit of 0. Over a coarse time step (group `new_stepduration`) the averaged row uses the
+  step mean of the limit (the check is on the original time steps), and the coarse-flow info line names a limit
+  that varies within a coarse step. The hourly inertia shortfall table shows 0 instead of an
   empty cell in a time step without a requirement. The Excel export puts both limits also on the time sheets.
   Databases are migrated automatically; constant and period values are unchanged and give the same model.
 - **New: a solve can leave out unit detail (`reduce_unit_detail_method`, database version 79).** Set it on a

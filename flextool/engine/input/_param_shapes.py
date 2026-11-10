@@ -3188,12 +3188,7 @@ class PeriodNeed:
 
     def solve_words(self) -> str:
         """``"solve 'a'"``, ``"solve 'a', roll 3"`` or ``"this solve"``."""
-        if not self.solve:
-            return "this solve"
-        base, sep, roll = self.solve.rpartition("_roll_")
-        if sep and base and roll.isdigit():
-            return f"solve '{base}', roll {roll}"
-        return f"solve '{self.solve}'"
+        return _solve_words(self.solve)
 
 
 def _period_coverage_problems(
@@ -3360,3 +3355,108 @@ def require_period_coverage_time(
             _period_coverage_problems(resolved, out, keys, period_filter, need=need_periods, active=active),
             entity_class=entity_class, parameter_name=parameter_name, need=need_periods)
     return _drop_zero_rows(out) if filter_zero else out
+
+
+# ---------------------------------------------------------------------------
+# Time coverage — a time map must give a value for every time step of the solve
+# ---------------------------------------------------------------------------
+
+#: How many missing time steps an error message names (the rest are counted).
+_TIME_COVERAGE_SHOWN = 5
+
+
+def _solve_words(solve: "str | None") -> str:
+    """``"solve 'a'"``, ``"solve 'a', roll 3"`` or ``"this solve"``."""
+    if not solve:
+        return "this solve"
+    base, sep, roll = solve.rpartition("_roll_")
+    if sep and base and roll.isdigit():
+        return f"solve '{base}', roll {roll}"
+    return f"solve '{solve}'"
+
+
+def _time_coverage_problems(
+    resolved: "ResolvedShape | None",
+    steps: "pl.DataFrame | None",
+    *,
+    active: "set[str] | None",
+) -> "list[tuple[str, list[str]]]":
+    """``[(entity, missing steps)]`` of the entities whose time map leaves out a time step of ``steps``.
+
+        need       = the (d, t) pairs of steps                                   (steps order)
+        timed      = { k : resolved has a row of k with a time step } ∩ active
+        miss[k]    = { t : (d, t) ∈ need } − { t : k's time map has a number at t }      k has a time map
+                   = { (d, t) ∈ need : k's map gives d } − { (d, t) : a number at (d, t) }  period + time map
+        ∀ k ∈ timed, miss[k] ≠ ∅
+
+    A constant and a period map have no time level and are never checked.  A period that a period + time map
+    does not give at all is left to the period check (:func:`require_period_coverage_time`, where a stochastic
+    branch period inherits its anchor's value).  An authored 0 counts as a value, a null or NaN does not.
+    ``steps`` are the original time steps (a solve with ``new_stepduration`` lists the time steps its solve
+    steps combine).  A missing pair of a period + time map is named ``period/time``.
+    """
+    if (resolved is None or resolved.frame is None or resolved.time_index_column is None
+            or steps is None or steps.height == 0):
+        return []
+    frame = resolved.frame
+    tcol, pcol = resolved.time_index_column, resolved.period_index_column
+    label = pl.concat_str([pl.col(c).cast(pl.Utf8) for c in resolved.entity_dim_columns], separator=", ")
+    num = pl.col("value").cast(pl.Float64, strict=False) if "value" in frame.columns else pl.lit(None, pl.Float64)
+    rows = (frame.filter(pl.col(tcol).is_not_null())
+            .select(label.alias("__k"),
+                    (pl.col(pcol).cast(pl.Utf8) if pcol is not None else pl.lit(None, pl.Utf8)).alias("__d"),
+                    pl.col(tcol).cast(pl.Utf8).alias("__t"),
+                    num.alias("__v")))
+    if active is not None:
+        rows = rows.filter(pl.col("__k").is_in(sorted(active)))
+    if rows.height == 0:
+        return []
+    need = (steps.select(pl.col("d").cast(pl.Utf8).alias("__d"), pl.col("t").cast(pl.Utf8).alias("__t"))
+            .unique(maintain_order=True).with_row_index("__i"))
+    given = rows.filter(pl.col("__v").is_not_null() & pl.col("__v").is_not_nan())
+    time_only = rows.filter(pl.col("__d").is_null()).select("__k").unique()
+    missing_t = (time_only.join(need.select("__i", "__t"), how="cross")
+                 .join(given.filter(pl.col("__d").is_null()).select("__k", "__t").unique(), on=["__k", "__t"],
+                       how="anti")
+                 .group_by("__k", "__t").agg(pl.col("__i").min())
+                 .select("__k", "__i", pl.col("__t").alias("__what")))
+    periods = rows.filter(pl.col("__d").is_not_null()).select("__k", "__d").unique()
+    missing_dt = (periods.join(need, on="__d", how="inner")
+                  .join(given.filter(pl.col("__d").is_not_null()).select("__k", "__d", "__t").unique(),
+                        on=["__k", "__d", "__t"], how="anti")
+                  .select("__k", "__i", pl.concat_str(["__d", "__t"], separator="/").alias("__what")))
+    missing = pl.concat([missing_t, missing_dt]).sort("__k", "__i")
+    return [(k, list(group.get_column("__what")))
+            for (k,), group in missing.group_by("__k", maintain_order=True)]
+
+
+def require_time_coverage(
+    resolved: "ResolvedShape | None",
+    steps: "pl.DataFrame | None",
+    *,
+    entity_class: str,
+    parameter_name: str,
+    active: "set[str] | None" = None,
+    solve: "str | None" = None,
+) -> None:
+    """Raise :class:`FlexToolConfigError` when a time map (or the time level of a period + time map) leaves out a
+    time step of ``steps`` (``(d, t)``, the original time steps the solve uses; :func:`_time_coverage_problems`).
+
+    The message names the class, each entity, the parameter, the first missing time steps with their count and
+    the solve (``solve``: the solve or roll name, None for "this solve").  ``active`` (entity labels) limits the
+    check to the entities whose limit is switched on; None checks every entity.  Pure: the caller works out the
+    steps, the gate and the solve name.
+    """
+    problems = _time_coverage_problems(resolved, steps, active=active)
+    if not problems:
+        return
+    where = _solve_words(solve)
+    parts = []
+    for k, missing in problems:
+        shown = ", ".join(missing[:_TIME_COVERAGE_SHOWN])
+        more = f" and {len(missing) - _TIME_COVERAGE_SHOWN} more" if len(missing) > _TIME_COVERAGE_SHOWN else ""
+        parts.append(f"{entity_class} '{k}', parameter '{parameter_name}': the time map has no value for "
+                     f"{len(missing)} time step(s) used by {where}: {shown}{more}")
+    raise FlexToolConfigError(
+        "; ".join(parts) + ". A time map (or the time level of a period+time map) must give a value for every "
+        "time step of the solve, look-ahead included (a constant applies to every time step).")

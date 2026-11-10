@@ -45,11 +45,12 @@ from flextool.engine.input._param_shapes import (
     promote_param_to_dt,
     require_period_coverage,
     require_period_coverage_time,
+    require_time_coverage,
     resolve_facet_groups,
     resolve_param_shape,
-    stochastic_time_entities,
 )
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.engine.input._solve_step_aggregation import active_base_steps, base_steps_of
 from flextool.engine.preprocess.emit._leaf_sets import _CO2_MAX_PERIOD_METHOD, _CO2_MAX_TOTAL_METHOD
 from flextool.engine.preprocess.params._existing import (
     _DIVEST_PERIOD_METHODS,
@@ -66,6 +67,8 @@ from flextool.engine.preprocess.params._projection import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from flextool.engine.input._input_source import InputSource
     from flextool.engine.input._param_shapes import ResolvedShape
 
@@ -1013,6 +1016,65 @@ def pdGroup_penalty_capacity_margin_from_source(source: "InputSource",
     return _group_penalty_from_source(source, "penalty_capacity_margin", period_filter)
 
 
+#: The group limits whose time map must cover every time step of the solve: (parameter, the groups it applies to).
+GROUP_TIME_LIMITS: tuple[tuple[str, "Callable[[InputSource], pl.DataFrame]"], ...] = (
+    ("inertia_limit", groupInertia),
+    ("non_synchronous_limit", groupNonSync),
+)
+
+
+def _require_solve_time_coverage(source: "InputSource", resolved: "ResolvedShape | None",
+                                 period_filter: "pl.DataFrame | None", parameter_name: str,
+                                 flagged: "Callable[[InputSource], pl.DataFrame]", solve: "str | None") -> None:
+    """A group limit's time map must give a value for every time step of this solve (:func:`require_time_coverage`).
+
+        steps = { (d, t) ∈ period_filter }                             without new_stepduration
+              = { (d, b) : (d, s) ∈ period_filter, b a base step of s }  with it (the original time steps)
+
+    Only the groups ``flagged`` switches on are checked.  The run checks every solve's time steps once before its
+    first solve (:func:`check_group_limit_time_coverage`); this per-solve check covers a load outside a run.
+    """
+    if (resolved is None or resolved.frame is None or resolved.time_index_column is None
+            or period_filter is None or period_filter.height == 0
+            or not resolved.frame.get_column(resolved.time_index_column).is_not_null().any()):
+        return
+    steps = period_filter.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+    base = active_base_steps()
+    if base is not None:
+        base_of = base_steps_of(base, steps.get_column("t")).select(
+            pl.col("new_step").cast(pl.Utf8).alias("t"), pl.col("time").cast(pl.Utf8).alias("__b"))
+        steps = steps.join(base_of, on="t", how="inner", maintain_order="left").select("d", pl.col("__b").alias("t"))
+    require_time_coverage(resolved, steps, entity_class="group", parameter_name=parameter_name,
+                          active=_group_names(flagged(source)), solve=solve)
+
+
+def check_group_limit_time_coverage(source: "InputSource", steps_by_solve: "dict[str, pl.DataFrame]") -> None:
+    """Before the first solve of a run: every group limit of :data:`GROUP_TIME_LIMITS` given as a time map (or a
+    period + time map) must give a value for every time step that the run's solves use.
+
+        ∀ solve s, (parameter, flagged) ∈ GROUP_TIME_LIMITS:  require_time_coverage(parameter, steps_by_solve[s])
+
+    ``steps_by_solve``: solve name -> ``(d, t)`` of the original time steps of all its sub-solves (every roll,
+    look-ahead included; a ``new_stepduration`` step lists the time steps it combines).  The first solve with a
+    gap raises :class:`FlexToolConfigError` (:func:`require_time_coverage`), so a rolling run stops before its
+    first roll instead of at the roll that reaches the gap.  The shape is resolved against the solve's steps, so a
+    map with Spine's silent ``x`` index whose keys are periods is a period map and is not checked.
+    """
+    flagged_names: dict[str, set[str]] = {}
+    for solve, steps in steps_by_solve.items():
+        if steps is None or steps.height == 0:
+            continue
+        for parameter_name, flagged in GROUP_TIME_LIMITS:
+            resolved = resolve_param_shape(source, "group", parameter_name, period_filter=steps)
+            if (resolved is None or resolved.frame is None or resolved.time_index_column is None
+                    or not resolved.frame.get_column(resolved.time_index_column).is_not_null().any()):
+                continue
+            if parameter_name not in flagged_names:
+                flagged_names[parameter_name] = _group_names(flagged(source))
+            require_time_coverage(resolved, steps, entity_class="group", parameter_name=parameter_name,
+                                  active=flagged_names[parameter_name], solve=solve)
+
+
 def pdtGroup_inertia_limit_from_source(source: "InputSource",
                                         period_filter: pl.DataFrame | None = None,
                                         *,
@@ -1021,12 +1083,15 @@ def pdtGroup_inertia_limit_from_source(source: "InputSource",
     """``group.inertia_limit`` → ``Param`` with the authored dims ⊆ ``(g, d, t)``.
 
     Constant, period, time or period + time map (:func:`resolve_param_shape` →
-    :func:`broadcast_to_period_time`); zero rows dropped (no requirement there).  A period map, or the period
-    level of a period + time map, of a group with ``has_inertia = yes`` must cover ``need_periods``
-    (:func:`require_period_coverage_time`).
+    :func:`broadcast_to_period_time`); zero rows dropped (an authored 0 is no requirement).  A period map, or the
+    period level of a period + time map, of a group with ``has_inertia = yes`` must cover ``need_periods``
+    (:func:`require_period_coverage_time`), and a time map, or the time level of a period + time map, every
+    time step of ``period_filter`` (:func:`_require_solve_time_coverage`).
     """
     resolved = resolve_param_shape(
         source, "group", "inertia_limit", period_filter=period_filter)
+    _require_solve_time_coverage(source, resolved, period_filter, "inertia_limit", groupInertia,
+                                 need_periods.solve if need_periods is not None else None)
     active = _group_names(groupInertia(source)) if _gate_needed(need_periods, resolved) else None
     return require_period_coverage_time(
         resolved, "g", period_filter, entity_class="group", parameter_name="inertia_limit",
@@ -1050,14 +1115,16 @@ def pdtGroup_non_synchronous_limit_from_source(source: "InputSource",
     """``group.non_synchronous_limit`` → ``Param`` with the authored dims ⊆ ``(g, d, t)``.
 
     Constant, period, time or period + time map (:func:`resolve_param_shape` →
-    :func:`broadcast_to_period_time`).  Zero rows are kept: an authored 0 is a limit of 0, while a time step
-    that a time map leaves out has no limit (``non_sync_constraint`` has no row there).  A period map, or the
+    :func:`broadcast_to_period_time`).  Zero rows are kept: an authored 0 is a limit of 0.  A period map, or the
     period level of a period + time map, of a group with ``has_non_synchronous = yes`` must cover
-    ``need_periods`` (:func:`require_period_coverage_time`).
+    ``need_periods`` (:func:`require_period_coverage_time`), and a time map, or the time level of a period + time
+    map, every time step of ``period_filter`` (:func:`_require_solve_time_coverage`).
     """
     resolved = resolve_param_shape(
         source, "group", "non_synchronous_limit",
         period_filter=period_filter)
+    _require_solve_time_coverage(source, resolved, period_filter, "non_synchronous_limit", groupNonSync,
+                                 need_periods.solve if need_periods is not None else None)
     active = _group_names(groupNonSync(source)) if _gate_needed(need_periods, resolved) else None
     return require_period_coverage_time(
         resolved, "g", period_filter, entity_class="group", parameter_name="non_synchronous_limit",
@@ -1102,25 +1169,6 @@ def check_energy_margin_adder_shape(source: "InputSource", period_filter: pl.Dat
             f"time steps (its keys are time steps, not periods). This parameter takes "
             f"{allowed_shapes_in_words(PARAM_ALLOWED_SHAPES[('node', 'energy_margin_adder')])}; name the map's "
             f"index levels 'period' / 'time'.")
-
-
-def groupNonSync_valued_from_source(source: "InputSource") -> pl.DataFrame:
-    """``(g,)``: the groups whose ``non_synchronous_limit`` has a value anywhere in the input.
-
-        valued = { g : g authors a non-null non_synchronous_limit (any shape, any period or time step) }
-
-    Read from the authored rows, before any solve's dt: a roll whose window holds none of a time map's hours
-    still knows that the group has a value, so those steps have no limit (no ``non_sync_constraint`` row) instead
-    of the limit 0 of a group without any value (``_group_slack._non_sync_rows``).  The parameter has no default.
-    """
-    names: set[str] = {str(e[0]) for e in stochastic_time_entities(source, "group", "non_synchronous_limit")}
-    try:
-        df = source.parameter_explicit("group", "non_synchronous_limit")
-    except (KeyError, AttributeError):
-        df = None
-    if df is not None and df.height > 0 and "value" in df.columns:
-        names |= set(df.filter(pl.col("value").is_not_null()).get_column("name").cast(pl.Utf8).to_list())
-    return pl.DataFrame({"g": sorted(names)}, schema={"g": pl.Utf8})
 
 
 def pdGroup_penalty_non_synchronous_from_source(source: "InputSource",
@@ -2671,7 +2719,6 @@ def apply_direct_params_b(source: "InputSource",
     ):
         setattr(flex_data, field,
                 _filter_param_by_periods(fn(source, period_filter=dt, need_periods=need), dt))
-    flex_data.groupNonSync_valued = groupNonSync_valued_from_source(source)
     check_energy_margin_adder_shape(source, dt)
     for fn, field in (
         (pdGroup_penalty_capacity_margin_from_source,

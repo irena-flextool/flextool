@@ -1562,7 +1562,6 @@ class FlexData:
     pdtGroup_inertia_limit: Param | None = None          # authored dims ⊆ (g, d, t)
     pdGroup_penalty_inertia: Param | None = None         # (g, d)
     pdtGroup_non_synchronous_limit: Param | None = None  # authored dims ⊆ (g, d, t)
-    groupNonSync_valued: pl.DataFrame | None = None      # (g,) groups with any non_synchronous_limit value
     pdGroup_penalty_non_synchronous: Param | None = None # (g, d)
     p_process_sink_inertia_constant: Param | None = None    # (p, sink)
     p_process_source_inertia_constant: Param | None = None  # (p, source)
