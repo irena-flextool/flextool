@@ -11,6 +11,7 @@ import shutil
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -20,13 +21,15 @@ from flextool._file_lock import exclusive_file_lock
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 from flextool.update_flextool import frozen as fz
 from flextool.update_flextool.db_migration import migrate_database
-from flextool.update_flextool.migrate_before_run import migration_lock_path
+from flextool.update_flextool.migrate_before_run import migrate_before_run, migration_lock, migration_lock_path
 from tests.db_utils import json_to_db
 
 REPO = Path(__file__).resolve().parents[2]
 SEED = Path(__file__).resolve().parent / "data" / "v75_seed_stoch_two_period.json"
 OLD = FLEXTOOL_DB_VERSION - 1
 MIGRATING = "Migrating the input database from version"
+WAITING = "Waiting for another migration of"
+BY_OTHER = "The input database was migrated by another run"
 
 
 @pytest.fixture(scope="module")
@@ -113,7 +116,93 @@ def test_parallel_runs_with_the_flag_migrate_once_and_both_run(tmp_path: Path, o
     outputs = [proc.communicate(timeout=600) for proc in procs]
     for proc, (out, err) in zip(procs, outputs):
         assert proc.returncode == 0, out[-3000:] + err[-3000:]
+    # Both runs waited for the lock (if one had arrived after the release, the double check would be untested).
+    assert all(out.count(WAITING) == 1 for out, _err in outputs), [out[-3000:] for out, _err in outputs]
     assert sum(out.count(MIGRATING) for out, _err in outputs) == 1
+    assert sum(out.count(BY_OTHER) for out, _err in outputs) == 1
     assert fz.read_db_version_ro(db) == FLEXTOOL_DB_VERSION
     for name in ("run_a", "run_b"):
         assert (tmp_path / name / "out" / "output_parquet" / "det").is_dir()
+
+
+def _start(target, *args) -> tuple[threading.Thread, list]:
+    result: list = []
+
+    def _run_it() -> None:
+        try:
+            result.append(target(*args))
+        except BaseException as exc:  # noqa: BLE001 - handed to the test thread
+            result.append(exc)
+
+    thread = threading.Thread(target=_run_it, daemon=True)
+    thread.start()
+    return thread, result
+
+
+def test_a_database_unreadable_during_another_migration_waits_for_the_lock(
+        tmp_path: Path, old_db_template: Path, monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str]) -> None:
+    # Another migration holds the lock and SQLite's write lock: the version cannot be read, so the run must wait for
+    # the lock and decide under it, not skip the migration.
+    monkeypatch.setattr(fz, "_BUSY_TIMEOUT_S", 0.1)
+    db = _copy(old_db_template, tmp_path / "db").resolve()
+    writer = sqlite3.connect(db)
+    with exclusive_file_lock(migration_lock_path(db)):
+        writer.execute("BEGIN EXCLUSIVE")
+        thread, result = _start(migrate_before_run, f"sqlite:///{db}")
+        thread.join(2)
+        assert thread.is_alive() and not result
+        writer.rollback()
+        writer.close()
+    thread.join(600)
+    assert result == [OLD]
+    out = capsys.readouterr().out
+    assert out.count(WAITING) == 1 and out.count(MIGRATING) == 1
+    assert fz.read_db_version_ro(db) == FLEXTOOL_DB_VERSION
+
+
+def test_migrate_database_takes_the_migration_lock(tmp_path: Path, old_db_template: Path,
+                                                   capsys: pytest.CaptureFixture[str]) -> None:
+    # flextool-migrate-database, the GUI refresh and the Toolbox tool all go through migrate_database.
+    db = _copy(old_db_template, tmp_path / "db").resolve()
+    with exclusive_file_lock(migration_lock_path(db)):
+        thread, result = _start(migrate_database, str(db))
+        thread.join(2)
+        assert thread.is_alive() and fz.read_db_version_ro(db) == OLD
+    thread.join(600)
+    assert result == [None]
+    assert capsys.readouterr().out.count(WAITING) == 1
+    assert fz.read_db_version_ro(db) == FLEXTOOL_DB_VERSION
+
+
+def test_the_migration_lock_is_reentrant_within_a_thread(tmp_path: Path, old_db_template: Path,
+                                                         capsys: pytest.CaptureFixture[str]) -> None:
+    db = _copy(old_db_template, tmp_path / "db").resolve()
+    with migration_lock(db):
+        assert migrate_before_run(str(db)) == OLD
+    assert WAITING not in capsys.readouterr().out
+    assert fz.read_db_version_ro(db) == FLEXTOOL_DB_VERSION
+
+
+def test_a_file_system_without_locks_stops_with_a_message(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                          capsys: pytest.CaptureFixture[str]) -> None:
+    import errno
+    import fcntl
+
+    from flextool._file_lock import FileLockError
+    from flextool.cli.cmd_run_flextool import _migrate_input_or_exit
+
+    def _no_locks(_fd: int, _op: int) -> None:
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(fcntl, "flock", _no_locks)
+    lock = tmp_path / "x.sqlite.migrate.lock"
+    with pytest.raises(FileLockError, match="x.sqlite.migrate.lock: the file system does not support file locks"):
+        with exclusive_file_lock(lock):
+            pass
+    db = tmp_path / "x.sqlite"
+    db.write_bytes(b"")
+    with pytest.raises(SystemExit) as excinfo:
+        _migrate_input_or_exit(f"sqlite:///{db}")
+    assert excinfo.value.code == 1
+    assert "The input database was not migrated: Cannot lock" in capsys.readouterr().err

@@ -139,23 +139,66 @@ def check_and_upgrade_database(
     failed = False
 
     try:
-        from flextool.update_flextool.db_handle import open_database_mapping
+        from flextool.update_flextool.db_handle import open_database_mapping  # noqa: F401  (availability check)
     except ImportError as exc:
         messages.append(f"Cannot check database version (spinedb_api not available): {exc}")
         return was_upgraded, failed, messages
 
     # The frozen check reads the file read-only, before anything below can
-    # open it with ``upgrade=True``.
-    from flextool.update_flextool.frozen import FrozenDatabaseError, frozen_guard
+    # open it with ``upgrade=True``.  A marker that cannot be read now (another
+    # migration is committing) is checked again under the migration lock.
+    from flextool._file_lock import FileLockError
+    from flextool.update_flextool.frozen import FrozenCheckError, FrozenDatabaseError, frozen_guard, is_current_ro
+    from flextool.update_flextool.migrate_before_run import migration_lock
+
+    def _guard() -> bool:
+        """Whether the migration may go on; adds the frozen refusal to *messages*."""
+        nonlocal failed
+        try:
+            frozen_guard(db_path, allow_frozen=allow_frozen)
+        except FrozenDatabaseError as exc:
+            if not exc.up_to_date:
+                messages.append(str(exc))
+                failed = True
+            return False
+        return True
 
     try:
         frozen_guard(db_path, allow_frozen=allow_frozen)
-    except FrozenDatabaseError as exc:
-        if exc.up_to_date:
-            return was_upgraded, failed, messages
-        messages.append(str(exc))
+    except FrozenCheckError:
+        pass
+    except FrozenDatabaseError:
+        _guard()
+        return was_upgraded, failed, messages
+    # A current database is never opened for writing and never waits for the lock.
+    if is_current_ro(db_path):
+        return was_upgraded, failed, messages
+
+    # Every in-place migration of the file holds ``<db>.migrate.lock``
+    # (shared with flextool-run --migrate and flextool-migrate-database); the
+    # state is read again under it, as another process may have migrated it.
+    try:
+        with migration_lock(Path(db_path)):
+            if not _guard():
+                return was_upgraded, failed, messages
+            return _upgrade_locked(db_path, messages, progress_callback, cancel_check, allow_frozen)
+    except FileLockError as exc:
+        messages.append(f"{Path(db_path).name}: not migrated: {exc}")
         return was_upgraded, True, messages
 
+
+def _upgrade_locked(
+    db_path: Path,
+    messages: list[str],
+    progress_callback: Callable[[int, int, int], None] | None,
+    cancel_check: Callable[[], bool] | None,
+    allow_frozen: bool,
+) -> tuple[bool, bool, list[str]]:
+    """The upgrade of :func:`check_and_upgrade_database`, run while holding the migration lock."""
+    from flextool.update_flextool.db_handle import open_database_mapping
+
+    was_upgraded = False
+    failed = False
     db_url = f"sqlite:///{db_path}"
 
     # Probe the schema read-only first so a database that is already current

@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 import argparse
@@ -91,26 +92,18 @@ def migrate_database(
             before the file is opened, and a frozen database that is
             already current is left unchanged.
     """
-    from flextool.update_flextool.frozen import (
-        FrozenDatabaseError,
-        frozen_guard,
-        is_current_ro,
-        set_frozen_version,
-        sqlite_path_from,
-    )
+    from flextool.update_flextool.frozen import FrozenCheckError, sqlite_path_from
+    from flextool.update_flextool.migrate_before_run import migration_lock
 
-    # The guard reads the file with sqlite3 read-only, before the
-    # ``upgrade=True`` open below can change its SpineDB schema.
+    # The frozen guard runs first, read-only, before anything can open the file with ``upgrade=True``.  A marker that
+    # cannot be read now (another migration is committing) is checked again under the migration lock.
     try:
-        frozen = frozen_guard(database_path, allow_frozen=allow_frozen)
-    except FrozenDatabaseError as exc:
-        if exc.up_to_date:
-            print(f"{database_path} is frozen ({exc.info.describe()}) and up to date; left unchanged")
-            return
-        raise
-    if frozen is not None and is_current_ro(sqlite_path_from(database_path)):
-        # Even with allow_frozen, a frozen database that is current is not opened for writing.
-        print(f"{database_path} is frozen ({frozen.describe()}) and up to date; left unchanged")
+        proceed, frozen = _frozen_check(database_path, allow_frozen)
+    except FrozenCheckError:
+        if sqlite_path_from(database_path) is None:
+            raise
+        proceed, frozen = None, None
+    if proceed is False:
         return
 
     if database_path.startswith('sqlite://') or database_path.startswith('http://'):
@@ -120,6 +113,38 @@ def migrate_database(
     else:
         logging.critical("No sqlite file at " + database_path)
         exit(-1)
+
+    # Every in-place migration of a local file holds ``<db>.migrate.lock``; the version is read again under it.
+    path = sqlite_path_from(database_path)
+    with migration_lock(path) if path is not None and path.is_file() else contextlib.nullcontext():
+        if proceed is None:
+            proceed, frozen = _frozen_check(database_path, allow_frozen)
+            if proceed is False:
+                return
+        _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback, cancel_check)
+
+
+def _frozen_check(database_path, allow_frozen: bool):
+    """``(proceed, frozen marker)``: the frozen guard of :func:`migrate_database`; prints why it stops."""
+    from flextool.update_flextool.frozen import FrozenDatabaseError, frozen_guard, is_current_ro, sqlite_path_from
+
+    try:
+        frozen = frozen_guard(database_path, allow_frozen=allow_frozen)
+    except FrozenDatabaseError as exc:
+        if exc.up_to_date:
+            print(f"{database_path} is frozen ({exc.info.describe()}) and up to date; left unchanged")
+            return False, None
+        raise
+    if frozen is not None and is_current_ro(sqlite_path_from(database_path)):
+        # Even with allow_frozen, a frozen database that is current is not opened for writing.
+        print(f"{database_path} is frozen ({frozen.describe()}) and up to date; left unchanged")
+        return False, None
+    return True, frozen
+
+
+def _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback, cancel_check) -> None:
+    """The steps of :func:`migrate_database` on the opened database (the version is read here, under the lock)."""
+    from flextool.update_flextool.frozen import set_frozen_version
 
     with open_database_mapping(mapping_name, create=False, upgrade=True) as db:
         sq= db.object_parameter_definition_sq

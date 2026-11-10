@@ -7,6 +7,7 @@ frozen file itself; its marker is kept with the new version).
 import argparse
 import sys
 
+from flextool._file_lock import FileLockError
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.frozen import FrozenDatabaseError, migrate_copy, read_frozen, sqlite_path_from
 
@@ -51,6 +52,9 @@ def main(argv: list[str] | None = None) -> int:
     except FrozenDatabaseError as exc:
         print(str(exc), file=sys.stderr)
         return EXIT_FROZEN
+    except FileLockError as exc:
+        print(f"The database was not migrated: {exc}", file=sys.stderr)
+        return 1
     if args.allow_migrate_frozen:
         path = sqlite_path_from(args.filepath)
         info = read_frozen(path) if path is not None else None

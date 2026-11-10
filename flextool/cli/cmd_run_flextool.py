@@ -1053,6 +1053,7 @@ EXIT_FROZEN = 2
 
 def _migrate_input_or_exit(input_db_url: str) -> None:
     """Migrate the input database for ``--migrate`` (once across parallel runs); exit 2 on a frozen database."""
+    from flextool._file_lock import FileLockError
     from flextool.update_flextool.frozen import FrozenDatabaseError
     from flextool.update_flextool.migrate_before_run import migrate_before_run
 
@@ -1061,6 +1062,9 @@ def _migrate_input_or_exit(input_db_url: str) -> None:
     except FrozenDatabaseError as exc:
         print(str(exc), file=sys.stderr, flush=True)
         sys.exit(EXIT_FROZEN)
+    except FileLockError as exc:
+        print(f"The input database was not migrated: {exc}", file=sys.stderr, flush=True)
+        sys.exit(1)
 
 
 def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_path, output_location,

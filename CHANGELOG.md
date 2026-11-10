@@ -104,7 +104,10 @@
   older input database before the run, the same way as `flextool-migrate-database`; without the flag the run still
   refuses it, and the refusal now names the flag. A frozen database is not migrated: the run stops with the frozen
   message and exit code 2. Runs started at the same time with `--migrate` on one database migrate it once (a lock on
-  `<database>.migrate.lock`); the others wait and then run. `execute_flextool_workflow.py` takes the same lock.
+  `<database>.migrate.lock`); the others print one "Waiting for another migration" line, wait and then run. Every
+  in-place migration takes the same lock: `flextool-migrate-database`, the Toolbox **Migrate database** tool, the
+  FlexTool window's refresh and `execute_flextool_workflow.py`. On Windows the wait is bounded (10 minutes, set
+  `FLEXTOOL_MIGRATION_LOCK_TIMEOUT` in seconds); a file system without file locks stops the migration with a message.
 - **Behaviour change: the model run refuses an input database that is not at the current FlexTool version.**
   Before, only databases below version 25 were refused, so an unmigrated database ran old data under the new
   version's semantics without a word. `flextool-run` (and `run_flextool.py`, `python -m

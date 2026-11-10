@@ -174,14 +174,15 @@ def main():
         print(f"{'='*70}\n")
 
     # The engine refuses an input database that is not at the current version: migrate it first (never a frozen one).
+    from flextool._file_lock import FileLockError
     from flextool.update_flextool.frozen import FrozenDatabaseError
     try:
         migrate_input_if_needed(args.input_db_url)
-    except FrozenDatabaseError as exc:
+    except (FrozenDatabaseError, FileLockError) as exc:
         print("\n" + "="*70)
         print(f"ERROR: {exc}")
         print("="*70)
-        sys.exit(2)
+        sys.exit(2 if isinstance(exc, FrozenDatabaseError) else 1)
 
     # Phase 2: Model Execution + Output Write
     # cmd_run_flextool writes outputs inline using the live in-memory
