@@ -326,6 +326,22 @@ def _unit_has_storage(unit: UnitInstance) -> bool:
     )
 
 
+def _ft2_capacity(capacity: float | None, invested: float | None) -> float | None:
+    """FT4 ``existing`` of an FT2 capacity: ``capacity`` + ``invested capacity``.
+
+    FT2 ``invested capacity (MW)`` / ``invested storage (MWh)`` is a parameter
+    (``flexModel.mod``: C = capacity + invested capacity + v_invest), capacity
+    already built, not a decision: it is in every capacity limit in every mode,
+    and outside ``v_invest`` (the kW/kWh ratio and the unitGroup invest limits
+    count v_invest only).  So it is FT4 existing capacity, not a forced
+    investment (which a dispatch-only solve, or an entity without an
+    investment cost, would never make).  ``None`` when both are empty.
+    """
+    if capacity is None and invested is None:
+        return None
+    return (capacity or 0.0) + (invested or 0.0)
+
+
 def _get_unit_node_name(unit: UnitInstance) -> str:
     """Generate the input node name for a non-charger/discharger unit.
 
@@ -748,6 +764,33 @@ def _availability_item(data: OldFlexToolData) -> UnmappedItem | None:
                         _UNMAPPED[("unit_type", "availability")])
 
 
+def _invested_capacity_items(data: OldFlexToolData) -> list[UnmappedItem]:
+    """FT2 ``invested capacity (MW)`` / ``invested storage (MWh)``: imported as
+    existing capacity (:func:`_ft2_capacity`); FT2 adds its annuity to the
+    objective as a constant, FT4 does not."""
+    reason = (
+        "imported as existing capacity (added to 'capacity'), so it is in "
+        "every solve, as in FlexTool 2. FlexTool 2 also adds its investment "
+        "annuity to the total cost; FlexTool 4 does not, so the FlexTool 4 "
+        "total cost is lower by that fixed amount. The dispatch and the other "
+        "investments are the same. Nothing to do, unless you compare total "
+        "costs."
+    )
+    items = []
+    units_mw = [_get_unit_name(u) for u in data.units
+                if u.invested_capacity_mw and u.invested_capacity_mw > 0]
+    units_mwh = [_get_unit_name(u) for u in data.units
+                 if u.invested_storage_mwh and u.invested_storage_mwh > 0]
+    conns = [f"{c.node1}_{c.node2}" for c in data.connections
+             if c.invested_capacity_mw and c.invested_capacity_mw > 0]
+    for sheet, column, names in (("units", "invested capacity (MW)", units_mw),
+                                 ("units", "invested storage (MWh)", units_mwh),
+                                 ("nodeNode", "invested capacity (MW)", conns)):
+        if names:
+            items.append(UnmappedItem(sheet, column, names, reason))
+    return items
+
+
 def _collect_unmapped(data: OldFlexToolData) -> list[UnmappedItem]:
     """Every non-empty FT2 input the importer does not translate, by entity."""
     found: dict[tuple[str, str], UnmappedItem] = {}
@@ -817,6 +860,7 @@ def _collect_unmapped(data: OldFlexToolData) -> list[UnmappedItem]:
     if availability is not None:
         items.append(availability)
     items.extend(_profile_scaling_items(data))
+    items.extend(_invested_capacity_items(data))
     # time_in_years first: it changes the balance of every cost.
     tiy = _time_in_years_item(data)
     return ([tiy] if tiy is not None else []) + items
@@ -1011,7 +1055,7 @@ def _write_storage_units(
             logger.warning("Unit '%s' has no output node; skipping storage.", unit_name)
             continue
 
-        capacity = unit.capacity_mw or 0.0
+        capacity = _ft2_capacity(unit.capacity_mw, unit.invested_capacity_mw) or 0.0
 
         # ── Storage node ──────────────────────────────────────────
         _add_entity(db, "node", storage_node, alt_name, counters,
@@ -1019,7 +1063,8 @@ def _write_storage_units(
         _add_param(db, "node", (storage_node,), "node_type", "storage",
                    alt_name, counters)
         _add_param_if_set(db, "node", (storage_node,), "existing",
-                          unit.storage_mwh, alt_name, counters, skip_zero=False)
+                          _ft2_capacity(unit.storage_mwh, unit.invested_storage_mwh),
+                          alt_name, counters, skip_zero=False)
         _write_storage_start_end(db, storage_node, unit, alt_name, counters)
 
         if lolp > 0:
@@ -1036,9 +1081,9 @@ def _write_storage_units(
         inv_cost_kwh = _get_unit_type_param(data, unit, "inv.cost/kwh")
         _add_param_if_set(db, "node", (storage_node,), "invest_cost",
                           inv_cost_kwh, alt_name, counters)
-        # invest_method / invest_max_total / invest_min_total of the storage
-        # node are written once, below with the unit's investment (a forced
-        # 'invested storage (MWh)' wins over 'max invest (MWh)').
+        # invest_method / invest_max_total of the storage node are written
+        # below with the unit's investment ('invested storage (MWh)' is in
+        # existing, see _ft2_capacity).
 
         # Inflow on storage node (pumped hydro pattern)
         if unit.inflow_profile:
@@ -1209,66 +1254,41 @@ def _write_storage_units(
         _add_param_if_set(db, "node", (storage_node,), "discount_rate",
                           interest, alt_name, counters)
 
-        invested_mw = unit.invested_capacity_mw
-        invested_mwh = unit.invested_storage_mwh
-        has_forced_mw = invested_mw is not None and invested_mw > 0
-        has_forced_mwh = invested_mwh is not None and invested_mwh > 0
-        has_invest = unit.max_invest_mw is not None and unit.max_invest_mw > 0
-
-        if has_forced_mw:
-            # Forced investment on charger and discharger
-            for target in (discharger_name, charger_name):
-                _add_param(db, "unit", (target,), "invest_method",
-                           "invest_total", alt_name, counters)
-                _add_param(db, "unit", (target,), "invest_max_total",
-                           invested_mw, alt_name, counters)
-                _add_param(db, "unit", (target,), "invest_min_total",
-                           invested_mw, alt_name, counters)
-        elif has_invest:
+        # 'invested capacity (MW)' / 'invested storage (MWh)' are in existing
+        # (_ft2_capacity); 'max invest' is the FT2 v_invest limit.
+        if unit.max_invest_mw is not None and unit.max_invest_mw > 0:
             for target in (discharger_name, charger_name):
                 _add_param(db, "unit", (target,), "invest_method",
                            "invest_total", alt_name, counters)
                 _add_param(db, "unit", (target,), "invest_max_total",
                            unit.max_invest_mw, alt_name, counters)
-
-        if has_forced_mwh:
-            # Forced investment on storage node
-            _add_param(db, "node", (storage_node,), "invest_method",
-                       "invest_total", alt_name, counters)
-            _add_param(db, "node", (storage_node,), "invest_max_total",
-                       invested_mwh, alt_name, counters)
-            _add_param(db, "node", (storage_node,), "invest_min_total",
-                       invested_mwh, alt_name, counters)
-        elif unit.max_invest_mwh is not None and unit.max_invest_mwh > 0:
+        if unit.max_invest_mwh is not None and unit.max_invest_mwh > 0:
             _add_param(db, "node", (storage_node,), "invest_method",
                        "invest_total", alt_name, counters)
             _add_param(db, "node", (storage_node,), "invest_max_total",
                        unit.max_invest_mwh, alt_name, counters)
 
         # ── Charger ↔ Discharger investment constraint ────────────
-        # Always active — ties charger capacity to discharger capacity
+        # FT2 has one unit, so one v_invest: the charger invests what the
+        # discharger invests.  Only v_invest (constraint_invested_capacity_coeff):
+        # the existing capacities are equal already.
         charger_link = f"{unit_name}_charger_link"
-        deactivate_storage_link = has_forced_mw and has_forced_mwh
-
         _add_entity(db, "constraint", charger_link, alt_name, counters,
                      entities_added, entity_alts_added)
         _add_param(db, "constraint", (charger_link,), "sense", "equal",
                    alt_name, counters)
         _add_param(db, "constraint", (charger_link,), "constant", 0.0,
                    alt_name, counters)
-
-        # Charger always gets charger_link coefficient
         _add_param(db, "unit", (charger_name,),
                    "constraint_invested_capacity_coeff",
                    Map([charger_link], [-1.0], index_name="constraint"),
                    alt_name, counters)
-
-        # Build discharger coefficient Map (always includes charger_link)
         discharger_coeff_indexes = [charger_link]
         discharger_coeff_values = [1.0]
 
         # ── kW/kWh constraint (discharger ↔ storage node) ────────
-        # Deactivated when both MW and MWh are forced (avoids rounding issues)
+        # FT2 investStorage_kW_per_kWh: v_invest (MW) = ratio × v_investStorage
+        # (MWh), on v_invest only ('invested ...' capacities are existing).
         kw_kwh_ratio = _get_unit_type_param(data, unit, "fixed kw/kwh ratio")
         if kw_kwh_ratio is not None and kw_kwh_ratio > 0:
             storage_link = f"{unit_name}_storage_link"
@@ -1278,28 +1298,13 @@ def _write_storage_units(
                        alt_name, counters)
             _add_param(db, "constraint", (storage_link,), "constant", 0.0,
                        alt_name, counters)
+            _add_param(db, "node", (storage_node,),
+                       "constraint_invested_capacity_coeff",
+                       Map([storage_link], [-kw_kwh_ratio], index_name="constraint"),
+                       alt_name, counters)
+            discharger_coeff_indexes.append(storage_link)
+            discharger_coeff_values.append(1.0)
 
-            if deactivate_storage_link:
-                try:
-                    db.add_or_update_entity_alternative(
-                        entity_class_name="constraint",
-                        entity_byname=(storage_link,),
-                        alternative_name=alt_name,
-                        active=False,
-                    )
-                except SpineDBAPIError:
-                    pass
-            else:
-                # Storage node coefficient — only when constraint is active
-                _add_param(db, "node", (storage_node,),
-                           "constraint_invested_capacity_coeff",
-                           Map([storage_link], [-1.0], index_name="constraint"),
-                           alt_name, counters)
-                # Add to discharger Map
-                discharger_coeff_indexes.append(storage_link)
-                discharger_coeff_values.append(kw_kwh_ratio)
-
-        # Discharger coefficient Map (charger_link always, storage_link when active)
         _add_param(db, "unit", (discharger_name,),
                    "constraint_invested_capacity_coeff",
                    Map(discharger_coeff_indexes, discharger_coeff_values,
@@ -1361,10 +1366,10 @@ def _write_units(
         _add_param(db, "unit", (unit_name,), "conversion_method",
                    conversion_method, alt_name, counters)
 
-        # -- existing capacity: FT2 ``capacity (MW)`` only.  ``invested capacity
-        # (MW)`` is a forced investment below (invest_min_total =
-        # invest_max_total); using it as ``existing`` too counted it twice. --
-        _add_param_if_set(db, "unit", (unit_name,), "existing", unit.capacity_mw,
+        # -- existing capacity: ``capacity (MW)`` + ``invested capacity (MW)``
+        # (see _ft2_capacity); ``max invest (MW)`` is the investment below. --
+        _add_param_if_set(db, "unit", (unit_name,), "existing",
+                          _ft2_capacity(unit.capacity_mw, unit.invested_capacity_mw),
                           alt_name, counters)
 
         # -- efficiency --
@@ -1431,21 +1436,11 @@ def _write_units(
         _add_param_if_set(db, "unit", (unit_name,), "discount_rate", interest_rate,
                           alt_name, counters)
 
-        # -- investment --
-        has_forced_invest = (
-            unit.invested_capacity_mw is not None and unit.invested_capacity_mw > 0
-        )
+        # -- investment: FT2 v_invest <= max invest (MW) --
         has_max_invest = (
             unit.max_invest_mw is not None and unit.max_invest_mw > 0
         )
-        if has_forced_invest:
-            _add_param(db, "unit", (unit_name,), "invest_method", "invest_total",
-                       alt_name, counters)
-            _add_param(db, "unit", (unit_name,), "invest_max_total",
-                       unit.invested_capacity_mw, alt_name, counters)
-            _add_param(db, "unit", (unit_name,), "invest_min_total",
-                       unit.invested_capacity_mw, alt_name, counters)
-        elif has_max_invest:
+        if has_max_invest:
             _add_param(db, "unit", (unit_name,), "invest_method", "invest_total",
                        alt_name, counters)
             _add_param(db, "unit", (unit_name,), "invest_max_total",
@@ -1618,7 +1613,8 @@ def _write_inflow_units(
         _add_param(db, "node", (inflow_node,), "penalty_down", 0.0,
                    alt_name, counters)
         _add_param_if_set(db, "node", (inflow_node,), "existing",
-                          unit.storage_mwh, alt_name, counters, skip_zero=False)
+                          _ft2_capacity(unit.storage_mwh, unit.invested_storage_mwh),
+                          alt_name, counters, skip_zero=False)
         _write_storage_start_end(db, inflow_node, unit, alt_name, counters)
         # Self-discharge loss from unit_type
         self_discharge = _get_unit_type_param(data, unit, "self discharge loss")
@@ -1708,11 +1704,13 @@ def _write_connections(
         _add_entity(db, "connection", conn_name, alt_name, counters,
                      entities_added, entity_alts_added)
 
-        # existing capacity
+        # existing capacity: the larger direction + invested capacity
+        # (see _ft2_capacity)
         cap = conn.cap_rightward_mw or 0.0
         if conn.cap_leftward_mw is not None:
             cap = max(cap, conn.cap_leftward_mw)
-        _add_param_if_set(db, "connection", (conn_name,), "existing", cap,
+        _add_param_if_set(db, "connection", (conn_name,), "existing",
+                          _ft2_capacity(cap, conn.invested_capacity_mw),
                           alt_name, counters)
 
         # efficiency = 1 - loss
@@ -1731,20 +1729,10 @@ def _write_connections(
         _add_param_if_set(db, "connection", (conn_name,), "discount_rate",
                           conn.interest, alt_name, counters)
 
-        has_forced_invest = (
-            conn.invested_capacity_mw is not None and conn.invested_capacity_mw > 0
-        )
         has_max_invest = (
             conn.max_invest_mw is not None and conn.max_invest_mw > 0
         )
-        if has_forced_invest:
-            _add_param(db, "connection", (conn_name,), "invest_method",
-                       "invest_total", alt_name, counters)
-            _add_param(db, "connection", (conn_name,), "invest_max_total",
-                       conn.invested_capacity_mw, alt_name, counters)
-            _add_param(db, "connection", (conn_name,), "invest_min_total",
-                       conn.invested_capacity_mw, alt_name, counters)
-        elif has_max_invest:
+        if has_max_invest:
             _add_param(db, "connection", (conn_name,), "invest_method",
                        "invest_total", alt_name, counters)
             _add_param(db, "connection", (conn_name,), "invest_max_total",
@@ -2166,14 +2154,20 @@ def _write_chp_constraints(
         output2  <=         output2_max_capacity_ratio × C
 
     A row exists when its coeff or its constant is non-zero.  In FT4 the row
-    is ``output2 − coeff × output1 − constant × invested  {sense}  constant ×
-    existing``: the existing part of C is a constant, the invested part a
-    ``constraint_invested_capacity_coeff`` on the unit (FT2 has one
-    investment period, so the capacity invested in it is all of v_invest).
-    The MW form ``output2 max capacity (MW)`` of older workbooks is a plain
-    cap.  All coefficients of a unit go into one Map per edge.
+    is ``output2 − coeff × output1 − constant × C  {sense}  0``, with C the
+    capacity in service in the solve: ``constraint_cumulative_pre_built_capacity_coeff``
+    (existing capacity, including what an earlier solve of the chain
+    invested) plus ``constraint_invested_capacity_coeff`` (what this solve
+    invests), both −constant on the unit.  FT2 has no retirements, so the
+    two are all of C.  Not ``constraint_invested_capacity_coeff`` alone: in
+    the dispatch solve after the invest solve the invested MW are pre-built,
+    and the row would lose them.  The MW form ``output2 max capacity (MW)``
+    of older workbooks is a plain cap.  All coefficients of a unit go into
+    one Map per edge.
     """
     count = 0
+    # The older workbook form (header 'output2 max capacity (MW)').
+    mw_form = any(u.output2_max_capacity is not None for u in data.units)
     for unit in data.units:
         if not unit.output2_node or not unit.output_node:
             continue
@@ -2181,13 +2175,37 @@ def _write_chp_constraints(
             continue
 
         unit_name = _get_unit_name(unit)
-        # The invested part of C (``invested capacity (MW)`` is a forced
-        # investment) is in constraint_invested_capacity_coeff.
-        existing = unit.capacity_mw or 0.0
-
+        constants = [c for c in (unit.output2_eq_constant, unit.output2_gt_constant,
+                                 unit.output2_lt_constant) if c]
+        if mw_form and constants:
+            counters.unmapped.append(UnmappedItem(
+                "units", "output2 eq / gt / lt constant", [unit_name],
+                "this workbook has the older column 'output2 max capacity "
+                "(MW)'. The import reads the constants as shares of the unit's "
+                "capacity and multiplies them by the capacity, as the FlexTool 2 "
+                "model does (a constant of -0.2 on a 100 MW unit is -20 MW). "
+                f"The constants here are {', '.join(f'{c:g}' for c in constants)}"
+                + (", which look like MW" if max(abs(c) for c in constants) > 5 else "")
+                + ". If your FlexTool 2 version used them as MW, divide them by "
+                "the unit's capacity in the workbook and import again.",
+            ))
+        if not any((unit.output2_eq_coeff, unit.output2_eq_constant,
+                    unit.output2_gt_coeff, unit.output2_gt_constant,
+                    unit.output2_lt_coeff, unit.output2_lt_constant,
+                    unit.output2_max_capacity_ratio, unit.output2_max_capacity)):
+            counters.unmapped.append(UnmappedItem(
+                "units", "output2 grid / node", [unit_name],
+                "the unit has an output2 but no 'output2 eq / gt / lt' row and "
+                "no output2 maximum, so its output2 is free: it uses no fuel and "
+                f"has no limit (in FlexTool 4 only {unit.output2_node}'s "
+                "balance and the solver's upper bound for flows limit it). "
+                "FlexTool 2 behaves the same. If the unit should tie its "
+                "output2 to its main output, add the rows in the workbook and "
+                "import again.",
+            ))
         primary_coeffs: dict[str, float] = {}
         secondary_coeffs: dict[str, float] = {}
-        invested_coeffs: dict[str, float] = {}
+        capacity_coeffs: dict[str, float] = {}
 
         def row(cname: str, sense: str, coeff: float, per_capacity: float,
                 constant: float = 0.0) -> None:
@@ -2195,13 +2213,13 @@ def _write_chp_constraints(
                         entities_added, entity_alts_added)
             _add_param(db, "constraint", (cname,), "sense", sense,
                        alt_name, counters)
-            _add_param(db, "constraint", (cname,), "constant",
-                       constant + per_capacity * existing, alt_name, counters)
+            _add_param(db, "constraint", (cname,), "constant", constant,
+                       alt_name, counters)
             secondary_coeffs[cname] = 1.0
             if coeff:
                 primary_coeffs[cname] = -coeff
             if per_capacity:
-                invested_coeffs[cname] = -per_capacity
+                capacity_coeffs[cname] = -per_capacity
 
         for suffix, sense, coeff, constant in (
             ("eq", "equal", unit.output2_eq_coeff, unit.output2_eq_constant),
@@ -2221,16 +2239,19 @@ def _write_chp_constraints(
                 constant=unit.output2_max_capacity)
             count += 1
 
-        for cls, edge, coeffs in (
-            ("unit__outputNode", (unit_name, unit.output_node), primary_coeffs),
-            ("unit__outputNode", (unit_name, unit.output2_node), secondary_coeffs),
-            ("unit", (unit_name,), invested_coeffs),
+        for cls, edge, param, coeffs in (
+            ("unit__outputNode", (unit_name, unit.output_node),
+             "constraint_flow_coeff", primary_coeffs),
+            ("unit__outputNode", (unit_name, unit.output2_node),
+             "constraint_flow_coeff", secondary_coeffs),
+            ("unit", (unit_name,),
+             "constraint_cumulative_pre_built_capacity_coeff", capacity_coeffs),
+            ("unit", (unit_name,),
+             "constraint_invested_capacity_coeff", capacity_coeffs),
         ):
             if not coeffs:
                 continue
             names = list(coeffs)
-            param = ("constraint_invested_capacity_coeff" if cls == "unit"
-                     else "constraint_flow_coeff")
             _add_param(db, cls, edge, param,
                        Map(names, [coeffs[n] for n in names], index_name="constraint"),
                        alt_name, counters)
@@ -2708,7 +2729,7 @@ def _apply_master_override(
                                    "ramp_method", "ramp_limit", alt_name, counters)
                     else:
                         _add_param(db, "unit__outputNode", rel,
-                                   "ramp_method", "no_ramp", alt_name, counters)
+                                   "ramp_method", "none", alt_name, counters)
 
     elif "use non synchronous" in param or "use_non_synchronous" in ov.param_name.lower():
         enabled = float(value) == 1 if isinstance(value, (int, float)) else False
@@ -3033,6 +3054,42 @@ def _apply_unit_group_override(
 
 
 
+def _units_override_kind(param_lower: str) -> str | None:
+    """The capacity column a units override sets (the order of the
+    :func:`_apply_units_override` branches), else ``None``."""
+    if param_lower in ("capacity (mw)", "capacity"):
+        return "capacity"
+    if "invested capacity" in param_lower:
+        return "invested_mw"
+    if "max invest (mw)" in param_lower and "mwh" not in param_lower:
+        return None
+    if "invested storage" in param_lower:
+        return "invested_mwh"
+    if "max invest (mwh)" in param_lower:
+        return None
+    if "storage (mwh)" in param_lower or (
+        "storage" in param_lower and "invest" not in param_lower
+        and "start" not in param_lower and "finish" not in param_lower
+    ):
+        return "storage_mwh"
+    return None
+
+
+def _scenario_override(
+    overrides: list[SensitivityOverride], ids: dict[str, str | None],
+    kind: str, base: float | None,
+) -> tuple[float | None, bool]:
+    """(value, overridden) of a units capacity column in one scenario: its
+    override for the unit with ``ids`` (unittype, output node), else ``base``."""
+    for other in reversed(overrides):
+        if (other.section == "units"
+                and all(other.entity_ids.get(k) == v for k, v in ids.items())
+                and _units_override_kind(other.param_name.lower()) == kind
+                and isinstance(other.value, (int, float))):
+            return float(other.value), True
+    return base, False
+
+
 def _apply_units_override(
     ov: SensitivityOverride,
     data: OldFlexToolData,
@@ -3041,9 +3098,15 @@ def _apply_units_override(
     counters: _Counters,
     existing_entities: set[tuple[str, tuple[str, ...]]],
     entity_alts_added: set[tuple[str, tuple[str, ...], str]],
-    forced_invest: dict[str, set[str]] | None = None,
+    scenario_overrides: list[SensitivityOverride] | None = None,
 ) -> None:
-    """Apply a units-section sensitivity override."""
+    """Apply a units-section sensitivity override.
+
+    ``capacity`` and ``invested capacity`` (``storage`` and ``invested
+    storage``) are one FT4 ``existing`` (:func:`_ft2_capacity`): each takes
+    the other from the scenario's own override, else from the base workbook,
+    and the pair is written once.
+    """
     unit_type = ov.entity_ids.get("unittype")
     output_node = ov.entity_ids.get("output node")
 
@@ -3078,27 +3141,31 @@ def _apply_units_override(
 
     param_lower = ov.param_name.lower()
     value = ov.value
+    ids = {"unittype": unit_type, "output node": output_node}
+    overrides = scenario_overrides if scenario_overrides is not None else [ov]
 
-    if "capacity (mw)" == param_lower or param_lower == "capacity":
-        if is_storage:
-            _add_param(db, "unit", (charger,), "existing", value, alt_name, counters)
-            _add_param(db, "unit", (discharger,), "existing", value, alt_name, counters)
-        else:
-            _add_param(db, "unit", (unit_name,), "existing", value, alt_name, counters)
-    elif "invested capacity" in param_lower:
-        if is_storage:
-            for target in (charger, discharger):
-                _add_param(db, "unit", (target,), "invest_max_total", value, alt_name, counters)
-                _add_param(db, "unit", (target,), "invest_min_total", value, alt_name, counters)
-                _add_param(db, "unit", (target,), "invest_method", "invest_total",
-                           alt_name, counters)
-            if forced_invest is not None:
-                forced_invest.setdefault(unit_name, set()).add("mw")
-        else:
-            _add_param(db, "unit", (unit_name,), "invest_max_total", value, alt_name, counters)
-            _add_param(db, "unit", (unit_name,), "invest_min_total", value, alt_name, counters)
-            _add_param(db, "unit", (unit_name,), "invest_method", "invest_total",
-                       alt_name, counters)
+    def capacity_pair(kind: str, other: str, base_other: float | None) -> float | None:
+        """FT4 existing for a capacity / invested capacity override; None when
+        the scenario's override of ``other`` writes it instead (it is later
+        in the order of the branches: the capacity branch writes)."""
+        other_value, other_overridden = _scenario_override(overrides, ids, other, base_other)
+        if other_overridden and kind in ("invested_mw", "invested_mwh"):
+            return None
+        mine = float(value) if isinstance(value, (int, float)) else None
+        return _ft2_capacity(mine, other_value)
+
+    if "capacity (mw)" == param_lower or param_lower == "capacity" or (
+        "invested capacity" in param_lower
+    ):
+        kind = "capacity" if "invested" not in param_lower else "invested_mw"
+        other = "invested_mw" if kind == "capacity" else "capacity"
+        base_other = (None if base_unit is None else
+                      base_unit.invested_capacity_mw if kind == "capacity"
+                      else base_unit.capacity_mw)
+        existing = capacity_pair(kind, other, base_other)
+        if existing is not None:
+            for target in ((charger, discharger) if is_storage else (unit_name,)):
+                _add_param(db, "unit", (target,), "existing", existing, alt_name, counters)
     elif "max invest (mw)" in param_lower and "mwh" not in param_lower:
         if is_storage:
             for target in (charger, discharger):
@@ -3113,17 +3180,14 @@ def _apply_units_override(
                            alt_name, counters)
     elif "invested storage" in param_lower:
         storage_target = storage_node if is_storage else _get_unit_node_name(base_unit)
-        if _entity_exists(existing_entities, "node", (storage_target,)):
-            _add_param(db, "node", (storage_target,), "invest_max_total", value,
+        existing = capacity_pair(
+            "invested_mwh", "storage_mwh",
+            None if base_unit is None else base_unit.storage_mwh)
+        if existing is not None and _entity_exists(existing_entities, "node", (storage_target,)):
+            _add_param(db, "node", (storage_target,), "existing", existing,
                        alt_name, counters)
-            _add_param(db, "node", (storage_target,), "invest_min_total", value,
-                       alt_name, counters)
-            _add_param(db, "node", (storage_target,), "invest_method", "invest_total",
-                       alt_name, counters)
-            _add_param(db, "node", (storage_target,), "node_type", "storage",
-                       alt_name, counters)
-            if forced_invest is not None:
-                forced_invest.setdefault(unit_name, set()).add("mwh")
+            _add_param(db, "node", (storage_target,), "node_type",
+                       "storage" if existing > 0 else "balance", alt_name, counters)
     elif "max invest (mwh)" in param_lower:
         storage_target = storage_node if is_storage else _get_unit_node_name(base_unit)
         if _entity_exists(existing_entities, "node", (storage_target,)):
@@ -3137,10 +3201,13 @@ def _apply_units_override(
         "storage" in param_lower and "invest" not in param_lower and "start" not in param_lower and "finish" not in param_lower
     ):
         storage_target = storage_node if is_storage else _get_unit_node_name(base_unit)
+        existing = capacity_pair(
+            "storage_mwh", "invested_mwh",
+            None if base_unit is None else base_unit.invested_storage_mwh)
         if _entity_exists(existing_entities, "node", (storage_target,)):
-            _add_param(db, "node", (storage_target,), "existing", value,
+            _add_param(db, "node", (storage_target,), "existing", existing,
                        alt_name, counters)
-            if float(value) > 0:
+            if (existing or 0.0) > 0:
                 _add_param(db, "node", (storage_target,), "node_type", "storage",
                            alt_name, counters)
             else:
@@ -3263,6 +3330,8 @@ def _apply_node_node_override(
     alt_name: str,
     counters: _Counters,
     existing_entities: set[tuple[str, tuple[str, ...]]],
+    data: OldFlexToolData | None = None,
+    overrides: list[SensitivityOverride] | None = None,
 ) -> None:
     """Apply a nodeNode-section sensitivity override."""
     node1 = ov.entity_ids.get("node1")
@@ -3280,14 +3349,32 @@ def _apply_node_node_override(
     param_lower = ov.param_name.lower()
     value = ov.value
 
-    if "invested capacity" in param_lower:
-        _add_param(db, "connection", (conn_name,), "invest_max_total", value, alt_name, counters)
-        _add_param(db, "connection", (conn_name,), "invest_min_total", value, alt_name, counters)
-        _add_param(db, "connection", (conn_name,), "invest_method", "invest_total",
-                   alt_name, counters)
-    elif "cap.rightward" in param_lower or "cap.leftward" in param_lower:
-        # Use the value as existing capacity
-        _add_param(db, "connection", (conn_name,), "existing", value, alt_name, counters)
+    if "invested capacity" in param_lower or "cap.rightward" in param_lower or (
+        "cap.leftward" in param_lower
+    ):
+        # One FT4 existing: the larger direction + invested capacity
+        # (_ft2_capacity), each from the scenario's override, else the base.
+        base = next((c for c in (data.connections if data else [])
+                     if c.node1 == node1 and c.node2 == node2), None)
+        values = {"cap.rightward": None if base is None else base.cap_rightward_mw,
+                  "cap.leftward": None if base is None else base.cap_leftward_mw,
+                  "invested capacity": None if base is None else base.invested_capacity_mw}
+        last = None
+        for other in overrides or [ov]:
+            if other.section != "nodeNode" or other.entity_ids.get("node1") != node1 \
+                    or other.entity_ids.get("node2") != node2:
+                continue
+            for key in values:
+                if key in other.param_name.lower() and isinstance(other.value, (int, float)):
+                    values[key] = float(other.value)
+                    last = other
+        if last is ov or last is None:
+            directions = [v for v in (values["cap.rightward"], values["cap.leftward"])
+                          if v is not None]
+            _add_param(db, "connection", (conn_name,), "existing",
+                       _ft2_capacity(max(directions) if directions else None,
+                                     values["invested capacity"]),
+                       alt_name, counters)
     elif "max invest" in param_lower:
         _add_param(db, "connection", (conn_name,), "invest_max_total", value, alt_name, counters)
         if isinstance(value, (int, float)) and float(value) > 0:
@@ -3394,10 +3481,6 @@ def write_sensitivities_to_db(
                 for ov in overrides
             )
 
-            # Track forced investments per unit for constraint deactivation
-            # Keys: unit_name, values: set of "mw" and/or "mwh"
-            forced_invest: dict[str, set[str]] = {}
-
             # 4. Process each override
             for ov in overrides:
                 if ov.section == "master":
@@ -3428,115 +3511,16 @@ def write_sensitivities_to_db(
                 elif ov.section == "units":
                     _apply_units_override(
                         ov, data, db, scenario_name, counters, existing_entities,
-                        entity_alts_added, forced_invest,
+                        entity_alts_added, overrides,
                     )
                 elif ov.section == "nodeNode":
                     _apply_node_node_override(
                         ov, db, scenario_name, counters, existing_entities,
+                        data, overrides,
                     )
                 else:
                     _unknown_sensitivity(counters, scenario_name, ov.section,
                                          ov.param_name, None)
-
-            # 4b. Handle storage_link constraint activation/deactivation.
-            #     The charger_link (charger ↔ discharger) always stays active.
-            #     The storage_link (discharger ↔ storage node kW/kWh ratio) is
-            #     deactivated when both MW and MWh are forced, to avoid rounding.
-            for unit in data.units:
-                if not _needs_charger_discharger(unit, data):
-                    continue
-                unit_name = _get_unit_name(unit)
-                ut = _get_unit_type(data, unit)
-                kw_kwh_ratio = ut.params.get("fixed kw/kwh ratio") if ut else None
-                if not (kw_kwh_ratio is not None and kw_kwh_ratio > 0):
-                    continue  # No storage_link to manage
-
-                # Base forced state
-                base_forced_mw = (
-                    unit.invested_capacity_mw is not None
-                    and unit.invested_capacity_mw > 0
-                )
-                base_forced_mwh = (
-                    unit.invested_storage_mwh is not None
-                    and unit.invested_storage_mwh > 0
-                )
-                base_both_forced = base_forced_mw and base_forced_mwh
-
-                # Effective forced state (base + sensitivity overrides)
-                sens_types = forced_invest.get(unit_name, set())
-                eff_forced_mw = "mw" in sens_types or (
-                    base_forced_mw and "mw" not in sens_types
-                )
-                eff_forced_mwh = "mwh" in sens_types or (
-                    base_forced_mwh and "mwh" not in sens_types
-                )
-                eff_both_forced = eff_forced_mw and eff_forced_mwh
-
-                if eff_both_forced == base_both_forced:
-                    continue  # No change
-
-                charger_link = f"{unit_name}_charger_link"
-                storage_link = f"{unit_name}_storage_link"
-                discharger = f"{unit_name}_discharger"
-                storage_node = f"{unit_name}_storage"
-
-                if eff_both_forced and not base_both_forced:
-                    # Deactivate storage_link, rewrite discharger coeff without it
-                    if _entity_exists(existing_entities, "constraint", (storage_link,)):
-                        try:
-                            db.add_or_update_entity_alternative(
-                                entity_class_name="constraint",
-                                entity_byname=(storage_link,),
-                                alternative_name=scenario_name,
-                                active=False,
-                            )
-                        except SpineDBAPIError:
-                            pass
-
-                    # Discharger: only charger_link (drop storage_link)
-                    _add_param(db, "unit", (discharger,),
-                               "constraint_invested_capacity_coeff",
-                               Map([charger_link], [1.0], index_name="constraint"),
-                               scenario_name, counters)
-                    # Storage node: null
-                    null_value, null_type = api.to_database(None)
-                    if _entity_exists(existing_entities, "node", (storage_node,)):
-                        try:
-                            db.add_parameter_value(
-                                entity_class_name="node",
-                                entity_byname=(storage_node,),
-                                parameter_definition_name="constraint_invested_capacity_coeff",
-                                alternative_name=scenario_name,
-                                value=null_value, type=null_type,
-                            )
-                        except SpineDBAPIError:
-                            pass
-
-                elif base_both_forced and not eff_both_forced:
-                    # Re-activate storage_link, write full coefficients
-                    if _entity_exists(existing_entities, "constraint", (storage_link,)):
-                        try:
-                            db.add_or_update_entity_alternative(
-                                entity_class_name="constraint",
-                                entity_byname=(storage_link,),
-                                alternative_name=scenario_name,
-                                active=True,
-                            )
-                        except SpineDBAPIError:
-                            pass
-
-                    # Discharger: both charger_link + storage_link
-                    _add_param(db, "unit", (discharger,),
-                               "constraint_invested_capacity_coeff",
-                               Map([charger_link, storage_link],
-                                   [1.0, kw_kwh_ratio],
-                                   index_name="constraint"),
-                               scenario_name, counters)
-                    # Storage node coefficient
-                    _add_param(db, "node", (storage_node,),
-                               "constraint_invested_capacity_coeff",
-                               Map([storage_link], [-1.0], index_name="constraint"),
-                               scenario_name, counters)
 
             # 5. Apply mode overrides if present
             if has_mode_override:

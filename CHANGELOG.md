@@ -31,17 +31,33 @@
   existing file was never refreshed, and the model run now refuses it. **Calibrate investments** migrates its
   scenarios' sources first, as a normal run does.
 
-- **Fix: the FlexTool 2 importer counted `invested capacity (MW)` twice when `capacity (MW)` was empty.** It
-  was written as the unit's `existing` capacity and also as a forced investment of the same size; `existing` now
-  comes from `capacity (MW)` only (also in the CHP output2 constraints).
+- **Fix: FlexTool 2 `invested capacity (MW)` / `invested storage (MWh)` are imported as existing capacity.**
+  They are capacity already built in FlexTool 2. The importer wrote them as a forced investment, which a
+  dispatch-only workbook (`mode_invest` 0) never made, nor any solve for an entity without an investment cost, so
+  that capacity was lost; with `capacity (MW)` empty it was also written as `existing`, so counted twice; and a
+  `max invest` beside it was dropped. Now `existing` is capacity + invested capacity (units, storage, connections,
+  also in sensitivities) and `max invest` stays the investment limit. FlexTool 2 adds the annuity of that
+  capacity to its total cost, FlexTool 4 does not: the import report lists the entities.
+- **Fix: an invested FlexTool 2 CHP keeps its output2 in the dispatch solve.** The output2 constraints counted
+  only the capacity invested in the same solve, so in the dispatch solve after the investment solve the heat was
+  limited to 0. They now use the capacity in service (pre-built + invested). The import report notes output2
+  constants in workbooks with the older `output2 max capacity (MW)` column (read as shares of capacity, as in
+  FlexTool 2's model) and an output2 without any row (free heat).
+- **Fix: a user constraint without capacity terms lost its `constant` when another constraint had one.** When
+  some constraint used `constraint_cumulative_pre_built_capacity_coeff` or `constraint_capacity_coeff` (whose
+  existing capacity moves to the right-hand side) and `constant` was a single value, every constraint without such
+  a term got a right-hand side of 0 instead of its `constant` (e.g. `flow ≤ 800` became `flow ≤ 0`). Models
+  without capacity terms, or with a period-map `constant`, are unchanged.
+- **Fix: a FlexTool 2 sensitivity that turns `use_ramps` off is imported** (it wrote a ramp method the import's
+  database version does not have, and the import stopped).
+- **Fix: the FlexTool 2 `fixed kW/kWh ratio` was inverted.** FlexTool 2 sets invested MW = ratio × invested MWh;
+  the import wrote ratio × MW = MWh (a ratio of 0.25 gave a 1/16 h storage instead of a 4 h one).
 - **Fix: the FlexTool 2 importer (`flextool-read-old`, GUI "Convert from FlexTool 2.0 input file") translates
   more and reports what it cannot.** Sensitivities are now imported in the same run as the base data
   (`--master MASTER.xlsm`; in the GUI the master workbook is asked for before the conversion), before the
   database is migrated: before, the GUI wrote them into an already migrated database, where a renamed parameter
   such as the capacity margin was dropped with only a log line. A target that is a FlexTool database at another
-  version than the import's (56) is refused, as is `flextool-import-sensitivities` on a migrated database. A
-  storage with `invested storage (MWh)` got `max invest (MWh)` as its investment limit; it now gets the forced
-  size. The FlexTool 2 master workbook given as the input file stops with a message naming the right files
+  version than the import's (56) is refused, as is `flextool-import-sensitivities` on a migrated database. The FlexTool 2 master workbook given as the input file stops with a message naming the right files
   (before: an empty database). `fix unit generation`, `use min generation` and `use max generation` with their
   `ts_unit` series (shares of capacity) become profiles with `profile_method` `fixed`, `lower_limit` and
   `upper_limit` on the unit's primary output (before: ignored, so must-run units were free). `storage start` /
@@ -59,7 +75,7 @@
   not multiplied by the capacity, and a row with only a constant was dropped. Now the output2 edge has
   `conversion_flow_coeff` 0 (no fuel, outside the capacity, ramp and minimum-load limits, as in FlexTool 2), and
   each row, and the capacity ratio, becomes a user constraint `output2 − coeff × output1 {=, ≥, ≤} constant ×
-  (existing + invested capacity)`. Headers written with underscores (`output2_max_capacity_ratio`) are read.
+  capacity in service`. Headers written with underscores (`output2_max_capacity_ratio`) are read.
 - **Fix: FlexTool 2 `availability` no longer derates dispatch.** FlexTool 2 uses it only in the capacity margin;
   the import wrote it as FlexTool 4 `availability`, which reduces every flow of the unit. It is now left out and
   listed in the import report (FlexTool 4 has no per-unit share in the capacity margin).

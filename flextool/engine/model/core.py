@@ -3753,6 +3753,15 @@ def _eq_user_constraints(b: _Build) -> None:
     live_period = _user_constraint_live_keys(period_terms)
     live_step = live_period | _user_constraint_live_keys(flow_terms + state_terms + online_terms)
     empty_rows: list[tuple[pl.DataFrame, str]] = []
+    # The constant is moved to the right-hand side as constant − Σ const_terms.  A (cn,) constant summed with a
+    # (cn, d) existing-capacity term would keep d empty for every constraint without such a term, and those rows
+    # would read 0 instead of their constant: give the constant the (cn, d) of the rows first.
+    rhs_constant = d.p_constraint_constant
+    row_periods = [_collected(o).select("d") for o in (d.cdt_eq, d.cdt_le, d.cdt_ge) if _has_rows(o)]
+    if const_terms and row_periods and rhs_constant is not None and "d" not in rhs_constant.dims:
+        periods = pl.concat(row_periods).unique(maintain_order=True)
+        rhs_constant = Param(("cn", "d"), _collected(rhs_constant.frame).join(periods, how="cross")
+                             .select("cn", "d", "value"))
     uc_members = None
     if b.has_coarse_proc:
         from flextool.engine.preprocess.flex_data import coarse_row_members
@@ -3785,7 +3794,7 @@ def _eq_user_constraints(b: _Build) -> None:
                 over      = rows,
                 sense     = sense,
                 lhs_terms = lhs,
-                rhs_terms = {"constant": d.p_constraint_constant},
+                rhs_terms = {"constant": rhs_constant},
                 partition = (None if uc_members is None or "t" not in rows.columns
                              else _coarse_flows.row_partition(b, uc_members, rows)),
             )

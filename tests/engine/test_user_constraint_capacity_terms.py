@@ -256,3 +256,19 @@ def test_coefficient_gives_zero_cost_entity_its_variables(tmp_path_factory, kind
 
     assert has(fd.ed_invest_set) is invest
     assert has(fd.ed_divest_set) is divest
+
+
+def test_constant_kept_beside_capacity_terms_of_other_constraints(tmp_path_factory) -> None:
+    """A flow-only constraint keeps its constant as the right-hand side when other constraints have capacity
+    terms: ``flow ≤ 7`` (hand value).  Before: the (cn,) constant summed with the (cn, d) existing-capacity
+    constants of the other constraints lost its period, and the row read ``flow ≤ 0``."""
+    values = TWIN_VALUES + _constraint("c_flow_cap", "less_than", 7.0) + [
+        ["unit__outputNode", [PLANT, "west"], "constraint_flow_coeff", _map({"c_flow_cap": 1.0})]]
+    url, scen = make_db(tmp_path_factory, alt="uc_flow_cap", values=values, base_chain=SINGLE,
+                        entities=TWIN_ENTITIES + [["constraint", "c_flow_cap", None]])
+    step = list(run(tmp_path_factory, url, scen).values())[-1]
+    pb = build(step.flex_data)
+    bounds = row_bounds(pb, "process_constraint_less_than", "c_flow_cap,")
+    assert len(bounds) == step.flex_data.dt.height
+    assert {upper for _, upper in bounds.values()} == {7.0}
+    _assert_twin(pb)

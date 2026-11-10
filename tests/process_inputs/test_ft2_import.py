@@ -6,7 +6,7 @@ needs no file outside the repository.  One small model, 24 hourly steps:
 
 * node ``elec/nodeA``, demand 60 MW every step;
 * ``coal`` (min load + startup cost), ``wind`` (cf profile);
-* ``battery`` (charger / discharger, ``invested storage (MWh)`` = 20 forced,
+* ``battery`` (charger / discharger, ``invested storage (MWh)`` = 20,
   ``max invest (MWh)`` = 100, ``storage start`` = 0.5);
 * ``gas_mustrun``: 40 MW, ``fix unit generation`` = 1 with ts_unit
   ``fix_generation`` 0.5 / 0.6 alternating;
@@ -191,12 +191,17 @@ def write_workbook(path: Path, sheets: dict[str, list[list]]) -> Path:
 
 def write_master_workbook(path: Path) -> Path:
     """An FT2 master workbook: no data sheets, one sensitivity that turns the
-    capacity margin on (its v56 name was renamed at v65)."""
+    capacity margin on (its v56 name was renamed at v65) and one that gives
+    the CHP 5 MW of invested capacity."""
     return write_workbook(path, {
         "Getting Started": [["FlexTool 2"]],
         "Sensitivity definitions": [
             ["Scenario definitions master:", "Sheet", "use_capacity_margin"],
             ["Margin", "master", 1],
+            [],
+            ["Scenario definitions units:", "Sheet", "unittype", "output node",
+             "invested capacity (MW)"],
+            ["MoreChp", "units", "chp", "nodeA", 5],
             [],
         ],
     })
@@ -240,9 +245,9 @@ def imported(imported_with_report: tuple[str, ImportReport]) -> str:
 #: * storage_default_fix_nothing: yes, the v56 default fix_start becomes
 #:   fix_nothing.  The importer always writes storage_start_end_method, so the
 #:   imported meaning does not depend on the default (test_storage_start_finish).
-#: * user_constraint_prebuilt_nets_retirements: the importer writes no
-#:   pre-built capacity coefficient (CHP rows and storage links use
-#:   constraint_invested_capacity_coeff, FT2 has no retirements) -> n/a.
+#: * user_constraint_prebuilt_nets_retirements: the CHP rows use
+#:   constraint_cumulative_pre_built_capacity_coeff, which now nets earlier
+#:   retirements; the importer writes no retirement (FT2 has none) -> n/a.
 #: * dc_power_flow_lines_beside_dc_links, price_ladder_periods_from_solve_periods,
 #:   construction_lead_time_commissioning, coarse_process_flows,
 #:   stochastic_branch_period_years, ramp_branch_point_shutdown_once,
@@ -281,10 +286,43 @@ def test_import_reaches_current_version_without_markers(
     assert report.markers_removed == EXPECTED_MARKERS
 
 
-def test_forced_storage_investment_wins_over_max_invest(imported: str) -> None:
+def test_invested_storage_is_existing_beside_max_invest(imported: str) -> None:
+    # FT2 storage capacity = storage + invested storage (20) + v_investStorage
+    # with v_investStorage <= max invest (100) (flexModel.mod stateLimit).
     node = ("battery_nodeA_storage",)
-    assert _values(imported, "node", "invest_min_total")[(node, "base")] == 20
-    assert _values(imported, "node", "invest_max_total")[(node, "base")] == 20
+    assert _values(imported, "node", "existing")[(node, "base")] == 20
+    assert _values(imported, "node", "invest_max_total")[(node, "base")] == 100
+    assert (node, "base") not in _values(imported, "node", "invest_min_total")
+
+
+def test_storage_kw_per_kwh_link_follows_ft2(tmp_path: Path) -> None:
+    # FT2 investStorage_kW_per_kWh: v_invest (MW) = ratio x v_investStorage
+    # (MWh).  Ratio 0.25 (a 4 h storage): discharger invest - 0.25 x storage
+    # invest = 0 (before: 0.25 x MW - MWh = 0, a 1/16 h storage).
+    sheets = ft2_sheets()
+    sheets["unit_type"].append(_unit_type("bat4h", **{
+        "efficiency": 0.9, "eff charge": 0.9, "availability": 1,
+        "inv.cost/kW": 300, "fixed kW/kWh ratio": 0.25}))
+    sheets["units"].append(_unit(**{
+        "unit type": "bat4h", "output grid": "elec", "output node": "nodeA",
+        "max invest (MW)": 10, "max invest (MWh)": 40}))
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    import_old_flextool_xlsm(str(xlsm), url, strict=True)
+    link = "bat4h_nodeA_storage_link"
+    coeff = _values(url, "unit", "constraint_invested_capacity_coeff")
+    discharger = coeff[(("bat4h_nodeA_discharger",), "base")]
+    assert dict(zip(discharger.indexes, discharger.values))[link] == 1.0
+    node = _values(url, "node", "constraint_invested_capacity_coeff")[(("bat4h_nodeA_storage",), "base")]
+    assert dict(zip(node.indexes, node.values)) == {link: -0.25}
+
+
+def test_invested_capacity_sensitivity_adds_to_capacity(imported: str) -> None:
+    # Scenario MoreChp: invested capacity 5 on the 20 MW CHP -> C = 25 MW.
+    existing = _values(imported, "unit", "existing")
+    assert existing[(("chp_nodeA",), "base")] == 20
+    assert existing[(("chp_nodeA",), "MoreChp")] == 25
+    assert _values(imported, "unit", "invest_min_total") == {}
 
 
 #: (storage start, storage finish) -> FT2 meaning (flexModel.mod stateStart,
@@ -377,14 +415,16 @@ def test_master_workbook_rejected(tmp_path: Path) -> None:
 
 
 def test_chp_output2_rows_follow_ft2(imported: str) -> None:
-    # FT2 rows with C = capacity 20 MW + v_invest (hand values from
-    # flexModel.mod):  heat - 1.4 elec >= 0;  heat - 2.0 elec - 0.1 C <= 0;
-    # heat - 1.6 C <= 0.  The existing 20 MW part of C moves to the constant.
+    # FT2 rows with C = capacity + invested capacity + v_invest (hand values
+    # from flexModel.mod):  heat - 1.4 elec >= 0;  heat - 2.0 elec - 0.1 C <= 0;
+    # heat - 1.6 C <= 0.  C is the capacity in service: pre-built (existing,
+    # and what an earlier solve invested) + invested in the solve, so the
+    # constants are 0.
     chp, elec, heat = "chp_nodeA", ("chp_nodeA", "nodeA"), ("chp_nodeA", "nodeH")
     sense = _values(imported, "constraint", "sense")
     constant = _values(imported, "constraint", "constant")
-    rows = {"gt": ("greater_than", 0.0), "lt": ("less_than", 2.0),
-            "output2_max": ("less_than", 32.0)}
+    rows = {"gt": ("greater_than", 0.0), "lt": ("less_than", 0.0),
+            "output2_max": ("less_than", 0.0)}
     for suffix, (row_sense, row_constant) in rows.items():
         key = ((f"{chp}_{suffix}",), "base")
         assert sense[key] == row_sense
@@ -394,9 +434,11 @@ def test_chp_output2_rows_follow_ft2(imported: str) -> None:
         f"{chp}_gt": 1.0, f"{chp}_lt": 1.0, f"{chp}_output2_max": 1.0}
     assert dict(zip(flow[(elec, "base")].indexes, flow[(elec, "base")].values)) == {
         f"{chp}_gt": -1.4, f"{chp}_lt": -2.0}
-    invested = _values(imported, "unit", "constraint_invested_capacity_coeff")[((chp,), "base")]
-    assert dict(zip(invested.indexes, invested.values)) == pytest.approx(
-        {f"{chp}_lt": -0.1, f"{chp}_output2_max": -1.6})
+    for param in ("constraint_cumulative_pre_built_capacity_coeff",
+                  "constraint_invested_capacity_coeff"):
+        coeffs = _values(imported, "unit", param)[((chp,), "base")]
+        assert dict(zip(coeffs.indexes, coeffs.values)) == pytest.approx(
+            {f"{chp}_lt": -0.1, f"{chp}_output2_max": -1.6})
     # output2 has no fuel and is outside the capacity limit in FT2.
     coeff = _values(imported, "unit__outputNode", "conversion_flow_coeff")
     assert coeff[(heat, "base")] == 0.0
@@ -519,10 +561,10 @@ def test_imported_model_solves_with_must_run(
 
 def test_invested_capacity_without_capacity_is_not_counted_twice(tmp_path: Path) -> None:
     """FT2 capacity C = capacity + invested capacity + v_invest (flexModel.mod).  With
-    ``capacity (MW)`` empty and ``invested capacity (MW)`` = 25, C = 25 MW: the import
-    forces 25 MW of investment, so ``existing`` must be empty (0), not 25 as well.
-    The CHP's output2 row ``heat <= 1.6 C`` then has constant 1.6 × 0 = 0 and
-    the invested part -1.6 on the forced 25 MW (hand values)."""
+    ``capacity (MW)`` empty and ``invested capacity (MW)`` = 25, C = 25 MW: existing
+    25 and no investment (before: existing 25 and a forced 25 MW investment).  The
+    CHP's output2 row ``heat <= 1.6 C`` has constant 0 and -1.6 on the capacity in
+    service (hand values)."""
     sheets = ft2_sheets()
     sheets["unit_type"].append(_unit_type("peaker", efficiency=0.4, availability=1))
     sheets["unit_type"].append(_unit_type("chp_new", efficiency=0.4, availability=1))
@@ -536,15 +578,129 @@ def test_invested_capacity_without_capacity_is_not_counted_twice(tmp_path: Path)
         "output2_max_capacity_ratio": 1.6}))
     xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
     url = f"sqlite:///{tmp_path / 'model.sqlite'}"
-    import_old_flextool_xlsm(str(xlsm), url, strict=True)
+    report = import_old_flextool_xlsm(str(xlsm), url, strict=True)
 
     existing = _values(url, "unit", "existing")
     for unit in ("peaker_nodeA", "chp_new_nodeA"):
-        assert existing.get(((unit,), "base"), 0) == 0
-        assert _values(url, "unit", "invest_min_total")[((unit,), "base")] == 25
-        assert _values(url, "unit", "invest_max_total")[((unit,), "base")] == 25
+        assert existing[((unit,), "base")] == 25
+        assert ((unit,), "base") not in _values(url, "unit", "invest_method")
     assert existing[(("coal_nodeA",), "base")] == 100
     chp = "chp_new_nodeA"
     assert _values(url, "constraint", "constant")[((f"{chp}_output2_max",), "base")] == pytest.approx(0.0)
-    invested = _values(url, "unit", "constraint_invested_capacity_coeff")[((chp,), "base")]
-    assert dict(zip(invested.indexes, invested.values)) == pytest.approx({f"{chp}_output2_max": -1.6})
+    coeffs = _values(url, "unit", "constraint_cumulative_pre_built_capacity_coeff")[((chp,), "base")]
+    assert dict(zip(coeffs.indexes, coeffs.values)) == pytest.approx({f"{chp}_output2_max": -1.6})
+    found = {(u.sheet, u.column): u for u in report.unmapped}
+    assert found[("units", "invested capacity (MW)")].entities == ["peaker_nodeA", "chp_new_nodeA"]
+    assert "annuity" in found[("units", "invested capacity (MW)")].reason
+
+
+def test_output2_report_lines(tmp_path: Path) -> None:
+    """An output2 without rows is free; constants of the older MW-form workbook are
+    read as shares of capacity, and the report says so."""
+    sheets = ft2_sheets()
+    sheets["units"][0] = UNITS_HEADER + ["output2 max capacity (MW)"]
+    for row in sheets["units"][1:]:
+        row.append(None)
+    sheets["units"][-1][-1] = 800
+    sheets["units"][-1][UNITS_HEADER.index("output2 gt constant")] = -100
+    sheets["unit_type"].append(_unit_type("chp_free", efficiency=0.4, availability=1))
+    sheets["units"].append(_unit(**{
+        "unit type": "chp_free", "fuel": "coal", "output grid": "elec",
+        "output node": "nodeA", "capacity (MW)": 10,
+        "output2 grid": "heat", "output2 node": "nodeH"}) + [None])
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    report = import_old_flextool_xlsm(str(xlsm), f"sqlite:///{tmp_path / 'm.sqlite'}")
+    found = {(u.sheet, u.column): u for u in report.unmapped}
+    mw = found[("units", "output2 eq / gt / lt constant")]
+    assert mw.entities == ["chp_nodeA"]
+    assert "-100, 0.1, which look like MW" in mw.reason
+    free = found[("units", "output2 grid / node")]
+    assert free.entities == ["chp_free_nodeA"]
+    assert "free" in free.reason
+
+
+def _solve(url: str, solver_dir: Path, work: Path, monkeypatch: pytest.MonkeyPatch):
+    from flextool.engine import run_chain_from_db
+
+    monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
+    monkeypatch.chdir(work)
+    steps = run_chain_from_db(url, "base", work_folder=work, solver_config_dir=solver_dir)
+    assert steps and all(step.optimal for step in steps.values())
+    return work / "output_raw"
+
+
+@pytest.mark.solver
+def test_invested_chp_keeps_its_heat_in_the_dispatch_solve(
+    test_solver_config_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Invest solve, then dispatch solve.  CHP: no existing capacity, max invest
+    50 MW, heat demand 40 MW and no other heat source.  FT2 (hand values):
+    heat <= 1.6 C needs C = 40 / 1.6 = 25 MW; with C = 25,
+    1.4 elec - 0.2 C <= heat = 40 <= 2.0 elec + 0.2 C gives
+    17.5 <= elec <= 32.14; fuel = elec / 0.4.  Before: the dispatch solve's
+    rows counted only capacity invested in that solve, so heat <= 0."""
+    import polars as pl
+
+    sheets = ft2_sheets()
+    col = UNITS_HEADER.index
+    chp_row = sheets["units"][-1]
+    chp_row[col("capacity (MW)")] = None
+    chp_row[col("max invest (MW)")] = 50
+    chp_row[col("output2 gt constant")] = -0.2
+    chp_row[col("output2 lt constant")] = 0.2
+    sheets["unit_type"][-1] = _unit_type("chp", **{
+        "efficiency": 0.4, "availability": 1, "inv.cost/kW": 1000,
+        "lifetime": 30, "interest": 0.05})
+    sheets["ts_energy"] = sheets["ts_energy"][:3] + [[t, None, 60, 40] for t in STEPS]
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    import_old_flextool_xlsm(str(xlsm), url, strict=True)
+    work = tmp_path / "run"
+    work.mkdir()
+    raw = _solve(url, test_solver_config_dir, work, monkeypatch)
+
+    invest = pl.read_parquet(raw / "v_invest__invest.parquet")
+    # v_invest is per unit of unitsize (1000 MW for an investment-only unit).
+    assert invest["chp_nodeA"][0] * 1000 == pytest.approx(25.0, abs=1e-6)
+    flow = pl.read_parquet(raw / "v_flow__dispatch_p2020.parquet")
+    heat = flow["('chp_nodeA', 'chp_nodeA', 'nodeH')"] * 1000
+    elec = flow["('chp_nodeA', 'chp_nodeA', 'nodeA')"] * 1000
+    fuel = flow["('chp_nodeA', 'coal_market', 'chp_nodeA')"] * 1000
+    assert heat.to_list() == pytest.approx([40.0] * 24, abs=1e-6)
+    assert elec.min() >= 17.5 - 1e-6 and elec.max() <= 45 / 1.4 + 1e-6
+    assert fuel.to_list() == pytest.approx((elec / 0.4).to_list(), abs=1e-6)
+    slack = pl.read_parquet(raw / "vq_state_up__dispatch_p2020.parquet")
+    assert slack["nodeH"].abs().max() == pytest.approx(0.0, abs=1e-9)
+
+
+@pytest.mark.solver
+def test_dispatch_only_workbook_keeps_invested_capacity(
+    test_solver_config_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """mode_invest 0: FT2 solves dispatch only, with C = capacity + invested
+    capacity.  A gas unit with only 60 MW of invested capacity, demand 300 MW
+    (more than all other units together, 193 MW at most), loss of load 10000
+    per MWh against 20 / 0.4 = 50 for gas: the unit runs at 60 MW in every
+    step (hand values).  Before: a forced investment that a dispatch-only
+    solve never makes, so 0 MW."""
+    import polars as pl
+
+    sheets = ft2_sheets()
+    for row in sheets["master"]:
+        if row[0] == "mode_invest":
+            row[1] = 0
+    sheets["unit_type"].append(_unit_type("peaker", efficiency=0.4, availability=1))
+    sheets["units"].append(_unit(**{
+        "unit type": "peaker", "fuel": "gas", "output grid": "elec",
+        "output node": "nodeA", "invested capacity (MW)": 60}))
+    sheets["ts_energy"] = sheets["ts_energy"][:3] + [[t, None, 300, 30] for t in STEPS]
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    import_old_flextool_xlsm(str(xlsm), url, strict=True)
+    work = tmp_path / "run"
+    work.mkdir()
+    raw = _solve(url, test_solver_config_dir, work, monkeypatch)
+
+    flow = pl.read_parquet(raw / "v_flow__dispatch.parquet")
+    peaker = flow["('peaker_nodeA', 'gas_market', 'nodeA')"] * 60
+    assert peaker.to_list() == pytest.approx([60.0] * 24, abs=1e-6)
