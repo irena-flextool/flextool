@@ -1,7 +1,7 @@
 """Output functions for node group results."""
 import pandas as pd
 
-from flextool.process_outputs._annualize import annualize_dt_to_d
+from flextool.process_outputs._annualize import annualize_dt_to_d, realized_timestep_weight
 
 
 def _get_group_nodes_with_inflow(s, g: str) -> list[str]:
@@ -33,25 +33,6 @@ def _group_vre_flow(par, s, r, group_nodes) -> pd.Series:
         & cols.isin(s.process_source_sink_alwaysProcess)
     ]
     return r.flow_dt[vre_cols].mul(par.step_duration, axis=0).sum(axis=1)
-
-
-def _realized_timestep_weight(par, dt_index: pd.MultiIndex) -> pd.Series:
-    """``par.timestep_weight`` aligned to the realized ``(period, time)`` steps.
-
-    Raises ``ValueError`` when a realized step has no weight.  A plain
-    ``.mul(weight, axis=0)`` would outer-join and turn such a step into NaN,
-    which ``groupby.sum()`` then skips silently in both the numerator and the
-    denominator of a period share.
-    """
-    w = par.timestep_weight.reindex(dt_index)
-    missing = w.index[w.isna()]
-    if len(missing):
-        shown = ', '.join(f'({d}, {t})' for d, t in list(missing)[:5])
-        more = f' and {len(missing) - 5} more' if len(missing) > 5 else ''
-        raise ValueError(
-            f'Node group results: no timestep weight for the realized time steps {shown}{more}.'
-        )
-    return w
 
 
 def _safe_ratio(num, den):
@@ -87,7 +68,7 @@ def nodeGroup_indicators(par, s, v, r, debug):
 
     # Get time steps
     dt_index = s.dt_realize_dispatch  # Should be MultiIndex with (period, time)
-    weight = _realized_timestep_weight(par, dt_index)
+    weight = realized_timestep_weight(par, dt_index, what='Node group results')
 
     # Calculate timestep-level results first
     results_dt = []
@@ -292,7 +273,7 @@ def nodeGroup_VRE_share(par, s, v, r, debug):
     results_dt = _safe_ratio(vre_dt, inflow_dt)
     results.append((results_dt, 'nodeGroup_VRE_share_dt_g'))
 
-    weight = _realized_timestep_weight(par, index)
+    weight = realized_timestep_weight(par, index, what='Node group results')
     vre_d = vre_dt.mul(weight, axis=0).groupby(level='period', sort=False).sum()
     inflow_d = inflow_dt.mul(weight, axis=0).groupby(level='period', sort=False).sum()
     results_d = _safe_ratio(vre_d, inflow_d)

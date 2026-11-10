@@ -17,6 +17,7 @@ from flextool.update_flextool.db_handle import open_database_mapping
 from flextool import run_record
 
 from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
+from flextool.process_outputs._sheet_names import excel_sheet_name
 from flextool.process_outputs._output_meta import (
     datapackage_resource,
     derive_column_meta,
@@ -1392,13 +1393,8 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             if isinstance(df, (pd.MultiIndex, pd.Index)):
                 df = df.to_frame(index=False)
             if (not df.empty) & (len(df) > 0):
-                sheet_name = display_name[:31]
-                if sheet_name in used_names:
-                    suffix = 1
-                    while f"{sheet_name[:28]}_{suffix}" in used_names:
-                        suffix += 1
-                    sheet_name = f"{sheet_name[:28]}_{suffix}"
-                used_names.add(sheet_name)
+                # At most 31 characters, the __d / __dt suffix kept, distinct without regard to case.
+                sheet_name = excel_sheet_name(display_name, used_names)
                 sheets.append((sheet_name, name, df))
         sheets.sort(key=lambda x: x[0].lower())
 

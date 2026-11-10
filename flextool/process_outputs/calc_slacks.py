@@ -1,6 +1,25 @@
 import pandas as pd
 
-from flextool.process_outputs._annualize import annualize_dt_to_d
+from flextool.process_outputs._annualize import annualize_dt_to_d, realized_timestep_weight, weighted_period_average
+
+
+def reserve_period_average(frame: pd.DataFrame, par, reduced_cells=None) -> pd.DataFrame:
+    """The period average of a per-step reserve frame (MW, rows ``(period, time)``):
+    ``Σ_t w·Δt·X / Σ_t w·Δt`` over the period's steps (:func:`._annualize.weighted_period_average`), ``w`` the
+    timestep weight of each step (a ``ValueError`` when a step has none).
+
+    The rows of the steps whose solve left reserves out (``reduced_cells``, ``reduce_system_detail_method``) are
+    emptied first, so they count in neither sum.  An empty frame gives an empty per-period frame.
+    """
+    if frame.empty or len(frame.index) == 0:
+        return frame.groupby(level='period').sum() if 'period' in (frame.index.names or ()) else frame
+    if reduced_cells:
+        mask = reduced_cells.step_mask('reserves', frame.index)
+        if mask.any():
+            frame = frame.astype(float)
+            frame.loc[mask, :] = float('nan')
+    weight = realized_timestep_weight(par, frame.index, what='Reserve results')
+    return weighted_period_average(frame, weight, par.step_duration)
 
 
 def inertia_limit_on_slack_cells(limit: pd.DataFrame, q_inertia: pd.DataFrame) -> pd.DataFrame:
@@ -57,11 +76,12 @@ def compute_slacks(par, s, v, r) -> None:
     # Reserve held at each step, MW: v_reserve counts in units of the process's unit size, like v_flow
     # (model/_reserve.py: MW = v_reserve · unitsize[p]).  A capacity held, not an energy: no step_duration.
     r.reserves_dt = v.reserve.mul(par.entity_unitsize, axis=1, level='process')
-    # Average MW held over the period: Σ(MW × step_duration) / total period hours.
-    # Reserves are MW capacity held per hour (not consumed energy), so the
-    # meaningful per-period figure is the average MW held across the period.
-    period_hours = par.complete_period_share_of_year * 8760
-    r.reserves_d = r.reserves_dt.mul(par.step_duration, axis=0).groupby('period').sum().div(period_hours, axis=0)
+    # Average MW held over the period (item 188): Σ_t w·Δt·MW / Σ_t w·Δt over the period's realized steps,
+    # w = timestep_weight (the ratio rule of the period shares; complete_period_share_of_year, the max over the
+    # solves after a rolling union, is not needed).  Steps whose solve left reserves out
+    # (reduce_system_detail_method) are zero-filled by the variable reader; they are left out of both sums, so a
+    # period shared with a solve that kept reserves is not averaged with 0 MW.
+    r.reserves_d = reserve_period_average(r.reserves_dt, par, getattr(s, 'reduced_cells', None))
 
     # upward_node_slack_dt is already MWh per step (q_state_up × capacity × step_duration),
     # so the period aggregate is a plain groupby-sum; no extra step_duration.
