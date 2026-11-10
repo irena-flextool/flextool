@@ -1,5 +1,19 @@
 ## Unreleased
 
+- **New: project packages.** A project can be sent to another computer as one `<Name>_<YYYYMMDD>.flextool.zip`:
+  **Manage projects… → Export… / Import…** in the FlexTool window, or `flextool-project export|import|verify` in
+  the terminal. A package holds the input sources (external input files copied in under their own source numbers,
+  so shipped and re-run results pair up), `settings.yaml` without the machine-specific settings, `plot_settings.yaml`,
+  the workspace's solver `.opt` files and the result runs picked in a checkbox list (with sizes; a run whose input
+  changed after the run is warned about). Plots, CSV/Excel outputs, `results.sqlite` and scratch folders are left
+  out. `manifest.json` records the FlexTool and library versions, each database's data version and frozen marker
+  (frozen databases stay frozen), and the SHA-256, size and modification time of each file. Import checks every
+  checksum before writing, refuses paths outside the project, keeps the files' modification times (so imported
+  results are not flagged as made from a changed input), suggests `<Name>_2` when the name is taken (exit code 3
+  in the terminal), refuses a database newer than this FlexTool, migrates older ones on open (asking first for a
+  frozen one), and unpacks the shipped solver options to `imported_solver_config/` with a note on how to use them.
+- **Fix: the Solver options dialog said the `.opt` files are in the project's `solver_config` folder.** They are
+  in the `solver_config` folder of the FlexTool workspace (or `$FLEXTOOL_SOLVER_CONFIG_DIR`).
 - **Behaviour change: the model run refuses an input database that is not at the current FlexTool version.**
   Before, only databases below version 25 were refused, so an unmigrated database ran old data under the new
   version's semantics without a word. `flextool-run` (and `run_flextool.py`, `python -m

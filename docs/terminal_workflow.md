@@ -84,6 +84,7 @@ After `pip install -e .` or `pip install .`, these commands are available direct
 | `flextool-read-old` | `flextool.cli.cmd_read_old_flextool:main` |
 | `flextool-migrate-database` | `flextool.cli.cmd_migrate_database:main` |
 | `flextool-freeze` | `flextool.cli.cmd_freeze_database:main` |
+| `flextool-project` | `flextool.cli.cmd_project_package:main` |
 
 ---
 
@@ -503,6 +504,32 @@ flextool-freeze input.sqlite --unfreeze
 | `--unfreeze` | Remove the frozen marker |
 
 Freezing writes into the file, so take the SHA-256 of the released file after freezing it. Editing a frozen database (in the database editor, or by importing data into it) is not prevented.
+
+### Sharing a project
+
+`flextool-project` writes a project to one file, checks such a file and imports it (the FlexTool window does the same from **Manage projects… → Export… / Import…**).
+
+```bash
+flextool-project export UAE_ref --results WOM_1,WEM_1 -o UAE_ref.flextool.zip
+flextool-project verify UAE_ref.flextool.zip
+flextool-project import UAE_ref.flextool.zip --name UAE_ref_received
+```
+
+| Command / argument | Description |
+|---|---|
+| `export PROJECT` | The project folder, or the name of a project in `./projects` |
+| `-o FILE` | The package file (default `./<Name>_<YYYYMMDD>.flextool.zip`) |
+| `--results none\|all\|RUN,RUN` | The result runs (folders of `output_parquet/`) to include; default `none` |
+| `--no-external` | Do not copy the input files that the project reads from outside its folder |
+| `--solver-config-dir DIR` | Where the `.opt` files are read from (default `$FLEXTOOL_SOLVER_CONFIG_DIR`, else `./solver_config`) |
+| `verify FILE` | Check every checksum and the versions, unpacking nothing; exit code 1 on a problem |
+| `import FILE` | Unpack into `./projects/` (`--projects-dir DIR` for another folder) under the package's name or `--name NAME`; exit code 3 when the name is taken (the message suggests `<Name>_2`), 2 when the package is refused |
+
+The package holds the input sources (external input files copied in under their own source numbers), `settings.yaml` without the machine-specific settings (`execution_limits`, `max_workers`, `scenario_resource_history`, `external_refs`), `plot_settings.yaml`, the `.opt` files of the solver config folder, and the chosen result runs. Plots, CSV and Excel outputs, `results.sqlite` and the scratch folders are left out; `flextool-write-outputs` re-creates them from the results. Its `manifest.json` records the FlexTool, polar-high, HiGHS, polars, spinedb_api and Python versions, the data version and frozen marker of each input database, the runs whose input changed after the run (`stale_runs`) and the SHA-256, size and modification time of each file. Export reads the databases read-only: nothing is migrated, and a frozen database stays frozen.
+
+Import refuses member names that would leave the project folder, checks every checksum before it writes anything, unpacks into a hidden `projects/.<name>.partial/` folder, gives each file its recorded modification time back and then renames the folder into place. A database newer than this FlexTool is refused; an older one is migrated when the project is first opened, with the usual consent for a frozen one. The shipped `.opt` files go to `imported_solver_config/` in the project and the workspace's own are never overwritten; the import message says whether they differ and how to use them: copy `imported_solver_config/*.opt` to the workspace's `solver_config/`, or set `FLEXTOOL_SOLVER_CONFIG_DIR=<project>/imported_solver_config`. The checksums detect a file damaged on the way, not a deliberate change: the manifest is not signed.
+
+**Reproducing a delivered run.** Send a project with the inputs and the one scenario run to be reproduced (`--results WOM_1`). The receiver runs `flextool-project verify` (it prints the versions the run was made with; `pip install flextool==<version>` gives the same FlexTool), imports the package, makes the shipped solver options active as above, runs the scenario again, and compares the new results with the shipped `WOM_1` (whose `_run_status.json` records the verdict, the solver and the input data version). Because the source number is kept, the re-run writes to the same `WOM_1` folder name, so move the shipped folder aside first (or compare against a copy of it).
 
 ### Update FlexTool
 

@@ -38,7 +38,7 @@ Editing an input source jumps out to the Spine database editor or a spreadsheet 
 
 Each project lives in `projects/<name>/` and owns its own input sources, execution history, and `settings.yaml`. The **Project** drop-down switches between projects; **Project menu** opens a popup with:
 
-- **Manage projects…** — create / rename / delete projects.
+- **Manage projects…** — create / rename / delete projects, and **Export…** / **Import…** a project package (see [Sharing a project](#sharing-a-project)).
 - **UI font size** — radio choices (9, 10, 11, 12, 14 pt) plus **Custom…** to enter any integer between 6 and 32. The chosen size is applied live to every named Tk font (body / menu / heading / tooltip / fixed) and persisted to `projects/projects.yaml`. See [Display and fonts](#display-and-fonts).
 - **Reset window layout** — clears saved window sizes and sash positions for the result viewer and execution window. Any open viewer or execution window is closed; their defaults apply the next time they open.
 
@@ -222,11 +222,27 @@ Changing the size via **Project menu → UI font size** calls `setup_fonts` and 
 
 **Per-monitor DPI.** When the main window is moved between monitors with different scaling factors, the `<Configure>` handler reads `winfo fpixels 1i` and, if the effective DPI has changed by more than 10 %, re-applies the configured font sizes so points render at the new DPI. Already-placed widgets keep their pixel positions until the user resizes or re-opens the window; this is intentionally a partial fix — it beats leaving text frozen-tiny or frozen-huge until restart. If auto-detection picks the wrong monitor, setting `FLEXTOOL_DPI` at startup forces a value.
 
+## Sharing a project
+
+A project can be sent to another computer as one file, `<Name>_<YYYYMMDD>.flextool.zip`. In **Manage projects…** select the project and click **Export…**:
+
+- **Always in the package** (greyed): the input sources, `settings.yaml` without the settings of this machine (execution limits, parallel executions, learned memory budgets), `plot_settings.yaml`, and the solver option files (`*.opt`) of the workspace's `solver_config` folder.
+- **Copy external input files into the package** (on by default): input files that the project reads from outside its folder are copied into `input_sources/` of the package. They keep their source numbers, so a shipped result `base_2` and a re-run of the same scenario on the other computer pair up.
+- **Result runs**: tick the runs to include, or use **None** / **All**. The size of each run is shown, and the total is the uncompressed size (parquet files barely compress). A run whose input file changed after the run is marked *input changed after the run* in amber: its results do not match the input being shipped. The package lists such runs.
+- Plots, CSV and Excel outputs, `results.sqlite` and the scratch folders (`work/`, `converted/`, `intermediate/`) are not packaged: re-create them from the results on the other computer.
+
+Export is refused while the project has running or pending jobs. Frozen databases go into the package as they are and stay frozen. A `manifest.json` in the package records the FlexTool, polar-high, HiGHS, polars and spinedb_api versions, the data version and frozen marker of each input database, and the SHA-256, size and modification time of every file.
+
+To import, click **Import…** in **Manage projects…** and pick the package. The dialog shows the project name, when and with which FlexTool it was made, the data version of each database and the result runs, without unpacking anything. The name is filled in from the package; when a project of that name exists (compared without case), the first free `<Name>_2`, `<Name>_3`… is suggested, and **Import** stays disabled while the name is taken. Warnings are shown in amber: a package made with a newer FlexTool (results and inputs may use features this version lacks), and databases that are migrated when the project opens (FlexTool asks first for a frozen one, as for any frozen database). A database newer than this FlexTool cannot be opened, and Import is disabled until FlexTool is updated. Every checksum is checked before anything is written; files keep their modification times, so the results are not reported as made from a changed input. On success the new project opens.
+
+The shipped solver options are unpacked to `imported_solver_config/` in the project; the workspace's own `.opt` files are never changed. The import message says whether they differ from the workspace's. To run with the shipped options, copy `imported_solver_config/*.opt` to the workspace's `solver_config` folder, or start FlexTool with `FLEXTOOL_SOLVER_CONFIG_DIR` set to the project's `imported_solver_config` folder. The same can be done from the terminal with `flextool-project` (see [Sharing a project](terminal_workflow.md#sharing-a-project)).
+
 ## Where things live on disk
 
 - `projects/projects.yaml` — global settings (theme, font sizes, last project, jobs-window sash).
 - `projects/<project>/settings.yaml` — project settings: Auto-gen flags, Debug / Save-memory checkboxes, per-project `execution_limits` and `max_workers`, `input_source_numbers`, `bare_output_owners`, `scenario_resource_history`, viewer state.
 - `projects/<project>/input_sources/` — `.xlsx` and `.sqlite` input files.
+- `solver_config/` in the FlexTool workspace (the folder FlexTool is started from) — the solver option files (`highs.opt`…) that every run uses; `$FLEXTOOL_SOLVER_CONFIG_DIR` points runs at another folder. An imported project keeps the options it was shipped with in `projects/<project>/imported_solver_config/`.
 - `output_parquet/<scenario>_<src#>/` — canonical results, always written. New writes always carry the `_<src#>` suffix so the folder name itself records which source produced it. Pre-existing bare-name folders from older projects are still readable via `bare_output_owners`; the GUI flags rows whose source no longer exists as **orphan**.
 - `output_plots/<scenario>_<src#>/` — PNGs from scenario plots.
 - `output_excel/<scenario>_<src#>.xlsx` — Excel export of one scenario.
