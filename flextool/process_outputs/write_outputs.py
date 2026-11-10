@@ -28,7 +28,7 @@ from flextool.process_outputs.out_ancillary import (
     connection, connection_wards, connection_cf,
     reserves, investment_duals, inertia_results,
     slack_variables, input_sets, dc_power_flow,
-    co2_duals,
+    co2_duals, capacity_margin,
 )
 from flextool.process_outputs.out_capacity import unit_capacity, connection_capacity, node_capacity
 from flextool.process_outputs.out_costs import (
@@ -727,6 +727,7 @@ ALL_OUTPUTS = [
     investment_duals,
     inertia_results,
     slack_variables,
+    capacity_margin,
     unit_capacity,
     connection_capacity,
     node_capacity,

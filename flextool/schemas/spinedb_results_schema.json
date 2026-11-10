@@ -309,6 +309,22 @@
     ],
     [
       "group",
+      "capacity_margin",
+      null,
+      null,
+      "The capacity margin of each solve with investment periods, per investment period at the group's binding step (the step with the largest deficit). 'margin' - [MW] the margin above demand. 'peak_demand' - [MW] the peak demand of the period. 'demand' - [MW] the demand at the binding step. 'requirement' - [MW] margin + demand. 'firm', 'vre' - [MW] the counted capacity of firm and VRE units. 'storage_flow', 'unit_flow', 'connections_net', 'consumption' - [MW] the flows of storage-backed units, other units counted by their flow, connections and consumption. 'dumped' - [MW] minus the downward slack. 'counted' - [MW] the sum of the counted terms. 'shortfall' - [MW] the capacity the group lacked. 'penalty_cost' - [M CUR] the penalty of the shortfall. 'capacity_price' - [CUR/kW/a] the shadow price of the margin.",
+      null
+    ],
+    [
+      "group",
+      "capacity_margin_contribution",
+      null,
+      null,
+      "[MW] What each unit, connection and node counts in the capacity margin of the group at its binding step, keyed 'class__entity' (class firm, vre, storage, unit_by_flow, connection, consumption or dumped); the values sum to the counted capacity.",
+      null
+    ],
+    [
+      "group",
       "slack_inertia_t",
       null,
       null,

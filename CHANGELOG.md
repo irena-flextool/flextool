@@ -18,6 +18,21 @@
 - **New: a `balance_within_period` node in a capacity-margin group is an error** (it balances per period, the
   margin holds per time step), and the warning that storage nodes are left out of a capacity-margin group is gone
   (their units now count by their flow).
+- **Fix: an investment solve's capacity-margin shortfall was reported nowhere in an investment → dispatch chain
+  (item 85).** The dispatch solve that realizes the period has no capacity margin, and its 0 replaced the
+  investment solve's shortfall, so `slack__capacity_margin__d` showed 0 and the costs no *capacity margin penalty*.
+  Now both show the shortfall of the solve that decided the investments, as the invested capacity already did.
+  Behaviour change: the total cost of such a chain now includes that penalty (it is part of the plan's cost); a
+  model without a shortfall is unchanged. The forecast branch periods of a stochastic fan are not realized, so
+  their shortfalls stay out of these tables and the costs.
+- **New: the capacity margin of each investment solve, explained.** `capacity_margin__d` (results database
+  `group.capacity_margin`) has, per solve, group and investment period, the binding time step (the largest
+  deficit), the margin, the demand, the requirement, what firm and VRE units, storage-backed units, other units,
+  connections and consumption count there, the shortfall, its penalty and the shadow price of the margin.
+  `capacity_margin_entity__d` (`group.capacity_margin_contribution`) has what each unit, connection and node counts.
+  An investment solve keeps its rows under its own name (look-ahead and forecast branch periods included), and the
+  run log prints `capacity margin shortfall: group …, period …: … MW at … (penalty … M CUR)` after each solve that
+  leaves a shortfall.
 
 - **Fix: a profile link without profile data held the flow at 0 without a word (#104).** `profile_method`
   defaults to *upper_limit* on `unit__node__profile`, and a profile without a value in the scenario is 0, so the

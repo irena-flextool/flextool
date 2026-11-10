@@ -32,6 +32,7 @@ class Slack:
     meaning: str
     related_inputs: tuple[str, ...]
     node_level: str | None = None          # the column level that names a node (for feeding_entities)
+    detail_tables: tuple[str, ...] = ()    # the tables that break the slack down (listed when present)
 
 
 SLACKS: tuple[Slack, ...] = (
@@ -54,8 +55,12 @@ SLACKS: tuple[Slack, ...] = (
           "Reserve requirement the group did not meet, annualized.",
           ("reserve__upDown__group.reservation", "reserve__upDown__group.penalty_reserve")),
     Slack("vq_capacity_margin", "nodeGroup_slack_capacity_margin_d_g",
-          "Capacity the group lacked against its capacity margin in the period (not annualized).",
-          ("group.capacity_margin", "group.penalty_capacity_margin")),
+          "Capacity the group lacked against its capacity margin in the period (not annualized). An investment "
+          "solve's shortfall is shown under the solve that realizes the period; nodeGroup_capacity_margin_d_g has "
+          "it per solve, with the requirement and what each class of units and connections counts at the binding "
+          "step, and nodeGroup_capacity_margin_entity_d_g what each unit, connection and node counts.",
+          ("group.capacity_margin", "group.capacity_margin_share", "group.penalty_capacity_margin"),
+          detail_tables=("nodeGroup_capacity_margin_d_g", "nodeGroup_capacity_margin_entity_d_g")),
 )
 
 
@@ -152,6 +157,9 @@ def slack_summary(ctx: AssistantContext, run: str, *, min_value: float, max_rows
             "feeding_entities": None,
             "docs": DOCS,
         }
+        details = [t for t in spec.detail_tables if (rr.folder / f"{t}.parquet").is_file()]
+        if details:
+            record["detail_tables"] = details
         if spec.node_level is not None and spec.node_level in entity_levels:
             nodes = list(dict.fromkeys(e["entity"][entity_levels.index(spec.node_level)] for e in entries))
             feeding, note = _feeding(ctx, rr, nodes)

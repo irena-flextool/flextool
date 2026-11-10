@@ -2335,6 +2335,8 @@ rename:
   process_reserve_average_d_eppe: [process__reserve__upDown__node__d_average, true]
   reserve_prices_dt_ppg: [reserve_price__upDown__group__dt, true]
   nodeGroup_slack_capacity_margin_d_g: [slack__capacity_margin__d, true]
+  nodeGroup_capacity_margin_d_g: [capacity_margin__d, true]
+  nodeGroup_capacity_margin_entity_d_g: [capacity_margin_entity__d, true]
   node_slack_down_dt_e: [slack__downward__node_state__dt, true]
   node_slack_down_d_e: [slack__downward__node_state__d, true]
   nodeGroup_slack_inertia_d_g: [slack__inertia_group__d, true]

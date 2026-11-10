@@ -388,6 +388,20 @@ def capacity_margin_counted_arcs(d) -> pl.DataFrame | None:
     availability), the others firm (capacity × capacity_max_coeff × availability): each is the arc's own dispatch
     bound, so its counted capacity is never below its flow.  The arcs that do not count enter the row by their flow.
     """
+    arcs = capacity_margin_unit_arcs(d)
+    if arcs is None:
+        return None
+    out = arcs.filter(pl.col("cls").is_in(["firm", "vre"])).select("g", "p", "source", "sink", "f")
+    return out if out.height > 0 else None
+
+
+def capacity_margin_unit_arcs(d) -> pl.DataFrame | None:
+    """``(g, p, source, sink, f, cls)`` Utf8: every unit output arc into N(g) with its class in g's capacity
+    margin (:func:`capacity_margin_counted_arcs`): ``firm`` / ``vre`` (counted at capacity; ``f`` the profile of a
+    VRE arc), or by flow: ``storage`` (a storage-backed unit), ``internal`` (a converter with an input from N(g))
+    or ``uncapped`` (an arc with conversion_flow_coeff 0); ``f`` is null for the arcs counted by flow.  The row
+    (:func:`_eq_capacity_margin`) and the output breakdown (:func:`capacity_margin_report`) read these classes.
+    None without any unit output arc into N(g)."""
     nodes = _utf8(capacity_margin_nodes(d), ("g", "n"))
     pss = _utf8(getattr(d, "process_source_sink", None), ("p", "source", "sink"))
     units = _names(getattr(d, "process_unit", None), "p")
@@ -399,10 +413,11 @@ def capacity_margin_counted_arcs(d) -> pl.DataFrame | None:
         return None
     uncapped = _utf8(getattr(d, "process_source_sink_uncapped", None), ("p", "source", "sink"))
     inputs = pss.filter(pl.col("source") != pl.col("p")).select("p", "source").unique()
+    uncapped_arcs = None
     if uncapped is not None:
         zero_in = uncapped.filter(pl.col("sink") == pl.col("p")).select("p", "source").unique()
         inputs = inputs.join(zero_in, on=["p", "source"], how="anti")
-        out = out.join(uncapped, on=["p", "source", "sink"], how="anti")
+        uncapped_arcs = out.join(uncapped, on=["p", "source", "sink"], how="semi").select("g", "p", "source", "sink")
     state = _names(getattr(d, "nodeState", None), "n")
     share = _utf8(_param_frame(getattr(d, "p_process_source_input_share_max", None)), ("p", "source"))
     shares = inputs.with_columns(share=pl.lit(1.0))
@@ -419,20 +434,29 @@ def capacity_margin_counted_arcs(d) -> pl.DataFrame | None:
                            pl.col("share").filter(~is_state).sum().alias("other"))
                       .filter(pl.col("has_state") & (pl.col("other") < 1.0))
                       .select("p"))
-    out = out.join(storage_backed, on="p", how="anti")
     internal = inputs.join(nodes.rename({"n": "source"}), on="source", how="inner").select("g", "p").unique()
-    out = out.join(internal, on=["g", "p"], how="anti")
-    if out.height == 0:
-        return None
+    arcs = out.select("g", "p", "source", "sink")
+    # The by-flow classes: a storage-backed unit first, then a converter inside g, then an uncapped arc.
+    by_flow = [arcs.join(storage_backed, on="p", how="semi").with_columns(cls=pl.lit("storage"))]
+    rest = arcs.join(storage_backed, on="p", how="anti")
+    by_flow.append(rest.join(internal, on=["g", "p"], how="semi").with_columns(cls=pl.lit("internal")))
+    rest = rest.join(internal, on=["g", "p"], how="anti")
+    if uncapped_arcs is not None:
+        by_flow.append(rest.join(uncapped_arcs, on=["g", "p", "source", "sink"], how="semi")
+                       .with_columns(cls=pl.lit("uncapped")))
+        rest = rest.join(uncapped_arcs, on=["g", "p", "source", "sink"], how="anti")
     profiles = [f for f in (_utf8(getattr(d, "process_profile_upper", None), ("p", "source", "sink", "f")),
                             _utf8(getattr(d, "process_profile_fixed", None), ("p", "source", "sink", "f")))
                 if f is not None]
-    out = out.select("g", "p", "source", "sink")
     if profiles:
-        out = out.join(pl.concat(profiles).unique(), on=["p", "source", "sink"], how="left")
+        counted = rest.join(pl.concat(profiles).unique(), on=["p", "source", "sink"], how="left")
     else:
-        out = out.with_columns(f=pl.lit(None, dtype=pl.Utf8))
-    return out.unique().sort("g", "p", "source", "sink", "f", nulls_last=True)
+        counted = rest.with_columns(f=pl.lit(None, dtype=pl.Utf8))
+    counted = counted.with_columns(cls=pl.when(pl.col("f").is_null()).then(pl.lit("firm")).otherwise(pl.lit("vre")))
+    flow = pl.concat(by_flow).with_columns(f=pl.lit(None, dtype=pl.Utf8)).select("g", "p", "source", "sink", "f",
+                                                                                   "cls")
+    return (pl.concat([counted.select("g", "p", "source", "sink", "f", "cls"), flow]).unique()
+            .sort("g", "p", "source", "sink", "f", nulls_last=True))
 
 
 def _param_frame(param) -> "pl.DataFrame | None":
@@ -505,7 +529,6 @@ def _eq_capacity_margin(b: _Build) -> None:
     invc = d.p_inv_group_cap
     p_us = d.p_unitsize
     exist_cnt = d.p_process_existing_count
-    prof_val = d.p_profile_value
 
     # ─── EQ. ─── capacityMargin ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -559,20 +582,9 @@ def _eq_capacity_margin(b: _Build) -> None:
     dt_inv = d.dt.join(_capacity_margin_periods(d), on="d", how="semi")
     gn = capacity_margin_nodes(d)
 
-    counted = capacity_margin_counted_arcs(d)
-    arcs = None          # (g, p, source, sink) in process_source_sink dtypes: the counted arcs
-    kappa = None         # (g, p, source, sink, d, t): c · av (firm) or profile · av (VRE)
-    if counted is not None and gn is not None and exist_cnt is not None and p_us is not None:
-        pss = d.process_source_sink.select("p", "source", "sink")
-        arcs = (_arcs_at_group(pss, "sink", gn)
-                .with_columns(_g=pl.col("g").cast(pl.Utf8), _p=pl.col("p").cast(pl.Utf8),
-                              _s=pl.col("source").cast(pl.Utf8), _k=pl.col("sink").cast(pl.Utf8))
-                .join(counted.rename({"g": "_g", "p": "_p", "source": "_s", "sink": "_k", "f": "_f"}),
-                      on=["_g", "_p", "_s", "_k"], how="inner"))
-        kappa = _counted_coefficient(d, arcs, dt_inv, prof_val)
-        arcs = arcs.select("g", "p", "source", "sink").unique().sort("g", "p", "source", "sink")
-        if kappa is None or arcs.height == 0:
-            arcs = kappa = None
+    # arcs: (g, p, source, sink) in process_source_sink dtypes, the counted arcs;
+    # kappa: (g, p, source, sink, d, t), c · av (firm) or profile · av (VRE)
+    arcs, kappa = _counted_terms(d, gn, dt_inv)
 
     if arcs is not None:
         invest, divest = _invest_change(b, arcs, "cap_margin")
@@ -612,6 +624,28 @@ def _eq_capacity_margin(b: _Build) -> None:
     over = gcm.join(dt_inv, how="cross")
     _coarse_flows.add_row_rule_cstr(b, "capacityMargin", over=over, sense=">=", lhs_terms=lhs, rhs_terms=rhs,
                                     partition=_row_partition(b, "capacity_margin", over))
+
+
+def _counted_terms(d, gn: "pl.DataFrame | None", dt_inv: pl.DataFrame) -> "tuple[pl.DataFrame | None, Param | None]":
+    """``(arcs, kappa)`` of the capacity margin's counted arcs (:func:`capacity_margin_counted_arcs`) at the steps
+    ``dt_inv``: ``arcs`` (g, p, source, sink) in ``process_source_sink`` dtypes, ``kappa`` their capacity factor
+    (:func:`_counted_coefficient`); ``(None, None)`` without any (or without the existing count / unitsize).
+    One construction for the row (:func:`_eq_capacity_margin`) and its output breakdown
+    (:func:`capacity_margin_report`)."""
+    counted = capacity_margin_counted_arcs(d)
+    if counted is None or gn is None or d.p_process_existing_count is None or d.p_unitsize is None:
+        return None, None
+    pss = d.process_source_sink.select("p", "source", "sink")
+    arcs = (_arcs_at_group(pss, "sink", gn)
+            .with_columns(_g=pl.col("g").cast(pl.Utf8), _p=pl.col("p").cast(pl.Utf8),
+                          _s=pl.col("source").cast(pl.Utf8), _k=pl.col("sink").cast(pl.Utf8))
+            .join(counted.rename({"g": "_g", "p": "_p", "source": "_s", "sink": "_k", "f": "_f"}),
+                  on=["_g", "_p", "_s", "_k"], how="inner"))
+    kappa = _counted_coefficient(d, arcs, dt_inv, d.p_profile_value)
+    arcs = arcs.select("g", "p", "source", "sink").unique().sort("g", "p", "source", "sink")
+    if kappa is None or arcs.height == 0:
+        return None, None
+    return arcs, kappa
 
 
 def _counted_coefficient(d, arcs: pl.DataFrame, dt_inv: pl.DataFrame, prof_val: "Param | None") -> "Param | None":
@@ -657,6 +691,251 @@ def _counted_coefficient(d, arcs: pl.DataFrame, dt_inv: pl.DataFrame, prof_val: 
         parts.append(vre.select("g", "p", "source", "sink", "d", "t", "value"))
     frame = pl.concat(parts).sort("g", "p", "source", "sink", "d", "t")
     return Param(("g", "p", "source", "sink", "d", "t"), frame) if frame.height > 0 else None
+
+
+# ---------------------------------------------------------------------------
+# The capacity margin's breakdown of a solution (outputs)
+
+#: The classes of :func:`capacity_margin_report` (the ``class`` column of its per-entity frame) -> the summary
+#: column they add to.  Each value is the class's signed contribution to the row's left-hand side [MW].
+CAPACITY_MARGIN_CLASSES: dict[str, str] = {
+    "firm": "firm", "vre": "vre", "storage": "storage_flow", "unit_by_flow": "unit_flow",
+    "connection": "connections_net", "consumption": "consumption", "dumped": "dumped",
+}
+
+
+def _as_utf8(frame: "pl.DataFrame | pl.LazyFrame | None") -> "pl.DataFrame | None":
+    """``frame`` collected, its key columns (all but ``value``) cast to Utf8; None when absent."""
+    if frame is None:
+        return None
+    frame = frame.collect() if isinstance(frame, pl.LazyFrame) else frame
+    return frame.with_columns(*(pl.col(c).cast(pl.Utf8) for c in frame.columns if c != "value"))
+
+
+def _param_utf8(param, cols: tuple[str, ...], alias: str) -> "pl.DataFrame | None":
+    """``param``'s frame as ``(*cols, alias)``, keys Utf8 and the value Float64; None when absent."""
+    frame = _as_utf8(None if param is None else param.frame)
+    if frame is None or any(c not in frame.columns for c in cols):
+        return None
+    return frame.select(*cols, pl.col("value").cast(pl.Float64).alias(alias))
+
+
+def _invest_units(d, sol, var: str, edd: "pl.DataFrame | None", d_col: str) -> "pl.DataFrame | None":
+    """``(p, d, value)``: Σ_{d′} ``var``[p,d′] over ``edd`` (p | e, d′ = ``d_col``, d) at the solution (the
+    Σ_{d′} v_invest_p / v_divest_p of the row, :func:`_invest_change`); None without either."""
+    if edd is None or edd.height == 0 or var not in getattr(sol, "_vars", {}):
+        return None
+    edd = _as_utf8(edd.rename({"e": "p"}) if "e" in edd.columns else edd)
+    val = _as_utf8(sol.value(var)).rename({"d": d_col})
+    out = (edd.join(val, on=["p", d_col], how="inner")
+           .group_by("p", "d").agg(pl.col("value").cast(pl.Float64).sum()))
+    return out if out.height > 0 else None
+
+
+def _row_duals(sol, family: str, step: str) -> "pl.DataFrame | None":
+    """``(g, d, <step>, dual)`` (Utf8 keys) of the rows ``family[g,d,step]``; None without the family.  The key
+    is split from the right, so a group name may hold a comma; quotes (a timestamp step) are stripped."""
+    try:
+        raw = sol.constraint_dual(family)
+    except KeyError:
+        return None
+    if raw is None or raw.height == 0 or "key" not in raw.columns:
+        return None
+    rows = []
+    for key, dual in zip(raw["key"].to_list(), raw["dual"].to_list()):
+        parts = key.rsplit(",", 2)
+        if len(parts) != 3:
+            continue
+        rows.append((parts[0].strip("'"), parts[1].strip("'"), parts[2].strip("'"), float(dual)))
+    return pl.DataFrame(rows, schema={"g": pl.Utf8, "d": pl.Utf8, step: pl.Utf8, "dual": pl.Float64}, orient="row")
+
+
+def capacity_margin_report(d, sol, *, scale_the_objective: "float | None" = None,
+                           duals_valid: bool = True) -> "tuple[pl.DataFrame, pl.DataFrame] | None":
+    """The capacity margin of a solved solve, per group and investment period, at the row's binding step:
+    ``(summary, entity)``; None when the solve has no capacity margin.
+
+    One evaluation of the row's terms at the solution, from the class frames the row is built from
+    (:func:`capacity_margin_unit_arcs`, :func:`_counted_terms`, ``_balance_terms.balance_flow_values``):
+
+        firm, vre   = Σ_{arcs of F(g) / V(g)} (existing_count + Σ invest − Σ divest) · unitsize · κ   (per unit)
+        storage_flow, unit_flow, connections_net, consumption
+                    = the B¬FV terms of the storage-backed units' output, the other by-flow unit outputs
+                      (converters inside g, conversion_flow_coeff 0), the connections (both ends, reverse
+                      flows) and the unit inputs from N(g), each signed as in the node balance
+        dumped      = − Σ_{n ∈ N(g)} vq_state_down
+        counted     = the sum of these (the row's left-hand side without the slack)
+        requirement = M + demand,  demand = Σ_{n ∈ N(g)} −inflow_real / Δt
+        deficit[t]  = requirement − counted;  binding step = argmax_t deficit (the first of equal ones)
+        shortfall   = vq_capacity_margin · group_capacity_for_scaling   (= max(0, max_t deficit) at the optimum)
+        penalty_cost = shortfall · penalty_capacity_margin · 1000 · inflation_op / 1e6                 [M CUR]
+        capacity_price = Σ_t dual(capacityMargin[g,d,t]) · icap / s / (1000 · inflation_op · bw)      [CUR/kW/a]
+
+    A group whose row is one row per coarse step (the row rule) is evaluated at the Δt-weighted mean of each coarse
+    step (weights ``w`` of ``coarse_row_partition``), as its LP row is; its binding step is the coarse step's first
+    fine step.  ``penalty_cost`` follows the output cost tables (``calc_slacks``: the run's operations inflation, no
+    branch weight).  ``capacity_price`` is the shadow price of the margin: it equals penalty_capacity_margin while
+    there is a shortfall, and is null when the duals are not valid (``duals_valid`` False, a MIP).
+
+    ``summary``: ``(group, period, binding_time, margin, peak_demand, demand, requirement, firm, vre, storage_flow,
+    unit_flow, connections_net, consumption, dumped, counted, shortfall, penalty_cost, capacity_price)`` [MW
+    unless named above], ``binding_time`` the binding step.
+    ``entity``: ``(group, period, binding_time, class, entity, value)``: each entity's contribution at the binding step
+    (``class`` of :data:`CAPACITY_MARGIN_CLASSES`; ``entity`` a unit, connection or, for ``dumped``, a node); its
+    values sum to ``counted``.
+    """
+    if not has_capacity_margin(d) or "vq_capacity_margin" not in getattr(sol, "_vars", {}):
+        return None
+    resolve_capacity_margin(d)
+    dt_inv = d.dt.join(_capacity_margin_periods(d), on="d", how="semi")
+    steps = _as_utf8(dt_inv.select("d", "t")).with_row_index("__order")
+    groups = pl.DataFrame({"g": _names(d.groupCapacityMargin, "g")}, schema={"g": pl.Utf8})
+    gn = capacity_margin_nodes(d)
+    gn_u = _as_utf8(gn) if gn is not None else pl.DataFrame(schema={"g": pl.Utf8, "n": pl.Utf8})
+    contrib: list[pl.DataFrame] = []
+    cols = ["g", "d", "t", "cls", "entity", "value"]
+
+    # F and V: the counted arcs at capacity.
+    arcs, kappa = _counted_terms(d, gn, dt_inv)
+    if arcs is not None:
+        units = _param_utf8(d.p_process_existing_count, ("p", "d"), "exist")
+        units = units if units is not None else pl.DataFrame(schema={"p": pl.Utf8, "d": pl.Utf8, "exist": pl.Float64})
+        inv = _invest_units(d, sol, "v_invest_p", getattr(d, "edd_invest_set", None), "d_invest")
+        div = _invest_units(d, sol, "v_divest_p", getattr(d, "edd_divest_active", None), "d_divest")
+        kap = _as_utf8(kappa.frame).rename({"value": "kappa"})
+        cap = kap.join(units, on=["p", "d"], how="left")
+        for frame, alias in ((inv, "inv"), (div, "div")):
+            frame = frame if frame is not None else pl.DataFrame(schema={"p": pl.Utf8, "d": pl.Utf8,
+                                                                       "value": pl.Float64})
+            cap = cap.join(frame.rename({"value": alias}), on=["p", "d"], how="left")
+        cls = (capacity_margin_unit_arcs(d).filter(pl.col("cls").is_in(["firm", "vre"]))
+               .select("g", "p", "source", "sink", "cls").unique(["g", "p", "source", "sink"]))
+        us = _param_utf8(d.p_unitsize, ("p",), "us")
+        cap = (cap.join(us, on="p", how="inner").join(cls, on=["g", "p", "source", "sink"], how="inner")
+               .with_columns(value=(pl.col("exist").fill_null(0.0) + pl.col("inv").fill_null(0.0)
+                                    - pl.col("div").fill_null(0.0)) * pl.col("us") * pl.col("kappa")))
+        contrib.append(cap.select("g", "d", "t", "cls", pl.col("p").alias("entity"), "value"))
+
+    # B¬FV: the other flows at N(g), by their value.
+    if gn is not None:
+        flows = _balance_terms.balance_flow_values(d, sol, group_nodes=gn, exclude_arcs=arcs)
+        flows = flows.join(steps.select("d", "t"), on=["d", "t"], how="semi")
+        unit_names = _names(getattr(d, "process_unit", None), "p")
+        by_flow = capacity_margin_unit_arcs(d)
+        by_flow = (by_flow.filter(~pl.col("cls").is_in(["firm", "vre"]))
+                   .select("g", "p", "source", "sink", pl.col("cls").alias("__ucls"))
+                   if by_flow is not None else pl.DataFrame(schema={c: pl.Utf8 for c in
+                                                                    ("g", "p", "source", "sink", "__ucls")}))
+        flows = flows.join(by_flow.unique(["g", "p", "source", "sink"]), on=["g", "p", "source", "sink"],
+                           how="left")
+        is_unit = pl.col("p").is_in(unit_names)
+        flows = flows.with_columns(cls=pl.when(~is_unit).then(pl.lit("connection"))
+                                   .when(pl.col("term") != "sink_flow").then(pl.lit("consumption"))
+                                   .when(pl.col("__ucls") == "storage").then(pl.lit("storage"))
+                                   .otherwise(pl.lit("unit_by_flow")))
+        contrib.append(flows.select("g", "d", "t", "cls", pl.col("p").alias("entity"), "value"))
+        if "vq_state_down" in getattr(sol, "_vars", {}):
+            dump = _as_utf8(sol.value("vq_state_down")).join(gn_u, on="n", how="inner")
+            dump = dump.join(steps.select("d", "t"), on=["d", "t"], how="semi")
+            contrib.append(dump.select("g", "d", "t", pl.lit("dumped").alias("cls"), pl.col("n").alias("entity"),
+                                       (0.0 - pl.col("value").cast(pl.Float64)).alias("value")))
+    contrib_df = (pl.concat([c.select(cols) for c in contrib]) if contrib
+                  else pl.DataFrame(schema={**{c: pl.Utf8 for c in cols[:-1]}, "value": pl.Float64}))
+    contrib_df = (contrib_df.join(groups, on="g", how="semi")
+                  .group_by("g", "d", "t", "cls", "entity").agg(pl.col("value").sum()))
+
+    # The requirement per step: M + the real demand of N(g).
+    base = groups.join(steps, how="cross")
+    margin = _param_utf8(d.pdGroup_capacity_margin, ("g", "d"), "margin")
+    base = (base.join(margin, on=["g", "d"], how="left") if margin is not None
+            else base.with_columns(margin=pl.lit(None, dtype=pl.Float64)))
+    base = base.with_columns(pl.col("margin").fill_null(0.0))
+    inflow = _param_utf8(getattr(d, "pdtNodeInflow_per_step", None), ("n", "d", "t"), "inflow")
+    if inflow is not None and gn_u.height > 0:
+        dem = (gn_u.join(inflow, on="n", how="inner").group_by("g", "d", "t")
+               .agg((-pl.col("inflow")).sum().alias("demand")))
+        base = base.join(dem, on=["g", "d", "t"], how="left")
+    else:
+        base = base.with_columns(demand=pl.lit(None, dtype=pl.Float64))
+    base = base.with_columns(pl.col("demand").fill_null(0.0))
+
+    # The row rule: a coarse group's rows are the Δt-weighted means of its coarse steps.
+    part = None
+    if _has_rows(getattr(d, "process_coarse_step", None)):
+        from flextool.engine.preprocess.flex_data import coarse_row_partition
+
+        part = coarse_row_partition(d, "capacity_margin")
+        part = None if part is None or part.height == 0 else part.select(
+            *(pl.col(c).cast(pl.Utf8) for c in ("g", "d", "b_first", "t")), pl.col("w").cast(pl.Float64))
+    if part is not None:
+        def coarse(frame: pl.DataFrame, keys: list[str], values: list[str]) -> pl.DataFrame:
+            j = frame.join(part, on=["g", "d", "t"], how="left")
+            fine = j.filter(pl.col("b_first").is_null()).select(frame.columns)
+            agg = (j.filter(pl.col("b_first").is_not_null())
+                   .group_by(*[k for k in keys if k != "t"], "b_first")
+                   .agg(*((pl.col(v) * pl.col("w")).sum().alias(v) for v in values))
+                   .rename({"b_first": "t"}))
+            return pl.concat([fine, agg.select(frame.columns)])
+        contrib_df = coarse(contrib_df, ["g", "d", "t", "cls", "entity"], ["value"])
+        base = base.drop("__order")
+        base = coarse(base, ["g", "d", "t"], ["margin", "demand"]).join(steps, on=["d", "t"], how="left")
+
+    sums = contrib_df.group_by("g", "d", "t", "cls").agg(pl.col("value").sum())
+    wide = base.with_columns(requirement=pl.col("margin") + pl.col("demand"))
+    for c, col in CAPACITY_MARGIN_CLASSES.items():
+        wide = wide.join(sums.filter(pl.col("cls") == c).select("g", "d", "t", pl.col("value").alias(col)),
+                         on=["g", "d", "t"], how="left").with_columns(pl.col(col).fill_null(0.0))
+    class_cols = list(CAPACITY_MARGIN_CLASSES.values())
+    wide = wide.with_columns(counted=pl.sum_horizontal(class_cols))
+    wide = wide.with_columns(__deficit=pl.col("requirement") - pl.col("counted"))
+    binding = (wide.sort("g", "d", "__deficit", "__order", descending=[False, False, True, False])
+               .unique(["g", "d"], keep="first", maintain_order=True))
+
+    # The slack, its penalty and the shadow price.
+    vq = _as_utf8(sol.value("vq_capacity_margin")).select("g", "d", pl.col("value").cast(pl.Float64).alias("vq"))
+    gcs = _param_utf8(d.p_group_capacity_for_scaling, ("g", "d"), "gcs")
+    pen = _param_utf8(d.pdGroup_penalty_capacity_margin, ("g", "d"), "penalty")
+    infl_run_param = getattr(d, "p_inflation_op_run", None)
+    infl_run = _param_utf8(infl_run_param if infl_run_param is not None else d.p_inflation_op, ("d",), "infl_run")
+    infl = _param_utf8(d.p_inflation_op, ("d",), "infl")
+    peak = _param_utf8(getattr(d, "pdGroup_peak_demand", None), ("g", "d"), "peak_demand")
+    out = binding.join(vq, on=["g", "d"], how="left").join(gcs, on=["g", "d"], how="left")
+    out = out.with_columns(shortfall=pl.col("vq").fill_null(0.0) * pl.col("gcs").fill_null(1.0))
+    for frame, on in ((pen, ["g", "d"]), (infl_run, ["d"]), (infl, ["d"]), (peak, ["g", "d"])):
+        if frame is not None:
+            out = out.join(frame, on=on, how="left")
+    for c in ("penalty", "infl_run", "infl", "peak_demand"):
+        if c not in out.columns:
+            out = out.with_columns(pl.lit(None, dtype=pl.Float64).alias(c))
+    out = out.with_columns(penalty_cost=pl.col("shortfall") * pl.col("penalty").fill_null(0.0) * 1000.0
+                           * pl.col("infl_run").fill_null(1.0) / 1e6)
+    price = None
+    if duals_valid:
+        duals = [f for f in (_row_duals(sol, "capacityMargin", "t"), _row_duals(sol, "capacityMargin_coarse", "t"))
+                 if f is not None]
+        if duals:
+            bw = _capacity_margin_branch_weight(d)
+            bw_u = (_param_utf8(bw, ("d",), "bw") if bw is not None
+                    else pl.DataFrame(schema={"d": pl.Utf8, "bw": pl.Float64}))
+            icap = _param_utf8(d.p_inv_group_cap, ("g", "d"), "icap")
+            s_obj = 1.0 if scale_the_objective is None or scale_the_objective <= 0 else float(scale_the_objective)
+            price = (pl.concat(duals).group_by("g", "d").agg(pl.col("dual").sum())
+                     .join(icap, on=["g", "d"], how="left").join(infl, on="d", how="left")
+                     .join(bw_u, on="d", how="left")
+                     .with_columns(capacity_price=pl.col("dual") * pl.col("icap") / s_obj
+                                   / (1000.0 * pl.col("infl").fill_null(1.0) * pl.col("bw").fill_null(1.0)))
+                     .select("g", "d", "capacity_price"))
+    out = (out.join(price, on=["g", "d"], how="left") if price is not None
+           else out.with_columns(capacity_price=pl.lit(None, dtype=pl.Float64)))
+    out = out.sort("g", "__order")
+    summary = out.select(pl.col("g").alias("group"), pl.col("d").alias("period"), pl.col("t").alias("binding_time"),
+                         "margin", "peak_demand", "demand", "requirement", *class_cols, "counted", "shortfall",
+                         "penalty_cost", "capacity_price")
+    entity = (contrib_df.join(out.select("g", "d", "t", "__order"), on=["g", "d", "t"], how="inner")
+              .sort("g", "__order", "cls", "entity")
+              .select(pl.col("g").alias("group"), pl.col("d").alias("period"), pl.col("t").alias("binding_time"),
+                      pl.col("cls").alias("class"), "entity", "value"))
+    return summary, entity
 
 
 def _eq_inertia(b: _Build) -> None:

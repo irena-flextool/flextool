@@ -490,6 +490,16 @@ def write_outputs_for_solve(
             "write_all_variables failed for solve '%s': %s", solve_name, exc,
         )
 
+    # The capacity margin of a solve with investment periods: its per-solve tables (kept under this solve's
+    # name over all its investment periods, not realized-filtered) and the run-log line of a shortfall.
+    try:
+        from flextool.engine.output._capacity_margin import write_capacity_margin_report
+
+        write_capacity_margin_report(sol, flex_data, output_dir=output_dir, solve_name=roll_name,
+                                     scale_the_objective=scale_the_objective)
+    except Exception as exc:  # noqa: BLE001
+        _logger.error("capacity margin report failed for solve '%s': %s", solve_name, exc)
+
     try:
         write_all_handoffs(
             h, solve_name=roll_name, work_folder=work_folder,

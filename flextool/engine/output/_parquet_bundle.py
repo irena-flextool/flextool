@@ -216,6 +216,23 @@ for _spec in (
     REGISTRY[_spec.key] = _spec
 del _spec
 
+# -- raw / the capacity margin of each solve with investment periods (engine.output._capacity_margin) --------
+for _key, _cols, _note in (
+    ("capacity_margin_report",
+     ("margin", "peak_demand", "demand", "requirement", "firm", "vre", "storage_flow", "unit_flow",
+      "connections_net", "consumption", "dumped", "counted", "shortfall", "penalty_cost", "capacity_price"),
+     "capacity margin per (group, period) of the solve at its binding step; only when a capacity margin is active."),
+    ("capacity_margin_entity", ("class", "entity", "value"),
+     "each entity's capacity-margin contribution at the binding step; only when a capacity margin is active."),
+):
+    REGISTRY[_key] = ParquetSpec(
+        key=_key, category="raw", filename=f"{_key}__*.parquet",
+        columns=("solve", "group", "period", "binding_time", *_cols),
+        indices=("solve", "group", "period", "binding_time"), note=_note,
+        producer="flextool.engine.output._capacity_margin.write_capacity_margin_report",
+    )
+del _key, _cols, _note
+
 
 # NOTE: the legacy raw/handoff capacity CSVs (``entity_all_capacity.csv``,
 # ``{unit,connection,node}_capacity__period.csv``) were removed 2026-08-07.
@@ -374,6 +391,8 @@ for _key, _producer, _note in (
     ("nodeGroup_inertia_largest_flow_dt_g",        "out_ancillary.inertia_results", "Largest-flow inertia decomposition; only with N-1 / dynamic reserves."),
     ("nodeGroup_unit_node_inertia_dt_gee",         "out_ancillary.inertia_results", "Per-unit inertia contribution; only with inertia constraint."),
     ("nodeGroup_slack_capacity_margin_d_g", "out_ancillary.slack_variables", "Per-period capacity-margin slack by group."),
+    ("nodeGroup_capacity_margin_d_g",       "out_ancillary.capacity_margin", "Per-solve capacity margin by group and investment period at the binding step; only with a capacity margin."),
+    ("nodeGroup_capacity_margin_entity_d_g", "out_ancillary.capacity_margin", "Per-solve capacity-margin contribution of each entity; only with a capacity margin."),
     ("nodeGroup_slack_inertia_d_g",         "out_ancillary.slack_variables", "Per-period inertia slack by group."),
     ("nodeGroup_slack_inertia_dt_g",        "out_ancillary.slack_variables", "Per-(period,time) inertia slack."),
     ("nodeGroup_slack_nonsync_d_g",         "out_ancillary.slack_variables", "Per-period non-sync slack."),

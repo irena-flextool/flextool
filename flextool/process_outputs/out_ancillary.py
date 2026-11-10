@@ -525,6 +525,37 @@ def slack_variables(par, s, v, r, debug):
     return results
 
 
+#: The measures of ``nodeGroup_capacity_margin_d_g``, in column order (engine.model._group_slack.capacity_margin_report).
+CAPACITY_MARGIN_COLUMNS = (
+    "margin", "peak_demand", "demand", "requirement", "firm", "vre", "storage_flow", "unit_flow",
+    "connections_net", "consumption", "dumped", "counted", "shortfall", "penalty_cost", "capacity_price",
+)
+_CM_ROWS = ["solve", "period", "group", "binding_time"]
+
+
+def capacity_margin(par, s, v, r, debug):
+    """The capacity margin of every solve with investment periods, at each group's binding step: the
+    requirement, what each class counts, the shortfall and its penalty (``nodeGroup_capacity_margin_d_g``), and
+    each entity's contribution (``nodeGroup_capacity_margin_entity_d_g``, its columns (class, entity) sum to
+    ``counted``).  Rows are per solve (an investment solve keeps its own rows, also for a period a dispatch solve
+    realizes), with ``binding_time`` the binding step."""
+    summary = getattr(v, "capacity_margin_report", None)
+    entity = getattr(v, "capacity_margin_entity", None)
+    if summary is None or summary.height == 0:
+        return []
+    table = summary.to_pandas().set_index(_CM_ROWS)
+    table = table[[c for c in CAPACITY_MARGIN_COLUMNS if c in table.columns]].astype(float)
+    table.columns = pd.Index(table.columns, name="parameter")
+    results = [(table, 'nodeGroup_capacity_margin_d_g')]
+    if entity is not None and entity.height > 0:
+        e = entity.to_pandas()
+        wide = e.pivot_table(index=_CM_ROWS, columns=["class", "entity"], values="value", aggfunc="sum",
+                             sort=False)
+        wide = wide.reindex(table.index.intersection(wide.index, sort=False))
+        results.append((wide.astype(float), 'nodeGroup_capacity_margin_entity_d_g'))
+    return results
+
+
 def dc_power_flow(par, s, v, r, debug):
     """DC power flow voltage angles and angle differences per connection"""
 

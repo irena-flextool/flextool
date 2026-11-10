@@ -285,6 +285,22 @@ SLACK_CAP_MARGIN = Transform(
     "MW", Semantics.LEVEL,
     "Capacity-margin slack — per-period MW shortfall (not annualized).",
 )
+CAPACITY_MARGIN_MW = Transform(
+    "MW", Semantics.LEVEL,
+    "Capacity-margin term of the group at its binding step (MW, not annualized).",
+    algebra="the capacityMargin row's terms at the step with the largest deficit (requirement − counted)",
+)
+CAPACITY_MARGIN_PENALTY = Transform(
+    "M CUR", Semantics.DISCOUNTED,
+    "Penalty of the capacity-margin shortfall: shortfall · penalty_capacity_margin · 1000 · inflation / 1e6, "
+    "priced once per period.",
+    algebra="shortfall · penalty_capacity_margin · 1000 · inflation_op / 1e6",
+)
+CAPACITY_MARGIN_PRICE = Transform(
+    "CUR/kW/a", Semantics.PRICE,
+    "Shadow price of the capacity margin (equals penalty_capacity_margin while there is a shortfall).",
+    algebra="Σₜ dual(capacityMargin) · inv_group_cap / s / (1000 · inflation_op · branch_weight)",
+)
 # Sentinel: an output that is a pure membership/index set (no measures).
 DIMENSION_TABLE = Transform(
     "", Semantics.DIMENSION,
@@ -339,6 +355,11 @@ _NODEGROUP_GD_P = {
     '4. Curtailed VRE of demand': RATIO,
     '5. Annualized inflow': PREENERGY_ANNUAL,
     '6. Curtailed VRE of potential VRE': RATIO,
+}
+_CAPACITY_MARGIN_D_G = {
+    '*': CAPACITY_MARGIN_MW,
+    'penalty_cost': CAPACITY_MARGIN_PENALTY,
+    'capacity_price': CAPACITY_MARGIN_PRICE,
 }
 _FLOWGROUP_GD_P = {
     'cumulative_flow': ENERGY_PERIOD,   # MWh summed over the sample (not annualized)
@@ -453,6 +474,8 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "nodeGroup_slack_reserve_dt_eeg": RATE,
     "nodeGroup_slack_reserve_d_eeg": ENERGY_ANNUAL,
     "nodeGroup_slack_capacity_margin_d_g": SLACK_CAP_MARGIN,
+    "nodeGroup_capacity_margin_d_g": _CAPACITY_MARGIN_D_G,
+    "nodeGroup_capacity_margin_entity_d_g": CAPACITY_MARGIN_MW,
     # Node balance tables.  _dt_ep is the un-integrated MW level (assembled
     # from raw flow_dt / inflow / slacks with no step_duration, like the dt
     # group flows); _d_ep integrates + annualizes to MWh/a.
@@ -722,6 +745,13 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
     # Slacks of group constraints
     "nodeGroup_slack_capacity_margin_d_g": "Capacity margin shortfall of each group in each investment period, "
                                            "not scaled to a year.",
+    "nodeGroup_capacity_margin_d_g": "Capacity margin of each solve with investment periods, per group and "
+                                     "investment period at the step with the largest deficit: the requirement, "
+                                     "what firm, VRE, storage, other units, connections and consumption count, "
+                                     "the shortfall, its penalty and the shadow price.",
+    "nodeGroup_capacity_margin_entity_d_g": "Contribution of each unit, connection and node to the capacity margin "
+                                            "of each group at its binding step, per solve and investment period, "
+                                            "summing to the counted capacity.",
     "nodeGroup_slack_inertia_dt_g": "Inertia shortfall of each inertia group in each time step.",
     "nodeGroup_slack_inertia_d_g": "Inertia shortfall of each inertia group summed over the period and scaled to "
                                    "a full year.",
@@ -840,6 +870,11 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "nodeGroup_unit_node_inertia_dt_gee": OutputDims(_DT, ("group", "process", "node")),
     "nodeGroup_inertia_largest_flow_dt_g": OutputDims(_DT, ("group",)),
     "nodeGroup_slack_capacity_margin_d_g": OutputDims(_D, ("group",)),
+    "nodeGroup_capacity_margin_d_g": OutputDims(("solve", "period", "group", "binding_time"), ("parameter",),
+                                                kinds=(*_PARAMETER_QUANTITY, ("binding_time", "quantity"))),
+    "nodeGroup_capacity_margin_entity_d_g": OutputDims(("solve", "period", "group", "binding_time"),
+                                                       ("class", "entity"),
+                                                       kinds=(("binding_time", "quantity"), ("class", "part"))),
     "nodeGroup_slack_inertia_dt_g": OutputDims(_DT, ("group",), "nodeGroup_slack_inertia_d_g"),
     "nodeGroup_slack_inertia_d_g": OutputDims(_D, ("group",), "nodeGroup_slack_inertia_dt_g"),
     "nodeGroup_slack_nonsync_dt_g": OutputDims(_DT, ("group",), "nodeGroup_slack_nonsync_d_g"),

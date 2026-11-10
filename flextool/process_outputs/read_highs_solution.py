@@ -193,7 +193,10 @@ class VariableSpec(NamedTuple):
     # (``realized_invest_periods_of_current_solve.csv`` / provider).  Only
     # ``v_invest`` / ``v_divest`` use ``"invest"`` — they are decided on
     # the investment axis, so a dispatch-only roll must contribute no
-    # rows (see the registry note on those specs).  Ignored for
+    # rows (see the registry note on those specs).  ``"invest_branches"``
+    # is ``"invest"`` plus the forecast branch periods of the realized-
+    # invest periods (``vq_capacity_margin``: one slack per forecast branch
+    # period of a fan, which no dispatch axis holds).  Ignored for
     # ``has_time`` and ``has_period=False`` variables.
     period_source: str = "dispatch"
 
@@ -335,10 +338,13 @@ VARIABLE_SPECS: list[VariableSpec] = [
     # step's value is the sole contributor at union time.
     VariableSpec("v_invest", ("entity",), has_time=False, period_source="invest"),
     VariableSpec("v_divest", ("entity",), has_time=False, period_source="invest"),
-    # No t axis; the row scaler is still keyed by (g, d).
+    # No t axis; the row scaler is still keyed by (g, d).  Item 85: the slack lives on the investment axis, as
+    # ``v_invest`` does.  With the dispatch axis a dispatch roll's densified zero row for the period won the
+    # ``keep='last'`` union over the investment solve's shortfall, so an invest → dispatch chain reported no
+    # shortfall and no penalty.  A fan keeps one slack per forecast branch period (``invest_branches``).
     VariableSpec(
         "vq_capacity_margin", ("group",), has_time=False,
-        unscale_by="group_cap",
+        unscale_by="group_cap", period_source="invest_branches",
     ),
 
     # -- Commodity-ladder period-level trade ---------------------------------
@@ -608,6 +614,20 @@ def _fan_labels(flex_data) -> set[str]:
     return fan_period_labels({(str(a), str(b)) for a, b in zip(pbf["d"].to_list(), pbf["b"].to_list())})
 
 
+def _invest_branch_periods(flex_data, realized_invest: list[str]) -> list[str]:
+    """The forecast branch periods ``b ≠ d`` of ``period_branch_full`` whose period ``d`` is in
+    ``realized_invest``, in the frame's order; empty for a deterministic solve."""
+    pbf = getattr(flex_data, "period_branch_full", None) if flex_data is not None else None
+    if pbf is None or pbf.height == 0:
+        return []
+    keep = set(realized_invest)
+    out: list[str] = []
+    for a, b in zip(pbf["d"].cast(str).to_list(), pbf["b"].cast(str).to_list()):
+        if a in keep and b != a and b not in out:
+            out.append(b)
+    return out
+
+
 def _load_canonical_d_order(
     solve_name: str,
     *,
@@ -811,7 +831,7 @@ def extract_variable(
         canonical_d = _load_canonical_d_order(
             solve_name, flex_data=flex_data,
         )
-        if period_source == "invest":
+        if period_source in ("invest", "invest_branches"):
             # Investment-axis variables (``v_invest`` / ``v_divest``): a
             # roll that realizes DISPATCH but NO investment (the dispatch
             # children of a nested invest cascade) must emit NO rows.
@@ -834,7 +854,8 @@ def extract_variable(
                 realized_periods_csv, provider=provider,
             )
             no_invest = realized_invest is not None and not realized_invest
-            labels = _fan_labels(flex_data) if realized_invest else set()
+            # A fan label holds no capacity-margin slack (its forecasts do): no label rows for invest_branches.
+            labels = _fan_labels(flex_data) if realized_invest and period_source == "invest" else set()
             if no_invest:
                 canonical_d = []
             elif labels:
@@ -843,6 +864,14 @@ def extract_variable(
                 # column under recourse, so a 0 row): add the realized-invest labels.
                 base = list(canonical_d or [])
                 canonical_d = base + [p for p in realized_invest if p in labels and p not in base]
+            if period_source == "invest_branches" and realized_invest:
+                # The forecast branch periods b ≠ d of the realized-invest periods d (period_branch_full): a
+                # fan's planning slack has one value per forecast, and no dispatch axis holds them.  The output
+                # tables keep them where the run realizes them (drop_levels._drop_unrealized_forecast_periods).
+                branches = _invest_branch_periods(flex_data, realized_invest)
+                if branches:
+                    base = list(canonical_d or [])
+                    canonical_d = base + [p for p in branches if p not in base]
         canonical_rows = [(d,) for d in canonical_d] if canonical_d is not None else None
     else:
         canonical_rows = [()]  # one row: just (solve,)

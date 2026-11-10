@@ -32,6 +32,28 @@ Note that the picture has two `model`: *solves* parameters defined one for each 
 
 ![Invest_and_dispatch](../img/concept/invest_and_dispatch.png)
 
+**Check the investment solve's capacity margin.** A group's capacity margin (`capacity_margin_method`) applies only
+in a solve with investment periods, so here only the investment solve has it; the dispatch solve does not check it
+again. When the investment solve leaves a shortfall (the plan does not hold the margin, because the penalty is
+cheaper than the capacity or the capacity cannot be built), the run log says so right after that solve:
+
+```
+capacity margin shortfall: group <group>, period <period>: <MW> MW at <time step> (penalty <M CUR> M CUR)
+```
+
+The results then show:
+
+- `slack__capacity_margin__d`: the shortfall [MW] of the period, also when a later dispatch solve realizes the
+  period, and its penalty in the costs (`capacity margin penalty` in `costs_discounted__d`).
+- `capacity_margin__d`: the capacity margin of each solve with investment periods, under that solve's name, for
+  each group and investment period (look-ahead and forecast branch periods included) at its binding step (the time
+  step with the largest deficit): the margin, the demand, the requirement, what firm and VRE units, storage, other
+  units, connections and consumption count, the shortfall, its penalty and the shadow price of the margin.
+- `capacity_margin_entity__d`: what each unit, connection and node counts at that step, to see which capacity is
+  missing or does not count.
+
+See [Slack and penalty values](../results.md#slack-and-penalty-values).
+
 ## How to make an LP investment and a detailed dispatch check
 
 Unit commitment (`startup_method` *binary*), min loads, ramps and reserves make an investment solve slow, and an

@@ -266,6 +266,16 @@ SPINEDB_OUTPUT_SPEC: dict[str, dict[str, Any]] = {
                                                 param="slack_capacity_margin",
                                                 entity_dims=1, has_time=False,
                                                 category=None),
+    # The capacity margin of each solve at the group's binding step (rows solve, period, group, binding_time;
+    # the binding step is not a time axis: the value is Map category -> solve -> period).
+    "nodeGroup_capacity_margin_d_g": dict(ec="group", param="capacity_margin",
+                                          entity_dims=1, has_time=False,
+                                          category="header", entity_index="group"),
+    "nodeGroup_capacity_margin_entity_d_g": dict(ec="group",
+                                                 param="capacity_margin_contribution",
+                                                 entity_dims=1, has_time=False,
+                                                 category="header",
+                                                 entity_index="group"),
     "nodeGroup_slack_inertia_dt_g": dict(ec="group", param="slack_inertia_t",
                                          entity_dims=1, has_time=True,
                                          category=None),
