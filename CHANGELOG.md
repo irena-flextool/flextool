@@ -1,5 +1,15 @@
 ## Unreleased
 
+- **Behaviour change: a realized investment period must be an investment period of the same solve (#319).** A
+  solve whose `realized_invest_periods` lists a period that is not in its `invest_periods` now stops with an error
+  naming the solve and the periods. This includes a solve with `realized_invest_periods` but no `invest_periods`
+  (before, a rolling solve only got a warning and a single solve ignored the value): a database with a leftover
+  `realized_invest_periods` on a dispatch or rolling solve needs that value deleted. A 1D
+  `realized_invest_periods` on a solve whose `invest_periods` is a 2D map was ignored; it is now an error too
+  (use a 2D map with the same solve names).
+- **Fix: without `realized_invest_periods`, a solve realized the investments of every `realized_periods` period
+  (#319).** It now realizes the `realized_periods` that are also `invest_periods`, so a dispatch-only period of an
+  investment solve is no longer reported as an investment period.
 - **Behaviour change: the capacity margin counts what each entity can really deliver.** Before, every unit with an
   output into the group counted at its full capacity, whatever its `availability`, also a turbine on an empty
   storage, and connections did not count at all. Now, at each time step of an investment period, firm units count

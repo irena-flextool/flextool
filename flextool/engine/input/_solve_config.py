@@ -345,6 +345,11 @@ class SolveConfig:
         self.realized_periods: defaultdict = defaultdict(list)
         self.realized_invest_periods: defaultdict = defaultdict(list)
         self.fix_storage_periods: defaultdict = defaultdict(list)
+        # Solve entities whose value of a period parameter is a 2D map
+        # (``periods_to_tuples`` fans them out into ``<solve>_<outer>``
+        # duplicates), keyed by parameter name.  Read by
+        # ``_check_realized_invest_periods``.
+        self.map2d_period_parents: defaultdict = defaultdict(set)
         # Slice G (Axis B) — operational non-anticipativity window.
         # TRI-STATE per solve, distinct from the period dicts above:
         #   absent key / None -> unset -> legacy realized u fix window;
@@ -728,6 +733,8 @@ class SolveConfig:
         obj.non_anticipativity_invest_periods = obj.periods_to_tuples(
             db=db, cl="solve", par="shared_invest_periods"
         )
+        # After every period dict, so the 2D-map duplicate solves exist.
+        obj._check_realized_invest_periods()
 
         return obj
 
@@ -801,6 +808,50 @@ class SolveConfig:
     # ------------------------------------------------------------------
     # Methods
     # ------------------------------------------------------------------
+
+    def _check_realized_invest_periods(self) -> None:
+        """Raise when a solve realizes investments in a period it does not invest in (#319).
+
+        A realized investment period must be one of the solve's
+        ``invest_periods`` (the inner period ``p_in`` of each
+        ``(p_from, p_in)`` tuple is compared).  Checked over the solves
+        that run (``model_solve`` and ``contains_solves`` children, with
+        the 2D-map duplicates already made); rolls are made later from a
+        checked complete solve.  A 1D ``realized_invest_periods`` left on
+        a solve whose ``invest_periods`` is a 2D map never runs (the
+        duplicates replace it), so it gets its own message.
+        """
+        inv_2d = self.map2d_period_parents.get("invest_periods", set())
+        rinv_2d = self.map2d_period_parents.get("realized_invest_periods", set())
+        for parent in sorted(inv_2d - rinv_2d):
+            if self.realized_invest_periods.get(parent):
+                raise FlexToolConfigError(
+                    f"solve '{parent}': invest_periods is a 2D map, so "
+                    "realized_invest_periods must be a 2D map with the same "
+                    "solve names (outer keys)"
+                )
+        running: list[str] = []
+        for solves in (
+            list(self.model_solve.values())
+            + list(self.contains_solves.values())
+        ):
+            for s in solves:
+                if s not in running:
+                    running.append(s)
+        for s in running:
+            realized = [t[1] for t in self.realized_invest_periods.get(s, [])]
+            if not realized:
+                continue
+            invest = [t[1] for t in self.invest_periods.get(s, [])]
+            bad = [p for p in dict.fromkeys(realized) if p not in set(invest)]
+            if bad:
+                raise FlexToolConfigError(
+                    f"solve '{s}': realized_invest_periods lists period(s) "
+                    f"{bad} that are not in its invest_periods "
+                    f"{list(dict.fromkeys(invest))}. A realized investment "
+                    "period must also be an investment period: add it to "
+                    "invest_periods, or remove it from realized_invest_periods"
+                )
 
     def make_roll_counter(self) -> dict[str, int]:
         """Return a roll counter initialised to 0 for every rolling-window
@@ -1234,6 +1285,9 @@ class SolveConfig:
                                 )
                                 self.duplicate_solve(
                                     param["entity_name"], new_name
+                                )
+                                self.map2d_period_parents[par].add(
+                                    param["entity_name"]
                                 )
                                 result_dict[new_name].append(
                                     (

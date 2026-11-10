@@ -1187,28 +1187,24 @@ def native_run_model(state, solver) -> int:
             str(wf / "solve_data/period_with_history.csv"),
             provider=sub_solve_provider,
         )
+        # realized_invest_periods, or (when it is empty and the solve has
+        # both invest_periods and realized_periods) the realized_periods
+        # that are also invest_periods (#319).  One source with the
+        # investment-overlap warning: ``effective_realized_invest_periods``.
+        _cs_name = complete_solve[solve]
         solve_writers.emit_periods(
-            complete_solve[solve],
-            state.solve.realized_invest_periods,
+            _cs_name,
+            {_cs_name: [
+                (p, p) for p in effective_realized_invest_periods(
+                    _cs_name,
+                    realized_invest_periods=state.solve.realized_invest_periods,
+                    invest_periods=state.solve.invest_periods,
+                    realized_periods=state.solve.realized_periods,
+                )
+            ]},
             str(wf / "solve_data/realized_invest_periods_of_current_solve.csv"),
             provider=sub_solve_provider,
         )
-        # If realized_invest_periods is empty but both invest_periods and
-        # realized_periods are defined, fall back to realized_periods.
-        if (
-            not state.solve.realized_invest_periods[complete_solve[solve]]
-            and state.solve.invest_periods[complete_solve[solve]]
-            and state.solve.realized_periods[complete_solve[solve]]
-        ):
-            solve_writers.emit_periods(
-                complete_solve[solve],
-                state.solve.realized_periods,
-                str(
-                    wf
-                    / "solve_data/realized_invest_periods_of_current_solve.csv"
-                ),
-                provider=sub_solve_provider,
-            )
         sub_solve_provider.put(
             _provider_keys.SOLVE_DATA_INVEST_PERIODS_OF_CURRENT_SOLVE,
             solve_writers.derive_periods(
