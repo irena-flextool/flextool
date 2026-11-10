@@ -1293,3 +1293,23 @@ byte-identical before and after the augment.
   wrong.  `tests/model/test_howto_must_run.py::test_profile_unit_reported_fuel_input` is a strict xfail for it.
 
 Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for each of the eleven scenarios.
+
+## 2026-11-10 — a unit with a profile reports its input with efficiency
+
+**Context.** `flextool/process_outputs/calc_capacity_flows.py` skipped the output/input conversion (slope, and the
+min-load section) for every process with a profile, so the reported input of a direct unit with a profile and an
+input equalled its output.  In the LP the profile limits the unit's single `v_flow` (its output) and
+`nodeBalance_eq` draws `v_flow · slope` from the input node (`balance_flow_terms`, `source_eff`), as for any
+direct unit; the old model's `process_profile` held only units without an input or an output.  The LP is unchanged.
+
+- `test_a_lot`, `test_a_lot_but_not_multi_year`, `node__dt.csv`: only column (`west`, `To units`) changed; the
+  difference is `ev_charger`'s input (efficiency 0.9, profile), now output / 0.9 (e.g. −96.0 → −101.1111 where
+  ev_charger makes 46 MW).
+- `must_run_profile`: new `costs_discounted.csv` golden; the calculated total is now the hand value 88.476
+  (commodity_cost 87.6 = 200 MW / 0.4 × 20 CUR/MWh × 48 h × 182.5 / 10⁶; other operational 0.876 = wind_plant 100 MW ×
+  1 CUR/MWh over the same hours), checked as
+  `expected_objective` instead of `expected_solver_objective`.  The strict xfail
+  `test_profile_unit_reported_fuel_input` is now a plain test.
+
+Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the three scenarios; the other files
+the regeneration rewrote (`costs__dt.csv` of both test_a_lot scenarios, `0` → `0.0` in `ramps` only) were put back.

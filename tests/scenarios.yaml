@@ -811,16 +811,12 @@
 
 - scenario: must_run_profile
   csvs:
+    - costs_discounted.csv
     - unit__outputNode__dt.csv
   # Profile lower_limit 0.4 x 500 MW on baseload_plant (a second 500 MW coal
   # unit, 50 CUR/MWh): 200 MW (10 000 CUR/h) + wind 100 (100 CUR/h)
-  # = 10 100 CUR/h -> 88.476, pinned as the solver objective.  The calculated
-  # total (35.916) is wrong: the outputs report the fuel input of a unit with
-  # a profile as its output (efficiency left out, calc_capacity_flows skips
-  # the slope for every process in process_profile), so commodity_cost and
-  # costs_discounted.csv are not compared here; see the xfail in
-  # tests/model/test_howto_must_run.py.
-  expected_solver_objective: 88.476
+  # = 10 100 CUR/h -> 88.476.
+  expected_objective: 88.476
   expected_objective_tolerance: 1.0e-5
   time_budget_seconds: 10.0
 

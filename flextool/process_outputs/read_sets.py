@@ -405,16 +405,6 @@ def read_sets(
         name="process",
     )
 
-    # process_profile — processes with a profile method (any of the
-    # profile_upper / lower / fixed sets).
-    profile_processes = set()
-    for fld in (flex_data.process_profile_upper,
-                flex_data.process_profile_lower,
-                flex_data.process_profile_fixed):
-        if fld is not None and fld.height > 0 and "p" in fld.columns:
-            profile_processes.update(fld["p"].to_list())
-    s.process_profile = pd.Index(sorted(profile_processes), name="process")
-
     # process_online / process_online_integer / process_online_linear —
     # processes with unit commitment.
     s.process_online = _index_or_empty(

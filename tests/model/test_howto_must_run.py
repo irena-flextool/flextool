@@ -130,12 +130,6 @@ def test_heat_demand_runs_chp(tmp_path_factory, test_db_url):
     _assert_every_hour(flow(step, "wind_plant", "wind_plant", "west"), 150.0, "wind_plant")
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="Known output bug: the written fuel input of a unit with a profile equals its output (efficiency left "
-           "out): calc_capacity_flows skips the slope for every process in read_sets.process_profile, which holds "
-           "every process with a profile, while the old model's set held only units without an input or output. "
-           "The LP is right (solver objective 88.476); the calculated cost and the input flow are not.")
 def test_profile_unit_reported_fuel_input(tmp_path_factory, test_db_url):
     """baseload_plant makes 200 MW at efficiency 0.4, so its written fuel input is 500 MW in every hour."""
     import warnings

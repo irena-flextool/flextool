@@ -63,8 +63,10 @@ def compute_capacity_and_flows(par, s, v, r) -> None:
             back_vals = (flow_back[(p, orig_source, orig_sink)] * unitsize[p]).values
             flow_val = flow_val.sub(back_vals, axis=0)
 
+        # A direct unit's single v_flow is its output; the input it draws is output × slope (+ online × section),
+        # as in nodeBalance_eq (balance_flow_terms: source_eff / source_section).  A profile on the unit limits that
+        # same v_flow, so a unit with a profile converts like any other.
         if (method in s.method_1var_per_way and
-                p not in s.process_profile and
                 orig_source == always_source and orig_sink != always_sink):
             # ``slope[p]`` already carries the direct unit's output/input conversion_flow_coeff
             # ratio (#10 / Q12 — folded at the source by ``p_slope_from_source`` /

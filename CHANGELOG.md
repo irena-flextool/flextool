@@ -11,10 +11,11 @@
   and how to compare them. Three example scenarios `co2_*_measures` in examples.sqlite.
 - **Fix (docs): the ramp-limit text in Units no longer names the internal `p_fix_online`** as something a user
   sets; it names the online status a stochastic realization fixes and a user constraint on the units online.
-- **Known issue: the written fuel input of a unit with a profile** (`unit__node__profile` on a unit that also has
-  an input) equals its output: the efficiency is left out, so its fuel use and the results computed from it (commodity cost, the calculated total
-  cost) are too low. The optimisation itself is right (the solver objective in `summary_solve.csv`
-  is correct).
+- **Fix: the reported input of a unit with a profile** (`unit__node__profile` on a unit that also has an input)
+  equalled its output: the efficiency was left out. Its fuel or electricity use, the node results at its input
+  node, and the commodity cost, CO2 emissions and CO2 cost computed from that input (per unit, per group and the
+  calculated total cost) were too low. The optimisation itself was right (the solver objective in
+  `summary_solve.csv` was correct).
 - **New: `flextool-time-runs`, a timing check for exercises.** Runs scenarios one after another (default: every
   example and how-to scenario that comes with FlexTool; `--db PATH --scenario S ...` for a project's own database)
   with the FlexTool window's default threads per run (1; `--threads N` for another) and plots off unless
