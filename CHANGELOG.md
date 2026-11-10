@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **New: parameter catalogue (data dictionary).** The web docs have a *Parameter catalogue* page (under Model
+  parameters): every input parameter in one table per entity class with its unit, allowed shapes, default, choices,
+  parameter group and definition, generated from the schema of the installed FlexTool. `python -m
+  flextool.docs_build --xlsx catalogue.xlsx` writes the same as an Excel sheet with a frozen, filterable header and
+  empty **Source**, **How to replace** and **Notes** columns for a project team; `--input-db URL [--scenario NAME]`
+  adds **used in DB**, **entities** and **alternatives** columns from the keys of the stored values (read-only, no
+  value parsed) and lists the parameters a database has but this FlexTool does not define. See *How to make a data
+  dictionary for your model* in the how-to recipes.
 - **New: project packages.** A project can be sent to another computer as one `<Name>_<YYYYMMDD>.flextool.zip`:
   **Manage projects… → Export… / Import…** in the FlexTool window, or `flextool-project export|import|verify` in
   the terminal. A package holds the input sources (external input files copied in under their own source numbers,

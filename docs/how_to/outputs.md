@@ -133,3 +133,22 @@ The following groups are **always kept** regardless of the `--groups` selection 
 - `basics`
 
 These provide the structural backbone of any FlexTool model. Implementation: `flextool/cli/cmd_export_to_tabular.py` and `flextool/export_to_tabular/sheet_config.py`. The FlexTool GUI exposes the same picker under the "Add empty FlexTool input Excel" action (3.32.0). See also [Excel interface](../excel_interface.md) for the Excel-as-input workflow.
+
+## How to make a data dictionary for your model
+
+A project team that builds a model from its own data often needs a list of every input parameter: what it means, its unit, the shapes it accepts and its default, with room to note where the team's value comes from. FlexTool writes that list, the parameter catalogue, from its own database schema, so it always matches the installed version. The same table is on the web as the [Parameter catalogue](../parameter_catalogue.md) page.
+
+Write it as an Excel file, and mark the parameters your input database gives values to:
+
+```bash
+python -m flextool.docs_build --xlsx catalogue.xlsx \
+    --input-db sqlite:///input_data.sqlite --scenario base
+```
+
+The sheet `parameters` has one row per parameter (class, parameter, definition, unit, allowed shapes, default, value list, parameter group) and three empty columns for the team: **Source**, **How to replace** and **Notes**. The header row is frozen and has filters, so you can show, for example, only the parameters the database uses.
+
+- `--input-db` (optional) adds the columns **used in DB** (`yes` when any entity has a value), **entities** (how many) and **alternatives** (in which). Only the keys of the stored values are read; the database is not changed or migrated.
+- `--scenario` (optional) counts only the alternatives of that scenario.
+- A parameter that the database has but this FlexTool does not define gets its own row marked *not in this FlexTool version*. That happens with an older database whose parameters were renamed since: the command says so and names `flextool-migrate-database`; migrate the database (or a copy of it) to see its values under the current names.
+
+The catalogue is a dictionary, not an input template: to fill in data, use [a partial Excel template](#how-to-export-a-partial-excel-template-parameter-group-picker) or the [Excel interface](../excel_interface.md).

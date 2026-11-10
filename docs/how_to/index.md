@@ -56,6 +56,7 @@ Each example will either include an example database file that is located in the
 - [How to enable/disable outputs](outputs.md#how-to-enabledisable-outputs)
 - [How to read the LP scaling diagnostic report](outputs.md#how-to-read-the-lp-scaling-diagnostic-report)
 - [How to export a partial Excel template (parameter-group picker)](outputs.md#how-to-export-a-partial-excel-template-parameter-group-picker)
+- [How to make a data dictionary for your model](outputs.md#how-to-make-a-data-dictionary-for-your-model)
 
 ## [Performance and solvers](performance.md)
 
