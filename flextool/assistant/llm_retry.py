@@ -91,11 +91,13 @@ def call_with_retries(fn: Callable[[], Reply], policy: RetryPolicy, on_event: On
                       sleep: Callable[[float], bool] | None = None, clock: Callable[[], float] = time.monotonic,
                       rng: random.Random | None = None,
                       on_rejected: Callable[[LLMError], None] | None = None,
-                      pacing: Pacing | None = None) -> Reply:
+                      pacing: Pacing | None = None,
+                      on_failed: Callable[[LLMError], None] | None = None) -> Reply:
     """``fn()``, retried by *policy*.  *sleep(seconds)* waits and returns True when cancelled (default
     ``cancel.wait``); *clock* gives the time for the countdown; *on_rejected* is told of every rate-limit or
     overload answer that came before any output (the usage ledger counts them); *pacing* paces the attempts
-    (without it, a private pacer that starts unpaced)."""
+    (without it, a private pacer that starts unpaced); *on_failed* is told of every attempt that ended in an
+    error other than a stop, before it is retried or raised."""
     wait_for = cancel.wait if sleep is None else sleep
     rng = rng or random.Random()
     pacing = pacing or Pacing(key="", pacer=Pacer())
@@ -113,6 +115,8 @@ def call_with_retries(fn: Callable[[], Reply], policy: RetryPolicy, on_event: On
         try:
             reply = fn()
         except LLMError as err:
+            if on_failed is not None and not isinstance(err, Cancelled) and not cancel.is_set():
+                on_failed(err)
             if err.streamed or cancel.is_set():
                 if cancel.is_set() and not err.streamed and not isinstance(err, Cancelled):
                     raise cancelled(partial_usage=err.partial_usage) from err

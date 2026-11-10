@@ -182,6 +182,78 @@ def test_status_errors(case):
     assert err.provider == "Example AI"
 
 
+#: What each case's provider said (calibration fixes 2026-11-10): the HTTP status, Google's status name else the
+#: error code else the error type, and the first message, redacted.
+SAID = {
+    "insufficient_quota": (429, "insufficient_quota", "You exceeded your current quota."),
+    "gemini list body per day": (429, "RESOURCE_EXHAUSTED", "You exceeded your current quota."),
+    "gemini retryDelay": (429, "RESOURCE_EXHAUSTED", "You exceeded your current quota."),
+    "retry-after-ms": (429, "rate_limit_exceeded", "Rate limit reached."),
+    "retry-after seconds": (429, "", "Requests rate limit exceeded"),
+    "retry-after HTTP date": (429, "rate_limit_error", "Rate limited."),
+    "rate limit without a wait": (429, "requests", "Slow down."),
+    "openrouter no endpoints": (404, "", "No endpoints found matching your data policy (Free model publication)."),
+    "openrouter no credit": (402, "", "Insufficient credits. Add more using https://example.test/credits"),
+    "openrouter free models per day": (429, "", "Rate limit exceeded: free-models-per-day. Add credits to unlock "
+                                                "more."),
+    "anthropic 529": (529, "overloaded_error", "Overloaded"),
+    "anthropic billing_error": (400, "billing_error", "Your credit balance is too low."),
+    "anthropic prompt too long": (400, "invalid_request_error", "prompt is too long: 210000 tokens > 200000 maximum"),
+    "gemini input token count": (400, "INVALID_ARGUMENT", "The input token count (1200000) exceeds the maximum "
+                                                          "number of tokens allowed (1048576)."),
+    "openai context_length_exceeded": (400, "context_length_exceeded",
+                                       "This model's maximum context length is 128000 tokens."),
+    "anthropic signature rejected": (400, "invalid_request_error",
+                                     "messages.1.content.0: Invalid `signature` in `thinking` block"),
+    "gemini thought_signature": (400, "INVALID_ARGUMENT",
+                                 "Function call is missing a thought_signature in functionCall parts."),
+    "ollama tools": (400, "invalid_request_error", "registry.ollama.ai/library/example:2b does not support tools"),
+    "vllm tool choice": (400, "BadRequestError", "\"auto\" tool choice requires --enable-auto-tool-choice and "
+                                                 "--tool-call-parser to be set"),
+    "401": (401, "invalid_api_key", "Incorrect API key provided."),
+    "gemini API_KEY_INVALID": (400, "INVALID_ARGUMENT", "API key not valid. Please pass a valid API key."),
+    "403": (403, "permission_error", "Not allowed."),
+    "404 model": (404, "model_not_found", "The model does not exist."),
+    "500": (500, "", "Internal error"),
+    "503 with retry-after": (503, "UNAVAILABLE", "The model is overloaded."),
+    "307 redirect": (307, "", "moved"),
+    "422 other": (422, "invalid_request_error", "Extra inputs are not permitted (key <key>)"),
+}
+
+
+@pytest.mark.parametrize("case", CASES, ids=[c[0] for c in CASES])
+def test_every_class_keeps_what_the_provider_said(case):
+    """Calibration fixes 2026-11-10: whatever class an error answer becomes, it keeps the provider's own status,
+    code and message (redacted, no key), for the calibration's spent.json and console."""
+    name, library, preset_id, status, headers, body, _cls, _ = case
+    ctx = _ctx(preset_id)
+    if library == "openai":
+        err = classify_openai(openai_exception(_handler(status, body, headers)), ctx, now=NOW)
+    else:
+        err = classify_anthropic(anthropic_exception(_handler(status, body, headers)), ctx, now=NOW)
+    assert err.provider_said == E.ProviderSaid(*SAID[name])
+    assert E.provider_said_line(err) == f"Example AI said: {err.provider_said.text()}"
+
+
+def test_what_the_provider_said_inside_a_stream_capped_and_none():
+    """An error inside a stream has no HTTP status: the code its body names stands in.  A long message is cut at
+    300 characters.  An error of no provider answer (a refused connection) has nothing the provider said."""
+    long = "Quota exceeded for metric: input_token_count. " * 10
+    err = E.classify_status(None, [{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": long}}], None,
+                            _ctx("gemini"))
+    assert isinstance(err, E.RateLimited)
+    said = err.provider_said
+    assert (said.status, said.code) == (429, "RESOURCE_EXHAUSTED")
+    assert len(said.message) == E.MAX_PROVIDER_SAID and said.message == long[:299] + "…"
+    assert said.text() == f"429 RESOURCE_EXHAUSTED — {said.message}"
+
+    def refuse(request):
+        raise httpx2.ConnectError("refused", request=request)
+
+    err = classify_openai(openai_exception(refuse), _ctx())
+    assert err.provider_said is None and E.provider_said_line(err) is None
+
+
 def test_messages_name_the_route_model_and_key_source():
     ctx = _ctx("openrouter", zdr=True)
     auth = classify_openai(openai_exception(_handler(401, {"error": {"message": "No auth"}})), ctx)

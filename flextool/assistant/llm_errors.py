@@ -123,6 +123,30 @@ REFUSAL_OTHER = "the provider's usage rules"
 MAX_PROVIDER_TEXT = 500
 #: What a message quoting the provider says when the provider gave no text.
 NO_PROVIDER_TEXT = "no reason given"
+#: Longest provider message kept in :class:`ProviderSaid` (the calibration's spent.json and console).
+MAX_PROVIDER_SAID = 300
+
+
+@dataclass(frozen=True)
+class ProviderSaid:
+    """What the provider's own error answer said, beside FlexTool's message: the HTTP *status* (for an error inside
+    a stream, the numeric code its body names, else ``None``), the provider's error *code* (Google's status name
+    such as ``RESOURCE_EXHAUSTED``, OpenAI's or Anthropic's error type and code; ``""`` when none) and its
+    *message*, redacted (no key, no local path) and at most :data:`MAX_PROVIDER_SAID` characters."""
+
+    status: int | None
+    code: str
+    message: str
+
+    def text(self) -> str:
+        """``429 RESOURCE_EXHAUSTED — Quota exceeded for metric …`` (the parts it has)."""
+        head = " ".join(p for p in (str(self.status) if self.status is not None else "", self.code) if p)
+        if head and self.message:
+            return f"{head} — {self.message}"
+        return head or self.message or NO_PROVIDER_TEXT
+
+    def as_json(self) -> dict[str, object]:
+        return {"status": self.status, "code": self.code, "message": self.message}
 
 
 @dataclass
@@ -189,6 +213,9 @@ class LLMError(Exception):
         self.rate_headers: dict[str, str] | None = None
         #: The pacing epoch the request started in, set by a backend that paces itself (the window's gate).
         self.pace_epoch: int | None = None
+        #: The provider's own error answer (:class:`ProviderSaid`), for an error classified from one
+        #: (:func:`classify_status`); ``None`` for one FlexTool found itself (no connection, a stream without an end).
+        self.provider_said: ProviderSaid | None = None
 
     @property
     def params(self) -> dict[str, str]:
@@ -314,6 +341,14 @@ def message_for(err: LLMError, front_end: str) -> str:
             .format(**err.fields):
         return GUI_MESSAGES[err.message_key].format(**err.fields)
     return err.user_message
+
+
+def provider_said_line(err: LLMError) -> str | None:
+    """``Google Gemini said: 429 RESOURCE_EXHAUSTED — …``, the provider's own words after FlexTool's message;
+    ``None`` when the error came from no provider answer."""
+    if err.provider_said is None:
+        return None
+    return f"{err.provider or 'The AI service'} said: {err.provider_said.text()}"
 
 
 def internal_fault_message(type_name: str) -> str:
@@ -505,19 +540,43 @@ def _limit_zero(headers: Any, info: _Body) -> bool:
 
 
 def _provider_text(ctx: ErrorContext, body: _Body, fallback: str) -> str:
+    return _clean(ctx, next((m for m in body.messages if m.strip()), "") or fallback, MAX_PROVIDER_TEXT)
+
+
+def _clean(ctx: ErrorContext, text: str, limit: int) -> str:
     from flextool.assistant.redact import Redactor
 
-    text = next((m for m in body.messages if m.strip()), "") or fallback
     if ctx.secret:
         text = text.replace(ctx.secret, "<key>")
     text = Redactor(None).redact(" ".join(text.split()))
-    return text if len(text) <= MAX_PROVIDER_TEXT else text[:MAX_PROVIDER_TEXT - 1] + "…"
+    return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _said(status: int | None, body: object, info: _Body, ctx: ErrorContext, fallback_text: str) -> ProviderSaid:
+    """The :class:`ProviderSaid` of an error answer: its status, its error code and its first message (the library's
+    text only when there is no body: an answer that was no JSON)."""
+    if status is None:
+        status = next((int(c) for c in sorted(info.codes) if c.isdigit() and 300 <= int(c) <= 599), None)
+    # Google's status name, else the error code, else the error type (Anthropic's envelope type "error" says
+    # nothing).
+    names = (sorted(info.statuses) or sorted(c for c in info.codes if not c.isdigit())
+             or sorted(t for t in info.types if t != "error"))
+    message = next((m for m in info.messages if m.strip()), "") or (fallback_text if body is None else "")
+    return ProviderSaid(status, ", ".join(names), _clean(ctx, message, MAX_PROVIDER_SAID))
 
 
 def classify_status(status: int | None, body: object, headers: Any, ctx: ErrorContext, *, fallback_text: str = "",
                     now: float | None = None, **kwargs: Any) -> LLMError:
     """The error for an answer with HTTP *status* (``None`` for an error inside a stream), *body* (decoded JSON or
-    text) and *headers*; *kwargs* go to :class:`LLMError` (``partial_usage``, ``streamed``, ``partial_text``)."""
+    text) and *headers*; *kwargs* go to :class:`LLMError` (``partial_usage``, ``streamed``, ``partial_text``).
+    Every error it returns carries what the provider said (:attr:`LLMError.provider_said`)."""
+    err = _classify_status(status, body, headers, ctx, fallback_text=fallback_text, now=now, **kwargs)
+    err.provider_said = _said(status, body, _read_body(body), ctx, fallback_text)
+    return err
+
+
+def _classify_status(status: int | None, body: object, headers: Any, ctx: ErrorContext, *, fallback_text: str,
+                     now: float | None, **kwargs: Any) -> LLMError:
     info = _read_body(body)
     effective = status if status is not None else _body_status(info)
     text = info.text or fallback_text.lower()

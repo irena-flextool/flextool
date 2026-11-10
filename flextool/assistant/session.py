@@ -513,12 +513,15 @@ class Session:
                  free_tier_hint: Callable[[str], bool] | None = None,
                  retry_policy: RetryPolicy | None = None, sleep: Callable[[float], bool] | None = None,
                  clock: Callable[[], float] = time.monotonic, rng: random.Random | None = None,
-                 pacer: Pacer | None = None) -> None:
+                 pacer: Pacer | None = None,
+                 on_attempt_error: Callable[[LLMError], None] | None = None) -> None:
         """*budget* sets the compaction rhythm (unless *compaction_every* / *keep_recent_turns* are given), the
         pre-send fit and the free plan.  *free_tier_hint(route_key)* is asked when a rate limit the provider named
         a wait for ends a question with the free plan off (the route's usage-ledger key); it answers whether the
         free-plan hint should be shown (once per route, P3 §4.6).  *pacer* paces the requests (default the
-        process's; a backend that paces itself, the window's gate, brings its own)."""
+        process's; a backend that paces itself, the window's gate, brings its own).  *on_attempt_error* is told of
+        every request attempt that ended in an error, retried or not (the calibration keeps what the provider
+        said)."""
         self.ctx = ctx
         self.conversation = conversation
         self.caps = caps
@@ -533,6 +536,7 @@ class Session:
         self._clock = clock
         self._rng = rng
         self._pacer = pacer
+        self.on_attempt_error = on_attempt_error
         self._turn_lock = threading.Lock()
         self._cancel: threading.Event | None = None
         self._turn_no = 0
@@ -774,7 +778,8 @@ class Session:
             try:
                 reply = call_with_retries(lambda: stream_visible(self.backend, req, emit, cancel), self.retry_policy,
                                           emit, cancel, sleep=self._sleep, clock=self._clock, rng=self._rng,
-                                          on_rejected=self._rejected, pacing=pacing)
+                                          on_rejected=self._rejected, pacing=pacing,
+                                          on_failed=self.on_attempt_error)
             except LLMError as err:
                 if isinstance(err, RateLimited) and err.retry_after is not None:
                     # A limit with a named wait counts requests per minute or day: fewer steps help.  A limit
@@ -919,6 +924,7 @@ class Session:
             err = make_error(ContextTooLong, "context", self.error_ctx)
         if cause is not None:
             err.partial_usage = cause.partial_usage
+            err.provider_said = cause.provider_said
         return err
 
     # --- tool calls -----------------------------------------------------------------------------------------------
