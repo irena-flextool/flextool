@@ -1,9 +1,10 @@
-"""Generated documentation pages: the model formulation and the results catalogue, built from the installed code.
+"""Generated documentation pages: the model formulation, the results catalogue and the parameter catalogue, built
+from the installed code.
 
 One generator for the web docs (the mkdocs hook ``tools/mkdocs_hooks.py``), for ``python -m
 flextool.docs_build`` and for the assistant's documentation cache (``index.generate``, called on first use by
-``flextool.assistant.docs_store``; that path skips the private-names check).  ``scope`` lists what the
-documentation ships.
+``flextool.assistant.docs_store``; that path skips the private-names check and the web-only pages,
+``scope.WEB_ONLY_PAGES``).  ``scope`` lists what the documentation ships.
 
 Private names: when the local, git-ignored list ``.private_names`` (``scope.PRIVATE_NAMES_FILE``) exists at the
 repository root, a generated page or a shipped Markdown file that matches one of its lines fails the build
@@ -25,19 +26,22 @@ class PrivateNameError(RuntimeError):
 
 
 def render_page(name: str, markdown_root: Path) -> str:
-    """The Markdown of the generated page ``name`` (one of ``scope.GENERATED_PAGES``)."""
+    """The Markdown of the generated page ``name`` (one of ``scope.WEB_PAGES``)."""
     if name == scope.FORMULATION_PAGE:
         from flextool.docs_build.formulation import render_formulation
         return render_formulation(markdown_root)
     if name == scope.RESULTS_CATALOGUE_PAGE:
         from flextool.docs_build.catalogue import render_catalogue
         return render_catalogue(markdown_root)
-    raise ValueError(f"{name!r} is not a generated page ({', '.join(scope.GENERATED_PAGES)})")
+    if name == scope.PARAMETER_CATALOGUE_PAGE:
+        from flextool.docs_build.parameters import render_parameter_catalogue
+        return render_parameter_catalogue(markdown_root)
+    raise ValueError(f"{name!r} is not a generated page ({', '.join(scope.WEB_PAGES)})")
 
 
-def render_pages(markdown_root: Path) -> dict[str, str]:
-    """Every generated page, ``{name: markdown}``."""
-    return {name: render_page(name, markdown_root) for name in scope.GENERATED_PAGES}
+def render_pages(markdown_root: Path, names: tuple[str, ...] = scope.WEB_PAGES) -> dict[str, str]:
+    """The generated pages *names* (default: every page of the web docs), ``{name: markdown}``."""
+    return {name: render_page(name, markdown_root) for name in names}
 
 
 # ---------------------------------------------------------------------------

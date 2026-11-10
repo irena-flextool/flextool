@@ -68,6 +68,7 @@ nav:
     - 'Reserves': reference/reserves.md
     - 'User constraints': reference/user_constraints.md
     - 'Parameter groups and conventions': reference/parameter_groups.md
+    - 'Parameter catalogue': parameter_catalogue.md
   - 'How-to recipes':
     - how_to/index.md
     - 'Basics: time, VRE, network and demand': how_to/basics.md

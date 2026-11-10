@@ -72,6 +72,14 @@ FORMULATION_PAGE = "formulation.md"
 RESULTS_CATALOGUE_PAGE = "results_catalogue.md"
 GENERATED_PAGES: tuple[str, ...] = (FORMULATION_PAGE, RESULTS_CATALOGUE_PAGE)
 
+# Generated pages of the web docs only: not in the assistant's documentation cache or search index (the
+# parameter catalogue is one large table per class, and describe_parameter already serves each parameter).
+PARAMETER_CATALOGUE_PAGE = "parameter_catalogue.md"
+WEB_ONLY_PAGES: tuple[str, ...] = (PARAMETER_CATALOGUE_PAGE,)
+
+# Every generated page of the web docs.
+WEB_PAGES: tuple[str, ...] = GENERATED_PAGES + WEB_ONLY_PAGES
+
 # Every Markdown file the documentation copies from the Markdown root.
 CURATED_DOCS: tuple[str, ...] = USER_DOCS + DEV_DOCS + (ENGINE_DOC,)
 

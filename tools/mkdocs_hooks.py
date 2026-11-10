@@ -1,10 +1,10 @@
 """mkdocs hook (``mkdocs.yml`` ``hooks:``): add the pages generated from the code to the web docs.
 
-``on_files`` renders the formulation page and the results catalogue with ``flextool.docs_build`` (the same
-generator as ``python -m flextool.docs_build``) and adds them as generated files: they are rendered, indexed
-and in the nav, and nothing is written into ``docs/``.  The pages describe the code of this checkout: its root
-goes first on ``sys.path``, ahead of any other installed FlexTool.  When the local private-names list exists, a
-page that matches it fails the build.
+``on_files`` renders the formulation page, the results catalogue and the parameter catalogue with
+``flextool.docs_build`` (the same generator as ``python -m flextool.docs_build``) and adds them as generated
+files: they are rendered, indexed and in the nav, and nothing is written into ``docs/``.  The pages describe
+the code of this checkout: its root goes first on ``sys.path``, ahead of any other installed FlexTool.  When
+the local private-names list exists, a page that matches it fails the build.
 """
 from __future__ import annotations
 
