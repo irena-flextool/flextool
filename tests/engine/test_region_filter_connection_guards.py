@@ -104,17 +104,42 @@ def test_cross_region_connection_splits_when_the_detail_is_left_out(data, field,
 
 def test_integer_region_warning_is_quiet_when_integers_are_relaxed(data, caplog) -> None:
     """A binary unit in a region warns at none, naming reduce_unit_detail_method; under integers its online
-    columns are continuous and the region gets no warning."""
+    columns are continuous and the region gets no warning.
+
+    electrolyser_A gets a start-up cost (``pdt_online_integer``), a use of its online variables, so the integers
+    level keeps them (relaxed) instead of pruning them as unused."""
     from flextool.engine.preprocess._reduce_detail import apply_reduce_detail
 
-    ok = _replace(data, process_online_integer=_procs(data, ["electrolyser_A"]))
+    procs = _procs(data, ["electrolyser_A"])
+    ok = _replace(data, process_online_integer=procs, pdt_online_integer=procs.join(data.dt, how="cross"))
     with caplog.at_level(logging.WARNING, logger="flextool.engine.solve._region_filter"):
         split(ok, regions=REGIONS, benders_uncap_cross_region=True)
     msgs = [r.getMessage() for r in caplog.records if "integer variables" in r.getMessage()]
     assert len(msgs) == 1 and "reduce_unit_detail_method = integers" in msgs[0]
     caplog.clear()
-    relaxed, _ = apply_reduce_detail(ok, "integers")
-    assert relaxed.relax_integrality is True and relaxed.process_online_integer is not None
+    relaxed, report = apply_reduce_detail(ok, "integers")
+    assert relaxed.relax_integrality is True
+    assert relaxed.process_online_integer is not None and "electrolyser_A" in _names(relaxed.process_online_integer)
+    assert "online_unused" not in report.removed
     with caplog.at_level(logging.WARNING, logger="flextool.engine.solve._region_filter"):
         assert len(split(relaxed, regions=REGIONS, benders_uncap_cross_region=True)) == 3
     assert not [r for r in caplog.records if "integer variables" in r.getMessage()]
+
+
+def test_unused_integer_online_is_pruned_under_integers(data, caplog) -> None:
+    """A binary unit whose online variables nothing uses (no start-up cost, min load, reserve, ...) loses them
+    under integers: nothing integer is left to relax, and the region gets no warning."""
+    from flextool.engine.preprocess._reduce_detail import apply_reduce_detail
+
+    ok = _replace(data, process_online_integer=_procs(data, ["electrolyser_A"]))
+    reduced, report = apply_reduce_detail(ok, "integers")
+    assert report.removed.get("online_unused") == ["electrolyser_A"]
+    assert reduced.process_online_integer is None
+    assert not reduced.relax_integrality
+    with caplog.at_level(logging.WARNING, logger="flextool.engine.solve._region_filter"):
+        assert len(split(reduced, regions=REGIONS, benders_uncap_cross_region=True)) == 3
+    assert not [r for r in caplog.records if "integer variables" in r.getMessage()]
+
+
+def _names(frame) -> set[str]:
+    return set(frame.get_column("p").cast(pl.Utf8).to_list())
