@@ -1361,9 +1361,10 @@ def _write_units(
         _add_param(db, "unit", (unit_name,), "conversion_method",
                    conversion_method, alt_name, counters)
 
-        # -- existing capacity --
-        existing = unit.capacity_mw if unit.capacity_mw is not None else unit.invested_capacity_mw
-        _add_param_if_set(db, "unit", (unit_name,), "existing", existing,
+        # -- existing capacity: FT2 ``capacity (MW)`` only.  ``invested capacity
+        # (MW)`` is a forced investment below (invest_min_total =
+        # invest_max_total); using it as ``existing`` too counted it twice. --
+        _add_param_if_set(db, "unit", (unit_name,), "existing", unit.capacity_mw,
                           alt_name, counters)
 
         # -- efficiency --
@@ -2180,8 +2181,9 @@ def _write_chp_constraints(
             continue
 
         unit_name = _get_unit_name(unit)
-        existing = (unit.capacity_mw if unit.capacity_mw is not None
-                    else unit.invested_capacity_mw) or 0.0
+        # The invested part of C (``invested capacity (MW)`` is a forced
+        # investment) is in constraint_invested_capacity_coeff.
+        existing = unit.capacity_mw or 0.0
 
         primary_coeffs: dict[str, float] = {}
         secondary_coeffs: dict[str, float] = {}

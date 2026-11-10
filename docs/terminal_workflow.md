@@ -442,6 +442,8 @@ Sensitivity overrides that the sensitivity import does not translate are listed 
 
 **CHP (output2).** FlexTool 2's output2 (e.g. the heat of a CHP unit) uses no fuel and is outside the unit's capacity, minimum load and ramp limits; it is tied to the primary output only by the `output2 eq / gt / lt` rows and `output2_max_capacity_ratio`. In FlexTool 4 the output2 edge gets `conversion_flow_coeff` 0 (out of the conversion equation and of the capacity limits), and each FlexTool 2 row becomes a user `constraint` `<unit>_eq`, `_gt`, `_lt` or `_output2_max`: output2 − coeff × output1 {=, ≥, ≤} constant × capacity, where the capacity is the existing capacity (in the constraint's `constant`) plus the invested capacity (`constraint_invested_capacity_coeff` on the unit). The MW form `output2 max capacity (MW)` of older workbooks becomes a plain upper limit in MW.
 
+**Capacity.** A unit's `capacity (MW)` becomes `existing`; `invested capacity (MW)` becomes a forced investment (`invest_method` `invest_total` with `invest_min_total` = `invest_max_total` = that value), so the unit's capacity is their sum, as in FlexTool 2. An empty `capacity (MW)` means no existing capacity.
+
 **Storage start and finish.** A non-zero `storage start` / `storage finish` fixes the first / last storage state at that share of the storage capacity (`storage_start_end_method` `fix_start`, `fix_end` or `fix_start_end`); 0 or empty fixes nothing (`fix_nothing`). The storage state wraps from the last step to the first (`bind_within_solve`), except when both are set (`bind_forward_only`), as in FlexTool 2.
 
 ---

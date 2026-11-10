@@ -515,3 +515,36 @@ def test_imported_model_solves_with_must_run(
         slacks = pl.read_parquet(raw / f"{slack}__dispatch_p2020.parquet")
         for node in ("nodeA", "nodeH"):
             assert slacks[node].abs().max() == pytest.approx(0.0, abs=1e-9)
+
+
+def test_invested_capacity_without_capacity_is_not_counted_twice(tmp_path: Path) -> None:
+    """FT2 capacity C = capacity + invested capacity + v_invest (flexModel.mod).  With
+    ``capacity (MW)`` empty and ``invested capacity (MW)`` = 25, C = 25 MW: the import
+    forces 25 MW of investment, so ``existing`` must be empty (0), not 25 as well.
+    The CHP's output2 row ``heat <= 1.6 C`` then has constant 1.6 × 0 = 0 and
+    the invested part -1.6 on the forced 25 MW (hand values)."""
+    sheets = ft2_sheets()
+    sheets["unit_type"].append(_unit_type("peaker", efficiency=0.4, availability=1))
+    sheets["unit_type"].append(_unit_type("chp_new", efficiency=0.4, availability=1))
+    sheets["units"].append(_unit(**{
+        "unit type": "peaker", "fuel": "gas", "output grid": "elec",
+        "output node": "nodeA", "invested capacity (MW)": 25}))
+    sheets["units"].append(_unit(**{
+        "unit type": "chp_new", "fuel": "coal", "output grid": "elec",
+        "output node": "nodeA", "invested capacity (MW)": 25,
+        "output2 grid": "heat", "output2 node": "nodeH",
+        "output2_max_capacity_ratio": 1.6}))
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    import_old_flextool_xlsm(str(xlsm), url, strict=True)
+
+    existing = _values(url, "unit", "existing")
+    for unit in ("peaker_nodeA", "chp_new_nodeA"):
+        assert existing.get(((unit,), "base"), 0) == 0
+        assert _values(url, "unit", "invest_min_total")[((unit,), "base")] == 25
+        assert _values(url, "unit", "invest_max_total")[((unit,), "base")] == 25
+    assert existing[(("coal_nodeA",), "base")] == 100
+    chp = "chp_new_nodeA"
+    assert _values(url, "constraint", "constant")[((f"{chp}_output2_max",), "base")] == pytest.approx(0.0)
+    invested = _values(url, "unit", "constraint_invested_capacity_coeff")[((chp,), "base")]
+    assert dict(zip(invested.indexes, invested.values)) == pytest.approx({f"{chp}_output2_max": -1.6})

@@ -31,6 +31,9 @@
   existing file was never refreshed, and the model run now refuses it. **Calibrate investments** migrates its
   scenarios' sources first, as a normal run does.
 
+- **Fix: the FlexTool 2 importer counted `invested capacity (MW)` twice when `capacity (MW)` was empty.** It
+  was written as the unit's `existing` capacity and also as a forced investment of the same size; `existing` now
+  comes from `capacity (MW)` only (also in the CHP output2 constraints).
 - **Fix: the FlexTool 2 importer (`flextool-read-old`, GUI "Convert from FlexTool 2.0 input file") translates
   more and reports what it cannot.** Sensitivities are now imported in the same run as the base data
   (`--master MASTER.xlsm`; in the GUI the master workbook is asked for before the conversion), before the
