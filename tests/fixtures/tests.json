@@ -280,6 +280,11 @@
       null
     ],
     [
+      "commodity",
+      "natural_gas",
+      null
+    ],
+    [
       "connection",
       "battery_inverter",
       null
@@ -316,12 +321,37 @@
     ],
     [
       "constraint",
+      "bp_chp_ratio",
+      null
+    ],
+    [
+      "constraint",
       "coal_chp_fix",
       null
     ],
     [
       "constraint",
       "coal_plant_floor",
+      null
+    ],
+    [
+      "constraint",
+      "csp_solar_multiple",
+      null
+    ],
+    [
+      "constraint",
+      "csp_storage_hours",
+      null
+    ],
+    [
+      "constraint",
+      "ext_chp_backpressure_line",
+      null
+    ],
+    [
+      "constraint",
+      "ext_chp_max_heat",
       null
     ],
     [
@@ -431,6 +461,16 @@
     ],
     [
       "node",
+      "csp_heat",
+      null
+    ],
+    [
+      "node",
+      "desal_heat",
+      null
+    ],
+    [
+      "node",
       "dr_storage",
       null
     ],
@@ -461,7 +501,17 @@
     ],
     [
       "node",
+      "natural_gas_market",
+      null
+    ],
+    [
+      "node",
       "north",
+      null
+    ],
+    [
+      "node",
+      "water",
       null
     ],
     [
@@ -477,6 +527,11 @@
     [
       "node",
       "west",
+      null
+    ],
+    [
+      "profile",
+      "csp_field_yield",
       null
     ],
     [
@@ -656,6 +711,11 @@
     ],
     [
       "unit",
+      "bp_chp",
+      null
+    ],
+    [
+      "unit",
       "clean_plant",
       null
     ],
@@ -668,6 +728,21 @@
       "unit",
       "coal_plant",
       ""
+    ],
+    [
+      "unit",
+      "csp_backup_boiler",
+      null
+    ],
+    [
+      "unit",
+      "csp_field",
+      null
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      null
     ],
     [
       "unit",
@@ -691,7 +766,22 @@
     ],
     [
       "unit",
+      "ext_chp",
+      null
+    ],
+    [
+      "unit",
       "fusion_plant",
+      null
+    ],
+    [
+      "unit",
+      "med_desal",
+      null
+    ],
+    [
+      "unit",
+      "ro_desal",
       null
     ],
     [
@@ -742,6 +832,14 @@
       [
         "coal",
         "coal_market"
+      ],
+      null
+    ],
+    [
+      "commodity__node",
+      [
+        "natural_gas",
+        "natural_gas_market"
       ],
       null
     ],
@@ -908,6 +1006,14 @@
     [
       "unit__inputNode",
       [
+        "bp_chp",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
         "coal_chp",
         "coal_market"
       ],
@@ -918,6 +1024,22 @@
       [
         "coal_plant",
         "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "csp_backup_boiler",
+        "natural_gas_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "csp_turbine",
+        "csp_heat"
       ],
       null
     ],
@@ -941,6 +1063,30 @@
       "unit__inputNode",
       [
         "ev_charger",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "ext_chp",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "med_desal",
+        "desal_heat"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "ro_desal",
         "west"
       ],
       null
@@ -1004,6 +1150,22 @@
     [
       "unit__outputNode",
       [
+        "bp_chp",
+        "desal_heat"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "bp_chp",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
         "clean_plant",
         "west"
       ],
@@ -1036,6 +1198,30 @@
     [
       "unit__outputNode",
       [
+        "csp_backup_boiler",
+        "csp_heat"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "csp_field",
+        "csp_heat"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "csp_turbine",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
         "dr_decrease_demand",
         "west"
       ],
@@ -1060,8 +1246,40 @@
     [
       "unit__outputNode",
       [
+        "ext_chp",
+        "desal_heat"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "ext_chp",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
         "fusion_plant",
         "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "med_desal",
+        "water"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "ro_desal",
+        "water"
       ],
       null
     ],
@@ -1333,6 +1551,15 @@
     [
       "unit__node__profile",
       [
+        "csp_field",
+        "csp_heat",
+        "csp_field_yield"
+      ],
+      null
+    ],
+    [
+      "unit__node__profile",
+      [
         "ev_charger",
         "ev_battery",
         "ev_connected_share"
@@ -1473,6 +1700,22 @@
     [
       "node",
       [
+        "csp_heat"
+      ],
+      "csp_plant",
+      true
+    ],
+    [
+      "node",
+      [
+        "desal_heat"
+      ],
+      "desal_system",
+      true
+    ],
+    [
+      "node",
+      [
         "dr_storage"
       ],
       "dr_shift_demand",
@@ -1521,9 +1764,25 @@
     [
       "node",
       [
+        "natural_gas_market"
+      ],
+      "csp_gas_backup",
+      true
+    ],
+    [
+      "node",
+      [
         "north"
       ],
       "network",
+      true
+    ],
+    [
+      "node",
+      [
+        "water"
+      ],
+      "desal_system",
       true
     ],
     [
@@ -1605,6 +1864,22 @@
     [
       "unit",
       [
+        "bp_chp"
+      ],
+      "desal_extraction",
+      false
+    ],
+    [
+      "unit",
+      [
+        "bp_chp"
+      ],
+      "desal_system",
+      true
+    ],
+    [
+      "unit",
+      [
         "clean_plant"
       ],
       "co2_trajectory_system",
@@ -1624,6 +1899,30 @@
         "coal_plant"
       ],
       "coal",
+      true
+    ],
+    [
+      "unit",
+      [
+        "csp_backup_boiler"
+      ],
+      "csp_gas_backup",
+      true
+    ],
+    [
+      "unit",
+      [
+        "csp_field"
+      ],
+      "csp_plant",
+      true
+    ],
+    [
+      "unit",
+      [
+        "csp_turbine"
+      ],
+      "csp_plant",
       true
     ],
     [
@@ -1661,9 +1960,33 @@
     [
       "unit",
       [
+        "ext_chp"
+      ],
+      "desal_extraction",
+      true
+    ],
+    [
+      "unit",
+      [
         "fusion_plant"
       ],
       "fusion",
+      true
+    ],
+    [
+      "unit",
+      [
+        "med_desal"
+      ],
+      "desal_system",
+      true
+    ],
+    [
+      "unit",
+      [
+        "ro_desal"
+      ],
+      "desal_ro_invest",
       true
     ],
     [
@@ -8248,6 +8571,16 @@
       "ladder_cum_on"
     ],
     [
+      "commodity",
+      "natural_gas",
+      "price",
+      [
+        "MTIuMA==",
+        "float"
+      ],
+      "csp_gas_backup"
+    ],
+    [
       "connection",
       "battery_inverter",
       "constraint_invested_capacity_coeff",
@@ -8559,6 +8892,26 @@
     ],
     [
       "constraint",
+      "bp_chp_ratio",
+      "constant",
+      [
+        "MC4w",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "constraint",
+      "bp_chp_ratio",
+      "sense",
+      [
+        "ImVxdWFsIg==",
+        "str"
+      ],
+      "desal_system"
+    ],
+    [
+      "constraint",
       "coal_chp_fix",
       "constant",
       [
@@ -8606,6 +8959,86 @@
         "str"
       ],
       "must_run_constraint_one"
+    ],
+    [
+      "constraint",
+      "csp_solar_multiple",
+      "constant",
+      [
+        "MC4w",
+        "float"
+      ],
+      "csp_fixed_design"
+    ],
+    [
+      "constraint",
+      "csp_solar_multiple",
+      "sense",
+      [
+        "ImVxdWFsIg==",
+        "str"
+      ],
+      "csp_fixed_design"
+    ],
+    [
+      "constraint",
+      "csp_storage_hours",
+      "constant",
+      [
+        "MC4w",
+        "float"
+      ],
+      "csp_fixed_design"
+    ],
+    [
+      "constraint",
+      "csp_storage_hours",
+      "sense",
+      [
+        "ImVxdWFsIg==",
+        "str"
+      ],
+      "csp_fixed_design"
+    ],
+    [
+      "constraint",
+      "ext_chp_backpressure_line",
+      "constant",
+      [
+        "MC4w",
+        "float"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "constraint",
+      "ext_chp_backpressure_line",
+      "sense",
+      [
+        "ImdyZWF0ZXJfdGhhbiI=",
+        "str"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "constraint",
+      "ext_chp_max_heat",
+      "constant",
+      [
+        "MC4w",
+        "float"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "constraint",
+      "ext_chp_max_heat",
+      "sense",
+      [
+        "Imxlc3NfdGhhbiI=",
+        "str"
+      ],
+      "desal_extraction"
     ],
     [
       "constraint",
@@ -9469,6 +9902,156 @@
     ],
     [
       "node",
+      "csp_heat",
+      "constraint_capacity_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJjc3Bfc3RvcmFnZV9ob3VycyIsIDEuMF1dLCAiaW5kZXhfbmFtZSI6ICJjb25zdHJhaW50In0=",
+        "map"
+      ],
+      "csp_fixed_design"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "discount_rate",
+      [
+        "MC4wNw==",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "existing",
+      [
+        "MC4w",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "existing",
+      [
+        "MjUwMC4w",
+        "float"
+      ],
+      "csp_plant"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "invest_cost",
+      [
+        "MTUuMA==",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "invest_max_total",
+      [
+        "NTAwMC4w",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "invest_method",
+      [
+        "ImludmVzdF90b3RhbCI=",
+        "str"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "lifetime",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "node_type",
+      [
+        "InN0b3JhZ2Ui",
+        "str"
+      ],
+      "csp_plant"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "penalty_down",
+      [
+        "MTAwMC4w",
+        "float"
+      ],
+      "csp_plant"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "penalty_up",
+      [
+        "MTAwMC4w",
+        "float"
+      ],
+      "csp_plant"
+    ],
+    [
+      "node",
+      "csp_heat",
+      "storage_binding_method",
+      [
+        "ImJpbmRfd2l0aGluX3RpbWVibG9jayI=",
+        "str"
+      ],
+      "csp_plant"
+    ],
+    [
+      "node",
+      "desal_heat",
+      "node_type",
+      [
+        "ImJhbGFuY2Ui",
+        "str"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
+      "desal_heat",
+      "penalty_down",
+      [
+        "MTAwMC4w",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
+      "desal_heat",
+      "penalty_up",
+      [
+        "MTAwMC4w",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
       "dr_storage",
       "existing",
       [
@@ -9809,6 +10392,16 @@
     ],
     [
       "node",
+      "natural_gas_market",
+      "node_type",
+      [
+        "ImNvbW1vZGl0eSI=",
+        "str"
+      ],
+      "csp_gas_backup"
+    ],
+    [
+      "node",
       "north",
       "inflow",
       [
@@ -9856,6 +10449,106 @@
         "float"
       ],
       "network"
+    ],
+    [
+      "node",
+      "water",
+      "existing",
+      [
+        "MTUwMDAuMA==",
+        "float"
+      ],
+      "desal_water_storage"
+    ],
+    [
+      "node",
+      "water",
+      "inflow",
+      [
+        "LTMwMDAuMA==",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
+      "water",
+      "inflow",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ0MDAwMSIsIC0yMDAwLjBdLCBbInQwMDAyIiwgLTIwMDAuMF0sIFsidDAwMDMiLCAtMjAwMC4wXSwgWyJ0MDAwNCIsIC0yMDAwLjBdLCBbInQwMDA1IiwgLTIwMDAuMF0sIFsidDAwMDYiLCAtMjAwMC4wXSwgWyJ0MDAwNyIsIC0yMDAwLjBdLCBbInQwMDA4IiwgLTIwMDAuMF0sIFsidDAwMDkiLCAtMjAwMC4wXSwgWyJ0MDAxMCIsIC0yMDAwLjBdLCBbInQwMDExIiwgLTIwMDAuMF0sIFsidDAwMTIiLCAtMjAwMC4wXSwgWyJ0MDAxMyIsIC00MDAwLjBdLCBbInQwMDE0IiwgLTQwMDAuMF0sIFsidDAwMTUiLCAtNDAwMC4wXSwgWyJ0MDAxNiIsIC00MDAwLjBdLCBbInQwMDE3IiwgLTQwMDAuMF0sIFsidDAwMTgiLCAtNDAwMC4wXSwgWyJ0MDAxOSIsIC00MDAwLjBdLCBbInQwMDIwIiwgLTQwMDAuMF0sIFsidDAwMjEiLCAtNDAwMC4wXSwgWyJ0MDAyMiIsIC00MDAwLjBdLCBbInQwMDIzIiwgLTQwMDAuMF0sIFsidDAwMjQiLCAtNDAwMC4wXSwgWyJ0MDAyNSIsIC0yMDAwLjBdLCBbInQwMDI2IiwgLTIwMDAuMF0sIFsidDAwMjciLCAtMjAwMC4wXSwgWyJ0MDAyOCIsIC0yMDAwLjBdLCBbInQwMDI5IiwgLTIwMDAuMF0sIFsidDAwMzAiLCAtMjAwMC4wXSwgWyJ0MDAzMSIsIC0yMDAwLjBdLCBbInQwMDMyIiwgLTIwMDAuMF0sIFsidDAwMzMiLCAtMjAwMC4wXSwgWyJ0MDAzNCIsIC0yMDAwLjBdLCBbInQwMDM1IiwgLTIwMDAuMF0sIFsidDAwMzYiLCAtMjAwMC4wXSwgWyJ0MDAzNyIsIC00MDAwLjBdLCBbInQwMDM4IiwgLTQwMDAuMF0sIFsidDAwMzkiLCAtNDAwMC4wXSwgWyJ0MDA0MCIsIC00MDAwLjBdLCBbInQwMDQxIiwgLTQwMDAuMF0sIFsidDAwNDIiLCAtNDAwMC4wXSwgWyJ0MDA0MyIsIC00MDAwLjBdLCBbInQwMDQ0IiwgLTQwMDAuMF0sIFsidDAwNDUiLCAtNDAwMC4wXSwgWyJ0MDA0NiIsIC00MDAwLjBdLCBbInQwMDQ3IiwgLTQwMDAuMF0sIFsidDAwNDgiLCAtNDAwMC4wXSwgWyJ0MDA0OSIsIC0yMDAwLjBdLCBbInQwMDUwIiwgLTIwMDAuMF0sIFsidDAwNTEiLCAtMjAwMC4wXSwgWyJ0MDA1MiIsIC0yMDAwLjBdLCBbInQwMDUzIiwgLTIwMDAuMF0sIFsidDAwNTQiLCAtMjAwMC4wXSwgWyJ0MDA1NSIsIC0yMDAwLjBdLCBbInQwMDU2IiwgLTIwMDAuMF0sIFsidDAwNTciLCAtMjAwMC4wXSwgWyJ0MDA1OCIsIC0yMDAwLjBdLCBbInQwMDU5IiwgLTIwMDAuMF0sIFsidDAwNjAiLCAtMjAwMC4wXSwgWyJ0MDA2MSIsIC00MDAwLjBdLCBbInQwMDYyIiwgLTQwMDAuMF0sIFsidDAwNjMiLCAtNDAwMC4wXSwgWyJ0MDA2NCIsIC00MDAwLjBdLCBbInQwMDY1IiwgLTQwMDAuMF0sIFsidDAwNjYiLCAtNDAwMC4wXSwgWyJ0MDA2NyIsIC00MDAwLjBdLCBbInQwMDY4IiwgLTQwMDAuMF0sIFsidDAwNjkiLCAtNDAwMC4wXSwgWyJ0MDA3MCIsIC00MDAwLjBdLCBbInQwMDcxIiwgLTQwMDAuMF0sIFsidDAwNzIiLCAtNDAwMC4wXV0sICJpbmRleF9uYW1lIjogInRpbWUifQ==",
+        "map"
+      ],
+      "desal_water_storage"
+    ],
+    [
+      "node",
+      "water",
+      "node_type",
+      [
+        "ImJhbGFuY2Ui",
+        "str"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
+      "water",
+      "node_type",
+      [
+        "InN0b3JhZ2Ui",
+        "str"
+      ],
+      "desal_water_storage"
+    ],
+    [
+      "node",
+      "water",
+      "penalty_down",
+      [
+        "NTAuMA==",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
+      "water",
+      "penalty_up",
+      [
+        "NTAuMA==",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
+      "water",
+      "storage_binding_method",
+      [
+        "ImJpbmRfd2l0aGluX3RpbWVibG9jayI=",
+        "str"
+      ],
+      "desal_water_storage"
+    ],
+    [
+      "node",
+      "water",
+      "storage_start_end_method",
+      [
+        "ImZpeF9zdGFydCI=",
+        "str"
+      ],
+      "desal_water_storage"
+    ],
+    [
+      "node",
+      "water",
+      "storage_state_start",
+      [
+        "MC4w",
+        "float"
+      ],
+      "desal_water_storage"
     ],
     [
       "node",
@@ -10002,6 +10695,26 @@
       "west",
       "inflow",
       [
+        "LTE1MC4w",
+        "float"
+      ],
+      "csp_system"
+    ],
+    [
+      "node",
+      "west",
+      "inflow",
+      [
+        "LTMwMC4w",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "node",
+      "west",
+      "inflow",
+      [
         "LTMwMC4w",
         "float"
       ],
@@ -10122,6 +10835,16 @@
         "str"
       ],
       "ev"
+    ],
+    [
+      "profile",
+      "csp_field_yield",
+      "profile",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ0MDAwMSIsIDAuMF0sIFsidDAwMDIiLCAwLjBdLCBbInQwMDAzIiwgMC4wXSwgWyJ0MDAwNCIsIDAuMF0sIFsidDAwMDUiLCAwLjBdLCBbInQwMDA2IiwgMC4wXSwgWyJ0MDAwNyIsIDEuMF0sIFsidDAwMDgiLCAxLjBdLCBbInQwMDA5IiwgMS4wXSwgWyJ0MDAxMCIsIDEuMF0sIFsidDAwMTEiLCAxLjBdLCBbInQwMDEyIiwgMS4wXSwgWyJ0MDAxMyIsIDEuMF0sIFsidDAwMTQiLCAxLjBdLCBbInQwMDE1IiwgMS4wXSwgWyJ0MDAxNiIsIDEuMF0sIFsidDAwMTciLCAxLjBdLCBbInQwMDE4IiwgMS4wXSwgWyJ0MDAxOSIsIDAuMF0sIFsidDAwMjAiLCAwLjBdLCBbInQwMDIxIiwgMC4wXSwgWyJ0MDAyMiIsIDAuMF0sIFsidDAwMjMiLCAwLjBdLCBbInQwMDI0IiwgMC4wXSwgWyJ0MDAyNSIsIDAuMF0sIFsidDAwMjYiLCAwLjBdLCBbInQwMDI3IiwgMC4wXSwgWyJ0MDAyOCIsIDAuMF0sIFsidDAwMjkiLCAwLjBdLCBbInQwMDMwIiwgMC4wXSwgWyJ0MDAzMSIsIDAuNF0sIFsidDAwMzIiLCAwLjRdLCBbInQwMDMzIiwgMC40XSwgWyJ0MDAzNCIsIDAuNF0sIFsidDAwMzUiLCAwLjRdLCBbInQwMDM2IiwgMC40XSwgWyJ0MDAzNyIsIDAuNF0sIFsidDAwMzgiLCAwLjRdLCBbInQwMDM5IiwgMC40XSwgWyJ0MDA0MCIsIDAuNF0sIFsidDAwNDEiLCAwLjRdLCBbInQwMDQyIiwgMC40XSwgWyJ0MDA0MyIsIDAuMF0sIFsidDAwNDQiLCAwLjBdLCBbInQwMDQ1IiwgMC4wXSwgWyJ0MDA0NiIsIDAuMF0sIFsidDAwNDciLCAwLjBdLCBbInQwMDQ4IiwgMC4wXSwgWyJ0MDA0OSIsIDAuMF0sIFsidDAwNTAiLCAwLjBdLCBbInQwMDUxIiwgMC4wXSwgWyJ0MDA1MiIsIDAuMF0sIFsidDAwNTMiLCAwLjBdLCBbInQwMDU0IiwgMC4wXSwgWyJ0MDA1NSIsIDEuMF0sIFsidDAwNTYiLCAxLjBdLCBbInQwMDU3IiwgMS4wXSwgWyJ0MDA1OCIsIDEuMF0sIFsidDAwNTkiLCAxLjBdLCBbInQwMDYwIiwgMS4wXSwgWyJ0MDA2MSIsIDEuMF0sIFsidDAwNjIiLCAxLjBdLCBbInQwMDYzIiwgMS4wXSwgWyJ0MDA2NCIsIDEuMF0sIFsidDAwNjUiLCAxLjBdLCBbInQwMDY2IiwgMS4wXSwgWyJ0MDA2NyIsIDAuMF0sIFsidDAwNjgiLCAwLjBdLCBbInQwMDY5IiwgMC4wXSwgWyJ0MDA3MCIsIDAuMF0sIFsidDAwNzEiLCAwLjBdLCBbInQwMDcyIiwgMC4wXV0sICJpbmRleF9uYW1lIjogInRpbWUifQ==",
+        "map"
+      ],
+      "csp_system"
     ],
     [
       "profile",
@@ -11186,6 +11909,26 @@
         "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAyMCJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
         "array"
       ],
+      "csp_invest_common"
+    ],
+    [
+      "solve",
+      "y2020_2day_dispatch",
+      "invest_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAyMCJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "array"
+      ],
+      "desal_ro_invest"
+    ],
+    [
+      "solve",
+      "y2020_2day_dispatch",
+      "invest_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAyMCJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "array"
+      ],
       "retire"
     ],
     [
@@ -11770,6 +12513,36 @@
     ],
     [
       "unit",
+      "bp_chp",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "desal_system"
+    ],
+    [
+      "unit",
+      "bp_chp",
+      "efficiency",
+      [
+        "MC44NQ==",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "unit",
+      "bp_chp",
+      "existing",
+      [
+        "NjAwLjA=",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "unit",
       "clean_plant",
       "conversion_method",
       [
@@ -12200,6 +12973,226 @@
     ],
     [
       "unit",
+      "csp_backup_boiler",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "csp_gas_backup"
+    ],
+    [
+      "unit",
+      "csp_backup_boiler",
+      "efficiency",
+      [
+        "MC45",
+        "float"
+      ],
+      "csp_gas_backup"
+    ],
+    [
+      "unit",
+      "csp_backup_boiler",
+      "existing",
+      [
+        "MjUwLjA=",
+        "float"
+      ],
+      "csp_gas_backup"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "constraint_capacity_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJjc3Bfc29sYXJfbXVsdGlwbGUiLCAxLjBdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9",
+        "map"
+      ],
+      "csp_fixed_design"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "conversion_method",
+      [
+        "Im5vbmUi",
+        "str"
+      ],
+      "csp_plant"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "discount_rate",
+      [
+        "MC4wNw==",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "existing",
+      [
+        "MC4w",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "existing",
+      [
+        "NTAwLjA=",
+        "float"
+      ],
+      "csp_plant"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "invest_cost",
+      [
+        "MTUwLjA=",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "invest_max_total",
+      [
+        "MTAwMC4w",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "invest_method",
+      [
+        "ImludmVzdF90b3RhbCI=",
+        "str"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_field",
+      "lifetime",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "constraint_capacity_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJjc3Bfc29sYXJfbXVsdGlwbGUiLCAtNS4wXSwgWyJjc3Bfc3RvcmFnZV9ob3VycyIsIC0yNS4wXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "csp_fixed_design"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "csp_plant"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "discount_rate",
+      [
+        "MC4wNw==",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "efficiency",
+      [
+        "MC40",
+        "float"
+      ],
+      "csp_plant"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "existing",
+      [
+        "MC4w",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "existing",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "csp_plant"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "invest_cost",
+      [
+        "NTAwLjA=",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "invest_max_total",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "invest_method",
+      [
+        "ImludmVzdF90b3RhbCI=",
+        "str"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
+      "csp_turbine",
+      "lifetime",
+      [
+        "MjUuMA==",
+        "float"
+      ],
+      "csp_invest_common"
+    ],
+    [
+      "unit",
       "dr_decrease_demand",
       "conversion_method",
       [
@@ -12310,6 +13303,46 @@
     ],
     [
       "unit",
+      "ext_chp",
+      "constraint_capacity_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJleHRfY2hwX21heF9oZWF0IiwgLTAuNl1dLCAiaW5kZXhfbmFtZSI6ICJjb25zdHJhaW50In0=",
+        "map"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "unit",
+      "ext_chp",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "unit",
+      "ext_chp",
+      "efficiency",
+      [
+        "MC40NQ==",
+        "float"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "unit",
+      "ext_chp",
+      "existing",
+      [
+        "MTAwMC4w",
+        "float"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "unit",
       "fusion_plant",
       "conversion_method",
       [
@@ -12327,6 +13360,106 @@
         "float"
       ],
       "fusion"
+    ],
+    [
+      "unit",
+      "med_desal",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "desal_system"
+    ],
+    [
+      "unit",
+      "med_desal",
+      "efficiency",
+      [
+        "MTIuMA==",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "unit",
+      "med_desal",
+      "existing",
+      [
+        "MzAwMC4w",
+        "float"
+      ],
+      "desal_system"
+    ],
+    [
+      "unit",
+      "ro_desal",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "desal_ro_invest"
+    ],
+    [
+      "unit",
+      "ro_desal",
+      "discount_rate",
+      [
+        "MC4wNQ==",
+        "float"
+      ],
+      "desal_ro_invest"
+    ],
+    [
+      "unit",
+      "ro_desal",
+      "efficiency",
+      [
+        "MjUwLjA=",
+        "float"
+      ],
+      "desal_ro_invest"
+    ],
+    [
+      "unit",
+      "ro_desal",
+      "invest_cost",
+      [
+        "MzAuMA==",
+        "float"
+      ],
+      "desal_ro_invest"
+    ],
+    [
+      "unit",
+      "ro_desal",
+      "invest_max_total",
+      [
+        "MjAwMC4w",
+        "float"
+      ],
+      "desal_ro_invest"
+    ],
+    [
+      "unit",
+      "ro_desal",
+      "invest_method",
+      [
+        "ImludmVzdF90b3RhbCI=",
+        "str"
+      ],
+      "desal_ro_invest"
+    ],
+    [
+      "unit",
+      "ro_desal",
+      "lifetime",
+      [
+        "MjAuMA==",
+        "float"
+      ],
+      "desal_ro_invest"
     ],
     [
       "unit",
@@ -12876,6 +14009,20 @@
     [
       "unit__node__profile",
       [
+        "csp_field",
+        "csp_heat",
+        "csp_field_yield"
+      ],
+      "profile_method",
+      [
+        "InVwcGVyX2xpbWl0Ig==",
+        "str"
+      ],
+      "csp_plant"
+    ],
+    [
+      "unit__node__profile",
+      [
         "ev_charger",
         "ev_battery",
         "ev_connected_share"
@@ -12900,6 +14047,32 @@
         "str"
       ],
       "wind"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "bp_chp",
+        "desal_heat"
+      ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJicF9jaHBfcmF0aW8iLCAtMC41XV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "desal_system"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "bp_chp",
+        "west"
+      ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJicF9jaHBfcmF0aW8iLCAxLjBdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9",
+        "map"
+      ],
+      "desal_system"
     ],
     [
       "unit__outputNode",
@@ -13069,6 +14242,58 @@
         "float"
       ],
       "dr_decrease_demand"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "ext_chp",
+        "desal_heat"
+      ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJleHRfY2hwX2JhY2twcmVzc3VyZV9saW5lIiwgLTAuNV0sIFsiZXh0X2NocF9tYXhfaGVhdCIsIDEuMF1dLCAiaW5kZXhfbmFtZSI6ICJjb25zdHJhaW50In0=",
+        "map"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "ext_chp",
+        "desal_heat"
+      ],
+      "conversion_flow_coeff",
+      [
+        "MC4xNQ==",
+        "float"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "ext_chp",
+        "west"
+      ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJleHRfY2hwX2JhY2twcmVzc3VyZV9saW5lIiwgMS4wXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "desal_extraction"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "ext_chp",
+        "west"
+      ],
+      "conversion_flow_coeff",
+      [
+        "MS4w",
+        "float"
+      ],
+      "desal_extraction"
     ],
     [
       "unit__outputNode",
@@ -13289,12 +14514,48 @@
       ""
     ],
     [
+      "csp_fixed_design",
+      "CSP how-to: solar multiple 2 and 10 storage hours at design efficiency 0.4, as user constraints on the capacities (field = 5 x turbine, storage = 25 x turbine)."
+    ],
+    [
+      "csp_gas_backup",
+      "CSP how-to: a natural-gas boiler csp_backup_boiler (250 MW_th, efficiency 0.9) that can also charge the heat storage."
+    ],
+    [
+      "csp_invest_common",
+      "CSP how-to: no existing capacity; field, storage and turbine may be invested (bounds 1000 MW_th, 5000 MWh_th, 100 MW_e)."
+    ],
+    [
+      "csp_plant",
+      "CSP how-to: existing CSP plant: solar field csp_field 500 MW_th, heat storage csp_heat 2500 MWh_th, turbine csp_turbine 100 MW_e (efficiency 0.4)."
+    ],
+    [
+      "csp_system",
+      "CSP how-to: constant 150 MW demand at west (coal_plant is the backup) and the field-yield profile csp_field_yield (a clear day, a cloudy day, a clear day)."
+    ],
+    [
       "cumulative_investment",
       ""
     ],
     [
       "delay_source_coef_on",
       "Phase 3d: override unit__inputNode.(water_pump, water_source).conversion_flow_coeff from 1.0 to 2.0 for test_flex_delay_source_coef.py."
+    ],
+    [
+      "desal_extraction",
+      "Desalination how-to: bp_chp off; an extraction CHP ext_chp with an operating region (power >= 0.5 x heat, heat <= 0.6 x capacity) instead."
+    ],
+    [
+      "desal_ro_invest",
+      "Desalination how-to: a reverse-osmosis unit ro_desal (250 m3/MWh_e) that may be invested up to 2000 m3/h at 30 000 CUR per m3/h."
+    ],
+    [
+      "desal_system",
+      "Desalination how-to: constant 300 MW demand at west; a backpressure CHP bp_chp (coal, heat = 2 x power) feeds desal_heat; a thermal desalination unit med_desal (12 m3/MWh_th, 3000 m3/h) serves a water demand of 3000 m3/h."
+    ],
+    [
+      "desal_water_storage",
+      "Desalination how-to: water becomes a 15 000 m3 storage and the water demand varies (12 h at 2000, 12 h at 4000 m3/h)."
     ],
     [
       "dispatch_fullYear_roll",
@@ -13638,9 +14899,54 @@
       ""
     ],
     [
+      "csp_existing",
+      false,
+      ""
+    ],
+    [
+      "csp_fixed_design",
+      false,
+      ""
+    ],
+    [
+      "csp_gas_backup",
+      false,
+      ""
+    ],
+    [
+      "csp_optimised_design",
+      false,
+      ""
+    ],
+    [
+      "csp_without",
+      false,
+      ""
+    ],
+    [
       "delay_source_coef",
       false,
       null
+    ],
+    [
+      "desal_backpressure",
+      false,
+      ""
+    ],
+    [
+      "desal_extraction",
+      false,
+      ""
+    ],
+    [
+      "desal_ro_invest",
+      false,
+      ""
+    ],
+    [
+      "desal_water_storage",
+      false,
+      ""
     ],
     [
       "dr_decrease_demand",
@@ -14650,6 +15956,146 @@
       null
     ],
     [
+      "csp_existing",
+      "init",
+      "west"
+    ],
+    [
+      "csp_existing",
+      "west",
+      "coal"
+    ],
+    [
+      "csp_existing",
+      "coal",
+      "csp_system"
+    ],
+    [
+      "csp_existing",
+      "csp_system",
+      "csp_plant"
+    ],
+    [
+      "csp_existing",
+      "csp_plant",
+      null
+    ],
+    [
+      "csp_fixed_design",
+      "init",
+      "west"
+    ],
+    [
+      "csp_fixed_design",
+      "west",
+      "coal"
+    ],
+    [
+      "csp_fixed_design",
+      "coal",
+      "csp_system"
+    ],
+    [
+      "csp_fixed_design",
+      "csp_system",
+      "csp_plant"
+    ],
+    [
+      "csp_fixed_design",
+      "csp_plant",
+      "csp_invest_common"
+    ],
+    [
+      "csp_fixed_design",
+      "csp_invest_common",
+      "csp_fixed_design"
+    ],
+    [
+      "csp_fixed_design",
+      "csp_fixed_design",
+      null
+    ],
+    [
+      "csp_gas_backup",
+      "init",
+      "west"
+    ],
+    [
+      "csp_gas_backup",
+      "west",
+      "coal"
+    ],
+    [
+      "csp_gas_backup",
+      "coal",
+      "csp_system"
+    ],
+    [
+      "csp_gas_backup",
+      "csp_system",
+      "csp_plant"
+    ],
+    [
+      "csp_gas_backup",
+      "csp_plant",
+      "csp_gas_backup"
+    ],
+    [
+      "csp_gas_backup",
+      "csp_gas_backup",
+      null
+    ],
+    [
+      "csp_optimised_design",
+      "init",
+      "west"
+    ],
+    [
+      "csp_optimised_design",
+      "west",
+      "coal"
+    ],
+    [
+      "csp_optimised_design",
+      "coal",
+      "csp_system"
+    ],
+    [
+      "csp_optimised_design",
+      "csp_system",
+      "csp_plant"
+    ],
+    [
+      "csp_optimised_design",
+      "csp_plant",
+      "csp_invest_common"
+    ],
+    [
+      "csp_optimised_design",
+      "csp_invest_common",
+      null
+    ],
+    [
+      "csp_without",
+      "init",
+      "west"
+    ],
+    [
+      "csp_without",
+      "west",
+      "coal"
+    ],
+    [
+      "csp_without",
+      "coal",
+      "csp_system"
+    ],
+    [
+      "csp_without",
+      "csp_system",
+      null
+    ],
+    [
       "delay_source_coef",
       "init",
       "west"
@@ -14677,6 +16123,101 @@
     [
       "delay_source_coef",
       "delay_source_coef_on",
+      null
+    ],
+    [
+      "desal_backpressure",
+      "init",
+      "west"
+    ],
+    [
+      "desal_backpressure",
+      "west",
+      "coal"
+    ],
+    [
+      "desal_backpressure",
+      "coal",
+      "desal_system"
+    ],
+    [
+      "desal_backpressure",
+      "desal_system",
+      null
+    ],
+    [
+      "desal_extraction",
+      "init",
+      "west"
+    ],
+    [
+      "desal_extraction",
+      "west",
+      "coal"
+    ],
+    [
+      "desal_extraction",
+      "coal",
+      "desal_system"
+    ],
+    [
+      "desal_extraction",
+      "desal_system",
+      "desal_extraction"
+    ],
+    [
+      "desal_extraction",
+      "desal_extraction",
+      null
+    ],
+    [
+      "desal_ro_invest",
+      "init",
+      "west"
+    ],
+    [
+      "desal_ro_invest",
+      "west",
+      "coal"
+    ],
+    [
+      "desal_ro_invest",
+      "coal",
+      "desal_system"
+    ],
+    [
+      "desal_ro_invest",
+      "desal_system",
+      "desal_ro_invest"
+    ],
+    [
+      "desal_ro_invest",
+      "desal_ro_invest",
+      null
+    ],
+    [
+      "desal_water_storage",
+      "init",
+      "west"
+    ],
+    [
+      "desal_water_storage",
+      "west",
+      "coal"
+    ],
+    [
+      "desal_water_storage",
+      "coal",
+      "desal_system"
+    ],
+    [
+      "desal_water_storage",
+      "desal_system",
+      "desal_water_storage"
+    ],
+    [
+      "desal_water_storage",
+      "desal_water_storage",
       null
     ],
     [

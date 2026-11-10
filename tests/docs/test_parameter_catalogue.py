@@ -125,7 +125,7 @@ def test_xlsx_catalogue_with_input_db(examples_db_url, examples_db_path, tmp_pat
                     "How to replace", "Notes"]
     assert sorted(rows) == sorted(_schema_parameters())
     efficiency = rows[("unit", "efficiency")]
-    assert (efficiency["used in DB"], efficiency["entities"]) == ("yes", 13)   # 9 + the must-run how-to units steam_1..3 and baseload_plant
+    assert (efficiency["used in DB"], efficiency["entities"]) == ("yes", 19)   # 9 + the must-run units steam_1..3, baseload_plant + desal and CSP units (6)
     assert efficiency["unit"] == "dimensionless" and efficiency["default"] == 1     # a number, not text
     assert efficiency["quantity type"] == "fraction"
     assert not rows[("solve", "benders_tolerance")]["used in DB"]
@@ -151,7 +151,7 @@ def test_xlsx_catalogue_with_input_db(examples_db_url, examples_db_path, tmp_pat
     # A plain file path works like the URL.
     path_out = tmp_path / "path.xlsx"
     assert docs_build_main(["--xlsx", str(path_out), "--input-db", str(examples_db_path)]) == 0
-    assert _sheet(path_out)[1][("unit", "efficiency")]["entities"] == 13
+    assert _sheet(path_out)[1][("unit", "efficiency")]["entities"] == 19
 
     plain = tmp_path / "plain.xlsx"
     assert docs_build_main(["--xlsx", str(plain)]) == 0

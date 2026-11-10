@@ -1,0 +1,4 @@
+unit,solve,period,existing,invested,in_construction,divested,total
+coal_plant,y2020_2day_dispatch,p2020,500.0,,,,500.0
+csp_field,y2020_2day_dispatch,p2020,0.0,500.0,,,500.0
+csp_turbine,y2020_2day_dispatch,p2020,0.0,100.0,,,100.0

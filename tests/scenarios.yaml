@@ -928,3 +928,137 @@
   expected_objective: 3322.447059
   expected_objective_tolerance: 1.0e-5
   time_budget_seconds: 10.0
+
+# --- How-to: cogeneration with desalination (docs/how_to/thermal_chp.md) ---
+# Chain init, west, coal, desal_system (+ one alternative): constant 300 MW
+# demand at west; water demand 3000 m3/h (penalty 50 CUR/m3); coal 20
+# CUR/MWh fuel, coal_plant 50 CUR/MWh_e.  med_desal makes 12 m3 per MWh of
+# desal_heat (3000 m3/h); bp_chp (efficiency 0.85) makes heat = 2 x power.
+# Every hour is the same (the storage case: the same flows, with the state
+# moving), so objective (M CUR) = cost per hour x 8760 / 1e6.  Dispatch is
+# unique per step.
+- scenario: desal_backpressure
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit__inputNode__dt.csv
+    - costs_discounted.csv
+  # MED 3000 m3/h <- heat 250; bp_chp power 125, fuel 375 / 0.85 = 441.18;
+  # coal_plant 175 (fuel 437.5): (441.18 + 437.5) x 20 = 17 573.53 CUR/h
+  # -> 153.944118.
+  expected_objective: 153.944118
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+- scenario: desal_extraction
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit__inputNode__dt.csv
+    - costs_discounted.csv
+  # bp_chp off; ext_chp (efficiency 0.45, 0.45 x fuel = power + 0.15 x heat)
+  # heat 250, power 300 (20 / 0.45 = 44.4 < 50 CUR/MWh_e of coal_plant),
+  # fuel (300 + 37.5) / 0.45 = 750; coal_plant 0: 15 000 CUR/h -> 131.4.
+  # power >= 0.5 x heat holds (300 >= 125); heat <= 0.6 x 1000 does not bind.
+  expected_objective: 131.4
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+- scenario: desal_ro_invest
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit__inputNode__dt.csv
+    - unit_capacity__d.csv
+    - costs_discounted.csv
+  # ro_desal (250 m3/MWh_e: 0.2 CUR/m3 against 0.857843 for MED) is invested
+  # to its 2000 m3/h limit (annuity 30 000 x CRF(5 %, 20) = 2 407.28 CUR per
+  # m3/h and year against a saving of 5 764).  RO 2000 m3/h (8 MW), MED 1000
+  # (heat 83.33, bp_chp power 41.67), coal_plant 266.33: operation
+  # 16 257.843 CUR/h -> 142.418706, plus the RO annuity 2000 x 30 000 x
+  # 0.0802426 = 4.814555 -> 147.233261.
+  expected_objective: 147.233261
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+- scenario: desal_water_storage
+  csvs:
+    - unit__outputNode__dt.csv
+    - node_state__dt.csv
+    - costs_discounted.csv
+  # water is a 15 000 m3 storage (fix_start 0, bind_within_timeblock) and its
+  # demand is 12 h at 2000 then 12 h at 4000 m3/h (mean 3000 = the MED
+  # capacity), so MED runs flat at 3000 and the state goes 0 -> 12 000 (t0012)
+  # -> 0 (t0024), twice.  The cost is that of desal_backpressure: 153.944118.
+  expected_objective: 153.944118
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+# --- How-to: CSP with thermal storage (docs/how_to/investment.md) ---
+# Chain init, west, coal, csp_system (+ alternatives): constant 150 MW demand
+# at west; coal_plant 50 CUR/MWh_e is the backup.  Field yield 1.0 for
+# t0007..t0018 (clear day), 0.4 for t0031..t0042 (cloudy day), 0 otherwise.
+# Heat is free and coal costs the same in every hour, so the timing of the
+# turbine and the storage state are not unique: only period-level files are
+# compared.  Objective = 48-h cost x 182.5 / 1e6 (+ annuities).  The
+# unit__outputNode__d flows are annualised (x 182.5); the curtailment and
+# potential __d files are sums over the 48 h, not scaled to a year.
+- scenario: csp_without
+  csvs:
+    - unit__outputNode__d.csv
+    - costs_discounted.csv
+    - summary_solve.csv
+  # Without CSP: coal 150 x 48 = 7200 MWh x 50 = 360 000 CUR -> 65.7.
+  expected_objective: 65.7
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+- scenario: csp_existing
+  csvs:
+    - unit__outputNode__d.csv
+    - node_capacity__d.csv
+    - unit_curtailment__outputNode__d.csv
+    - unit_outputNode_VRE_potential__d.csv
+    - costs_discounted.csv
+    - summary_solve.csv
+  # Field 500 MW_th, tank 2500 MWh_th, turbine 100 MW_e (efficiency 0.4).
+  # Field potential 6000 + 2400 = 8400 MWh_th; used 3000 + 2500 (clear day:
+  # direct + stored) + 2400 (cloudy day) = 7900; curtailed 500.  Turbine
+  # 3160 MWh_e, coal 4040 MWh: 202 000 CUR -> 36.865.
+  expected_objective: 36.865
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+- scenario: csp_fixed_design
+  csvs:
+    - unit__outputNode__d.csv
+    - unit_capacity__d.csv
+    - node_capacity__d.csv
+    - unit_curtailment__outputNode__d.csv
+    - costs_discounted.csv
+    - summary_solve.csv
+  # Invested, tied by field = 5 x turbine and tank = 25 x turbine: the turbine
+  # bound binds, so 100 MW_e / 500 MW_th / 2500 MWh_th and the dispatch of
+  # csp_existing (36.865) plus the annuities (100 x 500 + 500 x 150 + 2500 x
+  # 15) x 1000 x CRF(7 %, 25) = 162.5 M x 0.0858105 = 13.944209 -> 50.809209.
+  expected_objective: 50.809209
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+- scenario: csp_optimised_design
+  csvs:
+    - summary_solve.csv
+  # No ties: not solved by hand.  tests/model/test_howto_csp.py checks that it
+  # costs no more than csp_fixed_design (50.809209) and keeps the bounds.
+  time_budget_seconds: 10.0
+
+- scenario: csp_gas_backup
+  csvs:
+    - unit__outputNode__d.csv
+    - unit_curtailment__outputNode__d.csv
+    - costs_discounted.csv
+    - summary_solve.csv
+  # Boiler heat costs 12 / 0.9 = 13.33 CUR/MWh_th = 33.3 CUR/MWh_e < 50, so
+  # the turbine runs at 100 MW_e every hour (12 000 MWh_th): solar 7900,
+  # boiler 4100 MWh_th (gas 4555.56 MWh), coal 2400 MWh:
+  # 120 000 + 54 666.67 = 174 666.67 CUR -> 31.876667.
+  expected_objective: 31.876667
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0

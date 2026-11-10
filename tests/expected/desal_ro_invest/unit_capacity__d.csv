@@ -1,0 +1,5 @@
+unit,solve,period,existing,invested,in_construction,divested,total
+bp_chp,y2020_2day_dispatch,p2020,600.0,,,,600.0
+coal_plant,y2020_2day_dispatch,p2020,500.0,,,,500.0
+med_desal,y2020_2day_dispatch,p2020,3000.0,,,,3000.0
+ro_desal,y2020_2day_dispatch,p2020,0.0,2000.0,,,2000.0

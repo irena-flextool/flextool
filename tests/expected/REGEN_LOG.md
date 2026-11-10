@@ -1313,3 +1313,27 @@ direct unit; the old model's `process_profile` held only units without an input 
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the three scenarios; the other files
 the regeneration rewrote (`costs__dt.csv` of both test_a_lot scenarios, `0` → `0.0` in `ramps` only) were put back.
+
+## 2026-11-10 — new goldens for the desalination and CSP how-to scenarios
+
+**Context.** Nine new scenarios in `tests/fixtures/tests.json` (added by
+`tests/fixtures/_augment_phase3_examples.py`, append-only): `desal_backpressure`, `desal_extraction`,
+`desal_ro_invest`, `desal_water_storage` (`docs/how_to/thermal_chp.md`) and `csp_without`, `csp_existing`,
+`csp_fixed_design`, `csp_optimised_design`, `csp_gas_backup` (`docs/how_to/investment.md`).  No existing golden
+changed (only new directories under `tests/expected/`), and the LP of every `tools/lp_snapshot.py` fixture is
+byte-identical before and after the augment.
+
+- Hand values (independent oracle, `tests/scenarios.yaml` comments) and the goldens agree.  Desalination, per hour:
+  MED 3000 m³/h ← heat 250, bp_chp power 125, fuel 441.1765, coal_plant 175 / ext_chp heat 250, power 300, fuel
+  750, coal_plant 0 / ro_desal invested 2000 m³/h (input 8 MW), MED 1000, heat 83.3333, power 41.6667, coal_plant
+  266.3333 / water state 0 → 12 000 (t0012) → 0 (t0024), twice.  Objectives 153.944118, 131.4, 147.233261
+  (commodity 142.4187 + unit investment 4.8146), 153.944118.
+- CSP, period files: field 1 441 750 MWh_th/a (7900 × 182.5), turbine 576 700 MWh_e/a (3160 × 182.5), coal
+  737 300 MWh/a (4040 × 182.5); with the gas boiler 748 250 (4100 × 182.5), turbine 876 000, coal 438 000.  The
+  curtailment (500) and potential (8400) `__d` files are sums over the 48 h, not scaled to a year.  Fixed design
+  capacities 100 / 500 / 2500, unit investment 10.7263 + storage investment 3.2179 = 13.944209.  Objectives 65.7,
+  36.865, 50.809209, 31.876667; `csp_optimised_design` 43.352629 (summary_solve only; not solved by hand,
+  `tests/model/test_howto_csp.py` checks it is ≤ the fixed design).  The CSP timing is degenerate, so no `__dt`
+  file is compared.
+
+Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for each of the nine scenarios.
