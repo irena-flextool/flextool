@@ -689,7 +689,11 @@ Other tools keep their results short so that a project with many runs fits the a
   limit the requests per second, per minute and per day. The chat waits and tries again a few times by itself (see
   [How fast requests are sent](#how-fast-requests-are-sent)); after that, wait, or switch service or model with
   `/provider` or `/model`. `/usage` shows what was used. On a free plan, switch on
-  the [free plan](#the-free-plan) so each question uses fewer requests.
+  the [free plan](#the-free-plan) so each question uses fewer requests. For Google, the line after the message
+  names the quota that was hit (for example input tokens per minute, its limit and the model) and the wait Google
+  suggests; the chat waits that long when it is short enough.
+- **"… the daily quota of this model is used up; try tomorrow or another model"** (chat). Google's quota per day
+  for the model is used up; it resets the next day (midnight Pacific time), so the chat does not wait for it.
 - **"The level … is not available for this model, so nothing was sent."** (`-q`). The `--tier` asked for is above the
   levels the model allows; the message says why and which levels it allows.
 - **"Nothing answers at localhost:11434. Start Ollama and try again."** Start the model server, then ask again.

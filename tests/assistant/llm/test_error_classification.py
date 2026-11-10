@@ -186,14 +186,22 @@ def test_status_errors(case):
 #: error code else the error type, and the first message, redacted.
 SAID = {
     "insufficient_quota": (429, "insufficient_quota", "You exceeded your current quota."),
-    "gemini list body per day": (429, "RESOURCE_EXHAUSTED", "You exceeded your current quota."),
-    "gemini retryDelay": (429, "RESOURCE_EXHAUSTED", "You exceeded your current quota."),
+    # Gemini quota fixes 2026-11-10: the quotas Google names lead, and the wait it suggests.
+    "gemini list body per day": (429, "RESOURCE_EXHAUSTED", "quota: requests per day; Google suggests waiting 41 s. "
+                                 "You exceeded your current quota.",
+                                 (E.QuotaViolation("generate_content_free_tier_requests",
+                                                   "GenerateRequestsPerDayPerProjectPerModel-FreeTier"),), 41.0),
+    "gemini retryDelay": (429, "RESOURCE_EXHAUSTED", "quota: requests per minute; Google suggests waiting 41 s. "
+                          "You exceeded your current quota.",
+                          (E.QuotaViolation("generate_content_free_tier_requests",
+                                            "GenerateRequestsPerMinutePerProjectPerModel-FreeTier"),), 41.0),
     "retry-after-ms": (429, "rate_limit_exceeded", "Rate limit reached."),
     "retry-after seconds": (429, "", "Requests rate limit exceeded"),
     "retry-after HTTP date": (429, "rate_limit_error", "Rate limited."),
     "rate limit without a wait": (429, "requests", "Slow down."),
     "openrouter no endpoints": (404, "", "No endpoints found matching your data policy (Free model publication)."),
-    "openrouter no credit": (402, "", "Insufficient credits. Add more using https://example.test/credits"),
+    # No links (Gemini quota fixes 2026-11-10): the sentence that leads to one is left out.
+    "openrouter no credit": (402, "", "Insufficient credits."),
     "openrouter free models per day": (429, "", "Rate limit exceeded: free-models-per-day. Add credits to unlock "
                                                 "more."),
     "anthropic 529": (529, "overloaded_error", "Overloaded"),
@@ -238,7 +246,7 @@ def test_every_class_keeps_what_the_provider_said(case):
 def test_what_the_provider_said_inside_a_stream_capped_and_none():
     """An error inside a stream has no HTTP status: the code its body names stands in.  A long message is cut at
     300 characters.  An error of no provider answer (a refused connection) has nothing the provider said."""
-    long = "Quota exceeded for metric: input_token_count. " * 10
+    long = "The service is limiting the requests of this project. " * 10
     err = E.classify_status(None, [{"error": {"code": 429, "status": "RESOURCE_EXHAUSTED", "message": long}}], None,
                             _ctx("gemini"))
     assert isinstance(err, E.RateLimited)
@@ -477,3 +485,132 @@ def test_connect_timeout_names_the_connect_time(library):
     err = classify(exception(unreachable), _ctx(host="llm.example.test"))
     assert isinstance(err, E.TimedOut)
     assert err.user_message == "Could not connect to llm.example.test within 10 seconds."
+
+
+# --- Gemini quota answers (fixes 2026-11-10) ----------------------------------------------------------------------
+#: Google's 429 message as the owner's run showed it: two sentences that lead to links, then the quota line.
+GOOGLE_429_MESSAGE = (
+    "You exceeded your current quota, please check your plan and billing details. For more information on this "
+    "error, head to: https://aistudio.google.com/docs/rate-limits. To monitor your current usage, head to: "
+    "https://ai.dev/rate-limit. \n* Quota exceeded for metric: generativelanguage.googleapis.com/"
+    "generate_content_free_tier_input_token_count, limit: 15000, model: gemma-4-31b-it\nPlease retry in 34.36s.")
+INPUT_METRIC = "generativelanguage.googleapis.com/generate_content_free_tier_input_token_count"
+REQUESTS_METRIC = "generativelanguage.googleapis.com/generate_content_free_tier_requests"
+
+
+def _google_quota(violations: list[dict], delay: str | None, message: str = GOOGLE_429_MESSAGE) -> list:
+    details: list[dict] = [{"@type": "type.googleapis.com/google.rpc.QuotaFailure", "violations": violations}]
+    details.append({"@type": "type.googleapis.com/google.rpc.Help",
+                    "links": [{"description": "Learn more", "url": "https://ai.google.dev/gemini-api/docs/rate-limits"}]})
+    if delay is not None:
+        details.append({"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": delay})
+    return [{"error": {"code": 429, "message": message, "status": "RESOURCE_EXHAUSTED", "details": details}}]
+
+
+def _gemini(body: object, status: int = 429) -> E.LLMError:
+    return classify_openai(openai_exception(_handler(status, body)),
+                           _ctx("gemini", provider="Google Gemini", model="gemma-4-31b-it"))
+
+
+def _retried(err: E.LLMError) -> tuple[float, BaseException | str]:
+    """What the retries do with *err* as the first answer: the time waited (the countdown waits in steps), and the
+    answer (or the error raised)."""
+    import threading
+
+    from flextool.assistant.llm_retry import Pacing, RetryPolicy, call_with_retries
+    from flextool.assistant.pacing import Pacer
+
+    answers: list = [err, "answer"]
+    waits: list[float] = []
+
+    def fn():
+        item = answers.pop(0)
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+    try:
+        reply = call_with_retries(fn, RetryPolicy(jitter=0.0), lambda _e: None, threading.Event(),
+                                  sleep=lambda s: waits.append(s) or False, clock=lambda: sum(waits),
+                                  pacing=Pacing(key="k", pacer=Pacer(clock=lambda: sum(waits))))
+    except E.LLMError as exc:
+        return sum(waits), exc
+    return sum(waits), reply
+
+
+def test_gemini_per_minute_quota_names_the_quota_and_the_wait():
+    """The quota Google names (QuotaFailure: metric, quota id, model, value) and its RetryInfo wait lead what the
+    provider said, whole; the links are gone; the retry waits what Google suggests.  Before: the message was the
+    first 300 characters of Google's text, links included, cut before the metric."""
+    err = _gemini(_google_quota([{"quotaMetric": INPUT_METRIC,
+                                  "quotaId": "GenerateContentInputTokensPerModelPerMinute-FreeTier",
+                                  "quotaDimensions": {"location": "global", "model": "gemma-4-31b-it"},
+                                  "quotaValue": "15000"}], "34s"))
+    assert type(err) is E.RateLimited and err.retry_after == 34.0
+    said = err.provider_said
+    assert said.message == ("quota: input tokens per minute (limit 15000, model gemma-4-31b-it); Google suggests "
+                            "waiting 34 s. You exceeded your current quota, please check your plan and billing "
+                            "details.")
+    assert said.quota == (E.QuotaViolation(INPUT_METRIC, "GenerateContentInputTokensPerModelPerMinute-FreeTier",
+                                           "15000", "gemma-4-31b-it"),)
+    assert said.retry_delay == 34.0
+    assert said.as_json()["quota"] == [{"metric": INPUT_METRIC, "quota_id": "GenerateContentInputTokensPerModelPer"
+                                        "Minute-FreeTier", "limit": "15000", "model": "gemma-4-31b-it"}]
+    assert _retried(err) == (pytest.approx(34.0), "answer")
+
+
+@pytest.mark.parametrize("violation", [
+    {"quotaMetric": REQUESTS_METRIC, "quotaId": "GenerateRequestsPerDayPerProjectPerModel-FreeTier",
+     "quotaDimensions": {"model": "gemma-4-31b-it"}, "quotaValue": "14400"},
+    {"quotaMetric": "generativelanguage.googleapis.com/generate_requests_PerDay", "quotaValue": "14400"}],
+    ids=["quotaId", "metric"])
+def test_gemini_per_day_quota_is_not_waited_for(violation):
+    """A quota per day (quotaId or metric with "PerDay") is used up until the next day: a plain message, no wait,
+    no retry, even though Google names a wait.  Before: the daily quota had the message of a quota that "resets on
+    the provider's schedule" (quotaId) or was a rate limit waited for (metric only)."""
+    err = _gemini(_google_quota([violation], "34s"))
+    assert type(err) is E.QuotaExhausted and err.code == "quota"
+    assert err.user_message == ("Google Gemini: the daily quota of this model is used up; try tomorrow or another "
+                                "model.")
+    assert err.provider_said.message.startswith("quota: requests per day (limit 14400")
+    waited, raised = _retried(err)
+    assert waited == 0 and raised is err
+
+
+def test_gemini_quota_from_the_message_alone():
+    """Without QuotaFailure and RetryInfo, the "* Quota exceeded for metric:" line and "Please retry in" of the
+    message stand in.  Before: no wait (a minute's guess) and the metric cut off."""
+    err = _gemini([{"error": {"code": 429, "message": GOOGLE_429_MESSAGE, "status": "RESOURCE_EXHAUSTED"}}])
+    assert type(err) is E.RateLimited and err.retry_after == pytest.approx(34.36)
+    assert err.provider_said.message == ("quota: input tokens (limit 15000, model gemma-4-31b-it); Google suggests "
+                                         "waiting 35 s. You exceeded your current quota, please check your plan "
+                                         "and billing details.")
+    assert err.provider_said.quota == (E.QuotaViolation(INPUT_METRIC, "", "15000", "gemma-4-31b-it"),)
+
+
+def test_the_quota_is_never_cut_the_general_sentences_go_first():
+    """A long message: the sentences after the quotas are left out to fit the 300 characters, the quotas are kept
+    whole.  Before: the text was cut at 300 characters, here before the metric."""
+    filler = " ".join(f"General advice sentence number {n} about plans and billing." for n in range(8))
+    message = f"{filler}\n* Quota exceeded for metric: {INPUT_METRIC}, limit: 15000, model: gemma-4-31b-it"
+    err = _gemini([{"error": {"code": 429, "message": message, "status": "RESOURCE_EXHAUSTED"}}])
+    said = err.provider_said.message
+    assert said.startswith("quota: input tokens (limit 15000, model gemma-4-31b-it). General advice sentence "
+                           "number 0 about plans and billing.")
+    assert len(said) <= E.MAX_PROVIDER_SAID and said.endswith("billing.")
+    assert "number 7" not in said
+
+
+def test_links_are_left_out_of_the_provider_text():
+    """No links in what FlexTool shows: the sentence that leads to a link is left out (in what the provider said
+    and in a message that quotes the provider); a link's trailing full stop does not take the next sentence with
+    it.  Before: the links were shown."""
+    body = {"error": {"message": "Bad field. See https://example.test/docs/errors. The value must be a number.",
+                      "type": "invalid_request_error"}}
+    err = classify_openai(openai_exception(_handler(422, body)), _ctx("mistral"))
+    assert type(err) is E.ProviderError
+    assert err.provider_said.message == "Bad field. The value must be a number."
+    assert "example.test" not in err.user_message and "Bad field. The value must be a number" in err.user_message
+    only_link = classify_openai(openai_exception(_handler(422, {"message": "https://example.test/x"})),
+                                _ctx("mistral"))
+    assert "example.test" not in only_link.provider_said.text()

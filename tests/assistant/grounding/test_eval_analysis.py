@@ -994,7 +994,8 @@ def test_a_stop_keeps_what_the_provider_said(evaluator, grounding: Path, tmp_pat
                                              monkeypatch: pytest.MonkeyPatch) -> None:
     """Calibration 2026-11-10: a cell stopped by Google's errors keeps, for every failed attempt, the HTTP status,
     Google's status name and its message in spent.json, and the console shows them after FlexTool's message.  A
-    429 (retried once), then a 503 that stops the cell."""
+    429 (retried once), then a 503 that stops the cell.  Gemini quota fixes 2026-11-10: the quota Google names
+    (metric, limit, model) and the wait it suggests lead the message, and spent.json keeps them."""
     import functools
 
     from flextool.assistant import session
@@ -1010,15 +1011,20 @@ def test_a_stop_keeps_what_the_provider_said(evaluator, grounding: Path, tmp_pat
          "--accept-data-notice", "--questions", "G01", "--levels", "basic"])
     assert evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
                              say=said.append, allow_unsolved=True) == 1
-    quota = GOOGLE_QUOTA + " key <key>"
+    quota = ("quota: input tokens (limit 15000, model gemma-4-31b); Google suggests waiting 0 s. You exceeded your "
+             "current quota. key <key>")
     assert said[-4:-1] == ["Google Gemini is still overloaded. Ask again in a moment.",
                            f"Google Gemini said: 503 UNAVAILABLE — {GOOGLE_BUSY}",
                            f"  earlier attempt (1): 429 RESOURCE_EXHAUSTED — {quota}"]
     spent = json.loads((out / evaluator.SPENT_FILE).read_text(encoding="utf-8"))
-    busy = {"code": "busy", "status": 503, "provider_code": "UNAVAILABLE", "message": GOOGLE_BUSY}
+    busy = {"code": "busy", "status": 503, "provider_code": "UNAVAILABLE", "message": GOOGLE_BUSY, "quota": [],
+            "retry_delay": None}
+    metric = "generativelanguage.googleapis.com/generate_content_free_tier_input_token_count"
     assert [{k: e[k] for k in ("cell", "requests", "code", "provider", "attempts")} for e in spent] == [
         {"cell": "G01__small__r1", "requests": 0, "code": "busy", "provider": busy,
-         "attempts": [{"code": "rpm", "status": 429, "provider_code": "RESOURCE_EXHAUSTED", "message": quota},
+         "attempts": [{"code": "rpm", "status": 429, "provider_code": "RESOURCE_EXHAUSTED", "message": quota,
+                       "quota": [{"metric": metric, "quota_id": "", "limit": "15000", "model": "gemma-4-31b"}],
+                       "retry_delay": 0.0},
                       busy]}]
     assert SECRET_KEY not in (out / evaluator.SPENT_FILE).read_text(encoding="utf-8")
 
@@ -1033,7 +1039,7 @@ def test_a_saved_turn_keeps_its_failed_attempts(evaluator, grounding: Path, tmp_
     turn = evaluator.read_cells(out)["G01__small__r1"]["turns"][0]
     assert turn["stop"] == "end"
     assert turn["failed_attempts"] == [{"code": "connection", "status": None, "provider_code": None,
-                                        "message": None}]
+                                        "message": None, "quota": [], "retry_delay": None}]
 
 
 class Timed(Harness):

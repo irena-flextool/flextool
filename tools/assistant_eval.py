@@ -618,10 +618,13 @@ class Setting:
 def failure_json(err: Any, red: Callable[[str], str]) -> dict[str, Any]:
     """One failed request attempt for spent.json and the records: FlexTool's code, and the HTTP status, the
     provider's error code and its message (redacted, at most ``MAX_PROVIDER_SAID`` characters) when the provider
-    answered with an error; ``None`` for each the provider did not say."""
+    answered with an error; ``None`` for each the provider did not say.  For a Google quota answer also the quotas
+    it names (metric, quota id, limit, model) and the wait it suggests in seconds (``quota``, ``retry_delay``)."""
     said = err.provider_said
     return {"code": err.code, "status": said.status if said else None, "provider_code": said.code if said else None,
-            "message": red(said.message) if said else None}
+            "message": red(said.message) if said else None,
+            "quota": [q.as_json() for q in said.quota] if said else [],
+            "retry_delay": said.retry_delay if said else None}
 
 
 def said_lines(final: Any, failed: Sequence[Any], red: Callable[[str], str]) -> list[str]:

@@ -149,9 +149,10 @@ def test_whole_answer_errors_are_classified_as_streamed_ones():
     backend, _ = backend_for([json_response(429, quota)], stream=False)
     with pytest.raises(E.RateLimited) as caught:
         ask(backend)
+    # Gemini quota fixes 2026-11-10: the quota the message names, in words.
     assert caught.value.provider_said == E.ProviderSaid(
-        429, "RESOURCE_EXHAUSTED", "Quota exceeded for metric: generate_content_free_tier_input_token_count, "
-                                   "limit: 15000")
+        429, "RESOURCE_EXHAUSTED", "quota: input tokens (limit 15000).",
+        (E.QuotaViolation("generate_content_free_tier_input_token_count", "", "15000"),))
     busy = [{"error": {"code": 503, "message": "The model is overloaded.", "status": "UNAVAILABLE"}}]
     backend, _ = backend_for([json_response(200, busy)], stream=False)
     with pytest.raises(E.ServerBusy) as caught:

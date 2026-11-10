@@ -44,6 +44,7 @@ MESSAGES: dict[str, str] = {
     "ended_early": "{provider} ended the answer before any of it came, several times. Ask again in a moment.",
     "quota": ("Your {provider} quota is used up for now. It resets on the provider's schedule, which FlexTool "
               "cannot see. You can switch to another provider or model."),
+    "quota_daily": "{provider}: the daily quota of this model is used up; try tomorrow or another model.",
     "credit": ("Your {provider} account has no credit left. Add credit in your provider account, or switch "
                "provider."),
     "auth": ("{provider} did not accept the key (from {key_source}). Check the key, or store a new one with "
@@ -128,15 +129,66 @@ MAX_PROVIDER_SAID = 300
 
 
 @dataclass(frozen=True)
+class QuotaViolation:
+    """One quota a Google rate-limit answer names (``google.rpc.QuotaFailure.Violation``, else a ``* Quota exceeded
+    for metric: …, limit: …, model: …`` line of its message): the *metric*, the quota id (*quota_id*, which names
+    the period, such as ``…PerMinute…`` or ``…PerDay…``), the enforced *limit* and the *model*; ``""`` for each
+    the answer does not name."""
+
+    metric: str = ""
+    quota_id: str = ""
+    limit: str = ""
+    model: str = ""
+
+    @property
+    def daily(self) -> bool:
+        """Whether the quota counts per day (it resets the next day, so waiting a minute does not help)."""
+        return any("perday" in v.lower() or "daily" in v.lower() for v in (self.metric, self.quota_id))
+
+    def text(self) -> str:
+        """``input tokens per minute (limit 15000, model gemma-4-31b-it)``."""
+        details = ", ".join(p for p in (f"limit {self.limit}" if self.limit else "",
+                                        f"model {self.model}" if self.model else "") if p)
+        return f"{_quota_name(self)} ({details})" if details else _quota_name(self)
+
+    def as_json(self) -> dict[str, str]:
+        return {"metric": self.metric, "quota_id": self.quota_id, "limit": self.limit, "model": self.model}
+
+
+def _quota_name(q: QuotaViolation) -> str:
+    """What a quota counts, in words: ``input tokens per minute``; the metric's own name when it is not known."""
+    metric = q.metric.rsplit("/", 1)[-1].lower()
+    ident = q.quota_id.lower()
+    both = f"{metric} {ident}"
+    if "input_token" in both or "inputtoken" in both:
+        what = "input tokens"
+    elif "output_token" in both or "outputtoken" in both:
+        what = "output tokens"
+    elif "token" in both:
+        what = "tokens"
+    elif "request" in both:
+        what = "requests"
+    else:
+        return q.metric.rsplit("/", 1)[-1] or q.quota_id or "a quota"
+    per = next((words for key, words in (("perminute", "per minute"), ("perday", "per day"),
+                                          ("perhour", "per hour")) if key in both), "")
+    return f"{what} {per}" if per else what
+
+
+@dataclass(frozen=True)
 class ProviderSaid:
     """What the provider's own error answer said, beside FlexTool's message: the HTTP *status* (for an error inside
     a stream, the numeric code its body names, else ``None``), the provider's error *code* (Google's status name
     such as ``RESOURCE_EXHAUSTED``, OpenAI's or Anthropic's error type and code; ``""`` when none) and its
-    *message*, redacted (no key, no local path) and at most :data:`MAX_PROVIDER_SAID` characters."""
+    *message*, redacted (no key, no local path, no link) and at most :data:`MAX_PROVIDER_SAID` characters (a
+    Google quota answer's message leads with the quotas it names, which are never cut).  For a Google quota
+    answer, the *quota* it names and the *retry_delay* (seconds) it suggests."""
 
     status: int | None
     code: str
     message: str
+    quota: tuple[QuotaViolation, ...] = ()
+    retry_delay: float | None = None
 
     def text(self) -> str:
         """``429 RESOURCE_EXHAUSTED — Quota exceeded for metric …`` (the parts it has)."""
@@ -146,7 +198,8 @@ class ProviderSaid:
         return head or self.message or NO_PROVIDER_TEXT
 
     def as_json(self) -> dict[str, object]:
-        return {"status": self.status, "code": self.code, "message": self.message}
+        return {"status": self.status, "code": self.code, "message": self.message,
+                "quota": [q.as_json() for q in self.quota], "retry_delay": self.retry_delay}
 
 
 @dataclass
@@ -400,6 +453,8 @@ class _Body:
     reasons: set[str] = field(default_factory=set)
     quota_ids: list[str] = field(default_factory=list)
     retry_delays: list[str] = field(default_factory=list)
+    #: Google's ``QuotaFailure.violations`` entries (``quotaMetric``, ``quotaId``, ``quotaDimensions``, …).
+    violations: list[dict] = field(default_factory=list)
     messages: list[str] = field(default_factory=list)
     strings: list[str] = field(default_factory=list)
 
@@ -442,9 +497,48 @@ def _read_body(body: object) -> _Body:
             out.quota_ids.append(value)
         elif key == "retryDelay" and isinstance(value, str):
             out.retry_delays.append(value)
+        elif key == "violations" and isinstance(value, list):
+            out.violations.extend(v for v in value if isinstance(v, dict))
         elif key in ("message", "raw") and isinstance(value, str):
             out.messages.append(value)
+    if not out.retry_delays and "RESOURCE_EXHAUSTED" in out.statuses:
+        # Google's message names the wait too ("Please retry in 34.36s."): the fallback without RetryInfo.
+        for message in out.messages:
+            match = _RETRY_IN.search(message)
+            if match:
+                out.retry_delays.append(match.group(1))
+                break
     return out
+
+
+#: Google's message line per quota ("* Quota exceeded for metric: X, limit: N, model: M") and its suggested wait.
+_QUOTA_LINE = re.compile(r"Quota exceeded for metric:\s*(?P<metric>[^,\s]+)(?:,\s*limit:\s*(?P<limit>[^,\s]+))?"
+                         r"(?:,\s*model:\s*(?P<model>[^,\s]+))?")
+_RETRY_IN = re.compile(r"\bretry in\s+(\d+(?:\.\d+)?)\s*s\b", re.IGNORECASE)
+
+
+def _quota_of(info: _Body) -> tuple[QuotaViolation, ...]:
+    """The quotas a Google answer names: its ``QuotaFailure`` violations, each completed from the message line of
+    its metric; without violations, the message lines alone."""
+    lines = [m.groupdict() for message in info.messages for m in _QUOTA_LINE.finditer(message)]
+    by_metric = {line["metric"]: line for line in lines}
+    out: list[QuotaViolation] = []
+    for v in info.violations:
+        metric = str(v.get("quotaMetric") or "")
+        quota_id = str(v.get("quotaId") or "")
+        if not metric and not quota_id:
+            continue
+        dims = v.get("quotaDimensions")
+        line = by_metric.get(metric, {})
+        value = v.get("quotaValue")
+        limit = str(value) if isinstance(value, (str, int)) and not isinstance(value, bool) else ""
+        model = str(dims.get("model") or "") if isinstance(dims, dict) else ""
+        out.append(QuotaViolation(metric, quota_id, limit or (line.get("limit") or "").rstrip("."),
+                                  model or (line.get("model") or "").rstrip(".")))
+    if not out:
+        out = [QuotaViolation(line["metric"], "", (line["limit"] or "").rstrip("."), (line["model"] or "").rstrip("."))
+               for line in lines]
+    return tuple(dict.fromkeys(out))
 
 
 #: Error types (Anthropic) and Google status names, with the HTTP status they stand for.
@@ -543,13 +637,48 @@ def _provider_text(ctx: ErrorContext, body: _Body, fallback: str) -> str:
     return _clean(ctx, next((m for m in body.messages if m.strip()), "") or fallback, MAX_PROVIDER_TEXT)
 
 
-def _clean(ctx: ErrorContext, text: str, limit: int) -> str:
+#: A link in a provider's text (FlexTool shows no links).
+_URL = re.compile(r"(?:https?://|www\.)\S+?(?=[.,;:!?)]*(?:\s|$))", re.IGNORECASE)
+_SENTENCE_END = re.compile(r"(?<=[.!?])\s+|\n+")
+
+
+def _sentences(text: str) -> list[str]:
+    """*text* in sentences (a new line also ends one), each without its links: a sentence that leads to a link
+    ("For more information …, head to: <link>.") is left out; when every sentence has one, only the links are."""
+    marked = _URL.sub("\0", text)
+    parts = [p.strip() for p in _SENTENCE_END.split(marked) if p.strip()]
+    kept = [p for p in parts if "\0" not in p]
+    if not kept:
+        kept = [" ".join(p.replace("\0", " ").split()) for p in parts]
+    return [p for p in kept if p and p not in (".", ":")]
+
+
+def _clean(ctx: ErrorContext, text: str, limit: int, *, lead: str = "") -> str:
+    """*text* redacted (no key, no local path) and without links, at most *limit* characters.  *lead* (a Google
+    answer's quotas) comes first and is never cut: the sentences after it are left out, last first, to fit."""
     from flextool.assistant.redact import Redactor
 
     if ctx.secret:
         text = text.replace(ctx.secret, "<key>")
-    text = Redactor(None).redact(" ".join(text.split()))
+    sentences = _sentences(text)
+    if lead:
+        # The quota lines and the suggested wait are in the lead already.
+        sentences = [s for s in sentences if not _QUOTA_LINE.search(s) and not _RETRY_IN.search(s)]
+        while sentences and len(" ".join([lead, *sentences])) > limit:
+            sentences.pop()
+        return Redactor(None).redact(" ".join([lead, *sentences]))
+    text = Redactor(None).redact(" ".join(" ".join(sentences).split()))
     return text if len(text) <= limit else text[:limit - 1] + "…"
+
+
+def _quota_lead(quota: tuple[QuotaViolation, ...], delay: float | None) -> str:
+    """``quota: input tokens per minute (limit 15000, model gemma-4-31b-it); Google suggests waiting 34 s.``"""
+    if not quota:
+        return ""
+    parts = ["quota: " + "; ".join(q.text() for q in quota)]
+    if delay is not None:
+        parts.append(f"Google suggests waiting {math.ceil(delay)} s")
+    return "; ".join(parts) + "."
 
 
 def _said(status: int | None, body: object, info: _Body, ctx: ErrorContext, fallback_text: str) -> ProviderSaid:
@@ -562,7 +691,10 @@ def _said(status: int | None, body: object, info: _Body, ctx: ErrorContext, fall
     names = (sorted(info.statuses) or sorted(c for c in info.codes if not c.isdigit())
              or sorted(t for t in info.types if t != "error"))
     message = next((m for m in info.messages if m.strip()), "") or (fallback_text if body is None else "")
-    return ProviderSaid(status, ", ".join(names), _clean(ctx, message, MAX_PROVIDER_SAID))
+    quota = _quota_of(info)
+    delay = retry_after_from(None, info) if quota else None
+    return ProviderSaid(status, ", ".join(names),
+                        _clean(ctx, message, MAX_PROVIDER_SAID, lead=_quota_lead(quota, delay)), quota, delay)
 
 
 def classify_status(status: int | None, body: object, headers: Any, ctx: ErrorContext, *, fallback_text: str = "",
@@ -610,6 +742,9 @@ def _classify_status(status: int | None, body: object, headers: Any, ctx: ErrorC
     if rate_limited and ("insufficient_quota" in types or "insufficient_quota" in codes):
         # OpenAI: no credit left or the monthly spend cap reached; neither resets by itself.
         return make(NoCredit, "credit")
+    if rate_limited and any(q.daily for q in _quota_of(info)):
+        # A Google quota per day: waiting minutes does not help, so it is not waited for.
+        return make(QuotaExhausted, "quota_daily")
     if rate_limited and (any("perday" in q.lower() or "daily" in q.lower() for q in info.quota_ids)
                          or "free-models-per-day" in text):
         return make(QuotaExhausted, "quota")
