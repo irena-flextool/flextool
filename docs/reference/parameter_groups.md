@@ -96,8 +96,11 @@ rerun fixes them all. A warning is printed once per scenario read in the run log
   period, an underscore and the branch name) and `model.periods_available`, over the **whole**
   database, so a key that is a period of another scenario is fine. The message suggests the closest period
   (*p2030x* → *p2030*). When the data covers more years than any solve names (a 2020–2050 trajectory for a 2030
-  model), add the extra periods to `model.periods_available`. Maps keyed by something else (`constraint_flow_coeff`
-  by constraint, `delay` by hours) are not period maps and are not checked.
+  model), add the extra periods to `model.periods_available`. A map without an index name of a parameter that can
+  also vary over time (`availability`, `self_discharge_loss`, ...) whose keys are neither periods nor time steps is
+  read as a period map, unless its keys look like time steps (*t0099*, *T0001*, a date-time stamp: then the
+  time-series check reports them). Maps keyed by something else (`constraint_flow_coeff` by constraint, `delay` by
+  hours) are not period maps and are not checked.
 - A time-step key, a `time` level or a time series on a period parameter that cannot vary over time
   (`existing`, `startup_cost`, `invest_cost`, `lifetime`, ...; use a constant or a period map), and numeric map
   keys (2020) on any period parameter (periods are names such as *p2020*). A name that is both a period and a time
@@ -117,7 +120,8 @@ rerun fixes them all. A warning is printed once per scenario read in the run log
 - Connection `efficiency` above 1 (creates energy).
 - `virtual_unitsize` at or below 0 (ignored).
 - A map of a period parameter that can also vary over time (`availability`, `other_operational_cost`, ...) without
-  an index name whose keys are neither periods nor time steps (the value is not used).
+  an index name whose keys are neither periods nor time steps but look like time steps, on a parameter the
+  time-series check does not cover (the value is not used).
 - A unit flow with `conversion_flow_coeff` 0 that no user constraint, flowGroup maximum or *upper_limit* / *fixed*
   profile ties: only `max_flow_for_unconstrained_variables` bounds it. Such an input is a free dump load on its node,
   such an output a free source. Tie it with a user constraint (`constraint_flow_coeff`), or give it a non-zero

@@ -123,6 +123,27 @@ def test_period_map_of_another_scenarios_periods_is_not_an_error(tmp_path_factor
     assert "Warning:" not in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("keys, time_error", [
+    (["t0099"], True),        # the form of a time step (past the end of t0001..t0072): a time series
+    (["T0001"], True),        # a time step in another case
+    (["p2050"], False),       # a period of no solve: the period-key check's error (test_period_key_checks.py)
+    (["p_none"], False),
+])
+def test_unnamed_map_keyed_by_neither_is_time_only_when_it_looks_like_time(tmp_path_factory, keys,
+                                                                          time_error) -> None:
+    """availability takes a period or a time map.  An unnamed map whose keys are neither periods nor time steps
+    is a time series with no key on a timeline when its keys look like time steps; otherwise it is left to the
+    period-key check (orchestrator decision on #205 vs item 168)."""
+    url, scen = _db(tmp_path_factory, f"b205_neither_{keys[0]}", [
+        ["unit", "coal_plant", "availability", _map([[k, 0.5] for k in keys], None)]])
+    if time_error:
+        with pytest.raises(FlexToolConfigError) as err:
+            _validate(url, scen)
+        assert f"none of its 1 time keys ({keys[0]})" in str(err.value), str(err.value)
+    else:
+        _validate(url, scen)
+
+
 def _datetime_timeline() -> list:
     return [["timeline", "y2050", "timestep_duration", _map([[s, 1.0] for s in _datetime_steps(0, 72)])]]
 

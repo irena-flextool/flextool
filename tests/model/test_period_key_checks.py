@@ -100,6 +100,15 @@ def test_only_the_mistyped_key_is_named(tmp_path_factory) -> None:
         "Did you mean 'p2030'?") + ESCAPE
 
 
+def test_silent_time_capable_map_keyed_by_no_period(tmp_path_factory) -> None:
+    # availability takes a period or a time map; p2050 is no period of the database and does not look like a
+    # time step (t0001..): a period map with a mistyped key.  Suggestion: the scenario's p2020 (by spelling).
+    msg = _error(tmp_path_factory, "b46_p2050", [["unit", "coal_plant", "availability", _map([["p2050", 0.5]])]])
+    assert msg == PREFIX + (
+        "unit 'coal_plant', parameter 'availability' (alternative 'b46_p2050'): map key 'p2050' is not a period. "
+        "Did you mean 'p2020'?") + ESCAPE
+
+
 def test_time_step_key_on_a_period_only_parameter(tmp_path_factory) -> None:
     msg = _error(tmp_path_factory, "b46_ts", [
         ["unit", "coal_plant", "startup_cost", _map([["t0001", 10.0], ["t0002", 10.0]])]])

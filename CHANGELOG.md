@@ -73,7 +73,11 @@
   periods such as *p2035_high* or `model.periods_available`) stops the run with an error that names the entity,
   the parameter, the alternative and the key, and suggests the closest period; data that covers more years than
   the solves name goes in `model.periods_available`. A period parameter that cannot vary over time keyed by time
-  steps, and numeric keys, are errors too; maps keyed by constraint names are not checked.
+  steps, and numeric keys, are errors too; maps keyed by constraint names are not checked. A map without
+  `index_name` of a parameter that takes a period or a time map (`self_discharge_loss`, `efficiency`, ...) whose
+  keys are neither periods nor time steps and do not look like time steps (*p2050*, *p_none*) gets this error too
+  (before: the entity silently got the parameter's default); keys that look like time steps (*t0099*, *T0001*, a
+  date-time stamp) get the time-series error below.
 - **Behaviour change: the period-only reader never spreads a period key it does not know over every period.**
   A key that is no period of the solve, such as a period of another scenario or one only in
   `model.periods_available`, gives no value in this solve. Normal runs already read it this way, so their

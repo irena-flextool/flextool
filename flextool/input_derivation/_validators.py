@@ -501,8 +501,38 @@ def _value_levels(value) -> list[tuple[str | None, list]]:
     return levels
 
 
+_DIGIT = re.compile(r"\d")
+
+
+def _key_form(key: str) -> str:
+    """The form of a map key: lower case, each digit as ``#`` (``t0099`` and ``T0001`` are ``t####``)."""
+    return _DIGIT.sub("#", key.lower())
+
+
+class _StepForms:
+    """The forms (:func:`_key_form`) of time steps, built on the first lookup (only a value with keys that are
+    neither periods nor time steps needs them).  ``sources``: callables returning iterables of time steps."""
+
+    def __init__(self, *sources) -> None:
+        self._sources = sources
+        self._forms: set[str] | None = None
+
+    def __contains__(self, form: str) -> bool:
+        if self._forms is None:
+            self._forms = {_key_form(t) for source in self._sources for t in source()}
+        return form in self._forms
+
+
+def _looks_like_time_keys(keys, step_forms) -> bool:
+    """Whether keys that are no time step still look like time steps: a date-time stamp, or a key of the form
+    (:func:`_key_form`) of a time step (``t0099`` past the end of ``t0001..t0072``, ``T0001`` in another case).
+    Keys that do not (``p2050``, ``p_none``) are period keys that are no period: the period-key check reports
+    them (:func:`validate_period_keys`), not the time-series check."""
+    return any(_ISO_STAMP.match(k) or _key_form(k) in step_forms for k in keys)
+
+
 def _time_levels(levels: list[tuple[str | None, list]], allowed, periods: set[str],
-                 timesteps: set[str], all_periods=None) -> list[int]:
+                 timesteps: set[str], all_periods=None, time_like=None) -> list[int]:
     """The positions of the time levels in ``levels`` (:func:`_value_levels`), classified as the readers do:
     by depth, label and the parameter's allowed shapes (``PARAM_ALLOWED_SHAPES``), then by the keys.
 
@@ -512,8 +542,10 @@ def _time_levels(levels: list[tuple[str | None, list]], allowed, periods: set[st
     - An unnamed level takes the allowed shapes' unique label at that depth and position; otherwise it is a period
       level when its keys hit the periods and no time step, or (``all_periods``, a callable giving the periods of
       the whole database) hit no time step but a period of another scenario: such an entity gets no value in this
-      solve, as documented; else it is a time level.  On 2 levels an unnamed outer level that hits no period is
-      not checked (a branch level of a 2-level stochastic profile).
+      solve, as documented; or (``time_like``, a callable of the keys, given for a parameter the period-key check
+      covers) hit neither and do not look like time steps (``p2050``, ``p_none``): a mistyped period map, which
+      :func:`validate_period_keys` reports; else it is a time level.  On 2 levels an unnamed outer level that hits
+      no period is not checked (a branch level of a 2-level stochastic profile).
     """
     from flextool.engine.input._param_shapes import _infer_silent_default_labels, _normalise_label
 
@@ -536,6 +568,8 @@ def _time_levels(levels: list[tuple[str | None, list]], allowed, periods: set[st
             if hits_period and not hits_step:
                 continue
             if not hits_step and all_periods is not None and not key_set.isdisjoint(all_periods()):
+                continue
+            if depth == 1 and not hits_step and time_like is not None and not time_like(keys):
                 continue
             if depth == 2 and pos == 0 and not hits_period and not hits_step:
                 continue
@@ -601,7 +635,10 @@ def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] 
     The time levels are classified as the readers do (:func:`_time_levels`): a stochastic branch name or a period
     key is never checked; an unnamed level keyed by periods of another scenario is a period level (no value in
     this solve, as documented). Date-time and duration keys are compared as the reader parses them
-    (:func:`_index_key_str`). Known limit: a period-level key that is not a period of the scenario is not reported.
+    (:func:`_index_key_str`). An unnamed level of a parameter that also takes a period map, whose keys are neither
+    periods nor time steps and do not look like time steps (``p2050``: :func:`_looks_like_time_keys`), is a period
+    map with mistyped keys: :func:`validate_period_keys` stops the run on it.  Known limit: a period-level key
+    that is not a period of the scenario is not reported here.
 
     Performance: a str-indexed Map is first read as raw database JSON (:func:`_raw_keys_on_timeline`, a C-speed
     regex and set comparison); only a value with a key that is not a period or a time step is parsed. Each
@@ -630,12 +667,24 @@ def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] 
     fast_seen: dict[bytes, bool] = {}
     keys_seen: dict[tuple[bytes, frozenset | None], dict[str, None]] = {}
 
+    def other_steps():
+        database.all_periods()  # loads the other timelines
+        return (t for _name, _alt, steps in database.other_timelines for t in steps)
+
+    # The forms of the time steps of every timeline of the database.
+    step_forms = _StepForms(lambda: timesteps, other_steps)
+
+    def time_like(keys) -> bool:
+        return _looks_like_time_keys(keys, step_forms)
+
+    period_axis = _period_axis_params()
     errors: list[str] = []
     other_timeline_warnings: list[str] = []
     warnings: list[str] = []
     for (cls, par) in TIME_AGGREGATION:
         allowed = PARAM_ALLOWED_SHAPES.get((cls, par))
         allowed_key = frozenset(allowed) if allowed else None
+        hand_off = time_like if (cls, par) in period_axis else None
         off_entities: list[str] = []
         all_keys: dict[str, None] = {}
         off_keys: dict[str, None] = {}
@@ -659,7 +708,7 @@ def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] 
                 else:
                     levels = _value_levels(json.loads(raw))
                 keys = {}
-                for pos in _time_levels(levels, allowed, periods, timesteps, database.all_periods):
+                for pos in _time_levels(levels, allowed, periods, timesteps, database.all_periods, hand_off):
                     keys.update(dict.fromkeys(levels[pos][1]))
                 keys_seen[(raw, allowed_key)] = keys
             if not keys:
@@ -2133,13 +2182,14 @@ def _shown(keys: list[str]) -> str:
 
 
 def _period_key_finding(raw: bytes, takes_time: bool, universe: set[str],
-                        timesteps: frozenset[str] | set[str], timesteps_b: frozenset[bytes]):
+                        timesteps: frozenset[str] | set[str], timesteps_b: frozenset[bytes], step_forms=None):
     """``(code, level keys, offending keys)`` of one Map value of a period-axis parameter, or None when its keys
     are fine (or not period keys; rank 3 and deeper are not checked).  A value of a time-capable parameter whose
     first key is a time step is a time series: it is never parsed (one regex on the database JSON).  Codes:
     ``unknown`` (keys that are no period), ``time`` (a time-step key on a parameter that cannot vary over time; a
     key that is also a period of the database is a period, #76), ``number`` (numeric keys), ``nothing`` (a silent
-    map of a time-capable parameter whose keys are neither periods nor time steps).  See
+    map of a time-capable parameter whose keys are neither periods nor time steps but look like time steps,
+    :func:`_looks_like_time_keys` against ``step_forms``; keys that do not are ``unknown``).  See
     :func:`validate_period_keys`."""
     from flextool.engine.input._param_shapes import _normalise_label
 
@@ -2184,7 +2234,7 @@ def _period_key_finding(raw: bytes, takes_time: bool, universe: set[str],
         steps = [k for k in keys if k in timesteps and k not in universe]
         if steps:
             return ("time", keys, steps)
-    if takes_time and universe.isdisjoint(keys):
+    if takes_time and universe.isdisjoint(keys) and _looks_like_time_keys(keys, step_forms or ()):
         return ("nothing", keys, keys)
     return unknown()
 
@@ -2217,7 +2267,9 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
       other key not in the universe → error;
     * a silent map of a parameter that takes a time map: a key that is a time step makes it a time series (not
       checked here); else keys hitting the periods make it a period map (the other keys → error); no key a period
-      → warning (the value is not used);
+      → error, unless the keys look like time steps (:func:`_looks_like_time_keys`: ``t0099``, a date-time stamp;
+      then a warning, the value is not used, and :func:`validate_time_series_keys` has stopped the run first for a
+      time-series parameter) — ``{p2050: ...}`` is a period map with a key that is no period;
     * a ``time`` / ``t`` level or a time series on a parameter that cannot vary over time → error;
     * numeric keys (2020) → error (periods are names; such a value crashed the read).
 
@@ -2245,6 +2297,7 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
     if whole is not None:
         timesteps |= whole.timesteps
     timesteps_b = frozenset(t.encode() for t in timesteps)
+    step_forms = _StepForms(lambda: timesteps)
     seen: dict[tuple, object] = {}
     errors: list[str] = []      # keys that are no period (depend on the universe)
     shape_errors: list[str] = []  # time steps, time series and numbers (always errors)
@@ -2267,7 +2320,8 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
             cache_key = (raw, takes_time)
             finding = seen.get(cache_key, False)
             if finding is False:
-                finding = seen[cache_key] = _period_key_finding(raw, takes_time, universe, timesteps, timesteps_b)
+                finding = seen[cache_key] = _period_key_finding(raw, takes_time, universe, timesteps, timesteps_b,
+                                                                   step_forms)
             if finding is None:
                 continue
             code, keys, bad = finding
