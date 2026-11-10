@@ -329,7 +329,8 @@ def test_non_synchronous_limit_varies_by_hour(tmp_path_factory, mode) -> None:
 # A time map must cover every time step of the solve
 
 
-def _run_expecting_error(tmp_path_factory, monkeypatch, alt: str, values: list) -> tuple[str, int]:
+def _run_expecting_error(tmp_path_factory, monkeypatch, alt: str, values: list,
+                         entities: list | None = None) -> tuple[str, int]:
     """Run ``values`` on coal_wind_inertia; return the FlexToolConfigError's message and how many LPs were built."""
     import flextool.engine.model.core as core
     from flextool.engine import run_chain_from_db
@@ -338,7 +339,7 @@ def _run_expecting_error(tmp_path_factory, monkeypatch, alt: str, values: list) 
     built = []
     real = core.build_flextool
     monkeypatch.setattr(core, "build_flextool", lambda *a, **k: built.append(1) or real(*a, **k))
-    url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=DET_CHAIN)
+    url, scen = make_db(tmp_path_factory, alt=alt, values=values, base_chain=DET_CHAIN, entities=entities)
     with pytest.raises(FlexToolConfigError) as err:
         run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp(f"{alt}_out"))
     return str(err.value), len(built)
@@ -356,6 +357,62 @@ def test_rolling_time_map_gap_stops_the_run_before_the_first_roll(tmp_path_facto
     assert "36 time step(s) used by solve 'y2020_2day_dispatch': t0013, t0014, t0015, t0016, t0017 and 31 more" in msg
 
 
+def test_rolling_time_map_gap_in_a_later_roll_stops_the_run_before_the_first_roll(tmp_path_factory,
+                                                                                   monkeypatch) -> None:
+    """The same rolling solve (rolls t0001-t0024, t0013-t0036, t0025-t0048, t0037-t0048) with a time map that leaves
+    out only t0040: the first roll is covered, so the per-solve check of the first roll passes and only the run's
+    check of every roll, before the first one, can stop the run before any LP is built."""
+    lim = tmap({t: 0.5 for t in T48 if t != "t0040"})
+    msg, built = _run_expecting_error(tmp_path_factory, monkeypatch, "c13_ns_gap_later_roll",
+                                      ROLLING + _det_values(scalar(L_INERTIA), lim))
+    assert built == 0, msg
+    assert ("group 'electricity', parameter 'non_synchronous_limit': the map has no value for 1 time step(s) used "
+            "by solve 'y2020_2day_dispatch': t0040.") in msg
+
+
+# A second solve after the 48 h one, on the next day of the same timeline (t0049-t0072).
+LATE_DAY_ENTITIES = [["solve", "late_day", None], ["timeset", "late_day_ts", None]]
+LATE_DAY = [
+    ["model", "flexTool", "solves",
+     b64({"value_type": "str", "data": ["y2020_2day_dispatch", "late_day"]}, "array")],
+    ["solve", "late_day", "solve_mode", b64("single_solve", "str")],
+    ["solve", "late_day", "period_timeset", b64({"index_type": "str", "index_name": "period",
+                                                 "data": [["p2020", "late_day_ts"]]}, "map")],
+    ["solve", "late_day", "realized_periods", b64({"value_type": "str", "data": ["p2020"]}, "array")],
+    ["timeset", "late_day_ts", "timeline", b64("y2020", "str")],
+    ["timeset", "late_day_ts", "timeset_duration", b64({"index_type": "str", "data": [["t0049", 24.0]]}, "map")],
+]
+
+
+def test_silent_x_time_map_without_a_key_in_a_later_solve_is_an_error(tmp_path_factory, monkeypatch) -> None:
+    """A non_synchronous_limit map with Spine's silent ``x`` index on t0001-t0048, in a run of the 48 h solve and a
+    second solve on t0049-t0072.  The map is read as a time map against the steps of the whole run, so the second
+    solve, which holds none of its keys, misses all 24 hours (before: the group had no value there, a limit of 0
+    without a word)."""
+    lim = pmap({t: 0.5 for t in T48}, index_name=None)
+    msg, built = _run_expecting_error(tmp_path_factory, monkeypatch, "c13_ns_silent_late_solve",
+                                      LATE_DAY + _det_values(scalar(L_INERTIA), lim), entities=LATE_DAY_ENTITIES)
+    assert built == 0, msg
+    assert ("group 'electricity', parameter 'non_synchronous_limit': the map has no value for 24 time step(s) used "
+            "by solve 'late_day': t0049, t0050, t0051, t0052, t0053 and 19 more") in msg
+    assert "give 1 for a time step without a limit" in msg
+
+
+@pytest.mark.parametrize("mode", ["single", "rolling"])
+def test_a_solve_that_leaves_the_limits_out_is_not_checked(tmp_path_factory, mode) -> None:
+    """Gaps in both time maps (inertia without t0007, non-synchronous without t0040) in a solve with
+    reduce_system_detail_method = inertia_non_synchronous: the solve never builds either limit, so the run solves,
+    with no inertia or non-synchronous rows."""
+    extra = (ROLLING if mode == "rolling" else []) + [
+        ["solve", "y2020_2day_dispatch", "reduce_system_detail_method", b64("inertia_non_synchronous", "str")]]
+    values = extra + _det_values(tmap({t: L_INERTIA for t in T48 if t != "t0007"}),
+                                 tmap({t: 0.5 for t in T48 if t != "t0040"}))
+    steps = _run(tmp_path_factory, f"c13_reduced_gap_{mode}", TESTS_JSON, DET_CHAIN, values)
+    for name, step in steps.items():
+        fams = _families(_lp(step.flex_data))
+        assert not {"inertia_constraint", "non_sync_constraint"} & fams, f"{name}: {sorted(fams)}"
+
+
 @pytest.mark.parametrize("mode", ["single", "step2"])
 def test_inertia_time_map_gap_is_an_error(tmp_path_factory, monkeypatch, mode) -> None:
     """An inertia_limit time map without t0007 and t0030: an error naming both hours (count 2).  With the solve's
@@ -366,7 +423,7 @@ def test_inertia_time_map_gap_is_an_error(tmp_path_factory, monkeypatch, mode) -
     msg, built = _run_expecting_error(tmp_path_factory, monkeypatch, f"c5_gap_inertia_{mode}",
                                       extra + _det_values(lim, scalar(L_NS)))
     assert built == 0, msg
-    assert ("group 'electricity', parameter 'inertia_limit': the time map has no value for 2 time step(s) used by "
+    assert ("group 'electricity', parameter 'inertia_limit': the map has no value for 2 time step(s) used by "
             "solve 'y2020_2day_dispatch': t0007, t0030.") in msg
 
 
@@ -374,7 +431,7 @@ def test_period_time_map_gap_is_an_error(tmp_path_factory, monkeypatch) -> None:
     """The time level of a period + time map must cover the solve too: p2020 without t0048 is named as p2020/t0048."""
     lim = ptmap({"p2020": {t: L_NS for t in T48[:-1]}})
     msg, _ = _run_expecting_error(tmp_path_factory, monkeypatch, "c5_gap_ns_pt", _det_values(scalar(L_INERTIA), lim))
-    assert "parameter 'non_synchronous_limit': the time map has no value for 1 time step(s)" in msg
+    assert "parameter 'non_synchronous_limit': the map has no value for 1 time step(s)" in msg
     assert "p2020/t0048" in msg
 
 
@@ -394,7 +451,7 @@ def test_time_coverage_checks_only_the_flagged_groups_and_counts_zero_as_a_value
     with pytest.raises(FlexToolConfigError) as err:
         require_time_coverage(resolved, steps, entity_class="group", parameter_name="inertia_limit",
                               active={"g1", "g2"}, solve="s_roll_2")
-    assert str(err.value).startswith("group 'g2', parameter 'inertia_limit': the time map has no value for 2 time "
+    assert str(err.value).startswith("group 'g2', parameter 'inertia_limit': the map has no value for 2 time "
                                      "step(s) used by solve 's', roll 2: t2, t3.")
 
 

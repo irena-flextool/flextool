@@ -3393,7 +3393,9 @@ def _time_coverage_problems(
     does not give at all is left to the period check (:func:`require_period_coverage_time`, where a stochastic
     branch period inherits its anchor's value).  An authored 0 counts as a value, a null or NaN does not.
     ``steps`` are the original time steps (a solve with ``new_stepduration`` lists the time steps its solve
-    steps combine).  A missing pair of a period + time map is named ``period/time``.
+    steps combine).  A missing pair of a period + time map is named ``period/time``.  The time steps of a period
+    that a period + time map does not give are not checked here (the inner join on ``d``): a stochastic branch
+    period it leaves out has its anchor's time steps, which the anchor's own entry covers.
     """
     if (resolved is None or resolved.frame is None or resolved.time_index_column is None
             or steps is None or steps.height == 0):
@@ -3438,13 +3440,15 @@ def require_time_coverage(
     parameter_name: str,
     active: "set[str] | None" = None,
     solve: "str | None" = None,
+    hint: str = "",
 ) -> None:
     """Raise :class:`FlexToolConfigError` when a time map (or the time level of a period + time map) leaves out a
     time step of ``steps`` (``(d, t)``, the original time steps the solve uses; :func:`_time_coverage_problems`).
 
     The message names the class, each entity, the parameter, the first missing time steps with their count and
     the solve (``solve``: the solve or roll name, None for "this solve").  ``active`` (entity labels) limits the
-    check to the entities whose limit is switched on; None checks every entity.  Pure: the caller works out the
+    check to the entities whose limit is switched on; None checks every entity.  ``hint``: an extra clause of the
+    message (what to give for a time step without a limit).  Pure: the caller works out the
     steps, the gate and the solve name.
     """
     problems = _time_coverage_problems(resolved, steps, active=active)
@@ -3455,8 +3459,9 @@ def require_time_coverage(
     for k, missing in problems:
         shown = ", ".join(missing[:_TIME_COVERAGE_SHOWN])
         more = f" and {len(missing) - _TIME_COVERAGE_SHOWN} more" if len(missing) > _TIME_COVERAGE_SHOWN else ""
-        parts.append(f"{entity_class} '{k}', parameter '{parameter_name}': the time map has no value for "
+        parts.append(f"{entity_class} '{k}', parameter '{parameter_name}': the map has no value for "
                      f"{len(missing)} time step(s) used by {where}: {shown}{more}")
     raise FlexToolConfigError(
         "; ".join(parts) + ". A time map (or the time level of a period+time map) must give a value for every "
-        "time step of the solve, look-ahead included (a constant applies to every time step).")
+        "time step of the solve, look-ahead included (a constant applies to every time step"
+        + (f"; {hint}" if hint else "") + ").")

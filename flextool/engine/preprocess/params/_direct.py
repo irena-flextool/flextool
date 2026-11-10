@@ -24,6 +24,8 @@ with a one-line call to the function below.
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 from typing import TYPE_CHECKING
 
 import polars as pl
@@ -67,7 +69,7 @@ from flextool.engine.preprocess.params._projection import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Iterator
 
     from flextool.engine.input._input_source import InputSource
     from flextool.engine.input._param_shapes import ResolvedShape
@@ -1016,25 +1018,51 @@ def pdGroup_penalty_capacity_margin_from_source(source: "InputSource",
     return _group_penalty_from_source(source, "penalty_capacity_margin", period_filter)
 
 
-#: The group limits whose time map must cover every time step of the solve: (parameter, the groups it applies to).
-GROUP_TIME_LIMITS: tuple[tuple[str, "Callable[[InputSource], pl.DataFrame]"], ...] = (
-    ("inertia_limit", groupInertia),
-    ("non_synchronous_limit", groupNonSync),
+#: The group limits whose time map must cover every time step of the solve: (parameter, the groups it applies to,
+#: the ``reduce_system_detail_method`` part that leaves the limit out of a solve).
+GROUP_TIME_LIMITS: tuple[tuple[str, "Callable[[InputSource], pl.DataFrame]", str], ...] = (
+    ("inertia_limit", groupInertia, "inertia"),
+    ("non_synchronous_limit", groupNonSync, "non_synchronous"),
 )
+
+#: What a time map gives for a time step without a limit (the hint of the coverage error).
+_TIME_LIMIT_HINT: dict[str, str] = {
+    "inertia_limit": "give 0 for a time step without a requirement",
+    "non_synchronous_limit": "give 1 for a time step without a limit",
+}
+
+#: The ``reduce_system_detail_method`` parts of the solve being loaded (:func:`reduced_system_parts`): a solve that
+#: leaves a group limit out does not need its time map to cover the solve's steps.
+_REDUCED_SYSTEM_PARTS: "contextvars.ContextVar[frozenset[str]]" = contextvars.ContextVar(
+    "flextool_reduced_system_parts", default=frozenset())
+
+
+@contextlib.contextmanager
+def reduced_system_parts(parts: "frozenset[str]") -> "Iterator[None]":
+    """Arm the ``reduce_system_detail_method`` parts of the solve being loaded for the per-solve time-coverage check
+    (:func:`_require_solve_time_coverage`) while the block runs."""
+    token = _REDUCED_SYSTEM_PARTS.set(frozenset(parts))
+    try:
+        yield
+    finally:
+        _REDUCED_SYSTEM_PARTS.reset(token)
 
 
 def _require_solve_time_coverage(source: "InputSource", resolved: "ResolvedShape | None",
                                  period_filter: "pl.DataFrame | None", parameter_name: str,
-                                 flagged: "Callable[[InputSource], pl.DataFrame]", solve: "str | None") -> None:
+                                 flagged: "Callable[[InputSource], pl.DataFrame]", part: str,
+                                 solve: "str | None") -> None:
     """A group limit's time map must give a value for every time step of this solve (:func:`require_time_coverage`).
 
         steps = { (d, t) ∈ period_filter }                             without new_stepduration
               = { (d, b) : (d, s) ∈ period_filter, b a base step of s }  with it (the original time steps)
 
-    Only the groups ``flagged`` switches on are checked.  The run checks every solve's time steps once before its
+    Only the groups ``flagged`` switches on are checked, and nothing when the solve leaves the limit out
+    (``part`` in its armed :func:`reduced_system_parts`).  The run checks every solve's time steps once before its
     first solve (:func:`check_group_limit_time_coverage`); this per-solve check covers a load outside a run.
     """
-    if (resolved is None or resolved.frame is None or resolved.time_index_column is None
+    if (part in _REDUCED_SYSTEM_PARTS.get()
+            or resolved is None or resolved.frame is None or resolved.time_index_column is None
             or period_filter is None or period_filter.height == 0
             or not resolved.frame.get_column(resolved.time_index_column).is_not_null().any()):
         return
@@ -1045,34 +1073,78 @@ def _require_solve_time_coverage(source: "InputSource", resolved: "ResolvedShape
             pl.col("new_step").cast(pl.Utf8).alias("t"), pl.col("time").cast(pl.Utf8).alias("__b"))
         steps = steps.join(base_of, on="t", how="inner", maintain_order="left").select("d", pl.col("__b").alias("t"))
     require_time_coverage(resolved, steps, entity_class="group", parameter_name=parameter_name,
-                          active=_group_names(flagged(source)), solve=solve)
+                          active=_group_names(flagged(source)), solve=solve,
+                          hint=_TIME_LIMIT_HINT.get(parameter_name, ""))
 
 
-def check_group_limit_time_coverage(source: "InputSource", steps_by_solve: "dict[str, pl.DataFrame]") -> None:
+def _authored_map_names(source: "InputSource", parameter_name: str) -> set[str]:
+    """The groups that author ``parameter_name`` as a map (a row with an index key and a value)."""
+    try:
+        df = source.parameter_explicit("group", parameter_name)
+    except (KeyError, AttributeError):
+        return set()
+    if df is None or df.height == 0 or "value" not in df.columns or "name" not in df.columns:
+        return set()
+    index = [c for c in df.columns if c not in ("name", "value")]
+    if not index:
+        return set()
+    keyed = pl.any_horizontal([pl.col(c).is_not_null() for c in index])
+    return set(df.filter(keyed & pl.col("value").is_not_null()).get_column("name").cast(pl.Utf8).to_list())
+
+
+def check_group_limit_time_coverage(source: "InputSource",
+                                    steps_of_run: "Callable[[], dict[str, pl.DataFrame]]",
+                                    reduced_parts_of: "Callable[[str], frozenset[str]] | None" = None) -> None:
     """Before the first solve of a run: every group limit of :data:`GROUP_TIME_LIMITS` given as a time map (or a
     period + time map) must give a value for every time step that the run's solves use.
 
-        ∀ solve s, (parameter, flagged) ∈ GROUP_TIME_LIMITS:  require_time_coverage(parameter, steps_by_solve[s])
+        run      = ∪_s steps[s]
+        resolved = resolve_param_shape(parameter, period_filter=run)                    once per parameter
+        ∀ solve s with part ∉ reduced_parts_of(s):  require_time_coverage(resolved, steps[s])
 
-    ``steps_by_solve``: solve name -> ``(d, t)`` of the original time steps of all its sub-solves (every roll,
-    look-ahead included; a ``new_stepduration`` step lists the time steps it combines).  The first solve with a
-    gap raises :class:`FlexToolConfigError` (:func:`require_time_coverage`), so a rolling run stops before its
-    first roll instead of at the roll that reaches the gap.  The shape is resolved against the solve's steps, so a
-    map with Spine's silent ``x`` index whose keys are periods is a period map and is not checked.
+    ``steps_of_run()``: solve name -> ``(d, t)`` of the original time steps of all its sub-solves (every roll,
+    look-ahead included; a ``new_stepduration`` step lists the time steps it combines); called only when a group
+    authors one of the limits as a map.  ``reduced_parts_of(s)``: the ``reduce_system_detail_method`` parts of
+    solve ``s``; a solve that leaves a limit out is not checked for it.  The first gap raises
+    :class:`FlexToolConfigError` (:func:`require_time_coverage`), so a rolling run stops before its first roll
+    instead of at the roll that reaches the gap.
+
+    The shape is resolved against the steps of the whole run, not per solve, so a map with Spine's silent ``x``
+    index is read the same way in every solve: keys that are periods make a period map (not checked here), keys
+    that are time steps a time map, and a solve whose steps hold none of its keys is a gap, not "no value".  A
+    flagged group whose map has no key that is a period or a time step of the run raises as well.
     """
-    flagged_names: dict[str, set[str]] = {}
-    for solve, steps in steps_by_solve.items():
-        if steps is None or steps.height == 0:
+    limits = [(p, flagged, part) for p, flagged, part in GROUP_TIME_LIMITS if _authored_map_names(source, p)]
+    if not limits:
+        return
+    steps_by_solve = {s: f for s, f in steps_of_run().items() if f is not None and f.height > 0}
+    if not steps_by_solve:
+        return
+    run = pl.concat(list(steps_by_solve.values())).unique(maintain_order=True)
+    for parameter_name, flagged, part in limits:
+        solves = [s for s in steps_by_solve if reduced_parts_of is None or part not in reduced_parts_of(s)]
+        active = _group_names(flagged(source)) if solves else set()
+        if not active:
             continue
-        for parameter_name, flagged in GROUP_TIME_LIMITS:
-            resolved = resolve_param_shape(source, "group", parameter_name, period_filter=steps)
-            if (resolved is None or resolved.frame is None or resolved.time_index_column is None
-                    or not resolved.frame.get_column(resolved.time_index_column).is_not_null().any()):
-                continue
-            if parameter_name not in flagged_names:
-                flagged_names[parameter_name] = _group_names(flagged(source))
-            require_time_coverage(resolved, steps, entity_class="group", parameter_name=parameter_name,
-                                  active=flagged_names[parameter_name], solve=solve)
+        resolved = resolve_param_shape(source, "group", parameter_name, period_filter=run)
+        kept = set()
+        if resolved is not None and resolved.frame is not None and resolved.frame.height > 0:
+            label = pl.concat_str([pl.col(c).cast(pl.Utf8) for c in resolved.entity_dim_columns], separator=", ")
+            kept = set(resolved.frame.select(label.alias("__k")).get_column("__k").to_list())
+        lost = sorted((_authored_map_names(source, parameter_name) & active) - kept
+                      - set(getattr(resolved, "stochastic_entities", None) or ()))
+        if lost:
+            raise FlexToolConfigError(
+                "; ".join(f"group '{g}', parameter '{parameter_name}'" for g in lost)
+                + ": the map has no key that is a period or a time step of the run's solves. Give a value for "
+                  "every period or time step the solves use (and name the map's index 'period' or 'time').")
+        if (resolved is None or resolved.frame is None or resolved.time_index_column is None
+                or not resolved.frame.get_column(resolved.time_index_column).is_not_null().any()):
+            continue
+        for solve in solves:
+            require_time_coverage(resolved, steps_by_solve[solve], entity_class="group",
+                                  parameter_name=parameter_name, active=active, solve=solve,
+                                  hint=_TIME_LIMIT_HINT.get(parameter_name, ""))
 
 
 def pdtGroup_inertia_limit_from_source(source: "InputSource",
@@ -1090,7 +1162,7 @@ def pdtGroup_inertia_limit_from_source(source: "InputSource",
     """
     resolved = resolve_param_shape(
         source, "group", "inertia_limit", period_filter=period_filter)
-    _require_solve_time_coverage(source, resolved, period_filter, "inertia_limit", groupInertia,
+    _require_solve_time_coverage(source, resolved, period_filter, "inertia_limit", groupInertia, "inertia",
                                  need_periods.solve if need_periods is not None else None)
     active = _group_names(groupInertia(source)) if _gate_needed(need_periods, resolved) else None
     return require_period_coverage_time(
@@ -1124,6 +1196,7 @@ def pdtGroup_non_synchronous_limit_from_source(source: "InputSource",
         source, "group", "non_synchronous_limit",
         period_filter=period_filter)
     _require_solve_time_coverage(source, resolved, period_filter, "non_synchronous_limit", groupNonSync,
+                                 "non_synchronous",
                                  need_periods.solve if need_periods is not None else None)
     active = _group_names(groupNonSync(source)) if _gate_needed(need_periods, resolved) else None
     return require_period_coverage_time(

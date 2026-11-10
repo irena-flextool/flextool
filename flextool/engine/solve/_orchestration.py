@@ -2999,16 +2999,21 @@ def _drive_cascade(
             self._prev_step_key = complete_solve_name
             return 0
 
-        def check_run_inputs(self, steps_by_solve: dict) -> None:
+        def check_run_inputs(self, steps_of_run) -> None:
             """Before the first solve: a group limit's time map covers every time step of the run's solves
             (:func:`~flextool.engine.preprocess.params._direct.check_group_limit_time_coverage`, read through the
-            run's reader, in the cascade's axis vocabulary like the per-solve loads)."""
+            run's reader, in the cascade's axis vocabulary like the per-solve loads).  A solve whose
+            ``reduce_system_detail_method`` leaves a limit out is not checked for it."""
             from flextool.engine.input._axis_enums import reset_global_axis_enums, set_global_axis_enums
+            from flextool.engine.preprocess._reduce_detail import system_parts
             from flextool.engine.preprocess.params._direct import check_group_limit_time_coverage
+
+            def _reduced(solve: str) -> frozenset:
+                return system_parts(self.state.solve.reduce_system_detail_for(solve))
 
             token = (set_global_axis_enums(_cascade_axis_enums) if _cascade_axis_enums is not None else None)
             try:
-                check_group_limit_time_coverage(cascade_db_reader, steps_by_solve)
+                check_group_limit_time_coverage(cascade_db_reader, steps_of_run, _reduced)
             finally:
                 if token is not None:
                     reset_global_axis_enums(token)
@@ -3129,12 +3134,17 @@ def _drive_cascade(
             _sub_solve_provider = getattr(
                 self.state, "current_provider", None,
             )
-            data = load_flextool(
-                self.state.paths.work_folder,
-                handoff=prior_for_load,
-                db_reader=cascade_db_reader,
-                provider=_sub_solve_provider,
-            )
+            # The solve's reduce_system_detail_method parts: a limit the solve leaves out need not cover its steps.
+            from flextool.engine.preprocess._reduce_detail import system_parts as _system_parts
+            from flextool.engine.preprocess.params._direct import reduced_system_parts
+            with reduced_system_parts(_system_parts(
+                    self.state.solve.reduce_system_detail_for(complete_solve_name))):
+                data = load_flextool(
+                    self.state.paths.work_folder,
+                    handoff=prior_for_load,
+                    db_reader=cascade_db_reader,
+                    provider=_sub_solve_provider,
+                )
             # Release heap held by the broadcast cascade scratch frames.
             # On H2_trade y2050 this drops RSS ~1.6 GB / 41 %; expected
             # to scale with timeline size.  No-op on non-glibc.

@@ -21,9 +21,10 @@ class SolverRunner:
         self.state = state
         self.logger = state.logger
 
-    def check_run_inputs(self, steps_by_solve: dict) -> None:  # noqa: ARG002
-        """Check the input against every time step the run uses (``steps_by_solve``: solve name -> ``(d, t)``
-        of its original time steps), before the first solve.  No check here; the cascade subclass overrides it."""
+    def check_run_inputs(self, steps_of_run) -> None:  # noqa: ARG002
+        """Check the input against every time step the run uses (``steps_of_run()``: solve name -> ``(d, t)``
+        of its original time steps, built only when called), before the first solve.  No check here; the
+        cascade subclass overrides it."""
         return None
 
     def run(self, current_solve: str) -> int:  # noqa: ARG002

@@ -242,7 +242,8 @@
   non-synchronous share that steps up by hour or season, or an inertia requirement that is higher in some hours.
   A time map (or the time level of a period+time map) must give a value for every time step of the solve,
   look-ahead included: a missing time step stops the run before its first solve (also in a rolling solve) with
-  an error naming the group, the parameter and the missing time steps. An authored 0 is no inertia requirement
+  an error naming the group, the parameter and the missing time steps (a solve whose
+  `reduce_system_detail_method` leaves the limit out is not checked). An authored 0 is no inertia requirement
   and a non-synchronous limit of 0. Over a coarse time step (group `new_stepduration`) the averaged row uses the
   step mean of the limit (the check is on the original time steps), and the coarse-flow info line names a limit
   that varies within a coarse step. The hourly inertia shortfall table shows 0 instead of an

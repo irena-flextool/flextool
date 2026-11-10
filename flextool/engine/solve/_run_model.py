@@ -407,7 +407,7 @@ def project_realized_branch_time_branch_rows(
 
 
 def run_time_steps(all_solves: list, active_time_lists: dict, complete_solve: dict, solve_config,
-                   timeline_config) -> "dict[str, pl.DataFrame]":
+                   timeline_config, period__branch_lists: "dict | None" = None) -> "dict[str, pl.DataFrame]":
     """The original time steps each solve of the run uses: complete solve name -> ``(d, t)`` (Utf8, timeline order).
 
         steps[c] = ∪ { (d, b) : s ∈ all_solves, complete_solve[s] = c, e ∈ active_time_lists[s][d],
@@ -415,8 +415,9 @@ def run_time_steps(all_solves: list, active_time_lists: dict, complete_solve: di
 
     every roll with its look-ahead; ``base`` is the step itself, or for a solve with ``new_stepduration`` the time
     steps of the original timeline that the solve step combines (the timeline of the period's timeset in
-    ``timesets_used_by_solves``).  Read by the run's input checks before the first solve
-    (``check_run_inputs`` of the solver).
+    ``timesets_used_by_solves``; a stochastic branch period takes the timeline of the period it branches from,
+    ``period__branch_lists``).  Read by the run's input checks before the first solve (``check_run_inputs`` of
+    the solver, which builds it only when a group authors a limit as a map).
     """
     timelines = getattr(timeline_config, "timelines", None) or {}
     original_of = getattr(timeline_config, "original_timeline", None) or {}
@@ -435,13 +436,18 @@ def run_time_steps(all_solves: list, active_time_lists: dict, complete_solve: di
             base_cache[timeline] = out
         return base_cache[timeline]
 
+    anchor: dict[str, str] = {}
+    for solve in all_solves:
+        for period, branch in (period__branch_lists or {}).get(solve, []) or []:
+            if branch != period:
+                anchor.setdefault(str(branch), str(period))
     pairs: dict[str, dict[tuple[str, str], None]] = {}
     for solve in all_solves:
         cs = complete_solve.get(solve, solve)
-        timeline_of_period = {d: timeline_of_timeset.get(ts) for d, ts in used.get(cs, ())}
+        timeline_of_period = {str(d): timeline_of_timeset.get(ts) for d, ts in used.get(cs, ())}
         seen = pairs.setdefault(cs, {})
         for d, entries in (active_time_lists.get(solve) or {}).items():
-            base = _base_of(timeline_of_period.get(d))
+            base = _base_of(timeline_of_period.get(str(d), timeline_of_period.get(anchor.get(str(d), ""))))
             for e in entries:
                 for b in (base.get(e.timestep, [e.timestep]) if base is not None else (e.timestep,)):
                     seen[(str(d), str(b))] = None
@@ -912,8 +918,8 @@ def native_run_model(state, solver) -> int:
     # ------------------------------------------------------------------
     _check_run_inputs = getattr(solver, "check_run_inputs", None)
     if _check_run_inputs is not None:
-        _check_run_inputs(run_time_steps(all_solves, active_time_lists, complete_solve, state.solve,
-                                         state.timeline))
+        _check_run_inputs(lambda: run_time_steps(all_solves, active_time_lists, complete_solve, state.solve,
+                                                 state.timeline, period__branch_lists))
 
     # ------------------------------------------------------------------
     # 5. Per-solve loop.
