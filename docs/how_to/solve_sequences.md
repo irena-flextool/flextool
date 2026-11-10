@@ -71,6 +71,50 @@ until the dispatch check passes.
 solve that realizes operations leaves a feature out, its cells of that feature are empty, not 0 (see
 [Leaving out detail in a solve](../reference/entities_and_time.md#leaving-out-detail-in-a-solve)).
 
+### Several milestones: representative-period investment, then a full-year dispatch of each
+
+A multi-year plan often makes the investments on representative periods (a few sample weeks per milestone year)
+and then checks each milestone with an hourly dispatch of the whole year (8760 h). FlexTool passes the investment
+decisions of a period to the period of the same name in the solves that follow, so the dispatch solves see the
+capacity built up to their milestone. There are two ways to set this up.
+
+**Sequential: one dispatch solve per milestone.** List the solves in the `model` parameter `solves`, the
+investment solve first: for example [*invest_rp*, *dispatch_2030*, *dispatch_2040*, *dispatch_2050*].
+
+- The investment solve has every milestone in `invest_periods` and `realized_invest_periods`, the representative timeset of each milestone in `period_timeset`, and `years_represented` for each milestone. Leave `realized_periods` out.
+- Each dispatch solve has one milestone in `period_timeset` (with the full-year timeset) and in `realized_periods`, and the same `years_represented` for it as the investment solve.
+
+    A dispatch solve that realizes a later milestone gets the capacity invested in all the milestones up to it.
+    One dispatch solve may also hold all the milestones, but its LP is then that many full years at once.
+
+**Nested: the investment solve contains the dispatch solve.** Put only the investment solve in `model`
+`solves` and give it `contains_solves`: *dispatch_solve*. The dispatch solve lists every milestone in
+`period_timeset` (each with the full-year timeset) and in `realized_periods`, and it can be a rolling solve
+(`solve_mode` *rolling_window*) so that each LP stays small. A storage solve can sit between the two for long-term
+storage. With several investment solves (myopic investment, set with 2D maps of `invest_periods` and
+`realized_invest_periods`), the same dispatch solve runs after each of them for the periods that investment solve
+realized. See [How to use Nested Rolling window solves](#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage).
+
+**Leave detail out of the investment solve.** Set `reduce_unit_detail_method` and `reduce_system_detail_method`
+on the investment solve and keep the full detail in the dispatch solves, as in
+[How to make an LP investment and a detailed dispatch check](#how-to-make-an-lp-investment-and-a-detailed-dispatch-check)
+(the options are in [Leaving out detail in a solve](../reference/entities_and_time.md#leaving-out-detail-in-a-solve)).
+
+**Choose the representative periods with care.** Hours the sample leaves out can be short of capacity in the
+full-year dispatch. The sections below help:
+[force-include adequacy-critical weeks](#how-to-force-include-adequacy-critical-weeks-in-representative-period-selection),
+[cluster on net load](#how-to-cluster-representative-periods-on-net-load) and
+[add an energy margin](#how-to-add-an-energy-margin-for-investment-adequacy). The investment solve does not see
+the dispatch results: if a dispatch solve shows unserved energy or reserve shortfall, change the sample or the
+margins and run again.
+
+**Examples.** In *examples.sqlite*, `5weeks_invest_fullYear_dispatch_coal_wind` is the sequential set-up with one
+milestone, and `multi_fullYear_battery_nested_multi_invest` is a nested set-up with four milestones, investment
+solves (each on the sample timeset of two milestones), a storage solve at 6 h steps and a rolling dispatch. To
+run in seconds, these examples use short stand-ins: their *fullYear* timeset is 72 hours and *5weeks* is five
+blocks of 4 hours. In a real model, the dispatch timeset covers the 8760 hours of the year and the sample holds
+whole weeks.
+
 ## How to use a rolling window for a dispatch model
 
 A rolling window can be used for example when a dispatch model gets too big to be solved on one go. It splits the problem into multiple consecutive smaller problems.
