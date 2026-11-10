@@ -149,6 +149,21 @@ def test_cool_down_follows_the_429_reset(fake_backends):
     assert gate.state(KEY)[1] == pytest.approx(1020.0)
 
 
+def test_a_busy_local_server_holds_the_other_chats_short_not_long(fake_backends):
+    """Calibration fixes 2026-11-10: a local server's busy answer naming 120 s (over the remote 90 s, under the
+    local 300 s) is a cool-down for the other chats, not a long wait that ends them."""
+    from flextool.assistant.llm_errors import ServerBusy
+
+    clock = Clock()
+    gate = ProviderGate(parallel=2, clock=clock)
+    busy = FakeBackend([ServerBusy("busy", provider="Ollama", local=True, retry_after=120)])
+    fake_backends.append(busy)
+    _, box, _ = _request(GatedBackend(busy, gate, "ollama", label="Ollama"))
+    _until(lambda: box)
+    assert isinstance(box["error"], ServerBusy)
+    assert gate.state("ollama")[1] == pytest.approx(1120.0) and gate.state("ollama")[2] == 0.0
+
+
 def _session(tmp_path: Path, backend, preset_id: str = "gemini") -> tuple[Session, Ledger]:
     ctx = make_context(tmp_path / "project", front_end="gui")
     ledger = Ledger()

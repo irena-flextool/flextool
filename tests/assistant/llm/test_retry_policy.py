@@ -198,3 +198,64 @@ def test_retries_through_the_fake_backend(fake_backends):
     assert reply.message.text == "done" and reply.message.origin == backend.origin
     assert len(backend.requests) == 2
     assert "".join(e.text for e in events if isinstance(e, TextDelta)) == "done"
+
+
+# --- a local model server that answers busy (calibration fixes 2026-11-10) ----------------------------------------
+LOCAL_CTX = ErrorContext(preset_id="ollama", provider="Ollama", model="m", host="localhost", port=11434, local=True,
+                         server_name="Ollama")
+
+
+def local_busy(retry_after=None):
+    """A local server's 503 answer, classified as the backends do."""
+    return E.classify_status(503, {"error": {"message": "server busy"}}, {"retry-after": str(retry_after)}
+                             if retry_after is not None else {}, LOCAL_CTX)
+
+
+def test_a_busy_local_server_is_retried_six_times_with_a_longer_backoff():
+    fn, calls = scripted(*[local_busy() for _ in range(6)], OK)
+    result, clock, events = run(fn)
+    assert result is OK and len(calls) == 7
+    assert sum(clock.sleeps) == pytest.approx(2 + 4 + 8 + 16 + 32 + 60)
+    waits = [e for e in events if isinstance(e, RetryWait)]
+    assert waits[0].reason == ("The local model server (Ollama) is busy, likely loading a model. Trying again in "
+                               "2 seconds (attempt 1 of 8).")
+    assert (waits[-1].attempt, waits[-1].of, waits[-1].seconds_left) == (6, 8, 1)
+    assert all(s <= 1.0 for s in clock.sleeps)          # the countdown ticks every second
+
+
+def test_a_busy_local_server_gets_at_most_eight_retries_then_the_local_message():
+    fn, calls = scripted(*[local_busy() for _ in range(10)])
+    err, clock, _ = run_raises(fn)
+    assert isinstance(err, E.ServerBusy) and len(calls) == 9
+    assert sum(clock.sleeps) == pytest.approx(2 + 4 + 8 + 16 + 32 + 60 + 60 + 60)
+    assert err.user_message == ("The local model server (Ollama) is still busy, likely loading a model. Ask again "
+                                "in a minute.")
+
+
+def test_a_busy_remote_service_still_fails_after_three_retries():
+    fn, calls = scripted(*[busy() for _ in range(6)], OK)
+    err, clock, _ = run_raises(fn)
+    assert isinstance(err, E.ServerBusy) and len(calls) == 4
+    assert sum(clock.sleeps) == pytest.approx(2 + 4 + 8)
+    assert err.user_message == "Example AI is still overloaded. Ask again in a moment."
+
+
+def test_the_waits_for_a_busy_local_server_are_capped_in_total():
+    # Named waits of 100 s: three fit the 300 s total, the fourth would not, so the fourth answer is raised.
+    fn, calls = scripted(*[local_busy(100) for _ in range(5)], OK)
+    err, clock, _ = run_raises(fn)
+    assert isinstance(err, E.ServerBusy) and len(calls) == 4
+    assert sum(clock.sleeps) == pytest.approx(300.0)
+    # The backoff alone is capped the same way: a 20 s total stops it after 2 + 4 + 8 s.
+    fn, calls = scripted(*[local_busy() for _ in range(6)], OK)
+    err, clock, _ = run_raises(fn, RetryPolicy(jitter=0.0, local_busy_longest_wait=20.0))
+    assert len(calls) == 4 and sum(clock.sleeps) == pytest.approx(14.0)
+
+
+def test_cancel_during_a_long_wait_for_a_busy_local_server():
+    # 2 + 4 + 8 + 16 one-second ticks are the first four waits; the 45th tick is inside the fifth (32 s) wait.
+    fn, calls = scripted(*[local_busy() for _ in range(6)], OK)
+    err, clock, events = run_raises(fn, cancel_after=45)
+    assert isinstance(err, E.Cancelled) and err.user_message == "Stopped."
+    assert len(calls) == 5 and len(clock.sleeps) == 45
+    assert events[-1].attempt == 5

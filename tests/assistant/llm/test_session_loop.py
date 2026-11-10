@@ -666,3 +666,32 @@ def test_an_overflow_keeps_this_parts_call_signatures_and_drops_message_data(rig
     assert with_calls[1].tool_calls[0].provider_extra == SIGNATURE      # this part
     assert all(not m.provider_extra for m in retried)
     r.validate_all()
+
+
+def test_a_busy_local_server_is_waited_for_on_the_session_path(tmp_path, tools, fake_backends):
+    """The calibration runner's path (``Session.run_turn`` with the default policy, no store): a local Ollama that
+    answers busy six times while it loads a model, then answers, ends the turn well (calibration fixes
+    2026-11-10)."""
+    from flextool.assistant.llm_errors import classify_status
+    from flextool.assistant.store import Conversation, new_id
+
+    local = ErrorContext(preset_id="ollama", provider="Ollama", model="m", host="localhost", port=11434,
+                         local=True, server_name="Ollama")
+    busy = [classify_status(503, {"error": {"message": "server busy"}}, {}, local) for _ in range(6)]
+    backend = FakeBackend([*busy, say("Loaded and done.")])
+    fake_backends.append(backend)
+    ctx = make_context(tmp_path / "project", input_source="base.sqlite", front_end="terminal")
+    conv = Conversation(id=new_id(), project_key="calibration", project_name=ctx.project_name,
+                        project_path=ctx.project_path, created="2026-11-10T00:00:00Z",
+                        updated="2026-11-10T00:00:00Z", origin=backend.origin, level="medium")
+    now = [0.0]
+
+    def sleep(seconds: float) -> bool:
+        now[0] += seconds
+        return False
+
+    session = Session(ctx, backend, PRESETS["ollama"], conversation=conv, caps=TurnCaps(), tier="medium",
+                      store=None, ledger=None, facts=None, sleep=sleep, clock=lambda: now[0])
+    result = session.run_turn("question", lambda _e: None, threading.Event())
+    assert result.ok and result.text == "Loaded and done."
+    assert len(backend.requests) == 7 and now[0] == pytest.approx(2 + 4 + 8 + 16 + 32 + 60, rel=0.2)

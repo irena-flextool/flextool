@@ -238,10 +238,11 @@ class GatedBackend:
             wait = self.gate.pacer.header_wait(err.rate_headers)
             if wait is None:
                 wait = self.gate.pacer.raised(self.pace_key, err.pace_epoch)
+        local_busy = isinstance(err, ServerBusy) and err.local
         if wait is None:
-            wait = self.policy.backoff(self._rejected_in_row, self._rng)
+            wait = self.policy.backoff(self._rejected_in_row, self._rng, local=local_busy)
         until = self.gate.clock() + max(0.0, wait)
-        if wait <= self.policy.longest_auto_wait:
+        if wait <= (self.policy.local_busy_longest_wait if local_busy else self.policy.longest_auto_wait):
             self.gate.cool_down(self.key, until, owner=self)
         else:
             self.gate.long_wait(self.key, until, owner=self)

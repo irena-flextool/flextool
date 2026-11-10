@@ -12,6 +12,10 @@ message.  While waiting, :class:`RetryWait` is pushed every second and the cance
   FlexTool now waits between requests (``rpm_paced``).
 * **A reported limit of 0** (:class:`AccessInactive`, review G9 / OR-2) is not retried and leaves the pacing alone.
 * **Overload**: at most ``max_retries`` retries, waiting ``retry_after`` or a doubling backoff with jitter.
+* **Overload of a local or LAN model server** (``err.local``; the server is often loading or swapping a model):
+  at most ``local_busy_retries`` retries, a doubling backoff from ``local_busy_backoff_start`` up to
+  ``local_busy_backoff_cap`` per wait (``retry_after`` when named), and all these waits together at most
+  ``local_busy_longest_wait``.
 
 With a :class:`Pacing`, every attempt first waits for its turn (unless the backend paces itself, the window's
 gate) and reports its outcome and the answer's request-limit headers to the pacer.
@@ -47,10 +51,18 @@ class RetryPolicy:
     longest_auto_wait: float = 90.0
     jitter: float = 0.2
     connection_wait: float = 2.0
+    #: A local or LAN model server that answers busy (calibration 2026-11-10): with jitter the eight waits are
+    #: at most 1.2 × (2+4+8+16+32+60+60+60) ≈ 290 s, under the 300 s total.
+    local_busy_retries: int = 8
+    local_busy_backoff_start: float = 2.0
+    local_busy_backoff_cap: float = 60.0
+    local_busy_longest_wait: float = 300.0
 
-    def backoff(self, n: int, rng: random.Random) -> float:
-        """The wait before retry *n* (1-based) when the provider names none."""
-        base = min(self.backoff_cap, self.backoff_start * 2 ** (n - 1))
+    def backoff(self, n: int, rng: random.Random, *, local: bool = False) -> float:
+        """The wait before retry *n* (1-based) when the provider names none; *local*: a local server's backoff."""
+        start, cap = ((self.local_busy_backoff_start, self.local_busy_backoff_cap) if local
+                      else (self.backoff_start, self.backoff_cap))
+        base = min(cap, start * 2 ** (n - 1))
         return max(0.0, base * (1.0 + rng.uniform(-self.jitter, self.jitter)))
 
 
@@ -89,6 +101,7 @@ def call_with_retries(fn: Callable[[], Reply], policy: RetryPolicy, on_event: On
     rate_retries = policy.free_plan_rate_retries if pacing.free_plan else policy.max_retries
     retries = 0
     rate_waited = 0.0
+    busy_waited = 0.0
     connection_retried = False
     while True:
         if cancel.is_set():
@@ -129,16 +142,22 @@ def call_with_retries(fn: Callable[[], Reply], policy: RetryPolicy, on_event: On
             elif isinstance(err, ServerBusy):
                 if on_rejected is not None:
                     on_rejected(err)
-                if err.retry_after is not None and err.retry_after > policy.longest_auto_wait:
+                longest = policy.local_busy_longest_wait if err.local else policy.longest_auto_wait
+                if err.retry_after is not None and err.retry_after > longest:
                     err.user_message = _message("rpm_long", err, minutes=max(1, math.ceil(err.retry_after / 60)))
                     err.args = (err.user_message,)
                     raise
-                if retries >= policy.max_retries:
+                busy_retries = policy.local_busy_retries if err.local else policy.max_retries
+                if retries >= busy_retries:
+                    raise
+                wait = (err.retry_after if err.retry_after is not None
+                        else policy.backoff(retries + 1, rng, local=err.local))
+                if err.local and busy_waited + wait > policy.local_busy_longest_wait:
                     raise
                 retries += 1
-                wait = err.retry_after if err.retry_after is not None else policy.backoff(retries, rng)
-                key = "busy_retry"
-                attempt, of = retries, policy.max_retries
+                busy_waited += wait
+                key = "busy_local_retry" if err.local else "busy_retry"
+                attempt, of = retries, busy_retries
             elif isinstance(err, Unreachable) and not err.local and not connection_retried:
                 connection_retried = True
                 wait = policy.connection_wait

@@ -34,6 +34,10 @@ MESSAGES: dict[str, str] = {
     "busy_retry": ("{provider} is overloaded at the moment. Trying again in {seconds} seconds (attempt {n} of "
                    "{max})."),
     "busy": "{provider} is still overloaded. Ask again in a moment.",
+    "busy_local_retry": ("The local model server ({provider}) is busy, likely loading a model. Trying again in "
+                         "{seconds} seconds (attempt {n} of {max})."),
+    "busy_local": ("The local model server ({provider}) is still busy, likely loading a model. Ask again in a "
+                   "minute."),
     "busy_streamed": "{provider} stopped the answer because it is overloaded. Ask again in a moment.",
     "quota": ("Your {provider} quota is used up for now. It resets on the provider's schedule, which FlexTool "
               "cannot see. You can switch to another provider or model."),
@@ -555,7 +559,7 @@ def classify_status(status: int | None, body: object, headers: Any, ctx: ErrorCo
         return err
     if "overloaded_error" in types or (effective in _BUSY_STATUS):
         streamed = bool(kwargs.get("streamed"))
-        return make(ServerBusy, "busy_streamed" if streamed else "busy",
+        return make(ServerBusy, "busy_streamed" if streamed else "busy_local" if ctx.local else "busy",
                     retry_after=retry_after_from(headers, info, now=now))
     phrase_status = effective in (400, 413, None)
     if effective in (400, None) and (("signature" in text and "thinking" in text) or "thought_signature" in text):
