@@ -33,6 +33,8 @@ The second time varying dimension is `period`, which is typically used to depict
 
 A parameter of particular type can be either constant/time-varying or constant/period-based. For example `inflow` is either a constant or time-varying, but it cannot be period-based (a period-keyed `inflow` is rejected; use `annual_flow` for demand that varies by period).
 
+The time steps of a time series must be time steps of a timeline (the names are case sensitive). A time series may be longer than what the model uses (a full year with a timeset that picks two weeks is fine), but a value whose time step is not a step of any timeline of the scenario is not used: FlexTool prints a warning that names the parameter, the entities and the first such steps (for example hourly data on a 3-hour timeline, or the stamps of another year). A time series with none of its steps on a timeline is an error. The branch names of a stochastic time series and the periods of a period+time map are not time steps and are not checked.
+
 **Recommendation — name the Map index for parameters that accept both `period` and `time`.** A few parameters accept *either* a period map or a time series (for example the flowGroup `min_instant_flow` / `max_instant_flow` limits, which accept "Constant, period, time or period+time"). Period and time Maps look structurally identical in Spine Toolbox — both are 1-dimensional Maps — so FlexTool tells them apart from the Map's `index_name`. Set it explicitly to **`period`** or **`time`** when authoring such a Map. If you leave the default (Spine stores it as `x`), FlexTool falls back to inspecting the Map's index *values* and matching them against the model's period and timestep names to guess the intended axis; this works when the keys clearly belong to one set, but is ambiguous if they don't. The guess is made per entity: a map whose keys are neither periods nor timesteps of the solve gives that entity no value in that solve (the same as if nothing had been authored for it, so the parameter's own default applies) — it never affects any other entity's value. Keys that match *both* a period and a timestep name are an error. Setting `index_name` removes the guesswork. (Parameters that accept only one of the two — e.g. `inflow` is time-only — are never ambiguous and need no `index_name`.)
 
 ### Timesets
@@ -67,6 +69,8 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
     - *Last*: `storage_state_reference_value` takes the value of the new time step's last time step (the state at its end).
 
     Stochastic (branch) time series are combined the same way, each branch on its own. A time series with values for only some time steps of a new time step uses the time steps it has (a warning names the parameter); the default value of the other time steps is not part of it. A new time step whose values are all equal keeps that value exactly, so a constant and an equivalent time map give the same model.
+
+    Values of time steps that are not on the original timeline are not part of a new time step (a warning names them, see [Timesteps and periods](#timesteps-and-periods)).
 
     **How the steps are formed.** Steps are aggregated from the start of each `timeset_duration` block. A block that is not a multiple of the step ends with a shorter step. A gap between blocks stays a gap. When several timesets share the timeline, each period keeps its own time steps.
 
@@ -113,7 +117,7 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
   - *timeset_weights*: Optional per-timestep weight map (index: timestep name, `index_name` *time* or left empty; value: float) applied to cost and slack terms in the objective. Use for non-RP models where timesteps represent unequal fractions of the year — e.g. a coarse OSeMOSYS-style timeslice structure where wet-season steps cover more year-hours than dry-season ones. Weights are normalized per period to sum to 1 and then scaled by the number of active timesteps, so uniform input reproduces weight = 1 per step (the default). Must not be combined with `representative_period_weights` on the same timeset — the runner errors out if both are set. The stochastic forecast branches of a period use the weights of the period's timeset. Any other shape (a scalar, a map indexed by *period*) is an error.
 
 
-- `timeline`: continuous timeline with a user-defined duration for each timestep. Timelines are used by time series data.
+- `timeline`: continuous timeline with a user-defined duration for each timestep. Timelines are used by time series data. A time series value whose time step is not a step of any timeline is not used (a warning names the parameter and the first such steps); a time series with none of its steps on a timeline is an error.
 
   - *timestep_duration*: a map with *timestep_name* as an index and *duration* as a value.
   - *timeline_duration_in_years* Total duration of the timeline in years. Used to relate operational part of the model with the annualized part of the model.

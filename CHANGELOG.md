@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **Fix: time series values whose time step is not on any timeline were dropped without a word.** Hourly data
+  on a 3-hour timeline used every third value, keys past the end of the timeline or in a different case (`T0001`)
+  were left out, and a series with no key on the timeline fell back to the parameter's default. Now a warning,
+  printed once per run for each class and parameter, names the entities, the number of such time steps and the
+  first five, and the timelines; a time series with none of its time steps on a timeline stops the run with an
+  error that names the entity, the parameter and the alternative. The keys are compared with the steps of all the
+  scenario's timelines; stochastic branch names and the periods of a period+time map are not checked. The model is
+  unchanged.
 - **Fix: a timeset block that starts off its timeline, or runs past its end, was skipped or cut without a word.**
   A `timeset_duration` block whose start is not a time step of the timeset's timeline (a typo, a different case
   such as `T0001`) was left out of the model, and when no block was left the error pointed at the `timeline`
