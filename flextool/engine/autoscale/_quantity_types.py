@@ -126,6 +126,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # How yr(order)+construction_lead_time snaps to a period boundary (immediate/closest_seam/previous_seam/next_seam) — an enum string, no physical unit.
     ('debug', 'model'): QuantityType.DIMENSIONLESS,
     # Instruction set for performing model debugging and testing — a string toggle, no physical unit.
+    ('constraint_period_method', 'constraint'): QuantityType.DIMENSIONLESS,
+    # Whether a user constraint has a row per time step or one annualised total per period — an enum string.
     ('constant', 'constraint'): QuantityType.DIMENSIONLESS,
     # Right-hand side of the user constraint. A period map gives each period its own value; it must cover every period of the solve. Constant or p...
     # User constraints aggregate LHS terms whose units depend on the user's coefficient choices; the RHS constant lives

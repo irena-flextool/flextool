@@ -20,7 +20,9 @@ Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
 * adds ``share_of_peak`` to ``capacity_margin_methods`` and ``group.capacity_margin_share``
   (float / 1d_map, group ``investment``, no default), rewrites the ``capacity_margin_method`` /
   ``capacity_margin`` descriptions, and writes the marker ``capacity_margin_counts_by_flow``
-  only on a database with a ``manual`` capacity-margin group.
+  only on a database with a ``manual`` capacity-margin group;
+* adds the value list ``constraint_period_methods`` (``per_timestep``, ``period_total``) and
+  ``constraint.constraint_period_method`` (``str``, default ``per_timestep``, group ``constraint``).
 
 It changes no other definition and no value, and a rerun commits nothing.
 """
@@ -58,9 +60,11 @@ EFFICIENCY_CHANGED = {("unit", name) for name in m._V79_UNIT_EFFICIENCY_DESCRIPT
 COEFF_CHANGED = set(m._V79_CONSTRAINT_COEFF_PARAMETERS)
 SHARE_NEW = ("group", "capacity_margin_share")
 MARGIN_CHANGED = {("group", "capacity_margin_method"), ("group", "capacity_margin")}
+PERIOD_METHOD_NEW = ("constraint", "constraint_period_method")
 #: Every definition the step adds or changes.
 ALL_CHANGED = (set(ONLINE_NEW) | set(RAMP_CHANGED) | set(REDUCE_NEW) | set(GROUP_LIMITS_CHANGED)
-               | {ADDER, DURATION} | EFFICIENCY_CHANGED | COEFF_CHANGED | {SHARE_NEW} | MARGIN_CHANGED)
+               | {ADDER, DURATION} | EFFICIENCY_CHANGED | COEFF_CHANGED | {SHARE_NEW} | MARGIN_CHANGED
+               | {PERIOD_METHOD_NEW})
 
 
 def _defs(db) -> dict:
@@ -302,6 +306,20 @@ def test_capacity_margin_marker_only_with_a_manual_group(tmp_path_factory, plain
         _rerun_changes_nothing(db, m._v79_capacity_margin, monkeypatch)
 
 
+# ─── constraint_period_method ────────────────────────────────────────────
+
+
+def test_adds_the_constraint_period_method(plain) -> None:
+    shipped = _shipped()
+    assert PERIOD_METHOD_NEW not in plain["before"]
+    assert "constraint_period_methods" not in plain["lists_before"]
+    assert plain["lists_after"]["constraint_period_methods"] == ["per_timestep", "period_total"]
+    types, group, description, _default, value_list, default = plain["after"][PERIOD_METHOD_NEW]
+    assert types == ("str",) and group == "constraint" and value_list == "constraint_period_methods"
+    assert default == "per_timestep"
+    assert description == shipped[PERIOD_METHOD_NEW] and description.startswith("[choice]")
+
+
 # ─── the step as a whole ─────────────────────────────────────────────────
 
 
@@ -309,7 +327,8 @@ def test_changes_nothing_else(plain) -> None:
     skip = ALL_CHANGED | {("model", "version")}
     assert ({k: v for k, v in plain["after"].items() if k not in skip}
             == {k: v for k, v in plain["before"].items() if k not in skip})
-    lists_after = {k: v for k, v in plain["lists_after"].items() if k not in REDUCE_NEW.values()}
+    lists_after = {k: v for k, v in plain["lists_after"].items()
+                   if k not in {*REDUCE_NEW.values(), "constraint_period_methods"}}
     lists_before = dict(plain["lists_before"])
     lists_before["capacity_margin_methods"] = [*lists_before["capacity_margin_methods"], "share_of_peak"]
     assert lists_after == lists_before
@@ -317,7 +336,8 @@ def test_changes_nothing_else(plain) -> None:
 
 @pytest.mark.parametrize("part", [
     "_v79_constraint_online_coeff", "_v79_ramp_cost_descriptions", "_v79_reduce_detail_methods",
-    "_v79_group_limits_by_time", "_v79_solve_step_series", "_v79_capacity_margin", "_migrate_v79_schema_batch"])
+    "_v79_group_limits_by_time", "_v79_solve_step_series", "_v79_capacity_margin", "_v79_constraint_period_method",
+    "_migrate_v79_schema_batch"])
 def test_rerun_is_idempotent(plain, part: str, monkeypatch) -> None:
     with DatabaseMapping(plain["url"]) as db:
         _rerun_changes_nothing(db, getattr(m, part), monkeypatch)

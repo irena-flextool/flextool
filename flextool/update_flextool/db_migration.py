@@ -6209,6 +6209,52 @@ def _v79_capacity_margin(db) -> None:
         _v77_set_marker(db, "capacity_margin_counts_by_flow", json.dumps({"since": 79, "groups": groups}))
 
 
+#: v79: ``constraint.constraint_period_method`` -- a user constraint per time step or as one total per period.
+CONSTRAINT_PERIOD_METHODS: tuple[str, ...] = ("per_timestep", "period_total")
+_V79_CONSTRAINT_PERIOD_METHOD_DESCRIPTION = (
+    "[choice] How the user constraint is applied in time. per_timestep (default): a row for every time step (a "
+    "constraint with only capacity terms has one row per period). period_total: one row per period over the sum "
+    "of the time steps, each step's terms times its duration and weight, annualised (divided by the period's share "
+    "of a year): flows count in MWh per year and units online in unit-hours per year; capacity terms and their "
+    "existing capacity are multiplied by the hours of the year, and constant is per year. A state coefficient is "
+    "not allowed. In a rolling solve the row is written only in a roll that realizes the whole period; otherwise "
+    "the solve leaves it out with a warning. Constant.")
+
+
+def _v79_constraint_period_method(db) -> None:
+    """``constraint.constraint_period_method`` (part of v79).
+
+    A scalar choice (type ``str``) with the value list ``constraint_period_methods`` (``per_timestep``,
+    ``period_total``), default ``per_timestep`` (the rows of before), group ``constraint``.  No data is rewritten.
+    Idempotent: an existing definition is updated to the v79 fields, and value-list entries already present are not
+    added again.
+    """
+    if not db.get_item("entity_class", name="constraint"):
+        return
+    list_name = "constraint_period_methods"
+    if not db.get_item("parameter_value_list", name=list_name):
+        db.add_parameter_value_list(name=list_name)
+    items = db.get_items("list_value", parameter_value_list_name=list_name)
+    present = {x["parsed_value"] for x in items}
+    index = max((x["index"] for x in items), default=-1) + 1
+    for value in CONSTRAINT_PERIOD_METHODS:
+        if value in present:
+            continue
+        val, typ = to_database(value)
+        db.add_list_value(parameter_value_list_name=list_name, value=val, type=typ, index=index)
+        index += 1
+    _ensure_parameter_group(db, "constraint", "a36784", 70)
+    default_val, default_type = to_database("per_timestep")
+    fields = {"default_value": default_val, "default_type": default_type, "parameter_value_list_name": list_name,
+              "parameter_group_name": "constraint", "description": _V79_CONSTRAINT_PERIOD_METHOD_DESCRIPTION}
+    pdef = _pdef_or_none(db, "constraint", "constraint_period_method")
+    if pdef is None:
+        db.add_parameter_definition(entity_class_name="constraint", name="constraint_period_method",
+                                    parameter_type_list=("str",), **fields)
+    elif any(pdef[k] != v for k, v in fields.items()) or tuple(pdef["parameter_type_list"] or ()) != ("str",):
+        db.update_parameter_definition(id=pdef["id"], parameter_type_list=("str",), **fields)
+
+
 def _migrate_v79_schema_batch(db) -> None:
     """All schema changes of database version 79 (v78 -> v79), in one step.
 
@@ -6222,6 +6268,8 @@ def _migrate_v79_schema_batch(db) -> None:
     6. The capacity margin counts firm and VRE capacity derated by availability and the other entities by their
        flow; ``share_of_peak`` and ``group.capacity_margin_share``; the behaviour-change marker
        ``capacity_margin_counts_by_flow`` (:func:`_v79_capacity_margin`).
+    7. ``constraint.constraint_period_method`` (``per_timestep`` / ``period_total``)
+       (:func:`_v79_constraint_period_method`).
 
     No value is rewritten.  Each part is idempotent, so a rerun of the step changes nothing.
     """
@@ -6231,9 +6279,10 @@ def _migrate_v79_schema_batch(db) -> None:
     _v79_group_limits_by_time(db)
     _v79_solve_step_series(db)
     _v79_capacity_margin(db)
+    _v79_constraint_period_method(db)
     _commit_step(db, "v79: constraint_online_coeff, ramp_cost, reduce_*_detail_method, time-varying group "
                      "limits, time series combined over a solve's new_stepduration step, capacity margin by "
-                     "entity class and share_of_peak")
+                     "entity class and share_of_peak, constraint_period_method")
 
 
 def _v79_adder_has_value(value) -> bool:

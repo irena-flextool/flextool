@@ -2788,6 +2788,20 @@
       ]
     ],
     [
+      "constraint_period_methods",
+      [
+        "InBlcl90aW1lc3RlcCI=",
+        "str"
+      ]
+    ],
+    [
+      "constraint_period_methods",
+      [
+        "InBlcmlvZF90b3RhbCI=",
+        "str"
+      ]
+    ],
+    [
       "construction_lead_time_methods",
       [
         "ImltbWVkaWF0ZSI=",
@@ -4528,6 +4542,17 @@
       ],
       null,
       "[the constraint's own unit] Right-hand side of the user constraint. A period map gives each period its own value; it must cover every period of the solve. Constant or period.",
+      "constraint"
+    ],
+    [
+      "constraint",
+      "constraint_period_method",
+      [
+        "InBlcl90aW1lc3RlcCI=",
+        "str"
+      ],
+      "constraint_period_methods",
+      "[choice] How the user constraint is applied in time. per_timestep (default): a row for every time step (a constraint with only capacity terms has one row per period). period_total: one row per period over the sum of the time steps, each step's terms times its duration and weight, annualised (divided by the period's share of a year): flows count in MWh per year and units online in unit-hours per year; capacity terms and their existing capacity are multiplied by the hours of the year, and constant is per year. A state coefficient is not allowed. In a rolling solve the row is written only in a roll that realizes the whole period; otherwise the solve leaves it out with a warning. Constant.",
       "constraint"
     ],
     [
@@ -7288,6 +7313,12 @@
       "constant",
       "map",
       1
+    ],
+    [
+      "constraint",
+      "constraint_period_method",
+      "str",
+      0
     ],
     [
       "constraint",
