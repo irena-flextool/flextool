@@ -26,12 +26,14 @@ text).  All grading state lives in the grading folder; results folders are only 
 read it: ``docs/dev/assistant_evaluation.md``.
 
 Exit codes: 0 done (also: the daily request budget is used, run again with --resume) · 1 failed (also: an error
-that is not the model's behaviour stopped a cell, which is not saved: run again with --resume) · 2 usage or a
-refused project / results folder · 3 the data notice was not accepted.
+that is not the model's behaviour stopped a cell: after a temporary one its checkpoint is kept and --resume
+continues it from the request that failed; after any other nothing of it is saved) · 2 usage or a refused project /
+results folder · 3 the data notice was not accepted.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import json
 import math
@@ -131,6 +133,11 @@ class CellStopped(Exception):
         self.provider = provider
         self.attempts = [dict(a) for a in attempts]
         self.said = list(said)
+        #: The stopped turn's failed attempts (an earlier run's first) and seconds so far, for its checkpoint.
+        self.current: dict[str, Any] = {}
+        #: The usage of the requests after the last checkpoint (a streamed break-off): not in any turn's usage.
+        self.lost_usage: list[dict[str, Any]] = []
+        self.kept_text = ""
 
 
 class DailyBudgetUsed(CellStopped):
@@ -292,11 +299,27 @@ def read_cells(out: Path) -> dict[str, dict]:
     return {p.stem: read_json(p) for p in sorted(folder.glob("*.json"))}
 
 
-def requests_today(cells: Iterable[Mapping[str, Any]], today: str, spent: Iterable[Mapping[str, Any]] = ()) -> int:
+def requests_today(cells: Iterable[Mapping[str, Any]], today: str, spent: Iterable[Mapping[str, Any]] = (),
+                   partials: Iterable[Mapping[str, int]] = ()) -> int:
     """The requests this results folder sent on the UTC day *today* (``YYYY-MM-DD``): those of its saved cells
-    and those of the cells that stopped unsaved or were replaced (*spent*)."""
-    return sum(int(c.get("requests_sent") or 0) for c in cells if str(c.get("ran_at") or "").startswith(today)) \
-        + sum(int(e.get("requests") or 0) for e in spent if str(e.get("ran_at") or "").startswith(today))
+    (by their ``requests_by_day``, else ``ran_at`` and ``requests_sent``), those of the cells that stopped, were
+    replaced or whose checkpoint was thrown away (*spent*: by ``by_day``, ``day`` or ``ran_at``) and those the
+    checkpoints of unfinished cells hold (*partials*, ``{day: requests}``).  Each request is counted once."""
+    def of_record(c: Mapping[str, Any]) -> int:
+        days = c.get("requests_by_day")
+        if isinstance(days, dict):
+            return int(days.get(today) or 0)
+        return int(c.get("requests_sent") or 0) if str(c.get("ran_at") or "").startswith(today) else 0
+
+    def of_spent(e: Mapping[str, Any]) -> int:
+        days = e.get("by_day")
+        if isinstance(days, dict):
+            return int(days.get(today) or 0)
+        day = e.get("day") or str(e.get("ran_at") or "")[:10]
+        return int(e.get("requests") or 0) if day == today else 0
+
+    return (sum(of_record(c) for c in cells) + sum(of_spent(e) for e in spent)
+            + sum(int(d.get(today) or 0) for d in partials))
 
 
 def read_spent(out: Path) -> list[dict]:
@@ -474,15 +497,18 @@ def known_cells(run: Mapping[str, Any], cells: Mapping[str, Mapping[str, Any]]) 
     return planned | set(cells) | set(skipped_cells(run))
 
 
-def _attempts(cid: str, spent: Sequence[Mapping[str, Any]], spent_known: bool, saved: Mapping[str, Any] | None
-              ) -> tuple[int | None, int | None]:
-    """``(attempts, requests)`` a cell took: every stop and replaced record of spent.json and the saved record;
-    ``(None, None)`` when nothing tells (no spent.json, a folder from before it, and no record)."""
+def _attempts(cid: str, spent: Sequence[Mapping[str, Any]], spent_known: bool, saved: Mapping[str, Any] | None,
+              partial: Any = None) -> tuple[int | None, int | None]:
+    """``(attempts, requests)`` a cell took: the attempts are every stop and replaced record of spent.json (a
+    checkpoint's own list of stops repeats them, so it is not counted) and the saved record; the requests are
+    those of spent.json (also a thrown-away checkpoint's), of the saved record and those its checkpoint holds.
+    ``(None, None)`` when nothing tells (no spent.json, a folder from before it, no record, no checkpoint)."""
     entries = [e for e in spent if e.get("cell") == cid]
-    if not spent_known and saved is None:
+    if not spent_known and saved is None and partial is None:
         return None, None
-    requests = sum(int(e.get("requests") or 0) for e in entries) + int((saved or {}).get("requests_sent") or 0)
-    return len(entries) + (saved is not None), requests
+    requests = (sum(int(e.get("requests") or 0) for e in entries) + int((saved or {}).get("requests_sent") or 0)
+                + sum(held_requests(partial).values()))
+    return sum(1 for e in entries if e.get("code") != "discarded") + (saved is not None), requests
 
 
 def _closest(cid: str, known: Iterable[str]) -> str:
@@ -528,19 +554,34 @@ def mark_skipped(out: Path, identity: Mapping[str, Any], skip: Sequence[str], un
             problems.append(f"{cid} is not applicable already ({saved['not_applicable']}).")
         elif saved is not None and finished(saved):
             problems.append(f"{cid} is finished: a finished cell is graded, not skipped.")
-    problems += [f"{cid} is not skipped." for cid in unskip if cid not in skipped]
+    quota_na = {cid for cid in unskip if cid not in skipped and (cells.get(cid) or {}).get(NA_SCOPE_KEY) == "cell"}
+    problems += [f"{cid} is not skipped." for cid in unskip if cid not in skipped and cid not in quota_na]
     if problems:
         raise Refused("\n".join(problems))
     spent_known = (Path(out) / SPENT_FILE).is_file()
     spent = read_spent(out)
+    partials = read_partials(out)
     now = iso(utc_now())
     for cid in dict.fromkeys(skip):
-        attempts, requests = _attempts(cid, spent, spent_known, cells.get(cid))
+        attempts, requests = _attempts(cid, spent, spent_known, cells.get(cid), partials.get(cid))
         skipped[cid] = {"status": SKIPPED_STATUS, "reason": reason.strip(), "skipped_at": now, "attempts": attempts,
                         "requests": requests}
         say(f"{cid}: {SKIPPED_STATUS}: {reason.strip()} (attempts: "
             f"{'not known' if attempts is None else attempts}).")
     for cid in dict.fromkeys(unskip):
+        if cid in quota_na:
+            # Not applicable for the provider's quota per request: the record goes (its requests stay counted,
+            # written first) and the next --resume asks the cell from the start.
+            record = cells[cid]
+            if int(record.get("requests_sent") or 0):
+                spent.append(_replaced(record, cid))
+                write_json(Path(out) / SPENT_FILE, spent)
+            run[UNSKIPPED_KEY] = [*(run.get(UNSKIPPED_KEY) or []),
+                                  {"cell": cid, "status": f"not applicable ({record.get('not_applicable')})",
+                                   "quota": record.get("quota"), "unskipped_at": now}]
+            cell_path(out, cid).unlink()
+            say(f"{cid}: no longer not applicable; run --resume asks it from the start.")
+            continue
         run[UNSKIPPED_KEY] = [*(run.get(UNSKIPPED_KEY) or []), {"cell": cid, **skipped.pop(cid), "unskipped_at": now}]
         say(f"{cid}: no longer skipped; run --resume asks it.")
     run[SKIPPED_KEY] = skipped
@@ -627,9 +668,12 @@ def failure_json(err: Any, red: Callable[[str], str]) -> dict[str, Any]:
             "retry_delay": said.retry_delay if said else None}
 
 
-def said_lines(final: Any, failed: Sequence[Any], red: Callable[[str], str]) -> list[str]:
+def said_lines(final: Any, failed: Sequence[Any], red: Callable[[str], str],
+               earlier_json: Sequence[Mapping[str, Any]] = ()) -> list[str]:
     """The console lines after FlexTool's message: what the provider said in the stopping answer, then what it
-    said in the earlier failed attempts of the cell (each different text once, with how often)."""
+    said in the earlier failed attempts of the cell (each different text once, with how often): *earlier_json*
+    first (the stopped turn's attempts an earlier run kept in its checkpoint, :func:`failure_json`), then
+    *failed*."""
     from flextool.assistant.llm_errors import provider_said_line
 
     lines = []
@@ -637,6 +681,10 @@ def said_lines(final: Any, failed: Sequence[Any], red: Callable[[str], str]) -> 
     if line:
         lines.append(red(line))
     earlier: dict[str, int] = {}
+    for attempt in earlier_json:
+        text = _said_text(attempt)
+        if text is not None:
+            earlier[text] = earlier.get(text, 0) + 1
     for err in failed:
         if err is not final and err.provider_said is not None:
             text = red(err.provider_said.text())
@@ -670,17 +718,247 @@ def _prompt_ratio(requests: Sequence[Mapping[str, Any]]) -> dict[str, float | No
             "tool_results": round(add_rep / add_est, 3) if add_est else None}
 
 
+# --- checkpoints: a cell continued from the request that failed (item 216) ---------------------------------------
+#: ``<out>/partial/<cell id>.json``: the checkpoint of a cell that has not finished.  Not in ``cells/``, whose
+#: ``*.json`` are the records.  It holds what was sent, unredacted (0600): never share a results folder with it.
+PARTIAL_DIR = "partial"
+PARTIAL_FORMAT = 1
+#: The keys of a checkpoint file, all of them always; a file with another set is of another format.
+PARTIAL_KEYS = ("format", "cell", "identity", "setting_key", "flextool_version", "git", "created", "updated",
+                "turns", "current", "session", "requests_by_day", "stopped", "stops", "resumes")
+CURRENT_KEYS = ("turn", "notices", "failed_attempts", "seconds")
+#: The keys of one finished turn of a record (and of a checkpoint's ``turns``), as :func:`run_cell` writes them.
+TURN_KEYS = ("user", "answer", "tool_calls", "rounds", "calls", "continuations", "stop", "notices", "error",
+             "failed_attempts", "limit_hit", "fit_compactions", "truncated", "seconds", "usage", "requests")
+#: The keys of one stop of a checkpoint (``stops``), all of them always.
+STOP_KEYS = ("code", "turn", "round", "request", "request_sha256", "est_input", "provider", "lost_usage",
+             "stopped_at", "pace", "stream")
+#: The stops after which the cell is kept and ``--resume`` continues it from its checkpoint: the provider busy or
+#: limiting (also its per-minute input-token quota and its daily quota), no connection, no answer in time.  Any
+#: other stop (key, permission, credit, model, routing, tools, history, a fault) throws the checkpoint away.
+TEMPORARY_STOPS = frozenset({"busy", "rpm", "tpm_input", "connection", "timeout", "quota"})
+#: A cell whose same request the provider refused for its input tokens per minute this many times in a row is not
+#: applicable (the request alone is over the quota; CAL-FINDING 2026-11-10): recorded, never asked again.
+QUOTA_PER_REQUEST = "provider quota per request"
+QUOTA_REPEATS = 2
+#: The same request stopped this many times in a row (any other temporary code): the runner says so.
+SAME_REQUEST_REPEATS = 3
+#: A record's ``not_applicable_scope``: ``"cell"`` = this cell only, whatever its level setting (never asked
+#: again by ``--resume``; ``--unskip`` takes it back).  Without it a not-applicable record is the setting's.
+NA_SCOPE_KEY = "not_applicable_scope"
+
+
+def partial_path(out: Path, cid: str) -> Path:
+    return Path(out) / PARTIAL_DIR / f"{cid}.json"
+
+
+def read_partials(out: Path) -> dict[str, Any]:
+    """The checkpoint files of a results folder, cell id → content (``None`` for a file that does not read as
+    JSON).  Temp files (``….json.<writer>.tmp``) are not matched."""
+    folder = Path(out) / PARTIAL_DIR
+    if not folder.is_dir():
+        return {}
+    found: dict[str, Any] = {}
+    for p in sorted(folder.glob("*.json")):
+        try:
+            found[p.stem] = read_json(p)
+        except (OSError, ValueError):
+            found[p.stem] = None
+    return found
+
+
+def held_requests(partial: Any) -> dict[str, int]:
+    """``{UTC day: requests}`` a checkpoint file holds (none for one of another format)."""
+    days = partial.get("requests_by_day") if isinstance(partial, dict) else None
+    if not isinstance(days, dict):
+        return {}
+    return {str(d): int(n) for d, n in days.items() if isinstance(n, int) and not isinstance(n, bool)}
+
+
+def unfinished_text(partial: Any) -> str:
+    """``unfinished: checkpoint at turn 2, request 7`` (grade-ai's refusal and the console): only the position is
+    read from a checkpoint, never its history (which is unredacted)."""
+    current = partial.get("current") if isinstance(partial, dict) else None
+    turn = current.get("turn") if isinstance(current, dict) else "?"
+    return f"unfinished: checkpoint at turn {turn}, request {sum(held_requests(partial).values()) + 1}"
+
+
+def setting_key(setting: Setting) -> dict[str, Any]:
+    """What a cell's requests are made from beyond the folder's identity: the level, the model id sent, the window
+    and its source, the caps and result caps, the compaction rhythm, the history policy, the free plan, the route
+    kind and the hashes of the instructions and tools.  A checkpoint of another key starts its cell again."""
+    from flextool.assistant import budget, prompt
+    from flextool.assistant.session import text_hash, tool_specs, tools_hash
+
+    b = setting.budget
+    history, history_turns = budget.history_policy(setting.level)
+    caps = {k: getattr(b.result_caps, k) for k in ("max_rows", "max_chars", "max_results", "max_items")}
+    key = {"level": setting.level, "model": setting.model, "window": b.window, "window_source": b.window_source,
+           "caps": {"max_rounds": b.level.max_rounds, "max_calls_per_turn": b.level.max_calls_per_turn,
+                    "max_calls_per_round": b.level.max_calls_per_round,
+                    "max_continuations": b.level.max_continuations, "max_output_tokens": b.max_output_tokens},
+           "result_caps": caps, "compaction_every": b.compaction_every, "keep_recent_turns": b.keep_recent_turns,
+           "history": [history, history_turns], "free_tier": b.free_tier,
+           "route": setting.route.kind if setting.route else None,
+           "system_hash": text_hash(list(prompt.system_layers("terminal", setting.level))),
+           "tools_hash": tools_hash(tool_specs(setting.level))}
+    return json.loads(json.dumps(key))
+
+
+def partial_problem(partial: Any, identity: Mapping[str, Any], key: Mapping[str, Any]) -> str | None:
+    """Why a checkpoint file cannot continue its cell here (``None``: it can): another format (a key missing or
+    unknown: never a default), another model or project, another level setting, other instructions or tools."""
+    if not isinstance(partial, dict) or set(partial) != set(PARTIAL_KEYS) or partial.get("format") != PARTIAL_FORMAT:
+        return "a checkpoint of another format"
+    current = partial.get("current")
+    if not isinstance(current, dict) or set(current) != set(CURRENT_KEYS) or not isinstance(partial["stops"], list) \
+            or not isinstance(partial["resumes"], list) or not isinstance(partial["turns"], list):
+        return "a checkpoint of another format"
+    session = partial["session"]
+    if not isinstance(session, dict) or not isinstance(session.get("pending"), dict) \
+            or not isinstance(session.get("state"), dict) \
+            or any(not isinstance(e, dict) or set(e) != set(STOP_KEYS) for e in partial["stops"]) \
+            or any(not isinstance(t, dict) or set(t) != set(TURN_KEYS) for t in partial["turns"]):
+        return "a checkpoint of another format"
+    if partial["identity"] != {k: identity[k] for k in IDENTITY_KEYS}:
+        return "the checkpoint belongs to another model or project"
+    saved = partial["setting_key"]
+    if not isinstance(saved, dict) or set(saved) != set(key):
+        return "a checkpoint of another format"
+    if saved.get("system_hash") != key["system_hash"] or saved.get("tools_hash") != key["tools_hash"]:
+        return "the instructions or tools changed"
+    changed = [k for k in key if saved.get(k) != key[k]]
+    if changed:
+        return f"the level setting changed: {', '.join(changed)}"
+    return None
+
+
+class CheckpointRefused(Exception):
+    """The session refused the checkpoint (:class:`~flextool.assistant.session.CheckpointMismatch`): nothing was
+    sent; the cell starts again from the start."""
+
+
+class CellCheckpoint:
+    """The checkpoint file of one cell (:data:`PARTIAL_DIR`).  :meth:`save` is the session's ``on_checkpoint``
+    (through :func:`run_cell`): just before each request it writes the cell's finished turns, the current turn's
+    notices and failed attempts, the session's snapshot and ``requests_by_day`` (the answered requests whose replies
+    it holds, by UTC day); then, when the day's budget is used, it sets the cell's cancel event so that nothing is
+    sent (``budget_stop``).  A write that fails is said once; the cell goes on without a checkpoint."""
+
+    def __init__(self, out: Path, cid: str, *, identity: Mapping[str, Any], key: Mapping[str, Any],
+                 git: Mapping[str, Any], say: Callable[[str], None], previous: dict | None = None,
+                 over_budget: Callable[[dict[str, int]], bool] = lambda _days: False) -> None:
+        self.path = partial_path(out, cid)
+        self.cid = cid
+        self.say = say
+        self.over_budget = over_budget
+        self.cancel = threading.Event()
+        self.budget_stop = False
+        self.write_failed = False
+        now = iso(utc_now())
+        self.data: dict[str, Any] = dict(previous) if previous is not None else {
+            "format": PARTIAL_FORMAT, "cell": cid, "identity": {k: identity[k] for k in IDENTITY_KEYS},
+            "setting_key": dict(key), "flextool_version": flextool_version(), "git": dict(git), "created": now,
+            "updated": now, "turns": [], "current": None, "session": None, "requests_by_day": {}, "stopped": False,
+            "stops": [], "resumes": []}
+        #: The commit of the run that wrote the checkpoint before (a resume may run another one: recorded).
+        self.previous_git = (previous or {}).get("git")
+        self.data["git"] = dict(git)
+        self.data["flextool_version"] = flextool_version()
+        #: The requests held by the file as last written (each request counted once: those after it are the
+        #: stop's, the file's are its own until it is removed).
+        self.on_disk: dict[str, int] = held_requests(previous) if previous is not None else {}
+        self.exists = previous is not None
+        self.turn_usage = 0              # the current turn's usage entries the last checkpoint holds
+
+    @property
+    def held(self) -> int:
+        return sum(held_requests(self.data).values())
+
+    def save(self, turns: Sequence[Mapping[str, Any]], current: dict[str, Any], snapshot: dict) -> None:
+        total = sum(len(t["usage"]) for t in turns) + len(snapshot["turn_usage"])
+        days = dict(held_requests(self.data))
+        new = total - sum(days.values())
+        if new > 0:
+            today = iso(utc_now())[:10]
+            days[today] = days.get(today, 0) + new
+        self.turn_usage = len(snapshot["turn_usage"])
+        self.data.update(turns=[dict(t) for t in turns], current=current, session=snapshot, requests_by_day=days,
+                         updated=iso(utc_now()), stopped=False)
+        self._write()
+        if self.over_budget(days):
+            self.budget_stop = True
+            self.cancel.set()                # nothing is sent: call_with_retries checks it before the send
+
+    def _write(self) -> bool:
+        if self.write_failed:
+            return False
+        from flextool.assistant import _files
+
+        try:
+            _files.write_text_atomic(self.path, _files.dumps(self.data), private=True)
+        except OSError as exc:
+            self.write_failed = True
+            self.say(f"{self.cid}: the checkpoint could not be written ({exc}); the cell goes on without one.")
+            return False
+        self.exists = True
+        self.on_disk = held_requests(self.data)
+        return True
+
+    def stop(self, entry: dict[str, Any], current: dict[str, Any] | None) -> bool:
+        """Write the stop into the file (before its spent.json entry: a crash between the two counts the requests
+        twice, never not at all).  ``False`` when there is no file to continue from."""
+        if not self.exists or self.write_failed or self.data.get("session") is None:
+            return False
+        if current is not None:
+            self.data["current"] = {**self.data["current"], **current}
+        self.data["stops"] = [*self.data["stops"], entry]
+        self.data["stopped"] = True
+        return self._write()
+
+    def resumed(self, point: dict[str, Any]) -> None:
+        self.data["resumes"] = [*self.data["resumes"], point]
+
+    def discard(self, spend: Callable[[dict[str, Any]], None]) -> None:
+        """Remove the file; the requests it held are written to spent.json first (``discarded``, per day)."""
+        for day, n in sorted(self.on_disk.items()):
+            if n:
+                spend({"ran_at": iso(utc_now()), "day": day, "requests": n, "cell": self.cid, "code": "discarded"})
+        self.remove()
+
+    def remove(self) -> None:
+        with contextlib.suppress(OSError):
+            self.path.unlink()
+        self.exists = False
+        self.on_disk = {}
+
+
+def _said_text(attempt: Mapping[str, Any]) -> str | None:
+    """What the provider said in a failed attempt kept as JSON (:func:`failure_json`), as the console shows it."""
+    from flextool.assistant.llm_errors import ProviderSaid
+
+    if attempt.get("status") is None and not attempt.get("provider_code") and not attempt.get("message"):
+        return None
+    return ProviderSaid(attempt.get("status"), attempt.get("provider_code") or "", attempt.get("message") or "").text()
+
+
 def run_cell(project: Path, qset: scoring.QuestionSet, question: scoring.Question, setting: Setting, *,
-             backend: Any, preset: Any, ledger: Any, say: Callable[[str], None]) -> dict[str, Any]:
+             backend: Any, preset: Any, ledger: Any, say: Callable[[str], None],
+             checkpoint: CellCheckpoint | None = None) -> dict[str, Any]:
     """Ask *question* in a fresh conversation (S01: one conversation for its turns) at *setting*; the turns of
     the record, redacted, each with its failed request attempts (``failed_attempts``, :func:`failure_json`).
     Raises :class:`CellStopped` when a turn ends in an error that is not a graded stop (:data:`GRADED_STOPS`),
     :class:`DailyBudgetUsed` when the provider says the quota is used; either carries every failed attempt of
-    the cell and what the provider said."""
+    this run of the cell and what the provider said.
+
+    *checkpoint*: just before each request the cell is checkpointed there; a checkpoint it holds already (a cell
+    that stopped, or a process that died) is continued: its finished turns are kept, the session restored and its
+    pending request sent again (:class:`CheckpointRefused`, before anything is sent, when the session refuses
+    it)."""
     from flextool.assistant.context import make_context
     from flextool.assistant.llm_adapter import Notice
     from flextool.assistant.llm_errors import message_for
-    from flextool.assistant.session import SESSION_MESSAGES, TRUNCATION_SHARE, Session, TurnCaps
+    from flextool.assistant.session import SESSION_MESSAGES, TRUNCATION_SHARE, CheckpointMismatch, Session, TurnCaps
     from flextool.assistant.store import Conversation, new_id
 
     ctx = make_context(project, input_source=qset.project.get("input_source"), scenario=question.scenario,
@@ -690,34 +968,69 @@ def run_cell(project: Path, qset: scoring.QuestionSet, question: scoring.Questio
     conversation = Conversation(id=new_id(), project_key="calibration", project_name=ctx.project_name,
                                 project_path=ctx.project_path, created=now, updated=now, origin=backend.origin,
                                 level=setting.level)
-    failed: list[Any] = []              # every failed request attempt of the cell, in order
-    session = Session(ctx, backend, preset, conversation=conversation, caps=TurnCaps.from_budget(setting.budget),
-                      tier=setting.level, store=None, ledger=ledger, facts=setting.facts, route=setting.route,
-                      budget=setting.budget, on_attempt_error=failed.append)
-    loaded = getattr(setting.facts, "loaded_context", None)
-    local = setting.route.kind in ("loopback", "local_network") and setting.route.forwarded_to is None
+    failed: list[Any] = []              # every failed request attempt of this run of the cell, in order
     red = ctx.redact
     turns: list[dict[str, Any]] = []
+    # The turn being asked: its number, notices, first failed attempt of this run, start, and what an earlier run
+    # of it left (notices, failed attempts and seconds up to its checkpoint).
+    live: dict[str, Any] = {"number": 0, "notices": [], "before": 0, "started": 0.0, "prior": None}
+
+    def current() -> dict[str, Any]:
+        prior = live["prior"] or {"notices": [], "failed_attempts": [], "seconds": 0.0}
+        return {"turn": live["number"], "notices": [*prior["notices"], *(red(n) for n in live["notices"])],
+                "failed_attempts": [*prior["failed_attempts"], *(failure_json(e, red) for e in failed[live["before"]:])],
+                "seconds": round(prior["seconds"] + time.monotonic() - live["started"], 2)}
+
+    def on_checkpoint(snapshot: dict) -> None:
+        if checkpoint is not None:
+            checkpoint.save(turns, current(), snapshot)
+
+    session = Session(ctx, backend, preset, conversation=conversation, caps=TurnCaps.from_budget(setting.budget),
+                      tier=setting.level, store=None, ledger=ledger, facts=setting.facts, route=setting.route,
+                      budget=setting.budget, on_attempt_error=failed.append,
+                      on_checkpoint=on_checkpoint if checkpoint is not None else None)
+    resume = checkpoint.data if checkpoint is not None and checkpoint.data.get("session") is not None else None
+    start = 1
+    if resume is not None:
+        try:
+            session.restore(resume["session"])
+        except CheckpointMismatch as exc:
+            raise CheckpointRefused(str(exc)) from None
+        turns[:] = [dict(t) for t in resume["turns"]]
+        start = int(resume["current"]["turn"])
+    cancel = checkpoint.cancel if checkpoint is not None else threading.Event()
+    loaded = getattr(setting.facts, "loaded_context", None)
+    local = setting.route.kind in ("loopback", "local_network") and setting.route.forwarded_to is None
     for number, text in enumerate(question.turns, start=1):
+        if number < start:
+            continue
+        resuming = resume is not None and number == start
         notices: list[str] = []
 
         def on_event(event: Any, notices: list[str] = notices) -> None:
             if isinstance(event, Notice):
                 notices.append(event.text)
 
-        started = time.monotonic()
-        before = len(failed)
-        result = session.run_turn(text, on_event, threading.Event())
-        seconds = round(time.monotonic() - started, 2)
+        live.update(number=number, notices=notices, before=len(failed), started=time.monotonic(),
+                    prior=dict(resume["current"]) if resuming else None)
+        if resuming:
+            result = session.resume_turn(on_event, cancel)
+        else:
+            result = session.run_turn(text, on_event, cancel)
+        state = current()
         if result.error is not None and result.error.code not in GRADED_STOPS:
             sent = sum(len(t["usage"]) for t in turns) + len(result.usage)
             stop = DailyBudgetUsed if result.error.code == "quota" else CellStopped
             attempts = [failure_json(e, red) for e in failed]
             if not any(e is result.error for e in failed):
                 attempts.append(failure_json(result.error, red))     # an error of no request attempt
-            raise stop(message_for(result.error, "terminal"), sent, result.error.code,
+            earlier = [a for a in (live["prior"] or {}).get("failed_attempts", [])]
+            exc = stop(message_for(result.error, "terminal"), sent, result.error.code,
                        provider=failure_json(result.error, red) if result.error.provider_said else None,
-                       attempts=attempts, said=said_lines(result.error, failed, red))
+                       attempts=attempts, said=said_lines(result.error, failed, red, earlier))
+            exc.current = {"failed_attempts": state["failed_attempts"], "seconds": state["seconds"]}
+            exc.lost_usage = [_usage_json(u) for u in result.usage[checkpoint.turn_usage:]] if checkpoint else []
+            raise exc
         messages = [m for m in conversation.messages if m.turn == number]
         results = {m.tool_call_id: m for m in messages if m.role == "tool"}
         calls = []
@@ -733,15 +1046,16 @@ def run_cell(project: Path, qset: scoring.QuestionSet, question: scoring.Questio
                         if local and loaded and r.reported is not None and r.reported >= TRUNCATION_SHARE * loaded)
         turns.append({
             "user": red(text), "answer": red(result.text), "tool_calls": calls, "rounds": result.rounds,
-            "calls": result.calls, "continuations": result.continuations, "stop": "end" if result.ok else (result.error.code if result.error else "error"),
-            "notices": [red(n) for n in notices],
+            "calls": result.calls, "continuations": result.continuations,
+            "stop": "end" if result.ok else (result.error.code if result.error else "error"),
+            "notices": state["notices"],
             "error": ({"code": result.error.code, "message": red(message_for(result.error, "terminal")),
                        "provider": (failure_json(result.error, red) if result.error.provider_said else None)}
                       if result.error is not None else None),
-            "failed_attempts": [failure_json(e, red) for e in failed[before:]],
+            "failed_attempts": state["failed_attempts"],
             "limit_hit": any(m.role == "user" and m.text == SESSION_MESSAGES["limit"] for m in messages),
-            "fit_compactions": notices.count(SESSION_MESSAGES["fit"]),
-            "truncated": truncated, "seconds": seconds,
+            "fit_compactions": [*(live["prior"] or {}).get("notices", []), *notices].count(SESSION_MESSAGES["fit"]),
+            "truncated": truncated, "seconds": state["seconds"],
             "usage": [_usage_json(u) for u in result.usage], "requests": requests,
         })
         say(f"  {question.id} turn {number}: {result.rounds} round(s), {result.calls} call(s), "
@@ -941,12 +1255,28 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
         say(f"{len(failed)} saved cell(s) are a provider failure saved as cut off (the answer broke off before "
             f"any of it came); they are asked again: {', '.join(failed)}.")
 
-    def budget_used() -> bool:
-        return daily is not None and requests_today(cells.values(), iso(utc_now())[:10], spent) >= daily
-
     def spend(entry: dict[str, Any]) -> None:
         spent.append(entry)
         write_json(out / SPENT_FILE, spent)
+
+    partials = read_partials(out)
+    for cid in sorted(partials):
+        saved = cells.get(cid)
+        if saved is not None and (finished(saved) or saved.get(NA_SCOPE_KEY) == "cell"):
+            # A checkpoint left beside the record that finished its cell (a stop between the two writes): the
+            # record holds its requests.
+            with contextlib.suppress(OSError):
+                partial_path(out, cid).unlink()
+            partials.pop(cid)
+    held = {cid: held_requests(p) for cid, p in partials.items()}
+
+    def today_count(extra: Mapping[str, int] | None = None, without: str | None = None) -> int:
+        day = iso(utc_now())[:10]
+        days = [d for c, d in held.items() if c != without] + ([extra] if extra is not None else [])
+        return requests_today(cells.values(), day, spent, days)
+
+    def budget_used() -> bool:
+        return daily is not None and today_count() >= daily
 
     probed: dict[str, Any] = {}
     for level in levels:
@@ -962,6 +1292,7 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
         _plan_automatic(out, level, bool(not setting.not_applicable and setting.choice is not None
                                          and setting.choice.automatic == level))
         done = DAILY_DONE_REMOTE if accepted else DAILY_DONE
+        again = "--resume" + (" --accept-data-notice" if accepted else "")
         for qid in wanted:
             question = qset.questions[qid]
             if question.automatic_level_only and (setting.choice is None or level != setting.choice.automatic):
@@ -972,10 +1303,19 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                     say(f"{cid}: {SKIPPED_STATUS} ({skipped[cid].get('reason')}); run --unskip {cid} to ask it")
                     continue
                 saved = cells.get(cid)
+                if saved is not None and saved.get(NA_SCOPE_KEY) == "cell":
+                    say(f"{cid}: not applicable ({saved.get('not_applicable')}); run --unskip {cid} to ask it again")
+                    continue
                 if saved is not None and (finished(saved) or (saved.get("not_applicable")
                                                               and setting.not_applicable)):
                     continue                       # done, or still not applicable (kept with its recorded tags)
+                has_partial = cid in partials
+                partial = partials.pop(cid, None)
                 if setting.not_applicable:
+                    if has_partial:
+                        CellCheckpoint(out, cid, identity=identity, key={}, git=git, say=say,
+                                       previous=partial if isinstance(partial, dict) else {}).discard(spend)
+                        held.pop(cid, None)
                     record = _record(question, setting, repeat, preset=preset, identity=identity,
                                      knobs_sent=knobs_sent, free_tier=free, git=git, turns=None, sending=sending)
                     write_json(cell_path(out, cid), record)
@@ -985,6 +1325,25 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 if budget_used():
                     say(done)
                     return 0
+                key = setting_key(setting)
+
+                def checkpoint_for(previous: dict | None, cid: str = cid, key: dict = key) -> CellCheckpoint:
+                    return CellCheckpoint(out, cid, identity=identity, key=key, git=git, say=say, previous=previous,
+                                          over_budget=lambda days, cid=cid: daily is not None
+                                          and today_count(days, without=cid) >= daily)
+
+                cp = checkpoint_for(None)
+                if has_partial:
+                    problem = partial_problem(partial, identity, key)
+                    if problem is None and partial.get("session") is None:
+                        problem = "a checkpoint of another format"
+                    if problem is not None:
+                        say(f"{cid}: started again from the start ({problem})")
+                        checkpoint_for(partial if isinstance(partial, dict) else {}).discard(spend)
+                        held.pop(cid, None)
+                    else:
+                        cp = checkpoint_for(partial)
+                        _continue_partial(cp, spend, sending, say)
                 if saved is not None and misclassified(saved):
                     say(f"{cid}: asked again (a provider failure saved as cut off)")
                 # A saved cell asked again (an error stop of an older folder, a provider failure saved as cut
@@ -996,31 +1355,57 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 pacer = backend.pacer if getattr(type(backend), "paces", False) else PROCESS_PACER
                 pacer.set_floor(pace_key(backend.origin), args.pace)
                 try:
-                    turns = run_cell(project, qset, question, setting, backend=backend, preset=preset,
-                                     ledger=ledger, say=say)["turns"]
+                    try:
+                        turns = run_cell(project, qset, question, setting, backend=backend, preset=preset,
+                                         ledger=ledger, say=say, checkpoint=cp)["turns"]
+                    except CheckpointRefused as refused:
+                        say(f"{cid}: started again from the start ({refused})")
+                        cp.discard(spend)
+                        held.pop(cid, None)
+                        cp = checkpoint_for(None)
+                        turns = run_cell(project, qset, question, setting, backend=backend, preset=preset,
+                                         ledger=ledger, say=say, checkpoint=cp)["turns"]
                 except CellStopped as exc:
-                    spend({"ran_at": iso(utc_now()), "requests": exc.requests_sent, "cell": cid, "code": exc.code,
-                           "provider": exc.provider, "attempts": exc.attempts, **sending})
-                    say(str(exc))
-                    for line in exc.said:
-                        say(line)
-                    if isinstance(exc, DailyBudgetUsed):
+                    outcome = _stopped(exc, cp, cid, spend=spend, sending=sending, say=say)
+                    held[cid] = cp.on_disk if cp.exists else {}
+                    if not cp.exists:
+                        held.pop(cid, None)
+                    if outcome == "not_applicable":
+                        record = _record(question, setting, repeat, preset=preset, identity=identity,
+                                         knobs_sent=knobs_sent, free_tier=free, git=git, turns=cp.data["turns"],
+                                         sending=sending)
+                        record.update(_na_fields(cp, exc))
+                        if saved is not None and int(saved.get("requests_sent") or 0):
+                            spend(_replaced(saved, cid))
+                        write_json(cell_path(out, cid), record)
+                        cells[cid] = record
+                        cp.remove()
+                        held.pop(cid, None)
+                        say(f"{cid}: not applicable ({QUOTA_PER_REQUEST}): the provider refused the same request "
+                            f"{QUOTA_REPEATS} times for its input tokens per minute; run --unskip {cid} to ask it "
+                            "again")
+                        continue
+                    if outcome in ("budget", "quota") or cp.budget_stop or isinstance(exc, DailyBudgetUsed):
                         say(done)
                         return 0
-                    say(f"{cid}: nothing was saved for this cell. Run again with --resume"
-                        + (" --accept-data-notice." if accepted else "."))
+                    if outcome == "kept":
+                        say(f"{cid}: {exc.kept_text}; run again with {again} to continue it")
+                    else:
+                        say(f"{cid}: nothing was saved for this cell. Run again with {again}.")
                     return 1
                 finally:
                     backend.close()
                 record = _record(question, setting, repeat, preset=preset, identity=identity,
                                  knobs_sent=knobs_sent, free_tier=free, git=git, turns=turns, sending=sending)
+                record.update(_resume_fields(cp, turns))
                 if saved is not None and int(saved.get("requests_sent") or 0):
                     # The replaced record's requests stay counted for their day (written first: a crash
                     # between the two counts them twice, never not at all).
-                    spend({"ran_at": saved.get("ran_at"), "requests": int(saved["requests_sent"]), "cell": cid,
-                           "code": "replaced"})
+                    spend(_replaced(saved, cid))
                 write_json(cell_path(out, cid), record)              # temp + os.replace: the old one goes
                 cells[cid] = record
+                cp.remove()                                          # record first: a crash between leaves a
+                held.pop(cid, None)                                  # stale checkpoint, removed by the next run
                 say(f"{cid}: saved")
                 if budget_used():
                     say(done)
@@ -1028,6 +1413,110 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     say(f"All cells of {args.model} are in {out}"
         + (f" ({len(skipped)} skipped by the owner)." if skipped else "."))
     return 0
+
+
+def _replaced(saved: Mapping[str, Any], cid: str) -> dict[str, Any]:
+    """The spent.json entry of a record replaced by a new one: its requests, per day when it has them."""
+    entry: dict[str, Any] = {"ran_at": saved.get("ran_at"), "requests": int(saved["requests_sent"]), "cell": cid,
+                             "code": "replaced"}
+    days = saved.get("requests_by_day")
+    if isinstance(days, dict) and days:
+        entry["by_day"] = dict(days)
+    return entry
+
+
+def _continue_partial(cp: CellCheckpoint, spend: Callable[[dict[str, Any]], None], sending: Mapping[str, Any],
+                      say: Callable[[str], None]) -> None:
+    """Continue a checkpoint: a process that died with it (no stop written: Ctrl-C, a crash) may have sent its
+    pending request, which is counted once on that day (conservative) and its stop written as ``crashed``; then
+    the resume point is recorded."""
+    data = cp.data
+    pending = data["session"]["pending"]
+    state = data["session"]["state"]
+    if not data["stopped"]:
+        spend({"ran_at": data["updated"], "requests": 1, "cell": cp.cid, "code": "crashed",
+               "request_sha256": pending.get("request_sha256"), "est_input": pending.get("est_input")})
+        data["stops"] = [*data["stops"], {
+            "code": "crashed", "turn": data["current"]["turn"], "round": state.get("rounds"), "request": cp.held + 1,
+            "request_sha256": pending.get("request_sha256"), "est_input": pending.get("est_input"), "provider": None,
+            "lost_usage": [], "stopped_at": data["updated"], "pace": None, "stream": None}]
+        data["stopped"] = True
+    last = data["stops"][-1]
+    cp.resumed({"turn": last["turn"], "round": last["round"], "request": last["request"], "code": last["code"],
+                "provider": last.get("provider"), "lost_usage": last.get("lost_usage") or [],
+                "stopped_at": last["stopped_at"], "resumed_at": iso(utc_now()), **dict(sending), "git": dict(cp.data["git"]),
+                "stopped_git": cp.previous_git, "request_sha256": pending.get("request_sha256"),
+                "body_sha256": pending.get("body_sha256")})
+    say(f"{cp.cid}: continued from turn {last['turn']}, request {last['request']} ({last['code']})")
+
+
+def _stopped(exc: CellStopped, cp: CellCheckpoint, cid: str, *, spend: Callable[[dict[str, Any]], None],
+             sending: Mapping[str, Any], say: Callable[[str], None]) -> str:
+    """A cell that stopped: for a temporary stop (:data:`TEMPORARY_STOPS`, the day's budget) with a checkpoint, the
+    stop written into it first; then its spent.json entry: the requests the checkpoint file does not hold (those
+    after the last checkpoint; all but the file's own when the checkpoint is thrown away, whose own are written as
+    ``discarded``).  Returns ``"kept"``, ``"budget"`` / ``"quota"`` (kept, the run ends with exit 0),
+    ``"not_applicable"`` (the same request refused :data:`QUOTA_REPEATS` times for its input tokens per minute: the
+    caller writes the record) or ``"discarded"`` (nothing kept)."""
+    code = "budget" if cp.budget_stop else exc.code
+    snapshot = cp.data.get("session") or {}
+    pending = snapshot.get("pending") or {}
+    kept = False
+    if code in TEMPORARY_STOPS or code == "budget":
+        current = cp.data.get("current") or {}
+        stop = {"code": code, "turn": current.get("turn"), "round": (snapshot.get("state") or {}).get("rounds"),
+                "request": cp.held + 1, "request_sha256": pending.get("request_sha256"),
+                "est_input": pending.get("est_input"), "provider": exc.provider, "lost_usage": list(exc.lost_usage),
+                "stopped_at": iso(utc_now()), **dict(sending)}
+        kept = cp.stop(stop, None if code == "budget" else exc.current)
+    after = max(0, exc.requests_sent - (cp.held if kept else sum(cp.on_disk.values())))
+    entry = {"ran_at": iso(utc_now()), "requests": after, "cell": cid, "code": code, "provider": exc.provider,
+             "attempts": exc.attempts, **dict(sending)}
+    if pending:
+        entry.update(request_sha256=pending.get("request_sha256"), est_input=pending.get("est_input"))
+    if code != "budget" or after:
+        spend(entry)
+    if code != "budget":
+        say(str(exc))
+        for line in exc.said:
+            say(line)
+    if not kept:
+        if cp.exists:
+            cp.discard(spend)
+        return "discarded"
+    stops = cp.data["stops"]
+    last = stops[-QUOTA_REPEATS:]
+    if len(last) == QUOTA_REPEATS and all(s["code"] == "tpm_input" for s in last) \
+            and len({s["request_sha256"] for s in last}) == 1:
+        return "not_applicable"
+    same = stops[-SAME_REQUEST_REPEATS:]
+    if len(same) == SAME_REQUEST_REPEATS and len({s["request_sha256"] for s in same}) == 1:
+        say(f"{cid}: the same request failed {SAME_REQUEST_REPEATS} times; --skip it or wait")
+    exc.kept_text = f"kept up to turn {stop['turn']}, request {stop['request']}"
+    return "budget" if code == "budget" else "quota" if isinstance(exc, DailyBudgetUsed) else "kept"
+
+
+def _na_fields(cp: CellCheckpoint, exc: CellStopped) -> dict[str, Any]:
+    """The fields of a record not applicable for the provider's quota per request: the quota the provider named,
+    the stops, and every request the cell's checkpoint held (the record holds them now)."""
+    days = held_requests(cp.data)
+    return {"not_applicable": QUOTA_PER_REQUEST, NA_SCOPE_KEY: "cell",
+            "quota": list((exc.provider or {}).get("quota") or []), "provider": exc.provider,
+            "stops": list(cp.data["stops"]), "requests_by_day": days, "requests_sent": sum(days.values()),
+            "resume": {"count": len(cp.data["resumes"]), "points": list(cp.data["resumes"])}}
+
+
+def _resume_fields(cp: CellCheckpoint, turns: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """A finished record's ``resume`` (how often and where the cell was continued) and ``requests_by_day`` (its
+    checkpoint's, and the requests after the last checkpoint on this day)."""
+    days = dict(held_requests(cp.data))
+    total = sum(len(t["usage"]) for t in turns)
+    new = total - sum(days.values())
+    if new > 0:
+        today = iso(utc_now())[:10]
+        days[today] = days.get(today, 0) + new
+    return {"resume": {"count": len(cp.data["resumes"]), "points": list(cp.data["resumes"])},
+            "requests_by_day": days}
 
 
 # --- grading v2: the grading folder ---------------------------------------------------------------------------
@@ -1053,7 +1542,14 @@ def _cell_key(folder: Path, cid: str) -> CellKey:
 
 
 def _stamps(records: Iterable[Mapping[str, Any]]) -> set[str]:
-    return {str(r.get(k)) for r in records for k in ("ran_at", "graded_at") if r.get(k)}
+    """The times of the records the leak scan looks for: when each ran or was graded, and when it stopped and was
+    continued (``resume.points``)."""
+    out: set[str] = set()
+    for r in records:
+        out |= {str(r.get(k)) for k in ("ran_at", "graded_at") if r.get(k)}
+        out |= {str(p.get(k)) for p in (r.get("resume") or {}).get("points") or [] for k in ("stopped_at", "resumed_at")
+                if p.get(k)}
+    return out
 
 
 def _tool_text(record: Mapping[str, Any]) -> str:
@@ -1279,7 +1775,14 @@ def _refuse_incomplete(loaded: Sequence[tuple[Path, dict, dict[str, dict]]], qse
         missing = sorted(expected - set(cells) - set(skipped))
         unfinished = sorted(cid for cid, r in cells.items()
                             if cid not in skipped and not r.get("not_applicable") and not finished(r))
-        named = [f"{cid} (missing)" for cid in missing] + unknown + [f"{cid} (not finished)" for cid in unfinished]
+        # A cell with only a checkpoint is named by it (a checkpoint beside a finished record does not count).
+        partials = {cid: p for cid, p in read_partials(folder).items()
+                    if cid not in skipped and not (cid in cells and (finished(cells[cid])
+                                                                     or cells[cid].get("not_applicable")))}
+        named = ([f"{cid} ({unfinished_text(partials[cid])})" if cid in partials else f"{cid} (missing)"
+                  for cid in missing] + unknown
+                 + [f"{cid} ({unfinished_text(partials[cid])})" if cid in partials else f"{cid} (not finished)"
+                    for cid in unfinished])
         if not named:
             continue
         total += len(named)
@@ -1840,6 +2343,10 @@ def summary_line(record: Mapping[str, Any], run: Mapping[str, Any], *, key_versi
         "fit_compactions": sum(int(t.get("fit_compactions") or 0) for t in turns),
         "truncations": sum(int(t.get("truncated") or 0) for t in turns),
         "refused_tools": refused, "cpu_offload": model.get("cpu_offload"),
+        # How often the cell was continued from a checkpoint (run --resume), where and after which stop.
+        "resumes": int((record.get("resume") or {}).get("count") or 0),
+        "resume_points": [[p.get("turn"), p.get("round")] for p in (record.get("resume") or {}).get("points") or []],
+        "resume_codes": [p.get("code") for p in (record.get("resume") or {}).get("points") or []],
     }
 
 

@@ -88,12 +88,52 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
 - **OpenRouter free models.** `--relax-data-collection` lets OpenRouter use providers that keep the data of the
   requests. The data is synthetic, and each cell records this. The runner stops after a daily number of requests:
   45 for a `:free` model by default, or `--max-requests-per-day N`. When it stops, it prints "Daily request budget
-  used. Run again with --resume --accept-data-notice tomorrow." (without the flag for a local model). A provider's
-  "quota used" reply stops it in the same way.
+  used. Run again with --resume --accept-data-notice tomorrow." (without the flag for a local model). The budget
+  is checked before every request, also inside a cell: the cell's checkpoint is kept (below) and the next day
+  continues it from that request, so a cell of more requests than one day allows (S01) finishes over two days. A
+  provider's "quota used" reply stops it in the same way.
 - **Errors.** A cell whose answer was cut off, was still too long for the context, or was refused by the provider
-  is a graded outcome and is saved. Any other error (no connection, a timeout, a busy service, a key, model or
-  routing error) stops the run with exit code 1. That cell is not saved, and the message says to run again with
-  `--resume`. The requests it sent still count towards the day's budget (`spent.json` in the results folder).
+  is a graded outcome and is saved. Any other error stops the run with exit code 1 (a daily quota: exit 0):
+  - after a *temporary* one (a busy or overloaded service, a rate limit, Google's per-minute input-token quota, no
+    connection, a timeout, a daily quota) the cell is kept: "G05__large__r1: kept up to turn 1, request 7; run
+    again with --resume to continue it";
+  - after any other (a key, permission, credit, model, routing, tools or history error, an internal fault) nothing
+    of the cell is saved: "…: nothing was saved for this cell. Run again with --resume." Its next `--resume` asks it
+    from the start.
+  The requests a cell sent count towards the day's budget once each (`spent.json` in the results folder, the
+  checkpoints and the records).
+- **Checkpoints and `--resume` (item 216).** Before every request the runner writes the cell's checkpoint,
+  `RESULTS/partial/<cell id>.json`: the finished turns as they go into the record, the current turn's notices,
+  failed attempts and seconds, the conversation and the turn's state, and `requests_by_day` (the answered requests
+  it holds, by UTC day). `--resume` continues a kept cell from the request that failed: the finished turns (of
+  S01, for example) are not asked again, and the failed request is sent again as it was (the same history,
+  `tool_choice` and output limit, a fresh retry budget). A process that died (Ctrl-C, a crash) leaves a
+  checkpoint with no stop: `--resume` continues it too and counts its pending request once on that day (it may
+  have been sent). The checkpoint is removed when the cell's record is written. It is continued only when it is
+  of this format, of this folder's model and project (`identity`), of the same level setting (level, model id
+  sent, window, caps and result caps, compaction, history, free plan, route, the hashes of the instructions and
+  tools) and when the restored conversation gives the same request byte for byte; else the cell starts again,
+  with one line: "G01__medium__r1: started again from the start (the level setting changed: window)" (or "the
+  instructions or tools changed", "a checkpoint of another format", "the checkpoint no longer gives the same
+  request"). A checkpoint written by an older format or commit is never filled with defaults: a field missing or
+  unknown is another format. A resume on another commit is allowed and recorded (the point's `git` and
+  `stopped_git`), not prevented: the hashes guarantee only the next request, so such a cell can mix two code
+  versions. The record's `resume` says how often and where the cell was continued: `{"count", "points": [{"turn",
+  "round", "request", "code", "provider", "lost_usage", "stopped_at", "resumed_at", "pace", "stream", "git",
+  "stopped_git", "request_sha256", "body_sha256"}]}` (0 points for a cell that never stopped); the stopped turn's
+  `failed_attempts` hold the stopping attempts, as a retry would; `results.jsonl` gets `resumes`, `resume_points`
+  (`[[turn, round]]`) and `resume_codes`. The graders never see any of it. **A checkpoint holds what was sent,
+  unredacted** (0600): do not share a results folder with a `partial/` in it; `grade-ai`, `review` and `summary`
+  read only a checkpoint's position (to name an unfinished cell), `calibrate` never.
+- **Google's per-minute input-token quota.** Gemma on Google's free tier refuses every request whose input alone
+  is over its per-minute input-token quota (CAL-FINDING 2026-11-10). That 429 has its own code, `tpm_input`
+  (retried like a rate limit, never a graded stop). When the provider refuses the same request (the same
+  `request_sha256`) twice in a row for it, the cell is "not applicable (provider quota per request)": its record
+  keeps the finished turns, the quota (`quota`), the stops and every request it took, and has
+  `not_applicable_scope: "cell"`, so no later `--resume` asks it, whatever its setting. Every stop in `spent.json`
+  and in a checkpoint names its request (`request_sha256`) and the request's corrected estimate (`est_input`).
+  Another code that stops the same request three times in a row is only named ("the same request failed 3 times;
+  --skip it or wait").
 - **What the provider said.** After FlexTool's own message the console shows the provider's own words: its HTTP
   status, its error code and its message, for example
   `Google Gemini said: 429 RESOURCE_EXHAUSTED — You exceeded your current quota. Quota exceeded for metric: …`,
@@ -117,15 +157,14 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
 - **`--pace` and `--no-stream` are part of the folder's record, not of its identity**: `run.json` lists every
   run's `pace` and `stream` (`runs`), each cell records the ones it was asked with (in `model`), and a `--resume`
   may change them.
-- **`--resume`** skips finished cells and asks again the cells that stopped with such an error. It also runs a
+- **`--resume`** skips finished cells, continues the kept ones and asks again the others that stopped. It also runs a
   cell recorded as not applicable once its setting fits. A saved cell that is asked again stays in the folder
   until its new record replaces it, so a stop on the way never leaves the cell missing. `run.json` records the
   questions, levels and repeats every run of the folder planned (its `matrix`), before any cell is asked. It refuses to continue a folder made with another model,
   provider, address, free-plan setting, Ollama contexts, CPU-offload setting, data-collection setting or project. Other levels,
   questions or repeats are fine.
-- **Skipping a cell that never completes.** Each request of a cell can fail, and a failure discards the whole
-  cell, so a cell of many requests (the eight turns of S01) on a flaky endpoint may never finish. The owner can
-  leave it out:
+- **Skipping a cell that never completes.** A cell kept at a request that fails every time (the same request
+  stopped again and again) does not finish. The owner can leave it out:
 
   ```
   python tools/assistant_eval.py run --resume --project DIR/"Grounding project ä" --provider PRESET \
@@ -137,8 +176,13 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
   applicable (skipped by owner)" (its `skipped` entry) with the reason, the time and the attempts and requests
   `spent.json` and a saved record show (null when nothing tells). The skip is part of the folder's record, not of
   its identity, so a later `--resume` is not refused; it leaves the cell out. A cell id the folder cannot have is
-  refused, with the closest ids named; a finished or not-applicable cell cannot be skipped. `--unskip CELL` takes
-  a skip back (the entry moves to `unskipped`) and the next `--resume` asks the cell again. `grade-ai`, `review`
+  refused, with the closest ids named; a finished or not-applicable cell cannot be skipped. A skipped cell keeps
+  its checkpoint (its requests are in the skip's count; the attempts are the stops of `spent.json`). `--unskip CELL`
+  takes a skip back (the entry moves to `unskipped`) and the next `--resume` asks the cell again, from its
+  checkpoint when it has one (a cell skipped before checkpoints, such as S01 of the first Gemma folder, starts once
+  from the start). `--unskip CELL` also takes back a cell not applicable for the provider's quota per request: its
+  record goes (its requests stay counted in `spent.json`, `replaced`) and the next `--resume` asks it from the
+  start, for example after the provider's limit changed. `grade-ai`, `review`
   and `summary` accept a folder whose only gaps are skipped cells: a skipped cell is in no rate and no agreement
   figure. `summary` prints it apart ("skipped: 1", with the cell and the reason), `summary --record` appends it as
   outcome `skipped` (with `skip_reason` and `skip_attempts`) and `calibrate` lists it apart in the same way.
@@ -231,7 +275,9 @@ this run only. The requests are counted in the usage ledger as "Anthropic (calib
 folders of every model; one folder alone is refused unless `--single-model`. The folder set is fixed by the first
 `grade-ai`. It refuses results folders that miss a planned cell (one of the `run.json` matrix; for a folder from
 before the matrix, any question, level or repeat another graded folder has) or have cells that are not finished
-(a cell the owner skipped with `run --skip` is no gap). The refusal names the cells and each folder's `run --resume` command. A cell that came back later would change
+(a cell the owner skipped with `run --skip` is no gap; a cell not applicable for the provider's quota per
+request is complete). The refusal names the cells and each folder's `run --resume` command; a cell with only
+a checkpoint is named "(unfinished: checkpoint at turn 2, request 7)". A cell that came back later would change
 the grading's cells, so `grade-ai`, `review` and `summary` refuse until every folder is complete.
 
 Run the same command again to continue: a cell that was graded from the same material is skipped. If a cell's

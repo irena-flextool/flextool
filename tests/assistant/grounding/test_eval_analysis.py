@@ -632,7 +632,9 @@ def no_waits(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.parametrize("code", ["connection", "timeout", "busy", "auth", "model", "routing"])
 def test_transient_error_not_saved_and_resumed(evaluator, grounding: Path, tmp_path: Path, code: str,
                                                no_waits) -> None:
-    """C6-M5: an error that is not the model's behaviour stops the run with the cell unsaved; --resume asks it."""
+    """C6-M5: an error that is not the model's behaviour stops the run with the cell unsaved; --resume asks it.
+    Item 216: a temporary stop (connection, timeout, busy) keeps the cell's checkpoint, which --resume continues;
+    any other (key, model, routing) throws it away."""
     out = tmp_path / "out"
     said: list[str] = []
     harness = Scripted([[_answer()], [_error(code)] * 4])
@@ -646,9 +648,14 @@ def test_transient_error_not_saved_and_resumed(evaluator, grounding: Path, tmp_p
 
     assert go() == 1
     assert sorted(p.stem for p in (out / "cells").glob("*.json")) == ["G01__small__r1"]
-    assert said[-1] == ("G03__small__r1: nothing was saved for this cell. Run again with --resume "
+    kept = code in ("connection", "timeout", "busy")
+    assert said[-1] == ("G03__small__r1: kept up to turn 1, request 1; run again with --resume --accept-data-notice "
+                        "to continue it" if kept else
+                        "G03__small__r1: nothing was saved for this cell. Run again with --resume "
                         "--accept-data-notice.")
+    assert evaluator.partial_path(out, "G03__small__r1").is_file() == kept
     assert go("--resume") == 0                                    # the fixed backend: plain answers
+    assert not (out / evaluator.PARTIAL_DIR).exists() or not any((out / evaluator.PARTIAL_DIR).iterdir())
     cells = evaluator.read_cells(out)
     assert sorted(cells) == ["G01__small__r1", "G03__small__r1", "G04__small__r1"]
     assert all(t["stop"] == "end" for r in cells.values() for t in r["turns"])
@@ -658,7 +665,8 @@ def test_run_plans_its_matrix_and_a_stopped_folder_is_incomplete(evaluator, scor
                                                                  tmp_path: Path, no_waits) -> None:
     """Grading v2 B1: run.json records the questions, levels and repeats a run plans (and whether the
     automatic-level question is asked at each level reached) before any cell is asked, so a folder a stop left
-    short names its missing cells: G01 saved, G03 stopped, G04 never asked → G03 and G04 missing."""
+    short names its missing cells: G01 saved, G03 stopped (its checkpoint named), G04 never asked → G03 and G04
+    missing."""
     out = tmp_path / "out"
     harness = Scripted([[_answer()], [_error("connection")] * 4])
     args = evaluator.build_parser().parse_args(
@@ -676,7 +684,8 @@ def test_run_plans_its_matrix_and_a_stopped_folder_is_incomplete(evaluator, scor
         evaluator._refuse_incomplete([(out, run_json, cells)], scoring.load_set())
     text = str(refused.value)
     assert text.startswith("2 cell(s) are missing or not finished")
-    assert "out: G03__small__r1 (missing), G04__small__r1 (missing)" in text
+    assert ("out: G03__small__r1 (unfinished: checkpoint at turn 1, request 1), G04__small__r1 (missing)"
+            in text)
     assert f"run --resume --project PROJECT --provider openrouter --model {PAID} --out {out}" in text
 
 
@@ -767,7 +776,8 @@ def test_a_provider_failure_saved_as_cut_off_is_asked_again(evaluator, grounding
 
 def test_spend_of_a_failed_cell_counts(evaluator, grounding: Path, tmp_path: Path, no_waits) -> None:
     """C6-M5: the requests a stopped cell sent count against the day: 1 (the tool call) + 1 (the resumed cell)
-    reaches the budget of 2."""
+    reaches the budget of 2.  Item 216: the answered tool call is held by the cell's checkpoint, not by the stop's
+    spent.json entry (each request counted once), and --resume continues the cell with the one request left."""
     from flextool.assistant.llm_adapter import Message, Reply, ToolCall, Usage
 
     out = tmp_path / "out"
@@ -786,7 +796,9 @@ def test_spend_of_a_failed_cell_counts(evaluator, grounding: Path, tmp_path: Pat
 
     assert go() == 1
     spent = json.loads((out / evaluator.SPENT_FILE).read_text(encoding="utf-8"))
-    assert [(e["cell"], e["requests"], e["code"]) for e in spent] == [("G01__small__r1", 1, "connection")]
+    assert [(e["cell"], e["requests"], e["code"]) for e in spent] == [("G01__small__r1", 0, "connection")]
+    partial = json.loads(evaluator.partial_path(out, "G01__small__r1").read_text(encoding="utf-8"))
+    assert list(partial["requests_by_day"].values()) == [1]
     assert not (out / "cells").exists() or not any((out / "cells").iterdir())
     sent = harness.requests
     assert go("--resume") == 0
