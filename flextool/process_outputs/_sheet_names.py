@@ -2,7 +2,8 @@
 
 Excel cuts a longer sheet name and compares names case-insensitively.  Cutting the end of a name loses what tells a
 per-step table from its per-period one (``…__dt`` / ``…__d``), so two tables can land on one name or on a name that
-says the wrong resolution.  :func:`excel_sheet_name` shortens the stem instead and keeps the suffix.
+says the wrong resolution.  The shipped long names have hand-made sheet names (:data:`SHEET_NAMES`);
+:func:`excel_sheet_name` shortens any other long name's stem instead and keeps the suffix.
 """
 from __future__ import annotations
 
@@ -15,6 +16,27 @@ MAX_SHEET_NAME = 31
 _SUFFIX_START = re.compile(r"__dt?(?=_[^_]|$)")
 
 
+#: Hand-made sheet names of the shipped output names (``default_plots.yaml`` ``rename``) that are longer than
+#: :data:`MAX_SHEET_NAME`, and of their pairs, so that a sheet name reads as its table.  Shortening such a name
+#: automatically cuts words (``…__upDown__n__dt``) or hides them behind a counter (``…_curtai_1__d``).  Keyed by the
+#: display name; the CSV file names are not changed.  :func:`excel_sheet_name` shortens any other long name.
+SHEET_NAMES: dict[str, str] = {
+    "process__reserve__upDown__node__dt": "process__reserve__node__dt",
+    "process__reserve__upDown__node__d_average": "process__reserve__node__d_avg",
+    "reserve_price__upDown__group__dt": "reserve_price__group__dt",
+    "slack__reserve__upDown__group__d": "slack__reserve__group__d",
+    "slack__reserve__upDown__group__dt": "slack__reserve__group__dt",
+    "unit_curtailment__outputNode__d": "unit_curtail__outputNode__d",
+    "unit_curtailment__outputNode__dt": "unit_curtail__outputNode__dt",
+    "unit_outputNode_VRE_potential__d": "unit_VRE_potential__d",
+    "unit_outputNode_VRE_potential__dt": "unit_VRE_potential__dt",
+    "unit_outputNode_VRE_curtailment__d": "unit_VRE_curtailment__d",
+    "unit_outputNode_VRE_curtailment__dt": "unit_VRE_curtailment__dt",
+    "unit_outputNode_VRE_curtailment_share__d": "unit_VRE_curtailment_share__d",
+    "unit_outputNode_VRE_curtailment_share__dt": "unit_VRE_curtailment_share__dt",
+}
+
+
 def _split(name: str) -> tuple[str, str]:
     """``(stem, suffix)`` of ``name`` (the suffix from the last ``__d…`` token, empty without one)."""
     hits = list(_SUFFIX_START.finditer(name))
@@ -25,10 +47,11 @@ def _split(name: str) -> tuple[str, str]:
 
 
 def excel_sheet_name(name: str, used: set[str]) -> str:
-    """A sheet name for the table ``name``: ``name`` itself when it fits in :data:`MAX_SHEET_NAME` characters and no
-    name of ``used`` is the same without regard to case; else the stem shortened in front of the time-resolution
-    suffix, with ``_<n>`` (n = 1, 2, …) before the suffix when that is taken.  The result is added to ``used``
-    (lower-case)."""
+    """A sheet name for the table ``name``: its :data:`SHEET_NAMES` entry, or ``name`` itself when it fits in
+    :data:`MAX_SHEET_NAME` characters, as long as no name of ``used`` is the same without regard to case; else the
+    stem shortened in front of the time-resolution suffix, with ``_<n>`` (n = 1, 2, …) before the suffix when that
+    is taken.  The result is added to ``used`` (lower-case)."""
+    name = SHEET_NAMES.get(name, name)
     stem, suffix = _split(name)
     if len(suffix) > MAX_SHEET_NAME - 1:
         stem, suffix = name, ""

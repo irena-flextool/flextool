@@ -16,6 +16,7 @@ from flextool.scenario_comparison.dispatch_data import (
     prepare_node_dispatch_data,
 )
 from flextool.plot_outputs.format_helpers import unique_series_names
+from flextool.process_outputs._sheet_names import excel_sheet_name
 
 logger = logging.getLogger(__name__)
 
@@ -783,9 +784,11 @@ def create_dispatch_plots(
     # Write Excel file
     if write_xlsx and excel_data:
         excel_path = plot_dir / "dispatch_data.xlsx"
+        used_sheet_names: set[str] = set()
         with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
             for name, df in excel_data.items():
-                sheet_name = name[:31]  # Excel sheet name limit
+                # At most 31 characters and distinct without regard to case (two long node names could collide).
+                sheet_name = excel_sheet_name(name, used_sheet_names)
                 # merge_cells=False: every row shows its period
                 df.to_excel(writer, sheet_name=sheet_name, merge_cells=False)
         print(f"Wrote dispatch data to {excel_path}")

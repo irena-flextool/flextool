@@ -9,6 +9,7 @@ import pandas as pd
 import yaml
 
 from flextool.lean_parquet import write_lean_parquet
+from flextool.process_outputs._sheet_names import excel_sheet_name
 
 from flextool.scenario_comparison.config_builder import (
     assign_palette_colors,
@@ -472,13 +473,8 @@ def run(
             if not export:
                 continue
             if (not df.empty) & (len(df) > 0):
-                sheet_name = display_name[:31]
-                if sheet_name in used_names:
-                    suffix = 1
-                    while f"{sheet_name[:28]}_{suffix}" in used_names:
-                        suffix += 1
-                    sheet_name = f"{sheet_name[:28]}_{suffix}"
-                used_names.add(sheet_name)
+                # At most 31 characters, the __d / __dt suffix kept, distinct without regard to case.
+                sheet_name = excel_sheet_name(display_name, used_names)
                 sheets.append((sheet_name, df))
         sheets.sort(key=lambda x: x[0].lower())
 
