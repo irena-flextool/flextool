@@ -256,8 +256,12 @@
   *integers_ramps_min_limits* both. *online* leaves out the online variables and with them the min limits and
   start-up costs; `min_load_efficiency` units use their full-load efficiency (the same fuel at full load, less at
   part load), ramp limits apply to the capacity, and a user constraint with a `constraint_online_coeff` term is
-  left out of the solve, with a warning naming it. *online_ramps* is *online* without ramps. A level never adds
-  detail. Every roll of a rolling solve uses the solve's level, and a realization solve uses its parent solve's
+  left out of the solve, with a warning naming it. *online_ramps* is *online* without ramps. Under the
+  *integers* levels a unit or connection whose online variables nothing in the solve still uses (no start-up cost,
+  min load or `capacity_min_coeff` floor, minimum up / down time, part-load curve, online term in a user
+  constraint, reserve, inertia, ramp limit or parent commitment left) loses them, as with `startup_method`
+  *no_startup*: the same result from a smaller solve. The run log names these units and connections, and their
+  online cells of that solve are empty. A level never adds detail. Every roll of a rolling solve uses the solve's level, and a realization solve uses its parent solve's
   levels, whatever is set on the realization solve itself (a warning names a different value set on a declared
   realization solve). Databases are migrated automatically; models that do not set the parameters are unchanged.
 - **New: a solve can leave out system detail (`reduce_system_detail_method`, database version 79).** *reserves*

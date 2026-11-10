@@ -3161,6 +3161,7 @@ def _drive_cascade(
             from flextool.engine.preprocess._reduce_detail import (
                 apply_reduce_detail,
                 cold_start_online_flow_carry,
+                online_gone,
                 output_static_view,
                 unit_parts,
             )
@@ -3189,7 +3190,11 @@ def _drive_cascade(
             # outputs leave the cells of the left-out features empty for this
             # sub-solve (process_outputs.reduced_cells).
             if _reduce_report.unit != "none" or _reduce_report.system != "none":
-                from flextool.engine.preprocess._reduce_detail import output_features, summary_line
+                from flextool.engine.preprocess._reduce_detail import (
+                    output_entities,
+                    output_features,
+                    summary_line,
+                )
                 _info_seen = self.__dict__.setdefault("_reduce_info_printed", set())
                 _summary = None
                 if _reduce_base not in _info_seen:
@@ -3201,6 +3206,7 @@ def _drive_cascade(
                 if data is not _unreduced:
                     # Written with this sub-solve's outputs (output._writer).
                     data.reduced_output_features = output_features(_reduce_report, _unreduced)
+                    data.reduced_output_entities = output_entities(_reduce_report)
             # The outputs read static sets from the last sub-solve: give
             # them the pre-transform data, except the fields every
             # sub-solve so far reduced, so a reduced solve never erases the
@@ -3209,17 +3215,24 @@ def _drive_cascade(
             _everywhere = (_reduce_report.fields if _everywhere is None
                            else _everywhere & _reduce_report.fields)
             self._reduce_everywhere = _everywhere
+            # The processes every sub-solve so far left without online variables (the online sets of the
+            # outputs keep the others, _reduce_detail.output_static_view).
+            _gone = online_gone(_unreduced, data)
+            _gone_everywhere = self.__dict__.get("_online_gone_everywhere")
+            _gone_everywhere = _gone if _gone_everywhere is None else _gone_everywhere & _gone
+            self._online_gone_everywhere = _gone_everywhere
             if data is not _unreduced:
-                data.output_static_data = output_static_view(data, _unreduced, _everywhere)
+                data.output_static_data = output_static_view(data, _unreduced, _everywhere, _gone_everywhere)
                 # Only the last sub-solve's view is read: release the views of the stored earlier steps.
                 for _prev in (getattr(self, "_all_steps", None) or {}).values():
                     _prev_fd = getattr(_prev, "flex_data", None)
                     if _prev_fd is not None and getattr(_prev_fd, "output_static_data", None) is not None:
                         _prev_fd.output_static_data = None
             # A ramp-carry flow from a producer that left out online
-            # variables has no online carry: those online units start
+            # variables (online*, or under integers* those of units
+            # without a use) has no online carry: those online units start
             # their ramp and commitment cold (the carry routing is kept).
-            if "online" in unit_parts(getattr(self.state, "current_carry_unit_detail", "none") or "none"):
+            if unit_parts(getattr(self.state, "current_carry_unit_detail", "none") or "none"):
                 data, _cold = cold_start_online_flow_carry(data)
                 if _cold:
                     _cold_msg = (

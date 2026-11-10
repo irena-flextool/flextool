@@ -134,10 +134,10 @@ the feature is untouched. A level that finds nothing to leave out says so in the
 | value | integer online, `exact` | ramps | min limits | online variables |
 |---|---|---|---|---|
 | `none` (default) | | | | |
-| `integers` | continuous | | | |
-| `integers_ramps` | continuous | left out | | |
-| `integers_min_limits` | continuous | | left out | |
-| `integers_ramps_min_limits` | continuous | left out | left out | |
+| `integers` | continuous | | | those without a use left out |
+| `integers_ramps` | continuous | left out | | those without a use left out |
+| `integers_min_limits` | continuous | | left out | those without a use left out |
+| `integers_ramps_min_limits` | continuous | left out | left out | those without a use left out |
 | `online` | — | | left out | left out |
 | `online_ramps` | — | left out | left out | left out |
 
@@ -150,6 +150,9 @@ What each value removes:
 - `integers_ramps_min_limits` removes: what `integers` removes, the ramp limits and ramp costs, and the min limits.
 - `online` removes: what `integers_min_limits` removes, and the online variables: units online, start-ups, shut-downs, start-up costs, the user constraints with a `constraint_online_coeff` term and the part-load curve of `min_load_efficiency` units. Ramp limits stay and apply to the capacity.
 - `online_ramps` removes: what `online` removes, and the ramp limits and ramp costs.
+
+Each `integers*` level also removes the online variables that nothing in the solve uses any more (see
+*Online variables without a use* below).
 
 The parts in detail:
 
@@ -177,6 +180,25 @@ The parts in detail:
     the solve whole, with a warning that names it. Ramp limits that are kept apply to the capacity, so a unit that
     starts from zero ramps up at its ramp speed (there is no start-up allowance). `online` contains every effect of
     `integers`, so the solve is an LP.
+
+- **Online variables without a use (`integers*` only).** After its own removals, an `integers*` level also leaves out
+  the online variables of each unit or connection that nothing in the solve still uses, as if its `startup_method`
+  were *no_startup*.
+
+    The online variables are used by: a start-up cost (`startup_cost`), `min_load` and the `capacity_min_coeff`
+    floors, the minimum up and down times, the part-load curve of a *min_load_efficiency* unit, a
+    `constraint_online_coeff` term in a user constraint of the solve, a reserve that the unit or connection holds,
+    inertia (an `inertia_constant` at a node of a group with `has_inertia`), ramp limits (their start-up and
+    shut-down allowance) and, in a realization solve, the units online it takes from its parent solve. A reserve or
+    an inertia limit that `reduce_system_detail_method` leaves out is no use. The ties that make the forecast branches
+    of a stochastic solve have the same units online are no use either. For example, under `integers_min_limits` a
+    unit with only a `min_load` loses its online variables, a unit with a start-up cost or a reserve keeps them; under
+    `integers` the unit with the `min_load` keeps them.
+
+    Without a use, the online rows only repeat the capacity limit, so the solution is the same and the solve is
+    smaller. The solve's info line in the run log names these units and connections ("online variables left out
+    (nothing in this solve uses them)"), and their units online and start-up cells of the solve are empty in the
+    outputs. `online` and `online_ramps` leave out every online variable anyway; `none` keeps them all.
 
 **`reduce_system_detail_method`.** Each value leaves out the parts in its name:
 

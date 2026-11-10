@@ -417,13 +417,14 @@ def write_outputs_for_solve(
             "append_solve_order failed for solve '%s': %s", solve_name, exc,
         )
 
-    # The features this sub-solve left out (reduce_*_detail_method, set by the cascade on its reduced data): the
-    # outputs leave their cells empty in its steps (process_outputs.reduced_cells).
+    # The features this sub-solve left out (reduce_*_detail_method, set by the cascade on its reduced data), whole
+    # or for some entities only: the outputs leave their cells empty in its steps (process_outputs.reduced_cells).
     _left_out = getattr(flex_data, "reduced_output_features", None)
-    if _left_out:
+    _left_out_of = getattr(flex_data, "reduced_output_entities", None)
+    if _left_out or _left_out_of:
         from flextool.process_outputs.reduced_cells import write_reduced_marker
 
-        write_reduced_marker(Path(output_dir), roll_name, _left_out)
+        write_reduced_marker(Path(output_dir), roll_name, list(_left_out or ()), _left_out_of)
 
     # Raw horizon dump (``model.output_horizon``, developer debug flag):
     # every LP variable and constraint over all rows, as raw solver values,

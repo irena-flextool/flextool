@@ -40,29 +40,37 @@ FEATURE_TABLES: dict[str, tuple[str, ...]] = {
 }
 
 
-def write_reduced_marker(output_raw: Path, solve: str, features: list[str]) -> None:
-    """Record the features sub-solve ``solve`` left out; nothing is written when it left none out."""
-    if not features:
+def write_reduced_marker(output_raw: Path, solve: str, features: list[str],
+                         entities: "dict[str, list[str]] | None" = None) -> None:
+    """Record the features sub-solve ``solve`` left out, whole (``features``) or for some entities only
+    (``entities``: feature -> entity names; their rows carry the name in column ``entity``, null for a whole
+    feature); nothing is written when it left none out."""
+    rows = [(f, None) for f in features] + [(f, e) for f, names in (entities or {}).items() for e in names]
+    if not rows:
         return
     output_raw.mkdir(parents=True, exist_ok=True)
-    pl.DataFrame({"feature": list(features)}, schema={"feature": pl.Utf8}).write_parquet(
+    pl.DataFrame({"feature": [f for f, _ in rows], "entity": [e for _, e in rows]},
+                 schema={"feature": pl.Utf8, "entity": pl.Utf8}).write_parquet(
         output_raw / f"{MARKER}__{solve}.parquet")
 
 
-def read_reduced_markers(output_raw: Path | str) -> dict[str, frozenset[str]]:
-    """``{sub-solve: features it left out}`` from the markers in ``output_raw`` (empty without any)."""
-    out: dict[str, frozenset[str]] = {}
+def read_reduced_markers(output_raw: Path | str) -> dict[str, frozenset]:
+    """``{sub-solve: what it left out}`` from the markers in ``output_raw`` (empty without any): a whole feature
+    as its name, a feature left out for one entity as ``(feature, entity)``."""
+    out: dict[str, frozenset] = {}
     prefix = f"{MARKER}__"
     for path in Path(output_raw).glob(f"{prefix}*.parquet"):
         solve = path.name[len(prefix):-len(".parquet")]
-        out[solve] = frozenset(pl.read_parquet(path)["feature"].to_list())
+        frame = pl.read_parquet(path)
+        entity = frame["entity"].to_list() if "entity" in frame.columns else [None] * frame.height
+        out[solve] = frozenset(f if e is None else (f, e) for f, e in zip(frame["feature"].to_list(), entity))
     return out
 
 
 @dataclasses.dataclass
 class ReducedCells:
     """Per left-out feature: the ``(period, time)`` steps (a ``MultiIndex``), the periods (an ``Index``) and the
-    sub-solves whose cells are empty."""
+    sub-solves whose cells are empty.  A feature left out for one entity only is keyed ``(feature, entity)``."""
 
     steps: dict[str, pd.MultiIndex] = dataclasses.field(default_factory=dict)
     periods: dict[str, pd.Index] = dataclasses.field(default_factory=dict)
@@ -71,7 +79,7 @@ class ReducedCells:
     def __bool__(self) -> bool:
         return bool(self.solves)
 
-    def step_mask(self, feature: str, index: pd.Index) -> np.ndarray:
+    def step_mask(self, feature: "str | tuple[str, str]", index: pd.Index) -> np.ndarray:
         """True for the rows of ``index`` (with ``period`` and ``time`` levels) at a step of ``feature``."""
         steps = self.steps.get(feature)
         if steps is None or not len(steps) or not {"period", "time"} <= set(index.names or ()):
@@ -84,7 +92,7 @@ def _str_level(index: pd.Index, name: str) -> pd.Index:
     return index.get_level_values(name).astype(str)
 
 
-def reduced_cells_of(s, markers: dict[str, frozenset[str]]) -> ReducedCells:
+def reduced_cells_of(s, markers: dict[str, frozenset]) -> ReducedCells:
     """Map the markers onto the realised steps and periods of the solve-keyed sets ``s`` (before ``drop_levels``).
 
     A step belongs to the last sub-solve that realised it (``s.dt_realize_dispatch``, as the ``solve`` column of
@@ -93,7 +101,13 @@ def reduced_cells_of(s, markers: dict[str, frozenset[str]]) -> ReducedCells:
     cells = ReducedCells()
     if not markers:
         return cells
-    left_out = pd.DataFrame([(solve, f) for solve, features in markers.items() for f in features],
+    # A string per marker key (a feature, or a (feature, entity) pair) for the groupings; mapped back at the end.
+    keys: dict[str, object] = {}
+    for features in markers.values():
+        for f in features:
+            keys.setdefault(f if isinstance(f, str) else "\x1f".join(f), f)
+    left_out = pd.DataFrame([(solve, f if isinstance(f, str) else "\x1f".join(f))
+                             for solve, features in markers.items() for f in features],
                             columns=["solve", "feature"])
     cells.solves = {f: set(g["solve"]) for f, g in left_out.groupby("feature", sort=False)}
     dt = getattr(s, "dt_realize_dispatch", None)
@@ -110,10 +124,13 @@ def reduced_cells_of(s, markers: dict[str, frozenset[str]]) -> ReducedCells:
             .reset_index().merge(n_solves, left_on="period", right_index=True)
         every = hit[hit["n_left_out"] == hit["n_solves"]]
         cells.periods = {f: pd.Index(g["period"], name="period") for f, g in every.groupby("feature", sort=False)}
+    cells.solves = {keys[k]: v for k, v in cells.solves.items()}
+    cells.steps = {keys[k]: v for k, v in cells.steps.items()}
+    cells.periods = {keys[k]: v for k, v in cells.periods.items()}
     return cells
 
 
-def _row_mask(df: pd.DataFrame, feature: str, cells: ReducedCells) -> np.ndarray:
+def _row_mask(df: pd.DataFrame, feature: "str | tuple[str, str]", cells: ReducedCells) -> np.ndarray:
     names = set(df.index.names or ())
     if "solve" in names:
         return np.asarray(_str_level(df.index, "solve").isin(list(cells.solves.get(feature, ()))), dtype=bool)
@@ -144,4 +161,18 @@ def mask_reduced_cells(results: dict, cells: ReducedCells) -> None:
             if mask.any():
                 df = df.astype(float)
                 df.loc[mask, :] = np.nan
+                results[name] = df
+    # A feature left out for some entities only: their column, in the rows of the solves that left them out.
+    for key in cells.solves:
+        if not isinstance(key, tuple):
+            continue
+        feature, entity = key
+        for name in FEATURE_TABLES.get(feature, ()):
+            df = results.get(name)
+            if df is None or df.empty or entity not in df.columns:
+                continue
+            mask = _row_mask(df, key, cells)
+            if mask.any():
+                df = df.astype(float)
+                df.loc[mask, entity] = np.nan
                 results[name] = df

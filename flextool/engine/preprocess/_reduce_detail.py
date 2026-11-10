@@ -23,6 +23,11 @@ Unit detail (``reduce_unit_detail_method``; the parts each value takes are in :d
   (``p_slope ← p_slope + p_section``, ``p_section ← 0``, ``process_min_load_eff`` cleared); user constraints with a
   ``constraint_online_coeff`` term are left out whole (dropping only the term could tighten the row).
 
+Under the ``integers*`` levels a unit or connection whose online variables have no remaining use after the level's
+removals loses them, as if its ``startup_method`` were ``no_startup`` (:func:`online_uses`, :data:`ONLINE_USES`;
+``removed["online_unused"]``).  The online rows without a use only repeat the capacity limit, so the LP is the same
+up to the left-out columns.  ``online`` / ``online_ramps`` leave out every online variable anyway.
+
 The carried roll-end flow is kept under ``integers`` / ``online`` without ``ramps``: the ramp limits and the ramp
 cost still need it at a continuation roll's first step.
 
@@ -94,6 +99,27 @@ ONLINE_FIELDS: tuple[str, ...] = (
     "pdt_online_linear", "pdt_online_integer", "p_roll_continue_online", "dt_online_carry", "p_fix_online",
 )
 
+#: The uses of a unit's or connection's online variables (``v_online_*``) in the model, by what keeps them under the
+#: ``integers*`` levels (:func:`online_uses`).  Each is a model term that reads the units online and would change
+#: without them; the other online rows (maxOnline, online_change, maxStartup / maxShutdown, maxFlow_online without a
+#: reserve or ramp term, maxFlow_back_online, maxOutputSum_online) only repeat the capacity limit.  The
+#: non-anticipativity ties of the units online are not a use.  ``tests/engine/test_reduce_detail_online_uses.py``
+#: classifies every model function that reads the online sets or variables against this list.
+ONLINE_USES: dict[str, str] = {
+    "startup_cost": "a start-up cost (pdt_online_linear / pdt_online_integer, startup_cost not 0)",
+    "min_load": "minimum load and the capacity_min_coeff floors (process_minload)",
+    "min_up_down": "minimum up / down times (pdt_uptime_set / pdt_downtime_set)",
+    "min_load_efficiency": "the part-load efficiency section (process_min_load_eff)",
+    "user_constraint": "an online term in a user constraint the solve writes (constraint_online_coeff)",
+    "reserves": "a reserve it provides: held on the units online (process_reserve_upDown_node_active)",
+    "inertia": "inertia counted from the units online (an inertia arc at a node of an inertia group)",
+    "ramp_limits": "ramp limits: the start-up and shut-down allowance reads the units started and stopped",
+    "parent_commitment": "the pin to the parent solve's commitment (p_fix_online)",
+}
+#: The fields :func:`_prune_online` filters to the processes that keep their online variables (``p`` column).
+PRUNE_FIELDS: tuple[str, ...] = tuple(f for f in ONLINE_FIELDS + MIN_TIME_FIELDS if f != "dt_online_carry") + (
+    "p_startup_cost",)
+
 #: FlexData fields cleared (set to None) by each system part.
 RESERVE_FIELDS: tuple[str, ...] = (
     "reserve_upDown_group", "reserve_upDown_group_method_timeseries", "reserve_upDown_group_method_dynamic",
@@ -130,7 +156,8 @@ class ReduceReport:
     ``removed``: feature -> sorted names of the entities (processes, or user constraints for
     ``user_constraints``) it was left out for; only features with something left out appear.  Keys: ``integer_online``
     (binary units / connections now continuous), ``exact`` (exact connections now regular), ``ramp_limits``,
-    ``ramp_costs``, ``min_load``, ``capacity_min_coeff``, ``min_up_down``, ``online``, ``min_load_efficiency``
+    ``ramp_costs``, ``min_load``, ``capacity_min_coeff``, ``min_up_down``, ``online``, ``online_unused`` (online
+    variables without a use left out under ``integers*``), ``min_load_efficiency``
     (folded to full-load efficiency), ``user_constraints`` (left out whole); system keys ``reserves`` (the reserve
     groups with a requirement as ``reserve__upDown__group``, or every reserve group when none has one),
     ``inertia`` / ``non_synchronous`` (the groups), ``dc_power_flow`` (the connections now lossless transport).  ``notes``: interaction facts for the run log, each present only when both
@@ -139,7 +166,8 @@ class ReduceReport:
     it now comes from built capacity, not online capacity), ``inertia_from_flows`` (inertia groups whose providers
     lost their online variables: inertia is counted from flows), ``downward_reserve_to_zero`` (processes left
     without min load that keep a downward reserve: it now reaches down to zero flow).  ``warnings``: the lines to
-    log as warnings (a user constraint left out).  ``fields``: the FlexData fields the transform changed.
+    log as warnings (a user constraint left out).  ``fields``: the FlexData fields the transform changed;
+    ``cleared``: those of them it set to None.
     """
 
     unit: str = "none"
@@ -148,6 +176,7 @@ class ReduceReport:
     notes: dict[str, list[str]] = dataclasses.field(default_factory=dict)
     warnings: list[str] = dataclasses.field(default_factory=list)
     fields: frozenset[str] = frozenset()
+    cleared: frozenset[str] = frozenset()
 
     @property
     def changed(self) -> bool:
@@ -282,12 +311,82 @@ def _drop_constraints(frame: pl.DataFrame | None, cns: list[str]) -> pl.DataFram
     return out if out.height > 0 else None
 
 
+def _online_names(d) -> set[str]:
+    return _names(d.process_online) | _names(d.process_online_linear) | _names(d.process_online_integer)
+
+
+def _inertia_providers(d, procs: set[str]) -> pl.DataFrame:
+    """``(p, g)`` Utf8: the processes of ``procs`` with an inertia arc at a node of an inertia group."""
+    empty = pl.DataFrame(schema={"p": pl.Utf8, "g": pl.Utf8})
+    groups = _names(d.groupInertia, "g")
+    if not procs or not groups or d.group_node is None:
+        return empty
+    arcs = [f.select(pl.col("p").cast(pl.Utf8), pl.col(side).cast(pl.Utf8).alias("n"))
+            for f, side in ((_frame(d.process_sink_inertia), "sink"), (_frame(d.process_source_inertia), "source"))
+            if f is not None and f.height > 0]
+    if not arcs:
+        return empty
+    group_node = (_frame(d.group_node).select(pl.col("g").cast(pl.Utf8), pl.col("n").cast(pl.Utf8))
+                  .filter(pl.col("g").is_in(sorted(groups))))
+    return (pl.concat(arcs).filter(pl.col("p").is_in(sorted(procs)))
+            .join(group_node, on="n", how="inner").select("p", "g").unique())
+
+
+def online_uses(d: "FlexData", sparts: frozenset[str] = frozenset()) -> dict[str, set[str]]:
+    """Use (of :data:`ONLINE_USES`) -> the processes with online variables in ``d`` that have it.
+
+    ``d`` is the data after the unit level's removals; ``sparts`` the system parts the solve leaves out (their
+    fields are still in ``d``): a reserve or an inertia group left out is no use.  Only uses with processes appear.
+    """
+    online = _online_names(d)
+    uses: dict[str, set[str]] = {
+        "startup_cost": _names(d.pdt_online_linear) | _names(d.pdt_online_integer),
+        "min_load": _names(d.process_minload),
+        "min_up_down": _names(d.pdt_uptime_set) | _names(d.pdt_downtime_set),
+        "min_load_efficiency": _names(d.process_min_load_eff),
+        "ramp_limits": set().union(*(_names(getattr(d, f"process_source_sink_ramp_limit_{k}"))
+                                     for k in ("sink_up", "sink_down", "source_up", "source_down"))),
+        "parent_commitment": _names(d.p_fix_online),
+    }
+    coef = _frame(d.p_process_constraint_online_coeff)
+    cns = set(_online_constraints(d))
+    uses["user_constraint"] = ({str(p) for p, cn in coef.select(pl.col("p").cast(pl.Utf8), pl.col("cn").cast(pl.Utf8))
+                                .iter_rows() if cn in cns} if cns else set())
+    uses["reserves"] = (_names(d.process_reserve_upDown_node_active) if "reserves" not in sparts else set())
+    uses["inertia"] = (set(_inertia_providers(d, online).get_column("p").to_list()) if "inertia" not in sparts
+                       else set())
+    out = {k: uses[k] & online for k in ONLINE_USES}
+    return {k: v for k, v in out.items() if v}
+
+
+def _prune_online(d: "FlexData", procs: set[str], new: dict) -> None:
+    """Into ``new``: the online fields of ``d`` (after ``new``) without the rows of ``procs``; a field left
+    without rows is None.  ``dt_online_carry`` goes with the last carried commitment."""
+    keep = sorted(procs)
+    for f in ("process_online", "process_online_linear", "process_online_integer") + PRUNE_FIELDS:
+        cur = new[f] if f in new else getattr(d, f)
+        frame = _frame(cur)
+        if frame is None or "p" not in frame.columns:
+            continue
+        kept = frame.filter(~pl.col("p").cast(pl.Utf8).is_in(keep))
+        if kept.height == frame.height:
+            continue
+        if kept.height == 0:
+            new[f] = None
+        else:
+            new[f] = Param(cur.dims, kept, name=cur.name) if isinstance(cur, Param) else kept
+    if new.get("p_roll_continue_online", d.p_roll_continue_online) is None and d.dt_online_carry is not None:
+        new["dt_online_carry"] = None
+
+
 # ---------------------------------------------------------------------------
 # the transform
 
 
-def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport) -> dict:
-    """The changed fields of the unit parts ``parts`` (field -> new value); fills ``report``."""
+def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport,
+                 sparts: frozenset[str] = frozenset()) -> dict:
+    """The changed fields of the unit parts ``parts`` (field -> new value); fills ``report``.  ``sparts``: the
+    system parts the solve leaves out (no use of online variables)."""
     new: dict = {}
     removed = report.removed
 
@@ -298,8 +397,6 @@ def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport) -> 
 
     if "integers" in parts:
         integer_online = _names(d.process_online_integer)
-        if integer_online and "online" not in parts:
-            new["relax_integrality"] = True
         if integer_online:
             removed["integer_online"] = sorted(integer_online)
         exact = _names(d.process_exact)
@@ -357,8 +454,25 @@ def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport) -> 
                 "of this solve (they count units online, which this level leaves out).")
         if d.p_process_constraint_online_coeff is not None:
             new["p_process_constraint_online_coeff"] = None
-    elif "integers" in parts and online_cns and _names(d.process_online_integer):
-        report.notes["fractional_online_constraints"] = list(online_cns)
+    elif "integers" in parts:
+        # Online variables that nothing uses after the level's removals go, as with startup_method no_startup.
+        after = copy.copy(d)
+        for f, v in new.items():
+            setattr(after, f, v)
+        used = set().union(*online_uses(after, sparts).values())
+        unused = online - used
+        if unused:
+            removed["online_unused"] = sorted(unused)
+            _prune_online(d, unused, new)
+        kept_integer = _names(new.get("process_online_integer", d.process_online_integer))
+        if kept_integer:
+            new["relax_integrality"] = True
+        if integer_online := sorted(set(removed.get("integer_online", ())) - unused):
+            removed["integer_online"] = integer_online
+        else:
+            removed.pop("integer_online", None)
+        if online_cns and kept_integer:
+            report.notes["fractional_online_constraints"] = list(online_cns)
     return new
 
 
@@ -426,7 +540,7 @@ def apply_reduce_detail(d: "FlexData", unit: str = "none", system: str = "none")
     sparts = system_parts(system)
     if not uparts and not sparts:
         return d, report
-    new = _reduce_unit(d, uparts, report) if uparts else {}
+    new = _reduce_unit(d, uparts, report, sparts) if uparts else {}
     new.update(_reduce_system(d, sparts, report))
     _interaction_notes(d, uparts, sparts, report)
     if not new:
@@ -435,6 +549,7 @@ def apply_reduce_detail(d: "FlexData", unit: str = "none", system: str = "none")
     for f, v in new.items():
         setattr(out, f, v)
     report.fields = frozenset(new)
+    report.cleared = frozenset(f for f, v in new.items() if v is None)
     return out, report
 
 
@@ -447,6 +562,7 @@ def apply_reduce_detail(d: "FlexData", unit: str = "none", system: str = "none")
 _REMOVED_TEXT: dict[str, str] = {
     "online": "online variables and start-up costs left out for {}",
     "integer_online": "integer units online made continuous for {}",
+    "online_unused": "online variables left out (nothing in this solve uses them) for {}",
     "exact": "exact connections behave as regular for {}",
     "ramp_limits": "ramp limits left out for {}",
     "ramp_costs": "ramp costs left out for {}",
@@ -460,7 +576,7 @@ _REMOVED_TEXT: dict[str, str] = {
     "non_synchronous": "non-synchronous limits left out for {}",
     "dc_power_flow": "DC power flow left out: lossless transport limited by capacity for {}",
 }
-_UNIT_KEYS = ("online", "integer_online", "exact", "ramp_limits", "ramp_costs", "min_load", "capacity_min_coeff",
+_UNIT_KEYS = ("online", "integer_online", "online_unused", "exact", "ramp_limits", "ramp_costs", "min_load", "capacity_min_coeff",
               "min_up_down", "min_load_efficiency", "user_constraints")
 _SYSTEM_KEYS = ("reserves", "inertia", "non_synchronous", "dc_power_flow")
 _NOTE_TEXT: dict[str, str] = {
@@ -546,9 +662,30 @@ OUTPUT_FEATURES: dict[str, tuple[str, ...]] = {
 def output_features(report: ReduceReport, unreduced: "FlexData") -> list[str]:
     """The features of :data:`OUTPUT_FEATURES` of which the transform cleared a field that had rows in
     ``unreduced`` (the data before the transform), in that order.  Keyed on the cleared fields, not on ``removed``:
-    a reserve set without a requirement still gives reserve variables when kept."""
+    a reserve set without a requirement still gives reserve variables when kept.  Online variables left out for
+    some processes only (``online_unused``) are not a cleared feature: :func:`output_entities` names them."""
     return [f for f, fields in OUTPUT_FEATURES.items()
-            if any(_has_rows(getattr(unreduced, n)) for n in fields if n in report.fields)]
+            if any(_has_rows(getattr(unreduced, n)) for n in fields if n in report.cleared)]
+
+
+def output_entities(report: ReduceReport) -> dict[str, list[str]]:
+    """Feature -> the processes whose output cells of the feature the solve leaves empty while other processes
+    keep theirs: ``{"online": the online_unused processes}`` when the solve keeps online variables for others
+    (empty otherwise)."""
+    unused = report.removed.get("online_unused")
+    if not unused or "online" in output_features_cleared(report):
+        return {}
+    return {"online": list(unused)}
+
+
+def output_features_cleared(report: ReduceReport) -> set[str]:
+    """The features of :data:`OUTPUT_FEATURES` with a field the transform cleared (whatever it had before)."""
+    return {f for f, fields in OUTPUT_FEATURES.items() if report.cleared & set(fields)}
+
+
+def online_gone(unreduced: "FlexData", reduced: "FlexData") -> frozenset[str]:
+    """The processes with online variables in ``unreduced`` that ``reduced`` has none for."""
+    return frozenset(_online_names(unreduced) - _online_names(reduced))
 
 
 # ---------------------------------------------------------------------------
@@ -559,7 +696,7 @@ def cold_start_online_flow_carry(d: "FlexData") -> tuple["FlexData", list[str]]:
     """Drop the carried roll-end flow of the online processes that have no online carry.
 
     For a solve that keeps online variables and continues from a solve whose ``reduce_unit_detail_method`` left
-    them out (``online*``): the producer realised the flows of its ramp arcs but no units online, so this solve's
+    them out (``online*``, or under ``integers*`` those of the processes without a use): the producer realised the flows of its ramp arcs but no units online, so this solve's
     online processes get a ramp-carry flow without an online carry, which
     ``params._ramp_links.check_online_ramp_carry_consistency`` refuses (the ramp split would read a false "0 units
     online before").  Their carried flow is dropped instead, so their ramp and commitment start cold, as at the
@@ -583,20 +720,33 @@ def cold_start_online_flow_carry(d: "FlexData") -> tuple["FlexData", list[str]]:
     return out, cold
 
 
-def output_static_view(d: "FlexData", unreduced: "FlexData", reduced_everywhere: "frozenset[str]") -> "FlexData":
+def output_static_view(d: "FlexData", unreduced: "FlexData", reduced_everywhere: "frozenset[str]",
+                       online_gone_everywhere: "frozenset[str] | None" = None) -> "FlexData":
     """The data the outputs read their static (solve-invariant) sets and parameters from, for a reduced sub-solve.
 
     The outputs take the solve-keyed sets and parameters of each sub-solve from its own (reduced) data, but the
     static ones (``process_online``, the reserve sets, ``groupInertia``, the DC sets, ...) from the last sub-solve
     only.  A reduced last solve would otherwise erase the tables of earlier full solves.  The view is the
     pre-transform data of the solve, except for the fields every sub-solve of the run so far reduced
-    (``reduced_everywhere``): a feature no solve kept has no values to show and keeps no table.
+    (``reduced_everywhere``): a feature no solve kept has no values to show and keeps no table.  With
+    ``online_gone_everywhere`` (the processes every sub-solve so far left without online variables,
+    :func:`online_gone`) the online sets are the pre-transform ones without those processes.
     """
     if d is unreduced:
         return d
     view = copy.copy(unreduced)
     for f in reduced_everywhere:
         setattr(view, f, getattr(d, f))
+    if online_gone_everywhere is not None:
+        # The online sets: the processes with online variables in at least one sub-solve so far (a process that
+        # only some solves left out keeps its column, the cells of those solves stay empty).
+        gone = sorted(online_gone_everywhere)
+        for f in ("process_online", "process_online_linear", "process_online_integer"):
+            frame = _frame(getattr(unreduced, f))
+            if frame is None:
+                continue
+            kept = frame.filter(~pl.col("p").cast(pl.Utf8).is_in(gone))
+            setattr(view, f, kept if kept.height > 0 else None)
     return view
 
 
