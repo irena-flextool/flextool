@@ -3,9 +3,10 @@
 :func:`apply_reduce_detail` takes the :class:`FlexData` that ``load_flextool`` built for a sub-solve and returns the
 reduced data the rest of the cascade sees (the build, warm-start reuse, Benders, the handoff and the per-roll
 outputs).  It only removes or relaxes detail that the cascade produced from the entity data; it never adds any.
-Every operation is one of: clear a set (its rows go), make the integer online columns continuous, or fold the
-``min_load_efficiency`` section into the slope (an approximation: at part load less fuel than the curve, at full
-load the same).  A level that finds nothing to reduce returns the data unchanged, so the LP is byte-identical.
+Every operation is one of: clear a set (its rows go), filter the rows of the online fields to the processes that
+keep their online variables (:func:`_prune_online`, :data:`PRUNE_FIELDS`), make the integer online columns
+continuous, or fold the ``min_load_efficiency`` section into the slope (an approximation: at part load less fuel
+than the curve, at full load the same).  A level that finds nothing to reduce returns the data unchanged, so the LP is byte-identical.
 
 Unit detail (``reduce_unit_detail_method``; the parts each value takes are in :data:`UNIT_PARTS`):
 
@@ -111,7 +112,9 @@ ONLINE_USES: dict[str, str] = {
     "min_up_down": "minimum up / down times (pdt_uptime_set / pdt_downtime_set)",
     "min_load_efficiency": "the part-load efficiency section (process_min_load_eff)",
     "user_constraint": "an online term in a user constraint the solve writes (constraint_online_coeff)",
-    "reserves": "a reserve it provides: held on the units online (process_reserve_upDown_node_active)",
+    # Conservative: maxFlow and the connection reserve rows hold the same reserve terms without the units online,
+    # so the LP alone would not need it; kept as the documented use ("a reserve that the unit holds").
+    "reserves": "a reserve it provides (process_reserve_upDown_node_active; kept conservatively)",
     "inertia": "inertia counted from the units online (an inertia arc at a node of an inertia group)",
     "ramp_limits": "ramp limits: the start-up and shut-down allowance reads the units started and stopped",
     "parent_commitment": "the pin to the parent solve's commitment (p_fix_online)",
@@ -514,17 +517,10 @@ def _interaction_notes(d: "FlexData", uparts: frozenset[str], sparts: frozenset[
             hit = sorted(min_load_gone & down)
             if hit:
                 report.notes["downward_reserve_to_zero"] = hit
-    if "inertia" not in sparts and online_gone and _names(d.groupInertia, "g") and d.group_node is not None:
-        group_node = _frame(d.group_node).select(pl.col("g").cast(pl.Utf8), pl.col("n").cast(pl.Utf8))
-        arcs = [f.select(pl.col("p").cast(pl.Utf8), pl.col(side).cast(pl.Utf8).alias("n"))
-                for f, side in ((_frame(d.process_sink_inertia), "sink"), (_frame(d.process_source_inertia), "source"))
-                if f is not None and f.height > 0]
-        if arcs:
-            providers = pl.concat(arcs).filter(pl.col("p").is_in(sorted(online_gone)))
-            groups = (providers.join(group_node, on="n", how="inner").get_column("g").unique().to_list())
-            hit = sorted(set(groups) & _names(d.groupInertia, "g"))
-            if hit:
-                report.notes["inertia_from_flows"] = hit
+    if "inertia" not in sparts and online_gone:
+        hit = sorted(set(_inertia_providers(d, online_gone).get_column("g").to_list()))
+        if hit:
+            report.notes["inertia_from_flows"] = hit
 
 
 def apply_reduce_detail(d: "FlexData", unit: str = "none", system: str = "none") -> tuple["FlexData", ReduceReport]:
@@ -653,8 +649,11 @@ def summary_line(report: ReduceReport, d: "FlexData", solve: str) -> str:
 #: The features whose output cells a reduced solve leaves empty (``process_outputs.reduced_cells``), with the
 #: FlexData fields that carry them: the solve has no variables of these features, so their cells are "not
 #: modelled", not 0.
+#: ``online`` is keyed on the online sets alone: under the ``integers*`` levels the carry and pin fields of the
+#: feature lose all their rows when every carried (pinned) process is pruned, while other processes keep their
+#: online variables and their cells (:func:`output_entities`).
 OUTPUT_FEATURES: dict[str, tuple[str, ...]] = {
-    "online": ONLINE_FIELDS, "reserves": RESERVE_FIELDS, "inertia": INERTIA_FIELDS,
+    "online": ("process_online", "process_online_linear", "process_online_integer"), "reserves": RESERVE_FIELDS, "inertia": INERTIA_FIELDS,
     "non_synchronous": NON_SYNC_FIELDS, "dc_power_flow": DC_FIELDS,
 }
 
@@ -692,22 +691,26 @@ def online_gone(unreduced: "FlexData", reduced: "FlexData") -> frozenset[str]:
 # across solves of different levels
 
 
-def cold_start_online_flow_carry(d: "FlexData") -> tuple["FlexData", list[str]]:
-    """Drop the carried roll-end flow of the online processes that have no online carry.
+def cold_start_online_flow_carry(d: "FlexData", left_out: "set[str] | frozenset[str]") -> tuple["FlexData", list[str]]:
+    """Drop the carried roll-end flow of the online processes that have no online carry because the producer left
+    their online variables out.
 
     For a solve that keeps online variables and continues from a solve whose ``reduce_unit_detail_method`` left
-    them out (``online*``, or under ``integers*`` those of the processes without a use): the producer realised the flows of its ramp arcs but no units online, so this solve's
-    online processes get a ramp-carry flow without an online carry, which
-    ``params._ramp_links.check_online_ramp_carry_consistency`` refuses (the ramp split would read a false "0 units
-    online before").  Their carried flow is dropped instead, so their ramp and commitment start cold, as at the
-    start of a solve.  The carry routing itself is unchanged.  Other processes keep their carried flow.  Returns the
-    data (``d`` itself when nothing is dropped) and the sorted names of the processes that start cold.
+    them out (``left_out``: the processes the producer had no online variables for, ``SolveHandoff.online_left_out``
+    — every online process under ``online*``, those without a use under ``integers*``): the producer realised the
+    flows of their ramp arcs but no units online, so this solve gets a ramp-carry flow without an online carry,
+    which ``params._ramp_links.check_online_ramp_carry_consistency`` refuses (the ramp split would read a false "0
+    units online before").  Their carried flow is dropped instead, so their ramp and commitment start cold, as at
+    the start of a solve.  The carry routing itself is unchanged.  Only the processes of ``left_out`` start cold: a
+    process the producer kept online and still carries no online carry is a real inconsistency, and the check
+    raises for it.  Returns the data (``d`` itself when nothing is dropped) and the sorted names of the processes
+    that start cold.
     """
     flow = d.p_roll_continue_flow
-    if flow is None:
+    if flow is None or not left_out:
         return d, []
     online = _names(d.process_online)
-    cold = sorted((_names(flow) & online) - _names(d.p_roll_continue_online))
+    cold = sorted((_names(flow) & online & set(left_out)) - _names(d.p_roll_continue_online))
     if not cold:
         return d, []
     out = copy.copy(d)

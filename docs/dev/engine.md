@@ -73,7 +73,20 @@ warm build, the handoff and the per-roll outputs. The per-roll emit and the inpu
     from its fields only and drop them. Unchanged frames are shared. A level that changes nothing returns the
     same object, so the LP is byte-identical.
 
-- **Only clears, relaxes or folds.** Each part sets its fields to `None` (the field lists `RAMP_FIELDS`, `ONLINE_FIELDS`, `RESERVE_FIELDS`, ... in `_reduce_detail.py`), except `relax_integrality` (integer online columns continuous) and the `min_load_efficiency` fold (`p_slope + p_section`, `p_section = 0`).
+- **Only clears, prunes, relaxes or folds.** Each part sets its fields to `None` (the field lists `RAMP_FIELDS`, `ONLINE_FIELDS`, `RESERVE_FIELDS`, ... in `_reduce_detail.py`), except `relax_integrality` (integer online columns continuous), the `min_load_efficiency` fold (`p_slope + p_section`, `p_section = 0`) and the pruning of online variables without a use.
+
+    Under the `integers*` levels, `online_uses` lists, on the data after the level's removals, the uses of each
+    process's online variables (`ONLINE_USES`: start-up cost, min load / capacity_min_coeff floors, min up / down
+    times, the min_load_efficiency section, a written user constraint with `constraint_online_coeff`, a reserve,
+    inertia, ramp limits, the parent's commitment pin; non-anticipativity ties are no use). The processes
+    without a use lose their online variables: `_prune_online` filters the rows of `PRUNE_FIELDS` (the online sets
+    and their parameters, the carry and pin, the min-time sets, `p_startup_cost`) to the other processes, and
+    clears `dt_online_carry` with the last carried commitment (`ReduceReport.removed["online_unused"]`). The
+    reserve use is conservative: maxFlow and the connection reserve rows hold the same reserve terms without the
+    units online, so a reserve-only unit could be pruned too; it keeps its online variables, as the user docs say.
+    `test_reduce_detail_online_uses.py` classifies every model reader of the online sets / variables (a new
+    reader must be added as a use or as no use) and checks that pruning gives the optimum of the same units
+    authored as `no_startup`.
 
     `test_reduce_detail.py` and `test_reduce_system_detail.py` check that every FlexData field of a feature is in
     its list by name, and for the system features also by the columns the frames hold. A new field of a feature
@@ -92,7 +105,22 @@ warm build, the handoff and the per-roll outputs. The per-roll emit and the inpu
     the realised steps and periods (from the solve-keyed sets before `drop_levels`) and empties the rows of the
     feature tables (`FEATURE_TABLES`). Unreduced solves write no marker, so their tables are unchanged.
 
-- **Carry across levels.** The handoff records its producer's unit level (`SolveHandoff.unit_detail`); a solve that keeps online variables and continues the ramp flow of an `online*` producer drops that flow for its online processes and starts cold (`cold_start_online_flow_carry`).
+    A whole feature is one whose `OUTPUT_FEATURES` fields the transform cleared; `online` is keyed on the online
+    sets alone (`process_online*`), since the carry and pin fields lose all their rows when every carried process
+    is pruned while others keep their online variables. Online variables pruned for some processes only are
+    per-entity markers (`output_entities` → `reduced_output_entities`): the marker's `entity` column holds the
+    process (null for a whole feature), `read_reduced_markers` gives `(feature, entity)` keys, and
+    `mask_reduced_cells` empties only that entity's column in the steps of the solves that pruned it. A period
+    realised by both a keeping and a pruning solve keeps its average, with the pruning solve's steps in it as
+    zeros (the same convention as whole features). The static online sets of the outputs keep every process that
+    some solve so far kept (`output_static_view(…, online_gone_everywhere)`, `online_gone`).
+
+- **Carry across levels.** The handoff records its producer's unit level (`SolveHandoff.unit_detail`) and the processes the producer left without online variables (`SolveHandoff.online_left_out`: all online processes under `online*`, those without a use under `integers*`).
+
+    A solve that keeps online variables and continues the ramp flow of such a producer drops that flow for those
+    processes only and starts their ramp and commitment cold (`cold_start_online_flow_carry`). Any other online
+    process with a carried ramp flow but no online carry is a real inconsistency: `check_online_ramp_carry`
+    raises for it.
 
 ## FlexData — the central data carrier
 

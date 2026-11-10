@@ -215,6 +215,9 @@ class RunnerState:
     # sub-solve (``SolveHandoff.unit_detail``, set by ``_run_model`` with the routing).  ``"none"`` without a
     # producer.  Read by the cascade after the detail reduction (a cross-level ramp carry starts cold).
     current_carry_unit_detail: str = "none"
+    # The processes that producer left without online variables (``SolveHandoff.online_left_out``): only their
+    # carried ramp flow starts cold; any other missing online carry raises.
+    current_carry_online_left_out: frozenset = frozenset()
     # Per-level Provider cache — keyed by :func:`compute_level_key`.
     # The orchestration loop populates this so sub-solves at the same
     # "level" (matching LP matrix shape) share a :class:`FlexDataProvider`.

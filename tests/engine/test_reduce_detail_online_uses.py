@@ -358,9 +358,11 @@ def _online_readers() -> set[str]:
 def test_every_reader_of_the_online_sets_is_classified() -> None:
     """Every model function that reads the online sets or variables is in CONSUMERS: a new consumer must be
     classified (a use of ONLINE_USES, which online_uses must then check, or no use).  Every use is held somewhere."""
-    assert _online_readers() == set(CONSUMERS)
+    readers = _online_readers()
+    assert readers == set(CONSUMERS), (f"unclassified: {sorted(readers - set(CONSUMERS))}, "
+                                       f"no longer readers: {sorted(set(CONSUMERS) - readers)}")
     classes = set().union(*CONSUMERS.values(), *ONLINE_ROWS.values())
-    assert classes - _NOT_A_USE == set(ONLINE_USES)
+    assert classes - _NOT_A_USE == set(ONLINE_USES), sorted((classes - _NOT_A_USE) ^ set(ONLINE_USES))
 
 
 def test_every_online_row_family_is_classified() -> None:
@@ -368,3 +370,194 @@ def test_every_online_row_family_is_classified() -> None:
     text = (MODEL_DIR / "_online.py").read_text(encoding="utf-8")
     names = set(re.findall(r'add_(?:cstr|twin)\(\s*(?:b,\s*)?f?"([A-Za-z_]+?)(?:\{|")', text, flags=re.S))
     assert names == set(ONLINE_ROWS)
+
+
+# ---------------------------------------------------------------------------
+# carried commitments that all belong to pruned units (review M1, S1)
+
+
+def test_only_pruned_carry_rows_do_not_empty_the_whole_online_feature(tmp_path_factory) -> None:
+    """The online carry and pin rows of the solve all belong to gn (pruned under integers): the carry fields are
+    cleared, but the other units keep their online variables, so the outputs leave only gn's online cells empty
+    (no whole-feature marker)."""
+    import copy
+
+    from polar_high import Param
+
+    fd = copy.copy(_step(tmp_path_factory).flex_data)
+    fd.p_roll_continue_online = Param(("p",), pl.DataFrame({"p": ["gn"], "value": [1.0]}))
+    fd.dt_online_carry = pl.DataFrame({"d": ["p2020"], "t": ["t0001"]})
+    reduced, report = apply_reduce_detail(fd, "integers")
+    assert report.removed["online_unused"] == ["gn"]
+    assert reduced.p_roll_continue_online is None and reduced.dt_online_carry is None
+    assert {"p_roll_continue_online", "dt_online_carry"} <= report.cleared
+    assert "online" not in _reduce_detail.output_features(report, fd)
+    assert _reduce_detail.output_entities(report) == {"online": ["gn"]}
+
+
+def _chain(tmp_path_factory, alt: str, level_a: str, level_b: str):
+    """sA (t0001-t0002) then sB (t0003-t0004) in period p2020, sB continuing sA's realised end; demand 50 MW; g1
+    (efficiency 0.5, min load 0.5) and g2 (efficiency 0.4, a ramp limit of 0.5 per minute), both 100 MW and
+    binary.  integers_ramps leaves g2 without a use, integers_min_limits g1."""
+    from flextool.engine import run_chain_from_db
+
+    ents = [["node", "elec", None], ["node", "fuel", None], ["commodity", "fuelc", None],
+            ["commodity__node", ["fuelc", "fuel"], None], ["timeset", "tsA", None], ["timeset", "tsB", None],
+            ["solve", "sA", None], ["solve", "sB", None]]
+    vals = [["model", "flexTool", "solves", b64({"value_type": "str", "data": ["sA", "sB"]}, "array")],
+            ["timeset", "tsA", "timeline", _s("y2020")], ["timeset", "tsA", "timeset_duration", _ts("t0001")],
+            ["timeset", "tsB", "timeline", _s("y2020")], ["timeset", "tsB", "timeset_duration", _ts("t0003")],
+            ["node", "elec", "node_type", _s("balance")], ["node", "elec", "inflow", _f(-50.0)],
+            ["node", "fuel", "node_type", _s("commodity")], ["commodity", "fuelc", "price", _f(20.0)],
+            ["unit", "g1", "min_load", _f(0.5)], ["unit", "g1", "efficiency", _f(0.5)],
+            ["unit", "g2", "efficiency", _f(0.4)],
+            ["unit__outputNode", ["g2", "elec"], "ramp_method", _s("ramp_limit")],
+            ["unit__outputNode", ["g2", "elec"], "ramp_speed_up", _f(0.5)],
+            ["unit__outputNode", ["g2", "elec"], "ramp_speed_down", _f(0.5)]]
+    for u in ("g1", "g2"):
+        ents += [["unit", u, None], ["unit__inputNode", [u, "fuel"], None], ["unit__outputNode", [u, "elec"], None]]
+        vals += [["unit", u, "existing", _f(100.0)], ["unit", u, "startup_method", _s("binary")]]
+    for solve, ts, level in (("sA", "tsA", level_a), ("sB", "tsB", level_b)):
+        vals += [["solve", solve, "period_timeset",
+                  b64({"index_type": "str", "index_name": "period", "data": [["p2020", ts]]}, "map")],
+                 ["solve", solve, "realized_periods", b64({"value_type": "str", "data": ["p2020"]}, "array")],
+                 ["solve", solve, "solve_mode", _s("single_solve")], ["solve", solve, "solver_mip_gap", _f(0.0)],
+                 ["solve", solve, "reduce_unit_detail_method", _s(level)]]
+    url, scen = make_db(tmp_path_factory, alt=alt, values=vals, base_chain=["init"], entities=ents)
+    wf = tmp_path_factory.mktemp(f"{alt}_w")
+    steps = run_chain_from_db(url, scen, work_folder=wf, keep_solutions=True)
+    assert list(steps) == ["sA", "sB"], list(steps)
+    return steps, wf, scen
+
+
+def test_a_kept_unit_keeps_its_online_cells_when_every_carried_unit_is_pruned(tmp_path_factory) -> None:
+    """sA integers_ramps keeps only g1 online (g2 has no use left), so sB's carried commitment is g1's alone;
+    sB integers_min_limits prunes g1 and keeps g2.  sB's online cells of g2 have values, g1's are empty; sA's of
+    g1 have values, g2's are empty.  g2's carried ramp flow starts cold in sB (sA left g2 out)."""
+    steps, wf, scen = _chain(tmp_path_factory, "ou_chain", "integers_ramps", "integers_min_limits")
+    assert steps["sA"].handoff.online_left_out == frozenset({"g2"})
+    fb = steps["sB"].flex_data
+    assert fb.process_online["p"].cast(pl.Utf8).to_list() == ["g2"]
+    assert "online" not in fb.reduced_output_features
+    assert fb.reduced_output_entities == {"online": ["g1"]}
+    out = _write_outputs(steps, wf, scen)
+    g1 = _cells(out, "unit_online__dt.csv", "g1")
+    g2 = _cells(out, "unit_online__dt.csv", "g2")
+    sa, sb = [("p2020", "t0001"), ("p2020", "t0002")], [("p2020", "t0003"), ("p2020", "t0004")]
+    assert [g1[k] for k in sb] == ["", ""] and [g2[k] for k in sa] == ["", ""]
+    for cell in [g1[k] for k in sa] + [g2[k] for k in sb]:
+        assert cell != "" and float(cell) == float(cell)
+
+
+def test_only_the_units_the_producer_left_out_start_cold(tmp_path_factory) -> None:
+    """A ramp-carry flow without an online carry starts cold only for a process the producer left without online
+    variables; for a process the producer kept (a same-level inconsistency) the consistency check still raises."""
+    import copy
+
+    from polar_high import Param
+
+    from flextool.engine.preprocess._reduce_detail import cold_start_online_flow_carry
+    from flextool.engine.preprocess.params._ramp_links import check_online_ramp_carry
+
+    fd = _step(tmp_path_factory).flex_data
+    assert fd.dt_ramp_carry is None or fd.dt_ramp_carry.height == 0
+    data = copy.copy(fd)
+    data.dt_ramp_carry = pl.DataFrame({"d": ["p2020"], "t": ["t0001"]})
+    data.p_roll_continue_flow = Param(("p", "source", "sink", "d", "t"), pl.DataFrame(
+        {"p": ["gp"], "source": ["gp"], "sink": ["elec"], "d": ["p2020"], "t": ["t0001"], "value": [50.0]}))
+    with pytest.raises(ValueError, match="no online carry"):
+        check_online_ramp_carry(data)
+    # The producer kept gp (it left out only gn): no cold start, the check raises.
+    same, cold = cold_start_online_flow_carry(data, frozenset({"gn"}))
+    assert same is data and cold == []
+    with pytest.raises(ValueError, match="no online carry"):
+        check_online_ramp_carry(same)
+    # The producer left gp out: its carried flow is dropped and the check passes.
+    started, cold = cold_start_online_flow_carry(data, frozenset({"gp", "gn"}))
+    assert cold == ["gp"] and started.p_roll_continue_flow is None
+    check_online_ramp_carry(started)
+
+
+# ---------------------------------------------------------------------------
+# the optimum with pruning equals the optimum of the same units authored as no_startup (review S2)
+
+
+#: Unit -> (capacity MW, efficiency, extra values).  ga: start-up cost; gb: min load; gc: the reserve provider;
+#: gd: nothing, availability 0.8 (its capacity binds at the peak); ge: nothing.
+OPT_UNITS = {
+    "ga": (100.0, 0.5, [["startup_cost", 50.0]]),
+    "gb": (80.0, 0.45, [["min_load", 0.4]]),
+    "gc": (60.0, 0.4, []),
+    "gd": (120.0, 0.35, [["availability", 0.8]]),
+    "ge": (90.0, 0.3, []),
+}
+#: Demand at elec per step (MW) and the net inflow at elec2 (behind the two-way connection c, 50 MW, binary).
+OPT_DEMAND = {"t0001": 150.0, "t0002": 250.0, "t0003": 380.0, "t0004": 200.0}
+OPT_ELEC2 = {"t0001": 30.0, "t0002": -40.0, "t0003": 20.0, "t0004": -45.0}
+
+
+def _opt_model(level: str, no_startup: tuple[str, ...]):
+    tmap = lambda series: b64({"index_type": "str", "data": [[t, v] for t, v in series.items()]}, "map")  # noqa: E731
+    ents = [["node", "elec", None], ["node", "elec2", None], ["node", "fuel", None], ["commodity", "fuelc", None],
+            ["group__node", ["electricity", "elec"], None], ["commodity__node", ["fuelc", "fuel"], None],
+            ["reserve", "rsv", None], ["reserve__upDown__group", ["rsv", "up", "electricity"], None],
+            ["reserve__upDown__unit__node", ["rsv", "up", "gc", "elec"], None],
+            ["connection", "c", None], ["connection__node__node", ["c", "elec", "elec2"], None]]
+    grp, key = ["rsv", "up", "electricity"], ["rsv", "up", "gc", "elec"]
+    vals = [["timeset", "2day", "timeset_duration", b64({"index_type": "str", "data": [["t0001", 4.0]]}, "map")],
+            ["solve", SOLVE, "solver_mip_gap", _f(0.0)], ["solve", SOLVE, "reduce_unit_detail_method", _s(level)],
+            ["node", "elec", "node_type", _s("balance")],
+            ["node", "elec", "inflow", tmap({t: -v for t, v in OPT_DEMAND.items()})],
+            ["node", "elec2", "node_type", _s("balance")], ["node", "elec2", "inflow", tmap(OPT_ELEC2)],
+            ["node", "fuel", "node_type", _s("commodity")], ["commodity", "fuelc", "price", _f(20.0)],
+            ["reserve__upDown__group", grp, "reserve_method", _s("timeseries_only")],
+            ["reserve__upDown__group", grp, "reservation", _f(20.0)],
+            ["reserve__upDown__group", grp, "penalty_reserve", _f(1000.0)],
+            ["reserve__upDown__unit__node", key, "is_enabled", _s("yes")],
+            ["reserve__upDown__unit__node", key, "max_share", _f(1.0)],
+            ["reserve__upDown__unit__node", key, "reliability", _f(1.0)],
+            ["connection", "c", "existing", _f(50.0)], ["connection", "c", "efficiency", _f(0.95)],
+            ["connection", "c", "startup_method", _s("no_startup" if "c" in no_startup else "binary")]]
+    for u, (cap, eff, extra) in OPT_UNITS.items():
+        ents += [["unit", u, None], ["unit__inputNode", [u, "fuel"], None], ["unit__outputNode", [u, "elec"], None]]
+        vals += [["unit", u, "existing", _f(cap)], ["unit", u, "efficiency", _f(eff)],
+                 ["unit", u, "startup_method", _s("no_startup" if u in no_startup else "binary")]]
+        vals += [["unit", u, name, _f(v)] for name, v in extra]
+    return vals, ents
+
+
+@pytest.mark.parametrize("level, pruned", [
+    ("integers", ["c", "gd", "ge"]),
+    ("integers_min_limits", ["c", "gb", "gd", "ge"]),
+])
+def test_pruning_gives_the_optimum_of_the_units_authored_as_no_startup(tmp_path_factory, level, pruned) -> None:
+    """Five different units over four steps of varying demand (the peak needs gd at its availability limit), a
+    start-up cost on ga, a min load on gb, a reserve provider gc and a two-way connection c: the solve that
+    prunes the units without a use has the objective of the same solve with those units authored as no_startup
+    (which then has nothing to prune)."""
+    vals, ents = _opt_model(level, ())
+    steps, _wf, _scen = _RUNS.get(tmp_path_factory, alt=f"opt_{level}", values=vals, base_chain=["init"],
+                                  entities=ents)
+    step = next(iter(steps.values()))
+    fd = step.flex_data
+    assert sorted(set(_online_columns(build(fd))) ^ {"ga", "gb", "gc", "gd", "ge", "c"}) == pruned
+    vals_ns, ents_ns = _opt_model(level, tuple(pruned))
+    steps_ns, _wf, _scen = _RUNS.get(tmp_path_factory, alt=f"opt_{level}_ns", values=vals_ns, base_chain=["init"],
+                                     entities=ents_ns)
+    step_ns = next(iter(steps_ns.values()))
+    assert _online_columns(build(step_ns.flex_data)) == {"ga", "gb", "gc", "gd", "ge", "c"} - set(pruned)
+    assert step.solution is not None and step_ns.solution is not None
+    assert float(step.obj) == pytest.approx(float(step_ns.obj), rel=1e-9)
+
+
+def test_an_authored_zero_startup_cost_is_no_use(tmp_path_factory) -> None:
+    """gs with startup_cost 0 (authored) on binary units: the data builds (no start-up cost set; the start-up
+    sets are built only from non-zero costs) and gs has no use left, so integers prunes it with gn."""
+    vals = [v if v[:3] != ["unit", "gs", "startup_cost"] else ["unit", "gs", "startup_cost", _f(0.0)]
+            for v in _values()]
+    steps, _wf, _scen = _RUNS.get(tmp_path_factory, alt="ou_sc0", values=vals, base_chain=["init"],
+                                  entities=_entities())
+    fd = next(iter(steps.values())).flex_data
+    assert fd.pdt_online_integer is None or fd.pdt_online_integer.height == 0
+    _reduced, report = apply_reduce_detail(fd, "integers")
+    assert report.removed["online_unused"] == ["gn", "gs"]

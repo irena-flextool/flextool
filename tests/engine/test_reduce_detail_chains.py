@@ -231,6 +231,7 @@ def test_full_storage_roll_after_an_online_dispatch_starts_cold(tmp_path_factory
     producer = steps[names[s1 - 1]]
     assert names[s1 - 1].startswith("dispatch_fullYear_roll_roll_")
     assert producer.handoff.unit_detail == "online" and producer.handoff.roll_end_online is None
+    assert producer.handoff.online_left_out == frozenset({"coal_plant"})
     assert "coal_plant" in producer.handoff.roll_end_flow["process"].to_list()
     fd = steps["storage_fullYear_6h_roll_1"].flex_data
     assert {str(p) for p in fd.process_online["p"].to_list()} == {"coal_plant"}
@@ -245,7 +246,7 @@ def test_full_storage_roll_after_an_online_dispatch_starts_cold(tmp_path_factory
     kept.p_roll_continue_flow = carried
     with pytest.raises(ValueError, match="no online carry"):
         check_online_ramp_carry(kept)
-    started, procs = cold_start_online_flow_carry(kept)
+    started, procs = cold_start_online_flow_carry(kept, producer.handoff.online_left_out)
     assert procs == ["coal_plant"] and started.p_roll_continue_flow is None
     check_online_ramp_carry(started)
 

@@ -267,9 +267,10 @@
   min load or `capacity_min_coeff` floor, minimum up / down time, part-load curve, online term in a user
   constraint, reserve, inertia, ramp limit or parent commitment left) loses them, as with `startup_method`
   *no_startup*: the same result from a smaller solve. The run log names these units and connections, and their
-  online cells of that solve are empty. A level never adds detail. Every roll of a rolling solve uses the solve's level, and a realization solve uses its parent solve's
-  levels, whatever is set on the realization solve itself (a warning names a different value set on a declared
-  realization solve). Databases are migrated automatically; models that do not set the parameters are unchanged.
+  online cells of that solve are empty. A level never adds detail. Every roll of a rolling solve uses the solve's
+  level, and a realization solve uses its parent solve's levels, whatever is set on the realization solve itself
+  (a warning names a different value set on a declared realization solve). Databases are migrated automatically;
+  models that do not set the parameters are unchanged.
 - **New: a solve can leave out system detail (`reduce_system_detail_method`, database version 79).** *reserves*
   leaves out the reserve requirements (and with them the units' reserve limits and the reserve ties of a
   stochastic solve), *inertia* the inertia limits, *non_synchronous* the non-synchronous share limits, and

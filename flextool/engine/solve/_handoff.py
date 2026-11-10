@@ -229,12 +229,15 @@ class SolveHandoff:
     # File equivalent: solve_data/ladder_cum_sim_hours.csv.
     cum_sim_hours: pl.DataFrame | None = None
 
-    # The producing solve's ``reduce_unit_detail_method`` (``"none"`` when not reduced).  Routed with the
-    # roll-forward carriers (``solve._carry_routing.CarryRouter.step_carriers``): a solve that keeps online
-    # variables and continues from a producer that left them out (``online*``) gets a ramp-carry flow without an
-    # online carry, and starts those units' ramp and commitment cold instead of raising
-    # (``preprocess._reduce_detail.cold_start_online_flow_carry``).  Not a carrier: not in ``_FIELDS``.
+    # The producing solve's ``reduce_unit_detail_method`` (``"none"`` when not reduced) and the processes it left
+    # without online variables (every online process under ``online*``, those without a use under ``integers*``;
+    # ``preprocess._reduce_detail.online_gone``).  Routed with the roll-forward carriers
+    # (``solve._carry_routing.CarryRouter.step_carriers``): a solve that keeps online variables and continues from
+    # this producer gets a ramp-carry flow without an online carry for those processes, and starts only their ramp
+    # and commitment cold instead of raising (``preprocess._reduce_detail.cold_start_online_flow_carry``).  Not
+    # carriers: not in ``_FIELDS``.
     unit_detail: str = "none"
+    online_left_out: frozenset = frozenset()
 
     _FIELDS = (
         "realized_invest", "realized_existing", "realized_commission", "divest_cumulative", "realized_divest",

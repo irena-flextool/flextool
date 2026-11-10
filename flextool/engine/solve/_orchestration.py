@@ -3173,7 +3173,6 @@ def _drive_cascade(
                 cold_start_online_flow_carry,
                 online_gone,
                 output_static_view,
-                unit_parts,
             )
             from flextool.engine.preprocess.params._ramp_links import check_online_ramp_carry
             _unit_level = self.state.solve.reduce_unit_detail_for(complete_solve_name)
@@ -3242,8 +3241,11 @@ def _drive_cascade(
             # variables (online*, or under integers* those of units
             # without a use) has no online carry: those online units start
             # their ramp and commitment cold (the carry routing is kept).
-            if unit_parts(getattr(self.state, "current_carry_unit_detail", "none") or "none"):
-                data, _cold = cold_start_online_flow_carry(data)
+            # Only the processes the producer left out: any other missing
+            # online carry is an inconsistency and the check below raises.
+            _carry_left_out = getattr(self.state, "current_carry_online_left_out", frozenset()) or frozenset()
+            if _carry_left_out:
+                data, _cold = cold_start_online_flow_carry(data, _carry_left_out)
                 if _cold:
                     _cold_msg = (
                         f"Solve {complete_solve_name}: ramp and commitment of {', '.join(_cold)} start cold "
@@ -4410,6 +4412,7 @@ def _drive_cascade(
             # The producer's unit level travels with the routed carriers
             # (a later solve that keeps online variables starts cold).
             handoff.unit_detail = _unit_level
+            handoff.online_left_out = _gone
             # Deposit so the next iteration's translator picks it up
             # AND we have it for the result dict.
             self.state.handoffs[complete_solve_name] = handoff

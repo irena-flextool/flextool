@@ -3235,9 +3235,9 @@ def _load_online(inp: Path, sd: Path, dt: pl.DataFrame,
                 sc_p = sc_frame.select("p", "d").unique()
                 pdt_online_lin = (p_odt.join(p_online_lin, on="p", how="inner")
                                        .join(sc_p, on=["p", "d"], how="inner"))
-            if p_online_int.height > 0:
-                pdt_online_int = (p_odt.join(p_online_int, on="p", how="inner")
-                                        .join(sc_p, on=["p", "d"], how="inner"))
+                if p_online_int.height > 0:
+                    pdt_online_int = (p_odt.join(p_online_int, on="p", how="inner")
+                                            .join(sc_p, on=["p", "d"], how="inner"))
 
     # Δ.12-drop: ``p_section`` produced authoritatively by
     # ``apply_derived_c.p_section_from_source`` when dt and classified
