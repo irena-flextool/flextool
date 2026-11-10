@@ -94,6 +94,29 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
   is a graded outcome and is saved. Any other error (no connection, a timeout, a busy service, a key, model or
   routing error) stops the run with exit code 1. That cell is not saved, and the message says to run again with
   `--resume`. The requests it sent still count towards the day's budget (`spent.json` in the results folder).
+- **What the provider said.** After FlexTool's own message the console shows the provider's own words: its HTTP
+  status, its error code and its message, for example
+  `Google Gemini said: 429 RESOURCE_EXHAUSTED — You exceeded your current quota. Quota exceeded for metric: …`,
+  then each different text of the cell's earlier failed attempts once (`earlier attempts (2): 503 UNAVAILABLE —
+  …`). The stop's entry in `spent.json` keeps it: `provider` (the stopping answer: `code`, FlexTool's error code
+  such as `rpm` or `busy`; `status`; `provider_code`; `message`) and `attempts` (every failed attempt of the cell
+  in the same form, the stopping one last), with the run's `pace` and `stream`. A saved turn keeps its failed
+  attempts too (`failed_attempts`; the turn's `error` has `provider`). The message is redacted (no key, no local
+  path) and at most 300 characters. An error that came with no provider answer (no connection, a timeout, a
+  stream that ended early) has `null` status, code and message.
+- **`--pace SECONDS`** keeps at least that many seconds between the starts of two requests of the run, on top of
+  FlexTool's own pacing (the spacing is the largest of the pace, the interval learned from rate limits, the
+  preset's seed and the provider's request-limit headers). The pace is not learned or kept for the chat. A
+  provider that limits the tokens per minute refuses requests that are each small enough: every request of a cell
+  carries about 5 000 tokens of instructions and tool descriptions, so a few back to back exceed the minute.
+  For Gemma via Google (preset `gemini`) use `--pace 20`.
+- **`--no-stream`** asks for whole answers instead of streamed ones (the OpenAI-compatible providers; refused for
+  Anthropic). The answer is read as the streamed one is: the same text (reasoning blocks such as Gemma's
+  `<thought>` removed), tool calls with their provider data (Gemini's thought signatures), usage and error
+  classification. Gemma via Google answered whole requests more reliably than streamed ones in manual tests.
+- **`--pace` and `--no-stream` are part of the folder's record, not of its identity**: `run.json` lists every
+  run's `pace` and `stream` (`runs`), each cell records the ones it was asked with (in `model`), and a `--resume`
+  may change them.
 - **`--resume`** skips finished cells and asks again the cells that stopped with such an error. It also runs a
   cell recorded as not applicable once its setting fits. A saved cell that is asked again stays in the folder
   until its new record replaces it, so a stop on the way never leaves the cell missing. `run.json` records the

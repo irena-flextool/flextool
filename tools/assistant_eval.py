@@ -118,12 +118,19 @@ def accept_route(preset: Any, base_url: str, route: Any, accepted: set, *, accep
 class CellStopped(Exception):
     """A turn of the cell ended in an error that is not the model's behaviour (connection, timeout, busy, key,
     model or routing, a fault): the cell is not saved and ``--resume`` asks it again.  *requests_sent*: the
-    requests that reached the provider before the stop (they count against the daily budget)."""
+    requests that reached the provider before the stop (they count against the daily budget).  *provider*: what
+    the provider said in the stopping answer (:func:`failure_json`'s fields, ``None`` when no answer said
+    anything); *attempts*: every failed attempt of the cell (:func:`failure_json`), the stopping one last;
+    *said*: the console lines of what the provider said."""
 
-    def __init__(self, text: str, requests_sent: int = 0, code: str = "") -> None:
+    def __init__(self, text: str, requests_sent: int = 0, code: str = "", *, provider: dict | None = None,
+                 attempts: Sequence[Mapping[str, Any]] = (), said: Sequence[str] = ()) -> None:
         super().__init__(text)
         self.requests_sent = requests_sent
         self.code = code
+        self.provider = provider
+        self.attempts = [dict(a) for a in attempts]
+        self.said = list(said)
 
 
 class DailyBudgetUsed(CellStopped):
@@ -377,6 +384,19 @@ def _plan_matrix(out: Path, questions: Sequence[str], levels: Sequence[str], rep
     write_json(run_file, run)
 
 
+#: run.json's log of how each run sent its requests: ``[{"started", "pace", "stream"}]`` (``run --pace``,
+#: ``--no-stream``).  Part of the folder's record, not of its identity: a ``--resume`` may change them.  A folder
+#: from before has none (it was paced by the pacing alone, and streamed).
+RUNS_KEY = "runs"
+
+
+def _log_run(out: Path, sending: Mapping[str, Any]) -> None:
+    run_file = Path(out) / RUN_FILE
+    run = read_json(run_file)
+    run[RUNS_KEY] = [*(run.get(RUNS_KEY) or []), {"started": iso(utc_now()), **sending}]
+    write_json(run_file, run)
+
+
 def _plan_automatic(out: Path, level: str, asked: bool) -> None:
     run_file = Path(out) / RUN_FILE
     run = read_json(run_file)
@@ -595,6 +615,33 @@ class Setting:
     not_applicable: str | None = None
 
 
+def failure_json(err: Any, red: Callable[[str], str]) -> dict[str, Any]:
+    """One failed request attempt for spent.json and the records: FlexTool's code, and the HTTP status, the
+    provider's error code and its message (redacted, at most ``MAX_PROVIDER_SAID`` characters) when the provider
+    answered with an error; ``None`` for each the provider did not say."""
+    said = err.provider_said
+    return {"code": err.code, "status": said.status if said else None, "provider_code": said.code if said else None,
+            "message": red(said.message) if said else None}
+
+
+def said_lines(final: Any, failed: Sequence[Any], red: Callable[[str], str]) -> list[str]:
+    """The console lines after FlexTool's message: what the provider said in the stopping answer, then what it
+    said in the earlier failed attempts of the cell (each different text once, with how often)."""
+    from flextool.assistant.llm_errors import provider_said_line
+
+    lines = []
+    line = provider_said_line(final) if final is not None else None
+    if line:
+        lines.append(red(line))
+    earlier: dict[str, int] = {}
+    for err in failed:
+        if err is not final and err.provider_said is not None:
+            text = red(err.provider_said.text())
+            earlier[text] = earlier.get(text, 0) + 1
+    lines += [f"  earlier attempt{'s' if n > 1 else ''} ({n}): {text}" for text, n in earlier.items()]
+    return lines
+
+
 def _usage_json(usage: Any) -> dict[str, Any]:
     return dataclasses.asdict(usage) if usage is not None else {}
 
@@ -623,8 +670,10 @@ def _prompt_ratio(requests: Sequence[Mapping[str, Any]]) -> dict[str, float | No
 def run_cell(project: Path, qset: scoring.QuestionSet, question: scoring.Question, setting: Setting, *,
              backend: Any, preset: Any, ledger: Any, say: Callable[[str], None]) -> dict[str, Any]:
     """Ask *question* in a fresh conversation (S01: one conversation for its turns) at *setting*; the turns of
-    the record, redacted.  Raises :class:`CellStopped` when a turn ends in an error that is not a graded stop
-    (:data:`GRADED_STOPS`), :class:`DailyBudgetUsed` when the provider says the quota is used."""
+    the record, redacted, each with its failed request attempts (``failed_attempts``, :func:`failure_json`).
+    Raises :class:`CellStopped` when a turn ends in an error that is not a graded stop (:data:`GRADED_STOPS`),
+    :class:`DailyBudgetUsed` when the provider says the quota is used; either carries every failed attempt of
+    the cell and what the provider said."""
     from flextool.assistant.context import make_context
     from flextool.assistant.llm_adapter import Notice
     from flextool.assistant.llm_errors import message_for
@@ -638,9 +687,10 @@ def run_cell(project: Path, qset: scoring.QuestionSet, question: scoring.Questio
     conversation = Conversation(id=new_id(), project_key="calibration", project_name=ctx.project_name,
                                 project_path=ctx.project_path, created=now, updated=now, origin=backend.origin,
                                 level=setting.level)
+    failed: list[Any] = []              # every failed request attempt of the cell, in order
     session = Session(ctx, backend, preset, conversation=conversation, caps=TurnCaps.from_budget(setting.budget),
                       tier=setting.level, store=None, ledger=ledger, facts=setting.facts, route=setting.route,
-                      budget=setting.budget)
+                      budget=setting.budget, on_attempt_error=failed.append)
     loaded = getattr(setting.facts, "loaded_context", None)
     local = setting.route.kind in ("loopback", "local_network") and setting.route.forwarded_to is None
     red = ctx.redact
@@ -653,12 +703,18 @@ def run_cell(project: Path, qset: scoring.QuestionSet, question: scoring.Questio
                 notices.append(event.text)
 
         started = time.monotonic()
+        before = len(failed)
         result = session.run_turn(text, on_event, threading.Event())
         seconds = round(time.monotonic() - started, 2)
         if result.error is not None and result.error.code not in GRADED_STOPS:
             sent = sum(len(t["usage"]) for t in turns) + len(result.usage)
             stop = DailyBudgetUsed if result.error.code == "quota" else CellStopped
-            raise stop(message_for(result.error, "terminal"), sent, result.error.code)
+            attempts = [failure_json(e, red) for e in failed]
+            if not any(e is result.error for e in failed):
+                attempts.append(failure_json(result.error, red))     # an error of no request attempt
+            raise stop(message_for(result.error, "terminal"), sent, result.error.code,
+                       provider=failure_json(result.error, red) if result.error.provider_said else None,
+                       attempts=attempts, said=said_lines(result.error, failed, red))
         messages = [m for m in conversation.messages if m.turn == number]
         results = {m.tool_call_id: m for m in messages if m.role == "tool"}
         calls = []
@@ -676,8 +732,10 @@ def run_cell(project: Path, qset: scoring.QuestionSet, question: scoring.Questio
             "user": red(text), "answer": red(result.text), "tool_calls": calls, "rounds": result.rounds,
             "calls": result.calls, "continuations": result.continuations, "stop": "end" if result.ok else (result.error.code if result.error else "error"),
             "notices": [red(n) for n in notices],
-            "error": ({"code": result.error.code, "message": red(message_for(result.error, "terminal"))}
+            "error": ({"code": result.error.code, "message": red(message_for(result.error, "terminal")),
+                       "provider": (failure_json(result.error, red) if result.error.provider_said else None)}
                       if result.error is not None else None),
+            "failed_attempts": [failure_json(e, red) for e in failed[before:]],
             "limit_hit": any(m.role == "user" and m.text == SESSION_MESSAGES["limit"] for m in messages),
             "fit_compactions": notices.count(SESSION_MESSAGES["fit"]),
             "truncated": truncated, "seconds": seconds,
@@ -690,7 +748,7 @@ def run_cell(project: Path, qset: scoring.QuestionSet, question: scoring.Questio
 
 def _record(question: scoring.Question, setting: Setting, repeat: int, *, preset: Any, identity: Mapping[str, Any],
             knobs_sent: Mapping[str, Any], free_tier: bool, git: Mapping[str, Any],
-            turns: list[dict[str, Any]] | None) -> dict[str, Any]:
+            turns: list[dict[str, Any]] | None, sending: Mapping[str, Any]) -> dict[str, Any]:
     b = setting.budget
     choice = setting.choice
     requests_sent = sum(len(t["usage"]) for t in turns or [])
@@ -706,7 +764,7 @@ def _record(question: scoring.Question, setting: Setting, repeat: int, *, preset
                   "window": b.window if b else None, "window_source": b.window_source if b else None,
                   "free_tier": free_tier, "ollama": setting.ollama, "cpu_offload": offload,
                   "knobs_sent": dict(knobs_sent),
-                  "knobs_relaxed": bool(identity.get("knobs_relaxed"))},
+                  "knobs_relaxed": bool(identity.get("knobs_relaxed")), **sending},
         "not_applicable": setting.not_applicable,
         "budget": ({"caps": {"max_rounds": b.level.max_rounds, "max_calls_per_turn": b.level.max_calls_per_turn,
                              "max_calls_per_round": b.level.max_calls_per_round,
@@ -802,6 +860,7 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     from flextool.assistant import budget, endpoint, net, providers
     from flextool.assistant.chat_cli import FREE_TIER_FLAG
     from flextool.assistant.llm_adapter import Connection
+    from flextool.assistant.pacing import PROCESS_PACER, pace_key
     from flextool.assistant.settings import DEFAULT_KNOBS
     from flextool.assistant.usage import Ledger
 
@@ -828,6 +887,10 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
         raise Refused("--relax-data-collection is for OpenRouter only.")
     if args.repeat < 1:
         raise Refused("--repeat must be at least 1.")
+    if not (math.isfinite(args.pace) and args.pace >= 0):
+        raise Refused("--pace is the least number of seconds between two requests: 0 or more.")
+    if args.no_stream and preset.backend != "openai":
+        raise Refused(f"--no-stream is for the OpenAI-compatible providers; {preset.label} answers streamed.")
     try:
         base_url = net.check_base_url(args.base_url or preset.base_url or "")
     except net.BaseUrlRefused as exc:
@@ -849,6 +912,10 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                  again="--resume --accept-data-notice" if args.resume else "--accept-data-notice", what=what)
     _open_results(out, identity, args.resume)
     _plan_matrix(out, wanted, levels, args.repeat)
+    # How the requests are sent: part of the folder's record (each run in run.json, each cell and stop with its
+    # own), not of its identity, so a --resume may change it.
+    sending = {"pace": args.pace, "stream": not args.no_stream}
+    _log_run(out, sending)
 
     key, source = _key_or_refuse(preset, base_url, args.model, endpoint.route_for(preset, base_url, model=args.model))
     knobs = dict(DEFAULT_KNOBS)
@@ -857,7 +924,8 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     knobs_sent = providers.request_fields(preset, knobs)
 
     def conn_for(model: str, route: Any) -> Connection:
-        return Connection(base_url=base_url, model=model, api_key=key, key_source=source, knobs=knobs, route=route)
+        return Connection(base_url=base_url, model=model, api_key=key, key_source=source, knobs=knobs, route=route,
+                          stream=not args.no_stream)
 
     daily = daily_budget(preset.id, args.model, args.max_requests_per_day)
     ledger = CalibrationLedger(Ledger())
@@ -906,7 +974,7 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                     continue                       # done, or still not applicable (kept with its recorded tags)
                 if setting.not_applicable:
                     record = _record(question, setting, repeat, preset=preset, identity=identity,
-                                     knobs_sent=knobs_sent, free_tier=free, git=git, turns=None)
+                                     knobs_sent=knobs_sent, free_tier=free, git=git, turns=None, sending=sending)
                     write_json(cell_path(out, cid), record)
                     cells[cid] = record
                     say(f"{cid}: not applicable ({setting.not_applicable})")
@@ -920,12 +988,19 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 # off, or now applicable) stays on disk until its new record replaces it: a stop on the way
                 # leaves the folder with the old record, never without the cell.
                 backend = backend_factory(preset, conn_for(setting.model, setting.route))
+                # --pace: the least gap between request starts, on top of the pacing's own (the pacer the session
+                # uses: the backend's when it paces itself, else the process's).
+                pacer = backend.pacer if getattr(type(backend), "paces", False) else PROCESS_PACER
+                pacer.set_floor(pace_key(backend.origin), args.pace)
                 try:
                     turns = run_cell(project, qset, question, setting, backend=backend, preset=preset,
                                      ledger=ledger, say=say)["turns"]
                 except CellStopped as exc:
-                    spend({"ran_at": iso(utc_now()), "requests": exc.requests_sent, "cell": cid, "code": exc.code})
+                    spend({"ran_at": iso(utc_now()), "requests": exc.requests_sent, "cell": cid, "code": exc.code,
+                           "provider": exc.provider, "attempts": exc.attempts, **sending})
                     say(str(exc))
+                    for line in exc.said:
+                        say(line)
                     if isinstance(exc, DailyBudgetUsed):
                         say(done)
                         return 0
@@ -935,7 +1010,7 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 finally:
                     backend.close()
                 record = _record(question, setting, repeat, preset=preset, identity=identity,
-                                 knobs_sent=knobs_sent, free_tier=free, git=git, turns=turns)
+                                 knobs_sent=knobs_sent, free_tier=free, git=git, turns=turns, sending=sending)
                 if saved is not None and int(saved.get("requests_sent") or 0):
                     # The replaced record's requests stay counted for their day (written first: a crash
                     # between the two counts them twice, never not at all).
@@ -1968,6 +2043,12 @@ def build_parser() -> argparse.ArgumentParser:
                         "OpenRouter :free model, none otherwise)")
     p.add_argument("--questions", help="comma-separated question ids (default: all)")
     p.add_argument("--repeat", type=int, default=1)
+    p.add_argument("--pace", type=float, default=0.0, metavar="SECONDS",
+                   help="at least this many seconds between two request starts in this run, on top of FlexTool's "
+                        "own pacing (e.g. 20 for Gemma via Google); recorded, may change between resumes")
+    p.add_argument("--no-stream", action="store_true",
+                   help="ask for whole answers instead of streamed ones (OpenAI-compatible providers); recorded, "
+                        "may change between resumes")
     p.add_argument("--accept-data-notice", action="store_true",
                    help="accept the provider's data notice for this run only (only for a grounding project)")
     p.add_argument("--resume", action="store_true", help="continue a results folder")

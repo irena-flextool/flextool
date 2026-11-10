@@ -969,3 +969,160 @@ def test_skip_of_an_unknown_cell_is_refused(evaluator, grounding: Path, tmp_path
                harness=harness, model=PAID) == 2
     assert "No cell G03__smal__r1 in out (closest: G03__small__r1" in capsys.readouterr().err
     assert (out / evaluator.RUN_FILE).read_bytes() == before
+
+
+# --- calibration fixes 2026-11-10: the provider's own words, --pace, --no-stream --------------------------------
+GOOGLE_QUOTA = ("You exceeded your current quota. Quota exceeded for metric: generativelanguage.googleapis.com/"
+                "generate_content_free_tier_input_token_count, limit: 15000, model: gemma-4-31b.")
+GOOGLE_BUSY = "The model is overloaded. Please try again later."
+
+
+def _google(status: int, name: str, message: str, headers: dict | None = None):
+    """The error Google's endpoint answers, classified as the backend does (no wait before its retry)."""
+    from flextool.assistant import llm_errors
+
+    body = [{"error": {"code": status, "message": message, "status": name,
+                       "details": [{"@type": "type.googleapis.com/google.rpc.RetryInfo", "retryDelay": "0s"}]}}]
+    return llm_errors.classify_status(status, body, headers, llm_errors.ErrorContext(
+        preset_id="gemini", provider="Google Gemini", host="generativelanguage.googleapis.com", secret=SECRET_KEY))
+
+
+SECRET_KEY = "AIzaSy-test-key-0123456789"
+
+
+def test_a_stop_keeps_what_the_provider_said(evaluator, grounding: Path, tmp_path: Path,
+                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    """Calibration 2026-11-10: a cell stopped by Google's errors keeps, for every failed attempt, the HTTP status,
+    Google's status name and its message in spent.json, and the console shows them after FlexTool's message.  A
+    429 (retried once), then a 503 that stops the cell."""
+    import functools
+
+    from flextool.assistant import session
+    from flextool.assistant.llm_retry import RetryPolicy
+
+    monkeypatch.setattr(session, "RetryPolicy", functools.partial(RetryPolicy, max_retries=1))
+    out = tmp_path / "out"
+    said: list[str] = []
+    harness = Scripted([[_google(429, "RESOURCE_EXHAUSTED", GOOGLE_QUOTA + f" key {SECRET_KEY}"),
+                         _google(503, "UNAVAILABLE", GOOGLE_BUSY, {"retry-after": "0"})]])
+    args = evaluator.build_parser().parse_args(
+        ["run", "--project", str(grounding), "--provider", "openrouter", "--model", PAID, "--out", str(out),
+         "--accept-data-notice", "--questions", "G01", "--levels", "basic"])
+    assert evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
+                             say=said.append, allow_unsolved=True) == 1
+    quota = GOOGLE_QUOTA + " key <key>"
+    assert said[-4:-1] == ["Google Gemini is still overloaded. Ask again in a moment.",
+                           f"Google Gemini said: 503 UNAVAILABLE — {GOOGLE_BUSY}",
+                           f"  earlier attempt (1): 429 RESOURCE_EXHAUSTED — {quota}"]
+    spent = json.loads((out / evaluator.SPENT_FILE).read_text(encoding="utf-8"))
+    busy = {"code": "busy", "status": 503, "provider_code": "UNAVAILABLE", "message": GOOGLE_BUSY}
+    assert [{k: e[k] for k in ("cell", "requests", "code", "provider", "attempts")} for e in spent] == [
+        {"cell": "G01__small__r1", "requests": 0, "code": "busy", "provider": busy,
+         "attempts": [{"code": "rpm", "status": 429, "provider_code": "RESOURCE_EXHAUSTED", "message": quota},
+                      busy]}]
+    assert SECRET_KEY not in (out / evaluator.SPENT_FILE).read_text(encoding="utf-8")
+
+
+def test_a_saved_turn_keeps_its_failed_attempts(evaluator, grounding: Path, tmp_path: Path, no_waits) -> None:
+    """A connection error retried once, then the answer: the saved turn names the failed attempt (no provider
+    answer, so no status or message)."""
+    out = tmp_path / "out"
+    harness = Scripted([[_error("connection"), _answer()]])
+    assert run(evaluator, grounding, out, "--questions", "G01", "--levels", "basic", harness=harness,
+               model=PAID) == 0
+    turn = evaluator.read_cells(out)["G01__small__r1"]["turns"][0]
+    assert turn["stop"] == "end"
+    assert turn["failed_attempts"] == [{"code": "connection", "status": None, "provider_code": None,
+                                        "message": None}]
+
+
+class Timed(Harness):
+    """Plain answers; the time of each request and the connection of each backend."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.times: list[float] = []
+        self.conns: list = []
+
+    def factory(self, preset, conn):
+        import time
+
+        backend = super().factory(preset, conn)
+        self.conns.append(conn)
+        stream = backend.stream
+
+        def timed(req, on_event, cancel):
+            self.times.append(time.monotonic())
+            return stream(req, on_event, cancel)
+
+        backend.stream = timed
+        return backend
+
+
+@pytest.fixture
+def no_floor():
+    from flextool.assistant.pacing import PROCESS_PACER
+
+    yield
+    for state in PROCESS_PACER._states.values():
+        state.floor = None
+
+
+def test_pace_spaces_the_requests_and_may_change_on_resume(evaluator, grounding: Path, tmp_path: Path,
+                                                           no_floor) -> None:
+    """``run --pace 0.6``: no two requests of the run start closer than 0.6 s (the pacing alone would send them
+    back to back).  The pace is recorded in run.json (each run) and in each cell; a --resume with another pace is
+    not refused."""
+    out = tmp_path / "out"
+    harness = Timed()
+    assert run(evaluator, grounding, out, "--questions", "G01,G03,G04", "--levels", "basic", "--pace", "0.6",
+               harness=harness, model=PAID) == 0
+    gaps = [b - a for a, b in zip(harness.times, harness.times[1:])]
+    assert len(gaps) == 2 and min(gaps) >= 0.6 - 0.01
+    cells = evaluator.read_cells(out)
+    assert {c["model"]["pace"] for c in cells.values()} == {0.6}
+    assert {c["model"]["stream"] for c in cells.values()} == {True}
+    assert run(evaluator, grounding, out, "--resume", "--questions", "G01,G05", "--levels", "basic",
+               harness=harness, model=PAID) == 0
+    assert evaluator.read_cells(out)["G05__small__r1"]["model"]["pace"] == 0.0
+    runs = json.loads((out / evaluator.RUN_FILE).read_text(encoding="utf-8"))[evaluator.RUNS_KEY]
+    assert [(r["pace"], r["stream"]) for r in runs] == [(0.6, True), (0.0, True)]
+
+
+def test_pace_is_a_floor_over_the_pacing():
+    """The floor lengthens the spacing of request starts over the learned interval and the seed and leaves the
+    learned interval as it is."""
+    from flextool.assistant.pacing import Pacer
+
+    p = Pacer(clock=lambda: 0.0)
+    p.prepare("k", 1.1)
+    p.set_floor("k", 20.0)
+    assert p.interval("k") == 20.0
+    assert p.rate_limited("k", None) == pytest.approx(2.2)          # learned from the seed, not the floor
+    assert p.interval("k") == 20.0
+    p.set_floor("k", 0)
+    assert p.interval("k") == pytest.approx(2.2)
+
+
+def test_no_stream_asks_for_whole_answers(evaluator, grounding: Path, tmp_path: Path, capsys) -> None:
+    """``run --no-stream``: every connection asks for whole answers, recorded per cell and run; a --resume may
+    stream again.  Refused for a provider whose backend has no whole answers (nothing is written)."""
+    out = tmp_path / "out"
+    harness = Timed()
+    assert run(evaluator, grounding, out, "--questions", "G01", "--levels", "basic", "--no-stream",
+               harness=harness, model=PAID) == 0
+    assert harness.conns and not any(c.stream for c in harness.conns)
+    assert evaluator.read_cells(out)["G01__small__r1"]["model"]["stream"] is False
+    assert run(evaluator, grounding, out, "--resume", "--questions", "G03", "--levels", "basic",
+               harness=harness, model=PAID) == 0
+    assert harness.conns[-1].stream is True
+    runs = json.loads((out / evaluator.RUN_FILE).read_text(encoding="utf-8"))[evaluator.RUNS_KEY]
+    assert [r["stream"] for r in runs] == [False, True]
+    capsys.readouterr()
+    args = evaluator.build_parser().parse_args(
+        ["run", "--project", str(grounding), "--provider", "anthropic", "--model", "claude-x", "--out",
+         str(tmp_path / "other"), "--accept-data-notice", "--no-stream"])
+    assert evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
+                             say=lambda _t: None, allow_unsolved=True) == 2
+    assert "--no-stream is for the OpenAI-compatible providers" in capsys.readouterr().err
+    assert not (tmp_path / "other").exists()
