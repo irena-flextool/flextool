@@ -114,6 +114,12 @@ def test_timings_csv_exists_and_has_expected_schema(
     assert (df["phase"].astype(str).str.len() > 0).all(), (
         "every row must carry a phase name"
     )
+    # One ``read_input`` row (DB read + input preparation + run set-up),
+    # recorded before the first solve's rows.
+    read_input = df[df["phase"] == "read_input"]
+    assert len(read_input) == 1, f"expected one read_input row, got {len(read_input)}"
+    assert read_input["seconds"].iloc[0] > 0
+    assert read_input.index[0] < df.index[df["phase"] == "preprocessing_global"][0]
 
 
 

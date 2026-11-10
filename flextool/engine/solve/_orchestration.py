@@ -5024,6 +5024,12 @@ def run_chain_from_db(
     from flextool.engine.input._axis_enums import reset_global_axis_enums, set_global_axis_enums
     _axis_enums_token = set_global_axis_enums(cascade_input_provider.axis_enums)
     try:
+        # ``read_input`` timing row: the DB read, the input preparation and
+        # the run set-up (solve and timeline configuration, runner) up to the
+        # first solve.  The runner built in ``_runner_factory`` below makes
+        # the recorder that starts timings.csv afresh, so the row is recorded
+        # there, once the runner exists.
+        _t_read_input_start = time.perf_counter()
         write_workdir_inputs(
             db_url,
             scenario_name,
@@ -5055,6 +5061,13 @@ def run_chain_from_db(
                 run_options=run_options,
             )
             runner.state.logger.setLevel(logging.ERROR)
+            _recorder = runner.state.timing_recorder
+            if _recorder is not None:
+                _recorder.record(
+                    "read_input",
+                    seconds=time.perf_counter() - _t_read_input_start,
+                    t_start=_t_read_input_start,
+                )
             return runner
 
         # Build a minimal native RunnerState so callers can introspect

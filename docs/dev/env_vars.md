@@ -76,7 +76,7 @@ All off by default, with no overhead when unset.
 | `FLEXTOOL_MEM_SAMPLER` | unset (off) | `1` / `true` / `yes` | Background thread that samples RSS at a fixed interval; catches peaks between checkpoints. |
 | `FLEXTOOL_MEM_SAMPLER_LOG` | `/tmp/flextool_mem_sampler_<pid>.log` | path | Sampler output. |
 | `FLEXTOOL_MEM_SAMPLER_INTERVAL_MS` | `100` (20–10000) | milliseconds | Sampler interval. |
-| `FLEXTOOL_PHASE_TIMING` | unset (off) | `1` | Per-iteration rows (`lp_build` / `solve` / `handoff`, `warm_used`) in `timings.csv`. |
+| `FLEXTOOL_PHASE_TIMING` | unset (off) | `1` | Per-iteration rows (`preprocessing` / `lp_build` / `solve` / `handoff`, `warm_used`) in `timings.csv`. `warm_used` is a flag in the `seconds` column (1 = warm start used), not a time. Always-on rows: `read_input`, `preprocessing_global`, `roll_setup`, `all_solves`, `write_outputs/*`, `total`. |
 | `FLEXTOOL_PHASE_PROFILE` | unset (off) | `1` | One epoch-stamped RSS line per orchestration phase on stderr (aligns with the sampler log). |
 | `FLEXTOOL_PYRAMID_PROFILE` | unset (off) | `1` | One `[pyramid profile]` RSS line per preprocessing emit on stderr. |
 | `FLEXTOOL_AUTOSCALE_PROFILE` | unset (off) | `1` | RSS markers around the autoscale steps. |
