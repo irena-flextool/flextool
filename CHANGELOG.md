@@ -106,7 +106,8 @@
   message and exit code 2. Runs started at the same time with `--migrate` on one database migrate it once (a lock on
   `<database>.migrate.lock`); the others print one "Waiting for another migration" line, wait and then run. Every
   in-place migration takes the same lock: `flextool-migrate-database`, the Toolbox **Migrate database** tool, the
-  FlexTool window's refresh and `execute_flextool_workflow.py`. On Windows the wait is bounded (10 minutes, set
+  FlexTool window's refresh and `execute_flextool_workflow.py`. A database that is already current does not wait for the
+  lock and gets no lock file. On Windows the wait is bounded (10 minutes, set
   `FLEXTOOL_MIGRATION_LOCK_TIMEOUT` in seconds); a file system without file locks stops the migration with a message.
 - **Behaviour change: the model run refuses an input database that is not at the current FlexTool version.**
   Before, only databases below version 25 were refused, so an unmigrated database ran old data under the new

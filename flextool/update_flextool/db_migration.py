@@ -114,14 +114,60 @@ def migrate_database(
         logging.critical("No sqlite file at " + database_path)
         exit(-1)
 
-    # Every in-place migration of a local file holds ``<db>.migrate.lock``; the version is read again under it.
+    # Every in-place migration of a local file holds ``<db>.migrate.lock``; the version is read again under it.  A
+    # file that reads as current (read-only) needs no migration: it neither waits for the lock nor creates the file.
     path = sqlite_path_from(database_path)
+    if proceed is True and path is not None and path.is_file():
+        current = _current_version_ro(path, up_to)
+        if current is not None:
+            print(database_path + " already up-to-date at version " + str(current))
+            return
     with migration_lock(path) if path is not None and path.is_file() else contextlib.nullcontext():
         if proceed is None:
             proceed, frozen = _frozen_check(database_path, allow_frozen)
             if proceed is False:
                 return
         _migrate_open(database_path, mapping_name, up_to, frozen, progress_callback, cancel_check)
+
+
+def _current_version_ro(path, up_to: int | None) -> int | None:
+    """The data version of *path* when it has nothing to migrate or refresh (read read-only), else ``None``.
+
+    Nothing to do means: the current data version (and not below *up_to*), a current SpineDB schema revision and no
+    superseded unit-count description (:func:`_refresh_unit_count_texts` would rewrite one).  Anything that cannot be
+    read gives ``None``: it is decided under the lock.
+    """
+    from flextool.update_flextool.frozen import read_db_version_ro, schema_outdated_ro
+
+    version = read_db_version_ro(path)
+    if version != FLEXTOOL_DB_VERSION or (up_to is not None and up_to > version):
+        return None
+    if schema_outdated_ro(path) or _unit_count_texts_stale_ro(path):
+        return None
+    return version
+
+
+def _unit_count_texts_stale_ro(path) -> bool:
+    """Whether *path* carries a superseded ``existing`` / ``virtual_unitsize`` description (read-only; ``True`` when
+    it cannot be read)."""
+    import sqlite3
+
+    from flextool.update_flextool.frozen import _connect_ro
+
+    try:
+        con = _connect_ro(path)
+    except sqlite3.Error:
+        return True
+    try:
+        rows = con.execute(
+            "SELECT ec.name, pd.name, pd.description FROM parameter_definition pd "
+            "JOIN entity_class ec ON pd.entity_class_id = ec.id WHERE pd.name IN ('existing', 'virtual_unitsize')"
+        ).fetchall()
+    except sqlite3.Error:
+        return True
+    finally:
+        con.close()
+    return any(desc in _SUPERSEDED_UNIT_COUNT_TEXTS.get((cls, name), ()) for cls, name, desc in rows)
 
 
 def _frozen_check(database_path, allow_frozen: bool):

@@ -15,6 +15,7 @@ than this FlexTool raises :class:`~flextool.update_flextool.frozen.FrozenDatabas
 from __future__ import annotations
 
 import errno
+import importlib.util
 import os
 import threading
 from collections.abc import Iterator
@@ -31,6 +32,8 @@ TIMEOUT_ENV = "FLEXTOOL_MIGRATION_LOCK_TIMEOUT"
 DEFAULT_TIMEOUT_S = 600.0
 
 _held = threading.local()
+#: Whether the lock is polled (Windows, no ``fcntl``); only then is :data:`TIMEOUT_ENV` read.
+_POLLED = importlib.util.find_spec("fcntl") is None
 
 
 def migration_lock_path(path: Path) -> Path:
@@ -39,7 +42,11 @@ def migration_lock_path(path: Path) -> Path:
 
 
 def lock_timeout() -> float:
-    """The wait for the migration lock on Windows, seconds (:data:`TIMEOUT_ENV`, default 10 minutes)."""
+    """The wait for the migration lock on Windows, seconds (:data:`TIMEOUT_ENV`, default 10 minutes).
+
+    Read only where the lock is polled (Windows): on POSIX the kernel waits and the variable is not read, so a bad
+    value there does not stop a migration.
+    """
     text = os.environ.get(TIMEOUT_ENV, "").strip()
     if not text:
         return DEFAULT_TIMEOUT_S
@@ -69,7 +76,8 @@ def migration_lock(path: Path) -> Iterator[None]:
     def _wait() -> None:
         print(f"  Waiting for another migration of {key} ...", flush=True)
 
-    with exclusive_file_lock(migration_lock_path(Path(key)), timeout=lock_timeout(), on_wait=_wait):
+    timeout = lock_timeout() if _POLLED else None
+    with exclusive_file_lock(migration_lock_path(Path(key)), timeout=timeout, on_wait=_wait):
         held.add(key)
         try:
             yield

@@ -206,3 +206,49 @@ def test_a_file_system_without_locks_stops_with_a_message(tmp_path: Path, monkey
         _migrate_input_or_exit(f"sqlite:///{db}")
     assert excinfo.value.code == 1
     assert "The input database was not migrated: Cannot lock" in capsys.readouterr().err
+
+
+@pytest.fixture(scope="module")
+def current_db_template(tmp_path_factory: pytest.TempPathFactory, old_db_template: Path) -> Path:
+    path = tmp_path_factory.mktemp("run_migrate_current") / "current.sqlite"
+    shutil.copy2(old_db_template, path)
+    migrate_database(str(path))
+    migration_lock_path(path).unlink(missing_ok=True)
+    assert fz.is_current_ro(path)
+    return path
+
+
+def test_a_current_database_creates_no_lock_file(tmp_path: Path, current_db_template: Path,
+                                                capsys: pytest.CaptureFixture[str]) -> None:
+    from flextool.gui.db_version_check import check_and_upgrade_database
+
+    db = _copy(current_db_template, tmp_path / "db").resolve()
+    digest = fz.sha256_of(db)
+    migrate_database(str(db))
+    assert "already up-to-date at version" in capsys.readouterr().out
+    assert migrate_before_run(str(db)) is None
+    check_and_upgrade_database(db)
+    assert not migration_lock_path(db).exists()
+    assert fz.sha256_of(db) == digest
+
+
+def test_a_current_database_does_not_wait_for_a_held_lock(tmp_path: Path, current_db_template: Path,
+                                                          capsys: pytest.CaptureFixture[str]) -> None:
+    db = _copy(current_db_template, tmp_path / "db").resolve()
+    with exclusive_file_lock(migration_lock_path(db)):
+        for target in (migrate_database, migrate_before_run):
+            thread, result = _start(target, str(db))
+            thread.join(30)
+            assert not thread.is_alive() and result == [None]
+    assert WAITING not in capsys.readouterr().out
+
+
+def test_a_bad_lock_timeout_does_not_stop_a_posix_migration(tmp_path: Path, old_db_template: Path,
+                                                            monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("fcntl")
+    from flextool.update_flextool.migrate_before_run import TIMEOUT_ENV
+
+    monkeypatch.setenv(TIMEOUT_ENV, "ten minutes")
+    db = _copy(old_db_template, tmp_path / "db")
+    assert migrate_before_run(str(db)) == OLD
+    assert fz.read_db_version_ro(db) == FLEXTOOL_DB_VERSION
