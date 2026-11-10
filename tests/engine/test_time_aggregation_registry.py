@@ -317,7 +317,7 @@ def test_behaviour_change_notice_names_the_changed_entities(capsys) -> None:
         bc.start_run({})
         aggregate_to_solve_steps(frame, Agg.MEAN, ["name"], base, keys=key)
         assert capsys.readouterr().out == ""
-        bc.start_run({"solve_step_series_combined": "83"})
+        bc.start_run({"solve_step_series_combined": "79"})
         aggregate_to_solve_steps(frame, Agg.MEAN, ["name"], base, keys=key, report_changes=False)
         assert capsys.readouterr().out == ""
         aggregate_to_solve_steps(frame, Agg.MEAN, ["name"], base, keys=key)
@@ -551,7 +551,7 @@ def test_notice_names_a_step_whose_first_hour_is_missing(capsys) -> None:
 
     base = _base([("h1", "h1", 1.0), ("h2", "h1", 1.0)])
     try:
-        bc.start_run({"solve_step_series_combined": "83"})
+        bc.start_run({"solve_step_series_combined": "79"})
         aggregate_to_solve_steps(pl.DataFrame({"name": ["u"], "t": ["h2"], "value": [0.6]}), Agg.MEAN, ["name"],
                                  base, keys=("unit", "availability"), notes=set())
         assert "Affected parameters: unit.availability of u." in capsys.readouterr().out

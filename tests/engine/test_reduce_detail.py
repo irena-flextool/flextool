@@ -1,4 +1,4 @@
-"""Solve-level unit-detail reduction (``solve.reduce_unit_detail_method``, database version 81).
+"""Solve-level unit-detail reduction (``solve.reduce_unit_detail_method``, database version 79).
 
 A level only removes or relaxes detail that the cascade produced from the entity data
 (``preprocess._reduce_detail.apply_reduce_detail``, run on each sub-solve right after ``load_flextool``).
@@ -131,7 +131,7 @@ def _families(pb) -> tuple[set[str], set[str]]:
 
 
 def test_engine_values_are_the_schema_value_lists() -> None:
-    """The resolver accepts exactly the v81 value lists, in order."""
+    """The resolver accepts exactly the v79 value lists, in order."""
     from flextool._resources import package_data_path
 
     with open(package_data_path("schemas/spinedb_schema.json"), encoding="utf-8") as fh:

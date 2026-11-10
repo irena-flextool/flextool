@@ -34,7 +34,7 @@ import spinedb_api as api
 from flextool.engine.input._solve_state import FlexToolConfigError
 
 #: The values of ``solve.reduce_unit_detail_method`` / ``solve.reduce_system_detail_method`` the engine accepts:
-#: the v81 value lists ``reduce_unit_detail_methods`` / ``reduce_system_detail_methods`` (pinned against the schema
+#: the v79 value lists ``reduce_unit_detail_methods`` / ``reduce_system_detail_methods`` (pinned against the schema
 #: by tests/engine/test_reduce_detail.py).
 REDUCE_UNIT_DETAIL_METHODS: tuple[str, ...] = (
     "none", "integers", "integers_ramps", "integers_min_limits", "integers_ramps_min_limits", "online",
@@ -329,7 +329,7 @@ class SolveConfig:
             if dispatch_realization_method is not None else {}
         )
 
-        # v81 per-solve detail reductions (solve-name -> value-list string); only authored solves appear.
+        # v79 per-solve detail reductions (solve-name -> value-list string); only authored solves appear.
         # Resolved at access time via :meth:`reduce_unit_detail_for` / :meth:`reduce_system_detail_for`.
         self.reduce_unit_detail_method: dict = (
             reduce_unit_detail_method if reduce_unit_detail_method is not None else {}
@@ -579,7 +579,7 @@ class SolveConfig:
             mode=DictMode.DICT,
         )
 
-        # v81 per-solve detail reductions.  Only solves that author them appear; absent solves resolve to
+        # v79 per-solve detail reductions.  Only solves that author them appear; absent solves resolve to
         # "none" via ``reduce_unit_detail_for`` / ``reduce_system_detail_for``.
         reduce_unit_detail_method: dict = params_to_dict(
             db=db, cl="solve", par="reduce_unit_detail_method", mode=DictMode.DICT,

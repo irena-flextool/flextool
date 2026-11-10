@@ -1,4 +1,4 @@
-"""Solve-level system-detail reduction (``solve.reduce_system_detail_method``, database version 81).
+"""Solve-level system-detail reduction (``solve.reduce_system_detail_method``, database version 79).
 
 A level clears the FlexData of the system features it names (``preprocess._reduce_detail``): reserves, inertia,
 non-synchronous share limits, DC power flow.  The capacity margin is never reduced.

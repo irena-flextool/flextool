@@ -1229,7 +1229,7 @@ previous golden.  Regenerated with `pytest tests/test_scenarios.py --regenerate 
 
 ## 2026-11-09 — every `costs__dt.csv` and `costs_discounted.csv` (the new cost category `ramps`)
 
-**Context.** `ramp_cost` is now charged (C-3, schema v80) and reported in the new cost category *ramps*, which is
+**Context.** `ramp_cost` is now charged (C-3, schema v79) and reported in the new cost category *ramps*, which is
 always written, as *starts* is.  No golden scenario has a ramp cost, so the column is 0 everywhere and nothing else
 changes; the LP of every standard fixture is byte-identical (`tools/lp_snapshot.py`).
 

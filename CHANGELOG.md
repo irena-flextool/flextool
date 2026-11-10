@@ -77,7 +77,7 @@
   but this FlexTool does not define. See *How to make a data dictionary for your model* in the how-to recipes.
 - **Changed: the user-constraint capacity coefficients** (`constraint_capacity_coeff`, `..._invested_capacity_coeff`,
   and the other `constraint_*capacity_coeff` of unit, node and connection) say in their description that they are a
-  map of coefficients indexed by constraint name (schema v83, description only).
+  map of coefficients indexed by constraint name (schema v79, description only).
 - **New: project packages.** A project can be sent to another computer as one `<Name>_<YYYYMMDD>.flextool.zip`:
   **Manage projects… → Export… / Import…** in the FlexTool window, or `flextool-project export|import|verify` in
   the terminal. A package holds the input sources (external input files copied in under their own source numbers,
@@ -221,9 +221,9 @@
   first time step's value once; it is now summed like a deterministic inflow, so it grows by the number of time
   steps each new step combines. The step means are exact (before, a profile whose hours in a step were equal was
   rounded to 6 decimals; it now keeps the exact value, a change of at most 5e-7). A database upgraded to version
-  83 that has a solve with `new_stepduration` prints a notice naming the parameters and entities whose values
+  79 that has a solve with `new_stepduration` prints a notice naming the parameters and entities whose values
   change.
-- **Fix: `energy_margin_adder` is summed over a solve's `new_stepduration` step (database version 83, results
+- **Fix: `energy_margin_adder` is summed over a solve's `new_stepduration` step (database version 79, results
   change).** The adder is MWh per time step of the timeline. When the investment solve has `new_stepduration`, a
   solve step now gets the sum of the values of the time steps it combines: a period+time map is summed, and a
   constant or period value counts once per time step (on 4 h solve steps of an hourly timeline, a constant 10
@@ -236,8 +236,8 @@
   was silently ignored, now stops the run with an error naming the shapes the parameter takes.
 - **Docs: a unit `efficiency` may be above 1** (no change in results). A heat pump with COP 3 has `efficiency` 3;
   a desalination unit with an electricity input and a water output in m³ uses the m³ per MWh ratio (e.g. 250). The
-  database upgrade to version 83 rewrites the `efficiency` and `efficiency_at_min_load` descriptions to say so.
-- **New: `inertia_limit` and `non_synchronous_limit` per time step (database version 82).** Both group limits now
+  database upgrade to version 79 rewrites the `efficiency` and `efficiency_at_min_load` descriptions to say so.
+- **New: `inertia_limit` and `non_synchronous_limit` per time step (database version 79).** Both group limits now
   take a constant, a period map, a time map or a period+time map (before: constant or period), e.g. a
   non-synchronous share that steps up by hour or season, or an inertia requirement that is higher in some hours.
   A time step that a time map leaves out has no inertia requirement and no non-synchronous limit (an authored 0
@@ -246,7 +246,7 @@
   covers), and the coarse-flow info line names a limit that varies within a coarse step. The hourly inertia shortfall table shows 0 instead of an
   empty cell in a time step without a requirement. The Excel export puts both limits also on the time sheets.
   Databases are migrated automatically; constant and period values are unchanged and give the same model.
-- **New: a solve can leave out unit detail (`reduce_unit_detail_method`, database version 81).** Set it on a
+- **New: a solve can leave out unit detail (`reduce_unit_detail_method`, database version 79).** Set it on a
   `solve` to make that solve faster, typically an investment solve followed by a full dispatch. *none* (default)
   keeps everything. *integers*: units with `startup_method` *binary* get continuous units online and `exact`
   connections behave as *regular*, so the solve is an LP. *integers_ramps* also leaves out ramp limits and ramp
@@ -258,7 +258,7 @@
   detail. Every roll of a rolling solve uses the solve's level, and a realization solve uses its parent solve's
   levels, whatever is set on the realization solve itself (a warning names a different value set on a declared
   realization solve). Databases are migrated automatically; models that do not set the parameters are unchanged.
-- **New: a solve can leave out system detail (`reduce_system_detail_method`, database version 81).** *reserves*
+- **New: a solve can leave out system detail (`reduce_system_detail_method`, database version 79).** *reserves*
   leaves out the reserve requirements (and with them the units' reserve limits and the reserve ties of a
   stochastic solve), *inertia* the inertia limits, *non_synchronous* the non-synchronous share limits, and
   *dc_power_flow* the angles of `dc_power_flow_with_angles` groups: their lines become lossless transport limited
@@ -280,7 +280,7 @@
   flow and shortfall, the non-synchronous shortfall and the DC angles. A per-period cell is empty when every solve
   that realized the period left the feature out. Costs are unchanged. Models that do not set the parameters get
   the same results as before.
-- **New: `ramp_cost` is charged (database version 80).** A unit flow with `ramp_method` *ramp_cost* or *both* pays
+- **New: `ramp_cost` is charged (database version 79).** A unit flow with `ramp_method` *ramp_cost* or *both* pays
   `ramp_cost` [CUR/MW] for every MW its step-average flow changes from the previous time step, up and down alike.
   A change is an event, like a start-up, so the step length does not enter: ramping 0 → X → 0 costs
   2 × `ramp_cost` × X. The previous step is the one the ramp limits use: no cost at the first step of a solve,

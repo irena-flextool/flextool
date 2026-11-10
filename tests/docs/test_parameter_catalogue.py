@@ -138,7 +138,7 @@ def test_xlsx_catalogue_with_input_db(examples_db_url, examples_db_path, tmp_pat
     assert book.sheetnames == ["Read me", "parameters", "classes"]
     readme = {r[0]: r[1] for r in book["Read me"].iter_rows(values_only=True) if r[0]}
     assert set(head) <= set(readme)                       # one line per column
-    assert readme["Input database"] == examples_db_url and readme["Database version"] == "83"
+    assert readme["Input database"] == examples_db_url and readme["Database version"] == "79"
     assert readme["Web version"].endswith("/parameter_catalogue/")
     classes = {r[0]: r[1] for r in book["classes"].iter_rows(min_row=2, values_only=True)}
     assert set(classes) >= {k[0] for k in rows} and classes["unit"]

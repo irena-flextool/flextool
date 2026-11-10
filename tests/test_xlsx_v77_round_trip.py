@@ -64,7 +64,7 @@ VALUES = [
     ("group", ("g_retire",), "invest_method", "retire_period"),
     ("group", ("g_off",), "invest_method", "not_active"),
     ("constraint", ("c1",), "constant", _period({"p2030": 5.0, "p2040": 6.0})),
-    # v82: the group inertia and non-synchronous limits take time and period + time maps.
+    # v79: the group inertia and non-synchronous limits take time and period + time maps.
     ("group", ("g_inertia",), "inertia_limit", _time({"t01": 200.0, "t02": 800.0})),
     ("group", ("g_inertia",), "non_synchronous_limit", _period_time({"p2030": {"t01": 0.2, "t02": 0.6}})),
 ]

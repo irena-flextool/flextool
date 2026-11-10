@@ -44,7 +44,7 @@ def _ask(root: tk.Tk, presses: list[str], confirm_answers: list[bool]) -> tuple[
 
     root.after(50, press)
     choice = ask_frozen_migration_choice(
-        root, "ref.sqlite", Path("/data/ref.sqlite"), "Reference 1.0", 82, 83, "ref_v83.sqlite",
+        root, "ref.sqlite", Path("/data/ref.sqlite"), "Reference 1.0", 78, 79, "ref_v79.sqlite",
         confirm_in_place=lambda _parent: confirm_answers.pop(0),
     )
     return choice, texts
@@ -61,5 +61,5 @@ def test_choice_buttons(root: tk.Tk, presses: list[str], answers: list[bool], ex
     choice, texts = _ask(root, list(presses), list(answers))
     assert choice == expected
     text = " ".join(texts)
-    assert "ref.sqlite is frozen ('Reference 1.0', v82). This FlexTool needs v83." in text
-    assert "ref_v83.sqlite" in text and "new input source" in text
+    assert "ref.sqlite is frozen ('Reference 1.0', v78). This FlexTool needs v79." in text
+    assert "ref_v79.sqlite" in text and "new input source" in text

@@ -1834,15 +1834,7 @@ def migrate_database(
             elif next_version == 78:
                 _migrate_v78_unit_prefixes(db)
             elif next_version == 79:
-                _migrate_v79_constraint_online_coeff(db)
-            elif next_version == 80:
-                _migrate_v80_ramp_cost_descriptions(db)
-            elif next_version == 81:
-                _migrate_v81_reduce_detail_methods(db)
-            elif next_version == 82:
-                _migrate_v82_group_limits_by_time(db)
-            elif next_version == 83:
-                _migrate_v83_solve_step_series(db)
+                _migrate_v79_schema_batch(db)
             else:
                 print("Version invalid")
             last_completed_version = next_version
@@ -5841,8 +5833,8 @@ def _v79_texts() -> dict[tuple[str, str], str]:
     return t
 
 
-def _migrate_v79_constraint_online_coeff(db) -> None:
-    """``constraint_online_coeff`` on unit and connection (v78 -> v79).
+def _v79_constraint_online_coeff(db) -> None:
+    """``constraint_online_coeff`` on unit and connection (part of v79).
 
     A new optional ``1d_map`` (index: constraint name) in the ``constraint``
     group, no default and no value list: the number of units online in each
@@ -5864,11 +5856,10 @@ def _migrate_v79_constraint_online_coeff(db) -> None:
             db.add_parameter_definition(entity_class_name=cls, name="constraint_online_coeff", **fields)
         elif any(pdef[k] != v for k, v in fields.items()):
             db.update_parameter_definition(id=pdef["id"], **fields)
-    _commit_step(db, "v79: constraint_online_coeff on unit and connection")
 
 
-#: Descriptions written by v80: ``ramp_cost`` became functional (a cost per MW of change of the flow).
-_V80_DESCRIPTIONS: dict[tuple[str, str], str] = {
+#: Descriptions written by v79: ``ramp_cost`` became functional (a cost per MW of change of the flow).
+_V79_RAMP_DESCRIPTIONS: dict[tuple[str, str], str] = {
     **{(cls, "ramp_method"): (
         "[choice] Choice of ramp method. ramp_limit limits the ramp speed. ramp_cost charges every change in the "
         "flow between consecutive time steps. both adds the limit as well.")
@@ -5882,29 +5873,28 @@ _V80_DESCRIPTIONS: dict[tuple[str, str], str] = {
 }
 
 
-def _migrate_v80_ramp_cost_descriptions(db) -> None:
-    """``ramp_method`` and ``ramp_cost`` descriptions on unit__inputNode / unit__outputNode (v79 -> v80).
+def _v79_ramp_cost_descriptions(db) -> None:
+    """``ramp_method`` and ``ramp_cost`` descriptions on unit__inputNode / unit__outputNode (part of v79).
 
     Description-only: ``ramp_cost`` is now charged (``ramp_change_eq``), so the "not functional" text goes.
     No data is rewritten.  Definitions a database does not have are skipped.  Idempotent: a rerun finds every
-    description already in its v80 form.
+    description already in its v79 form.
     """
-    for (cls, name), text in sorted(_V80_DESCRIPTIONS.items()):
+    for (cls, name), text in sorted(_V79_RAMP_DESCRIPTIONS.items()):
         pdef = _pdef_or_none(db, cls, name)
         if pdef is None or (pdef["description"] or "") == text:
             continue
         db.update_parameter_definition(id=pdef["id"], description=text)
-    _commit_step(db, "v80: ramp_method and ramp_cost descriptions (ramp_cost is functional)")
 
 
-#: v81: the two solve-level detail reductions; values in the fixed word order of the design.
+#: v79: the two solve-level detail reductions; values in the fixed word order of the design.
 REDUCE_UNIT_DETAIL_METHODS: tuple[str, ...] = (
     "none", "integers", "integers_ramps", "integers_min_limits", "integers_ramps_min_limits", "online",
     "online_ramps")
 REDUCE_SYSTEM_DETAIL_METHODS: tuple[str, ...] = (
     "none", "reserves", "inertia", "non_synchronous", "inertia_non_synchronous",
     "reserves_inertia_non_synchronous", "dc_power_flow", "reserves_inertia_non_synchronous_dc_power_flow")
-_V81_DESCRIPTIONS: dict[str, str] = {
+_V79_REDUCE_DESCRIPTIONS: dict[str, str] = {
     "reduce_unit_detail_method": (
         "[choice] Detail of units and connections that this solve leaves out, to make it faster (typically an "
         "investment solve). none (default): all detail. integers: binary startup_method is solved as continuous "
@@ -5924,12 +5914,12 @@ _V81_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-def _migrate_v81_reduce_detail_methods(db) -> None:
-    """``solve.reduce_unit_detail_method`` and ``solve.reduce_system_detail_method`` (v80 -> v81).
+def _v79_reduce_detail_methods(db) -> None:
+    """``solve.reduce_unit_detail_method`` and ``solve.reduce_system_detail_method`` (part of v79).
 
     Two scalar choices (type ``str``) with their value lists (``reduce_unit_detail_methods`` /
     ``reduce_system_detail_methods``), default ``none``, group ``solve_advanced``.  No data is rewritten.  Idempotent: an existing definition is
-    updated to the v81 fields, and value-list entries already present are not added again.
+    updated to the v79 fields, and value-list entries already present are not added again.
     """
     if not db.get_item("entity_class", name="solve"):
         return
@@ -5952,18 +5942,17 @@ def _migrate_v81_reduce_detail_methods(db) -> None:
                             ("reduce_system_detail_method", "reduce_system_detail_methods")):
         fields = {"default_value": default_val, "default_type": default_type,
                   "parameter_value_list_name": list_name, "parameter_group_name": "solve_advanced",
-                  "description": _V81_DESCRIPTIONS[name]}
+                  "description": _V79_REDUCE_DESCRIPTIONS[name]}
         pdef = _pdef_or_none(db, "solve", name)
         if pdef is None:
             db.add_parameter_definition(entity_class_name="solve", name=name, parameter_type_list=("str",), **fields)
         elif any(pdef[k] != v for k, v in fields.items()) or tuple(pdef["parameter_type_list"] or ()) != ("str",):
             db.update_parameter_definition(id=pdef["id"], parameter_type_list=("str",), **fields)
-    _commit_step(db, "v81: solve.reduce_unit_detail_method and solve.reduce_system_detail_method")
 
 
-#: v82: ``group.inertia_limit`` and ``group.non_synchronous_limit`` also take a time or period + time map.
-_V82_TYPES: tuple[str, ...] = ("float", "1d_map", "2d_map")
-_V82_DESCRIPTIONS: dict[tuple[str, str], str] = {
+#: v79: ``group.inertia_limit`` and ``group.non_synchronous_limit`` also take a time or period + time map.
+_V79_GROUP_LIMIT_TYPES: tuple[str, ...] = ("float", "1d_map", "2d_map")
+_V79_GROUP_LIMIT_DESCRIPTIONS: dict[tuple[str, str], str] = {
     ("group", "inertia_limit"): (
         "[MWs] Minimum synchronous inertia in the group. Used only when has_inertia is yes. No value means no "
         "requirement. Constant, period, time or period+time. Over a coarse time step the row uses the step mean "
@@ -5977,30 +5966,29 @@ _V82_DESCRIPTIONS: dict[tuple[str, str], str] = {
 }
 
 
-def _migrate_v82_group_limits_by_time(db) -> None:
-    """``group.inertia_limit`` and ``group.non_synchronous_limit`` per time step (v81 -> v82).
+def _v79_group_limits_by_time(db) -> None:
+    """``group.inertia_limit`` and ``group.non_synchronous_limit`` per time step (part of v79).
 
     Each type list is widened to its union with ``float`` / ``1d_map`` / ``2d_map`` (:func:`_v77_union_types`) and
     the description written.  No value is rewritten: a constant or period map stays valid.  Definitions a database
-    does not have are skipped.  Idempotent: a rerun finds every definition already in its v82 form.
+    does not have are skipped.  Idempotent: a rerun finds every definition already in its v79 form.
     """
-    for (cls, name), text in sorted(_V82_DESCRIPTIONS.items()):
+    for (cls, name), text in sorted(_V79_GROUP_LIMIT_DESCRIPTIONS.items()):
         pdef = _pdef_or_none(db, cls, name)
         if pdef is None:
             continue
         fields: dict = {}
-        union = _v77_union_types(pdef["parameter_type_list"], _V82_TYPES)
+        union = _v77_union_types(pdef["parameter_type_list"], _V79_GROUP_LIMIT_TYPES)
         if tuple(pdef["parameter_type_list"] or ()) != union:
             fields["parameter_type_list"] = union
         if (pdef["description"] or "") != text:
             fields["description"] = text
         if fields:
             db.update_parameter_definition(id=pdef["id"], **fields)
-    _commit_step(db, "v82: group inertia_limit and non_synchronous_limit per time step")
 
 
-#: v83: ``energy_margin_adder`` is an energy per time step of the timeline, summed over a new_stepduration step.
-_V83_ENERGY_MARGIN_ADDER_DESCRIPTION = (
+#: v79: ``energy_margin_adder`` is an energy per time step of the timeline, summed over a new_stepduration step.
+_V79_ENERGY_MARGIN_ADDER_DESCRIPTION = (
     "[MWh] per time step of the timeline. Extra demand (negative inflow) added to every time step of the "
     "investment solve, when `energy_margin_method` = `inflow_adder`. The value is not a total that is divided over "
     "the steps: each time step gets the full value. On a timeline of 24 h time steps, a margin of 10 MW needs a "
@@ -6009,8 +5997,8 @@ _V83_ENERGY_MARGIN_ADDER_DESCRIPTION = (
     "affected. 0 = off. Constant, period or period+time.")
 
 
-#: v83 (C-6): ``unit.efficiency`` and ``efficiency_at_min_load`` may be above 1 (heat-pump COP, m³ per MWh).
-_V83_UNIT_EFFICIENCY_DESCRIPTIONS = {
+#: v79 (C-6): ``unit.efficiency`` and ``efficiency_at_min_load`` may be above 1 (heat-pump COP, m³ per MWh).
+_V79_UNIT_EFFICIENCY_DESCRIPTIONS = {
     "efficiency": (
         "[-] Efficiency of the unit at full load: outputs / inputs, each flow weighted by its conversion_flow_coeff "
         "(default 1, giving plain sum of outputs / sum of inputs). May be above 1: a heat pump with COP 3 has 3; a "
@@ -6025,27 +6013,27 @@ _V83_UNIT_EFFICIENCY_DESCRIPTIONS = {
         "applies at minimum load too. Constant, period, time or period+time."),
 }
 
-#: v83 (C-10): the user-constraint capacity coefficients say how their map is indexed, like their siblings.
-_V83_CONSTRAINT_COEFF_SENTENCE = "A map of coefficients (Index: constraint name, value: coefficient). "
-_V83_CONSTRAINT_COEFF_PARAMETERS: tuple[tuple[str, str], ...] = tuple(
+#: v79 (C-10): the user-constraint capacity coefficients say how their map is indexed, like their siblings.
+_V79_CONSTRAINT_COEFF_SENTENCE = "A map of coefficients (Index: constraint name, value: coefficient). "
+_V79_CONSTRAINT_COEFF_PARAMETERS: tuple[tuple[str, str], ...] = tuple(
     (cls, f"constraint_{kind}_coeff")
     for cls in ("unit", "node", "connection")
     for kind in ("capacity", "cumulative_pre_built_capacity", "in_construction_capacity", "invested_capacity",
                  "retired_capacity"))
-#: v83 (C-10): a doubled word in the ``timeset.timeset_duration`` description.
-_V83_TIMESET_DURATION_TYPO = ("name of the the timestep", "name of the timestep")
+#: v79 (C-10): a doubled word in the ``timeset.timeset_duration`` description.
+_V79_TIMESET_DURATION_TYPO = ("name of the the timestep", "name of the timestep")
 
 
-def _v83_constraint_coeff_description(description: str) -> str:
+def _v79_constraint_coeff_description(description: str) -> str:
     """*description* with the index sentence after its unit bracket (unchanged when it has the sentence)."""
-    if _V83_CONSTRAINT_COEFF_SENTENCE.strip() in description:
+    if _V79_CONSTRAINT_COEFF_SENTENCE.strip() in description:
         return description
     end = description.find("] ") + 2 if description.startswith("[") and "] " in description else 0
-    return description[:end] + _V83_CONSTRAINT_COEFF_SENTENCE + description[end:]
+    return description[:end] + _V79_CONSTRAINT_COEFF_SENTENCE + description[end:]
 
 
-def _migrate_v83_solve_step_series(db) -> None:
-    """A solve's ``new_stepduration`` combines every time series by its kind (v82 -> v83).
+def _v79_solve_step_series(db) -> None:
+    """A solve's ``new_stepduration`` combines every time series by its kind (part of v79).
 
     No value is rewritten.  The ``node.energy_margin_adder`` description is rewritten (an energy per time step of
     the timeline, summed over a new_stepduration step), and ``unit.efficiency`` / ``efficiency_at_min_load`` say
@@ -6057,37 +6045,58 @@ def _migrate_v83_solve_step_series(db) -> None:
     marker value lists the solves / nodes).  Idempotent: a rerun finds the description and the markers written.
     """
     pdef = _pdef_or_none(db, "node", "energy_margin_adder")
-    if pdef is not None and (pdef["description"] or "") != _V83_ENERGY_MARGIN_ADDER_DESCRIPTION:
-        db.update_parameter_definition(id=pdef["id"], description=_V83_ENERGY_MARGIN_ADDER_DESCRIPTION)
-    for name, text in _V83_UNIT_EFFICIENCY_DESCRIPTIONS.items():
+    if pdef is not None and (pdef["description"] or "") != _V79_ENERGY_MARGIN_ADDER_DESCRIPTION:
+        db.update_parameter_definition(id=pdef["id"], description=_V79_ENERGY_MARGIN_ADDER_DESCRIPTION)
+    for name, text in _V79_UNIT_EFFICIENCY_DESCRIPTIONS.items():
         pdef = _pdef_or_none(db, "unit", name)
         if pdef is not None and (pdef["description"] or "") != text:
             db.update_parameter_definition(id=pdef["id"], description=text)
-    for cls, name in _V83_CONSTRAINT_COEFF_PARAMETERS:
+    for cls, name in _V79_CONSTRAINT_COEFF_PARAMETERS:
         pdef = _pdef_or_none(db, cls, name)
         if pdef is not None:
-            text = _v83_constraint_coeff_description(pdef["description"] or "")
+            text = _v79_constraint_coeff_description(pdef["description"] or "")
             if text != (pdef["description"] or ""):
                 db.update_parameter_definition(id=pdef["id"], description=text)
     pdef = _pdef_or_none(db, "timeset", "timeset_duration")
-    if pdef is not None and _V83_TIMESET_DURATION_TYPO[0] in (pdef["description"] or ""):
+    if pdef is not None and _V79_TIMESET_DURATION_TYPO[0] in (pdef["description"] or ""):
         db.update_parameter_definition(id=pdef["id"], description=pdef["description"].replace(
-            *_V83_TIMESET_DURATION_TYPO))
+            *_V79_TIMESET_DURATION_TYPO))
     solves = sorted({pv["entity_byname"][0] for pv in db.find_parameter_values(
         entity_class_name="solve", parameter_definition_name="new_stepduration")
         if from_database(pv["value"], pv["type"]) is not None})
     if solves:
-        _v77_set_marker(db, "solve_step_series_combined", json.dumps({"since": 83, "solves": solves}))
+        _v77_set_marker(db, "solve_step_series_combined", json.dumps({"since": 79, "solves": solves}))
         nodes = sorted({pv["entity_byname"][0] for pv in db.find_parameter_values(
             entity_class_name="node", parameter_definition_name="energy_margin_adder")
-            if _v83_adder_has_value(from_database(pv["value"], pv["type"]))})
+            if _v79_adder_has_value(from_database(pv["value"], pv["type"]))})
         if nodes:
             _v77_set_marker(db, "energy_margin_adder_per_original_step",
-                            json.dumps({"since": 83, "solves": solves, "nodes": nodes}))
-    _commit_step(db, "v83: time series combined over a solve's new_stepduration step")
+                            json.dumps({"since": 79, "solves": solves, "nodes": nodes}))
 
 
-def _v83_adder_has_value(value) -> bool:
+def _migrate_v79_schema_batch(db) -> None:
+    """All schema changes of database version 79 (v78 -> v79), in one step.
+
+    1. ``constraint_online_coeff`` on unit and connection (:func:`_v79_constraint_online_coeff`).
+    2. ``ramp_method`` / ``ramp_cost`` descriptions: ``ramp_cost`` is charged (:func:`_v79_ramp_cost_descriptions`).
+    3. ``solve.reduce_unit_detail_method`` / ``reduce_system_detail_method`` (:func:`_v79_reduce_detail_methods`).
+    4. ``group.inertia_limit`` / ``non_synchronous_limit`` per time step (:func:`_v79_group_limits_by_time`).
+    5. A solve's ``new_stepduration`` combines every time series by its kind: descriptions and the
+       behaviour-change markers ``solve_step_series_combined`` / ``energy_margin_adder_per_original_step``
+       (:func:`_v79_solve_step_series`).
+
+    No value is rewritten.  Each part is idempotent, so a rerun of the step changes nothing.
+    """
+    _v79_constraint_online_coeff(db)
+    _v79_ramp_cost_descriptions(db)
+    _v79_reduce_detail_methods(db)
+    _v79_group_limits_by_time(db)
+    _v79_solve_step_series(db)
+    _commit_step(db, "v79: constraint_online_coeff, ramp_cost, reduce_*_detail_method, time-varying group "
+                     "limits, time series combined over a solve's new_stepduration step")
+
+
+def _v79_adder_has_value(value) -> bool:
     """An ``energy_margin_adder`` value that adds demand: not null and not a constant 0 (a map counts)."""
     if value is None:
         return False
