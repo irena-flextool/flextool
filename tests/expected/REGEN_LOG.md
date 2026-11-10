@@ -1422,4 +1422,4 @@ investment-marginal tables name the solve that realized the period's investments
 
 Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the three.  The regeneration also
 rewrote `costs__dt`, `node_state__dt` and `unit__outputNode__dt` with last-digit rounding differences (≤ 4e-4) and
-a 0 → 0.0 number format; those files were left as they were.
+a 0 → 0.0 number format; those three files were restored to their previous content (not committed).

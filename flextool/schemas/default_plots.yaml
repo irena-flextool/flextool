@@ -2365,8 +2365,6 @@ rename:
   unit_ramp_outputs_dt_ee: [unit_ramp__outputNode__dt, true]
   unit_startup_d_e: [unit_startup__d, true]
   unit_VRE_potential_outputNode_dt_ee: [unit_outputNode_VRE_potential__dt, true]
-  unit_VRE_curtailment_outputNode_dt_ee: [unit_outputNode_VRE_curtailment__dt, true]
   unit_curtailment_share_outputNode_dt_ee: [unit_outputNode_VRE_curtailment_share__dt, true]
   unit_VRE_potential_outputNode_d_ee: [unit_outputNode_VRE_potential__d, true]
-  unit_VRE_curtailment_outputNode_d_ee: [unit_outputNode_VRE_curtailment__d, true]
   unit_curtailment_share_outputNode_d_ee: [unit_outputNode_VRE_curtailment_share__d, true]

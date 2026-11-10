@@ -19,19 +19,18 @@ _SUFFIX_START = re.compile(r"__dt?(?=_[^_]|$)")
 #: Hand-made sheet names of the shipped output names (``default_plots.yaml`` ``rename``) that are longer than
 #: :data:`MAX_SHEET_NAME`, and of their pairs, so that a sheet name reads as its table.  Shortening such a name
 #: automatically cuts words (``…__upDown__n__dt``) or hides them behind a counter (``…_curtai_1__d``).  Keyed by the
-#: display name; the CSV file names are not changed.  :func:`excel_sheet_name` shortens any other long name.
+#: display name; the CSV file names are not changed.  The curtailment table (a VRE output) is named like its
+#: ``unit_VRE_*`` neighbours although its display name would fit.  :func:`excel_sheet_name` shortens any other long name.
 SHEET_NAMES: dict[str, str] = {
     "process__reserve__upDown__node__dt": "process__reserve__node__dt",
     "process__reserve__upDown__node__d_average": "process__reserve__node__d_avg",
     "reserve_price__upDown__group__dt": "reserve_price__group__dt",
     "slack__reserve__upDown__group__d": "slack__reserve__group__d",
     "slack__reserve__upDown__group__dt": "slack__reserve__group__dt",
-    "unit_curtailment__outputNode__d": "unit_curtail__outputNode__d",
-    "unit_curtailment__outputNode__dt": "unit_curtail__outputNode__dt",
+    "unit_curtailment__outputNode__d": "unit_VRE_curtailment__d",
+    "unit_curtailment__outputNode__dt": "unit_VRE_curtailment__dt",
     "unit_outputNode_VRE_potential__d": "unit_VRE_potential__d",
     "unit_outputNode_VRE_potential__dt": "unit_VRE_potential__dt",
-    "unit_outputNode_VRE_curtailment__d": "unit_VRE_curtailment__d",
-    "unit_outputNode_VRE_curtailment__dt": "unit_VRE_curtailment__dt",
     "unit_outputNode_VRE_curtailment_share__d": "unit_VRE_curtailment_share__d",
     "unit_outputNode_VRE_curtailment_share__dt": "unit_VRE_curtailment_share__dt",
 }

@@ -77,8 +77,8 @@ def load_solve_order(work_folder: Path | str) -> dict[str, int]:
 #: A rolling solve's rolls are named ``<solve>_roll_<k>`` (``solve._recursive_solve``).
 _ROLL_SUFFIX = re.compile(r"_roll_\d+$")
 
-#: The per-period output tables (raw result keys) whose values come from the investment solves: the capacities and
-#: the investment marginal values.  Their ``solve`` column names the solve that realized the period's investments
+#: The per-period output tables (raw result keys) whose values come from the investment solves: the capacities,
+#: the investment marginal values and the capacity-margin shortfall (a constraint of the investment periods).  Their ``solve`` column names the solve that realized the period's investments
 #: (``d_realize_invest``); a period without realized investments falls back to the dispatch label.
 INVESTMENT_PERIOD_TABLES: frozenset[str] = frozenset({
     "unit_capacity_ed_p",
@@ -87,6 +87,7 @@ INVESTMENT_PERIOD_TABLES: frozenset[str] = frozenset({
     "dual_invest_effective_unit_d_e",
     "dual_invest_effective_connection_d_e",
     "dual_invest_effective_node_d_e",
+    "nodeGroup_slack_capacity_margin_d_g",
 })
 
 

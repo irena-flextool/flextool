@@ -78,8 +78,9 @@
   and is shortened in front of it, with `_1`, `_2`, … before the suffix when two names would be the same (also
   without regard to case, as Excel compares them). The shipped long names get hand-made sheet names instead
   (`process__reserve__node__dt`, `process__reserve__node__d_avg`, `reserve_price__group__dt`,
-  `slack__reserve__group__d` / `__dt`, `unit_curtail__outputNode__d` / `__dt`, `unit_VRE_potential__d` / `__dt`,
-  `unit_VRE_curtailment__d` / `__dt`, `unit_VRE_curtailment_share__d` / `__dt`); the CSV file names do not change.
+  `slack__reserve__group__d` / `__dt`, `unit_VRE_potential__d` / `__dt`, `unit_VRE_curtailment_share__d` /
+  `__dt`), and the curtailment table `unit_curtailment__outputNode__d` / `__dt` gets the sheet name
+  `unit_VRE_curtailment__d` / `__dt` like its neighbours; the CSV file names do not change.
   The scenario-comparison workbook and the dispatch-data workbook name their sheets the same way.
 
 - **Fix: a profile link without profile data held the flow at 0 without a word (#104).** `profile_method`

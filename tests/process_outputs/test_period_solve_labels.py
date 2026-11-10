@@ -39,6 +39,9 @@ def test_investment_tables_name_the_investment_solve() -> None:
     # p2025 has no realized investment: the dispatch label.
     assert period_solve_labels(dispatch, invest, table="unit_capacity_ed_p") == {
         "p2020": "invest_p2020", "p2025": "dispatch"}
+    # The capacity-margin shortfall is a constraint of the investment periods.
+    assert period_solve_labels(dispatch, invest, table="nodeGroup_slack_capacity_margin_d_g") == {
+        "p2020": "invest_p2020", "p2025": "dispatch"}
     # A dispatch table ignores the investment solves.
     assert period_solve_labels(dispatch, invest, table="unit_outputNode_d_ee") == {
         "p2020": "dispatch", "p2025": "dispatch"}

@@ -5,7 +5,9 @@ upward penalty 10 000 CUR/MWh; one unit to invest in at 100 CUR/kW, lifetime 1 y
 operational cost 1 CUR/MWh.  ``invest_rp`` sees only the representative block t1..t2 (weight 2 × 1 / 2 = 1, period share 2/8760);
 ``dispatch`` runs t1..t4 on the capacity ``invest_rp`` built.
 
-Hand values (independent of the code):
+Hand values (independent of the code; they take the convention that the first period p1 has discount factor 1,
+with inflation_rate unset and years_represented 1).  The discount rate is 0.05, not 0: an entered 0 is replaced by
+0.05 in the annuity (a default ported from the GMPL model), so the spec's interest rate 0 cannot be used.
 
 * Investment.  Below 60 MW every MW short costs 1 MWh × 4380 × 1e4 = 4.38e7 CUR/a, far above the annuity
   (r = 0.05, n = 1: 1e5 × 0.05 / (1 − 1.05⁻¹) = 1.05e5 CUR/MW/a); a MW above
@@ -102,3 +104,42 @@ def test_the_investment_cost_is_counted_once(chain) -> None:
     _, csv = chain
     costs = pd.read_csv(csv / "costs_discounted.csv").set_index("category").iloc[:, 0]
     assert float(costs["unit investment & retirement"]) == pytest.approx(INVEST_COST_MCUR, rel=1e-9)
+
+
+
+def _unit_capacity(db_url: str) -> dict:
+    """The ``capacity`` value of unit ``gen`` in the results database as ``{column: {solve: {period: MW}}}``."""
+    from spinedb_api import DatabaseMapping, from_database
+
+    def render(value):
+        if getattr(value, "indexes", None) is None:
+            return value
+        return {str(i): render(value.get_value(i)) for i in value.indexes}
+
+    with DatabaseMapping(db_url) as db:
+        (pv,) = db.get_parameter_value_items(entity_class_name="unit", entity_byname=("gen",),
+                                             parameter_definition_name="capacity")
+        return render(from_database(pv["value"], pv["type"]))
+
+
+def test_the_results_database_and_its_parquet_replay_label_the_capacity_alike(chain) -> None:
+    """Native ``write_spinedb`` and the parquet replay give the capacity the investment solve's label (#210)."""
+    from flextool.process_outputs.write_outputs import write_outputs
+
+    steps, csv = chain
+    work = csv.parents[2]
+    last = steps["dispatch"]
+    native_db = "sqlite:///" + str(work / "results_native.sqlite")
+    replay_db = "sqlite:///" + str(work / "results_replay.sqlite")
+    common = dict(scenario_name="tiny", output_location=str(work / "db_out"), subdir="tiny",
+                  raw_output_dir=str(work / "w" / "output_raw"))
+    write_outputs(**common, write_methods=["parquet", "spinedb"], results_db_url=native_db,
+                  flex_data=last.flex_data, solution=last.solution, solve_name=last.solve_name,
+                  solve_steps=[(s.solve_name, s.flex_data, s.effective_solution) for s in steps.values()],
+                  flex_data_provider=getattr(last, "flex_data_provider", None))
+    write_outputs(**common, read_parquet_dir=True, write_methods=["spinedb"], results_db_url=replay_db)
+
+    native = _unit_capacity(native_db)
+    assert {solve for column in native.values() for solve in column} == {"invest_rp"}
+    assert native["total"]["invest_rp"]["p1"] == pytest.approx(INVESTED_MW, rel=1e-9)
+    assert _unit_capacity(replay_db) == native
