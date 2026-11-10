@@ -2270,13 +2270,16 @@ def _write_chp_constraints(
     invests), both −constant on the unit.  FT2 has no retirements, so the
     two are all of C.  Not ``constraint_invested_capacity_coeff`` alone: in
     the dispatch solve after the invest solve the invested MW are pre-built,
-    and the row would lose them.  The MW form ``output2 max capacity (MW)``
-    of older workbooks is a plain cap.  All coefficients of a unit go into
-    one Map per edge.
+    and the row would lose them.
+
+    Older workbooks (header ``output2 max capacity (MW)``, see
+    ``UnitInstance.output2_constants_mw``) give the constants in MW:
+    ``output2 − coeff × output1  {sense}  constant``, no capacity term, and
+    ``output2 max capacity (MW)`` is a plain cap.  All coefficients of a unit
+    go into one Map per edge.
     """
     count = 0
-    # The older workbook form (header 'output2 max capacity (MW)').
-    mw_form = any(u.output2_max_capacity is not None for u in data.units)
+    mw_units: list[str] = []
     for unit in data.units:
         if not unit.output2_node or not unit.output_node:
             continue
@@ -2284,20 +2287,10 @@ def _write_chp_constraints(
             continue
 
         unit_name = _get_unit_name(unit)
-        constants = [c for c in (unit.output2_eq_constant, unit.output2_gt_constant,
-                                 unit.output2_lt_constant) if c]
-        if mw_form and constants:
-            counters.unmapped.append(UnmappedItem(
-                "units", "output2 eq / gt / lt constant", [unit_name],
-                "this workbook has the older column 'output2 max capacity "
-                "(MW)'. The import reads the constants as shares of the unit's "
-                "capacity and multiplies them by the capacity, as the FlexTool 2 "
-                "model does (a constant of -0.2 on a 100 MW unit is -20 MW). "
-                f"The constants here are {', '.join(f'{c:g}' for c in constants)}"
-                + (", which look like MW" if max(abs(c) for c in constants) > 5 else "")
-                + ". If your FlexTool 2 version used them as MW, divide them by "
-                "the unit's capacity in the workbook and import again.",
-            ))
+        constants_mw = unit.output2_constants_mw
+        if constants_mw and any((unit.output2_eq_constant, unit.output2_gt_constant,
+                                 unit.output2_lt_constant)):
+            mw_units.append(unit_name)
         if not any((unit.output2_eq_coeff, unit.output2_eq_constant,
                     unit.output2_gt_coeff, unit.output2_gt_constant,
                     unit.output2_lt_coeff, unit.output2_lt_constant,
@@ -2337,7 +2330,11 @@ def _write_chp_constraints(
         ):
             if not coeff and not constant:
                 continue
-            row(f"{unit_name}_{suffix}", sense, coeff or 0.0, constant or 0.0)
+            if constants_mw:
+                row(f"{unit_name}_{suffix}", sense, coeff or 0.0, 0.0,
+                    constant=constant or 0.0)
+            else:
+                row(f"{unit_name}_{suffix}", sense, coeff or 0.0, constant or 0.0)
             count += 1
         if unit.output2_max_capacity_ratio:
             row(f"{unit_name}_output2_max", "less_than", 0.0,
@@ -2365,6 +2362,11 @@ def _write_chp_constraints(
                        Map(names, [coeffs[n] for n in names], index_name="constraint"),
                        alt_name, counters)
 
+    if mw_units:
+        counters.assumptions.append(
+            "This workbook has the older column 'output2 max capacity (MW)', so "
+            "the 'output2 eq / gt / lt constant' values were read as MW (not as "
+            f"shares of the unit's capacity): {', '.join(mw_units)}.")
     logger.info("Wrote %d CHP constraints.", count)
 
 

@@ -160,9 +160,13 @@
   the database; now it says which column is empty, before writing anything.
 - **Fix: an invested FlexTool 2 CHP keeps its output2 in the dispatch solve.** The output2 constraints counted
   only the capacity invested in the same solve, so in the dispatch solve after the investment solve the heat was
-  limited to 0. They now use the capacity in service (pre-built + invested). The import report notes output2
-  constants in workbooks with the older `output2 max capacity (MW)` column (read as shares of capacity, as in
-  FlexTool 2's model) and an output2 without any row (free heat).
+  limited to 0. They now use the capacity in service (pre-built + invested). The import report notes an output2
+  without any row (free heat).
+- **Fix: in older FlexTool 2 workbooks the output2 constants are MW.** A workbook with the `output2 max capacity
+  (MW)` column (in place of `output2 max capacity ratio`) gives the `output2 eq / gt / lt constant` in MW; the
+  importer multiplied them by the unit's capacity (a constant of 100 on a 50 MW unit became 5000 MW). They are now
+  written as MW, with no capacity term, and the import report says so under "How some inputs were read". Newer
+  workbooks are unchanged (constants per unit of capacity).
 - **Fix: a user constraint without capacity terms lost its `constant` when another constraint had one** (since
   4.0). When some constraint used `constraint_cumulative_pre_built_capacity_coeff` or `constraint_capacity_coeff`
   (whose existing capacity moves to the right-hand side) or, in a chain of solves with a construction lead time,

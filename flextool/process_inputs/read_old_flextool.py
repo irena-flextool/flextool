@@ -63,6 +63,11 @@ _UNIT_COLUMN_MAP: dict[str, str] = {
     "inflow multiplier": "inflow_multiplier",
 }
 
+# Units-sheet headers of older FT2 workbooks, whose output2 eq / gt / lt
+# constants are MW (newer workbooks: 'output2 max capacity ratio', constants
+# per unit of capacity).
+_OUTPUT2_MW_HEADERS = frozenset({"output2 max capacity (mw)", "output2 max capacity"})
+
 # Columns that need special grid/node splitting
 _UNIT_GRID_NODE_COLS: dict[str, tuple[str, str]] = {
     "input grid/node": ("input_grid", "input_node"),
@@ -185,6 +190,10 @@ class UnitInstance:
     #: FT2 ``output2_max_capacity_ratio``: output2 <= ratio x capacity.
     #: (``output2_max_capacity`` is the MW form of older workbooks.)
     output2_max_capacity_ratio: float | None = None
+    #: The sheet has the older header ``output2 max capacity (MW)`` (or
+    #: ``output2 max capacity``): its ``output2 eq / gt / lt constant`` are MW,
+    #: not shares of the unit's capacity.
+    output2_constants_mw: bool = False
 
 
 @dataclass
@@ -579,6 +588,10 @@ def _read_units(wb: openpyxl.Workbook) -> list[UnitInstance]:
         else None for h in headers
     ]
 
+    # Older workbooks have 'output2 max capacity (MW)' in place of
+    # 'output2 max capacity ratio'; in them the output2 constants are MW.
+    constants_mw = any(h in _OUTPUT2_MW_HEADERS for h in normalized_headers)
+
     result: list[UnitInstance] = []
 
     for row in rows[1:]:
@@ -682,6 +695,7 @@ def _read_units(wb: openpyxl.Workbook) -> list[UnitInstance]:
             fueluse_increase_eq=field_values["fueluse_increase_eq"],
             inflow_multiplier=field_values["inflow_multiplier"],
             extra_params=extra,
+            output2_constants_mw=constants_mw,
         ))
     return result
 

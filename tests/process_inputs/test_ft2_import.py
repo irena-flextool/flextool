@@ -598,7 +598,7 @@ def test_invested_capacity_without_capacity_is_not_counted_twice(tmp_path: Path)
 
 def test_output2_report_lines(tmp_path: Path) -> None:
     """An output2 without rows is free; constants of the older MW-form workbook are
-    read as shares of capacity, and the report says so."""
+    read as MW, and the report says so in 'How some inputs were read'."""
     sheets = ft2_sheets()
     sheets["units"][0] = UNITS_HEADER + ["output2 max capacity (MW)"]
     for row in sheets["units"][1:]:
@@ -613,12 +613,108 @@ def test_output2_report_lines(tmp_path: Path) -> None:
     xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
     report = import_old_flextool_xlsm(str(xlsm), f"sqlite:///{tmp_path / 'm.sqlite'}")
     found = {(u.sheet, u.column): u for u in report.unmapped}
-    mw = found[("units", "output2 eq / gt / lt constant")]
-    assert mw.entities == ["chp_nodeA"]
-    assert "-100, 0.1, which look like MW" in mw.reason
+    assert ("units", "output2 eq / gt / lt constant") not in found
+    mw = [a for a in report.assumptions if "output2 eq / gt / lt constant" in a]
+    assert len(mw) == 1 and "read as MW" in mw[0] and mw[0].endswith(": chp_nodeA.")
     free = found[("units", "output2 grid / node")]
     assert free.entities == ["chp_free_nodeA"]
     assert "free" in free.reason
+
+
+# The units sheet of an older FT2 workbook: 'output2 max capacity (MW)' in place
+# of 'output2 max capacity ratio', and the output2 constants are MW.
+OLD_UNITS_HEADER = [
+    "output2 max capacity (MW)" if h == "output2_max_capacity_ratio" else h
+    for h in UNITS_HEADER] + ["output2 eq coeff", "output2 eq constant"]
+
+
+@pytest.mark.solver
+def test_old_header_output2_constants_are_mw(
+    test_solver_config_dir: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Older workbook (header 'output2 max capacity (MW)'): the CHP (20 MW) has
+    heat = 1.0 elec + 5,  heat >= 1.0 elec - 4  and  heat <= 0 elec + 20, all
+    constants in MW, and a plain cap heat <= 800 MW.  The LP rows have the MW
+    values as their bounds and no capacity term.  Hand solve: CHP heat has no
+    fuel and saves the gas boiler's 20 / 0.9 per MWh, CHP elec costs 10 / 0.4
+    = 25 per MWh against 27 for the coal unit, so the CHP runs to the heat
+    bound: heat 20 MW (binding), elec 15, fuel 15 / 0.4 = 37.5; the boiler
+    makes the other 10 MW of the 30 MW heat demand.  Before: the constants
+    were multiplied by the capacity (heat = elec + 100 > the demand)."""
+    import polars as pl
+
+    from flextool.engine import run_chain_from_db
+    from tests.engine._lp_rows import row_bounds, row_terms
+    from tests.engine._unit_db import build
+
+    sheets = ft2_sheets()
+    col = OLD_UNITS_HEADER.index
+    width = len(OLD_UNITS_HEADER) - len(UNITS_HEADER)
+    units = [OLD_UNITS_HEADER] + [row + [None] * width for row in sheets["units"][1:]]
+    chp_row = units[-1]
+    chp_row[col("output2 gt coeff")] = 1.0
+    chp_row[col("output2 gt constant")] = -4
+    chp_row[col("output2 lt coeff")] = None
+    chp_row[col("output2 lt constant")] = 20
+    chp_row[col("output2 eq coeff")] = 1.0
+    chp_row[col("output2 eq constant")] = 5
+    chp_row[col("output2 max capacity (MW)")] = 800
+    boiler = [None] * len(OLD_UNITS_HEADER)
+    for key, value in {"unit type": "boiler", "fuel": "gas", "output grid": "heat",
+                       "output node": "nodeH", "capacity (MW)": 50}.items():
+        boiler[col(key)] = value
+    units.append(boiler)
+    sheets["units"] = units
+    sheets["unit_type"].append(_unit_type("boiler", efficiency=0.9, availability=1))
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    url = f"sqlite:///{tmp_path / 'model.sqlite'}"
+    import_old_flextool_xlsm(str(xlsm), url, strict=True)
+
+    chp = "chp_nodeA"
+    assert ((chp,), "base") not in _values(url, "unit", "constraint_invested_capacity_coeff")
+    assert ((chp,), "base") not in _values(
+        url, "unit", "constraint_cumulative_pre_built_capacity_coeff")
+
+    work = tmp_path / "run"
+    work.mkdir()
+    monkeypatch.setenv("FLEXTOOL_AUTOSCALE_STRICT", "1")
+    monkeypatch.chdir(work)
+    steps = run_chain_from_db(url, "base", work_folder=work,
+                              solver_config_dir=test_solver_config_dir,
+                              keep_solutions=True)
+    assert steps and all(step.optimal for step in steps.values())
+    for step in steps.values():
+        pb = build(step.flex_data)
+        n_steps = step.flex_data.dt.height
+        for family, row, bound in (
+            ("process_constraint_equal", "eq", (5.0, 5.0)),
+            ("process_constraint_greater_than", "gt", (-4.0, None)),
+            ("process_constraint_less_than", "lt", (None, 20.0)),
+            ("process_constraint_less_than", "output2_max", (None, 800.0)),
+        ):
+            bounds = row_bounds(pb, family, f"{chp}_{row},")
+            assert len(bounds) == n_steps, (family, row)
+            lower, upper = bound
+            for lb, ub in bounds.values():
+                if lower is not None:
+                    assert lb == pytest.approx(lower)
+                if upper is not None:
+                    assert ub == pytest.approx(upper)
+            for terms in row_terms(pb, family, f"{chp}_{row},").values():
+                assert all(c.startswith("v_flow") for c in terms), terms
+
+    raw = work / "output_raw"
+    flow = pl.read_parquet(sorted(raw.glob("v_flow__dispatch*.parquet"))[-1])
+    heat = flow[f"('{chp}', '{chp}', 'nodeH')"] * 20
+    elec = flow[f"('{chp}', '{chp}', 'nodeA')"] * 20
+    fuel = flow[f"('{chp}', 'coal_market', '{chp}')"] * 20
+    boiler_heat = flow["('boiler_nodeH', 'gas_market', 'nodeH')"] * 50
+    assert heat.to_list() == pytest.approx([20.0] * 24, abs=1e-6)
+    assert elec.to_list() == pytest.approx([15.0] * 24, abs=1e-6)
+    assert fuel.to_list() == pytest.approx([37.5] * 24, abs=1e-6)
+    assert boiler_heat.to_list() == pytest.approx([10.0] * 24, abs=1e-6)
+    slack = pl.read_parquet(sorted(raw.glob("vq_state_up__dispatch*.parquet"))[-1])
+    assert slack["nodeH"].abs().max() == pytest.approx(0.0, abs=1e-9)
 
 
 def _solve(url: str, solver_dir: Path, work: Path, monkeypatch: pytest.MonkeyPatch):
