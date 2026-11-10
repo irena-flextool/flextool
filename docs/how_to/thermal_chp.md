@@ -129,3 +129,106 @@ The look-back follows the timeline in the same way as ramp limits: it continues 
 If the unit also has ramp limits (`ramp_method` with `ramp_speed_up`, `ramp_speed_down`), the model additionally tightens the maximum output in the startup and pre-shutdown timesteps based on how fast the unit can ramp within one timestep. A unit that starts in a timestep reaches on average at most `min_load + ½ × ramp_speed_up × 60 × timestep duration` of the started capacity in that step (it synchronises at minimum load and then ramps up: half a step's ramp on average), and in the step before it shuts down at most `min_load + ½ × ramp_speed_down × 60 × timestep duration` (both capped at full output and by `availability`). A unit online for a single step gets the smaller of the two. On an input with a ramp limit of a unit with several inputs or outputs, the limit is on the input it draws (at minimum load it needs the input of its minimum-load output). Without ramp limits, the unit can reach full output immediately after starting.
 
 Startups and shutdowns count exactly the units coming online and going offline. A unit with online variables ramps on its online capacity: the units online in both steps change by at most the ramp; a unit starting in a step reaches at most the startup-step output above, and a unit shutting down drops from at least its minimum load (and, in the step before, at most the pre-shutdown output). Starting and stopping units in the same step therefore gives no extra ramp room on a unit's output. On an input, or on one output of a unit with several outputs, a start/stop pair can still gain up to the minimum-load share of that flow, which the startup cost pays for.
+
+## How to make a unit run all the time (must-run)
+
+**(examples.sqlite scenarios: must_run_none, must_run_profile, must_run_constraint_one, must_run_fleet_output_floor, must_run_flowgroup, must_run_heat_demand, must_run_fleet_two_online, must_run_min_load_only)**
+***init - west - coal - wind - must_run_system - (one must-run alternative)***
+
+**No single switch.** FlexTool has no must-run parameter. A unit runs when the optimisation wants it to, so a must-run is a floor that you put on its flow or on its units online. The table lists the ways to do it. The examples are the same small system with a different floor each.
+
+| Option | Where it is set | LP or MIP | What it forces | When to use it |
+|---|---|---|---|---|
+| 1. Profile lower limit | `unit__node__profile`, `profile_method` *lower_limit* | LP | flow ≥ profile × availability × capacity | A share of the capacity that follows investments or changes in time |
+| 2. User constraint on one flow | `constraint` + `constraint_flow_coeff` on `unit__outputNode` | LP | flow ≥ `constant` [MW] | A fixed MW floor on one unit, constant or per period |
+| 3. User constraint on a fleet's output | the same, with a coefficient on each unit | LP | sum of the flows ≥ `constant` [MW] | A floor on a group of units; the model picks the cheapest ones |
+| 4. flowGroup minimum flow | `flowGroup` + `flowGroup__unit__node`, `min_instant_flow` | LP | sum of the member flows ≥ `min_instant_flow` [MW] | As option 3, also with a floor that changes in time |
+| 5. Demand-driven | the unit's other output has a demand (heat, steam, water) | LP | nothing directly: the unit runs because its other product is needed | CHP and other plants that run for a heat or process demand |
+| 6. User constraint on the units online | `constraint` + `constraint_online_coeff` on `unit` | MIP with *binary* startup (LP with *linear*) | at least N units online, each at least at `min_load` | A requirement for N machines on line, for example for system strength |
+
+**The example system.** The base alternative *must_run_system* sets a constant demand of 300 MW at *west* and an `other_operational_cost` of 1 CUR/MWh on *wind_plant*. Wind (1000 MW) can cover the demand in every hour, so without a floor no coal runs. Coal costs 20 CUR/MWh of fuel at `efficiency` 0.4, i.e. 50 CUR/MWh of electricity. The alternative *must_run_fleet* adds three 100 MW coal units *steam_1*, *steam_2* and *steam_3* with an `other_operational_cost` of 0, 1 and 2 CUR/MWh (so the model always prefers them in that order). The results per hour, the same in all 48 hours:
+
+| Scenario | Dispatch [MW] | Cost per hour [CUR] | Objective [M CUR] |
+|---|---|---|---|
+| *must_run_none* | wind 300 | 300 | 2.628 |
+| *must_run_profile* | baseload_plant 200, wind 100 | 10 100 | 88.476 |
+| *must_run_constraint_one* | coal_plant 150, wind 150 | 7 650 | 67.014 |
+| *must_run_fleet_output_floor* | steam_1 100, wind 200 | 5 200 | 45.552 |
+| *must_run_flowgroup* | steam_1 100, wind 200 | 5 200 | 45.552 |
+| *must_run_heat_demand* | coal_chp 150 (and 300 heat), wind 150 | 10 150 | 88.914 |
+| *must_run_fleet_two_online* | steam_1 50, steam_2 50, wind 200 | 5 250 | 45.990 |
+| *must_run_min_load_only* | wind 300 | 300 | 2.628 |
+
+**Floors are hard.** None of these floors has a slack of its own. If a floor forces more output than the node can use, the extra energy goes to the node's downward slack, which costs `penalty_down`. If two floors cannot both hold (for example a floor above the unit's capacity), the model is infeasible.
+
+### Option 1: profile lower limit
+
+**(examples.sqlite scenario: must_run_profile)**
+***init - west - coal - wind - must_run_system - must_run_profile***
+
+**The data.** Create a `profile` (here *must_run_share*) with `profile` 0.4 and connect it to the flow with a `unit__node__profile` entity (*baseload_plant*, *west*, *must_run_share*) with `profile_method` *lower_limit*. *baseload_plant* is a 500 MW coal unit like *coal_plant*.
+
+**What it does.** In every time step the flow is at least profile × `availability` × capacity, here 0.4 × 500 = 200 MW. The capacity includes invested capacity, so the floor grows with investments. The `profile` can be a constant, a period, a time series or both (see [units constrained by profiles](../reference/units.md#units-constrained-by-profiles)), so the floor can change from hour to hour.
+
+!!! tip "Give the profile a value"
+    A `unit__node__profile` entity whose `profile` has no value in the scenario holds the flow at 0: `profile_method` defaults to *upper_limit*, and a missing profile value is 0. Add the entity only where the profile has a value, or turn the unit off in the scenarios where it does not.
+
+### Option 2: user constraint on one flow
+
+**(examples.sqlite scenario: must_run_constraint_one)**
+***init - west - coal - wind - must_run_system - must_run_constraint_one***
+
+**The data.** Create a `constraint` *coal_plant_floor* with `sense` *greater_than* and `constant` 150. On `unit__outputNode` (*coal_plant*, *west*) set `constraint_flow_coeff` to the map (*coal_plant_floor* | 1).
+
+**What it does.** In every time step, the flow from *coal_plant* to *west* is at least 150 MW. The `constant` is in MW (the unit of the flow times its coefficient). It can be a constant or a period map, not a time series. The floor does not follow investments; use a `constraint_capacity_coeff` term on the unit (see [user constraints](../reference/user_constraints.md)) if it should.
+
+### Option 3: user constraint on a fleet's output
+
+**(examples.sqlite scenario: must_run_fleet_output_floor)**
+***init - west - coal - wind - must_run_system - must_run_fleet - must_run_fleet_output_floor***
+
+**The data.** Create a `constraint` *steam_fleet_output_floor* with `sense` *greater_than* and `constant` 100, and set `constraint_flow_coeff` (*steam_fleet_output_floor* | 1) on the output flow of each of *steam_1*, *steam_2* and *steam_3*.
+
+**What it does.** The sum of the three flows is at least 100 MW in every time step. The model chooses how to share it: here *steam_1*, the cheapest, runs at 100 MW and the other two stay off. Use this when the requirement is on the fleet, not on each unit.
+
+### Option 4: flowGroup minimum flow
+
+**(examples.sqlite scenario: must_run_flowgroup)**
+***init - west - coal - wind - must_run_system - must_run_fleet - must_run_flowgroup***
+
+**The data.** Create a `flowGroup` *steam_fleet*, add the flows with `flowGroup__unit__node` entities (*steam_fleet*, *steam_k*, *west*) and set `min_instant_flow` to 100.
+
+**What it does.** The same as option 3: the sum of the member flows is at least 100 MW. `min_instant_flow` can also be a time series or a period+time map, so the floor can change in time (see [flow groups](../reference/flow_groups.md#cumulative-and-instant-flow-limits)). A user constraint is the better choice when the flows need different weights.
+
+### Option 5: demand-driven running
+
+**(examples.sqlite scenario: must_run_heat_demand)**
+***init - west - coal - wind - must_run_system - coal_chp - heat***
+
+**What it does.** Many plants that run all the time do so because their other product is needed. Here *coal_chp* must make 300 MW of heat for the *heat* node, and the *coal_chp_fix* constraint ties its electricity to half of the heat (see [How to create combined heat and power (CHP)](#how-to-create-combined-heat-and-power-chp)). So it makes 150 MW of electricity in every hour, although wind could cover the whole electricity demand. Model the demand that makes the plant run instead of forcing its output, when you know that demand: the plant then runs as much as the demand needs and the costs fall on the right product.
+
+### Option 6: user constraint on the units online
+
+**(examples.sqlite scenario: must_run_fleet_two_online)**
+***init - west - coal - wind - must_run_system - must_run_fleet - must_run_fleet_two_online***
+
+**The data.** On each of *steam_1*, *steam_2* and *steam_3* set `startup_method` *binary*, `min_load` 0.5 and `constraint_online_coeff` (*steam_fleet_two_online* | 1). Create a `constraint` *steam_fleet_two_online* with `sense` *greater_than* and `constant` 2. The example also sets `solver_mip_gap` 0 on the solve, so the solver proves the best integer solution.
+
+**What it does.** In every time step at least two of the three units are online, and each online unit makes at least its minimum load: *steam_1* and *steam_2* are online at 50 MW each. The count is in units of `virtual_unitsize`, or of the unit's `existing` capacity when it has no `virtual_unitsize` (here 100 MW, so each unit is one). See the [two of three units online](../reference/user_constraints.md#example-two-of-three-units-online) example.
+
+**Output floor or count.** The output floor of option 3 and this count cost almost the same here (5 200 against 5 250 CUR/h), but they force different things. The floor asks for 100 MW from any units; the count asks for two machines on line, whatever their output. Use the count only when the requirement really is about machines (for example inertia or short-circuit power from several units); it needs integer online variables, which makes the solve slower.
+
+**Binary or linear.** With *binary* startup the count is a whole number, so ≥ 1.5 needs two units online. With *linear* startup the count is continuous: ≥ 1.5 keeps 1.5 units' worth of capacity online (150 MW here), with the minimum load applying to that capacity, not two whole machines. Linear is an LP and solves fast; binary gives the exact count.
+
+**An exact count.** To fix the number of units online, use the same data with `sense` *equal* and `constant` N. The `constant` can be a constant or a period map, not a time series. There is no parameter that fixes a unit's online status directly: the model's internal `p_fix_online` only holds the online status that a stochastic realization solve passes on, and it is not read from the input data.
+
+### min_load is not a must-run
+
+**(examples.sqlite scenario: must_run_min_load_only)**
+***init - west - coal - wind - must_run_system - must_run_fleet - must_run_min_load_only***
+
+**What it does.** The steam units have `startup_method` *binary* and `min_load` 0.5, but no floor. The minimum load applies only while a unit is online, and the model is free to keep it offline, so all three stay off and wind covers the demand (the same result as *must_run_none*). `min_load` limits how low an online unit can go; it does not make the unit run.
+
+### Avoid a negative cost as a must-run bonus
+
+**Why not.** A large negative `other_operational_cost` makes the unit run, but it pays the unit for every MWh it makes. The node prices and the cost results then include the bonus, so they are no longer the system's real costs. Once the bonus, less the unit's own costs, is larger than the node's `penalty_down`, the unit runs above the demand and the extra energy is dumped through the downward slack. The bonus also hides in the objective, so the effect is hard to see in the results. Use one of the floors above instead: they force exactly the output you want and show it as a constraint.

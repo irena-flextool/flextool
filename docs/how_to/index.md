@@ -24,6 +24,7 @@ Each example will either include an example database file that is located in the
 - [How to add a reserve](thermal_chp.md#how-to-add-a-reserve)
 - [How to add a minimum load, start-up and ramp](thermal_chp.md#how-to-add-a-minimum-load-start-up-and-ramp)
 - [How to add minimum uptime and downtime](thermal_chp.md#how-to-add-minimum-uptime-and-downtime)
+- [How to make a unit run all the time (must-run)](thermal_chp.md#how-to-make-a-unit-run-all-the-time-must-run)
 
 ## [Investment and multi-year models](investment.md)
 
@@ -47,6 +48,7 @@ Each example will either include an example database file that is located in the
 ## [Emissions and system limits](emissions.md)
 
 - [How to add CO2 emissions, costs and limits](emissions.md#how-to-add-co2-emissions-costs-and-limits)
+- [How to compare emission trajectories](emissions.md#how-to-compare-emission-trajectories)
 - [How to create a non-synchronous limit](emissions.md#how-to-create-a-non-synchronous-limit)
 
 ## [Outputs, diagnostics and Excel templates](outputs.md)

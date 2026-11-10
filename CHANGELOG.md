@@ -1,5 +1,20 @@
 ## Unreleased
 
+- **New: how-to "How to make a unit run all the time (must-run)"** (Thermal, CHP and reserves). Six ways to make
+  a unit or a fleet run (profile lower limit, a user constraint on a flow or on a fleet's output, a flowGroup
+  `min_instant_flow`, a demand that needs the unit's other product, a user constraint on the units online) with
+  when to use each, an exact online count (`constraint_online_coeff` with `sense` *equal*), why `min_load` alone is
+  not a must-run and why a negative cost is a poor must-run bonus. Eight example scenarios `must_run_*` in
+  examples.sqlite.
+- **New: how-to "How to compare emission trajectories"** (Emissions and system limits): one `co2_max_period`
+  trajectory per alternative on the same four-period system, without, with existing and with additional measures,
+  and how to compare them. Three example scenarios `co2_*_measures` in examples.sqlite.
+- **Fix (docs): the ramp-limit text in Units no longer names the internal `p_fix_online`** as something a user
+  sets; it names the online status a stochastic realization fixes and a user constraint on the units online.
+- **Known issue: the written fuel input of a unit with a profile** (`unit__node__profile` on a unit that also has
+  an input) equals its output: the efficiency is left out, so its fuel use and the results computed from it (commodity cost, the calculated total
+  cost) are too low. The optimisation itself is right (the solver objective in `summary_solve.csv`
+  is correct).
 - **New: `flextool-time-runs`, a timing check for exercises.** Runs scenarios one after another (default: every
   example and how-to scenario that comes with FlexTool; `--db PATH --scenario S ...` for a project's own database)
   with the FlexTool window's default threads per run (1; `--threads N` for another) and plots off unless

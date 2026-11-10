@@ -18,6 +18,50 @@ There methods can be combined by setting the `co2_method` to *price_period*, *pr
 
 ![Add CO2](../img/tutorial/coal_co2.png)
 
+## How to compare emission trajectories
+
+**(examples.sqlite scenarios: co2_without_measures, co2_existing_measures, co2_additional_measures)**
+***init - west - coal - co2_trajectory_system - (one trajectory alternative)***
+
+**The idea.** Put the system in one set of alternatives and each emission trajectory in an alternative of its own, on top of it. A scenario per trajectory then differs only in the CO2 limit, so the results show what the trajectory costs. The examples use the usual reporting terms: without measures, with existing measures and with additional measures.
+
+**The system.** The alternative *co2_trajectory_system* has:
+
+- a solve *y2020_2035_2day_dispatch* with four periods *p2020*, *p2025*, *p2030* and *p2035* (each on the 2-day timeset, `years_represented` 5) and the model's `solves` set to it;
+- a constant demand of 300 MW at *west*;
+- *coal_plant* (from *coal*), 50 CUR/MWh, which emits 0.34 / 0.4 = 0.85 t of CO2 per MWh of electricity;
+- a carbon-free *clean_plant* (500 MW, `conversion_method` *none*) with an `other_operational_cost` of 80 CUR/MWh;
+- `co2_method` *period* on the group *co2_limit*, whose member is *coal_market*.
+
+**The trajectories.** Each trajectory alternative sets `co2_max_period` on *co2_limit* as a period map [tCO2/a]:
+
+| Alternative | p2020 | p2025 | p2030 | p2035 |
+|---|---|---|---|---|
+| *co2_without_measures* | 3.0 Mt | 3.0 Mt | 3.0 Mt | 3.0 Mt |
+| *co2_existing_measures* | 2.0 Mt | 1.8 Mt | 1.6 Mt | 1.4 Mt |
+| *co2_additional_measures* | 2.0 Mt | 1.5 Mt | 1.0 Mt | 0.5 Mt |
+
+**No limit is a large value.** A period map must give a value for every period of the solve: a missing period is an error, not "no limit". The scenario without measures therefore uses a value that never binds. Coal alone would emit 300 MW × 0.85 t/MWh × 8760 h = 2 233 800 t/a, so 3.0 Mt/a does not bind.
+
+**The scenarios.** Each scenario is *init*, *west*, *coal*, *co2_trajectory_system* and one trajectory, with the trajectory ranked last so that it overrides the others (see [the tutorial on alternative order](../tutorial.md#step-1-a-node-with-no-units)).
+
+**The results.** Below 2 233 800 t/a the limit binds, so coal makes exactly the limit's worth of electricity and *clean_plant* makes the rest. A tonne less of CO2 costs (80 − 50) / 0.85 = 35.29 CUR, which is the CO2 price that the model reports in every period where the limit binds.
+
+| Scenario | Emissions [Mt/a] | CO2 price [CUR/t] | Objective [M CUR] |
+|---|---|---|---|
+| *co2_without_measures* | 2.2338 in every period | 0 | 2628.0 |
+| *co2_existing_measures* | 2.0, 1.8, 1.6, 1.4 | 35.29 | 3004.8 |
+| *co2_additional_measures* | 2.0, 1.5, 1.0, 0.5 | 35.29 | 3322.4 |
+
+**Compare them.** Run the three scenarios and open them together in the comparison view of the [Result viewer](../flextool_gui_interface.md#result-viewer) (key X), or make comparison plots with [`scenario_results.py`](../terminal_workflow.md#scenario_resultspy-cross-scenario-comparison) `--alternatives co2_without_measures co2_existing_measures co2_additional_measures`. The plots *Emissions CO2 per nodeGroup* and *CO2 period limited shadow price* show the emissions and the CO2 price per period.
+
+**Things to know.**
+
+- The limit is annual (t/a): each period's emissions are scaled to a full year, whatever the length of its timeset. Use `co2_max_total` with `co2_method` *total* for a budget over the whole horizon (see [CO2 costs and limits](../reference/groups.md#co2-costs-and-limits)).
+- In a rolling solve, each roll applies the limit to its own window and carries what earlier rolls emitted.
+- CO2 is the only emission that FlexTool tracks, and `co2_content` is a constant per commodity.
+- The limit has no slack. If the system cannot meet a trajectory, the model meets it by leaving demand unserved (the node's upward slack at `penalty_up`), so check the slack results of a tight trajectory.
+
 ## How to create a non-synchronous limit
 **(non_sync_and_curtailment.sqlite)**
 ***(scenario: non_sync)***
