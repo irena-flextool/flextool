@@ -118,6 +118,7 @@ def test_output_floor_cheaper_than_online_count(tmp_path_factory, test_db_url):
     count = cost_per_hour("must_run_fleet_two_online")
     assert floor == pytest.approx(5200.0, abs=1e-4)
     assert count == pytest.approx(5250.0, abs=1e-4)
+    assert floor < count
 
 
 def test_heat_demand_runs_chp(tmp_path_factory, test_db_url):
