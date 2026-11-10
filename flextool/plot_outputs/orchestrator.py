@@ -33,7 +33,7 @@ from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_singl
 from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
 from flextool.plot_outputs.plot_bars import build_bar_figures
 from flextool.plot_outputs.plot_lines import build_line_figures, build_stack_figures
-from flextool.plot_outputs.color_template import load_color_template
+from flextool.plot_outputs.color_template import load_color_template, plot_settings_write_plot_data
 
 logger = logging.getLogger(__name__)
 logging.getLogger('matplotlib.category').disabled = True
@@ -913,7 +913,7 @@ def plot_data_wanted(write_plot_data: bool, color_path: Path | None) -> bool:
     """Whether to write the plotted data as CSV: the flag, or ``write_plot_data: true`` in the plot settings file."""
     if write_plot_data:
         return True
-    return bool(load_color_template(color_path).get('write_plot_data', False))
+    return plot_settings_write_plot_data(color_path)
 
 
 def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,

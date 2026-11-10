@@ -15,8 +15,9 @@
   series in one header row, a `subplot` column when a file has several subplots, values after `multiply_by`; empty
   result cells stay empty. Turn it on with **Write plotted data (CSV)** in the GUI's Png settings,
   `--write-plot-data` on `flextool-run`, `flextool-write-outputs` and `flextool-scenario-results`, or a top-level
-  `write_plot_data: true` in the project's `plot_settings.yaml`. Off by default. See *Plotted data as CSV* in
-  Model outputs.
+  `write_plot_data: true` in the project's `plot_settings.yaml` (the GUI checkbox then shows checked and greyed
+  out). Off by default. A CSV that cannot be written gives a warning and the plots are still made. See *Plotted
+  data as CSV* in Model outputs.
 - **New: parameter catalogue (data dictionary).** The web docs have a *Parameter catalogue* page (under Model
   parameters): every input parameter in one table per entity class with its unit, allowed shapes, default, allowed
   values, parameter group and definition, generated from the schema of the installed FlexTool. `python -m

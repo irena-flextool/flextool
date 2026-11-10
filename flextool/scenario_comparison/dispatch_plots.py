@@ -1,5 +1,7 @@
 """Dispatch area plots: render and save stacked-area dispatch plots for nodeGroups and nodes."""
 
+import logging
+
 import pandas as pd
 from pathlib import Path
 import matplotlib
@@ -13,6 +15,9 @@ from flextool.scenario_comparison.dispatch_data import (
     prepare_dispatch_data,
     prepare_node_dispatch_data,
 )
+from flextool.plot_outputs.format_helpers import unique_series_names
+
+logger = logging.getLogger(__name__)
 
 
 def _auto_assign_node_colors_with_existing(
@@ -235,23 +240,26 @@ def dispatch_plot_data(
     """The data drawn in one dispatch plot: the time window of the flows plus the demand line.
 
     Rows are the time steps of the window (no gap rows at timeline breaks), columns the stacked flows and
-    ``Curtailed`` as plotted, then the demand line as ``demand``.  When a flow column is already called
-    ``demand``, the line is ``demand (line)`` (then ``demand (line) 2``, ...).  Empty cells stay empty.
+    ``Curtailed`` as plotted, then the demand line as ``Demand`` (its legend label).  When a flow column is
+    already called ``Demand``, the line is ``Demand (line)`` (then ``Demand (line) 2``, ...).  A flow whose name
+    is an index column (``time``) is written as ``<name> (series)``.  Empty cells stay empty.
     """
-    out = df_dispatch.iloc[timeline[0]:timeline[1]].copy()
-    out.columns = [str(c) for c in out.columns]
+    out = df_dispatch.iloc[timeline[0]:timeline[1]]
+    index_part = pd.DataFrame(index=out.index).reset_index()
+    names = unique_series_names([str(c) for c in out.columns], {str(c) for c in index_part.columns})
+    out = out.set_axis(names, axis=1)
     if inflow_series is not None and not inflow_series.empty:
-        name = 'demand'
+        name = 'Demand'
         n = 1
-        while name in out.columns:
-            name = 'demand (line)' if n == 1 else f'demand (line) {n}'
+        while name in out.columns or name in index_part.columns:
+            name = 'Demand (line)' if n == 1 else f'Demand (line) {n}'
             n += 1
         inflow = inflow_series.iloc[timeline[0]:timeline[1]]
         if len(inflow) == len(out):
             out[name] = inflow.to_numpy()
         else:
             out[name] = inflow.reindex(out.index)
-    return out.reset_index()
+    return pd.concat([index_part, out.reset_index(drop=True)], axis=1)
 
 
 def plot_dispatch_area(
@@ -285,9 +293,13 @@ def plot_dispatch_area(
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
     if write_plot_data:
-        dispatch_plot_data(df_dispatch, inflow_series, timeline).to_csv(
-            output_path.with_suffix('.csv'), index=False, float_format='%.8g', encoding='utf-8',
-        )
+        csv_path = output_path.with_suffix('.csv')
+        try:
+            dispatch_plot_data(df_dispatch, inflow_series, timeline).to_csv(
+                csv_path, index=False, float_format='%.8g', encoding='utf-8',
+            )
+        except Exception as exc:  # an opt-in side output must never stop the plotting
+            logger.warning("Plot data CSV %s not written: %s", csv_path, exc)
 
     if show_plot:
         plt.show()

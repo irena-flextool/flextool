@@ -313,12 +313,20 @@ default and then costs nothing.
 - Rows are the x axis of the plot (the time steps, or the bars), with the row index levels (for example `period`,
   `time`) as the first columns. Only the plotted time window is written, and the gap rows that leave a gap in a
   line at a [timeline break](#model-outputs) are not.
-- Columns are the plotted series (lines, stacks, bars). When a series has several levels (for example the scenario
-  and the entity in a comparison plot) the level names are joined with ` | ` into one header row.
+- Columns are the plotted series (lines, stacks, bars), with one header row. When a series is named by several
+  dimensions, its header is their values joined with ` | `, in the order of the result's dimensions; the dimension
+  names themselves are not written. For example, in a comparison plot of unit output with the scenario first and the
+  unit second, the column `base | coal_plant` is unit `coal_plant` in scenario `base`. A series named like one of
+  the first columns (for example an entity called `time`) gets ` (series)` added to its name.
 - A leading `subplot` column names the subplot of each row when the file has more than one subplot.
-- Values are as plotted, after `multiply_by` (the unit is in the plot's axis label). A cell that is empty in the
+- Values are as plotted, after `multiply_by` (the unit is in the plot's axis label). For a stacked plot, each
+  column is that series' own value, not the stacked total, so do not add the columns up again. Where a line is drawn
+  as the sum over a dimension the plot does not show, the column is that sum. A cell that is empty in the
   results stays empty, also where a bar plot draws it as zero.
-- A dispatch plot's CSV has the flows of the plotted time window and the demand line as a `demand` column
-  (`demand (line)` if a flow is already called `demand`).
+- A dispatch plot's CSV has the flows of the plotted time window and the demand line as a `Demand` column, as in
+  the legend (`Demand (line)` if a flow is already called `Demand`).
+- If a CSV cannot be written, the log has a warning naming the file, and the plots are still made.
+- In `plot_settings.yaml`, only `write_plot_data: true` (no quotes) turns this on; a quoted `"true"` or any value
+  that is not `true` or `false` leaves it off with a warning.
 
 The CSVs are removed with the plots when the plots are made again.

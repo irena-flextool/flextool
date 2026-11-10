@@ -13,6 +13,7 @@ matplotlib.use("Agg")
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from flextool.plot_outputs.config import PlotConfig
 from flextool.plot_outputs.orchestrator import (
@@ -1423,14 +1424,60 @@ class TestWritePlotData:
         from flextool.scenario_comparison.dispatch_plots import plot_dispatch_area
 
         index = pd.Index([f"t{i:04d}" for i in range(1, 7)], name="time")
-        flows = pd.DataFrame({"wind": [1.0, 2, 3, 4, 5, 6], "demand": [-1.0, -2, -3, -4, -5, -6]}, index=index)
+        flows = pd.DataFrame({"wind": [1.0, 2, 3, 4, 5, 6], "Demand": [-1.0, -2, -3, -4, -5, -6],
+                              "time": [0.5] * 6}, index=index)
         inflow = pd.Series([7.0, 8, 9, 10, 11, 12], index=index)
         out = tmp_path / "dispatch_nodeGroup_g_s.png"
         plot_dispatch_area(flows, inflow, out, title="g - s", timeline=(1, 4), write_plot_data=True)
         frame = pd.read_csv(out.with_suffix(".csv"))
-        assert list(frame.columns) == ["time", "wind", "demand", "demand (line)"]
+        # The demand line has its legend name; a flow already called that, or called like the index, is renamed.
+        assert list(frame.columns) == ["time", "wind", "Demand", "time (series)", "Demand (line)"]
         assert frame["time"].tolist() == ["t0002", "t0003", "t0004"]
-        assert frame["demand (line)"].tolist() == [8.0, 9.0, 10.0]
-        assert frame["demand"].tolist() == [-2.0, -3.0, -4.0]
+        assert frame["Demand (line)"].tolist() == [8.0, 9.0, 10.0]
+        assert frame["Demand"].tolist() == [-2.0, -3.0, -4.0]
         plot_dispatch_area(flows, inflow, tmp_path / "no_csv.png", title="g - s", timeline=(1, 4))
         assert not (tmp_path / "no_csv.csv").exists()
+
+    def test_series_named_like_an_index_level(self, tmp_path):
+        df = self._time_df().iloc[:, :2].set_axis(pd.Index(["time", "period"], name="node"), axis=1)
+        settings = {"x_dt_e": {"plot_name": "N", "map_dimensions_for_plots": ["dt_e", "tt_l"]}}
+        plot_dict_of_dataframes({"x_dt_e": df}, str(tmp_path), settings, plot_rows=(0, 3), write_plot_data=True)
+        frame = pd.read_csv(tmp_path / "N.csv")
+        assert list(frame.columns[:2]) == ["period", "time"]
+        assert sorted(frame.columns[2:]) == ["period (series)", "time (series)"]
+        assert frame["time (series)"].tolist() == [0.0, 8.0, 16.0]
+
+    def test_csv_failure_warns_and_plotting_goes_on(self, tmp_path, monkeypatch, caplog):
+        import flextool.plot_outputs.format_helpers as fh
+
+        def broken(batch):
+            raise ValueError("boom")
+
+        monkeypatch.setattr(fh, "plot_data_frame", broken)
+        with caplog.at_level("WARNING"):
+            self._plot_time(tmp_path, write_plot_data=True)
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["T_01.png", "T_02.png"]
+        assert "T_01.csv not written: boom" in caplog.text
+
+    @pytest.mark.parametrize("value", ['"false"', '"true"', "1", "yes please"])
+    def test_plot_settings_key_must_be_a_yaml_bool(self, tmp_path, caplog, value):
+        settings_file = tmp_path / "plot_settings.yaml"
+        settings_file.write_text(f"write_plot_data: {value}\n", encoding="utf-8")
+        plot_dir = tmp_path / "plots"
+        plot_dir.mkdir()
+        with caplog.at_level("WARNING"):
+            self._plot_time(plot_dir, color_path=settings_file)
+        assert not list(plot_dir.glob("*.csv"))
+        assert "not true or false" in caplog.text
+
+    def test_summed_lines_csv_has_the_drawn_sums(self, tmp_path):
+        # tt_le: the unit level has no rule, so each node's line is drawn as the sum over its units.
+        index = pd.MultiIndex.from_arrays([["p1"] * 3, ["t0001", "t0002", "t0003"]], names=["period", "time"])
+        columns = pd.MultiIndex.from_tuples([("n1", "u1"), ("n1", "u2"), ("n2", "u1")], names=["node", "unit"])
+        df = pd.DataFrame(np.arange(9, dtype=float).reshape(3, 3), index=index, columns=columns)
+        settings = {"x_dt_ee": {"plot_name": "S", "map_dimensions_for_plots": ["dt_ee", "tt_le"]}}
+        plot_dict_of_dataframes({"x_dt_ee": df}, str(tmp_path), settings, plot_rows=(0, 3), write_plot_data=True)
+        frame = pd.read_csv(tmp_path / "S.csv")
+        assert list(frame.columns) == ["period", "time", "n1", "n2"]
+        assert frame["n1"].tolist() == [1.0, 7.0, 13.0]  # 0+1, 3+4, 6+7
+        assert frame["n2"].tolist() == [2.0, 5.0, 8.0]

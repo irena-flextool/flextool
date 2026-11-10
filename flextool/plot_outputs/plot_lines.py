@@ -278,6 +278,30 @@ def _compute_line_layout(
 #  Lines
 # ---------------------------------------------------------------------------
 
+def _summed_lines_frame(df_sub: pd.DataFrame, drawn: list, level_names: list) -> pd.DataFrame:
+    """The lines (or stacks) drawn in one subplot as a frame, for the plot-data CSV when some of them are sums.
+
+    *drawn* is the ``(key, series)`` list the subplot drew.  A column level that no rule uses is summed over in the
+    drawing, so ``df_sub`` itself would show the unsummed columns; this frame has one column per drawn line,
+    named by its key (a tuple key becomes a column MultiIndex over *level_names*).
+    """
+    keys = [k for k, _ in drawn]
+    frame = pd.concat([pd.Series(y.to_numpy(), index=df_sub.index) for _, y in drawn], axis=1)
+    if keys and all(isinstance(k, tuple) for k in keys):
+        frame.columns = pd.MultiIndex.from_tuples(keys, names=level_names or None)
+    else:
+        frame.columns = keys
+    return frame
+
+
+def _batch_as_drawn(batch: list, fig) -> list:
+    """*batch* with each subplot whose lines were sums replaced by the summed lines (see :func:`_summed_lines_frame`)."""
+    summed = getattr(fig, '_flextool_summed_subplots', None)
+    if not summed:
+        return batch
+    return [(title, summed.get(i, frame)) for i, (title, frame) in enumerate(batch)]
+
+
 def _build_lines_figure(
     effective_plots, plot_name, sub_levels, line_level_names, time_index,
     subplots_per_row, legend_position,
@@ -343,6 +367,8 @@ def _build_lines_figure(
     # set_smart_xticks handles tick labelling from time_index separately.
     x_positions = np.arange(len(time_index))
 
+    summed_subplots: dict[int, pd.DataFrame] = {}
+
     # ── Per-subplot rendering ──
     for idx, (eff_title, df_sub) in enumerate(effective_plots):
         ax = axes[idx]
@@ -378,6 +404,8 @@ def _build_lines_figure(
                     ),
                 )
 
+            drawn: list = []
+            summed = False
             for line in lines:
                 if is_multiindex:
                     if len(line_level_names) == 1:
@@ -395,11 +423,15 @@ def _build_lines_figure(
                     y_data = df_sub[line]
 
                 if isinstance(y_data, pd.DataFrame):
+                    summed = summed or y_data.shape[1] > 1
                     y_data = y_data.sum(axis=1)
+                drawn.append((line, y_data))
 
                 label = str(line)
                 color = shared_color_map.get(label) if shared_color_map else None
                 ax.plot(x_positions, y_data.values, label=label, color=color)
+            if summed:
+                summed_subplots[idx] = _summed_lines_frame(df_sub, drawn, line_level_names)
 
         # Subplot formatting
         if eff_title is not None:
@@ -454,6 +486,8 @@ def _build_lines_figure(
     # ── Figure title ──
     fig_h = fig.get_size_inches()[1]
     fig.suptitle(plot_name, y=1 - 0.14 / fig_h, va='top')
+    if summed_subplots:
+        fig._flextool_summed_subplots = summed_subplots
 
     return fig
 
@@ -593,7 +627,7 @@ def build_line_figures(
             expected_x_length=expected_x_length,
         )
         if keep_plot_data:
-            fig.flextool_plot_batch = batch
+            fig.flextool_plot_batch = _batch_as_drawn(batch, fig)
         result.append((batch_title, fig))
     return result, total_file_count
 
@@ -659,6 +693,8 @@ def _build_stack_figure(
             axes[idx] = fig.add_axes([x_left, y_bottom, ax_width, ax_height])
         y_cursor -= cell_height + INTER_ROW_GAP
 
+    summed_subplots: dict[int, pd.DataFrame] = {}
+
     # ── Per-subplot rendering ──
     for idx, (eff_title, df_sub) in enumerate(effective_plots):
         ax = axes[idx]
@@ -679,6 +715,8 @@ def _build_stack_figure(
                 stacks = df_sub.columns.unique().tolist()
 
             data_dict = {}
+            drawn: list = []
+            summed = False
             for stack in stacks:
                 if is_multiindex:
                     if len(stack_level_names) == 1:
@@ -689,11 +727,15 @@ def _build_stack_figure(
                     y_data = df_sub[stack]
 
                 if isinstance(y_data, pd.DataFrame):
+                    summed = summed or y_data.shape[1] > 1
                     y_data = y_data.sum(axis=1)
+                drawn.append((stack, y_data))
 
                 data_dict[str(stack)] = y_data
 
             df_to_plot = pd.DataFrame(data_dict, index=df_sub.index)
+            if summed:
+                summed_subplots[idx] = _summed_lines_frame(df_sub, drawn, stack_level_names)
 
         # Reset index to use time only (drop period)
         df_to_plot.index = time_index
@@ -824,6 +866,8 @@ def _build_stack_figure(
     # ── Figure title ──
     fig_h = fig.get_size_inches()[1]
     fig.suptitle(plot_name, y=1 - 0.14 / fig_h, va='top')
+    if summed_subplots:
+        fig._flextool_summed_subplots = summed_subplots
 
     return fig
 
@@ -956,6 +1000,6 @@ def build_stack_figures(
             expected_x_length=expected_x_length,
         )
         if keep_plot_data:
-            fig.flextool_plot_batch = batch
+            fig.flextool_plot_batch = _batch_as_drawn(batch, fig)
         result.append((batch_title, fig))
     return result, total_file_count
