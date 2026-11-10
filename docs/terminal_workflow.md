@@ -181,6 +181,7 @@ solver's native output and any crash dump.
 |---|---|
 | `--scenario-name NAME` | Scenario name to execute (if omitted, uses the active DB filter) |
 | `--settings-db-url URL` | Settings DB consulted for post-processing defaults |
+| `--migrate` | Migrate the input database to the current FlexTool version before the run, if it is older (see [Migrate database schema](#migrate-database-schema)). A frozen database is not migrated: the run stops with exit code 2. Without the flag, an older database is refused. |
 | `--output-spreadsheet PATH` | Save results to a spreadsheet file |
 | `--write-methods METHOD [...]` | Output formats: `plot`, `parquet`, `excel`, `csv`, `spinedb` (default: `plot parquet`) |
 | `--results-db-url URL` | Target SpineDB for the `spinedb` write-method (default: `<output-location>/results.sqlite`) |
@@ -490,7 +491,7 @@ flextool-migrate-database input.sqlite
 | `--copy-to PATH` | Copy the database to `PATH` and migrate the copy; the original is not changed. For a frozen database. |
 | `--allow-migrate-frozen` | Migrate a frozen database in place; its frozen marker is kept with the new version. |
 
-The model run (`flextool-run`, `run_flextool.py`, `python -m flextool.cli.cmd_run_flextool`) does not run a database that is not at the current FlexTool version: it stops with a message naming this command. `execute_flextool_workflow.py` migrates the input database before it runs the model, the FlexTool window migrates its input sources when it refreshes them, and the Spine Toolbox workflow runs its **Migrate database** tool before FlexTool.
+The model run (`flextool-run`, `run_flextool.py`, `python -m flextool.cli.cmd_run_flextool`) does not run a database that is not at the current FlexTool version: it stops with a message naming this command. With `--migrate` it migrates the database first, the same way as this command: a frozen database is not migrated, and the run stops with the frozen message and exit code 2. Runs started at the same time with `--migrate` on one database migrate it once: the migration holds a lock on `<database>.migrate.lock` next to the database (the file stays there; it can be deleted when no run is starting), and the other runs wait for it and then find the database current. The settings databases (`--settings-db-url`, the output database) are not migrated. `execute_flextool_workflow.py` migrates the input database before it runs the model, the FlexTool window migrates its input sources when it refreshes them, and the Spine Toolbox workflow runs its **Migrate database** tool before FlexTool.
 
 A frozen database older than this FlexTool (or at the current version but with an older SpineDB schema) is refused with exit code 2 and a message naming the two options: `--copy-to NEW.sqlite` migrates a copy (the copy is not frozen; it records the label, the old version and the SHA-256 of the frozen file it was made from) and `--allow-migrate-frozen` migrates the frozen file itself. A frozen database that is already current, or newer than this FlexTool, is left unchanged, also with `--allow-migrate-frozen`. If FlexTool cannot read the file to check for the marker (another program holds a lock on it), it does not migrate it and says so. `flextool-update` skips frozen databases and lists them, and `execute_flextool_workflow.py` stops on one.
 
@@ -705,6 +706,8 @@ version and names the command to run. Migrate it once before the loop:
 ```bash
 flextool-migrate-database input.sqlite
 ```
+
+or add `--migrate` to the `flextool-run` command; runs started at the same time then migrate it once.
 
 **Bash (Linux, macOS):**
 

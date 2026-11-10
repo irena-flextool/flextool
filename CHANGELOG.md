@@ -100,6 +100,11 @@
   left out of the package; `verify` prints one `pip install` line pinning FlexTool, polar-high, highspy and polars.
 - **Fix: the Solver options dialog said the `.opt` files are in the project's `solver_config` folder.** They are
   in the `solver_config` folder of the FlexTool workspace (or `$FLEXTOOL_SOLVER_CONFIG_DIR`).
+- **New: `flextool-run --migrate`** (also `run_flextool.py`, `python -m flextool.cli.cmd_run_flextool`) migrates an
+  older input database before the run, the same way as `flextool-migrate-database`; without the flag the run still
+  refuses it, and the refusal now names the flag. A frozen database is not migrated: the run stops with the frozen
+  message and exit code 2. Runs started at the same time with `--migrate` on one database migrate it once (a lock on
+  `<database>.migrate.lock`); the others wait and then run. `execute_flextool_workflow.py` takes the same lock.
 - **Behaviour change: the model run refuses an input database that is not at the current FlexTool version.**
   Before, only databases below version 25 were refused, so an unmigrated database ran old data under the new
   version's semantics without a word. `flextool-run` (and `run_flextool.py`, `python -m

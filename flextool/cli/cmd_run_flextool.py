@@ -560,6 +560,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('input_db_url', help='Database URL to connect to (can be copied from Toolbox workflow db item')
     parser.add_argument('output_db_url', metavar='DB_URL', nargs='?', default=None, help='Save information about result location to database for post-processing')
     parser.add_argument('--settings-db-url', help='Settings for post-processing')
+    parser.add_argument('--migrate', action='store_true', default=False,
+                        help='Migrate the input database to the current FlexTool version before the run, if it is '
+                             'older (the same migration as flextool-migrate-database).  A frozen database is not '
+                             'migrated: the run stops.  Parallel runs with --migrate on one database migrate it '
+                             'once; the others wait for it.  Without the flag, an older database is refused.')
     parser.add_argument('--scenario-name', help='Name for the scenario in the database that should be executed', nargs='?', default=None)
     parser.add_argument(
         '--debug',
@@ -923,6 +928,11 @@ def main():
         except Exception as _exc:
             logging.warning("Failed to auto-seed %s: %s", _candidate, _exc)
 
+    # --migrate: bring an older input database to the current version before anything opens it (the engine refuses
+    # one that is not current).  A frozen database stops the run, as flextool-migrate-database does.
+    if args.migrate:
+        _migrate_input_or_exit(input_db_url)
+
     # Phase-timing recorder: constructed once per CLI invocation, lives
     # on ``runner.state.timing_recorder``, writes a structured timings.csv
     # at <work_folder>/solve_data/timings.csv (one row per phase, atomic
@@ -1035,6 +1045,22 @@ def main():
         rec.finish(state, exit_code=exit_code, error=error)
         _cleanup_run_record()
         _restore_signals()
+
+
+#: The exit code of a run stopped by a frozen database (``--migrate``), as in ``flextool-migrate-database``.
+EXIT_FROZEN = 2
+
+
+def _migrate_input_or_exit(input_db_url: str) -> None:
+    """Migrate the input database for ``--migrate`` (once across parallel runs); exit 2 on a frozen database."""
+    from flextool.update_flextool.frozen import FrozenDatabaseError
+    from flextool.update_flextool.migrate_before_run import migrate_before_run
+
+    try:
+        migrate_before_run(input_db_url)
+    except FrozenDatabaseError as exc:
+        print(str(exc), file=sys.stderr, flush=True)
+        sys.exit(EXIT_FROZEN)
 
 
 def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_path, output_location,

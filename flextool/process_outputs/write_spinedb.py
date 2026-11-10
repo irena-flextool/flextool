@@ -45,6 +45,7 @@ from typing import Any
 import pandas as pd
 from spinedb_api import DatabaseMapping, import_data
 from flextool.update_flextool.db_handle import open_database_mapping
+from flextool._file_lock import lock_exclusive as _lock_exclusive, unlock as _unlock
 from spinedb_api.parameter_value import Map
 
 from flextool.process_outputs._output_meta import FACTOR, result_key_summary
@@ -433,48 +434,6 @@ def _top_up_schema_if_stale(db_url: str) -> None:
                 db.close()
         finally:
             _unlock(lock_fh)
-
-
-def _lock_exclusive(lock_fh) -> None:
-    """Acquire a blocking exclusive lock on an open file handle.
-
-    Portable across POSIX (``fcntl.flock``) and Windows (``msvcrt.locking``);
-    ``fcntl`` does not exist on Windows, so dispatch on what imports."""
-    try:
-        import fcntl
-    except ImportError:
-        import msvcrt
-        import time
-
-        # ``msvcrt.locking`` locks ``nbytes`` from the current file position;
-        # lock a single byte at offset 0.  Use the non-blocking variant in a
-        # retry loop so we block indefinitely rather than giving up after the
-        # ~10s LK_LOCK ceiling.
-        lock_fh.seek(0)
-        while True:
-            try:
-                msvcrt.locking(lock_fh.fileno(), msvcrt.LK_NBLCK, 1)
-                return
-            except OSError:
-                time.sleep(0.05)
-    else:
-        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
-
-
-def _unlock(lock_fh) -> None:
-    """Release a lock taken by :func:`_lock_exclusive` (portable)."""
-    try:
-        import fcntl
-    except ImportError:
-        import msvcrt
-
-        lock_fh.seek(0)
-        try:
-            msvcrt.locking(lock_fh.fileno(), msvcrt.LK_UNLCK, 1)
-        except OSError:
-            pass
-    else:
-        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
 
 def _replace_with_retry(src: str, dst: str, *, attempts: int = 20,

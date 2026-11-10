@@ -48,28 +48,14 @@ def migrate_input_if_needed(input_db_url: str) -> int | None:
 
     The engine refuses a database that is not at the current version, so the workflow migrates first; a current one
     whose SpineDB schema is an older revision is upgraded too.  Both are read read-only, so a current database is not
-    touched.  A frozen database is not migrated: this raises
+    touched.  Parallel workflows on one database migrate it once (an exclusive lock, see
+    :mod:`~flextool.update_flextool.migrate_before_run`).  A frozen database is not migrated: this raises
     :class:`~flextool.update_flextool.frozen.FrozenDatabaseError`.  Other URLs and missing files are left to the engine,
     which reports them.
     """
-    from flextool.update_flextool import FLEXTOOL_DB_VERSION
-    from flextool.update_flextool.db_migration import migrate_database
-    from flextool.update_flextool.frozen import read_db_version_ro, schema_outdated_ro, sqlite_path_from
+    from flextool.update_flextool.migrate_before_run import migrate_before_run
 
-    path = sqlite_path_from(input_db_url)
-    if path is None or not path.is_file():
-        return None
-    version = read_db_version_ro(path)
-    if version is None or version > FLEXTOOL_DB_VERSION:
-        return None
-    if version == FLEXTOOL_DB_VERSION:
-        if not schema_outdated_ro(path):
-            return None
-        print(f"  Upgrading the SpineDB schema of the input database: {path}")
-    else:
-        print(f"  Migrating the input database from version {version} to {FLEXTOOL_DB_VERSION}: {path}")
-    migrate_database(str(path))
-    return version
+    return migrate_before_run(input_db_url)
 
 
 def build_parser() -> argparse.ArgumentParser:
