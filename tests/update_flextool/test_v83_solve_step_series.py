@@ -3,7 +3,9 @@
 Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
 ``tests/fixtures/stoch_two_period.json``) migrated to 82, then to 83.  The step
 rewrites the ``node.energy_margin_adder`` description and the ``unit.efficiency`` /
-``efficiency_at_min_load`` descriptions (may be above 1, C-6), changes no other
+``efficiency_at_min_load`` descriptions (may be above 1, C-6), the 15 user-constraint
+capacity coefficient descriptions (indexed by constraint name) and the ``timeset_duration``
+typo (C-10), changes no other
 definition and no value, writes the behaviour-change markers only on a database
 whose results change (a solve with ``new_stepduration``; with also an
 ``energy_margin_adder`` value, the adder marker too), and a rerun commits
@@ -71,7 +73,7 @@ def plain(tmp_path_factory: pytest.TempPathFactory) -> dict:
     return _migrate(tmp_path_factory, "v83_plain", {})
 
 
-def test_rewrites_the_adder_and_unit_efficiency_descriptions_only(plain) -> None:
+def test_rewrites_the_v83_descriptions_only(plain) -> None:
     with open(package_data_path("schemas/spinedb_schema.json"), encoding="utf-8") as f:
         schema = json.load(f)
     shipped = {(r[0], r[1]): r[4] for r in schema["parameter_definitions"]}
@@ -82,10 +84,19 @@ def test_rewrites_the_adder_and_unit_efficiency_descriptions_only(plain) -> None
     for k in efficiency_keys:
         assert plain["after"][k][2] == shipped[k] == m._V83_UNIT_EFFICIENCY_DESCRIPTIONS[k[1]]
         assert shipped[k].startswith("[-] ") and "above 1" in shipped[k]
-    for k in {key} | efficiency_keys:
+    coeff_keys = set(m._V83_CONSTRAINT_COEFF_PARAMETERS)
+    assert len(coeff_keys) == 15
+    for k in coeff_keys:
+        assert plain["after"][k][2] == shipped[k]
+        assert shipped[k].startswith("[unit of the constraint per ")
+        assert "] A map of coefficients (Index: constraint name, value: coefficient). Puts " in shipped[k]
+    duration = ("timeset", "timeset_duration")
+    assert plain["after"][duration][2] == shipped[duration] and "the the" not in shipped[duration]
+    changed = {key, duration} | efficiency_keys | coeff_keys
+    for k in changed:
         assert plain["before"][k][2] != shipped[k]
         assert plain["after"][k][:2] + plain["after"][k][3:] == plain["before"][k][:2] + plain["before"][k][3:]
-    skip = {key, ("model", "version")} | efficiency_keys
+    skip = {("model", "version")} | changed
     assert ({k: v for k, v in plain["after"].items() if k not in skip}
             == {k: v for k, v in plain["before"].items() if k not in skip})
 

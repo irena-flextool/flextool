@@ -6025,13 +6025,33 @@ _V83_UNIT_EFFICIENCY_DESCRIPTIONS = {
         "applies at minimum load too. Constant, period, time or period+time."),
 }
 
+#: v83 (C-10): the user-constraint capacity coefficients say how their map is indexed, like their siblings.
+_V83_CONSTRAINT_COEFF_SENTENCE = "A map of coefficients (Index: constraint name, value: coefficient). "
+_V83_CONSTRAINT_COEFF_PARAMETERS: tuple[tuple[str, str], ...] = tuple(
+    (cls, f"constraint_{kind}_coeff")
+    for cls in ("unit", "node", "connection")
+    for kind in ("capacity", "cumulative_pre_built_capacity", "in_construction_capacity", "invested_capacity",
+                 "retired_capacity"))
+#: v83 (C-10): a doubled word in the ``timeset.timeset_duration`` description.
+_V83_TIMESET_DURATION_TYPO = ("name of the the timestep", "name of the timestep")
+
+
+def _v83_constraint_coeff_description(description: str) -> str:
+    """*description* with the index sentence after its unit bracket (unchanged when it has the sentence)."""
+    if _V83_CONSTRAINT_COEFF_SENTENCE.strip() in description:
+        return description
+    end = description.find("] ") + 2 if description.startswith("[") and "] " in description else 0
+    return description[:end] + _V83_CONSTRAINT_COEFF_SENTENCE + description[end:]
+
 
 def _migrate_v83_solve_step_series(db) -> None:
     """A solve's ``new_stepduration`` combines every time series by its kind (v82 -> v83).
 
     No value is rewritten.  The ``node.energy_margin_adder`` description is rewritten (an energy per time step of
     the timeline, summed over a new_stepduration step), and ``unit.efficiency`` / ``efficiency_at_min_load`` say
-    they may be above 1 (C-6).  Behaviour-change markers, only on a database whose
+    they may be above 1 (C-6).  The 15 user-constraint capacity coefficients say they are a map of coefficients
+    indexed by constraint name, and a doubled word leaves the ``timeset_duration`` description (C-10).
+    Behaviour-change markers, only on a database whose
     results change: ``solve_step_series_combined`` when some solve has a ``new_stepduration`` value, and
     ``energy_margin_adder_per_original_step`` when also some node has an ``energy_margin_adder`` value (the
     marker value lists the solves / nodes).  Idempotent: a rerun finds the description and the markers written.
@@ -6043,6 +6063,16 @@ def _migrate_v83_solve_step_series(db) -> None:
         pdef = _pdef_or_none(db, "unit", name)
         if pdef is not None and (pdef["description"] or "") != text:
             db.update_parameter_definition(id=pdef["id"], description=text)
+    for cls, name in _V83_CONSTRAINT_COEFF_PARAMETERS:
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is not None:
+            text = _v83_constraint_coeff_description(pdef["description"] or "")
+            if text != (pdef["description"] or ""):
+                db.update_parameter_definition(id=pdef["id"], description=text)
+    pdef = _pdef_or_none(db, "timeset", "timeset_duration")
+    if pdef is not None and _V83_TIMESET_DURATION_TYPO[0] in (pdef["description"] or ""):
+        db.update_parameter_definition(id=pdef["id"], description=pdef["description"].replace(
+            *_V83_TIMESET_DURATION_TYPO))
     solves = sorted({pv["entity_byname"][0] for pv in db.find_parameter_values(
         entity_class_name="solve", parameter_definition_name="new_stepduration")
         if from_database(pv["value"], pv["type"]) is not None})

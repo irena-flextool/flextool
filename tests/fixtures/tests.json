@@ -2942,7 +2942,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the connection's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is not included.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the connection's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is not included.",
       "constraint"
     ],
     [
@@ -2953,7 +2953,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -2964,7 +2964,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -2975,7 +2975,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -2997,7 +2997,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -3943,7 +3943,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MWh] Puts the node's storage capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MWh. Capacity in construction is not included.",
+      "[unit of the constraint per MWh] A map of coefficients (Index: constraint name, value: coefficient). Puts the node's storage capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MWh. Capacity in construction is not included.",
       "constraint"
     ],
     [
@@ -3954,7 +3954,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MWh] Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MWh.",
+      "[unit of the constraint per MWh] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -3965,7 +3965,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MWh] Puts the storage capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MWh.",
+      "[unit of the constraint per MWh] A map of coefficients (Index: constraint name, value: coefficient). Puts the storage capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -3976,7 +3976,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MWh] Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MWh.",
+      "[unit of the constraint per MWh] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -3987,7 +3987,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MWh] Puts the storage capacity retired in each period on the left side of the user constraint. Coefficient per MWh.",
+      "[unit of the constraint per MWh] A map of coefficients (Index: constraint name, value: coefficient). Puts the storage capacity retired in each period on the left side of the user constraint. Coefficient per MWh.",
       "constraint"
     ],
     [
@@ -4999,7 +4999,7 @@
         null
       ],
       null,
-      "[count of time steps] Index: name of the the timestep that starts the timeset, value: duration of the block in timesteps. Defines the *selection*: which timesteps are in the solve and how many (this sets 'hours_in_solve'). Representativeness - each timestep's share of the year - is set separately by 'timeset_weights'.",
+      "[count of time steps] Index: name of the timestep that starts the timeset, value: duration of the block in timesteps. Defines the *selection*: which timesteps are in the solve and how many (this sets 'hours_in_solve'). Representativeness - each timestep's share of the year - is set separately by 'timeset_weights'.",
       "timeline"
     ],
     [
@@ -5032,7 +5032,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the unit's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is not included.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the unit's capacity in service in each period on the left side of the user constraint (existing plus investments still in service minus retirements). Coefficient per MW. Capacity in construction is not included.",
       "constraint"
     ],
     [
@@ -5043,7 +5043,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -5054,7 +5054,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -5065,7 +5065,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity that comes online in each period on the left side of the user constraint. Without a construction lead time, this is the capacity invested in that period. Coefficient per MW.",
       "constraint"
     ],
     [
@@ -5087,7 +5087,7 @@
         null
       ],
       null,
-      "[unit of the constraint per MW] Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.",
+      "[unit of the constraint per MW] A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.",
       "constraint"
     ],
     [
