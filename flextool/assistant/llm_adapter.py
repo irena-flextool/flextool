@@ -144,6 +144,9 @@ class Connection:
     key_source: str
     knobs: Mapping[str, object]
     route: Route
+    #: False: each answer comes whole, not streamed (the calibration's ``run --no-stream``; the Chat Completions
+    #: backend only).
+    stream: bool = True
 
 
 # --- events pushed to the front end (thread-safe callback) -------------------------------------------------------

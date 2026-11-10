@@ -25,6 +25,10 @@ start, from these sources in this order of precedence:
    free models); the learned interval never goes below it;
 4. none: no wait.
 
+A **floor** (:meth:`Pacer.set_floor`, the calibration's ``run --pace``) is a least spacing of request starts for
+one key in this process: the spacing is the largest of the floor and the sources above.  It is not learned, not
+kept in the cache and never changes the learned interval.
+
 A wait named by the provider (``retry-after``) is honoured by the retry countdown (:mod:`flextool.assistant.
 llm_retry`) and does not change the interval.  :meth:`Pacer.wait` is atomic across threads: the request that passes
 marks its start, so two chats of the FlexTool window that share a provider and model (the gate's pacer,
@@ -181,6 +185,7 @@ class _State:
     loaded: bool = False
     stored_at: float | None = None          # wall time of the last cache write (or read) of the learned interval
     epoch: int = 0                          # raised by every raise of the learned interval
+    floor: float | None = None              # set_floor: no spacing below this (not learned, not stored)
 
 
 @dataclass
@@ -224,6 +229,11 @@ class Pacer:
                     state.learned = min(CAP, max(START, stored))
                     state.stored_at = self.wall()
 
+    def set_floor(self, key: str, seconds: float | None) -> None:
+        """No two request starts to *key* closer than *seconds* in this process (``None`` or 0: no floor)."""
+        with self._lock:
+            self._state(key).floor = seconds if seconds and seconds > 0 else None
+
     def interval(self, key: str) -> float:
         """The spacing of request starts without header information: learned, else seed, else 0."""
         with self._lock:
@@ -232,8 +242,8 @@ class Pacer:
     @staticmethod
     def _spacing(state: _State) -> float:
         if state.learned is not None:
-            return max(state.learned, state.seed or 0.0)
-        return state.seed or 0.0
+            return max(state.learned, state.seed or 0.0, state.floor or 0.0)
+        return max(state.seed or 0.0, state.floor or 0.0)
 
     def _not_before(self, state: _State, now: float) -> float:
         # The headers only lengthen the spacing: never below the learned interval or the seed (review G9).

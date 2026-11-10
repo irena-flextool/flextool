@@ -5,6 +5,11 @@ The request carries only the fields the preset allows; the knobs' fields go in `
 top level of the body).  The answer streams: text deltas are shown as they come, tool calls are assembled per
 ``index`` with their arguments concatenated, provider data the preset captures (Gemini's thought signatures in
 ``extra_content``, OpenRouter's ``reasoning_details``) is merged and replayed only to the same origin.
+
+A connection with ``stream=False`` (the calibration's ``run --no-stream``) asks for the whole answer at once.  Its
+message is read as one chunk whose delta is the whole message (:meth:`OpenAIChatBackend._consume_whole`), so the
+text, tool calls, captured provider data, usage, finish reason, reasoning blocks and error classification go
+through the same code as a streamed answer.
 """
 from __future__ import annotations
 
@@ -230,7 +235,8 @@ class OpenAIChatBackend:
     def request_body(self, req: Request) -> dict[str, Any]:
         """The whole request body (what reaches the endpoint)."""
         allowed = self.preset.allowed_params
-        body: dict[str, Any] = {"model": self.conn.model, "messages": self.wire_messages(req), "stream": True}
+        streamed = self.conn.stream
+        body: dict[str, Any] = {"model": self.conn.model, "messages": self.wire_messages(req), "stream": streamed}
         send_tools = bool(req.tools) and schemas_sent(self.preset, req.tool_choice)
         if send_tools:
             body["tools"] = [{"type": "function", "function": {"name": t.name, "description": t.description,
@@ -238,7 +244,7 @@ class OpenAIChatBackend:
             if "tool_choice" in allowed:
                 body["tool_choice"] = req.tool_choice
         body[self.preset.max_tokens_param] = req.max_output_tokens
-        if "stream_options" in allowed:
+        if "stream_options" in allowed and streamed:        # a whole answer carries its usage; the field is refused
             body["stream_options"] = {"include_usage": True}
         if "prompt_cache_key" in allowed and req.prefix_key:
             body["prompt_cache_key"] = req.prefix_key
@@ -268,16 +274,26 @@ class OpenAIChatBackend:
         stream = None
         try:
             try:
-                stream = self._client.chat.completions.create(
-                    model=body["model"], messages=body["messages"], stream=True, extra_body=extra_body or None,
-                    **named)
+                if body["stream"]:
+                    stream = self._client.chat.completions.create(
+                        model=body["model"], messages=body["messages"], stream=True, extra_body=extra_body or None,
+                        **named)
+                else:
+                    # The same body to the same path, the answer returned raw (read here as a streamed one is,
+                    # never parsed by the library); the library still raises for an error status.
+                    import httpx2
+
+                    whole = self._client.post("/chat/completions", body=body, cast_to=httpx2.Response)
             except Exception as exc:
                 if cancel.is_set() or self._inflight.aborted.is_set():
                     raise cancelled(self.ctx) from exc
                 raise classify_openai(exc, self.ctx) from exc
-            self._inflight.set(stream.response)
             try:
-                self._read_answer(stream.response, state, on_event, timer, cancel)
+                if stream is not None:
+                    self._inflight.set(stream.response)
+                    self._read_answer(stream.response, state, on_event, timer, cancel)
+                else:
+                    self._read_whole(whole, state, on_event)
             except LLMError:
                 raise
             except Exception as exc:
@@ -339,6 +355,37 @@ class OpenAIChatBackend:
         if body:
             self._raise_error_body("\n".join(body).encode("utf-8"), response, state,
                                    fallback="the answer ended with an error")
+
+    def _read_whole(self, response: Any, state: _State, on_event: OnEvent) -> None:
+        """Read a whole (not streamed) answer: an error body is classified as one inside a stream is; a
+        completion is consumed as one chunk (:meth:`_consume_whole`); anything else is an incomplete answer
+        (:meth:`_reply`), as a streamed request answered by a JSON body without an error is."""
+        raw = response.read()
+        self._raise_error_body(raw, response, state, fallback="the answer was an error")
+        try:
+            body: Any = json.loads(raw)
+        except ValueError:
+            body = None
+        if not isinstance(body, dict) or not isinstance(body.get("choices"), list):
+            state.plain_body = True
+            return
+        self._consume_whole(body, state, on_event)
+
+    def _consume_whole(self, body: dict, state: _State, on_event: OnEvent) -> None:
+        """A whole completion as one chunk: each choice's ``message`` is its delta, the tool calls numbered in
+        their order where they carry no ``index`` (Google's carry none)."""
+        choices = []
+        for choice in body["choices"]:
+            if not isinstance(choice, dict):
+                continue
+            delta = dict(choice.get("message") or {})
+            calls = delta.get("tool_calls")
+            if isinstance(calls, list):
+                delta["tool_calls"] = [{**c, "index": c["index"] if isinstance(c.get("index"), int) else n}
+                                       if isinstance(c, dict) else c for n, c in enumerate(calls)]
+            choices.append({"index": choice.get("index", 0), "delta": delta,
+                            "finish_reason": choice.get("finish_reason")})
+        self._consume({**body, "choices": choices}, state, on_event)
 
     def _raise_error_body(self, raw: bytes, response: Any, state: _State, *, fallback: str) -> None:
         """Raise the classified error when *raw* is a JSON error body; return when it is anything else."""
