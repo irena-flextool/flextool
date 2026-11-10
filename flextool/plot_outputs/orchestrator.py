@@ -258,17 +258,21 @@ def _apply_dimension_rules(
         for i in weight_row_levels:
             rules = rules[:i] + 'm' + rules[i + 1:]
 
+    # In a time chart an all-empty sum stays empty (NaN, drawn as a gap); a bar chart draws an empty value as
+    # no bar either way (its frames are zero-filled later), so its sums keep pandas' 0.
+    min_count = 1 if chart_type == 'time' else 0
+
     # Sum row levels marked 'm' (includes 'y'/'z' rewritten above)
     sum_row_levels = [i for i, char in enumerate(rules[:nr_row_levels]) if char == 'm']
     if sum_row_levels:
         summed_dimensions.extend(df.index.names[i] for i in sum_row_levels)
         keep_levels = [i for i in range(nr_row_levels) if i not in sum_row_levels]
         if len(keep_levels) > 0:
-            df = df.groupby(level=keep_levels).sum()
+            df = df.groupby(level=keep_levels).sum(min_count=min_count)
             for i in sum_row_levels:
                 rules = rules[:i] + rules[i + 1:]
         else:
-            df = df.sum(axis=0).to_frame().T
+            df = df.sum(axis=0, min_count=min_count).to_frame().T
             df.index = ['']
             df.index.name = 'sum'
 
@@ -285,11 +289,11 @@ def _apply_dimension_rules(
         summed_dimensions.extend(df.columns.names[i] for i in sum_column_levels)
         keep_levels = [i for i in range(nr_column_levels) if i not in sum_column_levels]
         if len(keep_levels) > 0:
-            df = df.T.groupby(level=keep_levels).sum().T
+            df = df.T.groupby(level=keep_levels).sum(min_count=min_count).T
             for i in sum_column_levels:
                 rules = rules[:i + df.index.nlevels] + rules[i + 1 + df.index.nlevels:]
         else:
-            df = df.sum(axis=1).to_frame()
+            df = df.sum(axis=1, min_count=min_count).to_frame()
             df.columns = ['']
             df.columns.name = 'sum'
 
@@ -421,8 +425,14 @@ def _apply_dimension_rules(
     # exist in the input parquet. Those phantom cells arrive as all-NaN
     # rows / columns. Drop them so pagination, drawing, and the
     # skip_data_with_only_zeroes flag see only the real combinations.
-    # This is a no-op for already-dense data.
-    df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
+    # This is a no-op for already-dense data.  Only a stack makes phantom
+    # rows: in a time chart whose rows are the input's own rows, an all-empty
+    # row is a time step without results and is kept, so it is drawn as a gap
+    # (dropping it would join the line across it).
+    if chart_type == 'time' and not col_levels_to_stack:
+        df = df.dropna(how='all', axis=1)
+    else:
+        df = df.dropna(how='all', axis=0).dropna(how='all', axis=1)
 
     # Rebuild rules to match actual level order after stack/unstack
     level_names_after = list(df.index.names) + list(df.columns.names)

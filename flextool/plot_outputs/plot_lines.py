@@ -424,7 +424,9 @@ def _build_lines_figure(
 
                 if isinstance(y_data, pd.DataFrame):
                     summed = summed or y_data.shape[1] > 1
-                    y_data = y_data.sum(axis=1)
+                    # min_count=1: a row whose cells are all empty (an empty result cell or a timeline-gap
+                    # row) stays NaN and is drawn as a gap, not as 0.
+                    y_data = y_data.sum(axis=1, min_count=1)
                 drawn.append((line, y_data))
 
                 label = str(line)
@@ -638,6 +640,34 @@ def build_line_figures(
 #  Stacked area
 # ---------------------------------------------------------------------------
 
+def _draw_stacked_area(ax, df: pd.DataFrame, colors) -> None:
+    """Draw *df*'s columns as stacked areas at x = 0, 1, ...: positive columns upward from zero, negative ones
+    downward, in column order (as pandas' stacked ``plot.area``).
+
+    A row whose cells are all empty (an empty result row or a timeline-gap row) is a gap: nothing is drawn there.
+    pandas' ``plot.area`` would draw it as 0.  An empty cell in a row that has other values adds nothing to the
+    stack there.  Each column must be all >= 0 or all <= 0 (the caller splits mixed columns).
+    """
+    n = len(df)
+    x = np.arange(n)
+    drawn = ~df.isna().all(axis=1).to_numpy()
+    pos = np.zeros(n)
+    neg = np.zeros(n)
+    for col, color in zip(df.columns, colors):
+        y = df[col].fillna(0).to_numpy(dtype=float)
+        if (y >= 0).all():
+            base, pos = pos, pos + y
+            top = pos
+        else:
+            base, neg = neg, neg + y
+            top = neg
+        ax.fill_between(x, base, top, where=drawn, color=color, alpha=1.0, linewidth=0, label=str(col))
+    if n:
+        # Keep the whole time axis (and zero) in view also when the first or last rows are gaps.
+        ax.update_datalim(np.column_stack([x, np.zeros(n)]))
+        ax.autoscale_view()
+
+
 def _build_stack_figure(
     effective_plots, plot_name, sub_levels, stack_level_names, time_index,
     subplots_per_row, legend_position,
@@ -728,7 +758,9 @@ def _build_stack_figure(
 
                 if isinstance(y_data, pd.DataFrame):
                     summed = summed or y_data.shape[1] > 1
-                    y_data = y_data.sum(axis=1)
+                    # min_count=1: a row whose cells are all empty (an empty result cell or a timeline-gap
+                    # row) stays NaN and is drawn as a gap, not as 0.
+                    y_data = y_data.sum(axis=1, min_count=1)
                 drawn.append((stack, y_data))
 
                 data_dict[str(stack)] = y_data
@@ -791,7 +823,7 @@ def _build_stack_figure(
             colors = plt.colormaps['tab10'].colors[:n_columns]
             if n_columns > 10:
                 colors = plt.colormaps['tab20'].colors[:n_columns]
-        df_to_plot.plot.area(stacked=True, ax=ax, alpha=1.0, legend=False, linewidth=0, color=colors, xlabel="")
+        _draw_stacked_area(ax, df_to_plot, colors)
 
         # Subplot formatting
         if eff_title is not None:
@@ -806,7 +838,7 @@ def _build_stack_figure(
                 pos_pairs = []
                 neg_pairs = []
                 for h, label in zip(handles, labels):
-                    if label in df_to_plot.columns and (df_to_plot[label] <= 0).all():
+                    if label in df_to_plot.columns and (df_to_plot[label].dropna() <= 0).all():
                         neg_pairs.append((h, label))
                     else:
                         pos_pairs.append((h, label))

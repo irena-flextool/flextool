@@ -10,6 +10,11 @@
   FlexTool from the terminal.
 - **New: `read_input` row in `timings.csv`**: the time to read the input database, prepare the input data and set
   up the run, up to the start of preprocessing.
+- **Fix: line and stacked-area plots leave a gap where there are no results.** A time step whose plotted cells
+  are all empty, and the gap at a timeline break, were drawn as 0 in a line that sums several columns and in
+  every stacked-area plot (scenario, comparison and result-viewer plots); a time step with no result at all was
+  dropped, so the line joined across it. They are now gaps. In a sum, an empty cell next to values adds nothing.
+  Bar charts are unchanged (an empty value draws no bar). The dispatch plots still draw a timeline break as 0.
 - **New: plotted data as CSV.** Each plot file can get a CSV file next to it with the data drawn in it (same name,
   `.csv`; a plot split into files gets `_01.csv`, `_02.csv`, …), for the scenario plots, the comparison plots and
   the dispatch plots. Rows are the plotted time steps or bars (no gap rows at timeline breaks), columns the plotted
