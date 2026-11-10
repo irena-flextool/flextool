@@ -109,3 +109,62 @@ Here we have *coal_flow* `flowGroup` with `flowGroup__unit__node` relation coal_
 and *wind_flow* `flowGroup` with `flowGroup__unit__node` relation wind_flow|wind_plant|nodeA.
 
 ![non-sync](../img/concept/non_sync.png)
+
+## How to set a minimum inertia
+**(examples.sqlite scenario: coal_wind_inertia)**
+***init - west - coal - wind - inertia***
+
+**The idea.** Synchronous machines store energy in their rotating mass, and this inertia slows the fall of the frequency after a large plant trips. A minimum inertia keeps enough synchronous machines running when wind and solar cover most of the demand. In FlexTool it is a limit on a `group` of nodes.
+
+**The limit.** Give the group (with its nodes as `group__node` entities, here *electricity* with *west*, *east* and *north*):
+
+- `has_inertia`: *yes*
+- `inertia_limit` [MWs]: the minimum inertia, here 200. Constant, period, time or period+time.
+- `penalty_inertia` [CUR per MWs and hour]: the cost of a shortfall, default 5000.
+
+    A time map can set the requirement hour by hour. A time step that the map leaves out has no requirement. A
+    period map must give a value for every period of the solve.
+
+**Which machines give inertia.** Give each synchronous machine an `inertia_constant` [MWs/MW] on the arc to the node it is connected to: on `unit__outputNode` for a generator (here *coal_plant* 5, *coal_chp* 4), on `unit__inputNode` for a synchronous motor load such as a pump (here *water_pump* 3). Wind, solar and batteries get none.
+
+**How the inertia is counted.** It depends on whether the unit has online variables:
+
+- With online variables (`startup_method` *linear* or *binary*): online capacity × `inertia_constant`.
+
+    A unit gives its full inertia whenever it is online, also at minimum load. This is the physically right
+    measure, and it lets the model keep a plant online at low output to provide inertia.
+
+- Without online variables: flow × `inertia_constant`.
+
+    A unit at half load gives half of its inertia, and a unit with no output gives none. This underestimates the
+    inertia of part-loaded plants, and the model can only get inertia by producing. In *coal_wind_inertia*,
+    *coal_plant* has no online variables, so in the hours when wind could cover the demand it still runs at
+    40 MW: 40 MW × 5 MWs/MW = 200 MWs.
+
+A unit with an `inertia_constant` on both its input and its output arc counts on both sides.
+
+**A synchronous condenser.** A condenser gives inertia without producing power. Make it a unit with only an electricity input:
+
+- `unit` *sync_condenser* with `existing` [MW] and `startup_method` *linear* (or *binary* for whole machines), and no `unit__outputNode`
+- `unit__inputNode` (*sync_condenser*, *west*) with `inertia_constant`, for example 4
+- `min_load`, for example 0.02, for its losses
+
+    A unit without outputs has its capacity on its input, so the condenser draws at least `min_load` × online
+    capacity from *west* while it is online. The model takes it online when inertia is needed: with
+    `existing` 100 and `inertia_constant` 4, 50 MW online gives the 200 MWs and draws 1 MW. The online variables
+    are needed, since a condenser without them has no flow and so no inertia.
+
+**The penalty.** The limit can be broken at `penalty_inertia` per MWs of shortfall and hour. Set the penalty well above what the model pays to keep machines online, and check that the shortfall is 0. A shortfall means that the system does not have enough synchronous machines; a cheap penalty lets the model buy its way out of the limit.
+
+**The results.**
+
+- `group_inertia__dt` (`group` `inertia_t`) [MWs]: the inertia of the group in each time step.
+- `group__unit__node_inertia__dt` (`inertia_unit_node_t`) [MWs]: the part of each unit.
+- `slack__inertia_group__dt` and `slack__inertia_group__d` (`slack_inertia_t`, `slack_inertia`) [MWs]: the shortfall; its cost is the category *inertia slack penalty* in the costs.
+- `group_inertia_largest_flow__dt` (`inertia_largest_flow_t`) [MW]: the largest single flow into the group. FlexTool reports it, but it does not set the limit from it: compute the limit from your largest infeed and enter it.
+
+**Things to know.**
+
+- With a `new_stepduration` (longer time steps), the limit is averaged over each new time step.
+- An investment solve with `reduce_unit_detail_method` *online* (or another value that leaves out the online variables) counts the inertia from the flows. With `reduce_system_detail_method` *inertia* (or one of the values that include it), the solve has no inertia limit. See [Leaving out detail in a solve](../reference/entities_and_time.md#leaving-out-detail-in-a-solve).
+- The parameters are in [Groups](../reference/groups.md#limits-for-nodes) and in [Units](../reference/units.md).
