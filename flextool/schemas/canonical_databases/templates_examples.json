@@ -53,12 +53,28 @@
       ""
     ],
     [
+      "co2_additional_measures",
+      "Emission-trajectory how-to: CO2 limit 2.0, 1.5, 1.0, 0.5 Mt/a."
+    ],
+    [
+      "co2_existing_measures",
+      "Emission-trajectory how-to: CO2 limit 2.0, 1.8, 1.6, 1.4 Mt/a."
+    ],
+    [
       "co2_limit",
       ""
     ],
     [
       "co2_price",
       ""
+    ],
+    [
+      "co2_trajectory_system",
+      "Emission-trajectory how-to: four 5-year periods p2020..p2035 on the 2-day timeset, constant 300 MW demand at west, a carbon-free clean_plant at 80 CUR/MWh and a per-period CO2 limit on group co2_limit."
+    ],
+    [
+      "co2_without_measures",
+      "Emission-trajectory how-to: CO2 limit 3.0 Mt/a in every period (does not bind)."
     ],
     [
       "coal",
@@ -201,6 +217,38 @@
       "Lossless 2-way connection forced-reverse test"
     ],
     [
+      "must_run_constraint_one",
+      "Must-run how-to: user constraint coal_plant output >= 150 MW."
+    ],
+    [
+      "must_run_fleet",
+      "Must-run how-to: three identical 100 MW coal steam units steam_1..3 (other_operational_cost 0, 1, 2 CUR/MWh breaks the tie)."
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "Must-run how-to: user constraint on the fleet output, sum >= 100 MW."
+    ],
+    [
+      "must_run_fleet_two_online",
+      "Must-run how-to: binary online steam units with min_load 0.5 and a user constraint on the online count, sum >= 2 units."
+    ],
+    [
+      "must_run_flowgroup",
+      "Must-run how-to: flowGroup steam_fleet with min_instant_flow 100 MW."
+    ],
+    [
+      "must_run_min_load_only",
+      "Must-run how-to: binary online steam units with min_load 0.5 and no must-run (control case: min_load is not a must-run)."
+    ],
+    [
+      "must_run_profile",
+      "Must-run how-to: a 500 MW coal unit baseload_plant whose output is at least 0.4 of its capacity (profile lower_limit)."
+    ],
+    [
+      "must_run_system",
+      "Must-run how-to: constant 300 MW demand at west; wind costs 1 CUR/MWh."
+    ],
+    [
       "network",
       ""
     ],
@@ -309,6 +357,21 @@
     ],
     [
       "constraint",
+      "coal_plant_floor",
+      null
+    ],
+    [
+      "constraint",
+      "steam_fleet_output_floor",
+      null
+    ],
+    [
+      "constraint",
+      "steam_fleet_two_online",
+      null
+    ],
+    [
+      "constraint",
       "water_pump_fix",
       null
     ],
@@ -325,6 +388,11 @@
     [
       "flowGroup",
       "connections_with_east",
+      null
+    ],
+    [
+      "flowGroup",
+      "steam_fleet",
       null
     ],
     [
@@ -459,6 +527,11 @@
     ],
     [
       "profile",
+      "must_run_share",
+      null
+    ],
+    [
+      "profile",
       "wind_profile",
       null
     ],
@@ -515,6 +588,11 @@
     [
       "solve",
       "y2020_2029_2x5y",
+      null
+    ],
+    [
+      "solve",
+      "y2020_2035_2day_dispatch",
       null
     ],
     [
@@ -599,6 +677,16 @@
     ],
     [
       "unit",
+      "baseload_plant",
+      null
+    ],
+    [
+      "unit",
+      "clean_plant",
+      null
+    ],
+    [
+      "unit",
       "coal_chp",
       null
     ],
@@ -630,6 +718,21 @@
     [
       "unit",
       "fusion_plant",
+      null
+    ],
+    [
+      "unit",
+      "steam_1",
+      null
+    ],
+    [
+      "unit",
+      "steam_2",
+      null
+    ],
+    [
+      "unit",
+      "steam_3",
       null
     ],
     [
@@ -823,6 +926,14 @@
     [
       "unit__inputNode",
       [
+        "baseload_plant",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
         "coal_chp",
         "coal_market"
       ],
@@ -863,6 +974,30 @@
     [
       "unit__inputNode",
       [
+        "steam_1",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "steam_2",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "steam_3",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
         "water_pump",
         "water_source"
       ],
@@ -881,6 +1016,22 @@
       [
         "anti_energy_plant",
         "anti_energy_market"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "baseload_plant",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "clean_plant",
+        "west"
       ],
       null
     ],
@@ -936,6 +1087,30 @@
       "unit__outputNode",
       [
         "fusion_plant",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_1",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_2",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_3",
         "west"
       ],
       null
@@ -1076,6 +1251,33 @@
     [
       "flowGroup__unit__node",
       [
+        "steam_fleet",
+        "steam_1",
+        "west"
+      ],
+      null
+    ],
+    [
+      "flowGroup__unit__node",
+      [
+        "steam_fleet",
+        "steam_2",
+        "west"
+      ],
+      null
+    ],
+    [
+      "flowGroup__unit__node",
+      [
+        "steam_fleet",
+        "steam_3",
+        "west"
+      ],
+      null
+    ],
+    [
+      "flowGroup__unit__node",
+      [
         "to_west_node",
         "anti_energy_plant",
         "west"
@@ -1133,6 +1335,15 @@
         "primary",
         "up",
         "electricity"
+      ],
+      null
+    ],
+    [
+      "unit__node__profile",
+      [
+        "baseload_plant",
+        "west",
+        "must_run_share"
       ],
       null
     ],
@@ -1395,6 +1606,22 @@
     [
       "unit",
       [
+        "baseload_plant"
+      ],
+      "must_run_profile",
+      true
+    ],
+    [
+      "unit",
+      [
+        "clean_plant"
+      ],
+      "co2_trajectory_system",
+      true
+    ],
+    [
+      "unit",
+      [
         "coal_chp"
       ],
       "coal_chp",
@@ -1446,6 +1673,30 @@
         "fusion_plant"
       ],
       "fusion",
+      true
+    ],
+    [
+      "unit",
+      [
+        "steam_1"
+      ],
+      "must_run_fleet",
+      true
+    ],
+    [
+      "unit",
+      [
+        "steam_2"
+      ],
+      "must_run_fleet",
+      true
+    ],
+    [
+      "unit",
+      [
+        "steam_3"
+      ],
+      "must_run_fleet",
       true
     ],
     [
@@ -8043,6 +8294,66 @@
     ],
     [
       "constraint",
+      "coal_plant_floor",
+      "constant",
+      [
+        "150.0",
+        "float"
+      ],
+      "must_run_constraint_one"
+    ],
+    [
+      "constraint",
+      "coal_plant_floor",
+      "sense",
+      [
+        "\"greater_than\"",
+        "str"
+      ],
+      "must_run_constraint_one"
+    ],
+    [
+      "constraint",
+      "steam_fleet_output_floor",
+      "constant",
+      [
+        "100.0",
+        "float"
+      ],
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "constraint",
+      "steam_fleet_output_floor",
+      "sense",
+      [
+        "\"greater_than\"",
+        "str"
+      ],
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "constraint",
+      "steam_fleet_two_online",
+      "constant",
+      [
+        "2.0",
+        "float"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "constraint",
+      "steam_fleet_two_online",
+      "sense",
+      [
+        "\"greater_than\"",
+        "str"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "constraint",
       "water_pump_fix",
       "constant",
       [
@@ -8113,6 +8424,16 @@
     ],
     [
       "flowGroup",
+      "steam_fleet",
+      "min_instant_flow",
+      [
+        "100.0",
+        "float"
+      ],
+      "must_run_flowgroup"
+    ],
+    [
+      "flowGroup",
       "to_west_node",
       "flow_aggregator",
       [
@@ -8156,8 +8477,48 @@
       "co2_limit",
       "co2_max_period",
       [
+        "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"p2020\", 2000000.0], [\"p2025\", 1500000.0], [\"p2030\", 1000000.0], [\"p2035\", 500000.0]], \"index_name\": \"period\"}",
+        "map"
+      ],
+      "co2_additional_measures"
+    ],
+    [
+      "group",
+      "co2_limit",
+      "co2_max_period",
+      [
+        "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"p2020\", 2000000.0], [\"p2025\", 1800000.0], [\"p2030\", 1600000.0], [\"p2035\", 1400000.0]], \"index_name\": \"period\"}",
+        "map"
+      ],
+      "co2_existing_measures"
+    ],
+    [
+      "group",
+      "co2_limit",
+      "co2_max_period",
+      [
         "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"p2020\", 3000000.0], [\"p2025\", 2400000.0], [\"p2030\", 1800000.0], [\"p2035\", 1200000.0]], \"index_name\": \"period\", \"type\": \"map\"}",
         "map"
+      ],
+      "co2_limit"
+    ],
+    [
+      "group",
+      "co2_limit",
+      "co2_max_period",
+      [
+        "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"p2020\", 3000000.0], [\"p2025\", 3000000.0], [\"p2030\", 3000000.0], [\"p2035\", 3000000.0]], \"index_name\": \"period\"}",
+        "map"
+      ],
+      "co2_without_measures"
+    ],
+    [
+      "group",
+      "co2_limit",
+      "co2_method",
+      [
+        "\"period\"",
+        "str"
       ],
       "co2_limit"
     ],
@@ -8169,7 +8530,7 @@
         "\"period\"",
         "str"
       ],
-      "co2_limit"
+      "co2_trajectory_system"
     ],
     [
       "group",
@@ -8350,6 +8711,16 @@
         "array"
       ],
       "5weeks_only_invest"
+    ],
+    [
+      "model",
+      "flexTool",
+      "solves",
+      [
+        "{\"value_type\": \"str\", \"data\": [\"y2020_2035_2day_dispatch\"], \"index_name\": \"sequence_index\"}",
+        "array"
+      ],
+      "co2_trajectory_system"
     ],
     [
       "model",
@@ -9306,6 +9677,26 @@
       "west",
       "inflow",
       [
+        "-300.0",
+        "float"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "node",
+      "west",
+      "inflow",
+      [
+        "-300.0",
+        "float"
+      ],
+      "must_run_system"
+    ],
+    [
+      "node",
+      "west",
+      "inflow",
+      [
         "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"t0001\", -589.0], [\"t0002\", -537.0], [\"t0003\", -506.0], [\"t0004\", -482.0], [\"t0005\", -472.0], [\"t0006\", -454.0], [\"t0007\", -423.0], [\"t0008\", -438.0], [\"t0009\", -474.0], [\"t0010\", -518.0], [\"t0011\", -538.0], [\"t0012\", -558.0], [\"t0013\", -572.0], [\"t0014\", -564.0], [\"t0015\", -553.0], [\"t0016\", -541.0], [\"t0017\", -534.0], [\"t0018\", -567.0], [\"t0019\", -689.0], [\"t0020\", -696.0], [\"t0021\", -670.0], [\"t0022\", -627.0], [\"t0023\", -550.0], [\"t0024\", -458.0], [\"t0025\", -436.0], [\"t0026\", -446.0], [\"t0027\", -436.0], [\"t0028\", -452.0], [\"t0029\", -469.0], [\"t0030\", -507.0], [\"t0031\", -549.0], [\"t0032\", -594.0], [\"t0033\", -682.0], [\"t0034\", -730.0], [\"t0035\", -774.0], [\"t0036\", -802.0], [\"t0037\", -807.0], [\"t0038\", -793.0], [\"t0039\", -780.0], [\"t0040\", -768.0], [\"t0041\", -755.0], [\"t0042\", -767.0], [\"t0043\", -872.0], [\"t0044\", -865.0], [\"t0045\", -808.0], [\"t0046\", -735.0], [\"t0047\", -669.0], [\"t0048\", -597.0], [\"t0049\", -533.0], [\"t0050\", -507.0], [\"t0051\", -487.0], [\"t0052\", -492.0], [\"t0053\", -511.0], [\"t0054\", -539.0], [\"t0055\", -549.0], [\"t0056\", -612.0], [\"t0057\", -665.0], [\"t0058\", -715.0], [\"t0059\", -760.0], [\"t0060\", -789.0], [\"t0061\", -784.0], [\"t0062\", -766.0], [\"t0063\", -740.0], [\"t0064\", -727.0], [\"t0065\", -714.0], [\"t0066\", -723.0], [\"t0067\", -849.0], [\"t0068\", -848.0], [\"t0069\", -812.0], [\"t0070\", -723.0], [\"t0071\", -647.0], [\"t0072\", -635.0]], \"index_name\": \"time\", \"type\": \"map\"}",
         "map"
       ],
@@ -9436,6 +9827,16 @@
         "map"
       ],
       "ev"
+    ],
+    [
+      "profile",
+      "must_run_share",
+      "profile",
+      [
+        "0.4",
+        "float"
+      ],
+      "must_run_profile"
     ],
     [
       "profile",
@@ -10314,6 +10715,46 @@
     ],
     [
       "solve",
+      "y2020_2035_2day_dispatch",
+      "period_timeset",
+      [
+        "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"p2020\", \"2day\"], [\"p2025\", \"2day\"], [\"p2030\", \"2day\"], [\"p2035\", \"2day\"]], \"index_name\": \"period\"}",
+        "map"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "solve",
+      "y2020_2035_2day_dispatch",
+      "realized_periods",
+      [
+        "{\"value_type\": \"str\", \"data\": [\"p2020\", \"p2025\", \"p2030\", \"p2035\"], \"index_name\": \"period\"}",
+        "array"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "solve",
+      "y2020_2035_2day_dispatch",
+      "solve_mode",
+      [
+        "\"single_solve\"",
+        "str"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "solve",
+      "y2020_2035_2day_dispatch",
+      "years_represented",
+      [
+        "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"p2020\", 5.0], [\"p2025\", 5.0], [\"p2030\", 5.0], [\"p2035\", 5.0]], \"index_name\": \"period\"}",
+        "map"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "solve",
       "y2020_2035_5week",
       "invest_periods",
       [
@@ -10411,6 +10852,26 @@
         "str"
       ],
       "init"
+    ],
+    [
+      "solve",
+      "y2020_2day_dispatch",
+      "solver_mip_gap",
+      [
+        "0.0",
+        "float"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "solve",
+      "y2020_2day_dispatch",
+      "solver_mip_gap",
+      [
+        "0.0",
+        "float"
+      ],
+      "must_run_min_load_only"
     ],
     [
       "solve",
@@ -10841,6 +11302,56 @@
         "float"
       ],
       "anti_energy_plant"
+    ],
+    [
+      "unit",
+      "baseload_plant",
+      "conversion_method",
+      [
+        "\"constant_efficiency\"",
+        "str"
+      ],
+      "must_run_profile"
+    ],
+    [
+      "unit",
+      "baseload_plant",
+      "efficiency",
+      [
+        "0.4",
+        "float"
+      ],
+      "must_run_profile"
+    ],
+    [
+      "unit",
+      "baseload_plant",
+      "existing",
+      [
+        "500.0",
+        "float"
+      ],
+      "must_run_profile"
+    ],
+    [
+      "unit",
+      "clean_plant",
+      "conversion_method",
+      [
+        "\"none\"",
+        "str"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "unit",
+      "clean_plant",
+      "existing",
+      [
+        "500.0",
+        "float"
+      ],
+      "co2_trajectory_system"
     ],
     [
       "unit",
@@ -11384,6 +11895,246 @@
     ],
     [
       "unit",
+      "steam_1",
+      "constraint_online_coeff",
+      [
+        "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"steam_fleet_two_online\", 1.0]], \"index_name\": \"constraint\"}",
+        "map"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "conversion_method",
+      [
+        "\"constant_efficiency\"",
+        "str"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "efficiency",
+      [
+        "0.4",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "existing",
+      [
+        "100.0",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "min_load",
+      [
+        "0.5",
+        "float"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "min_load",
+      [
+        "0.5",
+        "float"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "startup_method",
+      [
+        "\"binary\"",
+        "str"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "startup_method",
+      [
+        "\"binary\"",
+        "str"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "constraint_online_coeff",
+      [
+        "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"steam_fleet_two_online\", 1.0]], \"index_name\": \"constraint\"}",
+        "map"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "conversion_method",
+      [
+        "\"constant_efficiency\"",
+        "str"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "efficiency",
+      [
+        "0.4",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "existing",
+      [
+        "100.0",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "min_load",
+      [
+        "0.5",
+        "float"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "min_load",
+      [
+        "0.5",
+        "float"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "startup_method",
+      [
+        "\"binary\"",
+        "str"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "startup_method",
+      [
+        "\"binary\"",
+        "str"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "constraint_online_coeff",
+      [
+        "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"steam_fleet_two_online\", 1.0]], \"index_name\": \"constraint\"}",
+        "map"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "conversion_method",
+      [
+        "\"constant_efficiency\"",
+        "str"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "efficiency",
+      [
+        "0.4",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "existing",
+      [
+        "100.0",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "min_load",
+      [
+        "0.5",
+        "float"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "min_load",
+      [
+        "0.5",
+        "float"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "startup_method",
+      [
+        "\"binary\"",
+        "str"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "startup_method",
+      [
+        "\"binary\"",
+        "str"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
       "water_pump",
       "conversion_method",
       [
@@ -11676,6 +12427,20 @@
     [
       "unit__node__profile",
       [
+        "baseload_plant",
+        "west",
+        "must_run_share"
+      ],
+      "profile_method",
+      [
+        "\"lower_limit\"",
+        "str"
+      ],
+      "must_run_profile"
+    ],
+    [
+      "unit__node__profile",
+      [
         "ev_charger",
         "ev_battery",
         "ev_connected_share"
@@ -11700,6 +12465,19 @@
         "str"
       ],
       "wind"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "clean_plant",
+        "west"
+      ],
+      "other_operational_cost",
+      [
+        "80.0",
+        "float"
+      ],
+      "co2_trajectory_system"
     ],
     [
       "unit__outputNode",
@@ -11798,6 +12576,19 @@
         "coal_plant",
         "west"
       ],
+      "constraint_flow_coeff",
+      [
+        "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"coal_plant_floor\", 1.0]], \"index_name\": \"constraint\"}",
+        "map"
+      ],
+      "must_run_constraint_one"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "coal_plant",
+        "west"
+      ],
       "inertia_constant",
       [
         "5",
@@ -11856,6 +12647,97 @@
         "float"
       ],
       "fusion"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_1",
+        "west"
+      ],
+      "constraint_flow_coeff",
+      [
+        "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"steam_fleet_output_floor\", 1.0]], \"index_name\": \"constraint\"}",
+        "map"
+      ],
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_1",
+        "west"
+      ],
+      "other_operational_cost",
+      [
+        "0.0",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_2",
+        "west"
+      ],
+      "constraint_flow_coeff",
+      [
+        "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"steam_fleet_output_floor\", 1.0]], \"index_name\": \"constraint\"}",
+        "map"
+      ],
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_2",
+        "west"
+      ],
+      "other_operational_cost",
+      [
+        "1.0",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_3",
+        "west"
+      ],
+      "constraint_flow_coeff",
+      [
+        "{\"index_type\": \"str\", \"rank\": 1, \"data\": [[\"steam_fleet_output_floor\", 1.0]], \"index_name\": \"constraint\"}",
+        "map"
+      ],
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_3",
+        "west"
+      ],
+      "other_operational_cost",
+      [
+        "2.0",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "wind_plant",
+        "west"
+      ],
+      "other_operational_cost",
+      [
+        "1.0",
+        "float"
+      ],
+      "must_run_system"
     ]
   ],
   "scenario_alternatives": [
@@ -12107,6 +12989,81 @@
     [
       "capacity_margin",
       "capacity_margin",
+      null
+    ],
+    [
+      "co2_additional_measures",
+      "init",
+      "west"
+    ],
+    [
+      "co2_additional_measures",
+      "west",
+      "coal"
+    ],
+    [
+      "co2_additional_measures",
+      "coal",
+      "co2_trajectory_system"
+    ],
+    [
+      "co2_additional_measures",
+      "co2_trajectory_system",
+      "co2_additional_measures"
+    ],
+    [
+      "co2_additional_measures",
+      "co2_additional_measures",
+      null
+    ],
+    [
+      "co2_existing_measures",
+      "init",
+      "west"
+    ],
+    [
+      "co2_existing_measures",
+      "west",
+      "coal"
+    ],
+    [
+      "co2_existing_measures",
+      "coal",
+      "co2_trajectory_system"
+    ],
+    [
+      "co2_existing_measures",
+      "co2_trajectory_system",
+      "co2_existing_measures"
+    ],
+    [
+      "co2_existing_measures",
+      "co2_existing_measures",
+      null
+    ],
+    [
+      "co2_without_measures",
+      "init",
+      "west"
+    ],
+    [
+      "co2_without_measures",
+      "west",
+      "coal"
+    ],
+    [
+      "co2_without_measures",
+      "coal",
+      "co2_trajectory_system"
+    ],
+    [
+      "co2_without_measures",
+      "co2_trajectory_system",
+      "co2_without_measures"
+    ],
+    [
+      "co2_without_measures",
+      "co2_without_measures",
       null
     ],
     [
@@ -13345,6 +14302,266 @@
       null
     ],
     [
+      "must_run_constraint_one",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_constraint_one",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_constraint_one",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_constraint_one",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_constraint_one",
+      "must_run_system",
+      "must_run_constraint_one"
+    ],
+    [
+      "must_run_constraint_one",
+      "must_run_constraint_one",
+      null
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "must_run_system",
+      "must_run_fleet"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "must_run_fleet",
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "must_run_fleet_output_floor",
+      null
+    ],
+    [
+      "must_run_fleet_two_online",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "must_run_system",
+      "must_run_fleet"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "must_run_fleet",
+      "must_run_fleet_two_online"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "must_run_fleet_two_online",
+      null
+    ],
+    [
+      "must_run_flowgroup",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_flowgroup",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_flowgroup",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_flowgroup",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_flowgroup",
+      "must_run_system",
+      "must_run_fleet"
+    ],
+    [
+      "must_run_flowgroup",
+      "must_run_fleet",
+      "must_run_flowgroup"
+    ],
+    [
+      "must_run_flowgroup",
+      "must_run_flowgroup",
+      null
+    ],
+    [
+      "must_run_heat_demand",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_heat_demand",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_heat_demand",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_heat_demand",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_heat_demand",
+      "must_run_system",
+      "coal_chp"
+    ],
+    [
+      "must_run_heat_demand",
+      "coal_chp",
+      "heat"
+    ],
+    [
+      "must_run_heat_demand",
+      "heat",
+      null
+    ],
+    [
+      "must_run_min_load_only",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_min_load_only",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_min_load_only",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_min_load_only",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_min_load_only",
+      "must_run_system",
+      "must_run_fleet"
+    ],
+    [
+      "must_run_min_load_only",
+      "must_run_fleet",
+      "must_run_min_load_only"
+    ],
+    [
+      "must_run_min_load_only",
+      "must_run_min_load_only",
+      null
+    ],
+    [
+      "must_run_none",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_none",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_none",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_none",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_none",
+      "must_run_system",
+      null
+    ],
+    [
+      "must_run_profile",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_profile",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_profile",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_profile",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_profile",
+      "must_run_system",
+      "must_run_profile"
+    ],
+    [
+      "must_run_profile",
+      "must_run_profile",
+      null
+    ],
+    [
       "network_all_tech",
       "init",
       "west"
@@ -14447,6 +15664,21 @@
       ""
     ],
     [
+      "co2_additional_measures",
+      false,
+      ""
+    ],
+    [
+      "co2_existing_measures",
+      false,
+      ""
+    ],
+    [
+      "co2_without_measures",
+      false,
+      ""
+    ],
+    [
       "coal",
       false,
       ""
@@ -14618,6 +15850,46 @@
     ],
     [
       "multi_year_wind_no_investment",
+      false,
+      ""
+    ],
+    [
+      "must_run_constraint_one",
+      false,
+      ""
+    ],
+    [
+      "must_run_fleet_output_floor",
+      false,
+      ""
+    ],
+    [
+      "must_run_fleet_two_online",
+      false,
+      ""
+    ],
+    [
+      "must_run_flowgroup",
+      false,
+      ""
+    ],
+    [
+      "must_run_heat_demand",
+      false,
+      ""
+    ],
+    [
+      "must_run_min_load_only",
+      false,
+      ""
+    ],
+    [
+      "must_run_none",
+      false,
+      ""
+    ],
+    [
+      "must_run_profile",
       false,
       ""
     ],

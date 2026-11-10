@@ -1,0 +1,5 @@
+solve,period,co2_limit
+y2020_2035_2day_dispatch,p2020,2000000.0
+y2020_2035_2day_dispatch,p2025,1500000.0
+y2020_2035_2day_dispatch,p2030,1000000.0
+y2020_2035_2day_dispatch,p2035,500000.0

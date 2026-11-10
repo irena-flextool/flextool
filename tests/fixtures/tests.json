@@ -321,6 +321,21 @@
     ],
     [
       "constraint",
+      "coal_plant_floor",
+      null
+    ],
+    [
+      "constraint",
+      "steam_fleet_output_floor",
+      null
+    ],
+    [
+      "constraint",
+      "steam_fleet_two_online",
+      null
+    ],
+    [
+      "constraint",
       "water_pump_fix",
       null
     ],
@@ -337,6 +352,11 @@
     [
       "flowGroup",
       "connections_with_east",
+      null
+    ],
+    [
+      "flowGroup",
+      "steam_fleet",
       null
     ],
     [
@@ -471,6 +491,11 @@
     ],
     [
       "profile",
+      "must_run_share",
+      null
+    ],
+    [
+      "profile",
       "wind_profile",
       null
     ],
@@ -527,6 +552,11 @@
     [
       "solve",
       "y2020_2029_2x5y",
+      null
+    ],
+    [
+      "solve",
+      "y2020_2035_2day_dispatch",
       null
     ],
     [
@@ -621,6 +651,16 @@
     ],
     [
       "unit",
+      "baseload_plant",
+      null
+    ],
+    [
+      "unit",
+      "clean_plant",
+      null
+    ],
+    [
+      "unit",
       "coal_chp",
       null
     ],
@@ -652,6 +692,21 @@
     [
       "unit",
       "fusion_plant",
+      null
+    ],
+    [
+      "unit",
+      "steam_1",
+      null
+    ],
+    [
+      "unit",
+      "steam_2",
+      null
+    ],
+    [
+      "unit",
+      "steam_3",
       null
     ],
     [
@@ -845,6 +900,14 @@
     [
       "unit__inputNode",
       [
+        "baseload_plant",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
         "coal_chp",
         "coal_market"
       ],
@@ -885,6 +948,30 @@
     [
       "unit__inputNode",
       [
+        "steam_1",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "steam_2",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
+        "steam_3",
+        "coal_market"
+      ],
+      null
+    ],
+    [
+      "unit__inputNode",
+      [
         "water_pump",
         "water_source"
       ],
@@ -903,6 +990,22 @@
       [
         "anti_energy_plant",
         "anti_energy_market"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "baseload_plant",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "clean_plant",
+        "west"
       ],
       null
     ],
@@ -958,6 +1061,30 @@
       "unit__outputNode",
       [
         "fusion_plant",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_1",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_2",
+        "west"
+      ],
+      null
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_3",
         "west"
       ],
       null
@@ -1107,6 +1234,33 @@
     [
       "flowGroup__unit__node",
       [
+        "steam_fleet",
+        "steam_1",
+        "west"
+      ],
+      null
+    ],
+    [
+      "flowGroup__unit__node",
+      [
+        "steam_fleet",
+        "steam_2",
+        "west"
+      ],
+      null
+    ],
+    [
+      "flowGroup__unit__node",
+      [
+        "steam_fleet",
+        "steam_3",
+        "west"
+      ],
+      null
+    ],
+    [
+      "flowGroup__unit__node",
+      [
         "to_west_node",
         "anti_energy_plant",
         "west"
@@ -1164,6 +1318,15 @@
         "primary",
         "up",
         "electricity"
+      ],
+      null
+    ],
+    [
+      "unit__node__profile",
+      [
+        "baseload_plant",
+        "west",
+        "must_run_share"
       ],
       null
     ],
@@ -1434,6 +1597,22 @@
     [
       "unit",
       [
+        "baseload_plant"
+      ],
+      "must_run_profile",
+      true
+    ],
+    [
+      "unit",
+      [
+        "clean_plant"
+      ],
+      "co2_trajectory_system",
+      true
+    ],
+    [
+      "unit",
+      [
         "coal_chp"
       ],
       "coal_chp",
@@ -1485,6 +1664,30 @@
         "fusion_plant"
       ],
       "fusion",
+      true
+    ],
+    [
+      "unit",
+      [
+        "steam_1"
+      ],
+      "must_run_fleet",
+      true
+    ],
+    [
+      "unit",
+      [
+        "steam_2"
+      ],
+      "must_run_fleet",
+      true
+    ],
+    [
+      "unit",
+      [
+        "steam_3"
+      ],
+      "must_run_fleet",
       true
     ],
     [
@@ -8386,6 +8589,66 @@
     ],
     [
       "constraint",
+      "coal_plant_floor",
+      "constant",
+      [
+        "MTUwLjA=",
+        "float"
+      ],
+      "must_run_constraint_one"
+    ],
+    [
+      "constraint",
+      "coal_plant_floor",
+      "sense",
+      [
+        "ImdyZWF0ZXJfdGhhbiI=",
+        "str"
+      ],
+      "must_run_constraint_one"
+    ],
+    [
+      "constraint",
+      "steam_fleet_output_floor",
+      "constant",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "constraint",
+      "steam_fleet_output_floor",
+      "sense",
+      [
+        "ImdyZWF0ZXJfdGhhbiI=",
+        "str"
+      ],
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "constraint",
+      "steam_fleet_two_online",
+      "constant",
+      [
+        "Mi4w",
+        "float"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "constraint",
+      "steam_fleet_two_online",
+      "sense",
+      [
+        "ImdyZWF0ZXJfdGhhbiI=",
+        "str"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "constraint",
       "water_pump_fix",
       "constant",
       [
@@ -8456,6 +8719,16 @@
     ],
     [
       "flowGroup",
+      "steam_fleet",
+      "min_instant_flow",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "must_run_flowgroup"
+    ],
+    [
+      "flowGroup",
       "to_west_node",
       "flow_aggregator",
       [
@@ -8499,8 +8772,48 @@
       "co2_limit",
       "co2_max_period",
       [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsIDIwMDAwMDAuMF0sIFsicDIwMjUiLCAxNTAwMDAwLjBdLCBbInAyMDMwIiwgMTAwMDAwMC4wXSwgWyJwMjAzNSIsIDUwMDAwMC4wXV0sICJpbmRleF9uYW1lIjogInBlcmlvZCJ9",
+        "map"
+      ],
+      "co2_additional_measures"
+    ],
+    [
+      "group",
+      "co2_limit",
+      "co2_max_period",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsIDIwMDAwMDAuMF0sIFsicDIwMjUiLCAxODAwMDAwLjBdLCBbInAyMDMwIiwgMTYwMDAwMC4wXSwgWyJwMjAzNSIsIDE0MDAwMDAuMF1dLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "map"
+      ],
+      "co2_existing_measures"
+    ],
+    [
+      "group",
+      "co2_limit",
+      "co2_max_period",
+      [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsIDMwMDAwMDAuMF0sIFsicDIwMjUiLCAyNDAwMDAwLjBdLCBbInAyMDMwIiwgMTgwMDAwMC4wXSwgWyJwMjAzNSIsIDEyMDAwMDAuMF1dLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QiLCAidHlwZSI6ICJtYXAifQ==",
         "map"
+      ],
+      "co2_limit"
+    ],
+    [
+      "group",
+      "co2_limit",
+      "co2_max_period",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsIDMwMDAwMDAuMF0sIFsicDIwMjUiLCAzMDAwMDAwLjBdLCBbInAyMDMwIiwgMzAwMDAwMC4wXSwgWyJwMjAzNSIsIDMwMDAwMDAuMF1dLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "map"
+      ],
+      "co2_without_measures"
+    ],
+    [
+      "group",
+      "co2_limit",
+      "co2_method",
+      [
+        "InBlcmlvZCI=",
+        "str"
       ],
       "co2_limit"
     ],
@@ -8512,7 +8825,7 @@
         "InBlcmlvZCI=",
         "str"
       ],
-      "co2_limit"
+      "co2_trajectory_system"
     ],
     [
       "group",
@@ -8693,6 +9006,16 @@
         "array"
       ],
       "5weeks_only_invest"
+    ],
+    [
+      "model",
+      "flexTool",
+      "solves",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJ5MjAyMF8yMDM1XzJkYXlfZGlzcGF0Y2giXSwgImluZGV4X25hbWUiOiAic2VxdWVuY2VfaW5kZXgifQ==",
+        "array"
+      ],
+      "co2_trajectory_system"
     ],
     [
       "model",
@@ -9669,6 +9992,26 @@
       "west",
       "inflow",
       [
+        "LTMwMC4w",
+        "float"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "node",
+      "west",
+      "inflow",
+      [
+        "LTMwMC4w",
+        "float"
+      ],
+      "must_run_system"
+    ],
+    [
+      "node",
+      "west",
+      "inflow",
+      [
         "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJ0MDAwMSIsIC01ODkuMF0sIFsidDAwMDIiLCAtNTM3LjBdLCBbInQwMDAzIiwgLTUwNi4wXSwgWyJ0MDAwNCIsIC00ODIuMF0sIFsidDAwMDUiLCAtNDcyLjBdLCBbInQwMDA2IiwgLTQ1NC4wXSwgWyJ0MDAwNyIsIC00MjMuMF0sIFsidDAwMDgiLCAtNDM4LjBdLCBbInQwMDA5IiwgLTQ3NC4wXSwgWyJ0MDAxMCIsIC01MTguMF0sIFsidDAwMTEiLCAtNTM4LjBdLCBbInQwMDEyIiwgLTU1OC4wXSwgWyJ0MDAxMyIsIC01NzIuMF0sIFsidDAwMTQiLCAtNTY0LjBdLCBbInQwMDE1IiwgLTU1My4wXSwgWyJ0MDAxNiIsIC01NDEuMF0sIFsidDAwMTciLCAtNTM0LjBdLCBbInQwMDE4IiwgLTU2Ny4wXSwgWyJ0MDAxOSIsIC02ODkuMF0sIFsidDAwMjAiLCAtNjk2LjBdLCBbInQwMDIxIiwgLTY3MC4wXSwgWyJ0MDAyMiIsIC02MjcuMF0sIFsidDAwMjMiLCAtNTUwLjBdLCBbInQwMDI0IiwgLTQ1OC4wXSwgWyJ0MDAyNSIsIC00MzYuMF0sIFsidDAwMjYiLCAtNDQ2LjBdLCBbInQwMDI3IiwgLTQzNi4wXSwgWyJ0MDAyOCIsIC00NTIuMF0sIFsidDAwMjkiLCAtNDY5LjBdLCBbInQwMDMwIiwgLTUwNy4wXSwgWyJ0MDAzMSIsIC01NDkuMF0sIFsidDAwMzIiLCAtNTk0LjBdLCBbInQwMDMzIiwgLTY4Mi4wXSwgWyJ0MDAzNCIsIC03MzAuMF0sIFsidDAwMzUiLCAtNzc0LjBdLCBbInQwMDM2IiwgLTgwMi4wXSwgWyJ0MDAzNyIsIC04MDcuMF0sIFsidDAwMzgiLCAtNzkzLjBdLCBbInQwMDM5IiwgLTc4MC4wXSwgWyJ0MDA0MCIsIC03NjguMF0sIFsidDAwNDEiLCAtNzU1LjBdLCBbInQwMDQyIiwgLTc2Ny4wXSwgWyJ0MDA0MyIsIC04NzIuMF0sIFsidDAwNDQiLCAtODY1LjBdLCBbInQwMDQ1IiwgLTgwOC4wXSwgWyJ0MDA0NiIsIC03MzUuMF0sIFsidDAwNDciLCAtNjY5LjBdLCBbInQwMDQ4IiwgLTU5Ny4wXSwgWyJ0MDA0OSIsIC01MzMuMF0sIFsidDAwNTAiLCAtNTA3LjBdLCBbInQwMDUxIiwgLTQ4Ny4wXSwgWyJ0MDA1MiIsIC00OTIuMF0sIFsidDAwNTMiLCAtNTExLjBdLCBbInQwMDU0IiwgLTUzOS4wXSwgWyJ0MDA1NSIsIC01NDkuMF0sIFsidDAwNTYiLCAtNjEyLjBdLCBbInQwMDU3IiwgLTY2NS4wXSwgWyJ0MDA1OCIsIC03MTUuMF0sIFsidDAwNTkiLCAtNzYwLjBdLCBbInQwMDYwIiwgLTc4OS4wXSwgWyJ0MDA2MSIsIC03ODQuMF0sIFsidDAwNjIiLCAtNzY2LjBdLCBbInQwMDYzIiwgLTc0MC4wXSwgWyJ0MDA2NCIsIC03MjcuMF0sIFsidDAwNjUiLCAtNzE0LjBdLCBbInQwMDY2IiwgLTcyMy4wXSwgWyJ0MDA2NyIsIC04NDkuMF0sIFsidDAwNjgiLCAtODQ4LjBdLCBbInQwMDY5IiwgLTgxMi4wXSwgWyJ0MDA3MCIsIC03MjMuMF0sIFsidDAwNzEiLCAtNjQ3LjBdLCBbInQwMDcyIiwgLTYzNS4wXV0sICJpbmRleF9uYW1lIjogInRpbWUiLCAidHlwZSI6ICJtYXAifQ==",
         "map"
       ],
@@ -9799,6 +10142,16 @@
         "map"
       ],
       "ev"
+    ],
+    [
+      "profile",
+      "must_run_share",
+      "profile",
+      [
+        "MC40",
+        "float"
+      ],
+      "must_run_profile"
     ],
     [
       "profile",
@@ -10677,6 +11030,46 @@
     ],
     [
       "solve",
+      "y2020_2035_2day_dispatch",
+      "period_timeset",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsICIyZGF5Il0sIFsicDIwMjUiLCAiMmRheSJdLCBbInAyMDMwIiwgIjJkYXkiXSwgWyJwMjAzNSIsICIyZGF5Il1dLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "map"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "solve",
+      "y2020_2035_2day_dispatch",
+      "realized_periods",
+      [
+        "eyJ2YWx1ZV90eXBlIjogInN0ciIsICJkYXRhIjogWyJwMjAyMCIsICJwMjAyNSIsICJwMjAzMCIsICJwMjAzNSJdLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "array"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "solve",
+      "y2020_2035_2day_dispatch",
+      "solve_mode",
+      [
+        "InNpbmdsZV9zb2x2ZSI=",
+        "str"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "solve",
+      "y2020_2035_2day_dispatch",
+      "years_represented",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJwMjAyMCIsIDUuMF0sIFsicDIwMjUiLCA1LjBdLCBbInAyMDMwIiwgNS4wXSwgWyJwMjAzNSIsIDUuMF1dLCAiaW5kZXhfbmFtZSI6ICJwZXJpb2QifQ==",
+        "map"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "solve",
       "y2020_2035_5week",
       "invest_periods",
       [
@@ -10844,6 +11237,26 @@
         "str"
       ],
       "unidirectional"
+    ],
+    [
+      "solve",
+      "y2020_2day_dispatch",
+      "solver_mip_gap",
+      [
+        "MC4w",
+        "float"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "solve",
+      "y2020_2day_dispatch",
+      "solver_mip_gap",
+      [
+        "MC4w",
+        "float"
+      ],
+      "must_run_min_load_only"
     ],
     [
       "solve",
@@ -11324,6 +11737,56 @@
         "float"
       ],
       "anti_energy_plant"
+    ],
+    [
+      "unit",
+      "baseload_plant",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "must_run_profile"
+    ],
+    [
+      "unit",
+      "baseload_plant",
+      "efficiency",
+      [
+        "MC40",
+        "float"
+      ],
+      "must_run_profile"
+    ],
+    [
+      "unit",
+      "baseload_plant",
+      "existing",
+      [
+        "NTAwLjA=",
+        "float"
+      ],
+      "must_run_profile"
+    ],
+    [
+      "unit",
+      "clean_plant",
+      "conversion_method",
+      [
+        "Im5vbmUi",
+        "str"
+      ],
+      "co2_trajectory_system"
+    ],
+    [
+      "unit",
+      "clean_plant",
+      "existing",
+      [
+        "NTAwLjA=",
+        "float"
+      ],
+      "co2_trajectory_system"
     ],
     [
       "unit",
@@ -11867,6 +12330,246 @@
     ],
     [
       "unit",
+      "steam_1",
+      "constraint_online_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJzdGVhbV9mbGVldF90d29fb25saW5lIiwgMS4wXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "efficiency",
+      [
+        "MC40",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "existing",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "min_load",
+      [
+        "MC41",
+        "float"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "min_load",
+      [
+        "MC41",
+        "float"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "startup_method",
+      [
+        "ImJpbmFyeSI=",
+        "str"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_1",
+      "startup_method",
+      [
+        "ImJpbmFyeSI=",
+        "str"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "constraint_online_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJzdGVhbV9mbGVldF90d29fb25saW5lIiwgMS4wXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "efficiency",
+      [
+        "MC40",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "existing",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "min_load",
+      [
+        "MC41",
+        "float"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "min_load",
+      [
+        "MC41",
+        "float"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "startup_method",
+      [
+        "ImJpbmFyeSI=",
+        "str"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_2",
+      "startup_method",
+      [
+        "ImJpbmFyeSI=",
+        "str"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "constraint_online_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJzdGVhbV9mbGVldF90d29fb25saW5lIiwgMS4wXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "conversion_method",
+      [
+        "ImNvbnN0YW50X2VmZmljaWVuY3ki",
+        "str"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "efficiency",
+      [
+        "MC40",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "existing",
+      [
+        "MTAwLjA=",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "min_load",
+      [
+        "MC41",
+        "float"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "min_load",
+      [
+        "MC41",
+        "float"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "startup_method",
+      [
+        "ImJpbmFyeSI=",
+        "str"
+      ],
+      "must_run_fleet_two_online"
+    ],
+    [
+      "unit",
+      "steam_3",
+      "startup_method",
+      [
+        "ImJpbmFyeSI=",
+        "str"
+      ],
+      "must_run_min_load_only"
+    ],
+    [
+      "unit",
       "water_pump",
       "conversion_method",
       [
@@ -12159,6 +12862,20 @@
     [
       "unit__node__profile",
       [
+        "baseload_plant",
+        "west",
+        "must_run_share"
+      ],
+      "profile_method",
+      [
+        "Imxvd2VyX2xpbWl0Ig==",
+        "str"
+      ],
+      "must_run_profile"
+    ],
+    [
+      "unit__node__profile",
+      [
         "ev_charger",
         "ev_battery",
         "ev_connected_share"
@@ -12183,6 +12900,19 @@
         "str"
       ],
       "wind"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "clean_plant",
+        "west"
+      ],
+      "other_operational_cost",
+      [
+        "ODAuMA==",
+        "float"
+      ],
+      "co2_trajectory_system"
     ],
     [
       "unit__outputNode",
@@ -12281,6 +13011,19 @@
         "coal_plant",
         "west"
       ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJjb2FsX3BsYW50X2Zsb29yIiwgMS4wXV0sICJpbmRleF9uYW1lIjogImNvbnN0cmFpbnQifQ==",
+        "map"
+      ],
+      "must_run_constraint_one"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "coal_plant",
+        "west"
+      ],
       "inertia_constant",
       [
         "NQ==",
@@ -12339,6 +13082,97 @@
         "float"
       ],
       "fusion"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_1",
+        "west"
+      ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJzdGVhbV9mbGVldF9vdXRwdXRfZmxvb3IiLCAxLjBdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9",
+        "map"
+      ],
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_1",
+        "west"
+      ],
+      "other_operational_cost",
+      [
+        "MC4w",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_2",
+        "west"
+      ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJzdGVhbV9mbGVldF9vdXRwdXRfZmxvb3IiLCAxLjBdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9",
+        "map"
+      ],
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_2",
+        "west"
+      ],
+      "other_operational_cost",
+      [
+        "MS4w",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_3",
+        "west"
+      ],
+      "constraint_flow_coeff",
+      [
+        "eyJpbmRleF90eXBlIjogInN0ciIsICJyYW5rIjogMSwgImRhdGEiOiBbWyJzdGVhbV9mbGVldF9vdXRwdXRfZmxvb3IiLCAxLjBdXSwgImluZGV4X25hbWUiOiAiY29uc3RyYWludCJ9",
+        "map"
+      ],
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "steam_3",
+        "west"
+      ],
+      "other_operational_cost",
+      [
+        "Mi4w",
+        "float"
+      ],
+      "must_run_fleet"
+    ],
+    [
+      "unit__outputNode",
+      [
+        "wind_plant",
+        "west"
+      ],
+      "other_operational_cost",
+      [
+        "MS4w",
+        "float"
+      ],
+      "must_run_system"
     ]
   ],
   "alternatives": [
@@ -12395,12 +13229,28 @@
       ""
     ],
     [
+      "co2_additional_measures",
+      "Emission-trajectory how-to: CO2 limit 2.0, 1.5, 1.0, 0.5 Mt/a."
+    ],
+    [
+      "co2_existing_measures",
+      "Emission-trajectory how-to: CO2 limit 2.0, 1.8, 1.6, 1.4 Mt/a."
+    ],
+    [
       "co2_limit",
       ""
     ],
     [
       "co2_price",
       ""
+    ],
+    [
+      "co2_trajectory_system",
+      "Emission-trajectory how-to: four 5-year periods p2020..p2035 on the 2-day timeset, constant 300 MW demand at west, a carbon-free clean_plant at 80 CUR/MWh and a per-period CO2 limit on group co2_limit."
+    ],
+    [
+      "co2_without_measures",
+      "Emission-trajectory how-to: CO2 limit 3.0 Mt/a in every period (does not bind)."
     ],
     [
       "coal",
@@ -12551,6 +13401,38 @@
       "Lossless 2-way connection forced-reverse test"
     ],
     [
+      "must_run_constraint_one",
+      "Must-run how-to: user constraint coal_plant output >= 150 MW."
+    ],
+    [
+      "must_run_fleet",
+      "Must-run how-to: three identical 100 MW coal steam units steam_1..3 (other_operational_cost 0, 1, 2 CUR/MWh breaks the tie)."
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "Must-run how-to: user constraint on the fleet output, sum >= 100 MW."
+    ],
+    [
+      "must_run_fleet_two_online",
+      "Must-run how-to: binary online steam units with min_load 0.5 and a user constraint on the online count, sum >= 2 units."
+    ],
+    [
+      "must_run_flowgroup",
+      "Must-run how-to: flowGroup steam_fleet with min_instant_flow 100 MW."
+    ],
+    [
+      "must_run_min_load_only",
+      "Must-run how-to: binary online steam units with min_load 0.5 and no must-run (control case: min_load is not a must-run)."
+    ],
+    [
+      "must_run_profile",
+      "Must-run how-to: a 500 MW coal unit baseload_plant whose output is at least 0.4 of its capacity (profile lower_limit)."
+    ],
+    [
+      "must_run_system",
+      "Must-run how-to: constant 300 MW demand at west; wind costs 1 CUR/MWh."
+    ],
+    [
       "network",
       ""
     ],
@@ -12652,6 +13534,21 @@
     ],
     [
       "capacity_margin",
+      false,
+      ""
+    ],
+    [
+      "co2_additional_measures",
+      false,
+      ""
+    ],
+    [
+      "co2_existing_measures",
+      false,
+      ""
+    ],
+    [
+      "co2_without_measures",
       false,
       ""
     ],
@@ -12832,6 +13729,46 @@
     ],
     [
       "multi_year_wind_no_investment",
+      false,
+      ""
+    ],
+    [
+      "must_run_constraint_one",
+      false,
+      ""
+    ],
+    [
+      "must_run_fleet_output_floor",
+      false,
+      ""
+    ],
+    [
+      "must_run_fleet_two_online",
+      false,
+      ""
+    ],
+    [
+      "must_run_flowgroup",
+      false,
+      ""
+    ],
+    [
+      "must_run_heat_demand",
+      false,
+      ""
+    ],
+    [
+      "must_run_min_load_only",
+      false,
+      ""
+    ],
+    [
+      "must_run_none",
+      false,
+      ""
+    ],
+    [
+      "must_run_profile",
       false,
       ""
     ],
@@ -13215,6 +14152,81 @@
     [
       "capacity_margin",
       "capacity_margin",
+      null
+    ],
+    [
+      "co2_additional_measures",
+      "init",
+      "west"
+    ],
+    [
+      "co2_additional_measures",
+      "west",
+      "coal"
+    ],
+    [
+      "co2_additional_measures",
+      "coal",
+      "co2_trajectory_system"
+    ],
+    [
+      "co2_additional_measures",
+      "co2_trajectory_system",
+      "co2_additional_measures"
+    ],
+    [
+      "co2_additional_measures",
+      "co2_additional_measures",
+      null
+    ],
+    [
+      "co2_existing_measures",
+      "init",
+      "west"
+    ],
+    [
+      "co2_existing_measures",
+      "west",
+      "coal"
+    ],
+    [
+      "co2_existing_measures",
+      "coal",
+      "co2_trajectory_system"
+    ],
+    [
+      "co2_existing_measures",
+      "co2_trajectory_system",
+      "co2_existing_measures"
+    ],
+    [
+      "co2_existing_measures",
+      "co2_existing_measures",
+      null
+    ],
+    [
+      "co2_without_measures",
+      "init",
+      "west"
+    ],
+    [
+      "co2_without_measures",
+      "west",
+      "coal"
+    ],
+    [
+      "co2_without_measures",
+      "coal",
+      "co2_trajectory_system"
+    ],
+    [
+      "co2_without_measures",
+      "co2_trajectory_system",
+      "co2_without_measures"
+    ],
+    [
+      "co2_without_measures",
+      "co2_without_measures",
       null
     ],
     [
@@ -14480,6 +15492,266 @@
     [
       "multi_year_wind_no_investment",
       "wind_no_investment_10yr",
+      null
+    ],
+    [
+      "must_run_constraint_one",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_constraint_one",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_constraint_one",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_constraint_one",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_constraint_one",
+      "must_run_system",
+      "must_run_constraint_one"
+    ],
+    [
+      "must_run_constraint_one",
+      "must_run_constraint_one",
+      null
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "must_run_system",
+      "must_run_fleet"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "must_run_fleet",
+      "must_run_fleet_output_floor"
+    ],
+    [
+      "must_run_fleet_output_floor",
+      "must_run_fleet_output_floor",
+      null
+    ],
+    [
+      "must_run_fleet_two_online",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "must_run_system",
+      "must_run_fleet"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "must_run_fleet",
+      "must_run_fleet_two_online"
+    ],
+    [
+      "must_run_fleet_two_online",
+      "must_run_fleet_two_online",
+      null
+    ],
+    [
+      "must_run_flowgroup",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_flowgroup",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_flowgroup",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_flowgroup",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_flowgroup",
+      "must_run_system",
+      "must_run_fleet"
+    ],
+    [
+      "must_run_flowgroup",
+      "must_run_fleet",
+      "must_run_flowgroup"
+    ],
+    [
+      "must_run_flowgroup",
+      "must_run_flowgroup",
+      null
+    ],
+    [
+      "must_run_heat_demand",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_heat_demand",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_heat_demand",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_heat_demand",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_heat_demand",
+      "must_run_system",
+      "coal_chp"
+    ],
+    [
+      "must_run_heat_demand",
+      "coal_chp",
+      "heat"
+    ],
+    [
+      "must_run_heat_demand",
+      "heat",
+      null
+    ],
+    [
+      "must_run_min_load_only",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_min_load_only",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_min_load_only",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_min_load_only",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_min_load_only",
+      "must_run_system",
+      "must_run_fleet"
+    ],
+    [
+      "must_run_min_load_only",
+      "must_run_fleet",
+      "must_run_min_load_only"
+    ],
+    [
+      "must_run_min_load_only",
+      "must_run_min_load_only",
+      null
+    ],
+    [
+      "must_run_none",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_none",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_none",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_none",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_none",
+      "must_run_system",
+      null
+    ],
+    [
+      "must_run_profile",
+      "init",
+      "west"
+    ],
+    [
+      "must_run_profile",
+      "west",
+      "coal"
+    ],
+    [
+      "must_run_profile",
+      "coal",
+      "wind"
+    ],
+    [
+      "must_run_profile",
+      "wind",
+      "must_run_system"
+    ],
+    [
+      "must_run_profile",
+      "must_run_system",
+      "must_run_profile"
+    ],
+    [
+      "must_run_profile",
+      "must_run_profile",
       null
     ],
     [

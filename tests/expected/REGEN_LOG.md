@@ -1271,3 +1271,25 @@ scenario gets it as a golden (`tests/scenarios.yaml`).
 
 Regenerated with `pytest tests/test_scenarios.py --regenerate coal_wind_inertia`; the other two files the
 regeneration rewrote (`costs__dt.csv`, `unit__outputNode__dt.csv`, header spelling only) were put back.
+
+## 2026-11-10 — new goldens for the must-run and emission-trajectory how-to scenarios
+
+**Context.** Eleven new scenarios in `tests/fixtures/tests.json` (added by
+`tests/fixtures/_augment_phase3_examples.py`, append-only): `must_run_none`, `must_run_profile`,
+`must_run_constraint_one`, `must_run_fleet_output_floor`, `must_run_fleet_two_online`, `must_run_flowgroup`,
+`must_run_heat_demand`, `must_run_min_load_only` (`docs/how_to/thermal_chp.md`) and `co2_without_measures`,
+`co2_existing_measures`, `co2_additional_measures` (`docs/how_to/emissions.md`).  No existing golden changed: the
+LP of every `tests/fixtures/tests.json` fixture of `tools/lp_snapshot.py` (115 fixtures, 480 files) is
+byte-identical before and after the augment.
+
+- Hand values (independent oracle, `tests/scenarios.yaml` comments) and the goldens agree: must-run dispatch per hour
+  wind 300 / baseload_plant 200 + wind 100 / coal_plant 150 + wind 150 / steam_1 100 + wind 200 (output floor and
+  flowGroup) / steam_1 50 + steam_2 50, online 1, 1, 0 + wind 200 / coal_chp heat 300, electricity 150 + wind 150 /
+  all steam offline + wind 300.  Emissions per period = the cap where it binds (2.0, 1.8, 1.6, 1.4 and 2.0, 1.5,
+  1.0, 0.5 Mt/a), 2 233 800 t/a without measures; CO2 price 30 / 0.85 = 35.2941 CUR/t in every binding period;
+  objectives 2628.0, 3004.8, 3322.447059.
+- `must_run_profile` has no `costs_discounted.csv` golden and pins `expected_solver_objective` (88.476): the written
+  fuel input of a unit with a profile equals its output (efficiency left out), so its calculated cost (35.916) is
+  wrong.  `tests/model/test_howto_must_run.py::test_profile_unit_reported_fuel_input` is a strict xfail for it.
+
+Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for each of the eleven scenarios.

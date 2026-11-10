@@ -791,3 +791,144 @@
   expected_solver_objective: 67.3517305373
   expected_objective_tolerance: 1.0e-6
   time_budget_seconds: 30.0
+
+# --- How-to: must-run units (docs/how_to/thermal_chp.md) ---
+# Base chain init, west, coal, wind, must_run_system: constant 300 MW demand
+# at west; wind_plant 1000 MW (profile minimum 0.33 over t0001..t0048, so wind
+# covers the remainder in every hour) at 1 CUR/MWh; coal_plant 500 MW at
+# 20 CUR/MWh fuel / 0.4 = 50 CUR/MWh.  Every case is the same in each of the
+# 48 hours, so objective (M CUR) = cost per hour x 48 x 8760/48 / 1e6 =
+# cost per hour x 8760 / 1e6.  The dispatch is unique per step by design
+# (steam_1..3 carry other_operational_cost 0, 1, 2 to break the tie).
+- scenario: must_run_none
+  csvs:
+    - unit__outputNode__dt.csv
+    - costs_discounted.csv
+  # Control case: wind 300 MW at 1 CUR/MWh = 300 CUR/h -> 2.628.
+  expected_objective: 2.628
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+- scenario: must_run_profile
+  csvs:
+    - unit__outputNode__dt.csv
+  # Profile lower_limit 0.4 x 500 MW on baseload_plant (a second 500 MW coal
+  # unit, 50 CUR/MWh): 200 MW (10 000 CUR/h) + wind 100 (100 CUR/h)
+  # = 10 100 CUR/h -> 88.476, pinned as the solver objective.  The calculated
+  # total (35.916) is wrong: the outputs report the fuel input of a unit with
+  # a profile as its output (efficiency left out, calc_capacity_flows skips
+  # the slope for every process in process_profile), so commodity_cost and
+  # costs_discounted.csv are not compared here; see the xfail in
+  # tests/model/test_howto_must_run.py.
+  expected_solver_objective: 88.476
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+- scenario: must_run_constraint_one
+  csvs:
+    - unit__outputNode__dt.csv
+    - costs_discounted.csv
+  # User constraint coal_plant >= 150 MW: 150 x 50 + 150 x 1 = 7 650 CUR/h
+  # -> 67.014.
+  expected_objective: 67.014
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+- scenario: must_run_fleet_output_floor
+  csvs:
+    - unit__outputNode__dt.csv
+    - costs_discounted.csv
+  # Fleet output >= 100 MW: steam_1 (cheapest, 50 CUR/MWh) 100 MW + wind 200
+  # = 5 200 CUR/h -> 45.552.
+  expected_objective: 45.552
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+- scenario: must_run_fleet_two_online
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_online__dt.csv
+    - costs_discounted.csv
+  # MIP: online(steam_1..3) >= 2 units (unitsize = existing 100), min_load
+  # 0.5: steam_1 50 MW (2 500) + steam_2 50 MW (2 550) + wind 200 (200)
+  # = 5 250 CUR/h -> 45.990.
+  expected_objective: 45.99
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+- scenario: must_run_flowgroup
+  csvs:
+    - unit__outputNode__dt.csv
+    - costs_discounted.csv
+  # flowGroup steam_fleet min_instant_flow 100 MW: as the fleet output floor,
+  # 5 200 CUR/h -> 45.552.
+  expected_objective: 45.552
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+- scenario: must_run_heat_demand
+  csvs:
+    - unit__outputNode__dt.csv
+    - costs_discounted.csv
+  # Heat demand 300 MW served by coal_chp (heat = 2 x electricity,
+  # efficiency 0.9): electricity 150, fuel 450 / 0.9 = 500 MWh x 20 = 10 000
+  # CUR/h, wind 150 (150) = 10 150 CUR/h -> 88.914.
+  expected_objective: 88.914
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+- scenario: must_run_min_load_only
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_online__dt.csv
+    - costs_discounted.csv
+  # MIP control case: min_load applies only to an online unit, so every steam
+  # unit stays offline; wind 300 = 300 CUR/h -> 2.628.
+  expected_objective: 2.628
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+# --- How-to: emission trajectories (docs/how_to/emissions.md) ---
+# Chain init, west, coal, co2_trajectory_system, <trajectory>: four periods
+# p2020..p2035 on the 2-day timeset, years_represented 5 each, inflation_rate
+# 0; constant 300 MW demand; coal_plant 50 CUR/MWh emitting 0.34 / 0.4 =
+# 0.85 t/MWh_e; clean_plant 500 MW at 80 CUR/MWh, no emissions.
+# Unconstrained coal = 300 MW -> 255 t/h -> 2 233 800 t/a.  With a binding
+# cap C [t/a] the annual cost is 8760 x 80 x 300 - 30 x C / 0.85 =
+# 210.24 M - 35.294118 x C; without one it is 131.4 M.  Objective =
+# sum over periods of 5 x annual cost.  Timing of coal within a period is
+# degenerate, so only period-level files are compared.
+- scenario: co2_without_measures
+  csvs:
+    - group_CO2__d.csv
+    - group_CO2_price_period__d.csv
+    - costs_discounted.csv
+    - summary_solve.csv
+  # Cap 3.0e6 t/a does not bind: 4 x 5 x 131.4 = 2628.0.
+  expected_objective: 2628.0
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+- scenario: co2_existing_measures
+  csvs:
+    - group_CO2__d.csv
+    - group_CO2_price_period__d.csv
+    - costs_discounted.csv
+    - summary_solve.csv
+  # Caps 2.0, 1.8, 1.6, 1.4 Mt/a all bind: 5 x (4 x 210.24 - 35.294118 x 6.8)
+  # = 3004.8; CO2 price 30 / 0.85 = 35.294118 CUR/t in every period.
+  expected_objective: 3004.8
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
+- scenario: co2_additional_measures
+  csvs:
+    - group_CO2__d.csv
+    - group_CO2_price_period__d.csv
+    - costs_discounted.csv
+    - summary_solve.csv
+  # Caps 2.0, 1.5, 1.0, 0.5 Mt/a all bind: 5 x (4 x 210.24 - 35.294118 x 5.0)
+  # = 3322.447059; CO2 price 35.294118 CUR/t in every period.
+  expected_objective: 3322.447059
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
