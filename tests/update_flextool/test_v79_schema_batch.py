@@ -78,6 +78,27 @@ def _markers(db) -> dict:
             if md["name"].startswith(PREFIX)}
 
 
+def _rerun_changes_nothing(db, step, monkeypatch) -> None:
+    """Run ``step`` again on ``db`` and check that it changes nothing.  The batch commits through
+    ``m._commit_step``, which swallows ``NothingToCommit``: it is replaced by a check that the commit has nothing to
+    commit (and the batch must commit once); a part does not commit, so the session is committed here."""
+    commits: list[str] = []
+
+    def commit_must_be_empty(db_, message) -> None:
+        with pytest.raises(NothingToCommit):
+            db_.commit_session(message)
+        commits.append(message)
+
+    monkeypatch.setattr(m, "_commit_step", commit_must_be_empty)
+    step(db)
+    if step is m._migrate_v79_schema_batch:
+        assert len(commits) == 1, commits
+    else:
+        assert commits == []
+        with pytest.raises(NothingToCommit):
+            db.commit_session("rerun")
+
+
 def _shipped() -> dict:
     with open(package_data_path("schemas/spinedb_schema.json"), encoding="utf-8") as f:
         schema = json.load(f)
@@ -233,7 +254,7 @@ def test_no_marker_without_new_stepduration(tmp_path_factory, plain) -> None:
     assert adder_only["markers"] == adder_only["markers_before"]
 
 
-def test_markers_name_the_solves_and_nodes(tmp_path_factory) -> None:
+def test_markers_name_the_solves_and_nodes(tmp_path_factory, monkeypatch) -> None:
     step = _migrate(tmp_path_factory, "v79_step", {"solve": 2.0})
     assert json.loads(step["markers"]["solve_step_series_combined"]) == {"since": 79, "solves": [step["solve"]]}
     assert "energy_margin_adder_per_original_step" not in step["markers"]
@@ -241,13 +262,9 @@ def test_markers_name_the_solves_and_nodes(tmp_path_factory) -> None:
     assert json.loads(both["markers"]["energy_margin_adder_per_original_step"]) == {
         "since": 79, "solves": [both["solve"]], "nodes": [both["node"]]}
     with DatabaseMapping(both["url"]) as db:
-        m._v79_solve_step_series(db)
-        with pytest.raises(NothingToCommit):
-            db.commit_session("rerun")
+        _rerun_changes_nothing(db, m._v79_solve_step_series, monkeypatch)
     with DatabaseMapping(both["url"]) as db:
-        m._migrate_v79_schema_batch(db)
-        with pytest.raises(NothingToCommit):
-            db.commit_session("rerun")
+        _rerun_changes_nothing(db, m._migrate_v79_schema_batch, monkeypatch)
 
 
 # ─── the step as a whole ─────────────────────────────────────────────────
@@ -264,8 +281,21 @@ def test_changes_nothing_else(plain) -> None:
 @pytest.mark.parametrize("part", [
     "_v79_constraint_online_coeff", "_v79_ramp_cost_descriptions", "_v79_reduce_detail_methods",
     "_v79_group_limits_by_time", "_v79_solve_step_series", "_migrate_v79_schema_batch"])
-def test_rerun_is_idempotent(plain, part: str) -> None:
+def test_rerun_is_idempotent(plain, part: str, monkeypatch) -> None:
     with DatabaseMapping(plain["url"]) as db:
-        getattr(m, part)(db)
-        with pytest.raises(NothingToCommit):
-            db.commit_session("rerun")
+        _rerun_changes_nothing(db, getattr(m, part), monkeypatch)
+
+
+def test_rerun_check_fails_when_the_batch_changes_something(tmp_path_factory, monkeypatch) -> None:
+    """The batch rerun check can fail: a batch rerun that changes a description is caught (on a database of its
+    own, since the check commits the change)."""
+    own = _migrate(tmp_path_factory, "v79_rerun_check", {})
+    with DatabaseMapping(own["url"]) as db:
+        def changing_batch(db_) -> None:
+            pdef = db_.get_item("parameter_definition", entity_class_name="solve", name="reduce_unit_detail_method")
+            db_.update_parameter_definition(id=pdef["id"], description="changed")
+            m._commit_step(db_, "v79 rerun")
+
+        monkeypatch.setattr(m, "_migrate_v79_schema_batch", changing_batch)
+        with pytest.raises(pytest.fail.Exception):
+            _rerun_changes_nothing(db, m._migrate_v79_schema_batch, monkeypatch)
