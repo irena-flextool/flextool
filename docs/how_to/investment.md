@@ -110,6 +110,8 @@ Finally, FlexTool can mix several types of constraint coefficients: `constraint_
 
 A multi-year model is constructed from multiple periods, each presenting one year. In the example case, each year is otherwise the same, but the demand is increasing in the *west* `node`. This means that all periods can use the same timeset *5weeks* from the same timeline *y2020*, but one can also make separate timelines for each year, if data is available for this. The `inflow` time series are scaled to match the value in `annual_flow` that is mapped for each period. The model is using the `inflow_method` *scale_to_annual* in order to achieve this (default is *use_original* that would not perform scaling). There should also be an `inflation_rate` parameter set for the `model` entity *flexTool* if something else than the model default of 0 is to be used (set to expected inflation when inputs are in nominal terms).
 
+**Discounting later years.** Only `inflation_rate` discounts the costs of later periods; with the default 0, a cost in the last period weighs the same as in the first. In a model in real terms, set `inflation_rate` to the social discount rate to get present values. See [Discounting between milestone years](../advanced_concepts.md#discounting-between-milestone-years).
+
 ![Multi-year inflow](../img/concept/multi_year_inflow.png)
 
 A multi-year model could be solved at one go (multi_year_one_solve) or by rolling through several solves (multi-year) where each solve has a foresight horizon and a realisation horizon. Next we will go through both options.

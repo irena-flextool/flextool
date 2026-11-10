@@ -52,10 +52,22 @@ Economic values can be expressed in two ways:
 
 The model-level `inflation_rate` parameter (default: 0) adjusts all future costs to a common price base. It applies uniformly to all cost types: investment costs, fuel costs, fixed O&M, penalties, etc.
 
-- **Real inputs** (most common): Set `inflation_rate` = 0. All costs in all years use today's prices. A fuel cost of 50 EUR/MWh means the same purchasing power whether it occurs in 2025 or 2040.
+- **Real inputs** (most common): Set `inflation_rate` = 0. All costs in all years use today's prices. A fuel cost of 50 EUR/MWh means the same purchasing power whether it occurs in 2025 or 2040. To discount future costs with a social discount rate, set `inflation_rate` to that rate instead (see [Discounting between milestone years](#discounting-between-milestone-years)).
 - **Nominal inputs**: Set `inflation_rate` to expected inflation (e.g., 0.02 for 2%). The model deflates future costs: a nominal cost of 60 EUR/MWh in 2035 is treated as 60 / (1.02)^10 = 49.2 EUR/MWh approximately in today's money.
 
 The inflation rate applies via the factor `1 / (1 + inflation_rate)^years`. Investment costs are assumed to occur at the beginning of each year; operational costs at the middle of the year (adjustable with `inflation_offset_investment` and `inflation_offset_operations`).
+
+### Discounting between milestone years
+
+**Only `inflation_rate` discounts.** FlexTool discounts the costs of later periods (milestone years) with the `model` parameter `inflation_rate` and nothing else. Each period's costs are multiplied by a discount factor: the sum, over the years the period represents, of `1 / (1 + inflation_rate)^years_from_start`. The per-technology `discount_rate` does not discount between periods: it only turns an `invest_cost` into a yearly payment (see [The discount rate](#the-discount-rate-per-technology)).
+
+**How the years are counted.** The years from the start of the run come from `years_represented`: a period starts after the years that the periods before it represent. The period names are only labels, so *p2030* is not read as the year 2030. Give each milestone the number of years until the next milestone (for example 5 for *p2025* when the next period is *p2030*). Investment costs are discounted from the start of a year (`inflation_offset_investment`, default 0), operating costs from the middle of it (`inflation_offset_operations`, default 0.5).
+
+**With `inflation_rate` 0 there is no discounting.** A cost in 2040 then weighs the same as the same cost in 2025: each period's yearly costs are only multiplied by its `years_represented`. This is right for a model in real terms that should not prefer earlier or later costs, but it is not what most planning studies want.
+
+**A social discount rate.** In a model with real (constant-price) inputs, enter the social discount rate as `inflation_rate`, for example 0.05 for 5 %. The model applies the same factor whether the rate stands for inflation or for time preference, so the discounted costs are then present values at that rate. Keep the per-technology `discount_rate` at the real cost of capital of each technology. In a model with nominal inputs, use the combined rate: (1 + inflation) × (1 + social discount rate) − 1.
+
+**Where to see it.** `summary_solve.csv` lists the *Operational discount factor* and the *Investment discount factor* of each period. The cost results come both annualized (one year of the period, not discounted) and discounted (present value over the years the periods represent); see [Costs](results.md#costs).
 
 ### The discount rate (per technology)
 
@@ -84,7 +96,7 @@ The `discount_rate` and `inflation_rate` must use the same price basis across on
 
 | Inputs | inflation_rate | discount_rate (entity) |
 |--------|---------------|----------------------|
-| Real (constant prices) | 0 | Real WACC (e.g., 5%) |
+| Real (constant prices) | 0, or the social discount rate | Real WACC (e.g., 5%) |
 | Nominal (current and future prices) | Expected inflation (e.g., 2%) | Nominal WACC (e.g., 7%) |
 
 The relationship between real and nominal rates follows the Fisher equation:
@@ -99,7 +111,7 @@ Fixed costs (`fixed_cost` parameter on units, connections, and nodes) represent 
 
 For **existing** assets, fixed costs are applied each year with inflation adjustment.
 
-For **invested** assets, fixed costs are calculated over the full economic lifetime at the time of the investment decision. This allows the optimizer to correctly weigh the total cost of ownership when deciding whether to invest. In the results, these costs are reported as a separate line item from the investment annuity.
+For **invested** assets, the fixed cost is paid in every period the new capacity operates within the model horizon: until its `lifetime` ends, or in every later period with `lifetime_method` *reinvest_automatic*. Each period's fixed cost is discounted like the other costs of that period. Years after the model horizon are not counted, the same as for the investment annuity, so the investment decision weighs the costs of the years the model covers. In the results, these costs are reported as a separate line item (*fixed cost invested*) from the investment annuity.
 
 ### Summary of economic parameters
 
