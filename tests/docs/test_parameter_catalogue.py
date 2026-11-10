@@ -16,7 +16,7 @@ import pytest
 from flextool.assistant import docs_store
 from flextool.docs_build import render_pages, scope
 from flextool.docs_build.__main__ import main as docs_build_main
-from flextool.docs_build.parameters import escape_cell, parameter_record
+from flextool.docs_build.parameters import STOCHASTIC_TIME_WORDS, escape_cell, parameter_record
 
 REPO = Path(__file__).resolve().parents[2]
 DOCS = REPO / "docs"
@@ -73,14 +73,36 @@ def test_parameter_record_matches_describe_parameter(entity_class, parameter, tm
     assert record.group == payload["group"]
 
 
+def test_shapes_use_one_wording() -> None:
+    # The allow-list plus the stochastic-time map (STOCHASTIC_TIME_PARAMS).
+    assert parameter_record("unit", "efficiency").allowed_shapes == (
+        "a constant, or a map over periods or over time (1 level), or a map over periods and time (2 levels), "
+        f"or {STOCHASTIC_TIME_WORDS}")
+    # The description's sentence "Constant or period." in the allow-list's words.
+    assert parameter_record("unit", "existing").allowed_shapes == "a constant, or a map over periods (1 level)"
+    assert parameter_record("node", "inflow").allowed_shapes == (
+        f"a constant, or a map over time (1 level), or {STOCHASTIC_TIME_WORDS}")
+    # The description's index sentence.
+    assert parameter_record("unit", "constraint_capacity_coeff").allowed_shapes == (
+        "a map: constraint name → coefficient (1 level)")
+    assert parameter_record("solve", "stochastic_branches").allowed_shapes == (
+        "a map: period, branch, analysis_time, realized → probability weight (4 levels)")
+    assert parameter_record("commodity", "price").quantity_type == "price per energy"
+
+
 @pytest.fixture(scope="module")
-def examples_db_url(tmp_path_factory: pytest.TempPathFactory) -> str:
+def examples_db_path(tmp_path_factory: pytest.TempPathFactory) -> str:
     from flextool._resources import package_data_path
     from flextool.update_flextool.initialize_database import initialize_database
 
     path = tmp_path_factory.mktemp("catalogue_db") / "examples.sqlite"
     initialize_database(str(package_data_path("schemas/canonical_databases/templates_examples.json")), str(path))
-    return f"sqlite:///{path}"
+    return path
+
+
+@pytest.fixture(scope="module")
+def examples_db_url(examples_db_path: Path) -> str:
+    return f"sqlite:///{examples_db_path}"
 
 
 def _sheet(path: Path) -> tuple[list[str], dict[tuple[str, str], dict[str, object]], object]:
@@ -92,30 +114,62 @@ def _sheet(path: Path) -> tuple[list[str], dict[tuple[str, str], dict[str, objec
     return head, {(r[0], r[1]): dict(zip(head, r)) for r in rows[1:]}, ws
 
 
-def test_xlsx_catalogue_with_input_db(examples_db_url, tmp_path, monkeypatch) -> None:
+def test_xlsx_catalogue_with_input_db(examples_db_url, examples_db_path, tmp_path, monkeypatch) -> None:
     # No documentation in this installation: --xlsx does not need it.
     monkeypatch.setattr(docs_store, "markdown_root", lambda package_dir=docs_store.PACKAGE_DIR: None)
     out = tmp_path / "catalogue.xlsx"
     assert docs_build_main(["--xlsx", str(out), "--input-db", examples_db_url]) == 0
     head, rows, ws = _sheet(out)
-    assert head == ["class", "parameter", "definition", "unit", "allowed shapes", "default", "value list",
-                    "parameter group", "used in DB", "entities", "alternatives", "Source", "How to replace",
-                    "Notes"]
+    assert head == ["class", "parameter", "definition", "unit", "quantity type", "allowed shapes", "default",
+                    "allowed values", "parameter group", "used in DB", "entities", "alternatives", "Source",
+                    "How to replace", "Notes"]
     assert sorted(rows) == sorted(_schema_parameters())
     efficiency = rows[("unit", "efficiency")]
     assert (efficiency["used in DB"], efficiency["entities"]) == ("yes", 9)
-    assert efficiency["unit"] == "dimensionless" and efficiency["default"] == "1"
+    assert efficiency["unit"] == "dimensionless" and efficiency["default"] == 1     # a number, not text
+    assert efficiency["quantity type"] == "fraction"
     assert not rows[("solve", "benders_tolerance")]["used in DB"]
     assert all(not r[c] for r in rows.values() for c in ("Source", "How to replace", "Notes"))
-    assert ws.freeze_panes == "C2" and ws.auto_filter.ref == f"A1:N{len(rows) + 1}"
+    assert ws.freeze_panes == "C2" and ws.auto_filter.ref == f"A1:O{len(rows) + 1}"
     assert ws["A1"].font.bold and ws["C2"].alignment.wrap_text
+    from openpyxl import load_workbook
+
+    book = load_workbook(out)
+    assert book.sheetnames == ["Read me", "parameters", "classes"]
+    readme = {r[0]: r[1] for r in book["Read me"].iter_rows(values_only=True) if r[0]}
+    assert set(head) <= set(readme)                       # one line per column
+    assert readme["Input database"] == examples_db_url and readme["Database version"] == "83"
+    assert readme["Web version"].endswith("/parameter_catalogue/")
+    classes = {r[0]: r[1] for r in book["classes"].iter_rows(min_row=2, values_only=True)}
+    assert set(classes) >= {k[0] for k in rows} and classes["unit"]
 
     scenario_out = tmp_path / "coal.xlsx"
     assert docs_build_main(["--xlsx", str(scenario_out), "--input-db", examples_db_url, "--scenario", "coal"]) == 0
     efficiency = _sheet(scenario_out)[1][("unit", "efficiency")]
     assert (efficiency["used in DB"], efficiency["entities"], efficiency["alternatives"]) == ("yes", 1, "coal")
 
+    # A plain file path works like the URL.
+    path_out = tmp_path / "path.xlsx"
+    assert docs_build_main(["--xlsx", str(path_out), "--input-db", str(examples_db_path)]) == 0
+    assert _sheet(path_out)[1][("unit", "efficiency")]["entities"] == 9
+
     plain = tmp_path / "plain.xlsx"
     assert docs_build_main(["--xlsx", str(plain)]) == 0
     head, rows, _ = _sheet(plain)
     assert "used in DB" not in head and head[-3:] == ["Source", "How to replace", "Notes"]
+
+
+@pytest.mark.parametrize("form", ["path", "url"])
+def test_a_missing_input_db_is_an_error_and_is_not_created(form, tmp_path, capsys) -> None:
+    missing = tmp_path / "missing.sqlite"
+    value = str(missing) if form == "path" else f"sqlite:///{missing}"
+    assert docs_build_main(["--xlsx", str(tmp_path / "c.xlsx"), "--input-db", value]) == 1
+    assert f"no such file: {missing}" in capsys.readouterr().err
+    assert not missing.exists() and not (tmp_path / "c.xlsx").exists()
+
+
+def test_every_class_has_a_plain_description() -> None:
+    from flextool.assistant.inputs._schema import shipped_schema
+    from flextool.docs_build.parameters import class_description
+
+    assert all(class_description(cls) for cls in shipped_schema().classes)

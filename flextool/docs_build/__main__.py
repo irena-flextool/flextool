@@ -1,5 +1,5 @@
 """``python -m flextool.docs_build --out DIR`` writes the generated documentation pages into ``DIR``;
-``--xlsx FILE [--input-db URL [--scenario NAME]]`` writes the parameter catalogue as an Excel data dictionary."""
+``--xlsx FILE [--input-db DB [--scenario NAME]]`` writes the parameter catalogue as an Excel data dictionary."""
 from __future__ import annotations
 
 import argparse
@@ -66,7 +66,7 @@ def _write_xlsx(args: argparse.Namespace) -> int:
         if note:
             print(f"{PROG}: {note}", file=sys.stderr)
     try:
-        path = write_xlsx(args.xlsx, usage)
+        path = write_xlsx(args.xlsx, usage, input_db=args.input_db, scenario=args.scenario)
     except OSError as exc:
         print(f"{PROG}: cannot write {args.xlsx}: {exc}", file=sys.stderr)
         return 1
@@ -91,8 +91,9 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--xlsx", type=Path, default=None,
                         help="write the parameter catalogue (data dictionary) to this Excel file")
     parser.add_argument("--input-db", default=None,
-                        help="with --xlsx: the URL of an input database (sqlite:///file.sqlite); the parameters it "
-                             "gives values to are marked 'used in DB'")
+                        help="with --xlsx: an input database, as a file path (input_data.sqlite) or a URL "
+                             "(sqlite:///input_data.sqlite); the parameters it gives values to are marked 'used in "
+                             "DB'. The file is opened read-only")
     parser.add_argument("--scenario", default=None,
                         help="with --input-db: count only the alternatives of this scenario")
     args = parser.parse_args(argv)

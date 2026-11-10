@@ -1,13 +1,18 @@
 ## Unreleased
 
 - **New: parameter catalogue (data dictionary).** The web docs have a *Parameter catalogue* page (under Model
-  parameters): every input parameter in one table per entity class with its unit, allowed shapes, default, choices,
-  parameter group and definition, generated from the schema of the installed FlexTool. `python -m
-  flextool.docs_build --xlsx catalogue.xlsx` writes the same as an Excel sheet with a frozen, filterable header and
-  empty **Source**, **How to replace** and **Notes** columns for a project team; `--input-db URL [--scenario NAME]`
-  adds **used in DB**, **entities** and **alternatives** columns from the keys of the stored values (read-only, no
-  value parsed) and lists the parameters a database has but this FlexTool does not define. See *How to make a data
-  dictionary for your model* in the how-to recipes.
+  parameters): every input parameter in one table per entity class with its unit, allowed shapes, default, allowed
+  values, parameter group and definition, generated from the schema of the installed FlexTool. `python -m
+  flextool.docs_build --xlsx catalogue.xlsx` writes the same as an Excel file: a **Read me** sheet (what the file
+  is, the versions, what each column means and how to fill **Source** and **How to replace**), the **parameters**
+  sheet (also a **quantity type** column, a frozen, filterable header and empty **Source**, **How to replace** and
+  **Notes** columns for a project team) and a **classes** sheet that explains each entity class. `--input-db
+  FILE_OR_URL [--scenario NAME]` adds **used in DB**, **entities** and **alternatives** columns from the keys of the
+  stored values (the file is opened read-only; a missing file is an error) and lists the parameters a database has
+  but this FlexTool does not define. See *How to make a data dictionary for your model* in the how-to recipes.
+- **Changed: the user-constraint capacity coefficients** (`constraint_capacity_coeff`, `..._invested_capacity_coeff`,
+  and the other `constraint_*capacity_coeff` of unit, node and connection) say in their description that they are a
+  map of coefficients indexed by constraint name (schema v83, description only).
 - **New: project packages.** A project can be sent to another computer as one `<Name>_<YYYYMMDD>.flextool.zip`:
   **Manage projects… → Export… / Import…** in the FlexTool window, or `flextool-project export|import|verify` in
   the terminal. A package holds the input sources (external input files copied in under their own source numbers,

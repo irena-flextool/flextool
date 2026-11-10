@@ -136,19 +136,23 @@ These provide the structural backbone of any FlexTool model. Implementation: `fl
 
 ## How to make a data dictionary for your model
 
-A project team that builds a model from its own data often needs a list of every input parameter: what it means, its unit, the shapes it accepts and its default, with room to note where the team's value comes from. FlexTool writes that list, the parameter catalogue, from its own database schema, so it always matches the installed version. The same table is on the web as the [Parameter catalogue](../parameter_catalogue.md) page.
+A project team that builds a model from its own data often needs a list of every input parameter: what it means, its unit, the shapes it accepts and its default, with room to note where the team's value comes from. FlexTool writes that list, the parameter catalogue, from its own database schema, so it always matches the installed version. The same table is on the web as the [Parameter catalogue (web docs)](../parameter_catalogue.md) page; the FlexTool assistant answers the same questions per parameter with its `describe_parameter` tool.
 
-Write it as an Excel file, and mark the parameters your input database gives values to:
+Write it as an Excel file, and mark the parameters your input database gives values to. The command runs in FlexTool's Python environment (see [Terminal workflow](../terminal_workflow.md) for how to open a terminal with it):
 
 ```bash
 python -m flextool.docs_build --xlsx catalogue.xlsx \
-    --input-db sqlite:///input_data.sqlite --scenario base
+    --input-db input_data.sqlite --scenario base
 ```
 
-The sheet `parameters` has one row per parameter (class, parameter, definition, unit, allowed shapes, default, value list, parameter group) and three empty columns for the team: **Source**, **How to replace** and **Notes**. The header row is frozen and has filters, so you can show, for example, only the parameters the database uses.
+The file has three sheets:
 
-- `--input-db` (optional) adds the columns **used in DB** (`yes` when any entity has a value), **entities** (how many) and **alternatives** (in which). Only the keys of the stored values are read; the database is not changed or migrated.
-- `--scenario` (optional) counts only the alternatives of that scenario.
+- **Read me**: what the file is, the FlexTool and database versions, the input database, and one line per column of the parameters sheet, including what to write in **Source** and **How to replace**.
+- **parameters**: one row per parameter (class, parameter, definition, unit, quantity type, allowed shapes, default, allowed values, parameter group) and three empty columns for the team: **Source**, **How to replace** and **Notes**. The header row and the class and parameter columns are frozen, so they stay visible when you scroll; the header has filters, so you can show, for example, only the parameters the database uses.
+- **classes**: what each entity class (unit, node, `unit__outputNode`, ...) is.
+
+- `--input-db` (optional) is the input database, as a file path or as a URL (`sqlite:///input_data.sqlite`). It adds the columns **used in DB** (`yes` when any entity has a value), **entities** (how many) and **alternatives** (in which). Only the keys of the stored values are read; the file is opened read-only, so it is not changed or migrated.
+- `--scenario` (optional) counts only the values in the alternatives of that scenario. An entity that the scenario switches off (its entity alternative) still counts.
 - A parameter that the database has but this FlexTool does not define gets its own row marked *not in this FlexTool version*. That happens with an older database whose parameters were renamed since: the command says so and names `flextool-migrate-database`; migrate the database (or a copy of it) to see its values under the current names.
 
 The catalogue is a dictionary, not an input template: to fill in data, use [a partial Excel template](#how-to-export-a-partial-excel-template-parameter-group-picker) or the [Excel interface](../excel_interface.md).
