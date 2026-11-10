@@ -1370,8 +1370,10 @@ their goldens unchanged.  Three were regenerated:
 - `network_coal_wind_capacity_margin` (`unit__outputNode__dt`, `connection__dt`, `costs__dt`) and
   `network_coal_wind_reserve_co2_capacity_margin` (the same, `process__reserve__upDown__node__dt`, `co2`): the
   group's internal lines `west_east` (0.9), `west_north` (0.9) and `east_north` (0.8) now add their losses to the
-  requirement.  The model avoids them where the margin binds: less is sent to east and north, the coal output there
-  falls and those nodes take more upward slack.  The shortfall stays 122.4522 MW (`slack__capacity_margin__d`
+  requirement.  The LP sheds east and north at the binding steps to remove those losses from the requirement (a
+  shed MWh costs one hour of `penalty_up`, a margin MW a year of `penalty_capacity_margin`; corrected in the fix
+  pass below, where these goldens are restored): less is sent to east and north, the coal output there falls and
+  those nodes take more upward slack.  The shortfall stays 122.4522 MW (`slack__capacity_margin__d`
   unchanged: with no line flow at the binding steps the requirement is the old one).  Over the 48 h, `west_east`
   18 994.6 → 18 087.9 MWh, `west_north` 4 800 → 4 700, `east_north` 4 800 → 4 374.7; commodity cost 2 296 173 →
   2 240 250 and upward slack penalty 702 720 → 1 415 528 (reserve/CO2 variant: CO2 7.255 → 7.0945 Mt).
@@ -1383,3 +1385,25 @@ their goldens unchanged.  Three were regenerated:
 
 Hand values for the new row are in `tests/model/test_capacity_margin_flow_credit.py` (design and critique, checked
 by a separate agent).  Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the three.
+
+## 2026-11-10 — capacity margin fix pass: lines and lossy units inside the group left out (option B)
+
+**Context.** The WP-1 row required the losses of the group's internal lines at each step, and the LP shed east
+and north at the binding steps to remove them (the logic check in `capacity_margin_incentives.md` reproduces it).
+The fix pass leaves connections with both ends in the group and lossy units inside it out of the row, counts a
+multi-output unit's capacity once (maxOutputSum), and takes back the slack energy of storage nodes feeding the
+group.  `capacity_margin`, `all` and `test_a_lot_but_not_multi_year` match their goldens unchanged.
+
+- `network_coal_wind_capacity_margin` and `network_coal_wind_reserve_co2_capacity_margin`: back to their goldens
+  before `7ed575d0` (the files are those of `4eb0c857`, byte for byte; the regenerated run matches them to the
+  printed digits).  The east/north shedding is gone: upward slack penalty 1 415 528 → **702 720** (reserve/CO2
+  variant 1 426 975 → **754 341**), `west_east` 18 087.9 → 18 994.6 MWh, `west_north` 4 700 → 4 800,
+  `east_north` 4 374.7 → 4 800, CO2 7.0945 → 7.255 Mt; the shortfall stays 122.4522 MW.
+- `test_a_lot` (`unit__outputNode__dt`, `node__dt`, `costs__dt`): the row changed again (its group's internal
+  lines are left out), and the degenerate LP lands on a third vertex: in p2035 `coal_chp` and `wind_plant` move
+  between hours of equal cost.  Every column total is unchanged (commodity 834 347.447, CO2 709 195.331, upward
+  slack penalty 10 342 768.41, `coal_chp` heat 23 882.374, heat loss of load 1 217.626), and `costs_discounted`
+  is unchanged.  heat is not in the group, so the one-capacity rule of a CHP does not apply there.
+
+Generated with `pytest tests/test_scenarios.py --regenerate test_a_lot`; the two network scenarios were written
+from `4eb0c857` after their regenerated files were checked equal to them (max abs difference 1e-4, the rounding).

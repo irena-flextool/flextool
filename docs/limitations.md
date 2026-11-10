@@ -57,8 +57,11 @@ FlexTool is a linear (or mixed-integer) optimisation model of an energy system. 
     Storage counts only with what it discharges at that step, which is conservative for a full reservoir or a
     long-duration store. Imports count only as their actual flow, so a group fed only by imports cannot hold a
     margin. A unit fed from a fuel or commodity node, or from a balance node with limited supply, counts at its
-    capacity: the fuel is assumed to last through the peak. Under spatial Benders decomposition, a capacity-margin
-    group with nodes in more than one region is an error.
+    capacity: the fuel is assumed to last through the peak. Connections and lossy units inside the group are left
+    out, so the losses inside the group at the peak are not part of the requirement (add an estimate to the margin
+    if they matter). Energy made by the balance slack of a node outside the group and exported into it is not
+    taken back (that of a storage node feeding the group is). Under spatial Benders decomposition, a
+    capacity-margin group with nodes in more than one region is an error.
 
 - **Representative periods leave hours out.** An investment made on a sample of weeks cannot see the hours outside the sample; check the plan with a full-year dispatch.
 - **Costs count only within the model horizon.** The annuity and the fixed cost of new capacity are paid in the periods it operates within the model; the years after the last period are not counted.

@@ -235,8 +235,8 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "(and capacity_max_coeff), units fed from a storage node, connections and the units "
                      "consuming from the group by their actual flow; energy dumped through the downward balance "
                      "slack does not count. Before, availability was ignored, storage-backed units counted at full capacity and "
-                     "connections not at all. Exports and the losses of connections inside the group now add to "
-                     "the requirement (results change). In an investment -> dispatch chain the investment solve's "
+                     "connections not at all. Exports now add to the requirement; connections and lossy units "
+                     "inside the group are left out (results change). In an investment -> dispatch chain the investment solve's "
                      "shortfall and its penalty are now reported (slack__capacity_margin__d, the costs) instead of "
                      "0, so the total cost includes the penalty; capacity_margin__d explains each solve's margin."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "capacity_margin_counts_by_flow"),

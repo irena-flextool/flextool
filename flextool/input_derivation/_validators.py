@@ -714,10 +714,11 @@ def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
     """The nodes of a capacity-margin group (``capacity_margin_method`` manual or share_of_peak).
 
     Storage nodes are left out of the group's demand, and the units fed from them count by their flow, so a group
-    of storage nodes only has no demand to cover: an error.  A ``balance_within_period`` node balances its energy
-    over the period, not at each time step, so the per-step margin cannot hold for it: an error.
+    of storage nodes only has no demand to cover: an error.  A storage node of the group with demand (a negative
+    inflow, e.g. a heat node with a tank) has that demand left out of the margin: a warning.  A
+    ``balance_within_period`` node balances its energy over the period, not at each time step, so the per-step
+    margin cannot hold for it: an error.
     """
-    del logger
     capacity_margin_groups: dict[str, list[str]] = {}
     for pv in db.find_parameter_values(
         entity_class_name="group", parameter_definition_name="capacity_margin_method",
@@ -735,6 +736,7 @@ def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
         entity_class_name="node", parameter_definition_name="node_type",
     ):
         node_type[pv["entity_byname"][0]] = pv["parsed_value"]
+    inflow = _explicit_values(db, "node", "inflow")
     for g, nodes in sorted(capacity_margin_groups.items()):
         storage_in_group = [n for n in nodes if node_type.get(n) == "storage"]
         if storage_in_group and len(storage_in_group) == len(nodes):
@@ -743,6 +745,13 @@ def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
                 f"({', '.join(storage_in_group)}). The capacity margin covers the demand of the group's "
                 f"other nodes, so this group has none. Add the nodes whose demand the margin is for."
             )
+        with_demand = sorted(n for n in storage_in_group if any(v < 0.0 for v in inflow.get(n, ())))
+        if with_demand:
+            logger.warning(
+                f"Capacity margin group '{g}': the storage node(s) {', '.join(with_demand)} have demand (a "
+                f"negative inflow), which the capacity margin leaves out: it covers the demand of the group's "
+                f"nodes without a storage state. Model the demand on a balance node of the group, connected to the "
+                f"storage node, if the margin should cover it.")
         period_nodes = sorted(n for n in nodes if node_type.get(n) == "balance_within_period")
         if period_nodes:
             raise FlexToolConfigError(

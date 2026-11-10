@@ -356,6 +356,7 @@ class _Build:
     vq_reserve: Var | None = None
     v_reserve_total: Var | None = None
     vq_capacity_margin: Var | None = None
+    v_capacity_margin_slack_energy: Var | None = None
     vq_inertia: Var | None = None
     vq_non_synchronous: Var | None = None
     v_angle: Var | None = None

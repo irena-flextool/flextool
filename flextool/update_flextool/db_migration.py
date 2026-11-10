@@ -6157,9 +6157,9 @@ _V79_CAPACITY_MARGIN_DESCRIPTIONS: dict[tuple[str, str], str] = {
         "group's peak demand in the period. At every time step of an investment period, the capacity of the "
         "group's firm units (capacity x availability x capacity_max_coeff) and VRE units (capacity x profile x "
         "availability) must cover the group's demand plus the margin. Units fed from a storage node, "
-        "connections and the units consuming from the group count by their actual flow, so exports and losses "
-        "inside the group add to the requirement. Units fed from fuel or commodity nodes count at capacity: the "
-        "fuel is assumed to last."),
+        "connections and the units consuming from the group count by their actual flow, so exports add to the "
+        "requirement; connections and lossy units inside the group are left out (their losses are not "
+        "required). Units fed from fuel or commodity nodes count at capacity: the fuel is assumed to last."),
     ("group", "capacity_margin"): (
         "[MW] Capacity the group needs above its demand at every time step of an investment period. Used only "
         "with capacity_margin_method manual. No value means 0 (the demand must still be covered). Constant or "

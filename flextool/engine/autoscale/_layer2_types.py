@@ -169,6 +169,9 @@ VARIABLE_FAMILIES: dict[str, VarFamily] = {
     # ── Group-level slacks.  Direct physical units.
     # flextool/engine/model/_group_slack.py add_variables
     "vq_capacity_margin": VarFamily(QuantityType.POWER),
+    # flextool/engine/model/_group_slack.py add_variables: the slack energy of a storage node feeding a
+    # capacity-margin group (MWh, capacityMargin_slack_energy)
+    "v_capacity_margin_slack_energy": VarFamily(QuantityType.ENERGY),
     # flextool/engine/model/_group_slack.py add_variables
     "vq_inertia": VarFamily(QuantityType.INERTIA),
     # flextool/engine/model/_group_slack.py add_variables
@@ -600,6 +603,8 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # ── Group slack constraints.
     # flextool/engine/model/_group_slack.py _eq_capacity_margin
     "capacityMargin": CstrFamily(QuantityType.POWER),
+    # flextool/engine/model/_group_slack.py _eq_slack_energy
+    "capacityMargin_slack_energy": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/_group_slack.py _eq_inertia
     "inertia_constraint": CstrFamily(QuantityType.INERTIA),
     # flextool/engine/model/_group_slack.py _eq_non_sync

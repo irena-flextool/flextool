@@ -56,7 +56,8 @@ _RUNS: dict = {}
 
 
 def _shortfall(tmp_path_factory, name: str, chain: list[str], values: list, entities: list, nodes: list[str], *,
-               margin: float | None = 100.0, method: str = "manual") -> tuple[float, object]:
+               margin: float | None = 100.0, method: str = "manual",
+               penalty: float = 1000.0) -> tuple[float, object]:
     """``(shortfall MW of group cm in p2020, the solve's step)``."""
     from flextool.engine import run_chain_from_db
 
@@ -64,9 +65,11 @@ def _shortfall(tmp_path_factory, name: str, chain: list[str], values: list, enti
         return _RUNS[name]
     ents = [["group", "cm", None]] + [["group__node", ["cm", n], None] for n in nodes] + entities
     vals = [["group", "cm", "capacity_margin_method", st(method)],
-            ["group", "cm", "penalty_capacity_margin", sc(1000.0)],
+            ["group", "cm", "penalty_capacity_margin", sc(penalty)],
             ["solve", "y2020_2day_dispatch", "invest_periods",
-             b64({"value_type": "str", "data": ["p2020"], "index_name": "period"}, "array")]] + values
+             b64({"value_type": "str", "data": ["p2020"], "index_name": "period"}, "array")]]
+    own = {tuple(v[:3]) if isinstance(v[1], str) else (v[0], tuple(v[1]), v[2]) for v in values}
+    vals = [v for v in vals if (v[0], v[1], v[2]) not in own] + values
     if margin is not None:
         vals.append(["group", "cm", "capacity_margin", sc(margin)])
     url, scen = make_db(tmp_path_factory, alt=f"cmf_{name}", values=vals, base_chain=chain, entities=ents)
@@ -74,7 +77,7 @@ def _shortfall(tmp_path_factory, name: str, chain: list[str], values: list, enti
     step = list(steps.values())[-1]
     vq = utf8(step.solution.value("vq_capacity_margin"))
     gcs = utf8(step.flex_data.p_group_capacity_for_scaling.frame)
-    short = vq.join(gcs.rename({"value": "gcs"}), on=["g", "d"]).filter(pl.col("g") == "cm")
+    short = vq.join(gcs.rename({"value": "gcs"}), on=["g", "d"]).filter((pl.col("g") == "cm") & (pl.col("d") == "p2020"))
     assert short.height == 1
     _RUNS[name] = (float(short["value"][0] * short["gcs"][0]), step)
     return _RUNS[name]
@@ -177,6 +180,20 @@ def test_share_of_peak_P(tmp_path_factory) -> None:
     assert peak["value"].to_list() == [pytest.approx(max(DEMAND.values()))]
 
 
+def test_share_of_peak_takes_the_peak_outside_the_solve(tmp_path_factory) -> None:
+    """P with west's demand 1000 MW at t0060, a step of the timeline (72 steps) outside the solve's 48 steps: the
+    peak is 1000, so M = 100, and the solve's own peak step (t0043) gives 872 + 100 − 500 = 472 (a peak over the
+    solve's steps would give M = 87.2 and 459.2)."""
+    data = [[t, -1000.0 if t == "t0060" else v] for t, v in _fixture_value("west", "west", "inflow")["data"]]
+    inflow = b64({"index_type": "str", "rank": 1, "index_name": "time", "type": "map", "data": data}, "map")
+    vals = [["group", "cm", "capacity_margin_share", sc(0.1)], ["node", "west", "inflow", inflow]]
+    short, step = _shortfall(tmp_path_factory, "P_out", BASE, vals, [], ["west"], margin=None,
+                             method="share_of_peak")
+    peak = utf8(step.flex_data.pdGroup_peak_demand.frame).filter(pl.col("g") == "cm")
+    assert peak["value"].to_list() == [pytest.approx(1000.0)]
+    assert short == pytest.approx(472.0, abs=1e-4)
+
+
 def test_share_of_peak_ignores_capacity_margin(tmp_path_factory) -> None:
     """A ``capacity_margin`` value on a share_of_peak group is not its margin: still 459.2."""
     vals = [["group", "cm", "capacity_margin_share", sc(0.1)]]
@@ -222,11 +239,32 @@ def test_exports_on_a_one_variable_connection(tmp_path_factory) -> None:
     assert short == pytest.approx(672.0, abs=1e-4)
 
 
-def test_internal_losses_add_to_the_requirement_L(tmp_path_factory) -> None:
-    """L: group {west, ex}; ``w_ex`` delivers 300 MW at efficiency 0.9, so west sends 333.33: the 33.33 MW loss is
-    part of the requirement: 872 + 300 + 100 − 500 + 33.33 = 805.33."""
+def test_internal_lines_are_left_out_L(tmp_path_factory) -> None:
+    """L: group {west, ex}; ``w_ex`` (both ends in the group) delivers 300 MW at efficiency 0.9.  The line is left
+    out of the row, so its 33.33 MW loss is not part of the requirement and ex's demand counts one to one:
+    872 + 300 + 100 − 500 = 772 (with the line in the row: 805.33)."""
     short, _ = _shortfall(tmp_path_factory, "L", BASE, _ex_values(0.9, -300.0), EX_ENTITIES, ["west", "ex"])
-    assert short == pytest.approx(872.0 + 300.0 + 100.0 - 500.0 + 300.0 / 0.9 - 300.0, abs=1e-4)
+    assert short == pytest.approx(872.0 + 300.0 + 100.0 - 500.0, abs=1e-4)
+
+
+CONV_ENTITIES = [["node", "ex", None], ["unit", "conv", None], ["unit__inputNode", ["conv", "west"], None],
+                 ["unit__outputNode", ["conv", "ex"], None]]
+
+
+@pytest.mark.parametrize("efficiency,expected", [(0.9, 872.0 + 300.0 + 100.0 - 500.0),
+                                                 (3.0, 872.0 + 300.0 / 3.0 + 100.0 - 500.0)])
+def test_converter_inside_the_group(tmp_path_factory, efficiency, expected) -> None:
+    """Group {west, ex}; ``conv`` (400 MW) turns west's power into ex's demand of 300 MW (hard balance).
+
+    * efficiency 0.9 (an electric boiler): a lossy converter inside the group is left out, as a line inside it is:
+      872 + 300 + 100 − 500 = 772 (in the row it would be 805.33, and shedding ex would lower the requirement);
+    * efficiency 3 (a heat pump): counted by its flow, output 300 − input 100, so ex's demand needs 100 MW of
+      west's power: 872 + 100 + 100 − 500 = 572."""
+    vals = [["node", "ex", "node_type", st("balance")], ["node", "ex", "inflow", sc(-300.0)],
+            ["node", "ex", "penalty_method", st("off")],
+            ["unit", "conv", "existing", sc(400.0)], ["unit", "conv", "efficiency", sc(efficiency)]]
+    short, _ = _shortfall(tmp_path_factory, f"conv_{efficiency}", BASE, vals, CONV_ENTITIES, ["west", "ex"])
+    assert short == pytest.approx(expected, abs=1e-4)
 
 
 def test_dumped_energy_does_not_count(tmp_path_factory) -> None:
@@ -246,20 +284,33 @@ def test_dumped_energy_does_not_count(tmp_path_factory) -> None:
 # ─── CHP into an elec + heat group ───────────────────────────────────────
 
 
-def test_chp_in_elec_and_heat_group_has_no_negative_headroom(tmp_path_factory) -> None:
-    """``coal_chp`` (1000 MW, outputs west and heat, west = 0.5 · heat) with ``coal_plant`` in group {west, heat}
-    (heat demand 300 MW), margin 1500.  Each output arc counts at its own bound (1000 MW each), so with no other
-    flows in the group the row reads vq ≥ M + D_t + dump_t − counted = 1500 + (872 + 300) − 2500 = 172 at the peak
-    (the model does not dump heat there: that would raise the margin shortfall).  Every counted arc keeps its flow
-    within its counted capacity (headroom ≥ 0)."""
+def test_chp_in_elec_and_heat_group_counts_its_capacity_once(tmp_path_factory) -> None:
+    """``coal_chp`` (1000 MW, outputs west and heat, west = 0.5 · heat) with ``coal_plant`` (500 MW) in group
+    {west, heat} (heat demand 300 MW), margin 1500.  maxOutputSum caps the sum of the CHP's outputs at 1000 MW, so
+    it counts once, at 1000 · min(1, 1 + 1) = 1000 MW: vq ≥ M + D_t − counted = 1500 + (872 + 300) − (500 + 1000)
+    = 1172 at the peak (the model does not dump heat there: that would raise the shortfall).  The sum of the CHP's
+    flows into the group stays within its counted capacity (headroom ≥ 0)."""
     short, step = _shortfall(tmp_path_factory, "CHP", BASE + ["heat", "coal_chp"], [], [], ["west", "heat"],
                              margin=1500.0)
-    assert short == pytest.approx(172.0, abs=1e-4)
+    assert short == pytest.approx(1172.0, abs=1e-4)
     unitsize = utf8(step.flex_data.p_unitsize.frame).filter(pl.col("p") == "coal_chp")["value"][0]
     out = (utf8(step.solution.value("v_flow"))
            .filter((pl.col("p") == "coal_chp") & pl.col("sink").is_in(["west", "heat"])))
     assert set(out["sink"].to_list()) == {"west", "heat"}
-    assert (out["value"] * unitsize).max() <= 1000.0 + 1e-6
+    assert (out.group_by("d", "t").agg(pl.col("value").sum())["value"] * unitsize).max() <= 1000.0 + 1e-6
+
+
+# ─── storage slack does not pose as storage delivery ─────────────────────
+
+
+def test_storage_slack_energy_does_not_count(tmp_path_factory) -> None:
+    """C with the storage node's balance slack on (``penalty_method`` regular, ``penalty_up`` 1e4 by default) and a
+    margin penalty of 1e5 CUR/kW: a MW of margin (1e8) costs more than the slack energy behind it (1e4 · 182.5 per
+    MWh), so a row that credited ``bat_out``'s flow would let the slack fill ``bat`` (shortfall 272).  The slack
+    energy made at ``bat`` is taken back: 472."""
+    vals = [v for v in BAT_VALUES if v[2] != "penalty_method"]
+    short, step = _shortfall(tmp_path_factory, "C_slack", BASE, vals, BAT_ENTITIES, ["west"], penalty=1e5)
+    assert short == pytest.approx(472.0, abs=1e-4)
 
 
 # ─── share_of_peak in rolling and stochastic solves; the peak per period ──
@@ -347,3 +398,39 @@ def test_balance_within_period_node_in_a_capacity_margin_group_is_an_error(tmp_p
     with pytest.raises(FlexToolConfigError, match=r"Capacity margin group 'cm' contains balance_within_period "
                                                   r"nodes \(bwp\)"):
         _shortfall(tmp_path_factory, "bwp", BASE, vals, ents, ["west", "bwp"])
+
+
+def test_storage_node_with_demand_in_a_capacity_margin_group_is_reported(tmp_path_factory, caplog) -> None:
+    """A storage node of the group with demand has that demand left out of the margin; the run says so."""
+    import logging
+
+    vals = [v for v in BAT_VALUES if v[2] != "penalty_method"] + [["node", "bat", "inflow", sc(-10.0)]]
+    with caplog.at_level(logging.WARNING):
+        _shortfall(tmp_path_factory, "bat_demand", BASE, vals, BAT_ENTITIES, ["west", "bat"])
+    assert "Capacity margin group 'cm': the storage node(s) bat have demand" in caplog.text
+
+
+def test_share_of_peak_per_period_on_a_shared_timeline(tmp_path_factory) -> None:
+    """Two investment periods take different blocks of one timeline (p2020 t0001-t0024, p2025 t0025-t0072), and
+    west's demand is 1000 MW at t0060: each period's peak is over its own part of the timeline, so p2020 has the
+    peak of t0001-t0024 (from the fixture JSON) and p2025 has 1000."""
+    data = [[t, -1000.0 if t == "t0060" else v] for t, v in _fixture_value("west", "west", "inflow")["data"]]
+    inflow = b64({"index_type": "str", "rank": 1, "index_name": "time", "type": "map", "data": data}, "map")
+    periods = b64({"value_type": "str", "data": ["p2020", "p2025"], "index_name": "period"}, "array")
+    ents = [["timeset", "first_day", None], ["timeset", "rest", None]]
+    vals = [["group", "cm", "capacity_margin_share", sc(0.1)], ["node", "west", "inflow", inflow],
+            ["timeset", "first_day", "timeline", st("y2020")], ["timeset", "rest", "timeline", st("y2020")],
+            ["timeset", "first_day", "timeset_duration", b64({"index_type": "str", "index_name": "timestep",
+                                                              "data": [["t0001", 24.0]]}, "map")],
+            ["timeset", "rest", "timeset_duration", b64({"index_type": "str", "index_name": "timestep",
+                                                         "data": [["t0025", 48.0]]}, "map")],
+            ["solve", "y2020_2day_dispatch", "period_timeset",
+             b64({"index_type": "str", "index_name": "period",
+                  "data": [["p2020", "first_day"], ["p2025", "rest"]]}, "map")],
+            ["solve", "y2020_2day_dispatch", "realized_periods", periods],
+            ["solve", "y2020_2day_dispatch", "invest_periods", periods]]
+    _, step = _shortfall(tmp_path_factory, "P_shared", BASE, vals, ents, ["west"], margin=None,
+                         method="share_of_peak")
+    peak = {d: v for g, d, v in utf8(step.flex_data.pdGroup_peak_demand.frame).iter_rows() if g == "cm"}
+    first = max(DEMAND[f"t{i:04d}"] for i in range(1, 25))
+    assert peak == {"p2020": pytest.approx(first), "p2025": pytest.approx(1000.0)}

@@ -830,7 +830,8 @@ def coarse_row_members(flex_data: "FlexData", family: str) -> pl.DataFrame:
     the row's entities is safe (one more member can only keep the row at the solve's step).
 
     * ``capacity_margin`` (key ``g``): the processes whose flows enter the row (storage-backed units, connections,
-      consumption: the arcs at N(g) that do not count at capacity, ``_group_slack.capacity_margin_counted_arcs``);
+      consumption: the arcs at N(g) that neither count at capacity, ``_group_slack.capacity_margin_counted_arcs``,
+      nor are left out, ``_group_slack.capacity_margin_left_out_arcs``);
     * ``inertia`` (``g``): the processes with an inertia constant on a side at a node of g;
     * ``non_sync`` (``g``): the processes with an arc at a node of g, without those inside g;
     * ``instant_flow`` (``g``): the processes of the flow group (``group_process_node``);
@@ -865,10 +866,10 @@ def coarse_row_members(flex_data: "FlexData", family: str) -> pl.DataFrame:
                 return empty
             at = pl.concat([_arcs_at_nodes(pss, nodes, "source"), _arcs_at_nodes(pss, nodes, "sink")],
                            how="diagonal_relaxed").select("g", "p", "source", "sink")
-            counted = _group_slack.capacity_margin_counted_arcs(d)
-            if counted is not None:
-                at = at.join(counted.select("g", "p", "source", "sink"), on=["g", "p", "source", "sink"],
-                             how="anti")
+            for left in (_group_slack.capacity_margin_counted_arcs(d), _group_slack.capacity_margin_left_out_arcs(d)):
+                if left is not None:
+                    at = at.join(left.select("g", "p", "source", "sink"), on=["g", "p", "source", "sink"],
+                                 how="anti")
             procs(at.select("g", "p").unique())
         elif family == "inertia":
             for side in ("source", "sink"):

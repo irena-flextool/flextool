@@ -385,7 +385,7 @@ The energy-margin lever lets you de-rate a node's energy balance in the investme
 
 For example, to build about 10% more into a demand node, set `energy_margin_method = inflow_multiplier` and `energy_margin_multiplier = 1.1` on that node.
 
-The energy margin enters only the node balance. The reserve requirement, the non-synchronous limit and the capacity margin of a group follow the real demand; use `capacity_margin` for a capacity surplus.
+The energy margin enters only the node balance. The reserve requirement, the non-synchronous limit and the capacity margin of a group follow the real demand; use `capacity_margin` for a capacity surplus. Combined with a capacity margin, the energy margin does not lower or raise the capacity requirement: storage and imports count with the power they deliver at a step, also when it serves the energy margin's added demand, and firm output that serves it leaves the capacity margin unchanged.
 
 Use `inflow_adder` as the additive alternative to the multiplier. Because the multiplier scales the node's *existing* demand, it is a no-op on a node whose native inflow is zero — a common shape for a bare adequacy / slack node that carries no demand series of its own. `inflow_adder` instead adds a fixed block of demand at the node: it deepens the node's demand where it already has inflow and, crucially, **creates** the demand where the node had none, adding the same MWh to every investment-stage time step (a constant adder; on a timeline of 24 h time steps a margin of 10 MW needs a value of 240), or placing per-period values if authored as a period map. Set `energy_margin_method = inflow_adder` and `energy_margin_adder = <MWh>` on the node to raise investment-stage adequacy headroom without touching dispatch demand.
 

@@ -3,7 +3,10 @@
     P[g,d] = max(0, max_{t ∈ T(d)} Σ_{n ∈ N(g)} −inflow_real[n,d,t] / Δ[t])
     ∀ g ∈ groupCapacityMargin, d ∈ the solve's investment periods and their stochastic branch periods
     T(d) = every time step of the period's original timeline (input/timeline.csv): before representative-period
-      selection, before new_stepduration and independent of a roll's window;  Δ[t] = its duration
+      selection, before new_stepduration and independent of a roll's window;  Δ[t] = its duration.  When several
+      investment periods of the solve use one timeline with different steps (a multi-year timeline, one block
+      each), T(d) is the period's own part of it: the original steps of its timeset blocks, or the steps of its
+      base periods with representative periods (:func:`_own_steps`)
     inflow_real = the solve's pdtNodeInflow formula (inflow scaling method and its period multipliers), evaluated on
       the original time steps with the raw per-step inflow (input/pt_node_inflow, else the node's constant inflow)
       and the raw stochastic branch inflow (input/pbt_node_inflow); no energy margin
@@ -67,6 +70,59 @@ def _period_timelines(input_dir: Path, solve_data_dir: Path, *, provider) -> dic
     return out
 
 
+def _own_steps(solve_data_dir: Path, anchors: list[str], timelines: dict[str, list[str]],
+               steps_of: dict[str, list[str]], *, provider) -> dict[tuple[str, str], set[str]]:
+    """``{(period, timeline): the period's own steps of the timeline}`` for the timelines that several investment
+    periods of the solve use with different steps (each period's timeset picks its own blocks, e.g. one weather
+    year each of a multi-year timeline); the other timelines are not in the dict, so a period takes the whole of
+    such a timeline (its timeset may sample it).  A period's own steps are:
+
+    * the original steps behind its complete-solve steps (``steps_complete_solve`` through ``new_stepduration``'s
+      base steps), the blocks of its timeset; or
+    * with representative periods (``rp_weights``), the steps of its base periods: each base period's start and
+      the following steps, as many as its longest representative block, so the peak is over the data the
+      representative periods stand for.
+    """
+    from flextool.engine.preprocess.emit._base_steps import base_steps_of_solve_steps, complete_steps_by_period
+
+    base_of = base_steps_of_solve_steps(solve_data_dir, provider=provider)
+    blocks: dict[str, set[str]] = {}
+    for d, t in complete_steps_by_period(solve_data_dir, anchors, provider=provider):
+        blocks.setdefault(d, set()).update(base_of.get(t, (t,)))
+    rp_w = _frame(provider, solve_data_dir / "rp_weights.csv")
+    rp_len = _frame(provider, solve_data_dir / "rp_block_start_last.csv")
+    if rp_w is not None:
+        bases: dict[str, list[str]] = {}
+        for d, b in rp_w.select(rp_w.columns[:2]).iter_rows():
+            bases.setdefault(str(d), []).append(str(b))
+        lengths: dict[str, list[tuple[str, str]]] = {}
+        if rp_len is not None:
+            for d, start, last in rp_len.select(rp_len.columns[:3]).iter_rows():
+                lengths.setdefault(str(d), []).append((str(start), str(last)))
+        for d, starts in bases.items():
+            if d not in anchors:
+                continue
+            for tl in timelines.get(d, []):
+                order = steps_of.get(tl, [])
+                idx = {t: i for i, t in enumerate(order)}
+                spans = [idx[last] - idx[start] + 1 for start, last in lengths.get(d, ())
+                         if start in idx and last in idx]
+                length = max(spans) if spans else 1
+                blocks[d] = {order[j] for b in dict.fromkeys(starts) if b in idx
+                             for j in range(idx[b], min(idx[b] + length, len(order)))}
+    users: dict[str, list[str]] = {}
+    for d in anchors:
+        for tl in dict.fromkeys(timelines.get(d, [])):
+            users.setdefault(tl, []).append(d)
+    out: dict[tuple[str, str], set[str]] = {}
+    for tl, ds in users.items():
+        tl_steps = set(steps_of.get(tl, ()))
+        on_tl = {d: frozenset(blocks.get(d, set()) & tl_steps) for d in ds}
+        if len(ds) > 1 and len(set(on_tl.values())) > 1 and all(on_tl.values()):
+            out.update({(d, tl): set(v) for d, v in on_tl.items()})
+    return out
+
+
 def derive_capacity_margin_peak(input_dir: Path, solve_data_dir: Path, *, provider) -> pl.DataFrame | None:
     """``(group, period, value)`` Utf8 / Float64: P[g,d] of the module docstring; None when there is none."""
     groups = _column(_frame(provider, input_dir / "groupCapacityMargin.csv"))
@@ -90,12 +146,14 @@ def derive_capacity_margin_peak(input_dir: Path, solve_data_dir: Path, *, provid
     steps_of: dict[str, list[str]] = {}
     for tl, t in tl_df.select("timeline", "time").iter_rows():
         steps_of.setdefault(tl, []).append(t)
+    own = _own_steps(solve_data_dir, anchors, timelines, steps_of, provider=provider)
     steps: list[tuple[str, str]] = []
     period_timeline: list[tuple[str, str]] = []
     for d in sorted(parent):
         for tl in dict.fromkeys(timelines.get(d) or timelines.get(parent[d], [])):
             period_timeline.append((d, tl))
-            steps.extend((d, t) for t in steps_of.get(tl, ()))
+            mine = own.get((parent[d], tl))
+            steps.extend((d, t) for t in steps_of.get(tl, ()) if mine is None or t in mine)
     if not steps:
         return None
 

@@ -1,6 +1,6 @@
 solve,period,time,wind_plant
-Unnamed: 0_level_1,Unnamed: 1_level_1,Unnamed: 2_level_1,primary
-Unnamed: 0_level_2,Unnamed: 1_level_2,Unnamed: 2_level_2,up
+,,,primary
+,,,up
 ,,,west
 y2020_2day_dispatch,p2020,t0001,20
 y2020_2day_dispatch,p2020,t0002,20

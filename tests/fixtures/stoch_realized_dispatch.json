@@ -2318,7 +2318,7 @@
         "str"
       ],
       "capacity_margin_methods",
-      "[choice] Whether the group needs a capacity margin in investment solves, and how the margin is given. none (default): no margin. manual: capacity_margin MW. share_of_peak: capacity_margin_share times the group's peak demand in the period. At every time step of an investment period, the capacity of the group's firm units (capacity x availability x capacity_max_coeff) and VRE units (capacity x profile x availability) must cover the group's demand plus the margin. Units fed from a storage node, connections and the units consuming from the group count by their actual flow, so exports and losses inside the group add to the requirement. Units fed from fuel or commodity nodes count at capacity: the fuel is assumed to last.",
+      "[choice] Whether the group needs a capacity margin in investment solves, and how the margin is given. none (default): no margin. manual: capacity_margin MW. share_of_peak: capacity_margin_share times the group's peak demand in the period. At every time step of an investment period, the capacity of the group's firm units (capacity x availability x capacity_max_coeff) and VRE units (capacity x profile x availability) must cover the group's demand plus the margin. Units fed from a storage node, connections and the units consuming from the group count by their actual flow, so exports add to the requirement; connections and lossy units inside the group are left out (their losses are not required). Units fed from fuel or commodity nodes count at capacity: the fuel is assumed to last.",
       "investment"
     ],
     [

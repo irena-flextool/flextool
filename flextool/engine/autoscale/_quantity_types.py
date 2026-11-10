@@ -63,9 +63,9 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('candidate_precapacity_to_avoid_big_m', 'group'): QuantityType.POWER,
     # [MW] Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This...
     ('capacity_margin', 'group'): QuantityType.POWER,
+    # [MW] Capacity the group needs above its demand at every time step of an investment period (capacity_margin_method manual).
     ('capacity_margin_share', 'group'): QuantityType.FRACTION,
     # [-] Capacity margin as a share of the group's peak demand (capacity_margin_method share_of_peak).
-    # [MW] Capacity the group needs above its peak net load. Used only with capacity_margin_method manual, and only in investment periods. No valu...
     # Pre-v70 input-side names, carried during the migration window
     # (renamed to input_share_max / input_share_min by db_migration v70).
     ('capacity_max_coeff', 'unit__inputNode'): QuantityType.FRACTION,
@@ -240,7 +240,7 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('has_capacity_margin', 'group'): QuantityType.DIMENSIONLESS,
     # A flag whether the group of nodes has a capacity margin constraint in the investment mode.
     ('capacity_margin_method', 'group'): QuantityType.DIMENSIONLESS,
-    # Whether the group needs a capacity margin in investment solves. none: no margin. manual: the group needs capacity_margin MW above its peak n...
+    # Whether the group needs a capacity margin in investment solves, and how the margin is given (none, manual, share_of_peak).
     ('has_inertia', 'group'): QuantityType.DIMENSIONLESS,
     # Whether the group has an inertia constraint. Without yes, inertia_limit is ignored.
     ('has_non_synchronous', 'group'): QuantityType.DIMENSIONLESS,

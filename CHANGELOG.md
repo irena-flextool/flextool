@@ -3,21 +3,27 @@
 - **Behaviour change: the capacity margin counts what each entity can really deliver.** Before, every unit with an
   output into the group counted at its full capacity, whatever its `availability`, also a turbine on an empty
   storage, and connections did not count at all. Now, at each time step of an investment period, firm units count
-  at capacity × `availability` × `capacity_max_coeff`, VRE at capacity × profile × `availability`, and units fed
-  from a storage node, units fed from the group's own nodes, connections and consumption by their actual flow. So
-  only firm and VRE capacity can hold the margin: imports and storage help by what they deliver, exports and the
-  losses of connections inside the group add to the requirement, and energy dumped through a node's downward slack
-  no longer counts. Units fed from fuel or commodity nodes count at capacity (the fuel is assumed to last). Results
-  of models with a capacity margin change. An upgraded database with a *manual* capacity-margin group gets the
-  behaviour-change notice `capacity_margin_counts_by_flow`.
+  at capacity × `availability` × `capacity_max_coeff` (a unit with several outputs into the group, such as a CHP,
+  counts its capacity once, as the sum of its outputs is limited), VRE at capacity × min(profile,
+  `capacity_max_coeff`) × `availability`, and units fed from a storage node, units fed from the group's own nodes,
+  connections and consumption by their actual flow. So only firm and VRE capacity can hold the margin: imports and
+  storage help by what they deliver, exports add to the requirement, and energy dumped through a node's downward
+  slack no longer counts, nor does energy that the balance slack of a storage node feeding the group makes.
+  Connections with both ends in the group and lossy units inside it (efficiency below 1, e.g. an electric boiler)
+  are left out, so their losses are not part of the requirement (and shedding load behind them cannot lower it);
+  heat pumps inside the group count by their flow. Units fed from fuel or commodity nodes count at capacity (the
+  fuel is assumed to last). The energy margin does not change the capacity requirement. Results of models with a
+  capacity margin change. An upgraded database with a *manual* capacity-margin group gets the behaviour-change
+  notice `capacity_margin_counts_by_flow`.
 - **New: `capacity_margin_method` *share_of_peak* with `group.capacity_margin_share`.** The margin is the share
   times the group's peak demand, taken over the period's full time series (before representative periods and
-  `new_stepduration`), so a sample that misses the peak still gets the real peak's margin.
+  `new_stepduration`), so a sample that misses the peak still gets the real peak's margin. Periods that use
+  different parts of one timeline each take the peak of their own part.
 - **New: a capacity-margin, inertia or non-synchronous group across Benders regions is an error.** Each region
   subproblem required the whole requirement before; use one group per region.
 - **New: a `balance_within_period` node in a capacity-margin group is an error** (it balances per period, the
-  margin holds per time step), and the warning that storage nodes are left out of a capacity-margin group is gone
-  (their units now count by their flow).
+  margin holds per time step); a storage node with demand in a capacity-margin group gets a warning (its demand is
+  left out of the margin).
 - **Fix: an investment solve's capacity-margin shortfall was reported nowhere in an investment → dispatch chain
   (item 85).** The dispatch solve that realizes the period has no capacity margin, and its 0 replaced the
   investment solve's shortfall, so `slack__capacity_margin__d` showed 0 and the costs no *capacity margin penalty*.
