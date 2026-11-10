@@ -292,6 +292,8 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
 
     # Sets have varied special handling so are done individually
     s.solve_period = s.d_realized_period
+    # (solve, period) of the realized investments, for the solve label of the investment tables (#210).
+    s.solve_invest_period = s.d_realize_invest
     # Save per-timestep solve mapping before dropping (for correct re-join in CSV output)
     # For rolling scenarios, keep only the last solve's mapping per (period, time)
     s.solve_period_time = s.dt_realize_dispatch

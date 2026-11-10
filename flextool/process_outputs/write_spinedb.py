@@ -49,6 +49,7 @@ from flextool._file_lock import lock_exclusive as _lock_exclusive, unlock as _un
 from spinedb_api.parameter_value import Map
 
 from flextool.process_outputs._output_meta import FACTOR, result_key_summary
+from flextool.process_outputs.solve_order import period_solve_labels
 
 logger = logging.getLogger(__name__)
 
@@ -726,7 +727,7 @@ def collect_spinedb_payload(results, s, alternative_name, solve_name,
             logger.debug("spinedb: table '%s' empty — skipped", table_name)
             continue
         try:
-            pvs = df_to_spine_maps(df, spec, s, solve_name, par=par,
+            pvs = df_to_spine_maps(df, spec, s, solve_name, par=par, table_name=table_name,
                                    alternative_name=alternative_name)
         except Exception:
             logger.exception(
@@ -790,7 +791,7 @@ def _member_entities(ec, byname, member_classes):
 # DataFrame -> Spine Map serialization
 # ---------------------------------------------------------------------------
 
-def df_to_spine_maps(df, spec, s, solve_name, *, par=None, alternative_name=None):
+def df_to_spine_maps(df, spec, s, solve_name, *, par=None, alternative_name=None, table_name=None):
     """Serialize one engine DataFrame into a list of
     ``(entity_class, byname, value)`` triples per :data:`SPINEDB_OUTPUT_SPEC`.
 
@@ -808,9 +809,9 @@ def df_to_spine_maps(df, spec, s, solve_name, *, par=None, alternative_name=None
     # Entity-in-index frames (capacity, indicator): the entity is an index
     # level, columns are categories.
     if spec.get("entity_index"):
-        return _serialize_entity_index(df, spec, s, solve_name)
+        return _serialize_entity_index(df, spec, s, solve_name, table_name=table_name)
 
-    df = _ensure_solve_level(df, s, has_time)
+    df = _ensure_solve_level(df, s, has_time, table_name=table_name)
 
     # Reduce the column MultiIndex / Index to a uniform tuple form and
     # split into (entity-part, category-part).  Each yield is
@@ -1067,7 +1068,7 @@ def _is_empty(val) -> bool:
 # Solve reconstruction (mirrors the CSV branch, write_outputs.py:940-978)
 # ---------------------------------------------------------------------------
 
-def _ensure_solve_level(df, s, has_time):
+def _ensure_solve_level(df, s, has_time, table_name=None):
     """Add a ``solve`` index level to ``df`` if it lacks one, mirroring the
     CSV branch logic.  Returns ``df`` unchanged when ``solve`` is already
     present or no ``period`` level exists."""
@@ -1093,10 +1094,9 @@ def _ensure_solve_level(df, s, has_time):
             names=["solve"] + list(df.index.names),
         )
     else:
-        unique_sp = s.solve_period[
-            ~s.solve_period.droplevel("solve").duplicated(keep="last")]
-        period_to_solve = dict(zip(unique_sp.get_level_values("period"),
-                                   unique_sp.get_level_values("solve")))
+        period_to_solve = period_solve_labels(
+            s.solve_period, getattr(s, "solve_invest_period", None),
+            table=table_name)
         if df.index.nlevels == 1:
             solve_vals = df.index.map(lambda p: period_to_solve.get(p, ""))
             df.index = pd.MultiIndex.from_arrays(
@@ -1160,7 +1160,7 @@ def _serialize_total_series(series, spec):
     return [(spec["ec"], spec["fixed_entity"], Map(keys, vals))]
 
 
-def _serialize_entity_index(df, spec, s, solve_name):
+def _serialize_entity_index(df, spec, s, solve_name, *, table_name=None):
     """Serialize an entity-in-index frame (capacity / indicator): index is
     ``(entity[, period[, time]])`` and columns are categories.
 
@@ -1177,7 +1177,7 @@ def _serialize_entity_index(df, spec, s, solve_name):
     result: list[tuple] = []
     for entity, sub in df.groupby(level=entity_level, sort=False):
         sub = sub.droplevel(entity_level)
-        sub = _ensure_solve_level(sub, s, has_time)
+        sub = _ensure_solve_level(sub, s, has_time, table_name=table_name)
         cat_keys: list[str] = []
         cat_vals: list = []
         for col in sub.columns:
@@ -1209,9 +1209,7 @@ def _discount_factor_map(par, attr, s, solve_name):
     period_to_solve = None
     sp = getattr(s, "solve_period", None)
     if sp is not None:
-        unique_sp = sp[~sp.droplevel("solve").duplicated(keep="last")]
-        period_to_solve = dict(zip(unique_sp.get_level_values("period"),
-                                   unique_sp.get_level_values("solve")))
+        period_to_solve = period_solve_labels(sp)
     by_solve: dict[str, list] = {}
     order: list[str] = []
     for period, val in series.items():

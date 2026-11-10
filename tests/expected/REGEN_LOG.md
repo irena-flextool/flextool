@@ -1407,3 +1407,19 @@ group.  `capacity_margin`, `all` and `test_a_lot_but_not_multi_year` match their
 
 Generated with `pytest tests/test_scenarios.py --regenerate test_a_lot`; the two network scenarios were written
 from `4eb0c857` after their regenerated files were checked equal to them (max abs difference 1e-4, the rounding).
+
+## 2026-11-11 — per-period solve labels (#210): the complete solve, and the investment solve for capacities
+
+**Context.** The `solve` column of the per-period tables named the last roll that realized a part of the period
+(`dispatch_fullYear_roll_roll_17`).  It now names the complete solve (roll suffix removed); the capacity and
+investment-marginal tables name the solve that realized the period's investments.
+
+- `multi_fullYear_battery_nested_multi_invest`, `multi_fullYear_battery_nested_sample_invest_one_solve`,
+  `multi_fullYear_battery_nested_24h_invest_one_solve`: `cost_{unit,node,connection}_{annualized,discounted}__d`
+  `dispatch_fullYear_roll_roll_{17,35,53,71}` → `dispatch_fullYear_roll`; `unit_capacity__d` → the investment
+  solve (`invest_5weeks_p2020` … `invest_5weeks_p2035`, `invest_5weeks`, `invest_24h`).  21 files; a column-wise
+  comparison against the previous files shows only the `solve` column changed (every value identical).
+
+Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the three.  The regeneration also
+rewrote `costs__dt`, `node_state__dt` and `unit__outputNode__dt` with last-digit rounding differences (≤ 4e-4) and
+a 0 → 0.0 number format; those files were left as they were.

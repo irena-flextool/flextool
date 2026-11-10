@@ -10,6 +10,12 @@
 - **Fix: without `realized_invest_periods`, a solve realized the investments of every `realized_periods` period
   (#319).** It now realizes the `realized_periods` that are also `invest_periods`, so a dispatch-only period of an
   investment solve is no longer reported as an investment period.
+- **Fix: the per-period result tables of a rolling solve were labelled with one roll (#210).** The `solve` column of
+  the `…__d` tables (CSV, Excel, results database) named the last roll that realized a part of the period
+  (`dispatch_fullYear_roll_roll_17`). It now names the complete solve (`dispatch_fullYear_roll`). The capacity tables
+  (`unit_capacity__d`, `connection_capacity__d`, `node_capacity__d`) and the investment marginal values name the
+  solve that realized the period's investments, for example the investment solve of an investment → dispatch
+  chain, instead of the dispatch solve. The per-step tables are unchanged. Values do not change.
 - **Behaviour change: the capacity margin counts what each entity can really deliver.** Before, every unit with an
   output into the group counted at its full capacity, whatever its `availability`, also a turbine on an empty
   storage, and connections did not count at all. Now, at each time step of an investment period, firm units count

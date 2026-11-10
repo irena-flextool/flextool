@@ -16,8 +16,9 @@ from spinedb_api import from_database, Array
 from flextool.update_flextool.db_handle import open_database_mapping
 from flextool import run_record
 
-from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
+from flextool.lean_parquet import read_lean_parquet, read_lean_parquet_solve_labels, write_lean_parquet
 from flextool.process_outputs._sheet_names import excel_sheet_name
+from flextool.process_outputs.solve_order import INVESTMENT_PERIOD_TABLES, period_solve_labels
 from flextool.process_outputs._output_meta import (
     datapackage_resource,
     derive_column_meta,
@@ -1040,11 +1041,15 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         from flextool.plot_outputs.format_helpers import TIMELINE_BREAKS_FILE, load_timeline_breaks
         break_index = load_timeline_breaks(parquet_dir)
         results = {}
+        # {period: solve} of the realized investments, from the investment tables' footers (#210).
+        replay_invest_labels: dict[str, str] = {}
         for filename in os.listdir(parquet_dir):
             if filename.endswith('.parquet') and filename != TIMELINE_BREAKS_FILE:
                 key = filename[:-8]  # Remove '.parquet' extension
                 filepath = os.path.join(parquet_dir, filename)
                 results[key] = read_lean_parquet(filepath)
+                if key in INVESTMENT_PERIOD_TABLES:
+                    replay_invest_labels.update(read_lean_parquet_solve_labels(filepath))
                 if len(results[key].columns.names) == 1:
                     results[key] = results[key].squeeze()
                 else:
@@ -1153,8 +1158,11 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                     if derived:
                         col_meta = {k: v.as_dict() for k, v in derived.items()}
                 df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
+            # An investment table's solve label is not in its frame: keep it in the footer for a replay (#210).
+            invest_labels = (period_solve_labels(None, getattr(s, 'solve_invest_period', None), table=name)
+                             if name in INVESTMENT_PERIOD_TABLES else None)
             write_lean_parquet(df, f'{parquet_dir}/{name}.parquet',
-                               column_metadata=col_meta)
+                               column_metadata=col_meta, solve_labels=invest_labels)
 
         # The plot break steps, written also when empty so a parquet replay knows there are none.
         from flextool.plot_outputs.format_helpers import write_timeline_breaks
@@ -1327,10 +1335,11 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                             names=['solve'] + list(df.index.names)
                         )
                     else:
-                        # For period-only data, use solve_period to add solve column
-                        # Use dict lookup to preserve index order (join reorders alphabetically)
-                        unique_sp = s.solve_period[~s.solve_period.droplevel('solve').duplicated(keep='last')]
-                        period_to_solve = dict(zip(unique_sp.get_level_values('period'), unique_sp.get_level_values('solve')))
+                        # Period-only data: the last complete solve that realized the period (roll suffix removed);
+                        # the investment tables name the solve that realized the period's investments (#210).
+                        # Dict lookup preserves the index order (a join reorders alphabetically).
+                        period_to_solve = period_solve_labels(
+                            s.solve_period, getattr(s, 'solve_invest_period', None), table=table_name)
                         if df.index.nlevels == 1:
                             solve_vals = df.index.map(lambda p: period_to_solve.get(p, ''))
                             df.index = pd.MultiIndex.from_arrays(
@@ -1416,7 +1425,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             # the two discount-factor params (#33/#34) are intentionally
             # dropped — the writer degrades gracefully and logs that.
             from flextool.process_outputs.spinedb_replay import build_replay_s
-            s_shim = build_replay_s(results)
+            s_shim = build_replay_s(results, invest_labels=replay_invest_labels)
             # Prefer the real solve label recovered from node_prices_dt_e so
             # the ``collapse_solve`` frame (cost_discounted_solve) gets the
             # same single ``solve`` Map key the native path used; fall back
