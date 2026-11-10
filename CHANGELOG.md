@@ -15,11 +15,21 @@
   the label, the old version and the SHA-256 of the original, which stays byte-identical) or
   `--allow-migrate-frozen` (migrates the file and keeps the marker with the new version); `flextool-update` skips
   and lists frozen databases; the FlexTool window asks: migrate a copy (a new input source), migrate in place
-  (second confirm) or cancel (the source is not runnable this session and not asked about again). A frozen
-  database that is already current is left unchanged.
+  (second confirm) or cancel (the source is not runnable until the project is reopened and not asked about again).
+  A frozen database that is already current, or newer than this FlexTool, is left unchanged. When the marker
+  cannot be read (another program holds a lock on the file, an unreadable network path) the database is not
+  migrated and the message says so.
 - **Fix: checking the version of an input source no longer upgrades its SpineDB schema.** The FlexTool window
   read the version by opening each `.sqlite` source with a schema upgrade, so an external file's schema changed
-  before the consent dialog was shown. The version is now read read-only.
+  before the consent dialog was shown. The version and the SpineDB schema revision are now read read-only; a
+  source at the current FlexTool version with an older SpineDB schema (e.g. after a `spinedb_api` update) is
+  migrated like an older one (an internal source quietly, an external one after asking, a frozen one through the
+  frozen dialog), and the model run reports such a database with the migrate command instead of a SpineDB error.
+- **Fix: a canonical example database left at an older version is rebuilt.** `templates/examples.sqlite`, the
+  time-settings template and the how-to example databases are rebuilt from their JSON sources when the file in
+  the FlexTool folder is older than this FlexTool (the old file is kept as `<name>.v<version>.bak`); before, an
+  existing file was never refreshed, and the model run now refuses it. **Calibrate investments** migrates its
+  scenarios' sources first, as a normal run does.
 
 - **Fix: the FlexTool 2 importer (`flextool-read-old`, GUI "Convert from FlexTool 2.0 input file") translates
   more and reports what it cannot.** Sensitivities are now imported in the same run as the base data

@@ -475,17 +475,17 @@ flextool-migrate-database input.sqlite
 
 | Argument | Description |
 |---|---|
-| `filepath` | Path to the database file (absolute or relative to flextool folder) |
+| `filepath` | Path to the database file (absolute, or relative to the current folder) |
 | `--copy-to PATH` | Copy the database to `PATH` and migrate the copy; the original is not changed. For a frozen database. |
 | `--allow-migrate-frozen` | Migrate a frozen database in place; its frozen marker is kept with the new version. |
 
 The model run (`flextool-run`, `run_flextool.py`, `python -m flextool.cli.cmd_run_flextool`) does not run a database that is not at the current FlexTool version: it stops with a message naming this command. `execute_flextool_workflow.py` migrates the input database before it runs the model, the FlexTool window migrates its input sources when it refreshes them, and the Spine Toolbox workflow runs its **Migrate database** tool before FlexTool.
 
-A frozen database older than this FlexTool is refused with exit code 2 and a message naming the two options: `--copy-to NEW.sqlite` migrates a copy (the copy is not frozen; it records the label, the old version and the SHA-256 of the frozen file it was made from) and `--allow-migrate-frozen` migrates the frozen file itself. A frozen database that is already current is left unchanged. `flextool-update` skips frozen databases and lists them, and `execute_flextool_workflow.py` stops on one.
+A frozen database older than this FlexTool (or at the current version but with an older SpineDB schema) is refused with exit code 2 and a message naming the two options: `--copy-to NEW.sqlite` migrates a copy (the copy is not frozen; it records the label, the old version and the SHA-256 of the frozen file it was made from) and `--allow-migrate-frozen` migrates the frozen file itself. A frozen database that is already current, or newer than this FlexTool, is left unchanged, also with `--allow-migrate-frozen`. If FlexTool cannot read the file to check for the marker (another program holds a lock on it), it does not migrate it and says so. `flextool-update` skips frozen databases and lists them, and `execute_flextool_workflow.py` stops on one.
 
 ### Freeze a released database
 
-A released model (a reference case, a study's final input) can be frozen so that no FlexTool migrates it in place without being told to. The marker is a row in the database's `metadata` table, so it travels with the file; it does not change the model. Only a database at the current version can be frozen.
+A released model (a reference case, a study's final input) can be frozen so that this FlexTool and later versions do not migrate it in place without being told to (older FlexTool versions do not know the marker). The marker is a row in the database's `metadata` table, so it travels with the file; it does not change the model. Only a database at the current version can be frozen.
 
 ```bash
 flextool-freeze input.sqlite --label "Reference case 1.0"

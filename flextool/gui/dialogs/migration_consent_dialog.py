@@ -51,11 +51,12 @@ def ask_external_migration_consent(
     listbox.configure(xscrollcommand=h_scroll.set)
 
     for source_name, abs_path, current_version, _t in external_files:
-        listbox.insert(
-            "end",
-            f"{source_name}  —  {abs_path}  "
-            f"(v{current_version} → v{target_version})",
+        change = (
+            f"v{current_version}, SpineDB schema upgrade"
+            if current_version == target_version
+            else f"v{current_version} → v{target_version}"
         )
+        listbox.insert("end", f"{source_name}  —  {abs_path}  ({change})")
 
     listbox.pack(side="top", fill="x")
     h_scroll.pack(side="bottom", fill="x")

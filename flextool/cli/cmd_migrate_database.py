@@ -20,7 +20,7 @@ def build_parser() -> argparse.ArgumentParser:
         prog="flextool-migrate-database",
         description="Migrate a FlexTool input database to the current FlexTool data version.",
     )
-    parser.add_argument('filepath', help="Filepath of the database, absolute or relative to flextool folder")
+    parser.add_argument('filepath', help="Filepath of the database, absolute or relative to the current folder")
     frozen = parser.add_mutually_exclusive_group()
     frozen.add_argument('--copy-to', metavar='PATH',
                         help="Copy the database to PATH and migrate the copy; the original is not changed. "

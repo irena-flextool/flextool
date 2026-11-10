@@ -21,7 +21,7 @@ import shutil
 import sqlite3
 from dataclasses import dataclass
 from datetime import date
-from pathlib import Path
+from pathlib import Path, PurePath
 from typing import Callable
 from urllib.parse import quote
 
@@ -68,20 +68,73 @@ class MigratedFrom:
 
 
 class FrozenDatabaseError(RuntimeError):
-    """A frozen database would be migrated without ``allow_frozen=True``."""
+    """A frozen database would be migrated without ``allow_frozen=True``.
 
-    def __init__(self, path: Path, info: FrozenInfo, db_version: int | None, target_version: int) -> None:
+    ``up_to_date`` is true for a frozen database at (or newer than) this FlexTool's data version whose SpineDB schema
+    is current: the caller only has to leave it unchanged.
+    """
+
+    def __init__(
+        self,
+        path: Path,
+        info: FrozenInfo | None,
+        db_version: int | None,
+        target_version: int,
+        *,
+        schema_outdated: bool = False,
+        message: str | None = None,
+    ) -> None:
         self.path = path
         self.info = info
         self.db_version = db_version
         self.target_version = target_version
-        found = f"version {db_version}" if db_version is not None else "an unreadable version"
-        super().__init__(
-            f"{path.name} is frozen ({info.describe()}). It is at {found}; this FlexTool needs version "
-            f"{target_version}. The frozen file is not migrated in place. Migrate a copy: "
-            f"flextool-migrate-database {path} --copy-to NEW.sqlite (or, to change the frozen file itself, "
-            f"--allow-migrate-frozen)."
+        self.schema_outdated = schema_outdated
+        self.up_to_date = (
+            info is not None and db_version is not None and db_version >= target_version and not schema_outdated
         )
+        if message is None:
+            message = self._message(path, info, db_version, target_version, schema_outdated)
+        super().__init__(message)
+
+    @staticmethod
+    def _message(
+        path: Path, info: FrozenInfo | None, db_version: int | None, target_version: int, schema_outdated: bool
+    ) -> str:
+        described = info.describe() if info is not None else "frozen"
+        found = f"version {db_version}" if db_version is not None else "an unreadable version"
+        if db_version is not None and db_version >= target_version and schema_outdated:
+            state = (f"It is at FlexTool data version {db_version}, but its SpineDB schema is older than this "
+                     f"FlexTool's spinedb_api, so it has to be migrated before it can run.")
+        else:
+            state = f"It is at {found}; this FlexTool needs version {target_version}."
+        return (
+            f"{path.name} is frozen ({described}). {state} The frozen file is not migrated in place. Migrate a "
+            f"copy: flextool-migrate-database {_quoted(path)} --copy-to NEW.sqlite (or, to change the frozen file "
+            f"itself, --allow-migrate-frozen)."
+        )
+
+
+class FrozenCheckError(FrozenDatabaseError):
+    """The frozen marker could not be read (a locked or unreadable file): the database is not migrated.
+
+    Callers handle it as :class:`FrozenDatabaseError` (it is never ``up_to_date``).
+    """
+
+    def __init__(self, path: Path, reason: str) -> None:
+        self.reason = reason
+        super().__init__(
+            path, None, None, _target_version(),
+            message=(
+                f"Unable to check whether {Path(path).name} is frozen ({reason}), so it is not migrated. Close "
+                f"other programs that use the file (or copy it to a local folder) and try again: {path}"
+            ),
+        )
+
+
+def _quoted(path: str | Path) -> str:
+    """*path* for a command line hint: in double quotes when it holds a space."""
+    text = str(path)
+    return f'"{text}"' if any(ch.isspace() for ch in text) else text
 
 
 class FreezeError(ValueError):
@@ -106,27 +159,99 @@ def sqlite_path_from(database: str | Path) -> Path | None:
     return Path(text)
 
 
+#: Seconds a read-only check waits for a writer's lock before it gives up (and refuses).
+_BUSY_TIMEOUT_S = 5.0
+
+
+def ro_uri(path: str | Path | PurePath) -> str:
+    """The SQLite ``file:`` URI that opens *path* read-only.
+
+    The authority is always empty (``file://`` + an absolute path), so a Windows network-share path
+    ``//server/share/x.sqlite`` becomes ``file:////server/share/x.sqlite``; SQLite rejects ``file://server/...``
+    (an authority) unless it was built with ``SQLITE_ALLOW_URI_AUTHORITY``.  A drive path ``C:/x`` becomes
+    ``file:///C:/x``.
+    """
+    if isinstance(path, PurePath) and not isinstance(path, Path):
+        posix = path.as_posix()
+    else:
+        posix = Path(path).resolve().as_posix()
+    if not posix.startswith("/"):
+        posix = "/" + posix
+    return "file://" + quote(posix, safe="/:") + "?mode=ro"
+
+
 def _connect_ro(path: Path) -> sqlite3.Connection:
     """A read-only connection: never creates the file, never writes, never upgrades."""
-    uri = "file:" + quote(Path(path).resolve().as_posix()) + "?mode=ro"
-    return sqlite3.connect(uri, uri=True)
+    return sqlite3.connect(ro_uri(path), uri=True, timeout=_BUSY_TIMEOUT_S)
+
+
+def _is_missing_table(exc: sqlite3.Error) -> bool:
+    return "no such table" in str(exc).lower()
 
 
 def _metadata_rows(path: Path, name: str) -> list[tuple[int, str]]:
-    """``(id, value)`` of the metadata rows called *name*, oldest first; ``[]`` without a ``metadata`` table."""
+    """``(id, value)`` of the metadata rows called *name*, oldest first.
+
+    ``[]`` for a missing file or a database without a ``metadata`` table.  Any other read error (a locked file, a file
+    that cannot be opened or is not a database) raises :class:`FrozenCheckError`: a marker that cannot be read is
+    never taken as "not frozen".
+    """
     if not Path(path).is_file():
         return []
     try:
         con = _connect_ro(path)
-    except sqlite3.Error:
-        return []
+    except sqlite3.Error as exc:
+        raise FrozenCheckError(Path(path), str(exc)) from exc
     try:
         rows = con.execute("SELECT id, value FROM metadata WHERE name = ? ORDER BY id", (name,)).fetchall()
-    except sqlite3.Error:
-        return []
+    except sqlite3.Error as exc:
+        if _is_missing_table(exc):
+            return []
+        raise FrozenCheckError(Path(path), str(exc)) from exc
     finally:
         con.close()
     return [(int(row_id), str(value)) for row_id, value in rows]
+
+
+def read_schema_revision_ro(path: str | Path) -> str | None:
+    """The SpineDB (alembic) schema revision of the database at *path*, read read-only; ``None`` if there is none."""
+    path = Path(path)
+    if not path.is_file():
+        return None
+    try:
+        con = _connect_ro(path)
+    except sqlite3.Error:
+        return None
+    try:
+        row = con.execute("SELECT version_num FROM alembic_version").fetchone()
+    except sqlite3.Error:
+        return None
+    finally:
+        con.close()
+    return None if row is None else str(row[0])
+
+
+def schema_outdated_ro(path: str | Path) -> bool:
+    """Whether the SpineDB schema of *path* is an older revision that this spinedb_api upgrades.
+
+    Read read-only.  A revision this spinedb_api does not know (a newer Spine Toolbox) or no revision at all is not
+    "outdated": opening such a file reports its own error.
+    """
+    revision = read_schema_revision_ro(path)
+    if revision is None:
+        return False
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    config = Config()
+    config.set_main_option("script_location", "spinedb_api:alembic")
+    script = ScriptDirectory.from_config(config)
+    if revision == script.get_current_head():
+        return False
+    try:
+        return script.get_revision(revision) is not None
+    except Exception:
+        return False
 
 
 def _int_or_none(text: str) -> int | None:
@@ -155,7 +280,10 @@ def parse_frozen(value: str) -> FrozenInfo:
 
 
 def read_frozen(path: str | Path) -> FrozenInfo | None:
-    """The frozen marker of the database at *path*, or ``None`` (no marker, no ``metadata`` table, no file)."""
+    """The frozen marker of the database at *path*, or ``None`` (no marker, no ``metadata`` table, no file).
+
+    Raises :class:`FrozenCheckError` when the file is there but its marker cannot be read.
+    """
     value = _newest(Path(path), FROZEN_KEY)
     return None if value is None else parse_frozen(value)
 
@@ -226,13 +354,19 @@ def sha256_of(path: str | Path) -> str:
     return digest.hexdigest()
 
 
+def is_current_ro(path: str | Path) -> bool:
+    """Whether *path* is at (or newer than) this FlexTool's data version with a current SpineDB schema (read-only)."""
+    version = read_db_version_ro(path)
+    return version is not None and version >= _target_version() and not schema_outdated_ro(path)
+
+
 def frozen_guard(database: str | Path, *, allow_frozen: bool = False) -> FrozenInfo | None:
     """The check that runs before a migration opens the file.
 
     Returns ``None`` for a database that is not frozen (or not a local sqlite file), and the marker of a frozen one
     that *allow_frozen* lets the caller migrate.  Raises :class:`FrozenDatabaseError` for a frozen database without
-    *allow_frozen*; its ``db_version == target_version`` tells the caller that the file is current and only has to be
-    left unchanged.
+    *allow_frozen*; its ``up_to_date`` tells the caller that the file is current (data version and SpineDB schema)
+    and only has to be left unchanged.  Raises :class:`FrozenCheckError` when the marker cannot be read.
     """
     path = sqlite_path_from(database)
     if path is None or not path.is_file():
@@ -242,7 +376,9 @@ def frozen_guard(database: str | Path, *, allow_frozen: bool = False) -> FrozenI
         return None
     if allow_frozen:
         return info
-    raise FrozenDatabaseError(path, info, read_db_version_ro(path), _target_version())
+    raise FrozenDatabaseError(
+        path, info, read_db_version_ro(path), _target_version(), schema_outdated=schema_outdated_ro(path)
+    )
 
 
 def _validate_label(label: str) -> str:
@@ -295,7 +431,7 @@ def freeze(path: str | Path, label: str, *, today: str | None = None) -> FrozenI
         found = f"version {version}" if version is not None else "an unreadable version"
         raise FreezeError(
             f"{path.name} is at {found}; only a database at the current version ({target}) can be frozen. "
-            f"Migrate it first: flextool-migrate-database {path}"
+            f"Migrate it first: flextool-migrate-database {_quoted(path)}"
         )
     info = FrozenInfo(label=label, version=version, date=today or date.today().isoformat())
     with _open(path) as db:

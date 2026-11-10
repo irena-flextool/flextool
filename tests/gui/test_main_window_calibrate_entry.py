@@ -108,6 +108,7 @@ def _make_host(tk_root, tmp_path: Path, monkeypatch, checked):
     host._calibrate_dialog = None
     host._ensure_execution_mgr = lambda: None
     host._open_or_raise_execution_window = lambda: None
+    host._migrate_sources_before_run = lambda scenarios: scenarios
     return host
 
 
@@ -163,3 +164,16 @@ def test_handler_marks_xlsx_source(tk_root, tmp_path: Path, monkeypatch):
     finally:
         if dialog is not None:
             dialog.destroy()
+
+
+def test_handler_leaves_out_sources_that_stay_not_current(tk_root, tmp_path: Path, monkeypatch):
+    """As a normal run, the dialog first migrates the sources; none left runnable → no dialog."""
+    scen = ScenarioInfo(name=SCENARIO, source_number=1, source_name="mysource.sqlite")
+    host = _make_host(tk_root, tmp_path, monkeypatch, [scen])
+    seen: list = []
+    host._migrate_sources_before_run = lambda scenarios: seen.append(list(scenarios)) or []
+
+    mw.MainWindow._open_calibrate_dialog.__wrapped__(host)
+
+    assert seen == [[scen]]
+    assert host._calibrate_dialog is None

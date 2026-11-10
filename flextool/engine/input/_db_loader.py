@@ -1,10 +1,11 @@
 import logging
+from contextlib import ExitStack
 import spinedb_api as api
 from flextool import run_record
 from flextool.update_flextool.db_handle import open_database_mapping
 from pathlib import Path
 
-from flextool.engine.input._db_reader import check_version
+from flextool.engine.input._db_reader import check_version, schema_version_message
 from flextool.input_derivation import run as _input_derivation_run
 from flextool.engine.input._solve_config import SolveConfig
 from flextool.engine.input._timeline import TimelineConfig
@@ -64,7 +65,11 @@ class FlexToolRunner:
         # open connection to input db
         if scenario_name:
             scen_config = api.filters.scenario_filter.scenario_filter_config(scenario_name)
-        with (open_database_mapping(input_db_url) as db):
+        with ExitStack() as _db_stack:
+            try:
+                db = _db_stack.enter_context(open_database_mapping(input_db_url))
+            except api.SpineDBVersionError as exc:
+                raise FlexToolConfigError(schema_version_message(input_db_url, exc)) from None
             if scenario_name:
                 api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
             else:

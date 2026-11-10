@@ -91,17 +91,27 @@ def migrate_database(
             before the file is opened, and a frozen database that is
             already current is left unchanged.
     """
-    from flextool.update_flextool.frozen import FrozenDatabaseError, frozen_guard, set_frozen_version
+    from flextool.update_flextool.frozen import (
+        FrozenDatabaseError,
+        frozen_guard,
+        is_current_ro,
+        set_frozen_version,
+        sqlite_path_from,
+    )
 
     # The guard reads the file with sqlite3 read-only, before the
     # ``upgrade=True`` open below can change its SpineDB schema.
     try:
         frozen = frozen_guard(database_path, allow_frozen=allow_frozen)
     except FrozenDatabaseError as exc:
-        if exc.db_version == exc.target_version:
+        if exc.up_to_date:
             print(f"{database_path} is frozen ({exc.info.describe()}) and up to date; left unchanged")
             return
         raise
+    if frozen is not None and is_current_ro(sqlite_path_from(database_path)):
+        # Even with allow_frozen, a frozen database that is current is not opened for writing.
+        print(f"{database_path} is frozen ({frozen.describe()}) and up to date; left unchanged")
+        return
 
     if database_path.startswith('sqlite://') or database_path.startswith('http://'):
         mapping_name = database_path

@@ -68,16 +68,21 @@ def get_target_flextool_version() -> int:
 
 
 def needs_flextool_migration(db_path: Path) -> bool | None:
-    """Return True if this file's FlexTool data version is below the target.
+    """Return True if this file's FlexTool data version is below the target,
+    or it is at the target but its SpineDB schema is an older revision.
 
-    Returns ``None`` if the version cannot be determined (file unreadable,
-    not a FlexTool DB, etc.).
+    Both are read read-only.  Returns ``None`` if the version cannot be
+    determined (file unreadable, not a FlexTool DB, etc.).
     """
+    from flextool.update_flextool.frozen import schema_outdated_ro
+
     db_url = f"sqlite:///{db_path}"
     current = _read_flextool_version(db_url)
     if current is None:
         return None
-    return current < FLEXTOOL_DB_VERSION
+    if current < FLEXTOOL_DB_VERSION:
+        return True
+    return current == FLEXTOOL_DB_VERSION and schema_outdated_ro(db_path)
 
 
 def check_and_upgrade_database(
@@ -146,7 +151,7 @@ def check_and_upgrade_database(
     try:
         frozen_guard(db_path, allow_frozen=allow_frozen)
     except FrozenDatabaseError as exc:
-        if exc.db_version == exc.target_version:
+        if exc.up_to_date:
             return was_upgraded, failed, messages
         messages.append(str(exc))
         return was_upgraded, True, messages

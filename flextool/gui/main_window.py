@@ -5346,24 +5346,34 @@ class MainWindow(tk.Tk):
         if xlsx_scenarios:
             self._start_xlsx_preconversion(xlsx_scenarios)
 
-    def _sqlite_sources_not_current(self, scenarios: list[ScenarioInfo]) -> set[str]:
-        """The sqlite input sources of *scenarios* whose FlexTool data version is not current (read-only probe)."""
+    def _sqlite_sources_not_current(self, scenarios: list[ScenarioInfo]) -> dict[str, str]:
+        """The sqlite input sources of *scenarios* that are not current, each with the reason (read-only probe).
+
+        Not current: a FlexTool data version other than this FlexTool's, an
+        older SpineDB schema, or a version that cannot be read.
+        """
         from flextool.gui.db_version_check import get_target_flextool_version
-        from flextool.update_flextool.frozen import read_db_version_ro
+        from flextool.update_flextool.frozen import read_db_version_ro, schema_outdated_ro
 
         if self.input_source_mgr is None:
-            return set()
+            return {}
         target = get_target_flextool_version()
         by_name = {s.name: s for s in self.input_source_mgr._sources}
-        stale: set[str] = set()
+        stale: dict[str, str] = {}
         for name in {s.source_name for s in scenarios}:
             if not name.lower().endswith(".sqlite"):
                 continue
             source = by_name.get(name)
             if source is None:
                 continue
-            if read_db_version_ro(self.input_source_mgr.resolve_path(source)) != target:
-                stale.add(name)
+            path = self.input_source_mgr.resolve_path(source)
+            version = read_db_version_ro(path)
+            if version is None:
+                stale[name] = "could not read the FlexTool version"
+            elif version != target:
+                stale[name] = f"FlexTool data version {version}, this FlexTool needs {target}"
+            elif schema_outdated_ro(path):
+                stale[name] = "older SpineDB schema"
         return stale
 
     def _migrate_sources_before_run(self, scenarios: list[ScenarioInfo]) -> list[ScenarioInfo]:
@@ -5372,7 +5382,8 @@ class MainWindow(tk.Tk):
         A source changed after the last refresh (a file copied in, an external
         source whose migration was cancelled) is migrated here through the
         refresh, with its consent dialogs.  Scenarios of a source that is still
-        not current (declined, frozen, failed) are left out with a message.
+        not current (declined, frozen, failed, unreadable) are left out with a
+        message.
         """
         stale = self._sqlite_sources_not_current(scenarios)
         if not stale:
@@ -5383,9 +5394,9 @@ class MainWindow(tk.Tk):
             return scenarios
         messagebox.showwarning(
             "Input database not migrated",
-            "These input sources are not at the current FlexTool version and "
-            "were not migrated, so their scenarios are not run:\n\n  "
-            + "\n  ".join(sorted(still)),
+            "These input sources are not current and were not migrated, so "
+            "their scenarios are not run:\n\n  "
+            + "\n  ".join(f"{name} ({still[name]})" for name in sorted(still)),
             parent=self,
         )
         return [s for s in scenarios if s.source_name not in still]
@@ -5586,6 +5597,10 @@ class MainWindow(tk.Tk):
             return
 
         checked = self.avail_scenario_mgr.get_checked_scenarios(self.available_tree)
+        if not checked:
+            return
+        # As a normal run: migrate the sources first, leave out the ones that stay not current.
+        checked = self._migrate_sources_before_run(checked)
         if not checked:
             return
 

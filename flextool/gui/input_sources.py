@@ -592,6 +592,7 @@ class InputSourceManager:
             get_target_flextool_version,
             needs_flextool_migration,
         )
+        from flextool.update_flextool.frozen import FrozenCheckError
 
         internal_to_migrate: list[tuple[str, Path]] = []
         external_to_migrate: list[tuple[str, Path, int, int]] = []
@@ -615,9 +616,13 @@ class InputSourceManager:
             candidates.append((ext_name, abs_path, True))
 
         for name, path, external in candidates:
-            frozen = self._frozen_needing_migration(path, target_version)
+            try:
+                frozen = self._frozen_needing_migration(path, target_version)
+            except FrozenCheckError as exc:
+                planning_messages.append(f"{name}: {exc}")
+                continue
             if frozen is not None:
-                info, current = frozen
+                info, current, _schema_outdated = frozen
                 if path.resolve() in self._frozen_declined:
                     continue
                 if self.migrated_copy_of(path) is not None:
@@ -707,14 +712,17 @@ class InputSourceManager:
 
     def migrated_copy_of(self, original: Path) -> Path | None:
         """A registered source that is the migrated copy of *original* as it is now (same SHA-256), or ``None``."""
-        from flextool.update_flextool.frozen import read_migrated_from
+        from flextool.update_flextool.frozen import FrozenCheckError, read_migrated_from
 
         resolved = Path(original).resolve()
         copies = []
         for candidate in self._registered_sqlite_paths():
             if candidate.resolve() == resolved:
                 continue
-            marker = read_migrated_from(candidate)
+            try:
+                marker = read_migrated_from(candidate)
+            except FrozenCheckError:
+                continue
             if marker is not None:
                 copies.append((candidate, marker))
         if not copies:
@@ -727,31 +735,49 @@ class InputSourceManager:
 
     @staticmethod
     def _frozen_needing_migration(path: Path, target_version: int):
-        """``(marker, current version)`` of a frozen *path* that is not at *target_version*, else ``None``."""
-        from flextool.update_flextool.frozen import read_db_version_ro, read_frozen
+        """``(marker, current version, schema outdated)`` of a frozen *path* that needs migrating, else ``None``.
+
+        A frozen file needs migrating when its data version is older than *target_version* (or unreadable), or when
+        it is current but its SpineDB schema is an older revision.  One newer than this FlexTool is left alone (the
+        engine asks to update FlexTool).  Raises :class:`~flextool.update_flextool.frozen.FrozenCheckError` when the
+        marker cannot be read.
+        """
+        from flextool.update_flextool.frozen import read_db_version_ro, read_frozen, schema_outdated_ro
 
         info = read_frozen(path)
         if info is None:
             return None
         current = read_db_version_ro(path)
-        if current == target_version:
+        schema_outdated = schema_outdated_ro(path)
+        if current is not None and current >= target_version and not schema_outdated:
             return None
-        return info, current
+        return info, current, schema_outdated
 
     def _apply_frozen_status(self, source: InputSourceInfo, filepath: Path) -> None:
-        """Set the frozen fields of a sqlite source; an older frozen one becomes ``frozen_old`` (not runnable)."""
-        from flextool.gui.db_version_check import get_target_flextool_version
-        from flextool.update_flextool.frozen import read_db_version_ro, read_frozen
+        """Set the frozen fields of a sqlite source; a frozen one that needs migrating becomes ``frozen_old``.
 
-        info = read_frozen(filepath)
+        A marker that cannot be read (a locked file) leaves the status as it is and says so in the note.
+        """
+        from flextool.gui.db_version_check import get_target_flextool_version
+        from flextool.update_flextool.frozen import FrozenCheckError, read_frozen
+
+        target = get_target_flextool_version()
+        try:
+            needing = self._frozen_needing_migration(filepath, target)
+            info = needing[0] if needing is not None else read_frozen(filepath)
+        except FrozenCheckError as exc:
+            source.frozen_note = str(exc)
+            return
         if info is None:
             return
         source.frozen_label = info.label
-        target = get_target_flextool_version()
-        current = read_db_version_ro(filepath)
         note = f"Frozen: {info.describe()}."
-        if current != target:
-            found = f"version {current}" if current is not None else "an unreadable version"
+        if needing is not None:
+            _info, current, schema_outdated = needing
+            if current is not None and current >= target and schema_outdated:
+                found = f"version {current} with an older SpineDB schema"
+            else:
+                found = f"version {current}" if current is not None else "an unreadable version"
             copy = self.migrated_copy_of(filepath)
             if copy is not None:
                 note += (f"\nFrozen, older version ({found}; this FlexTool needs {target}). "
@@ -759,7 +785,8 @@ class InputSourceManager:
             else:
                 note += (f"\nFrozen, older version ({found}; this FlexTool needs {target}): not runnable. "
                          "Right-click > Migrate frozen database... to choose how to migrate it.")
-            if source.status in ("ok", "empty"):
+            # "error": an older SpineDB schema cannot be read without upgrading it.
+            if source.status in ("ok", "empty", "error"):
                 source.status = "frozen_old"
                 source.scenarios = []
         else:
