@@ -10,7 +10,7 @@ live, :func:`write_reserve_report` evaluates the solve's reserve requirement row
   the solve realizes.  :func:`read_reserve_report_parts` unions them over the solves, a step taken from the last
   solve that realizes it (as the other per-step outputs);
 * prints one line per group step whose shortfall does not match its largest deficit (the row evaluation and the LP
-  disagree)::
+  disagree), at most :data:`MAX_CHECK_LINES` per solve and then a count of the rest::
 
       reserve requirement check: solve <s>, reserve <r> <ud>, group <g>, step (<d>, <t>): deficit <X> MW, shortfall <Y> MW
 
@@ -38,26 +38,46 @@ REPORT_KEYS = ("reserve", "updown", "node_group", "period", "time")
 PROVIDER_KEYS = ("reserve", "updown", "node_group", "process", "node", "period", "time")
 
 
-def _realized_steps(flex_data) -> "pl.DataFrame | None":
-    """``(period, time)`` of the steps the solve realizes (``flex_data.realized_dispatch``), Utf8; None when the
-    solve does not say (every step is kept)."""
-    rd = getattr(flex_data, "realized_dispatch", None)
+#: The provider frame of the steps a solve realizes, the one the variable writer filters by
+#: (:func:`flextool.process_outputs.read_highs_solution._load_realized_set`).
+REALIZED_DISPATCH_KEY = "solve_data/realized_dispatch"
+
+
+def _realized_steps(flex_data, provider=None) -> "pl.DataFrame | None":
+    """``(period, time)`` of the steps the solve realizes, Utf8: the provider's ``solve_data/realized_dispatch``
+    (as the variable writer; empty for a forecast fan solve that realizes no step), else
+    ``flex_data.realized_dispatch``; both are keyed ``(period, step)``.  None when neither says (every step is
+    kept)."""
+    rd = provider.get(REALIZED_DISPATCH_KEY) if provider is not None and provider.has(REALIZED_DISPATCH_KEY) else None
+    if rd is None:
+        rd = getattr(flex_data, "realized_dispatch", None)
     if rd is None:
         return None
-    time_col = "step" if "step" in rd.columns else ("time" if "time" in rd.columns else rd.columns[1])
+    if rd.height == 0:
+        return pl.DataFrame(schema={"period": pl.Utf8, "time": pl.Utf8})
+    time_col = "step" if "step" in rd.columns else "time"
     return rd.select(pl.col("period").cast(pl.Utf8), pl.col(time_col).cast(pl.Utf8).alias("time")).unique()
 
 
+#: The most broken-check lines one solve prints; the rest are counted in one closing line.
+MAX_CHECK_LINES = 10
+
+
 def check_lines(violations: pl.DataFrame, solve_name: str, *, near_optimal: bool) -> list[str]:
-    """The run-log lines of the broken checks ``violations`` (:func:`reserve_requirement_report`)."""
+    """The run-log lines of the broken checks ``violations`` (:func:`reserve_requirement_report`): the first
+    :data:`MAX_CHECK_LINES` group steps, then ``... and N more group steps`` for the rest."""
     note = " (accepted near-optimal solve)" if near_optimal else ""
-    return [f"reserve requirement check: solve {solve_name}, reserve {r['reserve']} {r['updown']}, group "
-            f"{r['node_group']}, step ({r['period']}, {r['time']}): deficit {max(r['deficit'], 0.0):.6g} MW, "
-            f"shortfall {r['shortfall']:.6g} MW{note}"
-            for r in violations.iter_rows(named=True)]
+    lines = [f"reserve requirement check: solve {solve_name}, reserve {r['reserve']} {r['updown']}, group "
+             f"{r['node_group']}, step ({r['period']}, {r['time']}): deficit {max(r['deficit'], 0.0):.6g} MW, "
+             f"shortfall {r['shortfall']:.6g} MW{note}"
+             for r in violations.head(MAX_CHECK_LINES).iter_rows(named=True)]
+    if violations.height > MAX_CHECK_LINES:
+        lines.append(f"reserve requirement check: solve {solve_name}: ... and "
+                     f"{violations.height - MAX_CHECK_LINES} more group steps{note}")
+    return lines
 
 
-def write_reserve_report(sol: "Solution", flex_data, *, output_dir: Path, solve_name: str
+def write_reserve_report(sol: "Solution", flex_data, *, output_dir: Path, solve_name: str, provider=None
                          ) -> "tuple[pl.DataFrame, pl.DataFrame] | None":
     """Evaluate, persist and check the reserve requirement of one solve (module docstring); returns ``(summary,
     provider)`` with a leading ``solve`` column, filtered to the realized steps, or None when the solve has no
@@ -69,8 +89,8 @@ def write_reserve_report(sol: "Solution", flex_data, *, output_dir: Path, solve_
     report = reserve_requirement_report(flex_data, sol)
     if report is None:
         return None
+    steps = _realized_steps(flex_data, provider)
     summary, provider, violations = report
-    steps = _realized_steps(flex_data)
     if steps is not None:
         summary, provider, violations = (frame.join(steps, on=["period", "time"], how="semi")
                                          for frame in (summary, provider, violations))

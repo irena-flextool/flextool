@@ -12,7 +12,9 @@ def reserve_period_average(frame: pd.DataFrame, par, reduced_cells=None) -> pd.D
     emptied first, so they count in neither sum.  An empty frame gives an empty per-period frame.
     """
     if frame.empty or len(frame.index) == 0:
-        return frame.groupby(level='period').sum() if 'period' in (frame.index.names or ()) else frame
+        if 'period' in (frame.index.names or ()):
+            return frame.groupby(level='period').sum()
+        return pd.DataFrame(index=pd.Index([], name='period'), columns=frame.columns, dtype=float)
     if reduced_cells:
         mask = reduced_cells.step_mask('reserves', frame.index)
         if mask.any():

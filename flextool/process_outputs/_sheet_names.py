@@ -60,6 +60,8 @@ def excel_sheet_name(name: str, used: set[str]) -> str:
     while candidate.lower() in used:
         n += 1
         tag = f"_{n}"
-        candidate = stem[:MAX_SHEET_NAME - len(suffix) - len(tag)] + tag + suffix
+        keep = MAX_SHEET_NAME - len(suffix) - len(tag)
+        # A suffix too long to leave room for a stem and the tag is dropped (the name still fits).
+        candidate = (stem[:keep] + tag + suffix if keep > 0 else name[:MAX_SHEET_NAME - len(tag)] + tag)
     used.add(candidate.lower())
     return candidate

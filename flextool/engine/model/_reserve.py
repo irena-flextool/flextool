@@ -1556,12 +1556,15 @@ def _frame_u8(frame: "pl.DataFrame | pl.LazyFrame | None") -> "pl.DataFrame | No
                               *((pl.col("value").cast(pl.Float64),) if "value" in frame.columns else ()))
 
 
-def _sol_values(sol, d, name: str) -> "pl.DataFrame | None":
+def _sol_values(sol, d, name: str, processes: "list[str] | None" = None) -> "pl.DataFrame | None":
     """``name``'s values on every solve step (a coarse process's on each fine step, as the requirement rows read
-    them: ``engine.output._coarse_flows.var_values``), Utf8 keys; None without the variable or rows."""
+    them: ``engine.output._coarse_flows.var_values``), Utf8 keys; None without the variable or rows.  With
+    ``processes``, only the rows of those ``p`` (filtered before the keys are cast)."""
     from flextool.engine.output._coarse_flows import var_values
 
     frame = var_values(sol, d, name)
+    if frame is not None and processes is not None:
+        frame = frame.filter(pl.col("p").cast(pl.Utf8).is_in(processes))
     if frame is None or frame.height == 0:
         return None
     return _frame_u8(frame)
@@ -1575,8 +1578,10 @@ def _param_on_dt(param, d, keys: list[str], alias: str) -> "pl.DataFrame | None"
     return frame.select(*keys, pl.col("value").alias(alias))
 
 
-def _flows_at_nodes(d, sol) -> pl.DataFrame:
-    """``(p, n, kind, d, t, value)``: the flow of process p at node n in MW, as the requirement rows count it.
+def _flows_at_nodes(d, sol, processes: list[str]) -> pl.DataFrame:
+    """``(p, n, kind, d, t, value)``: the flow of process p at node n in MW, as the requirement rows count it, for
+    the ``processes`` whose flow a requirement row has (an ``increase_reserve_ratio`` or a ``large_failure_ratio``;
+    the other arcs are dropped before any join).
 
     ``kind`` ``into``: what arrives at n, ``v_flow · unitsize`` of the arcs whose sink is n and ``v_flow_back ·
     unitsize`` of the one-variable / DC arcs whose source is n.  ``kind`` ``drawn``: what leaves n, per arc whose
@@ -1588,7 +1593,7 @@ def _flows_at_nodes(d, sol) -> pl.DataFrame:
     parts: list[pl.DataFrame] = []
     us = _frame_u8(d.p_unitsize.frame).select("p", pl.col("value").alias("__us"))
     pss = getattr(d, "process_source_sink", None)
-    vf = _sol_values(sol, d, "v_flow") if _has_rows(pss) else None
+    vf = _sol_values(sol, d, "v_flow", processes) if _has_rows(pss) else None
     if vf is not None:
         vf = vf.join(us, on="p", how="inner").with_columns(__mw=pl.col("value") * pl.col("__us"))
         parts.append(vf.select("p", pl.col("sink").alias("n"), pl.lit("into").alias("kind"), "d", "t",
@@ -1613,7 +1618,7 @@ def _flows_at_nodes(d, sol) -> pl.DataFrame:
             if _has_rows(pml) and section is not None:
                 sec_arcs = eff_arcs.join(_frame_u8(pml.select("p")).unique(), on="p", how="semi")
                 for var in ("v_online_linear", "v_online_integer"):
-                    online = _sol_values(sol, d, var)
+                    online = _sol_values(sol, d, var, processes)
                     if online is None or sec_arcs.height == 0:
                         continue
                     parts.append(sec_arcs.join(online, on="p", how="inner")
@@ -1621,7 +1626,7 @@ def _flows_at_nodes(d, sol) -> pl.DataFrame:
                                  .select("p", pl.col("source").alias("n"), pl.lit("drawn").alias("kind"), "d", "t",
                                          (pl.col("value") * pl.col("__sec") * pl.col("__us")).alias("value")))
     back = _back_arcs(d)
-    vb = _sol_values(sol, d, "v_flow_back") if back is not None else None
+    vb = _sol_values(sol, d, "v_flow_back", processes) if back is not None else None
     if vb is not None:
         vb = (vb.join(_frame_u8(back.select("p", "source", "sink")).unique(), on=["p", "source", "sink"], how="semi")
               .join(us, on="p", how="inner").with_columns(__mw=pl.col("value") * pl.col("__us")))
@@ -1660,7 +1665,17 @@ def reserve_requirement_rows(d, sol) -> "pl.DataFrame | None":
         return None
     dt_u = _frame_u8(d.dt.select("d", "t"))
     gn = _group_nodes(d)
-    flows = _flows_at_nodes(d, sol) if getattr(sol, "_vars", {}).get("v_flow") is not None else None
+    method_dyn = getattr(d, "reserve_upDown_group_method_dynamic", None)
+    irr_set = getattr(d, "process_reserve_upDown_node_increase_reserve_ratio", None)
+    irr_g = (irr_set.join(gn, on="n", how="inner")
+             .join(method_dyn.select("r", "ud", "g").unique(), on=["r", "ud", "g"], how="inner")
+             if _has_rows(method_dyn) and _has_rows(irr_set) else None)
+    n_1 = _n_1_failing(d, gn)
+    # Only the processes a row multiplies by a ratio: the flows of every other arc are never read.
+    ratio_p = [f["p"] for f in (irr_g, *(part["lfr_g"] for part in n_1.values())) if f is not None]
+    processes = (pl.concat([p.cast(pl.Utf8) for p in ratio_p]).unique().to_list() if ratio_p else [])
+    flows = (_flows_at_nodes(d, sol, processes)
+             if processes and getattr(sol, "_vars", {}).get("v_flow") is not None else None)
     rows: list[pl.DataFrame] = []
     row_cols = ["r", "ud", "g", "method", "f", "d", "t", "need"]
 
@@ -1680,13 +1695,9 @@ def reserve_requirement_rows(d, sol) -> "pl.DataFrame | None":
         ts = _over_dt(method_ts, "timeseries").with_columns(need=pl.lit(0.0))
         res = _param_on_dt(getattr(d, "pdtReserve_upDown_group_reservation", None), d, _GROUP_STEP, "value")
         rows.append(_plus(ts, res, _GROUP_STEP).select(row_cols))
-    method_dyn = getattr(d, "reserve_upDown_group_method_dynamic", None)
     if _has_rows(method_dyn):
         dyn = _over_dt(method_dyn, "dynamic").with_columns(need=pl.lit(0.0))
-        irr_set = getattr(d, "process_reserve_upDown_node_increase_reserve_ratio", None)
-        if flows is not None and _has_rows(irr_set):
-            irr_g = (irr_set.join(gn, on="n", how="inner")
-                     .join(method_dyn.select("r", "ud", "g").unique(), on=["r", "ud", "g"], how="inner"))
+        if flows is not None and irr_g is not None:
             by_flow = _ratio_flows(flows, irr_g, getattr(d, "p_process_reserve_upDown_node_increase_reserve_ratio_value",
                                                          None), ("into", "drawn"))
             if by_flow is not None:
@@ -1695,16 +1706,15 @@ def reserve_requirement_rows(d, sol) -> "pl.DataFrame | None":
         if demand is not None:
             dyn = _plus(dyn, _frame_u8(demand.frame), _GROUP_STEP)
         rows.append(dyn.select(row_cols))
-    if flows is not None:
-        lfr_param = getattr(d, "p_process_reserve_upDown_node_large_failure_ratio_value", None)
-        for ud_filter, part in _n_1_failing(d, gn).items():
-            fail = (_frame_u8(part["fail_g"]).rename({"p_fail": "f"})
-                    .join(dt_u.select("d", "t"), how="cross")
-                    .with_columns(method=pl.lit("n_1"), need=pl.lit(0.0)))
-            failing = _ratio_flows(flows, part["lfr_g"], lfr_param, ("into",) if ud_filter == "up" else ("drawn",))
-            if failing is not None:
-                fail = _plus(fail, failing.rename({"p": "f"}), [*_GROUP_STEP, "f"])
-            rows.append(fail.select(row_cols))
+    lfr_param = getattr(d, "p_process_reserve_upDown_node_large_failure_ratio_value", None)
+    for ud_filter, part in (n_1.items() if flows is not None else ()):
+        fail = (_frame_u8(part["fail_g"]).rename({"p_fail": "f"})
+                .join(dt_u.select("d", "t"), how="cross")
+                .with_columns(method=pl.lit("n_1"), need=pl.lit(0.0)))
+        failing = _ratio_flows(flows, part["lfr_g"], lfr_param, ("into",) if ud_filter == "up" else ("drawn",))
+        if failing is not None:
+            fail = _plus(fail, failing.rename({"p": "f"}), [*_GROUP_STEP, "f"])
+        rows.append(fail.select(row_cols))
     return pl.concat(rows) if rows else None
 
 

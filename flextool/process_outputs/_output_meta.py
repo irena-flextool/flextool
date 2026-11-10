@@ -380,6 +380,7 @@ _NODEGROUP_GD_P = {
 _RESERVE_REQUIREMENT_D = {
     'requirement_avg': RESERVE_REQUIREMENT_AVG,
     'provided_avg': RESERVE_REQUIREMENT_AVG,
+    'counted_avg': RESERVE_REQUIREMENT_AVG,
     'shortfall_avg': RESERVE_REQUIREMENT_AVG,
     'requirement_max': RESERVE_REQUIREMENT_MAX,
     'shortfall_max': RESERVE_REQUIREMENT_MAX,

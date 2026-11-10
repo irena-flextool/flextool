@@ -505,7 +505,7 @@ def write_outputs_for_solve(
     try:
         from flextool.engine.output._reserve_report import write_reserve_report
 
-        write_reserve_report(sol, flex_data, output_dir=output_dir, solve_name=roll_name)
+        write_reserve_report(sol, flex_data, output_dir=output_dir, solve_name=roll_name, provider=provider)
     except Exception as exc:  # noqa: BLE001
         _logger.error("reserve requirement report failed for solve '%s': %s", solve_name, exc)
 

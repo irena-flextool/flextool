@@ -80,3 +80,14 @@ def test_the_counter_stays_within_the_limit() -> None:
     names = [excel_sheet_name("unit_outputNode_VRE_curtailment_share__dt", used) for _ in range(120)]
     assert len(set(names)) == 120
     assert all(len(n) <= MAX_SHEET_NAME and n.endswith("__dt") for n in names)
+
+
+def test_a_suffix_without_room_for_the_counter_is_dropped() -> None:
+    """A 30-character suffix leaves one character of stem; the second table of that name has no room for ``_1``
+    and the suffix, so it drops the suffix and still fits."""
+    name = "ab__d_" + "y" * 26
+    used: set[str] = set()
+    first, second = excel_sheet_name(name, used), excel_sheet_name(name, used)
+    assert first == "a__d_" + "y" * 26
+    assert second == name[:29] + "_1"
+    assert len(first) <= MAX_SHEET_NAME and len(second) <= MAX_SHEET_NAME

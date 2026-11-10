@@ -62,10 +62,11 @@
   (the largest deficit), the reserve provided (× `reliability`), the reserve that requirement counts (a
   large-failure requirement does not count the failing unit's own reserve, so the shortfall is requirement −
   counted) and the shortfall. `reserve__upDown__group__d` (`group__reserve__upDown.requirement`) has the period's
-  time-step-weighted averages of the requirement, the provision and the shortfall and their step maxima;
+  time-step-weighted averages of the requirement, the provision, the counted reserve and the shortfall and their
+  step maxima;
   `reserve__group__provider__dt` (CSV and Excel only) what each unit and connection counts for each group. The
   requirements are the model's own constraints evaluated at the solution; the run log prints `reserve requirement
-  check: …` for a step where they disagree with the solver's shortfall.
+  check: …` for a step where they disagree with the solver's shortfall (at most 10 lines per solve, then a count).
 - **Fix: the period average of the reserve a unit or connection holds ignored the time-step weights (item 188).**
   `process__reserve__upDown__node__d_average` (`reservation_average`) was the plain mean of the steps, too high
   or too low on representative periods with unequal weights. It is now the time-step-weighted average over the

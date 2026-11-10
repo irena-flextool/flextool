@@ -158,10 +158,12 @@ def test_a_timeseries_tables(timeseries) -> None:
     assert g["requirement"].tolist() == pytest.approx([30.0, 50.0])
     assert g["shortfall"].tolist() == pytest.approx([10.0, 30.0], abs=1e-6)
     d = _csv(timeseries, "reserve__upDown__group__d")[("rsv", "up", "g")]
-    assert list(d.columns) == ["requirement_avg", "provided_avg", "shortfall_avg", "requirement_max", "shortfall_max"]
+    assert list(d.columns) == ["requirement_avg", "provided_avg", "counted_avg", "shortfall_avg", "requirement_max",
+                               "shortfall_max"]
     row = d.iloc[0]
     assert row["requirement_avg"] == pytest.approx(40.0)
     assert row["provided_avg"] == pytest.approx(20.0, abs=1e-6)
+    assert row["counted_avg"] == pytest.approx(20.0, abs=1e-6)
     assert row["shortfall_avg"] == pytest.approx(20.0, abs=1e-6)
     assert row["requirement_max"] == pytest.approx(50.0)
     assert row["shortfall_max"] == pytest.approx(30.0, abs=1e-6)
@@ -387,3 +389,110 @@ def test_steps_of_a_solve_without_reserves_are_empty_and_not_averaged(tmp_path_f
     assert d["shortfall_avg"] == pytest.approx(0.0, abs=1e-6)
     avg = _csv(run, "process__reserve__upDown__node__d_average")
     assert avg.loc[:, ("g1", "rsv", "up", "elec")].tolist() == pytest.approx([10.0], abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Rolling and stochastic solves: the per-solve report keeps only the steps the solve realizes, and the union over
+# the solves has one row per step, from the solve that realizes it.
+
+def _rolling_case(tmp_path_factory) -> dict:
+    """``fullYear_roll`` cut to 12 h (``fullyear_roll_first_hours``: three rolls of horizon 8 h, jump 4 h, so the
+    horizons overlap by 4 h) on the plant chain of ``_case``: reservation 20 + k MW at step t000k (k = 1..12),
+    coal_plant 100 MW with demand 80 MW (20 MW up headroom)."""
+    from tests.engine._unit_db import fullyear_roll_first_hours
+
+    ents, vals = _case("timeseries_only", {}, extra_values=[
+        ["reserve__upDown__group", RUG, "reservation",
+         time_map({f"t{k:04d}": 20.0 + k for k in range(1, 13)}, 0.0)]])
+    vals = [v for v in vals if v[0] != "timeset"] + fullyear_roll_first_hours(12)
+    url, scen = make_db(tmp_path_factory, alt="r234_roll", values=vals, entities=ents,
+                        base_chain=["init", "west", "coal", "fullYear", "dispatch_fullYear_roll"])
+    from flextool.engine import run_chain_from_db
+
+    work = tmp_path_factory.mktemp("r234_roll_w")
+    with contextlib.redirect_stdout(io.StringIO()):
+        run_chain_from_db(url, scen, work_folder=work, keep_solutions=True)
+    return {"work": work}
+
+
+def test_rolling_overlap_one_row_per_step_from_the_realizing_roll(tmp_path_factory) -> None:
+    """Each roll realizes its first 4 h (roll k: t(4k+1)..t(4k+4)) although it solves 8 h, so the 12 steps come one
+    each from the roll that realizes them: requirement 20 + k, provided 20 (the headroom), shortfall k."""
+    run = _rolling_case(tmp_path_factory)
+    rep = _report(run)
+    times = [f"t{k:04d}" for k in range(1, 13)]
+    assert rep["time"].to_list() == times
+    assert rep["period"].unique().to_list() == ["p2020"]
+    assert rep["solve"].to_list() == [f"dispatch_fullYear_roll_roll_{(k - 1) // 4}" for k in range(1, 13)]
+    assert rep["requirement"].to_list() == pytest.approx([20.0 + k for k in range(1, 13)])
+    assert rep["provided"].to_list() == pytest.approx([20.0] * 12, abs=1e-6)
+    assert rep["shortfall"].to_list() == pytest.approx([float(k) for k in range(1, 13)], abs=1e-6)
+    _providers_sum_to_provided(run)
+
+
+def test_union_of_overlapping_solves_takes_each_step_from_the_last_solve(tmp_path) -> None:
+    """Two solves both report (p, t2) — s1 with 1 MW, s2 with 2 MW; s1 alone has t1, s2 alone t3.  In solve order
+    s1, s2 the union keeps t1 from s1 and t2, t3 from s2; in the order s2, s1 it keeps t2 from s1."""
+    from flextool.engine.output._reserve_report import read_reserve_report_parts
+
+    def part(solve: str, times: list[str], value: float) -> None:
+        pl.DataFrame({"solve": solve, "reserve": "rsv", "updown": "up", "node_group": "g", "period": "p",
+                      "time": times, "requirement": value}).write_parquet(tmp_path / f"reserve_group__{solve}.parquet")
+
+    part("s1", ["t1", "t2"], 1.0)
+    part("s2", ["t2", "t3"], 2.0)
+    union = read_reserve_report_parts(tmp_path, "reserve_group", {"s1": 0, "s2": 1}).sort("time")
+    assert union.select("time", "solve", "requirement").rows() == [("t1", "s1", 1.0), ("t2", "s2", 2.0),
+                                                                    ("t3", "s2", 2.0)]
+    union = read_reserve_report_parts(tmp_path, "reserve_group", {"s2": 0, "s1": 1}).sort("time")
+    assert union.select("time", "solve").rows() == [("t1", "s1"), ("t2", "s1"), ("t3", "s2")]
+
+
+def test_stochastic_fan_solves_report_no_forecast_steps(tmp_path_factory) -> None:
+    """``stochastics.json`` ``1_week_rolling_wind`` (rolling 96 h / jump 24 h over the 168 steps of period1, a
+    forecast fan in every roll with a ``realized`` designation): each fan roll realizes no step, its realization
+    solve ``1week_rolling__realized_dispatch_roll_k`` the steps 24k+1..24k+24.  A timeseries reserve of 10 MW on
+    demand_node (coal_plant and gas_plant providers): the fan rolls' report is empty (no forecast-branch period
+    such as period1_mid), and the union has the 168 steps of period1 once each, requirement 10."""
+    from flextool.engine import run_chain_from_db
+
+    rel = "reserve__upDown__unit__node"
+    ents = [["upDown", "up", None], ["reserve", "rsv", None], ["group", "g", None],
+            ["group__node", ["g", "demand_node"], None], ["reserve__upDown__group", RUG, None]]
+    vals = [["reserve__upDown__group", RUG, "reserve_method", b64("timeseries_only", "str")],
+            ["reserve__upDown__group", RUG, "penalty_reserve", b64(500.0, "float")],
+            ["reserve__upDown__group", RUG, "reservation", b64(10.0, "float")]]
+    for unit in ("coal_plant", "gas_plant"):
+        key = ["rsv", "up", unit, "demand_node"]
+        ents.append([rel, key, None])
+        vals += [[rel, key, "is_enabled", b64("yes", "str")], [rel, key, "max_share", b64(1.0, "float")],
+                 [rel, key, "reliability", b64(1.0, "float")]]
+    url, scen = make_db(tmp_path_factory, alt="r234_stoch", values=vals, entities=ents,
+                        base_chain=["init", "base", "system", "1week_rolling"],
+                        fixture_json=REPO / "tests" / "fixtures" / "stochastics.json")
+    work = tmp_path_factory.mktemp("r234_stoch_w")
+    with contextlib.redirect_stdout(io.StringIO()):
+        run_chain_from_db(url, scen, work_folder=work, keep_solutions=True)
+    raw = work / "output_raw"
+    fan = sorted(raw.glob("reserve_group__1week_rolling_roll_*.parquet"))
+    assert len(fan) == 7
+    assert all(pl.read_parquet(p).height == 0 for p in fan)
+    rep = _report({"work": work})
+    assert rep.height == 168
+    assert rep["period"].unique().to_list() == ["period1"]
+    assert rep["time"].to_list() == [f"t{k:04d}" for k in range(1, 169)]
+    assert rep["solve"].to_list() == [f"1week_rolling__realized_dispatch_roll_{(k - 1) // 24}" for k in range(1, 169)]
+    assert rep["requirement"].to_list() == pytest.approx([10.0] * 168)
+
+
+def test_check_lines_are_capped() -> None:
+    """25 broken group steps: the first MAX_CHECK_LINES (10) lines and one line counting the other 15."""
+    from flextool.engine.output._reserve_report import MAX_CHECK_LINES, check_lines
+
+    violations = pl.DataFrame({"reserve": "rsv", "updown": "up", "node_group": "g", "period": "p",
+                               "time": [f"t{k:02d}" for k in range(25)], "deficit": 1.0, "shortfall": 2.0})
+    lines = check_lines(violations, "s", near_optimal=False)
+    assert MAX_CHECK_LINES == 10
+    assert len(lines) == 11
+    assert lines[9].endswith("step (p, t09): deficit 1 MW, shortfall 2 MW")
+    assert lines[10] == "reserve requirement check: solve s: ... and 15 more group steps"

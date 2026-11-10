@@ -571,17 +571,17 @@ def _reserve_wide(frame, columns: list[str], values: list[str], dt_index) -> pd.
     realized steps ``dt_index``: a step no solve reported (one that left reserves out) is an empty row."""
     long = frame.to_pandas().astype({c: str for c in ("period", "time", *columns)})
     wide = long.set_index(["period", "time", *columns])[values]
+    # The column entities in first-appearance order.
+    groups = long[columns].drop_duplicates()
     if len(values) > 1:
         wide.columns = pd.Index(values, name="quantity")
         wide = wide.unstack(columns)
         wide = wide.reorder_levels([*range(1, len(columns) + 1), 0], axis=1)
-        groups = list(dict.fromkeys(long[columns].itertuples(index=False, name=None)))
-        wide = wide.reindex(columns=pd.MultiIndex.from_tuples(
-            [(*g, q) for g in groups for q in values], names=[*columns, "quantity"]))
+        order = groups.loc[groups.index.repeat(len(values))].assign(quantity=values * len(groups))
+        wide = wide.reindex(columns=pd.MultiIndex.from_frame(order))
     else:
         wide = wide[values[0]].unstack(columns)
-        wide = wide.reindex(columns=pd.MultiIndex.from_tuples(
-            list(dict.fromkeys(long[columns].itertuples(index=False, name=None))), names=columns))
+        wide = wide.reindex(columns=pd.MultiIndex.from_frame(groups))
     return wide.reindex(dt_index).astype(float)
 
 
@@ -593,7 +593,7 @@ def reserve_requirement(par, s, v, r, debug):
       ``requirement`` and ``counted`` reserve (so ``shortfall = requirement − counted`` when there is one), each
       method's requirement, the reserve ``provided`` (Σ v_reserve · unitsize · reliability) and the ``shortfall``;
     * ``nodeGroup_reserve_d_eegp`` period × (…, quantity): ``requirement_avg``, ``provided_avg``,
-      ``shortfall_avg`` (Σ_t w·Δt·X / Σ_t w·Δt over the period's steps that have a value) and the plain step
+      ``counted_avg``, ``shortfall_avg`` (Σ_t w·Δt·X / Σ_t w·Δt over the period's steps that have a value) and the plain step
       maxima ``requirement_max``, ``shortfall_max``;
     * ``nodeGroup_reserve_provider_dt_eegee`` (period, time) × (reserve, updown, node_group, process, node): each
       provider's counted reserve (× reliability), summing to ``provided``.
@@ -615,7 +615,7 @@ def reserve_requirement(par, s, v, r, debug):
     weight = realized_timestep_weight(par, dt.index, what='Reserve group results')
     pick = dt.columns.get_level_values("quantity")
     parts = {}
-    for q in ("requirement", "provided", "shortfall"):
+    for q in ("requirement", "provided", "counted", "shortfall"):
         parts[f"{q}_avg"] = weighted_period_average(dt.loc[:, pick == q], weight, par.step_duration)
     for q in ("requirement", "shortfall"):
         parts[f"{q}_max"] = dt.loc[:, pick == q].groupby(level="period", sort=False).max()
