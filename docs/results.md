@@ -18,6 +18,7 @@ Every result table, with its parquet and CSV file names, its index and column le
 
 The CSV / Excel / plot files are **derived** from the parquets, so deleting or regenerating them is safe. `summary_solve.csv` is a diagnostic file aimed at a quick overview of a solve — it lists objective decomposition, period weighting, CO2 total, and any non-zero slack uses.
 
+
 All annualized numbers are scaled to **a full year of operation** by dividing through by `complete_period_share_of_year`. All values are returned in user units — auto-scaling (see [LP scaling pipeline](dev/scaling.md)) and time-block aggregation under flex-temporal decomposition are unwound before they reach the parquets, so users always read MW / MWh / [CUR] in the original problem space.
 
 For stochastic models the parquets carry only the **realised / committed** results of each solve by default — the investment decisions, the operations of the periods before the reveal and, where a branch is designated realized, the realization dispatch of the fan — not the individual forecast branches. A forecasts-only fan has no realized operation, so its operational results are empty (the period label of the fan has no dispatch) and its operating costs and CO2 total are zero; its results hold the investment decisions and the investment and fixed costs (see [Costs of a run of several solves](#costs-of-a-run-of-several-solves)). The same holds for a rolling solve: only the realized steps of each roll (up to `rolling_solve_jump`) are reported, never its look-ahead. This does not depend on the `model` parameter `output_horizon` — the unrealized rows are only in its separate raw dump, below (see also [How to use stochastics](how_to/stochastics.md#how-to-use-stochastics-representing-uncertainty)).
@@ -42,6 +43,7 @@ With `output_horizon = yes` (a debug option), `output_parquet/<scenario>/horizon
 - [Ramps](#ramps)
 - [DC power flow](#dc-power-flow)
 - [Slack and penalty values](#slack-and-penalty-values)
+- [Plotted data as CSV](#plotted-data-as-csv)
 
 ## Costs
 
@@ -297,3 +299,26 @@ Slack uses are listed in the [Energy balance in nodes](#energy-balance-in-nodes)
 - `group__reserve__upDown` entity `slack_reserve_t` / `slack_reserve` — [MW] reserve shortfall, timestep / annualized
 
 For the sign / direction conventions of slacks, see [Slack convention](dev/slack_convention.md). For how block-aware solves (flex-temporal decomposition) and spatial Benders decomposition feed into these tables, see [Decomposition](dev/decomposition.md) — the result writers always operate on the fine-timeline, full-spatial solution, so the parquet tables look identical to a monolithic run.
+
+## Plotted data as CSV
+
+With **Write plotted data (CSV)** in the GUI's Png settings, `--write-plot-data` on `flextool-run`,
+`flextool-write-outputs` or `flextool-scenario-results` (Spine Toolbox users can add it to the tool's command-line
+arguments), or a top-level `write_plot_data: true` in the project's `plot_settings.yaml`, each plot file gets a CSV
+file next to it with the data drawn in it: `output_plots/<scenario>/<plot>.png` comes with `<plot>.csv`, a plot
+split into several files writes `<plot>_01.csv`, `<plot>_02.csv`, … with the data of each file, and the comparison
+plots and dispatch plots in `output_plot_comparisons/` get theirs too. Any one of these turns it on. It is off by
+default and then costs nothing.
+
+- Rows are the x axis of the plot (the time steps, or the bars), with the row index levels (for example `period`,
+  `time`) as the first columns. Only the plotted time window is written, and the gap rows that leave a gap in a
+  line at a [timeline break](#model-outputs) are not.
+- Columns are the plotted series (lines, stacks, bars). When a series has several levels (for example the scenario
+  and the entity in a comparison plot) the level names are joined with ` | ` into one header row.
+- A leading `subplot` column names the subplot of each row when the file has more than one subplot.
+- Values are as plotted, after `multiply_by` (the unit is in the plot's axis label). A cell that is empty in the
+  results stays empty, also where a bar plot draws it as zero.
+- A dispatch plot's CSV has the flows of the plotted time window and the demand line as a `demand` column
+  (`demand (line)` if a flow is already called `demand`).
+
+The CSVs are removed with the plots when the plots are made again.

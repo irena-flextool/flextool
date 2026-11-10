@@ -41,6 +41,8 @@ def main():
                             help='Enable debug output')
         parser.add_argument('--only-first-file-per-plot', action='store_true', default=False,
                             help='Only produce the first file for each plot (quick overview mode)')
+        parser.add_argument('--write-plot-data', action='store_true', default=False,
+                            help='Also write the data drawn in each plot as a CSV file next to it (same name, .csv)')
         parser.add_argument('--single-result', type=str, nargs=6,
                             metavar=('KEY', 'CSV_NAME', 'PLOT_NAME', 'PLOT_TYPE', 'SUBPLOTS_PER_ROW', 'LEGEND_POSITION'),
                             help='Process a single result (overrides --config): key csv_name plot_name plot_type subplots_per_row legend_position. Use "null" for None values.')
@@ -116,6 +118,7 @@ def main():
                     settings_db_url=args.settings_db_url,
                     plot_file_format=args.plot_file_format,
                     only_first_file=args.only_first_file_per_plot,
+                    write_plot_data=args.write_plot_data,
                     results_db_url=args.results_db_url,
                 )
         finally:

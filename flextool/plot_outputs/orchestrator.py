@@ -27,6 +27,7 @@ from flextool.plot_outputs.format_helpers import (
     file_member_period,
     has_timeline_breaks,
     insert_timeline_breaks,
+    write_plot_data_csv,
 )
 from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config, default_ylabel_for, flatten_new_format
 from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
@@ -645,6 +646,7 @@ def prepare_plot_data(
     only_file_index: int | None = None,
     period_weights=None,
     color_path: Path | None = None,
+    keep_plot_data: bool = False,
 ) -> tuple[list[tuple[str, plt.Figure]], int]:
     """Process one result DataFrame through dimension rules and build Figures.
 
@@ -653,6 +655,8 @@ def prepare_plot_data(
     When only_file_index is None, figures has all file splits.
     When only_file_index is set, figures has at most 1 element.
     Figures are NOT saved or closed; the caller is responsible for that.
+    With *keep_plot_data*, each Figure carries the data drawn into it as
+    ``flextool_plot_batch`` (see :func:`format_helpers.write_plot_data_csv`).
     """
     if df.empty:
         return [], 0
@@ -776,6 +780,7 @@ def prepare_plot_data(
                 color_template=color_tmpl,
                 category=color_category,
                 entity_class=color_entity_class,
+                keep_plot_data=keep_plot_data,
             )
             total_file_count += count
             figures.extend(figs)
@@ -798,6 +803,7 @@ def prepare_plot_data(
                     color_template=color_tmpl,
                     category=color_category,
                     entity_class=color_entity_class,
+                    keep_plot_data=keep_plot_data,
                 )
             else:
                 figs, count = build_line_figures(
@@ -817,6 +823,7 @@ def prepare_plot_data(
                     color_template=color_tmpl,
                     category=color_category,
                     entity_class=color_entity_class,
+                    keep_plot_data=keep_plot_data,
                 )
             total_file_count += count
             figures.extend(figs)
@@ -880,6 +887,7 @@ def prepare_plot_data(
                         color_template=color_tmpl,
                         category=color_category,
                         entity_class=color_entity_class,
+                        keep_plot_data=keep_plot_data,
                     )
                 else:
                     chunk_figs, _count = build_line_figures(
@@ -894,17 +902,26 @@ def prepare_plot_data(
                         color_template=color_tmpl,
                         category=color_category,
                         entity_class=color_entity_class,
+                        keep_plot_data=keep_plot_data,
                     )
                 figures.extend(chunk_figs)
 
     return figures, total_file_count
 
 
+def plot_data_wanted(write_plot_data: bool, color_path: Path | None) -> bool:
+    """Whether to write the plotted data as CSV: the flag, or ``write_plot_data: true`` in the plot settings file."""
+    if write_plot_data:
+        return True
+    return bool(load_color_template(color_path).get('write_plot_data', False))
+
+
 def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         active_settings=['default'], plot_rows=(0, 167), delete_existing_plots=True,
         plot_file_format='png', only_first_file=False,
         break_times: pd.MultiIndex | None = None,
-        color_path: Path | None = None):
+        color_path: Path | None = None,
+        write_plot_data: bool = False):
     """
     Plot dataframes from a dictionary according to key suffixes.
 
@@ -915,7 +932,10 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         active_settings: List of named configs to activate (default ['default'])
         plot_rows: Row slice to apply for time-series plots
         delete_existing_plots: If True, delete all existing plots in plot_dir (default True)
+        write_plot_data: Also write the data drawn in each plot file as a CSV with the same stem.  Also on when
+            the plot settings file at *color_path* has a top-level ``write_plot_data: true``.
     """
+    write_plot_data = plot_data_wanted(write_plot_data, color_path)
 
     # Flatten new-format entries (entry-name grouping) to flat result_key mapping
     plot_settings = flatten_new_format(plot_settings)
@@ -1007,6 +1027,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 break_times=break_times,
                 period_weights=period_weights,
                 color_path=color_path,
+                keep_plot_data=write_plot_data,
             )
 
             if only_first_file and len(figures) > 1:
@@ -1021,6 +1042,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                     needs_split=(len(figures) > 1),
                 )
                 fig.savefig(filepath)
+                if write_plot_data:
+                    write_plot_data_csv(fig, filepath)
                 plt.close(fig)
 
     if only_first_file and skipped_files > 0:

@@ -9,6 +9,7 @@ comparison plots honour ``projects/<Name>/plot_settings.yaml``.  An explicit
 CWD-relative behaviour and the bundled default template.
 """
 
+import os
 import shutil
 import sys
 import tempfile
@@ -99,6 +100,7 @@ class TestRunProjectRooting(unittest.TestCase):
 
         def _capture_plot(*args, **kwargs):
             captured["color_path"] = kwargs.get("color_path")
+            captured["write_plot_data"] = kwargs.get("write_plot_data")
 
         with (
             patch(
@@ -151,6 +153,19 @@ class TestRunProjectRooting(unittest.TestCase):
             f"contents: {list(self.project.iterdir())}",
         )
 
+    def test_plot_settings_key_writes_plot_data(self) -> None:
+        """``write_plot_data: true`` in the project's plot_settings.yaml turns the plotted-data CSVs on for
+        the comparison plots too, without the command-line flag."""
+        folders = {"scen_a": str(self.project), "scen_b": str(self.project)}
+        self.assertFalse(self._run(folders, plot_dir="output_plot_comparisons",
+                                   plot_dir_is_default=True)["write_plot_data"])
+        self.project_settings.write_text("write_plot_data: true\n")
+        # The settings file is cached by modification time: make the rewrite visibly newer.
+        st = self.project_settings.stat()
+        os.utime(self.project_settings, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+        self.assertTrue(self._run(folders, plot_dir="output_plot_comparisons",
+                                  plot_dir_is_default=True)["write_plot_data"])
+
     def test_explicit_plot_dir_wins(self) -> None:
         """An explicit --plot-dir is used verbatim even with a shared root,
         but color_path still resolves against the project root."""
@@ -174,7 +189,6 @@ class TestRunProjectRooting(unittest.TestCase):
 
         folders = {"scen_a": "/proj/pA/out", "scen_b": "/proj/pB/out"}
         old_cwd = Path.cwd()
-        import os
 
         os.chdir(self.tmp)
         try:

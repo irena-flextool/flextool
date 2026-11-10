@@ -1509,6 +1509,8 @@ class ExecutionManager:
 
         if single.only_first_file:
             cmd.append("--only-first-file-per-plot")
+        if single.write_plot_data:
+            cmd.append("--write-plot-data")
 
         # "Threads per run" (Execution jobs window): FlexTool's data processing and the solver of this run.
         # ``--threads`` gives HiGHS ``threads=N`` with its parallel simplex left off.
@@ -1680,6 +1682,8 @@ class ExecutionManager:
 
         if comp.only_first_file:
             cmd.append("--only-first-file-per-plot")
+        if comp.write_plot_data:
+            cmd.append("--write-plot-data")
 
         logger.info("Running post-execution comparison:\n%s", format_cmd_for_log(cmd))
 

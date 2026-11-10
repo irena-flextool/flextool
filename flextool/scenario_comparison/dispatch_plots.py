@@ -227,6 +227,33 @@ def _build_dispatch_figure(
     return fig
 
 
+def dispatch_plot_data(
+    df_dispatch: pd.DataFrame,
+    inflow_series: pd.Series | None,
+    timeline: tuple[int, int],
+) -> pd.DataFrame:
+    """The data drawn in one dispatch plot: the time window of the flows plus the demand line.
+
+    Rows are the time steps of the window (no gap rows at timeline breaks), columns the stacked flows and
+    ``Curtailed`` as plotted, then the demand line as ``demand``.  When a flow column is already called
+    ``demand``, the line is ``demand (line)`` (then ``demand (line) 2``, ...).  Empty cells stay empty.
+    """
+    out = df_dispatch.iloc[timeline[0]:timeline[1]].copy()
+    out.columns = [str(c) for c in out.columns]
+    if inflow_series is not None and not inflow_series.empty:
+        name = 'demand'
+        n = 1
+        while name in out.columns:
+            name = 'demand (line)' if n == 1 else f'demand (line) {n}'
+            n += 1
+        inflow = inflow_series.iloc[timeline[0]:timeline[1]]
+        if len(inflow) == len(out):
+            out[name] = inflow.to_numpy()
+        else:
+            out[name] = inflow.reindex(out.index)
+    return out.reset_index()
+
+
 def plot_dispatch_area(
     df_dispatch: pd.DataFrame,
     inflow_series: pd.Series | None,
@@ -238,8 +265,13 @@ def plot_dispatch_area(
     show_plot: bool = False,
     ylim: tuple[float, float] | None = None,
     break_times: pd.MultiIndex | None = None,
+    write_plot_data: bool = False,
 ) -> None:
-    """Create a stacked area dispatch plot with demand line."""
+    """Create a stacked area dispatch plot with demand line.
+
+    With *write_plot_data*, also write the plotted window as a CSV with the same stem
+    (see :func:`dispatch_plot_data`).
+    """
     fig = _build_dispatch_figure(
         df_dispatch, inflow_series, title,
         ylabel=ylabel, colors=colors, timeline=timeline,
@@ -252,6 +284,10 @@ def plot_dispatch_area(
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, format='png', bbox_inches='tight', dpi=150)
+    if write_plot_data:
+        dispatch_plot_data(df_dispatch, inflow_series, timeline).to_csv(
+            output_path.with_suffix('.csv'), index=False, float_format='%.8g', encoding='utf-8',
+        )
 
     if show_plot:
         plt.show()
@@ -435,6 +471,7 @@ def create_dispatch_plots(
     break_times: pd.MultiIndex | None = None,
     debug: bool = False,
     settings_path: str | Path | None = None,
+    write_plot_data: bool = False,
 ) -> None:
     """Create dispatch plots for all nodeGroups (and, in debug, all nodes).
 
@@ -450,6 +487,9 @@ def create_dispatch_plots(
     orchestrator resolves it against the derived project root).  When omitted
     it is resolved from ``plot_dir.parent`` — the legacy assumption that the
     comparison output dir lives directly under the project root.
+    
+    *write_plot_data* also writes each plot's drawn data as a CSV with the
+    PNG's stem (see :func:`dispatch_plot_data`).
     """
     plot_dir = Path(plot_dir)
 
@@ -628,6 +668,7 @@ def create_dispatch_plots(
                     show_plot=show_plot,
                     ylim=ng_ylims.get((scenario, ng)),
                     break_times=break_times,
+                    write_plot_data=write_plot_data,
                 )
 
                 if write_xlsx:
@@ -675,6 +716,7 @@ def create_dispatch_plots(
                     show_plot=show_plot,
                     ylim=node_ylims.get((scenario, node)),
                     break_times=break_times,
+                    write_plot_data=write_plot_data,
                 )
                 if write_xlsx:
                     excel_data[f"node_{node}_{scenario}"] = df_node

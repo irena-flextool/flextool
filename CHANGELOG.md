@@ -1,5 +1,13 @@
 ## Unreleased
 
+- **New: plotted data as CSV.** Each plot file can get a CSV file next to it with the data drawn in it (same name,
+  `.csv`; a plot split into files gets `_01.csv`, `_02.csv`, …), for the scenario plots, the comparison plots and
+  the dispatch plots. Rows are the plotted time steps or bars (no gap rows at timeline breaks), columns the plotted
+  series in one header row, a `subplot` column when a file has several subplots, values after `multiply_by`; empty
+  result cells stay empty. Turn it on with **Write plotted data (CSV)** in the GUI's Png settings,
+  `--write-plot-data` on `flextool-run`, `flextool-write-outputs` and `flextool-scenario-results`, or a top-level
+  `write_plot_data: true` in the project's `plot_settings.yaml`. Off by default. See *Plotted data as CSV* in
+  Model outputs.
 - **New: parameter catalogue (data dictionary).** The web docs have a *Parameter catalogue* page (under Model
   parameters): every input parameter in one table per entity class with its unit, allowed shapes, default, allowed
   values, parameter group and definition, generated from the schema of the installed FlexTool. `python -m

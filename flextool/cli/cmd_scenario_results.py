@@ -88,6 +88,10 @@ def main() -> None:
         help='Only produce the first file for each plot (quick overview mode)'
     )
     parser.add_argument(
+        '--write-plot-data', action='store_true', default=False,
+        help='Also write the data drawn in each plot as a CSV file next to it (same name, .csv)'
+    )
+    parser.add_argument(
         '--comparison-parquet-dir', default=None,
         help='Directory to write combined comparison parquet files for viewer integration'
     )
@@ -275,6 +279,7 @@ def main() -> None:
         excel_dir=args.excel_dir,
         shared_legend=shared_legend,
         only_first_file=args.only_first_file_per_plot,
+        write_plot_data=args.write_plot_data,
         comparison_parquet_dir=args.comparison_parquet_dir,
         debug=args.debug != 'off',
         plot_dir_is_default=plot_dir_is_default,

@@ -19,6 +19,7 @@ class PlotSettings:
     active_configs: list[str] = field(default_factory=list)
     dispatch_plots: bool = True  # comparison only: include --dispatch-plots
     only_first_file: bool = False  # limit to one file per plot (quick overview)
+    write_plot_data: bool = False  # also write each plot's drawn data as CSV next to it
     # Per-variant duration, keyed by variant letter (e.g. {"h": 168, "w": 8760}).
     # Only ints — "all" sentinel from the template is resolved to a concrete
     # integer the first time the variant is seen and stored here.

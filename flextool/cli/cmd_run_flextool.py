@@ -663,6 +663,8 @@ def build_parser() -> argparse.ArgumentParser:
                              'Enables parallel scenario execution by isolating each run.')
     parser.add_argument('--only-first-file-per-plot', action='store_true', default=False,
                         help='Only produce the first file for each plot (quick overview mode)')
+    parser.add_argument('--write-plot-data', action='store_true', default=False,
+                        help='Also write the data drawn in each plot as a CSV file next to it (same name, .csv)')
     parser.add_argument('--region', metavar='GROUP_NAME', default=None,
                         help='Write the filtered inputs of one Benders region '
                              'to ``input_region_<GROUP_NAME>/`` and stop; no '
@@ -1161,6 +1163,7 @@ def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_
                     fallback_output_location=str(output_path),
                     raw_output_dir=str(wf / 'output_raw'),
                     only_first_file=args.only_first_file_per_plot,
+                    write_plot_data=args.write_plot_data,
                     timing_recorder=timing_recorder,
                     flex_data=wo_flex_data,
                     solution=wo_solution,

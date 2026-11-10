@@ -156,7 +156,10 @@ Two caveats apply to the **replay** path only:
 Place a `plot_settings.yaml` in the project folder
 (`projects/<Name>/plot_settings.yaml`) to control plot colours and stacking
 order. It is honored automatically by both the per-scenario plots and the
-comparison plots in the Toolbox track.
+comparison plots in the Toolbox track. A top-level `write_plot_data: true` in it
+also writes the data drawn in each plot as a CSV file next to the plot (or add
+`--write-plot-data` to the tool's command-line arguments); see
+[Plotted data as CSV](results.md#plotted-data-as-csv).
 
 ### FlexTool GUI interoperability
 

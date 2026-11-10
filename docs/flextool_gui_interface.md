@@ -149,6 +149,8 @@ The **Png settings** dialog has separate sections for **scenario** and **scenari
 - **Plot config file** — YAML config defining what plots to render and how. The shipped default is the bundled `flextool/schemas/default_plots.yaml`.
 - **Active configs** — checkbox list of named configurations from the chosen file. Only checked configs are rendered.
 - **Dispatch plots** *(comparison section only)* — toggle whether dispatch time-series plots are included in comparisons. The companion **Edit dispatch plots…** button opens a YAML editor for the dispatch config.
+- **Just one file per plot** — render only the first file of a plot that is split into several files (a quick overview).
+- **Write plotted data (CSV)** — also write the data drawn in each plot as a CSV file next to its image, with the same name (see [Plotted data as CSV](results.md#plotted-data-as-csv)). A `write_plot_data: true` in the project's `plot_settings.yaml` turns this on whatever the checkbox says.
 
 The dialog is purely a configuration step; rendering happens via the Status cell of the relevant Outputs row (or automatically through Auto-gen).
 

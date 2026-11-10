@@ -108,12 +108,18 @@ class _PlotSection:
                 dispatch_row, text="Dispatch plots", variable=self._dispatch_var,
             ).pack(side="left")
 
-        # ── "Just one file per plot" checkbox ─────────────────────
+        # ── "Just one file per plot" + "Write plotted data (CSV)" ─
         row = 4 if show_dispatch else 3
+        files_row = ttk.Frame(self.frame)
+        files_row.grid(row=row, column=0, columnspan=2, sticky="w", pady=(4, 2))
         self._only_first_file_var = tk.BooleanVar(value=settings.only_first_file)
         ttk.Checkbutton(
-            self.frame, text="Just one file per plot", variable=self._only_first_file_var,
-        ).grid(row=row, column=0, columnspan=2, sticky="w", pady=(4, 2))
+            files_row, text="Just one file per plot", variable=self._only_first_file_var,
+        ).pack(side="left")
+        self._write_plot_data_var = tk.BooleanVar(value=settings.write_plot_data)
+        ttk.Checkbutton(
+            files_row, text="Write plotted data (CSV)", variable=self._write_plot_data_var,
+        ).pack(side="left", padx=(12, 0))
 
         # ── Active configs list (Treeview with checkboxes) ─────────
         row += 1
@@ -183,6 +189,7 @@ class _PlotSection:
             active_configs=active,
             dispatch_plots=dispatch,
             only_first_file=self._only_first_file_var.get(),
+            write_plot_data=self._write_plot_data_var.get(),
         )
 
     # ── Internal ──────────────────────────────────────────────────

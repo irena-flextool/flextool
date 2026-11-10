@@ -90,6 +90,10 @@ Some of the outputs are optional. Some of these optional outputs are output by d
 
 ![Optional outputs](../img/concept/optional_outputs.png)
 
+To get the numbers behind a plot, turn on **Write plotted data (CSV)** in the GUI's Png settings (or
+`--write-plot-data` in the terminal, or `write_plot_data: true` in `plot_settings.yaml`): each plot file then gets
+a CSV with the same name and the data drawn in it. See [Plotted data as CSV](../results.md#plotted-data-as-csv).
+
 ## How to read the LP scaling diagnostic report
 
 Every solve runs the auto-scaling pipeline before handing the LP to the solver and writes a single audit artefact into `solve_data/`:

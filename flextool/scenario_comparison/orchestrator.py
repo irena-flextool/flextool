@@ -33,7 +33,7 @@ from flextool.scenario_comparison.plan_union import (
     has_comparison_view,
 )
 from flextool.plot_outputs.config import _is_single_config, flatten_new_format
-from flextool.plot_outputs.orchestrator import plot_dict_of_dataframes
+from flextool.plot_outputs.orchestrator import plot_data_wanted, plot_dict_of_dataframes
 from flextool.plot_outputs.color_template import resolve_plot_settings_path
 
 
@@ -213,6 +213,7 @@ def run(
     excel_dir: str | None = None,
     shared_legend: bool = True,
     only_first_file: bool = False,
+    write_plot_data: bool = False,
     comparison_parquet_dir: str | None = None,
     debug: bool = False,
     plot_dir_is_default: bool = False,
@@ -230,6 +231,9 @@ def run(
     plot output dir is re-rooted at ``<project_root>/output_plot_comparisons``
     when the participating scenarios share a sensible common project root (see
     :func:`derive_project_root`).  An explicit ``--plot-dir`` always wins.
+
+    *write_plot_data* (or ``write_plot_data: true`` in the project's
+    ``plot_settings.yaml``) writes each plot's drawn data as a CSV next to it.
     """
     with open(output_config_path, 'r', encoding='utf-8') as f:
         settings = yaml.safe_load(f)
@@ -402,6 +406,8 @@ def run(
             _logging.warning("Plot plan computation failed (non-fatal): %s", exc)
 
     # Generate comparison plots from the merged settings derived above.
+    # Plotted data as CSV: the flag, or ``write_plot_data: true`` in plot_settings.yaml.
+    write_plot_data = plot_data_wanted(write_plot_data, color_path)
     plot_dict_of_dataframes(
         combined_dfs, plot_dir, settings['plots'],
         active_settings=active_configs, plot_rows=plot_rows,
@@ -409,6 +415,7 @@ def run(
         only_first_file=only_first_file,
         break_times=break_times,
         color_path=color_path,
+        write_plot_data=write_plot_data,
     )
     print(f'\nPlotted comparison of {len(scenario_folders)} scenarios to folder: {plot_dir}')
 
@@ -425,6 +432,7 @@ def run(
                 plot_rows=plot_rows,
                 debug=debug,
                 settings_path=color_path,
+                write_plot_data=write_plot_data,
             )
         else:
             print("Warning: Cannot generate dispatch plots - missing dispatch mappings")

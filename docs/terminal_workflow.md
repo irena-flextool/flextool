@@ -190,6 +190,7 @@ solver's native output and any crash dump.
 | `--flextool-location PATH` | Spine Toolbox shim: directs outputs to the FlexTool repo root rather than the work directory |
 | `--work-folder DIR` | Working directory for intermediate files (default: CWD). Enables parallel scenario execution by isolating each run |
 | `--only-first-file-per-plot` | Only produce the first file for each plot (quick overview mode) |
+| `--write-plot-data` | Also write the data drawn in each plot as a CSV file next to it (same name, `.csv`); see [Results](results.md#plotted-data-as-csv) |
 | `--input-source-file PATH` | The file the input database was made from (e.g. an Excel file), recorded in `_run_status.json` |
 | `--run-launcher NAME` | Who started the run, recorded in `_run_status.json` (default `direct`; `flextool-run` adds `flextool-run` unless one is given) |
 
@@ -276,6 +277,7 @@ All arguments are optional. When run from the terminal, you typically provide `-
 | `--output-location DIR` | Root directory for input/output locations (default: flextool root); overridden by `--output-locations-db-url` |
 | `--plot-file-format {png,svg}` | File format for plots (default: `png`) |
 | `--only-first-file-per-plot` | Only produce the first file for each plot (quick overview mode) |
+| `--write-plot-data` | Also write the data drawn in each plot as a CSV file next to it (same name, `.csv`); see [Results](results.md#plotted-data-as-csv) |
 | `--single-result KEY CSV_NAME PLOT_NAME PLOT_TYPE SUBPLOTS_PER_ROW LEGEND_POSITION` | Process a single result (overrides `--config-path`). Use `"null"` for None values |
 | `--debug` | Enable debug output |
 
@@ -339,6 +341,7 @@ python scenario_results.py [DB_URL] [options]
 | `--plot-file-format FORMAT` | File format for plots: `png` or `svg` |
 | `--shared-legend` | Use shared legend across subplots |
 | `--only-first-file-per-plot` | Only produce the first file for each plot |
+| `--write-plot-data` | Also write the data drawn in each plot, dispatch plots included, as a CSV file next to it; see [Results](results.md#plotted-data-as-csv) |
 | `--show-plots` | Display plots interactively in addition to saving |
 
 ### Examples

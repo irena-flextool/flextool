@@ -506,12 +506,15 @@ def build_line_figures(
     color_template: dict | None = None,
     category: str | None = None,
     entity_class: str | None = None,
+    keep_plot_data: bool = False,
 ) -> tuple[list[tuple[str, 'plt.Figure']], int]:
     """Build line-plot Figures and return them without saving or closing.
 
     Returns (figures, total_file_count) where figures is a list of
     (batch_title, Figure) pairs -- one per file batch.
     When only_file_index is set, only that batch is built.
+    With *keep_plot_data*, each Figure carries the drawn ``(subplot_title, frame)``
+    list as ``flextool_plot_batch`` (a reference, no copy) for its CSV.
     """
     # Convert level indices to level names
     if isinstance(df_plot.columns, pd.MultiIndex):
@@ -589,6 +592,8 @@ def build_line_figures(
             period_labels=period_labels,
             expected_x_length=expected_x_length,
         )
+        if keep_plot_data:
+            fig.flextool_plot_batch = batch
         result.append((batch_title, fig))
     return result, total_file_count
 
@@ -868,12 +873,15 @@ def build_stack_figures(
     color_template: dict | None = None,
     category: str | None = None,
     entity_class: str | None = None,
+    keep_plot_data: bool = False,
 ) -> tuple[list[tuple[str, 'plt.Figure']], int]:
     """Build stacked-area Figures and return them without saving or closing.
 
     Returns (figures, total_file_count) where figures is a list of
     (batch_title, Figure) pairs -- one per file batch.
     When only_file_index is set, only that batch is built.
+    With *keep_plot_data*, each Figure carries the drawn ``(subplot_title, frame)``
+    list as ``flextool_plot_batch`` (a reference, no copy) for its CSV.
     """
     # Convert level indices to level names
     if isinstance(df_plot.columns, pd.MultiIndex):
@@ -947,5 +955,7 @@ def build_stack_figures(
             period_labels=period_labels,
             expected_x_length=expected_x_length,
         )
+        if keep_plot_data:
+            fig.flextool_plot_batch = batch
         result.append((batch_title, fig))
     return result, total_file_count

@@ -913,7 +913,7 @@ def _note_parquet_written(parquet_dir: str) -> None:
     _note_parquet(parquet_dir, written=True)
 
 
-def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, timing_recorder=None, flex_data=None, solution=None, solve_name=None, solve_steps=None, flex_data_provider=None, results_db_url=None):
+def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, write_plot_data=False, timing_recorder=None, flex_data=None, solution=None, solve_name=None, solve_steps=None, flex_data_provider=None, results_db_url=None):
     """
     Write FlexTool outputs to various formats.
 
@@ -1262,7 +1262,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         delete_plots = not bool(single_result)
         results = {k: v.to_frame() if isinstance(v, pd.Series) else v for k, v in results.items()}
         # Load timeline breaks for visual gaps in time-series plots
-        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file, break_times=break_index, color_path=resolve_plot_settings_path(Path(output_location)))
+        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file, break_times=break_index, color_path=resolve_plot_settings_path(Path(output_location)), write_plot_data=write_plot_data)
 
         start = log_time('Plotted figures', start, timing_recorder)
 
