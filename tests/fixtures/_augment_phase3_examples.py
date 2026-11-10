@@ -525,9 +525,24 @@ def _csp_data() -> dict[str, list]:
 # ---------------------------------------------------------------------------
 
 
+def _parts() -> tuple[dict[str, list], ...]:
+    return (_must_run_data(), _co2_trajectory_data(), _desalination_data(), _csp_data())
+
+
+# What this script adds to tests.json, for builders that start from tests.json
+# and must not carry the Phase 3 examples (regen_lh2_three_region.py).
+ADDED_ALTERNATIVES: tuple[str, ...] = tuple(
+    row[0] for part in _parts() for row in part["alternatives"])
+ADDED_ENTITIES: tuple[tuple[str, tuple[str, ...]], ...] = tuple(
+    (row[0], (row[1],) if isinstance(row[1], str) else tuple(row[1]))
+    for part in _parts() for row in part["entities"])
+ADDED_SCENARIOS: tuple[str, ...] = tuple(
+    name for part in _parts() for name in part["scenarios"])
+
+
 def _import(db_path: Path) -> None:
     url = f"sqlite:///{db_path.resolve().as_posix()}"
-    parts = (_must_run_data(), _co2_trajectory_data(), _desalination_data(), _csp_data())
+    parts = _parts()
     with open_database_mapping(url) as db:
         existing_scenarios = {s["name"] for s in db.find_scenarios()}
         for part in parts:

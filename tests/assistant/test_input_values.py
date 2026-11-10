@@ -20,7 +20,7 @@ import pytest
 from flextool.assistant.inputs._values import RUN_TIME_NOTE
 from flextool.assistant.registry import call_tool
 
-from tests.assistant.conftest import compare_rows
+from tests.assistant.conftest import compare_rows, fixture_count
 
 
 def _call(ctx, tool: str, **args) -> dict:
@@ -181,8 +181,8 @@ def test_unknown_names_answer_with_similar_ones(ctx) -> None:
     assert not out.ok and "coal_plant" in out.message
     out = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameter": "existing",
                                            "entity": ["coal_plant"]})
-    # tests.json has 69 scenarios.
-    assert not out.ok and out.message.startswith('The input source "tests.sqlite" has 69 scenarios')
+    assert not out.ok and out.message.startswith(
+        f'The input source "tests.sqlite" has {fixture_count("scenarios")} scenarios')
 
 
 def test_get_entity_gives_each_value_the_scenario_sets(ctx) -> None:

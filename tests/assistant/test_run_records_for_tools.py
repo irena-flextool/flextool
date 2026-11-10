@@ -26,7 +26,7 @@ from flextool.assistant.registry import all_tools, call_tool
 from flextool.assistant.results import _runs
 from flextool.run_record import read_status_file, write_status_atomic
 
-from tests.assistant.conftest import fail_with, make_project, record_run, succeed, write_parquet
+from tests.assistant.conftest import fail_with, make_project, record_run, succeed, fixture_count, write_parquet
 
 
 def _call(ctx, tool: str, **args) -> dict:
@@ -93,8 +93,8 @@ def test_list_sources(ctx) -> None:
     (source,) = _call(ctx, "list_sources")["sources"]
     assert (source["name"], source["number"], source["kind"], source["path"]) == (
         "tests.sqlite", 1, "sqlite", "input_sources/tests.sqlite")
-    # tests.json has 69 scenarios; the database is migrated to this FlexTool.
-    assert len(source["scenarios"]) == 69 and source["scenarios_note"] is None
+    # Every scenario of tests.json; the database is migrated to this FlexTool.
+    assert len(source["scenarios"]) == fixture_count("scenarios") and source["scenarios_note"] is None
     assert (source["database_version"], source["version_status"]) == (FLEXTOOL_DB_VERSION, "current")
     assert source["conversion"] is None and source["behaviour_notices"] == []
 

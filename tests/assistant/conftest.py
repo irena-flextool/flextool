@@ -227,8 +227,9 @@ def ctx(assistant_project: Path):
 
 
 #: The many-runs project (agent feedback 2026-11-09, Cycle 1): one run folder ``<scenario>_1`` for each of the
-#: first 67 scenarios of ``tests/fixtures/tests.json`` (in the file's order): the first 43 hold a result file but no
-#: run record (an older FlexTool), the next 20 succeeded, the last 4 failed.
+#: first 67 scenarios of ``tests/fixtures/tests.json`` (in the file's order, leaving out the Phase 3 how-to
+#: examples of ``_augment_phase3_examples.py``): the first 43 hold a result file but no run record (an older
+#: FlexTool), the next 20 succeeded, the last 4 failed.
 MANY_RUNS = 67
 MANY_NO_RECORD = 43
 MANY_SUCCEEDED = 20
@@ -238,11 +239,23 @@ MANY_COST_UNITS = tuple(f"u{i:02d}" for i in range(1, 17))
 MANY_COST_CATEGORIES = tuple(f"category {i:02d}" for i in range(1, 13))
 
 
-def many_run_scenarios() -> list[str]:
+def fixture_count(section: str, entity_class: str | None = None) -> int:
+    """How many scenarios (``"scenarios"``) or entities of *entity_class* (``"entities"``) tests.json has."""
     import json
 
+    rows = json.loads((FIXTURES / "tests.json").read_text(encoding="utf-8"))[section]
+    return sum(1 for r in rows if entity_class is None or r[0] == entity_class)
+
+
+def many_run_scenarios() -> list[str]:
+    import importlib.util
+    import json
+
+    spec = importlib.util.spec_from_file_location("_augment_phase3_examples", FIXTURES / "_augment_phase3_examples.py")
+    augment = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(augment)
     data = json.loads((FIXTURES / "tests.json").read_text(encoding="utf-8"))
-    return [s[0] for s in data["scenarios"]][:MANY_RUNS]
+    return [s[0] for s in data["scenarios"] if s[0] not in augment.ADDED_SCENARIOS][:MANY_RUNS]
 
 
 def _write_costs(folder: Path, scenario: str, scale: float) -> None:
