@@ -120,6 +120,8 @@ def run(
         validate_timeline_timestep_duration,
         validate_node_inflow_not_period,
         validate_time_series_keys,
+        validate_period_keys,
+        database_time_facts,
         _scenario_time_vocab,
         validate_ladder_methods,
         validate_group_output_memberships,
@@ -198,7 +200,8 @@ def run(
         validate_timeline_timestep_duration(db)
         time_vocab = _scenario_time_vocab(backend)
         validate_node_inflow_not_period(backend, time_vocab)
-        validate_time_series_keys(backend, time_vocab)
+        validate_time_series_keys(backend, time_vocab, whole_db.get("time"))
+        validate_period_keys(backend, whole_db.get("time"))
         validate_profile_links(db, whole_db.get("profile_alternatives"))
         validate_basic_sanity(db, {step for steps in time_vocab[1].values() for step in steps})
         validate_zero_conversion_coeff(db)
@@ -331,6 +334,7 @@ def run(
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
             whole_db["profile_alternatives"] = value_alternatives(db, "profile", "profile")
+            whole_db["time"] = database_time_facts(db)
             if scen_config is not None:
                 api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
             os.makedirs(wf / "input", exist_ok=True)

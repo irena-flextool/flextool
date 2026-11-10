@@ -2958,9 +2958,33 @@ def broadcast_to_period(
     # carries Enum d after :func:`apply_derived_a` runs) doesn't trip
     # over Utf8-vs-Enum on the ``d`` (or entity) axis.  See the matching
     # comment in :func:`broadcast_to_period_time`.
+    #
+    # Failed-cast guard (item 65; mirrors the §3.4 guard of
+    # :func:`broadcast_to_period_time`): ``cast_frame_axes`` runs with
+    # ``strict=False``, so a ``period`` token outside the model's Enum
+    # vocabulary becomes ``null``, and the MAP_PERIOD split below reads a
+    # null ``d`` as a scalar default and broadcasts it over every active
+    # period.  Drop the rows whose ``period`` was non-null before the cast
+    # and null after (DEBUG log); never treat them as a scalar.  The input
+    # check (``validate_period_keys``) stops a mistyped DB key before this
+    # runs, so for valid data nothing is dropped (byte-for-byte no-op).
+    _has_period = "period" in lf.collect_schema().names()
+    if _has_period:
+        lf = lf.with_columns(pl.col("period").is_null().alias("__period_was_null"))
     _enums = get_global_axis_enums()
     if _enums is not None:
         lf = cast_frame_axes(lf, _enums)
+        if _has_period:
+            _failed = (~pl.col("__period_was_null")) & pl.col("period").is_null()
+            if _LOGGER.isEnabledFor(logging.DEBUG):
+                _n = lf.select(_failed.sum().alias("n")).collect().item()
+                if _n:
+                    _LOGGER.debug(
+                        "broadcast_to_period: dropped %d row(s) with unknown/inactive "
+                        "'period' token (failed Enum cast)", _n)
+            lf = lf.filter(~_failed)
+    if _has_period:
+        lf = lf.drop("__period_was_null")
 
     shape = resolved.shape
     if shape == Shape.SCALAR:

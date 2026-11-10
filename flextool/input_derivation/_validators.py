@@ -24,11 +24,13 @@ monolith; Step 2.5 item 6 extracted them here.
 """
 from __future__ import annotations
 
+import difflib
 import functools
 import json
 import logging
 import re
 from collections.abc import Iterable
+from dataclasses import dataclass
 
 import spinedb_api as api
 
@@ -50,6 +52,9 @@ __all__ = [
     "validate_output_min_coeff",
     "validate_node_inflow_not_period",
     "validate_time_series_keys",
+    "validate_period_keys",
+    "database_time_facts",
+    "DatabaseTimeFacts",
     "validate_profile_links",
     "validate_zero_conversion_coeff",
     "validate_basic_sanity",
@@ -73,33 +78,84 @@ def _get_commodity_price_methods(db) -> dict[str, str]:
     return out
 
 
+def _str_leaves(value, out: list[str]) -> None:
+    """Append the string values of a (nested) Map, outer to inner, to ``out``."""
+    if isinstance(value, api.Map):
+        for sub in value.values:
+            _str_leaves(sub, out)
+    elif isinstance(value, str):
+        out.append(value)
+
+
 def validate_timeline_timestep_duration(db) -> None:
-    """Raise FlexToolConfigError if any timeline entity is missing its
-    ``timestep_duration`` map.  Without it, ``step_duration`` silently
-    falls to 0 throughout the model and every time-weighted quantity
-    (balances, costs, ramps) collapses to zero.  There is no sensible
-    default, so the value must be present on every timeline.
+    """Raise FlexToolConfigError when a timeline that a solve uses has no ``timestep_duration``, or a step of
+    0 h or less (audit bug 8).
+
+    Without durations ``step_duration`` silently falls to 0 and every time-weighted quantity (balances, costs,
+    ramps) collapses to zero; a step of 0 h or less does the same for that step.  Only the used timelines are
+    checked: the timelines of the timesets named in the scenario's ``solve.period_timeset`` values (any solve
+    entity of the scenario).  A timeline no solve uses (a spare one kept in the database) needs no durations: the
+    timeline reader builds the timelines from the ``timestep_duration`` values, so it is invisible to the model.
+    When no solve has a ``period_timeset`` (the implicit time-structure rules), the timelines named by any
+    ``timeset.timeline`` are checked, or every timeline when no timeset names one.
+
+    ``db`` is the scenario-filtered DatabaseMapping.  All the offenders go into one error.
     """
     timelines = [ent["entity_byname"][0]
                  for ent in db.find_entities(entity_class_name="timeline")]
     if not timelines:
         return
-    have_duration: set[str] = set()
+    timeline_of: dict[str, str] = {}
+    for pv in db.find_parameter_values(entity_class_name="timeset", parameter_definition_name="timeline"):
+        if pv["type"] is not None:
+            timeline_of[pv["entity_byname"][0]] = str(pv["parsed_value"])
+    # used timeline -> (timeset, solve) that first names it
+    used: dict[str, tuple[str, str] | None] = {}
+    any_period_timeset = False
+    for pv in db.find_parameter_values(entity_class_name="solve", parameter_definition_name="period_timeset"):
+        if pv["type"] is None:
+            continue
+        any_period_timeset = True
+        names: list[str] = []
+        _str_leaves(_parsed_then_evict(pv), names)
+        for timeset in names:
+            timeline = timeline_of.get(timeset)
+            if timeline is not None:
+                used.setdefault(timeline, (timeset, pv["entity_byname"][0]))
+    if not any_period_timeset:
+        named = set(timeline_of.values())
+        used = {t: None for t in timelines if not named or t in named}
+    durations: dict[str, list] = {}
     for pv in db.find_parameter_values(
         entity_class_name="timeline",
         parameter_definition_name="timestep_duration",
     ):
-        if pv["type"] is None:
+        if pv["type"] is None or pv["entity_byname"][0] not in used:
             continue
-        have_duration.add(pv["entity_byname"][0])
-    missing = [t for t in timelines if t not in have_duration]
+        durations.setdefault(pv["entity_byname"][0], []).append(pv)
+
+    def why(timeline: str) -> str:
+        via = used[timeline]
+        return f" (timeset '{via[0]}' of solve '{via[1]}')" if via else ""
+
+    missing = [t for t in timelines if t in used and t not in durations]
+    errors: list[str] = []
     if missing:
-        raise FlexToolConfigError(
+        errors.append(
             "timeline 'timestep_duration' is not set for: "
-            + ", ".join(sorted(missing))
-            + ".  Every timeline needs a Map(timestep -> duration_in_hours); "
-              "without it all time-weighted quantities collapse to zero."
-        )
+            + ", ".join(f"{t}{why(t)}" for t in sorted(missing))
+            + ".  Every timeline a solve uses needs a Map(timestep -> duration_in_hours); "
+              "without it all time-weighted quantities collapse to zero.")
+    for timeline in sorted(durations):
+        for pv in durations[timeline]:
+            hit = _first_bad(_parsed_then_evict(pv), lambda v: v <= 0.0)
+            if hit is not None:
+                errors.append(
+                    f"timeline '{timeline}'{why(timeline)} timestep_duration = {hit[1]:g} "
+                    f"{_where(pv['alternative_name'], hit[0])}: a time step must last more than 0 hours (a step "
+                    "of 0 h or less weighs its flows, costs and balances by 0 or less).")
+    if errors:
+        raise FlexToolConfigError("\n".join(errors))
 
 
 def _pv_rows(src, entity_class: str, parameter: str) -> Iterable:
@@ -262,16 +318,24 @@ class _DatabaseTimeVocab:
     an unnamed map level keyed by periods of another scenario (a period level: that entity gets no value in this
     solve, docs/reference/entities_and_time.md), and a series keyed on the steps of a timeline that is not one of
     this scenario's.  ``src`` is the scenario-filtered ``SpineDBBackend``; any other ``src`` (or a backend without
-    a scenario) is taken as the whole database already.
+    a scenario) is taken as the whole database already.  ``whole`` (:func:`database_time_facts`, read by
+    ``input_derivation.run`` before the scenario filter) gives the whole database's facts without a second open.
     """
 
-    def __init__(self, src, periods: set[str], timelines: dict[str, list[str]]) -> None:
+    def __init__(self, src, periods: set[str], timelines: dict[str, list[str]],
+                 whole: "DatabaseTimeFacts | None" = None) -> None:
         self._src = src
         self._loaded = False
         self.periods: set[str] = set(periods)
         # (timeline, alternative, steps) of the timestep_duration values that are not this scenario's timelines
         self.other_timelines: list[tuple[str, str, frozenset[str]]] = []
         self._own = {name: frozenset(steps) for name, steps in timelines.items()}
+        if whole is not None:
+            # Read by ``input_derivation.run`` before the scenario filter: nothing to open.
+            self._loaded = True
+            self.periods |= whole.periods
+            self.other_timelines = [(name, alt, steps) for name, alt, steps in whole.timelines
+                                    if self._own.get(name) != steps]
 
     def _load(self) -> None:
         if self._loaded:
@@ -487,7 +551,8 @@ def _off_keys_hint(keys: list[str], lower_steps: dict[str, str], timelines: dict
     return ""
 
 
-def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] | None = None) -> None:
+def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] | None = None,
+                              whole: "DatabaseTimeFacts | None" = None) -> None:
     """Warn about time-series keys that are not a time step of any timeline; error when none of a value's are (#205).
 
     The readers join a time series with the solve's time steps, so a key that is not a time step of a timeline is
@@ -515,7 +580,8 @@ def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] 
     holds the database mapping's own bytes, so it adds no copy of them. The whole database's periods and timelines
     are read only when a value needs them (:class:`_DatabaseTimeVocab`).
 
-    ``vocab`` is the ``(periods, timelines)`` of :func:`_scenario_time_vocab` (built here when not given).
+    ``vocab`` is the ``(periods, timelines)`` of :func:`_scenario_time_vocab` (built here when not given);
+    ``whole`` the whole database's facts (:func:`database_time_facts`), when the caller read them.
     """
     from flextool.engine.input._param_shapes import PARAM_ALLOWED_SHAPES
     from flextool.engine.input._solve_step_aggregation import TIME_AGGREGATION
@@ -529,7 +595,7 @@ def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] 
     periods_b = frozenset(p.encode() for p in periods)
     base_b = frozenset(t.encode() for t in timesteps) | _RAW_STRUCTURE | {b"time", b"period", b"t"}
     unions: dict[frozenset[bytes], frozenset[bytes]] = {}
-    database = _DatabaseTimeVocab(src, periods, timelines)
+    database = _DatabaseTimeVocab(src, periods, timelines, whole)
     lower_steps: dict[str, str] | None = None
     # raw value -> True (fast path: nothing off), or per allowed shapes -> the value's time keys (in order)
     fast_seen: dict[bytes, bool] = {}
@@ -1723,5 +1789,291 @@ def validate_basic_sanity(db, timesteps: set[str] | None = None) -> None:
 
     if errors:
         raise FlexToolConfigError("Input values out of range:\n  " + "\n  ".join(errors))
+    for text in warnings:
+        _warn(text)
+
+
+# ---- period keys (items 46 / 65) ------------------------------------------
+
+
+@dataclass(frozen=True)
+class DatabaseTimeFacts:
+    """The period and time-step names of the **whole** database (every alternative, so every scenario), read by
+    ``input_derivation.run`` from the mapping it already fetched, before the scenario filter (no second open).
+
+    ``periods``: :func:`_period_universe` of the whole database; ``timesteps``: every key of every
+    ``timeline.timestep_duration``; ``timelines``: ``(timeline, alternative, steps)`` per ``timestep_duration``
+    value (for :class:`_DatabaseTimeVocab`)."""
+
+    periods: frozenset[str]
+    timesteps: frozenset[str]
+    timelines: tuple[tuple[str, str, frozenset[str]], ...]
+
+
+def _period_universe(src) -> set[str]:
+    """Every period name ``src`` defines: the periods of :func:`_scenario_periods` (``solve.period_timeset`` keys,
+    the solve period arrays / maps), the keys of ``solve.years_represented``, the first-level keys of
+    ``solve.stochastic_branches`` (the branch-anchor periods; the inner levels are branch names, flags and analysis
+    times) and ``model.periods_available`` (periods kept in the data that no solve names)."""
+    periods = _scenario_periods(src)
+    for par in ("years_represented", "stochastic_branches"):
+        for pv in _pv_rows(src, "solve", par):
+            if pv["type"] == "map":
+                periods.update(str(k) for k in _parsed_then_evict(pv).indexes)
+    for pv in _pv_rows(src, "model", "periods_available"):
+        if pv["type"] == "array":
+            periods.update(str(v) for v in _parsed_then_evict(pv).values)
+        elif pv["type"] == "map":
+            periods.update(str(k) for k in _parsed_then_evict(pv).indexes)
+    return periods
+
+
+class _RowsOf:
+    """The parameter values of a few ``(class, parameter)`` keys of a DatabaseMapping, gathered in one pass (one
+    ``find_parameter_values`` per key would scan the whole value table each time); :func:`_pv_rows` reads it."""
+
+    def __init__(self, db, keys: Iterable[tuple[str, str]]) -> None:
+        wanted = {}
+        for cls, par in keys:
+            for item in db.find_parameter_definitions(entity_class_name=cls, name=par):
+                wanted[item["id"]] = (cls, par)
+        self._rows: dict[tuple[str, str], list] = {key: [] for key in wanted.values()}
+        if wanted:
+            for pv in db.find_parameter_values():
+                key = wanted.get(pv["parameter_definition_id"])
+                if key is not None:
+                    self._rows[key].append(pv)
+
+    def parameter_value_items(self, entity_class: str, parameter: str) -> list:
+        return self._rows.get((entity_class, parameter), [])
+
+
+def database_time_facts(db) -> DatabaseTimeFacts:
+    """:class:`DatabaseTimeFacts` of ``db`` (an unfiltered DatabaseMapping whose values are fetched)."""
+    db = _RowsOf(db, [("timeline", "timestep_duration"), ("model", "periods_available")]
+                 + [("solve", par) for par in ("period_timeset", "years_represented", "stochastic_branches",
+                                               *_SOLVE_PERIOD_PARAMS)])
+    timesteps: set[str] = set()
+    timelines: list[tuple[str, str, frozenset[str]]] = []
+    for pv in _pv_rows(db, "timeline", "timestep_duration"):
+        if pv["type"] not in ("map", "time_series"):
+            continue
+        steps = frozenset(str(k) for k in _parsed_then_evict(pv).indexes)
+        timesteps |= steps
+        timelines.append((pv["entity_byname"][0], pv["alternative_name"], steps))
+    return DatabaseTimeFacts(frozenset(_period_universe(db)), frozenset(timesteps), tuple(timelines))
+
+
+@functools.lru_cache(maxsize=1)
+def _period_axis_params() -> dict[tuple[str, str], bool]:
+    """``{(class, parameter): takes a time map}`` of the parameters with a period axis: ``PERIOD_TIME_PARAMS`` and
+    every parameter of a ``_PARAMETER_SPECS`` entry with a ``period`` column (``existing``, ``lifetime``, ...),
+    except the ``solve`` / ``model`` time structure and the time-only ``timeset_weights``.  A parameter takes a time map when its allowed shapes have
+    one, or (spec-only parameters) when a spec without a ``period`` column reads it by ``time``.  Maps keyed by
+    something else (``constraint_flow_coeff`` by constraint, ``delay`` by hours) are not in the list."""
+    from flextool.engine.input._param_shapes import PARAM_ALLOWED_SHAPES, PERIOD_TIME_PARAMS, Shape
+    from flextool.input_derivation._specs import _PARAMETER_SPECS
+
+    out: dict[tuple[str, str], bool] = {
+        key: bool({Shape.MAP_TIME, Shape.MAP_PERIOD_TIME} & set(PARAM_ALLOWED_SHAPES[key]))
+        for key in PERIOD_TIME_PARAMS
+        if {Shape.MAP_PERIOD, Shape.MAP_PERIOD_TIME} & set(PARAM_ALLOWED_SHAPES[key])}
+    by_time: set[tuple[str, str]] = set()
+    by_period: set[tuple[str, str]] = set()
+    for spec in _PARAMETER_SPECS:
+        header = spec["header"].split(",") if isinstance(spec["header"], str) else list(spec["header"])
+        for cls, par in spec["cl_pars"]:
+            if "period" in header:
+                by_period.add((cls, par))
+            elif "time" in header:
+                by_time.add((cls, par))
+    for key in by_period:
+        if key[0] not in ("solve", "model") and key not in out:
+            out[key] = key in by_time
+    return out
+
+
+# The first key of a Map's database JSON (the outermost level's: nested levels sit inside its data).
+_RAW_FIRST_KEY = re.compile(rb'"data"\s*:\s*\[\s*\[\s*"([^"\\]*)"')
+_DIGIT_RUN = re.compile(r"\d+")
+
+
+def _digit_run(key: str) -> str:
+    """The longest run of digits in ``key`` ('' when none): '2030' of 'p2030x', '2020' of '2020.0'."""
+    runs = _DIGIT_RUN.findall(key)
+    return max(runs, key=len) if runs else ""
+
+
+def _period_suggestions(key: str, missing: list[str], rest: list[str]) -> list[str]:
+    """Periods ``key`` was probably meant to be: first among the scenario periods the map misses (``missing``),
+    then among the other periods (``rest``); by the same longest digit run, else by spelling
+    (``difflib.get_close_matches``, cutoff 0.6).  Up to 3."""
+    run = _digit_run(key)
+    if run:
+        for pool in (missing, rest):
+            hits = [p for p in pool if _digit_run(p) == run]
+            if hits:
+                return hits[:3]
+    for pool in (missing, rest):
+        hits = difflib.get_close_matches(key, pool, n=3, cutoff=0.6)
+        if hits:
+            return hits
+    return []
+
+
+def _did_you_mean(bad: list[str], keys: list[str], scenario_periods: set[str], universe: set[str]) -> str:
+    """`` Did you mean 'p2020'?`` for the shown offending keys (empty when no period is close)."""
+    missing = sorted(scenario_periods.difference(keys))
+    rest = sorted(universe.difference(missing))
+    parts: list[str] = []
+    for key in bad:
+        hits = _period_suggestions(key, missing, rest)
+        if not hits:
+            continue
+        text = repr(hits[0]) if len(hits) == 1 else "one of " + ", ".join(repr(h) for h in hits)
+        parts.append(text if len(bad) == 1 else f"{text} (for {key!r})")
+    return f" Did you mean {', '.join(parts)}?" if parts else ""
+
+
+def _shown(keys: list[str]) -> str:
+    return ", ".join(repr(k) for k in keys[:3]) + (", …" if len(keys) > 3 else "")
+
+
+def _period_key_finding(raw: bytes, takes_time: bool, is_existing: bool, universe: set[str],
+                        timesteps: frozenset[str] | set[str], timesteps_b: frozenset[bytes]):
+    """``(code, level keys, offending keys)`` of one Map value of a period-axis parameter, or None when its keys
+    are fine (or not period keys; rank 3 and deeper are not checked).  A value of a time-capable parameter whose
+    first key is a time step is a time series: it is never parsed (one regex on the database JSON).  Codes: ``unknown`` (keys that are no period), ``time`` (a time-step key on a
+    parameter that cannot vary over time), ``number`` (numeric keys), ``nothing`` (a silent map of a time-capable
+    parameter whose keys are neither periods nor time steps).  See :func:`validate_period_keys`."""
+    from flextool.engine.input._param_shapes import _normalise_label
+
+    if takes_time:
+        first = _RAW_FIRST_KEY.search(raw)
+        if first is not None and first.group(1) in timesteps_b:
+            return None  # a time series (its off-timeline keys are validate_time_series_keys')
+    value = json.loads(raw)
+    if not isinstance(value, dict):
+        return None
+    levels = _value_levels(value)
+    rank = len(levels)
+    if rank not in (1, 2):
+        return None
+    label = _normalise_label(levels[0][0])
+    keys = list(dict.fromkeys(levels[0][1]))
+    if not keys:
+        return None
+    if value.get("index_type") == "float":
+        return None if is_existing else ("number", keys, keys)
+
+    def unknown():
+        bad = [k for k in keys if k not in universe]
+        return ("unknown", keys, bad) if bad else None
+
+    if label == "period":
+        return unknown()
+    if rank == 2:
+        # The outer level of a period x time map (a silent outer level reads as period when its keys hit periods
+        # and no time step; else it is a branch or time level, not checked).
+        if label is None and takes_time and not universe.isdisjoint(keys) and timesteps.isdisjoint(keys):
+            return unknown()
+        return None
+    if label in ("time", "t"):
+        return None if takes_time or is_existing else ("time", keys, keys)
+    if label is not None:
+        return None
+    steps = [k for k in keys if k in timesteps]
+    if steps:
+        return None if takes_time or is_existing else ("time", keys, steps)
+    if takes_time and universe.isdisjoint(keys):
+        return ("nothing", keys, keys)
+    return unknown()
+
+
+def validate_period_keys(src, whole: DatabaseTimeFacts | None = None) -> None:
+    """Stop the run on map keys of a period-axis parameter that are not periods (items 46 / 65).
+
+    The readers join a period map with the solve's periods, so a mistyped key (``y2020`` for ``p2020``, ``2020``,
+    ``p2030x``) is dropped without a word: ``existing`` became 0, ``startup_cost`` vanished, an extra key of
+    ``co2_max_period`` was ignored.  Checked once per run (``input_derivation.run``, before the parameter read):
+    the explicit values of the period-axis parameters (:func:`_period_axis_params`; maps keyed by a constraint or
+    by hours are not period maps), rank 1 and 2 maps (rank 2: the outer level only; rank 3, the stochastic and
+    ladder maps, is out of scope), time series.
+
+    Period universe: the periods of the **whole** database (``whole``, :func:`database_time_facts`), so a key
+    that is a period of another scenario's solve, or listed in ``model.periods_available``, is fine.  Time steps:
+    every ``timestep_duration`` key of the whole database.  Rules:
+
+    * a level labelled ``period``: every key not in the universe → error;
+    * a silent (``x``) rank-1 map of a parameter that cannot vary over time: a time-step key → error (``existing``
+      is :func:`validate_basic_sanity`'s), any other key not in the universe → error;
+    * a silent map of a parameter that takes a time map: a key that is a time step makes it a time series (not
+      checked here); else keys hitting the periods make it a period map (the other keys → error); no key a period
+      → warning (the value is not used);
+    * a ``time`` / ``t`` level or a time series on a parameter that cannot vary over time → error;
+    * numeric keys (2020) → error (periods are names; such a value crashed the read).
+
+    Each error names the entity, the parameter, the alternative and up to 3 keys, with the closest period
+    (:func:`_period_suggestions`).  Without ``whole`` (a source that is not a URL) the universe is the scenario's
+    and the errors are printed as warnings.  No period at all (no solve periods, no ``periods_available``) → no
+    check (the time-structure checks report that).  Each distinct raw value is classified once.
+    """
+    scenario_periods = _period_universe(src)
+    universe = set(scenario_periods) | (set(whole.periods) if whole is not None else set())
+    if not universe:
+        return
+    _p, timelines = _scenario_time_vocab(src)
+    timesteps: set[str] = {step for steps in timelines.values() for step in steps}
+    if whole is not None:
+        timesteps |= whole.timesteps
+    timesteps_b = frozenset(t.encode() for t in timesteps)
+    seen: dict[tuple, object] = {}
+    errors: list[str] = []
+    warnings: list[str] = []
+    for (cls, par), takes_time in sorted(_period_axis_params().items()):
+        is_existing = par == "existing"
+        for pv in _pv_rows(src, cls, par):
+            kind = pv["type"]
+            where = (f"{cls} '{', '.join(str(b) for b in pv['entity_byname'])}', parameter '{par}' "
+                     f"(alternative '{pv['alternative_name']}')")
+            if kind == "time_series":
+                if not takes_time and not is_existing:
+                    errors.append(f"{where} is a time series, but {par} cannot vary over time. Use a constant or "
+                                  "a map keyed by period (p2020: ..., p2030: ...).")
+                continue
+            if kind != "map":
+                continue
+            raw = pv["value"]
+            if isinstance(raw, str):
+                raw = raw.encode()
+            cache_key = (raw, takes_time, is_existing)
+            finding = seen.get(cache_key, False)
+            if finding is False:
+                finding = seen[cache_key] = _period_key_finding(raw, takes_time, is_existing, universe, timesteps,
+                                                                timesteps_b)
+            if finding is None:
+                continue
+            code, keys, bad = finding
+            if code == "unknown":
+                one = len(bad) == 1
+                errors.append(
+                    f"{where}: map key{'' if one else 's'} {_shown(bad)} {'is not a period' if one else 'are not periods'}"
+                    f" of the model.{_did_you_mean(bad[:3], keys, scenario_periods, universe)}")
+            elif code == "time":
+                errors.append(f"{where}: map key {bad[0]!r} is a time step, but {par} cannot vary over time. Use a "
+                              "constant or a map keyed by period (p2020: ..., p2030: ...).")
+            elif code == "number":
+                errors.append(f"{where}: map keys are numbers ({_shown(bad)}); periods are names such as "
+                              f"'p2020'.{_did_you_mean(bad[:1], [], scenario_periods, universe)}")
+            else:
+                warnings.append(f"{where}: map keys ({_shown(keys)}) are neither periods nor time steps of the "
+                                "model; the value is not used.")
+    if errors:
+        text = ("Map keys that are not periods of the model:\n  " + "\n  ".join(errors)
+                + "\nIf a key is a period of data you keep for other models, add it to model.periods_available.")
+        if whole is None:
+            _warn(text)
+        else:
+            raise FlexToolConfigError(text)
     for text in warnings:
         _warn(text)

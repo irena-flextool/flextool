@@ -22,6 +22,18 @@
   Warnings: `availability` above 1, a profile above 1 on an *upper_limit* / *fixed* unit link, connection
   `efficiency` above 1 and `virtual_unitsize` at or below 0. *Model parameters → Parameter groups and conventions*
   has a new section *Input checks* listing them. Valid data runs as before.
+- **Fix: a mistyped period key was dropped without a word (items 46, 65).** A period map keyed *y2020* in a
+  model whose period is *p2020* gave `existing` 0, an extra key such as *p2030x* was ignored, and `startup_cost`
+  keyed by time steps or by 2020 vanished or crashed. Now a map key of a period parameter that is not a period of
+  the database (any scenario's solve periods, `years_represented`, `stochastic_branches` or
+  `model.periods_available`) stops the run with an error that names the entity, the parameter, the alternative and
+  the key, and suggests the closest period; data that covers more years than the solves name goes in
+  `model.periods_available`. A period parameter that cannot vary over time keyed by time steps, and numeric keys,
+  are errors too; maps keyed by constraint names are not checked. The period-only reader also drops an unknown
+  period token instead of spreading it over every period.
+- **Fix: a spare timeline without `timestep_duration` stopped the run (audit bug 8).** Only the timelines a
+  solve uses (through the timesets of its `period_timeset`) need durations now; a used timeline without them, or
+  with a step of 0 hours or less, stops the run with an error naming the timeline, the timeset and the solve.
 - **Fix: time series values whose time step is not on any timeline were dropped without a word.** Hourly data
   on a 3-hour timeline used every third value, keys past the end of the timeline or in a different case (`T0001`)
   were left out, and a series with no key on the timeline fell back to the parameter's default. Now a warning,

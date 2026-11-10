@@ -1,11 +1,13 @@
-"""The input checks of #104 / #213 / #170 raise nothing on the shipped data.
+"""The input checks of #104 / #213 / #170, items 46 / 65 and audit bug 8 raise nothing on the shipped data.
 
 Every scenario of ``tests/fixtures/tests.json`` and of each canonical JSON (``flextool/schemas/canonical_databases``)
 is read as ``input_derivation.run`` reads it (the profile alternatives from the whole database, then the scenario
-filter) and goes through ``validate_profile_links``, ``validate_basic_sanity`` and
-``validate_zero_conversion_coeff`` (no solve).  None may raise, and none may warn: every zero
+filter) and goes through ``validate_profile_links``, ``validate_basic_sanity``,
+``validate_zero_conversion_coeff``, ``validate_period_keys`` (with the whole database's periods) and
+``validate_timeline_timestep_duration`` (no solve).  None may raise, and none may warn: every zero
 ``conversion_flow_coeff`` of these files is tied by a user constraint, and the negative ``existing`` of the
-anti_energy_plant example is not reported.
+anti_energy_plant example is not reported, and the maps keyed by constraint names (``constraint_flow_coeff``)
+are not period maps.
 """
 from __future__ import annotations
 
@@ -46,6 +48,7 @@ def _check(url: str, scenario: str) -> str:
         db.fetch_all("entity")
         db.fetch_all("parameter_value")
         alternatives = v.value_alternatives(db, "profile", "profile")
+        whole = v.database_time_facts(db)
         api.filters.scenario_filter.scenario_filter_from_dict(
             db, api.filters.scenario_filter.scenario_filter_config(scenario))
         backend = SpineDBBackend.__new__(SpineDBBackend)
@@ -58,6 +61,8 @@ def _check(url: str, scenario: str) -> str:
             v.validate_profile_links(db, alternatives)
             v.validate_basic_sanity(db, {step for steps in timelines.values() for step in steps})
             v.validate_zero_conversion_coeff(db)
+            v.validate_timeline_timestep_duration(db)
+            v.validate_period_keys(backend, whole)
     return out.getvalue()
 
 
