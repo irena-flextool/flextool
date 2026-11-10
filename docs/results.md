@@ -215,16 +215,16 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
 
 `group` entities with `print_indicators = yes` produce indicator tables aggregating flows / inflows / slacks over their member nodes:
 
-- `group` entity `indicator` (period table) — gives a set of indicators for all `node` members:
-    - *Loss of load share* — [0–1] upward slack relative to inflow
-    - *VRE share of demand* — [0–1] share of inflow served by VRE sources
-    - *Excess load share* — [0–1] downward slack relative to inflow
-    - *Curtailed VRE of demand* — [0–1] curtailed VRE relative to inflow
+- `group` entity `indicator` (period table) — gives a set of indicators for all `node` members. Each share is a ratio of two energies summed over the period, weighted by the time-step weights: `share = Σ_t w·X / Σ_t w·Y` (never a sum or an average of the time-step shares):
+    - *Loss of load share* — [0–1] upward slack ÷ inflow over the period
+    - *VRE share of demand* — [0–1] VRE generation into the member nodes ÷ inflow over the period
+    - *Excess load share* — [0–1] downward slack ÷ inflow over the period
+    - *Curtailed VRE of demand* — [0–1] curtailed VRE ÷ inflow over the period (can exceed 1 when the curtailment is larger than the demand)
     - *Annualized inflow* — [MWh] sum of `inflow` to member nodes scaled to a year
-    - *Curtailed VRE of potential VRE* — [0–1] curtailed share of potential VRE
+    - *Curtailed VRE of potential VRE* — [0–1] curtailed VRE ÷ potential VRE generation of the group's VRE units over the period
 - table `nodeGroup_gdt_p` (timestep table, not in the results database) — exposes the timestep-level building blocks of the above: *Loss of load* [MWh/step], *VRE generation* [MWh/step], *Excess load* [MWh/step], *Curtailed VRE* [MWh/step], *Timestep inflow* [MWh/step], *Curtailed VRE of potential VRE* [0–1], *Annualized inflow* [MWh], *VRE share of demand* [0–1]
-- `group` entity `VRE_share_t` parameter — [0–1] share of inflow served by VRE sources at each timestep (one column per node group)
-- table `nodeGroup_VRE_share_d_g` (not in the results database) — [0–1] period-average VRE share
+- `group` entity `VRE_share_t` parameter — [0–1] share of inflow served by VRE sources at each timestep (one column per node group; 0 at a time step without inflow)
+- table `nodeGroup_VRE_share_d_g` (not in the results database) — [0–1] VRE share of the period's inflow: VRE generation ÷ inflow, both summed over the period with the time-step weights (equals *VRE share of demand* above)
 - `group` entity `flow_annualized` parameter — [MWh] annualized sum of `inflow` to member nodes
 - `group` entity `flow_t` parameter — [MWh/step] timestep inflow to member nodes
 

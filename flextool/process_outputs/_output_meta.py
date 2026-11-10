@@ -657,8 +657,8 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
                       "curtailment as shares of demand, the VRE share of demand and the annualized inflow.",
     "nodeGroup_VRE_share_dt_g": "Share of the inflow (demand) of each indicator group covered by VRE units in "
                                 "each time step.",
-    "nodeGroup_VRE_share_d_g": "Share of the inflow (demand) of each indicator group covered by VRE units, "
-                               "averaged over the time steps of the period.",
+    "nodeGroup_VRE_share_d_g": "Share of the period's inflow (demand) of each indicator group covered by VRE "
+                               "units: the VRE energy over the inflow, both summed with the timestep weights.",
     # VRE curtailment and potential
     "unit_VRE_potential_outputNode_dt_ee": "Potential output of each VRE unit to each output node in each time "
                                            "step: capacity times the upper-limit profile.",

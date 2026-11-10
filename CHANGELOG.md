@@ -27,6 +27,15 @@
   design efficiency and `constraint_capacity_coeff`), an optimised design, a gas backup, a plant summary (field
   potential and curtailment, capacity factor, tank cycles, levelised cost) from the existing outputs, and the
   limitations. Five example scenarios `csp_*` in examples.sqlite.
+- **Fix: the period node-group indicators and VRE share were not shares of the period's energy.** *Curtailed VRE
+  of potential VRE* was divided by the inflow instead of the potential VRE generation and, per period, summed over
+  the time steps (so it could exceed 1); *Curtailed VRE of demand* was an average of the time-step shares;
+  `nodeGroup_VRE_share_d_g` was an average of the time-step shares and *VRE share of demand* lost the VRE of a
+  time step without inflow. Every period share (`group` `indicator`, `nodeGroup_VRE_share_d_g`) is now the ratio of
+  the period sums weighted by the time-step weights, so the values of these results change. The VRE share takes
+  the VRE generation into all member nodes, as the indicators do; the time-step VRE share is 0 (not infinite) at a
+  time step without inflow; a realized time step without a time-step weight stops the output processing with an
+  error.
 - **Fix (docs): the CHP how-to gave the coefficient 2 on the electricity output of *coal_chp_fix*;** the example
   has 1 (with −0.5 on heat, so heat = 2 × electricity). The how-to also says how the *coal_chp_extraction*
   alternative builds its operating area.

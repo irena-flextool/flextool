@@ -17,8 +17,68 @@ def _get_group_nodes_with_inflow(s, g: str) -> list[str]:
     return group_nodes
 
 
+def _group_vre_flow(par, s, r, group_nodes) -> pd.Series:
+    """VRE generation into the member nodes of a group [MWh/step].
+
+    Sums ``r.flow_dt`` (MW) over the arcs of the VRE processes whose sink is
+    one of ``group_nodes`` and multiplies by ``step_duration``.  The node-group
+    indicators and ``nodeGroup_VRE_share`` both take the VRE energy from here,
+    so '2. VRE share of demand' and ``nodeGroup_VRE_share_d_g`` agree.
+    """
+    vre_processes = s.process_VRE.get_level_values('process')
+    cols = r.flow_dt.columns
+    vre_cols = cols[
+        cols.get_level_values('sink').isin(group_nodes)
+        & cols.get_level_values('process').isin(vre_processes)
+        & cols.isin(s.process_source_sink_alwaysProcess)
+    ]
+    return r.flow_dt[vre_cols].mul(par.step_duration, axis=0).sum(axis=1)
+
+
+def _realized_timestep_weight(par, dt_index: pd.MultiIndex) -> pd.Series:
+    """``par.timestep_weight`` aligned to the realized ``(period, time)`` steps.
+
+    Raises ``ValueError`` when a realized step has no weight.  A plain
+    ``.mul(weight, axis=0)`` would outer-join and turn such a step into NaN,
+    which ``groupby.sum()`` then skips silently in both the numerator and the
+    denominator of a period share.
+    """
+    w = par.timestep_weight.reindex(dt_index)
+    missing = w.index[w.isna()]
+    if len(missing):
+        shown = ', '.join(f'({d}, {t})' for d, t in list(missing)[:5])
+        more = f' and {len(missing) - 5} more' if len(missing) > 5 else ''
+        raise ValueError(
+            f'Node group results: no timestep weight for the realized time steps {shown}{more}.'
+        )
+    return w
+
+
+def _safe_ratio(num, den):
+    """``num / den`` with 0 where ``den`` is 0 (never ±inf or NaN)."""
+    return (num / den.where(den != 0)).fillna(0.0)
+
+
 def nodeGroup_indicators(par, s, v, r, debug):
-    """Node group indicator results by period and time"""
+    """Node group indicator results by period and time.
+
+    Time-step table ``nodeGroup_gdt_p``: energies in MWh/step and the shares
+    of the step.  Period table ``nodeGroup_gd_p``: every share is a ratio of
+    weighted sums over the period's realized steps,
+    ``share_X[d] = Σ_t w[d,t]·X[d,t] / Σ_t w[d,t]·Y[d,t]`` with
+    ``w = par.timestep_weight``, never a sum or a mean of the step shares:
+
+    - 1. Loss of load share = loss of load / inflow
+    - 2. VRE share of demand = VRE generation / inflow
+    - 3. Excess load share = excess load / inflow
+    - 4. Curtailed VRE of demand = curtailed VRE / inflow
+    - 6. Curtailed VRE of potential VRE = curtailed VRE / potential VRE
+
+    The years represented and ``complete_period_share_of_year`` cancel in
+    each of these ratios (numerator and denominator are from the same
+    period), so a share must not be annualised.  '5. Annualized inflow' is
+    the sum of the dt column '7', which is already weighted.
+    """
 
     results = []
 
@@ -27,9 +87,12 @@ def nodeGroup_indicators(par, s, v, r, debug):
 
     # Get time steps
     dt_index = s.dt_realize_dispatch  # Should be MultiIndex with (period, time)
+    weight = _realized_timestep_weight(par, dt_index)
 
     # Calculate timestep-level results first
     results_dt = []
+    # Weighted energies per (group, period, time) for the period shares
+    weighted_dt = []
 
     for g in s.nodeGroupIndicators:
         group_nodes = (
@@ -48,9 +111,8 @@ def nodeGroup_indicators(par, s, v, r, debug):
         # 2. Sum of annualized inflows [MWh].  Weight each (d, t) by
         # par.timestep_weight (=1.0 with no/uniform timeset_weights →
         # byte-identical) so the annualized inflow matches the cost-weighted
-        # objective.  group_inflow itself stays unweighted: it feeds the
-        # intensive VRE/slack *shares* below where the weight would cancel
-        # anyway, and the raw '5. Timestep inflow' output.
+        # objective.  group_inflow itself stays unweighted: it is the raw
+        # '5. Timestep inflow' output; the period shares weight it below.
         annualized_inflow = group_inflow.mul(par.timestep_weight, axis=0).div(par.complete_period_share_of_year)
 
         # Flow-derived quantities (r.flow_dt, potentialVREgen_dt) and q_state
@@ -61,27 +123,17 @@ def nodeGroup_indicators(par, s, v, r, debug):
         # any step_duration.
         step_dur = par.step_duration
 
-        # 3. VRE share (actual flow)
+        # 3. VRE generation (actual flow) into the group's nodes
+        vre_flow_sum = _group_vre_flow(par, s, r, group_nodes)
+
+        # 4. Potential VRE generation and curtailment
         vre_processes = s.process_VRE.get_level_values('process')
-        vre_cols = r.flow_dt.columns[
-            r.flow_dt.columns.get_level_values('sink').isin(group_nodes) &
-            r.flow_dt.columns.get_level_values('process').isin(vre_processes) &
-            r.flow_dt.columns.isin(s.process_source_sink_alwaysProcess)
-        ]
-        vre_flow_sum = r.flow_dt[vre_cols].mul(step_dur, axis=0).sum(axis=1)
-
-        # VRE share calculation (avoid division by zero)
-        vre_share = vre_flow_sum / group_inflow.where(group_inflow != 0, pd.NA)
-
-        # 4. Curtailed VRE share
         potential_cols = r.potentialVREgen_dt.columns[
             r.potentialVREgen_dt.columns.get_level_values(1).isin(group_nodes) &
             r.potentialVREgen_dt.columns.get_level_values(0).isin(vre_processes)
         ]
         potential_sum = r.potentialVREgen_dt[potential_cols].mul(step_dur, axis=0).sum(axis=1)
         curtailed_vre = (potential_sum - vre_flow_sum).clip(lower=0)
-        curtailed_vre_share = curtailed_vre / group_inflow.where(group_inflow != 0, pd.NA)
-        curtailed_vre / potential_sum
 
         # Filter balance nodes directly from the sets
         balance_set = set(s.node_balance) | set(s.node_balance_period)
@@ -109,30 +161,46 @@ def nodeGroup_indicators(par, s, v, r, debug):
         # post-roll "realized" subset.  Reindex every component series
         # to ``dt_index`` so the per-(period, time) DataFrame below
         # never raises "All arrays must be of the same length".
-        upward_slack = upward_slack.reindex(dt_index, fill_value=0)
-        downward_slack = downward_slack.reindex(dt_index, fill_value=0)
+        upward_slack = upward_slack.reindex(dt_index, fill_value=0).fillna(0)
+        downward_slack = downward_slack.reindex(dt_index, fill_value=0).fillna(0)
         vre_flow_sum = vre_flow_sum.reindex(dt_index, fill_value=0)
+        potential_sum = potential_sum.reindex(dt_index, fill_value=0)
         curtailed_vre = curtailed_vre.reindex(dt_index, fill_value=0)
-        curtailed_vre_share = curtailed_vre_share.reindex(dt_index, fill_value=0)
-        vre_share = vre_share.reindex(dt_index, fill_value=0)
         group_inflow = group_inflow.reindex(dt_index, fill_value=0)
         annualized_inflow = annualized_inflow.reindex(dt_index, fill_value=0)
 
+        # Step shares: curtailment against the potential, VRE against inflow
+        curtailed_vre_share = _safe_ratio(curtailed_vre, potential_sum)
+        vre_share = _safe_ratio(vre_flow_sum, group_inflow)
+
         # Combine timestep results for this group
+        period_values = dt_index.get_level_values('period')
         group_result_dt = pd.DataFrame({
             'group': g,
-            'period': dt_index.get_level_values('period'),
+            'period': period_values,
             'time': dt_index.get_level_values('time'),
-            '1. Loss of load': upward_slack.fillna(0).values,
+            '1. Loss of load': upward_slack.values,
             '2. VRE generation': vre_flow_sum.values,
-            '3. Excess load': downward_slack.fillna(0).values,
+            '3. Excess load': downward_slack.values,
             '4. Curtailed VRE': curtailed_vre.values,
             '5. Timestep inflow': group_inflow.values,
-            '6. Curtailed VRE of potential VRE': curtailed_vre_share.fillna(0).values,
+            '6. Curtailed VRE of potential VRE': curtailed_vre_share.values,
             '7. Annualized inflow': annualized_inflow.values,
-            '8. VRE share of demand': vre_share.fillna(0).values,
+            '8. VRE share of demand': vre_share.values,
         })
         results_dt.append(group_result_dt)
+
+        w = weight.values
+        weighted_dt.append(pd.DataFrame({
+            'group': g,
+            'period': period_values,
+            'lol': upward_slack.values * w,
+            'vre': vre_flow_sum.values * w,
+            'excess': downward_slack.values * w,
+            'curt': curtailed_vre.values * w,
+            'inflow': group_inflow.values * w,
+            'pot': potential_sum.values * w,
+        }))
 
     # Combine all groups for timestep level
     result_flat_dt = pd.concat(results_dt, ignore_index=True)
@@ -146,38 +214,17 @@ def nodeGroup_indicators(par, s, v, r, debug):
 
     results.append((results_dt_indexed, 'nodeGroup_gdt_p'))
 
-    # Aggregate to period level
-    # For shares, we need to recalculate properly:
-    # Sum the numerators and denominators separately, then divide
-    inflow_d = results_dt_indexed['5. Timestep inflow'].groupby(level=['group', 'period']).sum()
+    # Period level: ratios of the weighted period sums (see the docstring)
+    sums_d = pd.concat(weighted_dt, ignore_index=True).groupby(['group', 'period']).sum()
     annualized_inflow_d = results_dt_indexed['7. Annualized inflow'].groupby(level=['group', 'period']).sum()
 
-    # For VRE share: need to sum absolute flows and recalculate
-    # Since we have vre_share * inflow = vre_flow, we can recover vre_flow
-    vre_flow_dt = results_dt_indexed['8. VRE share of demand'] * results_dt_indexed['5. Timestep inflow']
-    vre_flow_d = vre_flow_dt.groupby(level=['group', 'period']).sum()
-    vre_share_d = vre_flow_d / inflow_d.where(inflow_d != 0, pd.NA)
-
-    # For curtailed VRE share: similar recovery
-    curtailed_vre_share_dt = results_dt_indexed['4. Curtailed VRE'] / results_dt_indexed['5. Timestep inflow']
-    curtailed_vre_share_d = curtailed_vre_share_dt.groupby(level=['group', 'period']).mean()
-    curtailed_vre_of_potential_vre_d = results_dt_indexed['6. Curtailed VRE of potential VRE'].groupby(level=['group', 'period']).sum()
-
-    # Slack shares: sum absolute values and recalculate
-    upward_slack_d = results_dt_indexed['1. Loss of load'].groupby(['group', 'period']).sum()
-    upward_slack_share_d = upward_slack_d / inflow_d
-
-    downward_slack_d = results_dt_indexed['3. Excess load'].groupby(['group', 'period']).sum()
-    downward_slack_share_d = downward_slack_d / inflow_d
-
-    # Combine period-level results
     results_d_indexed = pd.DataFrame({
-        '1. Loss of load share': upward_slack_share_d.fillna(0),
-        '2. VRE share of demand': vre_share_d.fillna(0),
-        '3. Excess load share': downward_slack_share_d.fillna(0),
-        '4. Curtailed VRE of demand': curtailed_vre_share_d.fillna(0),
+        '1. Loss of load share': _safe_ratio(sums_d['lol'], sums_d['inflow']),
+        '2. VRE share of demand': _safe_ratio(sums_d['vre'], sums_d['inflow']),
+        '3. Excess load share': _safe_ratio(sums_d['excess'], sums_d['inflow']),
+        '4. Curtailed VRE of demand': _safe_ratio(sums_d['curt'], sums_d['inflow']),
         '5. Annualized inflow': annualized_inflow_d,
-        '6. Curtailed VRE of potential VRE': curtailed_vre_of_potential_vre_d.fillna(0)
+        '6. Curtailed VRE of potential VRE': _safe_ratio(sums_d['curt'], sums_d['pot']),
     })
     results_d_indexed.columns.name = "parameter"
 
@@ -187,7 +234,14 @@ def nodeGroup_indicators(par, s, v, r, debug):
 
 
 def nodeGroup_VRE_share(par, s, v, r, debug):
-    """VRE share for node groups by period and time"""
+    """VRE share of the inflow of each node group by time step and period.
+
+    Time step: ``vre[d,t] / inflow[d,t]`` (0 where the inflow is 0).
+    Period: ``Σ_t w[d,t]·vre[d,t] / Σ_t w[d,t]·inflow[d,t]`` with
+    ``w = par.timestep_weight`` — a share of the period's inflow, not a mean
+    of the step shares.  The VRE energy comes from ``_group_vre_flow`` (as
+    for the indicators), so the period value equals '2. VRE share of demand'.
+    """
 
     results = []
 
@@ -210,41 +264,29 @@ def nodeGroup_VRE_share(par, s, v, r, debug):
 
     # Create index
     index = pd.MultiIndex.from_tuples(timesteps, names=['period', 'time'])
-    results_dt = pd.DataFrame(
-        index=index,
-        columns=pd.Index(groups_with_inflow, name='group'),
-        dtype=float,
-    )
+    group_columns = pd.Index(groups_with_inflow, name='group')
+    vre_dt = pd.DataFrame(index=index, columns=group_columns, dtype=float)
+    inflow_dt = pd.DataFrame(index=index, columns=group_columns, dtype=float)
 
-    # Get VRE processes
-    vre_processes = s.process_VRE.unique()
-
-    # Calculate for each group
     for g in groups_with_inflow:
-        group_nodes = _get_group_nodes_with_inflow(s, g)
-        node_cols = [col for col in par.node_inflow.columns.get_level_values(0) if col in group_nodes]
+        group_nodes = (
+            s.group_node[s.group_node.get_level_values('group') == g]
+            .get_level_values('node')
+            .tolist()
+        )
+        inflow_nodes = _get_group_nodes_with_inflow(s, g)
+        node_cols = [col for col in par.node_inflow.columns.get_level_values(0) if col in inflow_nodes]
+        # Inflow (demand) of the group's nodes [MWh/step], positive for demand
+        inflow_dt[g] = (-par.node_inflow[node_cols].sum(axis=1)).reindex(index, fill_value=0.0)
+        vre_dt[g] = _group_vre_flow(par, s, r, group_nodes).reindex(index, fill_value=0.0)
 
-        # Total inflow to group nodes (vectorized)
-        total_inflow = par.node_inflow[node_cols].sum(axis=1)
-
-        # VRE flow: sum flows from VRE processes to group nodes (vectorized)
-        vre_cols = [(p, src, snk) for (p, src, snk) in r.flow_dt.columns
-                    if p in vre_processes and (p, snk) in s.process_sink and snk in group_nodes]
-
-        if vre_cols:
-            # r.flow_dt is MW — multiply by step_duration to get MWh/step so
-            # the share against total_inflow (MWh/step) is a proper ratio.
-            vre_flow = r.flow_dt[vre_cols].mul(par.step_duration, axis=0).sum(axis=1)
-        else:
-            vre_flow = pd.Series(0.0, index=r.flow_dt.index)
-
-        # Calculate share (avoid division by zero)
-        results_dt[g] = (vre_flow / (-total_inflow)).fillna(0.0)
-
+    results_dt = _safe_ratio(vre_dt, inflow_dt)
     results.append((results_dt, 'nodeGroup_VRE_share_dt_g'))
 
-    # Return period results
-    results_d = results_dt.groupby(level='period').mean()
+    weight = _realized_timestep_weight(par, index)
+    vre_d = vre_dt.mul(weight, axis=0).groupby(level='period').sum()
+    inflow_d = inflow_dt.mul(weight, axis=0).groupby(level='period').sum()
+    results_d = _safe_ratio(vre_d, inflow_d)
     results_d.columns.name = 'group'
     results.append((results_d, 'nodeGroup_VRE_share_d_g'))
 

@@ -21,7 +21,7 @@ This produces the node-group summary indicator metrics — loss-of-load share, V
 
 These changes were done to the previous non-sync example database. 
 
-Note: The results are the share of curtailment in relation to the inflow (demand) so it can exceed 100% as seen in the figure.
+Note: *Curtailed VRE of demand* is the curtailment in relation to the inflow (demand), so it can exceed 100% as seen in the figure. *Curtailed VRE of potential VRE* is the curtailment in relation to the potential VRE generation and stays within 0–100%.
 
 The figures show the layout of the results. Their values come from an earlier version, in which the battery connection inside *nodeA_group* still counted towards the non-synchronous limit (the battery cycled to loosen it); the current version gives less battery cycling, less wind and more coal in this example.
 
