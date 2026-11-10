@@ -89,15 +89,15 @@ The rolling window solve splits the time dimension into overlapping parts and so
 
 The rolling solve could be setup also manually as described in the 'How to run a multi year model' - just using shorter periods. 
 
-However, this would be tedious if there are many solves. In a rolling window model, the user can set the `rolling_jump` and `rolling_horizon` parameters, which are expressed in hours. 
+However, this would be tedious if there are many solves. In a rolling window model, the user can set the `rolling_solve_jump` and `rolling_solve_horizon` parameters, which are expressed in hours. 
 
-- `rolling_horizon`: sets the length of the whole solve, in hours. In previous example 4 months (2880 hours). Horizon allows the model to see bit further in the future to improve the decision making for the period that will be output.
+- `rolling_solve_horizon`: sets the length of the whole solve, in hours. In previous example 4 months (2880 hours). Horizon allows the model to see bit further in the future to improve the decision making for the period that will be output.
 
-- `rolling_jump`: sets the interval for the length of each 'jump' the model takes forward in reach roll. It is then both the interval of roll starting points and the length of the output for each roll. The `rolling_jump` must be smaller than the `rolling_horizon`. In the previous example the `rolling_jump` would be 2 months (1440 hours).
+- `rolling_solve_jump`: sets the interval for the length of each 'jump' the model takes forward in reach roll. It is then both the interval of roll starting points and the length of the output for each roll. The `rolling_solve_jump` must be smaller than the `rolling_solve_horizon`. In the previous example the `rolling_solve_jump` would be 2 months (1440 hours).
 
 In addition, the user can set the duration for how long the model will roll:
 
-- `rolling_duration`: Optional (hours), the length of combined rolls. In the example, it could be set to 8640 hours which would divide evenly, or 8760 hours which means that the last roll will be shorter than the others. It is nicer to use `rolling_jump` that is divisable with the `rolling_duration` to keep rolls even. If `rolling_duration` is not set, it defaults to rolling through the whole timeline.
+- `rolling_duration`: Optional (hours), the length of combined rolls. In the example, it could be set to 8640 hours which would divide evenly, or 8760 hours which means that the last roll will be shorter than the others. It is nicer to use `rolling_solve_jump` that is divisable with the `rolling_duration` to keep rolls even. If `rolling_duration` is not set, it defaults to rolling through the whole timeline.
 
 When using rolling window solve, you are solving the model with less information. Therefore, the results will be less optimal since the model will not have the full information at once. It is therefore important to know how this could affect the results and what things to consider when implementing a rolling window model. It will have an impact on time dependant parts of the model: for example, storages or cumulative flow constraints. If the model can see only a few months to the future, it can't see how much energy needs to be stored after that. 
 
@@ -108,22 +108,22 @@ Short term storages also are operated less optimally in a rolling window model. 
 To set a dispatch rolling window model you need to set the entity `solve` parameters:
 
 - `solve_mode`: *rolling_window*
-- `rolling_jump`: Hours, the desired length of the solve interval
-- `rolling_horizon`: Hours, the desired length of each roll solve
+- `rolling_solve_jump`: Hours, the desired length of the solve interval
+- `rolling_solve_horizon`: Hours, the desired length of each roll solve
 - `rolling_duration`: (Optional) Hours, the length of the combined outputs. If not set, the whole timeline is used.
 
 Considerations on the rolling times:
 
-- The `rolling_jump` and `rolling_horizon` must be large enough to make the model faster. If too small intervals are used, the creation of solves and moving data from solve to another might take too much time.
-- If you are not using 1-hour timesteps, preferably use multiples of the timestep you are using as the `rolling_jump` and `rolling_horizon`. The steps included in each solve are calculated by summing the step durations until they are larger or equal to the hours given. So, if multiples are not used, the rolls might not be exactly the same size.
-- The model can roll over timeset and period jumps, which might cause some issues if storage constraints are used. Using timeset length or its multiples is therefore recommended. For example, the `rolling_jump` could be a half of a timeset and the `rolling_horizon` whole timeset or `rolling_jump` a timeset and `rolling_horizon` three timesets. Of course, when running e.g. a full year dispatch, there is only one timeset of 8760 hours, which makes the choices more simple.
+- The `rolling_solve_jump` and `rolling_solve_horizon` must be large enough to make the model faster. If too small intervals are used, the creation of solves and moving data from solve to another might take too much time.
+- If you are not using 1-hour timesteps, preferably use multiples of the timestep you are using as the `rolling_solve_jump` and `rolling_solve_horizon`. The steps included in each solve are calculated by summing the step durations until they are larger or equal to the hours given. So, if multiples are not used, the rolls might not be exactly the same size.
+- The model can roll over timeset and period jumps, which might cause some issues if storage constraints are used. Using timeset length or its multiples is therefore recommended. For example, the `rolling_solve_jump` could be a half of a timeset and the `rolling_solve_horizon` whole timeset or `rolling_solve_jump` a timeset and `rolling_solve_horizon` three timesets. Of course, when running e.g. a full year dispatch, there is only one timeset of 8760 hours, which makes the choices more simple.
 
 Considerations on storage parameters:
 
-- `storage_solve_horizon_method` *use_reference_value* or *use_reference_price* are the preferred means to bind storage values. They can be used together with the `storage_state_start_end_method`: *start*, which would then set the initial storage state. These methods bind either the storage value or the storage price at the end of *horizon* (not the end of *jump*). This allows the storage to use the part of the horizon that is not output to improve the behaviour of the storage in the part that is output (as defined by `rolling_horizon` and `rolling_jump`). 
-- `bind_within_timeblock` does not work correctly if the rolls don't include whole timeblocks. Instead, it will bind the first step of the roll (whatever it is) to the end of the timeblock. Do not use in nested solves if you are not using whole timeblocks or its multiples as `rolling_jump`. The storage level is not carried from roll to roll for this method (nor for `bind_within_period` and `bind_within_solve`): each roll cycles on its own, so the storage level jumps at each roll start, and the reported state change at that step is that jump.
-- the same applies to the `bind_within_period` (but in relation to periods - do not use this unless you are `rolling_jump` is as long as a period or its multiples).
-- `bind_intraperiod_blocks` loops the blocks of a period only in the rolls that hold the whole period. In a period that a roll holds only in part, the blocks chain forward and the storage level is carried from roll to roll, as for `bind_forward_only`. The blocks of a roll also end at the end of its realized part. Use a `rolling_jump` of a whole number of periods to keep every realized period looping (otherwise a warning is given).
+- `storage_solve_horizon_method` *use_reference_value* or *use_reference_price* are the preferred means to bind storage values. They can be used together with the `storage_state_start_end_method`: *start*, which would then set the initial storage state. These methods bind either the storage value or the storage price at the end of *horizon* (not the end of *jump*). This allows the storage to use the part of the horizon that is not output to improve the behaviour of the storage in the part that is output (as defined by `rolling_solve_horizon` and `rolling_solve_jump`). 
+- `bind_within_timeblock` does not work correctly if the rolls don't include whole timeblocks. Instead, it will bind the first step of the roll (whatever it is) to the end of the timeblock. Do not use in nested solves if you are not using whole timeblocks or its multiples as `rolling_solve_jump`. The storage level is not carried from roll to roll for this method (nor for `bind_within_period` and `bind_within_solve`): each roll cycles on its own, so the storage level jumps at each roll start, and the reported state change at that step is that jump.
+- the same applies to the `bind_within_period` (but in relation to periods - do not use this unless you are `rolling_solve_jump` is as long as a period or its multiples).
+- `bind_intraperiod_blocks` loops the blocks of a period only in the rolls that hold the whole period. In a period that a roll holds only in part, the blocks chain forward and the storage level is carried from roll to roll, as for `bind_forward_only`. The blocks of a roll also end at the end of its realized part. Use a `rolling_solve_jump` of a whole number of periods to keep every realized period looping (otherwise a warning is given).
 - `storage_start_end_method` can be used to set the first timestep of the first roll and/or the last timestep of the entire model (in conjunction with `storage_state_start` and `storage_state_end`); the end value applies in every roll whose horizon contains the model's last timestep (usually the last roll only). Every later roll starts from the storage state realised by the previous roll. It is meant for simple models: `storage_state_reference_value` with `storage_solve_horizon_method` *use_reference_value* is usually the better choice.
 - `bind_within_solve` binds the start state to the end state of each *roll* not the start and end of the whole model timeline. Use with caution (and probably best not to use together with `storage_solve_horizon_method` *use_reference_value*).
 
@@ -161,16 +161,16 @@ The long term storage solve can be implemented using a lower resolution solve. T
 - *fix_usage* does the same but not taking into account the inflow or slacks. Forces the summed usage of the storage during the dispatch solve to be the same as during the same time span in the storage solve. This avoids infeasibilities when modelling inflow stochastics in comparison to the *fix_quantity*.
 - *fix_price* takes the storage node's price (`price_t`, the value of one more MWh of stored energy) from the storage solve at the end timestep of the dispatch solve and uses it in the objective function to give a value to the stored energy at the end of the horizon. 
 
-The `rolling_jump` and `rolling_horizon` in the storage solve have to be longer than in the dispatch solve. You can set which storages are included as "long term storages" whose value will be transferred to the dispatch solve.
+The `rolling_solve_jump` and `rolling_solve_horizon` in the storage solve have to be longer than in the dispatch solve. You can set which storages are included as "long term storages" whose value will be transferred to the dispatch solve.
 
-To create a nested solve sequence, you need two or three `solve` entities. Either the investment solve or the storage solve can be left out. When using nested solve sequence, the sequence is not set with the `model`: `solves` parameter. Only the topmost solve is put there. Instead, the nested levels are set by the `solve` parameter `contains_solve`: *solve_name*. The investment solve is always on the top followed by the storage solve and dispatch solve:
+To create a nested solve sequence, you need two or three `solve` entities. Either the investment solve or the storage solve can be left out. When using nested solve sequence, the sequence is not set with the `model`: `solves` parameter. Only the topmost solve is put there. Instead, the nested levels are set by the `solve` parameter `contains_solves`: *solve_name*. The investment solve is always on the top followed by the storage solve and dispatch solve:
 
-- *investment_solve* `solve` parameter `contains_solve`: *storage_solve_name* 
-- *storage_solve* `solve` parameter `contains_solve`: *dispatch_solve_name*
+- *investment_solve* `solve` parameter `contains_solves`: *storage_solve_name* 
+- *storage_solve* `solve` parameter `contains_solves`: *dispatch_solve_name*
 
 To create a storage solve:
 
-- `solve` parameter `fix_storage_period`: Array of periods where the storage values are fixed in the lower solve. Should be the same as `realized_periods` for the dispatch solve.
+- `solve` parameter `fix_storage_periods`: Array of periods where the storage values are fixed in the lower solve. Should be the same as `realized_periods` for the dispatch solve.
 - `node` parameter `storage_nested_fix_method`: *fix_quantity*, *fix_price* or *fix_usage*
 
 To create an investment_solve:
@@ -182,8 +182,8 @@ To create an investment_solve:
 In addition, the rolling dispatch solve should be created as in the *How to use rolling window solve for dispatch*. To set a dispatch rolling window model you need to set the entity `solve` parameters:
 
 - `solve_mode`: *rolling_window*
-- `rolling_jump`: Hours, the desired length of the solve interval
-- `rolling_horizon`: Hours, the desired length of each roll solve
+- `rolling_solve_jump`: Hours, the desired length of the solve interval
+- `rolling_solve_horizon`: Hours, the desired length of each roll solve
 - `rolling_duration`: (Optional) Hours, the length of the combined outputs. If not set, the whole timeline is used.
 - `realized_periods`: Array of periods that are realized
 
@@ -192,8 +192,8 @@ The other model parameters apply to *all* of the solves. Therefore, the consider
 - Storage levels can be fixed with `storage_solve_horizon_method`: *use_reference_value* or *use_reference_price*, these will fix the end of each horizon not each jump.
 - `storage_start_end_method` fixes the start of each solve level (the first step of the first roll) and/or the end of the entire model. The end value applies to the last timestep of the model in every solve whose horizon contains it: the investment, storage and dispatch solves when each of them reaches the end of the model, but not a solve (or roll) that ends earlier. It is meant for simple models: in nested solves `storage_state_reference_value` with `storage_solve_horizon_method` *use_reference_value* is usually the better choice. The start applies where a level appears for the first time; every later solve or roll of a level (also the first dispatch roll under a later storage roll, and the next investment or storage solve of a split investment timeline) starts from the latest storage state realised before it at that level or below (usually by the dispatch solve). The upper solves only fix the end of a lower solve's horizon (`storage_nested_fix_method`). At the model's last timestep in a lower-level solve, an upper-level *fix_quantity* or *fix_usage* overrides `storage_state_end`; a *fix_price* only values that end, so `storage_state_end` still applies.
 - In most cases the `bind_storage_method` should be left as *bind_forward_only*
-- Do not use `bind_within_timeblock` if you are not using full timeblock or its multiples as the `rolling_jump` in the dispatch model, otherwise you might cause an infeasible problem. 
-- Do not use `bind_within_period` if you are not using full periods or its multiples as the `rolling_jump` in the dispatch model, otherwise you might cause an infeasible problem. 
+- Do not use `bind_within_timeblock` if you are not using full timeblock or its multiples as the `rolling_solve_jump` in the dispatch model, otherwise you might cause an infeasible problem. 
+- Do not use `bind_within_period` if you are not using full periods or its multiples as the `rolling_solve_jump` in the dispatch model, otherwise you might cause an infeasible problem. 
 - Do not use `bind_within_solve`
 
 The recommended storage parameters with nested solves are:
@@ -228,7 +228,7 @@ The tutorial contains an example of representaive periods under alternative *5we
 
 To create an investment solve sequence, you have two options:
 
-- Create manually a series of solves and set the `invest_periods` and `realized_invest_periods` individually for the solves. [How to create a multi-year model](investment.md#how-to-create-a-multi-year-model) has an example of this with the difference that here you use `realized_invest_periods` instead of `realized_periods` and that each of the higher level solves requires the `contains_solve` parameter. 
+- Create manually a series of solves and set the `invest_periods` and `realized_invest_periods` individually for the solves. [How to create a multi-year model](investment.md#how-to-create-a-multi-year-model) has an example of this with the difference that here you use `realized_invest_periods` instead of `realized_periods` and that each of the higher level solves requires the `contains_solves` parameter. 
 
 If you have many splits, this option can get tedious and prone to mistakes.
 
