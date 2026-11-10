@@ -348,6 +348,10 @@ def run(
         else:
             break_dirs.append(os.path.join(folder, name))
     break_times = load_timeline_breaks(*break_dirs)
+    # A dispatch plot shows one scenario on its own steps: it breaks where that scenario's timeline does
+    scenario_break_times = {
+        name: load_timeline_breaks(d) for name, d in zip(scenario_folders, break_dirs)
+    }
 
     # Write combined comparison parquets if output directory specified
     if comparison_parquet_dir:
@@ -428,7 +432,7 @@ def run(
                 scenarios=dispatch_scenarios,
                 show_plot=show_plots,
                 write_xlsx=write_dispatch_xlsx,
-                break_times=break_times,
+                break_times=scenario_break_times,
                 plot_rows=plot_rows,
                 debug=debug,
                 settings_path=color_path,

@@ -48,8 +48,8 @@
   a multi-period scenario each step (pv, loss of load, curtailment, demand, ...) was the sum over the periods, in
   the order of the step names. The periods now follow one another in the realized order, with a gap where a
   period does not continue the previous one, and the x axis names the time steps with the period below them. In
-  a comparison of scenarios with different periods, a scenario no longer shows zero rows for the other
-  scenarios' steps. The same fix applies to the dispatch plots in the result viewer. **Output format:** the
+  a comparison of scenarios with different steps, each scenario shows its own steps in its own order (not zero
+  rows for the other scenarios' steps), and its plot has gaps only where its own timeline breaks. The same fix applies to the dispatch plots in the result viewer. **Output format:** the
   plotted-data CSV of a dispatch plot and `dispatch_data.xlsx` now have a `period` column before `time`.
 - **Fix: the period node-group indicators and VRE share were not shares of the period's energy.** *Curtailed VRE
   of potential VRE* was divided by the inflow instead of the potential VRE generation and, per period, summed over

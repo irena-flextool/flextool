@@ -6,7 +6,7 @@ DispatchMappings — dispatch mapping DataFrames combined across scenarios (scen
 
 from __future__ import annotations
 
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, field, fields
 
 import pandas as pd
 
@@ -157,29 +157,48 @@ class TimeSeriesResults:
     flowGroup_gd_p: pd.DataFrame | None = None
     flowGroup_gd_t: pd.DataFrame | None = None
 
+    # --- Not a result: each scenario's own rows of each combined frame ---
+    # {variable: {scenario: row index of that scenario's file, in file order}}.
+    # The combined frames are the scenarios side by side, so their row index is
+    # the union of the scenarios' steps in first-seen order; this keeps each
+    # scenario's own steps and their order (see combine_parquet_files).
+    scenario_rows: dict[str, dict[str, pd.Index]] = field(default_factory=dict, repr=False)
+
     def to_dict(self) -> dict[str, pd.DataFrame]:
         """All non-None DataFrames as a dict, for plot_dict_of_dataframes()."""
         return {
             f.name: getattr(self, f.name)
             for f in fields(self)
-            if getattr(self, f.name) is not None
+            if f.name != 'scenario_rows' and getattr(self, f.name) is not None
         }
 
+    def own_rows(self, name: str, scenario: str) -> pd.Index | None:
+        """The rows of *scenario* in the combined frame *name*, in its file order (None if not recorded)."""
+        return self.scenario_rows.get(name, {}).get(scenario)
+
     @classmethod
-    def from_dict(cls, d: dict[str, pd.DataFrame]) -> TimeSeriesResults:
+    def from_dict(
+        cls,
+        d: dict[str, pd.DataFrame],
+        scenario_rows: dict[str, dict[str, pd.Index]] | None = None,
+    ) -> TimeSeriesResults:
         """Build from the raw dict produced by combine_parquet_files().
 
+        *scenario_rows* is the ``row_order`` that combine_parquet_files() filled.
         Warns about unknown keys (signals a field needs to be added).
         Dispatch mapping files (loaded separately) are silently excluded.
         """
-        known = {f.name for f in fields(cls)}
+        known = {f.name for f in fields(cls)} - {'scenario_rows'}
         unknown = set(d.keys()) - known - _DISPATCH_MAPPING_FILENAMES
         if unknown:
             print(
                 f"Warning: Result variables not registered in TimeSeriesResults "
                 f"(add fields to data_models.py): {sorted(unknown)}"
             )
-        return cls(**{k: v for k, v in d.items() if k in known})
+        return cls(
+            **{k: v for k, v in d.items() if k in known},
+            scenario_rows=dict(scenario_rows or {}),
+        )
 
 
 @dataclass

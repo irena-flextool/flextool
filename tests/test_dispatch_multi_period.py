@@ -172,3 +172,97 @@ def test_combined_parquet_scenarios_with_different_periods(tmp_path):
         df, _ = prepare_node_dispatch_data(res, sc, NODE)
         assert list(df.index) == steps, sc
         assert df["pv_out"].tolist() == pv
+
+
+def _write_combined(tmp_path, data):
+    """``data``: {scenario: (steps, pv, slack, curtailment, inflow)} written as parquets and combined
+    through the real load boundary (``get_scenario_results``), A first."""
+    from flextool.lean_parquet import write_lean_parquet
+    from flextool.scenario_comparison.db_reader import get_scenario_results
+
+    specs = [
+        ("unit_outputNode_dt_ee", 1, ("pv", NODE), ["unit", "node"]),
+        ("node_slack_up_dt_e", 2, (NODE,), ["node"]),
+        ("unit_curtailment_outputNode_dt_ee", 3, ("pv", NODE), ["unit", "sink"]),
+        ("node_inflow__dt", 4, (NODE,), ["node"]),
+    ]
+    for sc, row in data.items():
+        d = tmp_path / sc
+        d.mkdir()
+        for name, pos, key, names in specs:
+            write_lean_parquet(_frame(sc, row[0], key, row[pos], names), d / f"{name}.parquet")
+    _, res = get_scenario_results(scenario_folders={sc: str(tmp_path) for sc in data}, parquet_subdir="")
+    return res
+
+
+# Sampled weeks (A: steps 1-2 and 5-6, a break before t05) against the full timeline (B: t01-t06); the
+# combined row index is A's steps, then t03, t04 at the end.
+SAMPLED = [("y2030", "t01"), ("y2030", "t02"), ("y2030", "t05"), ("y2030", "t06")]
+FULL = [("y2030", f"t0{i}") for i in range(1, 7)]
+SHARED = {
+    "A": (SAMPLED, [1.0, 2.0, 5.0, 6.0], [0.0] * 4, [0.0, 1.0, 0.0, 0.0], [-1.0, -2.0, -5.0, -6.0]),
+    "B": (FULL, [10.0, 20.0, 30.0, 40.0, 50.0, 60.0], [0.0] * 6, [0.0] * 5 + [2.0],
+          [-10.0, -20.0, -30.0, -40.0, -50.0, -60.0]),
+}
+
+
+def test_scenarios_sharing_steps_keep_their_own_order(tmp_path):
+    res = _write_combined(tmp_path, SHARED)
+    assert list(res.unit_outputNode_dt_ee.index) == SAMPLED + FULL[2:4]  # the union order
+    maps = _mappings(SHARED)
+    for sc, (steps, pv, _slack, curt, inflow) in SHARED.items():
+        df, demand = prepare_dispatch_data(res, maps, sc, GROUP)
+        assert list(df.index) == steps, sc
+        assert df[PV_COL].tolist() == pv
+        assert df["Curtailed"].tolist() == curt
+        assert list(demand.index) == steps
+        assert demand.tolist() == [-x for x in inflow]
+        df_n, demand_n = prepare_node_dispatch_data(res, sc, NODE)
+        assert list(df_n.index) == steps, sc
+        assert df_n["pv_out"].tolist() == pv
+        assert demand_n.tolist() == [-x for x in inflow]
+
+
+def test_each_scenario_breaks_where_its_own_timeline_does(tmp_path, monkeypatch):
+    """create_dispatch_plots with per-scenario breaks: A gets its gap before t05, B (full timeline) none."""
+    from pathlib import Path
+
+    from flextool.scenario_comparison import dispatch_plots
+
+    res = _write_combined(tmp_path, SHARED)
+    (tmp_path / "plots").mkdir()
+    breaks = {"A": _index([("y2030", "t05")]), "B": _index([])}
+    drawn = {}
+
+    def capture(df, inflow, path, **kw):
+        fig = _build_dispatch_figure(df, inflow, "g", timeline=kw["timeline"], break_times=kw["break_times"])
+        line = next(ln for ln in fig.axes[0].get_lines() if ln.get_label() == "Demand")
+        drawn[Path(path).stem] = np.asarray(line.get_ydata(), dtype=float)
+
+    monkeypatch.setattr(dispatch_plots, "plot_dispatch_area", capture)
+    dispatch_plots.create_dispatch_plots(
+        res, _mappings(SHARED), tmp_path / "plots", scenarios=["A", "B"], break_times=breaks,
+        settings_path=tmp_path / "none.yaml", write_xlsx=True,
+    )
+    # dispatch_data.xlsx: every row shows its period (no merged cells)
+    sheet = pd.read_excel(tmp_path / "plots" / "dispatch_data.xlsx", sheet_name=f"{GROUP}_A")
+    assert list(zip(sheet["period"], sheet["time"])) == SAMPLED
+    a = drawn[f"dispatch_nodeGroup_{GROUP}_A"]
+    assert len(a) == 7 and np.isnan(a[2:5]).all()
+    assert a[[0, 1, 5, 6]].tolist() == [1, 2, 5, 6]
+    assert drawn[f"dispatch_nodeGroup_{GROUP}_B"].tolist() == [10, 20, 30, 40, 50, 60]
+
+
+def test_own_all_empty_step_is_kept(tmp_path):
+    """A step whose cells are all empty in the scenario's own file stays a row: the demand line stays aligned."""
+    steps = [("p", "t1"), ("p", "t2"), ("p", "t3")]
+    nan = float("nan")
+    data = {
+        "A": (steps, [1.0, nan, 3.0], [0.0, nan, 0.0], [0.0, nan, 0.0], [-1.0, -2.0, -3.0]),
+        "B": (steps[:1], [5.0], [0.0], [0.0], [-5.0]),
+    }
+    res = _write_combined(tmp_path, data)
+    df, demand = prepare_node_dispatch_data(res, "A", NODE)
+    assert list(df.index) == steps
+    assert list(demand.index) == steps
+    assert demand.tolist() == [1.0, 2.0, 3.0]

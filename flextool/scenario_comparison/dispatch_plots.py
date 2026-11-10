@@ -518,7 +518,7 @@ def create_dispatch_plots(
     show_plot: bool = False,
     write_xlsx: bool = False,
     plot_rows: list[int] | tuple[int, int] | None = None,
-    break_times: pd.MultiIndex | None = None,
+    break_times: pd.MultiIndex | dict[str, pd.MultiIndex] | None = None,
     debug: bool = False,
     settings_path: str | Path | None = None,
     write_plot_data: bool = False,
@@ -540,6 +540,10 @@ def create_dispatch_plots(
     
     *write_plot_data* also writes each plot's drawn data as a CSV with the
     PNG's stem (see :func:`dispatch_plot_data`).
+
+    *break_times*: the ``(period, time)`` break steps, as ``{scenario: breaks}``
+    (each scenario's own plot breaks where its own timeline does) or one set for
+    all scenarios.
     """
     plot_dir = Path(plot_dir)
 
@@ -675,6 +679,9 @@ def create_dispatch_plots(
 
     for scenario in scenarios:
         print(f"Creating dispatch plots for scenario: {scenario}")
+        scenario_breaks = (
+            break_times.get(scenario) if isinstance(break_times, dict) else break_times
+        )
 
         # Plot nodeGroup dispatches
         for ng in node_groups:
@@ -717,7 +724,7 @@ def create_dispatch_plots(
                     timeline=timeline,
                     show_plot=show_plot,
                     ylim=ng_ylims.get((scenario, ng)),
-                    break_times=break_times,
+                    break_times=scenario_breaks,
                     write_plot_data=write_plot_data,
                 )
 
@@ -765,7 +772,7 @@ def create_dispatch_plots(
                     timeline=timeline,
                     show_plot=show_plot,
                     ylim=node_ylims.get((scenario, node)),
-                    break_times=break_times,
+                    break_times=scenario_breaks,
                     write_plot_data=write_plot_data,
                 )
                 if write_xlsx:
@@ -779,5 +786,6 @@ def create_dispatch_plots(
         with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
             for name, df in excel_data.items():
                 sheet_name = name[:31]  # Excel sheet name limit
-                df.to_excel(writer, sheet_name=sheet_name)
+                # merge_cells=False: every row shows its period
+                df.to_excel(writer, sheet_name=sheet_name, merge_cells=False)
         print(f"Wrote dispatch data to {excel_path}")

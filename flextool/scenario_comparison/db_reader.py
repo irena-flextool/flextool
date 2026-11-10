@@ -183,6 +183,7 @@ def collect_parquet_files(
 def combine_parquet_files(
     files_by_name: dict[str, list[tuple[str, Path]]],
     num_scenarios: int = 0,
+    row_order: dict[str, dict[str, pd.Index]] | None = None,
 ) -> dict[str, pd.DataFrame]:
     """Combine parquet files across scenarios into dataframes.
 
@@ -195,6 +196,12 @@ def combine_parquet_files(
         Dictionary mapping filename to list of (scenario_name, file_path) tuples
     num_scenarios : int
         Total number of scenarios being combined (for warning about missing files)
+    row_order : dict, optional
+        Filled with ``{variable: {scenario: row index}}``: each scenario's own rows in
+        the order of its file.  The combined row index is the union of the scenarios'
+        rows in first-seen order, so a row that only a later scenario has comes after
+        the first scenario's rows; pass this to ``TimeSeriesResults.from_dict`` so a
+        per-scenario slice keeps its own rows and order.
 
     Returns
     -------
@@ -207,6 +214,7 @@ def combine_parquet_files(
         variable_name = filename.replace('.parquet', '')
 
         dfs_to_append = []
+        own_rows: dict[str, pd.Index] = {}
 
         for scenario_name, file_path in scenario_files:
             try:
@@ -245,6 +253,7 @@ def combine_parquet_files(
                     if src != [scenario_name]:
                         df = df.rename(columns={s: scenario_name for s in src})
                 dfs_to_append.append(df)
+                own_rows[scenario_name] = df.index
 
             except Exception as e:
                 print(f"Error reading {file_path} for scenario {scenario_name}: {e}")
@@ -253,6 +262,8 @@ def combine_parquet_files(
         if dfs_to_append:
             combined_df = pd.concat(dfs_to_append, axis=1)
             combined_dfs[variable_name] = combined_df
+            if row_order is not None:
+                row_order[variable_name] = own_rows
             if num_scenarios > 0 and len(dfs_to_append) < num_scenarios:
                 print(f"Found and combined only {len(dfs_to_append)} out of {num_scenarios} "
                       f"possible files for variable '{variable_name}' (shape: {combined_df.shape})")
@@ -334,9 +345,10 @@ def get_scenario_results(
     print(f"Found {len(files_by_name)} unique result variables from parquet subdirectories")
 
     num_scenarios = len(scenario_folders)
-    combined_dfs = combine_parquet_files(files_by_name, num_scenarios=num_scenarios)
+    row_order: dict[str, dict[str, pd.Index]] = {}
+    combined_dfs = combine_parquet_files(files_by_name, num_scenarios=num_scenarios, row_order=row_order)
 
-    return scenario_folders, TimeSeriesResults.from_dict(combined_dfs)
+    return scenario_folders, TimeSeriesResults.from_dict(combined_dfs, scenario_rows=row_order)
 
 
 def combine_scenario_parquets(

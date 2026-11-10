@@ -325,7 +325,8 @@ default and then costs nothing.
   results stays empty, also where a bar plot draws it as zero.
 - A dispatch plot's CSV has a `period` and a `time` column for the steps of the plotted time window (the periods
   one after another), the flows, and the demand line as a `Demand` column, as in the legend (`Demand (line)` if a
-  flow is already called `Demand`).
+  flow is already called `Demand`). `dispatch_data.xlsx` (scenario comparison with `--write-dispatch-xlsx`) has one
+  sheet per dispatch plot with the same `period` and `time` columns, a value on every row.
 - If a CSV cannot be written, the log has a warning naming the file, and the plots are still made.
 - In `plot_settings.yaml`, only `write_plot_data: true` (no quotes) turns this on; a quoted `"true"` or any value
   that is not `true` or `false` leaves it off with a warning.
