@@ -273,6 +273,8 @@ ENV_KNOBS: dict[str, EnvKnob] = {
         _user("POLARS_FORCE_PKG", "force one polars build; also skips FlexTool's processor check"),
         _user("FLEXTOOL_RUN_LOG_MAX_BYTES", "bytes of a run's _run.log kept from its end (4 MiB, at most 256 MiB); "
               "the first 64 KiB are kept too"),
+        _user("FLEXTOOL_MIGRATION_LOCK_TIMEOUT", "Windows: seconds a migration waits for the lock of another "
+              "migration of the same database (600); not read on Linux or macOS"),
         _user("POLARS_MAX_THREADS", "polars thread pool size, in place of FlexTool's limit of 8 but at most the "
               "run's --threads; the run header prints the effective count", read_by="polars"),
         # --- dev: solve acceptance ------------------------------------------------------------------------
