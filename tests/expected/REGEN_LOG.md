@@ -1357,3 +1357,29 @@ the annualized inflow) and to `wind` (curtailment, unit weights).  No existing g
 Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the two scenarios; the other files the
 regeneration rewrote (number formatting of `costs__dt.csv`, `unit__outputNode__dt.csv`,
 `unit_outputNode_VRE_potential__dt.csv`, the timestamp of `summary_solve.csv`) were put back.
+
+## 2026-11-10 — capacity margin counts by entity class (WP-1 of `capacity_margin_design.md`)
+
+**Context.** The capacity margin row now counts firm units at capacity × availability × capacity_max_coeff, VRE at
+capacity × profile × availability, and storage-backed units, connections and consumption by their flow; the dumped
+energy (downward balance slack) is subtracted.  A connection with both ends in the group enters at both ends, so
+its losses at a time step are part of the requirement.  Six scenarios have a capacity margin (alternative
+`capacity_margin`, group {east, north, west}); `capacity_margin`, `all` and `test_a_lot_but_not_multi_year` match
+their goldens unchanged.  Three were regenerated:
+
+- `network_coal_wind_capacity_margin` (`unit__outputNode__dt`, `connection__dt`, `costs__dt`) and
+  `network_coal_wind_reserve_co2_capacity_margin` (the same, `process__reserve__upDown__node__dt`, `co2`): the
+  group's internal lines `west_east` (0.9), `west_north` (0.9) and `east_north` (0.8) now add their losses to the
+  requirement.  The model avoids them where the margin binds: less is sent to east and north, the coal output there
+  falls and those nodes take more upward slack.  The shortfall stays 122.4522 MW (`slack__capacity_margin__d`
+  unchanged: with no line flow at the binding steps the requirement is the old one).  Over the 48 h, `west_east`
+  18 994.6 → 18 087.9 MWh, `west_north` 4 800 → 4 700, `east_north` 4 800 → 4 374.7; commodity cost 2 296 173 →
+  2 240 250 and upward slack penalty 702 720 → 1 415 528 (reserve/CO2 variant: CO2 7.255 → 7.0945 Mt).
+- `test_a_lot` (`unit__outputNode__dt`, `node__dt`, `costs__dt`): the same totals (the summed costs and CO2 are
+  unchanged to the printed digits, `costs_discounted` is unchanged): in p2035 `coal_chp` is off in other hours of
+  equal cost (heat taken as upward slack, `coal_plant` covering west), another optimal vertex of a degenerate LP
+  after the row's coefficients changed (availability alternative, connection flows, the dump term).  The
+  `costs__dt` file also changes its number format (0 → 0.0) in the rows the regeneration rewrote.
+
+Hand values for the new row are in `tests/model/test_capacity_margin_flow_credit.py` (design and critique, checked
+by a separate agent).  Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the three.
