@@ -692,6 +692,68 @@ python -m flextool.cli.cmd_read_self_describing_tabular_input \
     exported.xlsx sqlite:///input.sqlite
 ```
 
+### 7. Run several scenarios in a batch
+
+To run a set of scenarios (for example the sensitivities of
+[How to run a sensitivity](how_to/basics.md#how-to-run-a-sensitivity-one-alternative-on-top-of-a-scenario)) without
+the FlexTool window, loop over their names with `flextool-run`. Activate FlexTool's virtual environment first so
+that `flextool-run` is found.
+
+**Migrate the database first.** `flextool-run` refuses an input database that is not at the current FlexTool
+version and names the command to run. Migrate it once before the loop:
+
+```bash
+flextool-migrate-database input.sqlite
+```
+
+**Bash (Linux, macOS):**
+
+```bash
+for s in coal coal_co2_price coal_fuel_price_high; do
+    flextool-run sqlite:///input.sqlite sqlite:///output_info.sqlite --scenario-name "$s" --output-location results --work-folder "work/$s" --threads 2
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        echo "Scenario $s did not finish (return code $status)"
+    fi
+done
+```
+
+**PowerShell (Windows):**
+
+```powershell
+foreach ($s in @("coal", "coal_co2_price", "coal_fuel_price_high")) {
+    flextool-run "sqlite:///input.sqlite" "sqlite:///output_info.sqlite" --scenario-name "$s" --output-location "results" --work-folder "work\$s" --threads 2
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "Scenario $s did not finish (return code $LASTEXITCODE)"
+    }
+}
+```
+
+**Quoting.** Put each scenario name and path in double quotes: a name with spaces then stays one argument in both
+shells. In a database URL, use forward slashes also on Windows, for example
+`"sqlite:///C:/Users/me/flextool/input.sqlite"` (three slashes, then the drive).
+
+**Return codes.** `0` is success, `1` an infeasible or unbounded model, `-1` another failure (bash shows it as
+255). The loop goes on to the next scenario; each run's log is `_run.log` in its `output_parquet/<scenario>/`
+folder, next to `_run_status.json`.
+
+**Runs at the same time.** The loop above runs one scenario after another. To start several at once (for example
+from several terminals), give each run its own `--work-folder` and about cores / runs `--threads` (see the
+[`run_flextool.py` options](#run_flextoolpy-model-execution)). Leave the output database out of runs that start at the same time and compare them from
+their parquet folders, as below.
+
+**Compare the results** with `scenario_results.py`, from the output database or from the parquet folders:
+
+```bash
+python -m flextool.cli.cmd_scenario_results --parquet-base-dir results/output_parquet --alternatives coal coal_co2_price coal_fuel_price_high --write-to-xlsx
+```
+
+The workbook is written to `output_plot_comparisons/` under the parquet folder; `--excel-dir` and `--plot-dir`
+choose other folders.
+
+To check that the runs are fast enough for a course, time them with
+[`flextool-time-runs`](#check-that-exercises-run-fast-enough).
+
 ## Output directory structure
 
 After running the workflow, outputs are organized as follows:

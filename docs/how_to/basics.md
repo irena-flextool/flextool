@@ -152,3 +152,22 @@ The parameter is a flat Map on the `timeset` entity: index is the timestep name,
 
 !!! note "Mutually exclusive: timeset_weights and representative_period_weights"
     A single `timeset` may carry **either** `timeset_weights` (per-step weights for non-RP timeslice models) **or** `representative_period_weights` (per-period weights for RP-clustered models), not both. The runner errors out if both are set on the same timeset.
+
+## How to run a sensitivity (one alternative on top of a scenario)
+**(examples.sqlite scenarios: coal and coal_co2_price)**
+
+**The idea.** A sensitivity changes one or a few input values and leaves the rest of the model as it is. In FlexTool, put the changed values in an alternative of their own and add that alternative on top of the scenario you want to vary. The new scenario then differs from the original only in those values, and the difference in the results is the effect of the change.
+
+**Make the alternative.** Add an alternative, for example *fuel_price_high*, and give it only the values that change: here `price` 30 on the `commodity` *coal* (instead of 20). Do not copy the other data into it.
+
+**Make the scenario.** Make a new scenario with the same alternatives as the original, in the same order, and add the new alternative last. An alternative lower in the list overrides the ones above it when they set the same parameter (see [the tutorial](../tutorial.md#step-1-a-node-with-no-units)), so the last alternative wins. Make one scenario for each sensitivity: *coal* and *coal_fuel_price_high* side by side. To combine two changes, add both alternatives.
+
+**An example.** In *examples.sqlite*, the scenario *coal_co2_price* is the scenario *coal* with the alternative *co2_price* on top. That alternative sets `co2_method` *price* and `co2_price` 50 CUR/t on the group *co2_price*. The three scenarios of [How to compare emission trajectories](emissions.md#how-to-compare-emission-trajectories) are built the same way.
+
+**Things to know.**
+
+- A value in the sensitivity alternative replaces the whole value of the alternatives above it, not a part of it. If you give a period map, give every period of the solves: for many parameters a missing period is an error (the parameter descriptions say which).
+- An entity that exists only in the sensitivity (a new unit, for example) needs its entity alternative set to active in that alternative.
+- Check that the two scenarios differ only where you meant: the AI assistant's `compare_inputs` lists the input differences between two scenarios (see [The AI assistant](../ai_assistant.md#try-a-tool-from-the-terminal)).
+
+**Compare the results.** Run both scenarios and open them together in the comparison view of the [Result viewer](../flextool_gui_interface.md#result-viewer) (key X), or make comparison plots with [`scenario_results.py`](../terminal_workflow.md#scenario_resultspy-cross-scenario-comparison). To run many sensitivities from the terminal, see [Run several scenarios in a batch](../terminal_workflow.md#7-run-several-scenarios-in-a-batch).
