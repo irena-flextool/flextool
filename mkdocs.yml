@@ -85,6 +85,7 @@ nav:
     - 'Results catalogue': results_catalogue.md
     - 'Model formulation': formulation.md
     - 'Advanced concepts': advanced_concepts.md
+    - 'Model limitations': limitations.md
   - Interfaces:
     - 'FlexTool GUI': flextool_gui_interface.md
     - 'Spine Toolbox': spine_toolbox.md
