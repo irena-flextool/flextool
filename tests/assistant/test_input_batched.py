@@ -185,3 +185,11 @@ def test_shapes_are_worded_alike_inside_and_outside_the_registry(ctx) -> None:
     cells = _cells(out)
     assert cells["coal_plant", "existing"]["shape"] == "a constant"
     assert cells["coal_plant", "efficiency"]["shape"] == "a constant"
+
+
+def test_an_empty_entity_name_is_a_bad_argument_not_a_fault(ctx) -> None:
+    # Seen in a real gpt-oss calibration run: entities=[[]] crashed _parameter_table (names[0]) into "fault".
+    out = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameters": ["existing"],
+                                           "entities": [["coal_plant"], []], "scenario": "all"})
+    assert not out.ok
+    assert "non-empty list of names" in out.message and "fault" not in out.message.lower()

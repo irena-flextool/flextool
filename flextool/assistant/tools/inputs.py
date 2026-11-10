@@ -435,6 +435,9 @@ def _as_list(value: Any) -> list:
 def _requested_entities(db: _db.InputDB, entity_class: str, given: list[list[str]]) -> list[list[str]]:
     """The requested entities; one name each that together name one entity of a multi-dimensional class (the
     names of its dimensions given as a flat list) are that entity."""
+    if any(not e or not all(isinstance(n, str) and n for n in e) for e in given):
+        raise ToolError("bad_arguments", name="get_parameter",
+                        problem="each entity in entities must be a non-empty list of names")
     dims = db.classes[entity_class].dimensions
     if (len(dims) > 1 and len(given) == len(dims) and all(len(e) == 1 for e in given)
             and not any(_find(db, entity_class, e) for e in given)
