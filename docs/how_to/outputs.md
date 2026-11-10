@@ -138,6 +138,40 @@ The following groups are **always kept** regardless of the `--groups` selection 
 
 These provide the structural backbone of any FlexTool model. Implementation: `flextool/cli/cmd_export_to_tabular.py` and `flextool/export_to_tabular/sheet_config.py`. The FlexTool GUI exposes the same picker under the "Add empty FlexTool input Excel" action (3.32.0). See also [Excel interface](../excel_interface.md) for the Excel-as-input workflow.
 
+## How to replace a dataset and keep the old one as an alternative
+
+**The idea.** When new data arrives (a new demand forecast, updated cost assumptions), keep the old data and put the new values in an alternative of their own. A scenario with the new alternative on top then uses the new data, the old scenario still runs as before, and the two can be compared. Excel is handy for entering a large set of new values.
+
+**1. Export a partial template.** Export only the parameter groups that hold the data you replace, as in [How to export a partial Excel template](#how-to-export-a-partial-excel-template-parameter-group-picker):
+
+```bash
+python -m flextool.cli.cmd_export_to_tabular sqlite:///input.sqlite new_demand.xlsx --groups basics
+```
+
+**2. Edit the workbook.**
+
+- On each sheet, keep only the rows you replace and delete the others.
+- Write the name of the new alternative, for example *demand_2024*, in the `alternative` column of those rows.
+- Enter the new values. A new entity also needs `entity existence` *TRUE* in the new alternative.
+
+    Rows that keep the name of an existing alternative do not change the database (see step 3), so they can stay,
+    but deleting them keeps the workbook easy to check.
+
+**3. Import into the same database, without purging.** Copy the database first. Then:
+
+```bash
+python -m flextool.cli.cmd_read_self_describing_tabular_input new_demand.xlsx sqlite:///input.sqlite --no-purge
+```
+
+!!! warning "Always give `--no-purge` when adding data"
+    Without `--no-purge`, the import first deletes the entities, alternatives, scenarios and parameter values of the database and then writes the workbook's data: only the rows of your partial workbook would be left.
+
+With `--no-purge`, the import adds the new alternatives, entities and values. A value that the database already has for the same entity, parameter and alternative is not changed: the import prints a message for it and goes on. So an edit under the old alternative name has no effect; the new values must be in the new alternative.
+
+**4. Make the scenario.** Add a scenario with the alternatives of the old scenario and *demand_2024* last, in the Spine database editor or in the `scenario` sheet of the workbook before the import (a new column: the scenario name in the top row, then `base_alternative` and the other alternatives in order). The old scenario stays as it was.
+
+**5. Run and compare.** Run both scenarios and open them in the comparison view of the [Result viewer](../flextool_gui_interface.md#result-viewer) (key X). The AI assistant's `compare_inputs` checks that the two scenarios differ only in the new data, and `compare_runs` shows how the results differ (see [The AI assistant](../ai_assistant.md#try-a-tool-from-the-terminal)). The same set-up runs one value change as a sensitivity: see [How to run a sensitivity](basics.md#how-to-run-a-sensitivity-one-alternative-on-top-of-a-scenario).
+
 ## How to make a data dictionary for your model
 
 A project team that builds a model from its own data often needs a list of every input parameter: what it means, its unit, the shapes it accepts and its default, with room to note where the team's value comes from. FlexTool writes that list, the parameter catalogue, from its own database schema, so it always matches the installed version. The same table is on the web as the [Parameter catalogue (web docs)](../parameter_catalogue.md) page; the FlexTool assistant answers the same questions per parameter with its `describe_parameter` tool.
