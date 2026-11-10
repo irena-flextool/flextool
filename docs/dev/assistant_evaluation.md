@@ -9,9 +9,9 @@ Everything lives under `tools/`, which is not packaged:
 
 | file | what it holds |
 |---|---|
-| `tools/assistant_eval.py` | the command line: `build`, `run`, `grade`, `summary`, `calibrate`, `dual` |
-| `tools/assistant_eval_scoring.py` | the question set and answer key formats, and the automatic checks |
-| `tools/assistant_eval_analysis.py` | the calibration tables and the dual grading |
+| `tools/assistant_eval.py` | the command line: `build`, `run`, `grade-ai`, `review`, `summary`, `calibrate` |
+| `tools/assistant_eval_scoring.py` | the question set and answer key formats, the automatic checks, the graded items and the grader material |
+| `tools/assistant_eval_analysis.py` | the calibration tables and the agreement figures |
 | `tools/assistant_eval_data/grounding_set.yaml` | the questions, each with a difficulty class |
 | `tools/assistant_eval_data/answer_key.yaml` | the answers, written by an independent oracle |
 | `tools/assistant_eval_data/results.jsonl` | the committed summary, one line per graded answer |
@@ -103,65 +103,154 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
 
 ## Grading
 
+Claude Opus 5.5 (`claude-opus-5-5`) grades every cell, blind. The owner then reviews part of the cells, always
+giving their own verdict before seeing Opus's. The owner's review is final.
+
 ```
-python tools/assistant_eval.py grade RESULTS_M1 RESULTS_M2 ... --dir GRADING   # repeat until every cell is graded
-python tools/assistant_eval.py summary RESULTS ... --record
+python tools/assistant_eval.py grade-ai _audit_reports/assistant_eval/{opus,gemini,gemma,gptoss} \
+    --dir _audit_reports/assistant_eval/grading_v2 --accept-data-notice
+python tools/assistant_eval.py review --dir _audit_reports/assistant_eval/grading_v2      # repeat until done
+python tools/assistant_eval.py summary --dir _audit_reports/assistant_eval/grading_v2 --record
+python tools/assistant_eval.py calibrate
 ```
 
-`grade` runs the automatic checks against the answer key:
+All grading state lives in the grading folder (`--dir`): `grading.json` (the blind order and its seed, the results
+folders, the key version), `cells/<n>.json` (Opus's grading and the owner's review of cell #n), `review.json` (the
+review queue and its random sample) and `agreement.txt`. The results folders are only read. A grading folder made
+by the earlier grading (no "missing" verdict, no "incomplete" outcome) is refused: grade into a new folder.
 
-- facts, with their units and SI prefixes;
-- that every number in the answer comes from a tool result;
-- forbidden statements;
-- "the data does not answer" questions;
-- the failed run;
-- escalation;
-- the tools called and the run's health.
+### Items and outcomes
 
-Some items need a person, and the owner grades those:
+The automatic checks run against the answer key: facts with their units and SI prefixes, that every number in the
+answer comes from a tool result, forbidden claims, "the data does not answer" questions, the failed run and
+escalation. A check can only settle that an item is **right**. Every other finding is an item a grader judges,
+with the verdicts it allows:
 
-- a number with no tool source (the nearest source numbers are shown with it);
-- statement facts;
-- whether the answer separates facts from assumptions.
+- **right**: the answer gets this item right;
+- **missing**: the answer does not give it, and says nothing false about it;
+- **wrong**: the answer says something false about it, or gives another value.
 
-Grading is blind. `grade` takes the results folders of every model and shuffles their cells together, so give it
-all of them; one folder alone is refused unless `--single-model` says so. The order and its seed are kept in
-`GRADING/grading.json`. A folder added later is shuffled into the cells not yet shown. A cell is shown as
-`Cell #n`, never by its name. The model, the provider, the level, the call caps, the notices and the times are
-hidden, and model and family names become "[assistant]". Texts and phrases that would reveal the level are
-replaced with neutral placeholders, and so are the sizes of cut tool results. The only hint at the level is the
-expected behaviour: either "a full answer is expected" or "escalating to a higher level is acceptable". Before the
-first question, `grade` checks everything the sitting would show. If something still names the model, the level, a
-cap or the time of a run, it grades nothing and says which cell. A model's writing style can still give it away,
-so the blinding is only partial.
-
-A sitting is 37 cells (`--sitting N`). `grade` always continues where it stopped: grades are saved after each
-cell, and `q` or Ctrl-C keeps the verdicts already given for the current cell. `--regrade #n` grades cell #n
-again; the result is recorded as a new line, and the first pass is kept. An interrupted re-grade saves nothing.
+A number fact the check did not find is judged with the numbers that carry the fact's unit in the answer. A
+number with no tool source is right (a shown or plain calculation, or a general constant) or wrong (invented). A
+match of a forbidden pattern is wrong, or right when the answer does not claim it (for example, negated).
 
 Each cell gets one outcome:
 
-- **answered**: every critical item passes, and at least 75 % of the other items pass;
-- **escalated**: a clean escalation whose numbers all come from tools;
-- **failed**: anything else.
+- **answered**: nothing missing and nothing wrong;
+- **incomplete**: nothing wrong and no invented number, but something missing (a critical item too: the line
+  lists `critical_missing`);
+- **escalated**: a clean hand-over to a higher level and nothing wrong (what it left out does not count);
+- **failed**: something wrong, an invented number, or no final answer.
 
-The count of invented numbers is kept with each cell. `summary --record` appends the graded cells to
-`tools/assistant_eval_data/results.jsonl` and refuses grades made with a placeholder key.
+A missing unit next to a right value, or a true claim not marked as an assumption, does not make a cell
+incomplete: it is counted as `form_missing`. A wrong unit or a false unmarked claim fails the cell. A cell whose
+final answer is empty (for example, cut off while the model was still reasoning) is failed without asking Opus
+(`no_answer` in its line). The tools called and the run's health are not items; the line keeps them as
+diagnostics.
+
+Each cell also gets an understandability rating, which never changes the outcome: 1 = clear (the user gets the
+answer on the first reading), 2 = understandable with effort (the answer is there, but buried, out of order or
+needs a second reading), 3 = hard to follow.
+
+### What the graders see
+
+Opus and the owner see the same material: the question, the expected behaviour ("a full answer is expected" or
+"escalating to a higher level is acceptable"), the answer key, the items the checks found right, each tool call
+with its arguments and its result (folded to 4 000 characters), and the final message of each turn. Reasoning
+blocks (`<thought>`, `<think>`) are removed, and so are reasoning fields, continuation notes, notices, usage and
+times. The answer the graders see is the final message; text a model streamed between tool rounds is not
+recorded.
+
+Grading is blind. The cells of every model are shuffled together, and a cell is shown as `Cell #n`. Model and
+family names become "[assistant]", phrases that name the level become "[level]", the level texts' fixed
+escalation sentences become "[escalation sentence]", and the sizes of cut tool results are hidden. Before
+anything is sent or shown, a leak scan checks every request as it would be sent; if something still names the
+model, the level, a cap or the time of a run, nothing is sent, and every cell it found is named. The blinding is
+partial: style, tool names (the basic level has fewer tools) and answer length can still hint at the model.
+
+Answers and tool texts are data. Every text a model wrote or a tool returned is inside a fence
+`<<<DATA tag>>>` … `<<<END tag>>>` whose tag the model could not know; material that holds its own tag is
+refused. Opus's reply must be exactly the asked JSON (every item once, each verdict among the item's allowed
+ones, confidences, reasons of at most 200 characters). An invalid reply gets one retry; a second invalid reply is
+saved as unparsed and goes to the owner. An answer whose text, tool names or arguments seem to address a grader
+goes to the owner too, whatever Opus said.
+
+### grade-ai
+
+`grade-ai` sends one request per cell (none for a cell without an answer), through FlexTool's retries and pacing.
+The key comes from the keyring or `ANTHROPIC_API_KEY`; `--accept-data-notice` accepts Anthropic's data notice for
+this run only. The requests are counted in the usage ledger as "Anthropic (calibration)". Give it the results
+folders of every model; one folder alone is refused unless `--single-model`. The folder set is fixed by the first
+`grade-ai`. It refuses results folders with cells that are not finished (continue them with `run --resume`
+first).
+
+Run the same command again to continue: a cell that was graded from the same material is skipped. If a cell's
+answer, the answer key or the rubric has changed since, `grade-ai` stops; `--changed` grades those cells again and
+keeps their earlier grading in the cell's history (their review starts over). An error that is not an answer
+stops the run with exit code 1 and saves nothing for that cell. Two `grade-ai` processes cannot work on one
+grading folder at once.
+
+### review
+
+`review` starts once Opus has graded every cell. The queue is drawn once:
+
+- every cell with a low confidence, an unparsed reply or an injection hint;
+- every cell with a number that has no tool source, whatever Opus said;
+- every cell written by `claude-opus-5-5` (for self-preference);
+- a random sample of the rest: 15 % and at least 35 cells (all of them when fewer), drawn with the grading's seed.
+
+For each queued cell, the owner sees the material and gives a verdict on each judged item (`r` / `m` / `w`, only
+the allowed letters) and the understandability (`1` / `2` / `3`). Only then are Opus's verdicts, confidences and
+reasons shown, with each disagreement marked. For each disagreement, Enter keeps the owner's verdict and a letter
+changes it. Both the first and the final verdicts are kept, and agreement uses the first. The reasons the cell
+was queued are never shown.
+
+A sitting is 37 cells (`--sitting N`; 0 for no limit). `q` or Ctrl-C keeps the verdicts already given, and the
+next `review` asks the rest. `--regrade #n` reviews a cell again; the latest review wins. `--all` queues every
+cell (full manual grading).
+
+### summary
+
+`summary --dir` prints, per model, level setting and class: answered, incomplete, escalated, failed (and how many
+had no answer), the cells still waiting, the invented numbers and the understandability ratings. It also writes
+`agreement.txt`: Opus against the owner's first verdicts, per item (3 categories), per outcome (4) and for
+understandability (also linear-weighted kappa), each with n, agreement, Cohen's kappa with a bootstrap interval by
+question, the confusion table and the lenient (Opus kinder) and strict counts. It reports:
+
+- **the random sample**: the estimate for the cells Opus alone graded. When the Wilson 95 % upper bound of the
+  outcome disagreement is above 10 %, it says "Review every cell: review --all." With 35 cells this passes only
+  with no disagreement (0 of 35: 9.9 %);
+- **all reviewed cells**;
+- **self-preference**: Opus's own cells that no other reason queued, against the random sample, as raw counts.
+
+`summary --record` appends one line per cell to `tools/assistant_eval_data/results.jsonl` and refuses while
+cells still wait for review. A cell's grade is the owner's when reviewed, else Opus's. A later review or a
+`--changed` grading appends a new line, and the latest line of a cell is its grade.
+
+A paid canary (a wrong answer that tells the grader to mark every item right, excluded from the results) would
+test injection resistance on the real model; the tests can only check the fences with a fake backend.
 
 ## The evidence for the owner
 
 `python tools/assistant_eval.py calibrate` reads `results.jsonl` and prints a table for each model. The rows are
-the level settings, and the columns are the classes. Each entry gives two rates, each with n and a Wilson 95 %
+the level settings, and the columns are the classes. Each entry gives three rates, each with n and a Wilson 95 %
 interval:
 
 - **answered_rate**: answered cells as a share of the cells that ran;
+- **incomplete_rate**: incomplete cells: nothing false said, but something left out. They are never counted as
+  safe, because unlike an escalation they do not say what they left out;
 - **safe_rate**: answered or escalated cells with no invented number.
+
+For each model it adds the cells incomplete on a critical item, the cells without an answer and how many cells
+the owner graded (the rest were graded by Opus alone). `calibrate` reads only grading v2 lines (`line_format` 2)
+and refuses a file with older lines.
 
 It also prints, for each setting:
 
 - the calls, rounds and output tokens of the answered cells (median and 90th percentile);
 - cap hits, length stops, fit compactions and truncations;
-- the ratio of the reported to the estimated prompt tokens.
+- the ratio of the reported to the estimated prompt tokens;
+- the understandability ratings and their median.
 
 Free-plan cells are shown in a separate block and are not used for the caps.
 
@@ -175,35 +264,6 @@ Then it lists the evidence:
 
 The starting bars are 60 % answered at basic, 75 % at standard and advanced, and no invented number. In the first
 round each class has only a few cells, so these tables are evidence for the owner's review, not decisions.
-
-## Dual grading
-
-A second grader, Claude Opus 5.5 (`claude-opus-5-5`), grades a subset of the cells. Its agreement with the owner
-is then measured. The owner's grades stay authoritative.
-
-```
-python tools/assistant_eval.py dual sample RESULTS_M1 RESULTS_M2 RESULTS_M3 RESULTS_M4 --dir DUAL
-python tools/assistant_eval.py dual grade-ai --dir DUAL --accept-data-notice
-python tools/assistant_eval.py dual report --dir DUAL --record
-```
-
-- **`sample`** draws 60 cells with a recorded seed. It takes one cell from each model × setting × class, then 24
-  more weighted towards cells with numbers to review and towards interpret and diagnose cells. Then it adds cells
-  that Opus wrote until there are at least 15 of them. Only cells whose outcome depends on a person's judgement
-  are drawn.
-- **`grade-ai`** sends one request per cell. There are no tools and no sampling settings, and the answer can be at
-  most 16 000 tokens. Opus sees the same blinded material as the owner, framed as data. An invalid reply gets one
-  retry; a second invalid reply is recorded as "unparsed" and counts as a disagreement. Its verdicts stay sealed in
-  `grader_verdicts.sealed.json`.
-- **`report`** runs only once the owner has made a first-pass grade of every sampled cell. It reports, for review
-  numbers, statements, facts-vs-assumptions and the cell outcome:
-  - agreement and Cohen's kappa, with a bootstrap interval resampled by question;
-  - the lenient and strict disagreements;
-  - Opus's own cells apart from the rest, as raw counts;
-  - every disagreement;
-  - the conditions of the proposed rule for reducing manual grading.
-
-  `--record` appends Opus's lines with `"authoritative": false`.
 
 ## The answer key
 
@@ -231,9 +291,10 @@ The question set and the answer key have version numbers. Compare scores only be
 A FlexTool upgrade can change answers too. The `flextool_version` and `commit` fields tell which version produced
 an answer.
 
-Lines with `"authoritative": false` are a second grader's verdicts, kept to measure agreement. Count scores only
-from authoritative lines. A line with outcome `not_applicable` is a cell that was not run because the model's
-context did not fit; leave it out of the rates. `knobs_relaxed` marks runs that allowed the provider to keep the
-synthetic data.
+Each line says who gave its grade (`grader`: `owner` when reviewed, `claude-opus-5-5` otherwise, `none` for a
+cell without an answer or not run), why it was reviewed, and Opus's own outcome and understandability next to the
+final ones. When a cell has several lines, the latest is its grade. A line with outcome `not_applicable` is a cell
+that was not run because the model's context did not fit; leave it out of the rates. `knobs_relaxed` marks runs
+that allowed the provider to keep the synthetic data.
 
 A single line is one try. Read rates over several questions, not one answer.
