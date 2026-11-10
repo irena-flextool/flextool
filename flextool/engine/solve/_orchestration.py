@@ -5026,10 +5026,12 @@ def run_chain_from_db(
     try:
         # ``read_input`` timing row: the DB read, the input preparation and
         # the run set-up (solve and timeline configuration, runner) up to the
-        # first solve.  The runner built in ``_runner_factory`` below makes
-        # the recorder that starts timings.csv afresh, so the row is recorded
-        # there, once the runner exists.
+        # runner's construction, before ``preprocessing_global``.  The runner
+        # built in ``_runner_factory`` below makes the recorder that starts
+        # timings.csv afresh, so the row is recorded there, once the runner
+        # exists, and only by the first call.
         _t_read_input_start = time.perf_counter()
+        _read_input_recorded = False
         write_workdir_inputs(
             db_url,
             scenario_name,
@@ -5052,6 +5054,7 @@ def run_chain_from_db(
         # preprocessing chain (``preprocessing_solve_time``,
         # ``solve_writers``, ``handoff_writers``).  No write_input call.
         def _runner_factory() -> "FlexToolRunner":
+            nonlocal _read_input_recorded
             runner = FlexToolRunner(
                 input_db_url=db_url,
                 scenario_name=scenario_name,
@@ -5062,7 +5065,8 @@ def run_chain_from_db(
             )
             runner.state.logger.setLevel(logging.ERROR)
             _recorder = runner.state.timing_recorder
-            if _recorder is not None:
+            if _recorder is not None and not _read_input_recorded:
+                _read_input_recorded = True
                 _recorder.record(
                     "read_input",
                     seconds=time.perf_counter() - _t_read_input_start,

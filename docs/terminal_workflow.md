@@ -545,19 +545,24 @@ Import refuses member names that would leave the project folder or that Windows 
 
 For a course, `flextool-time-runs` runs scenarios one after another on the trainer's (or a participant's)
 computer and shows where each run's time goes. It prints the computer first (processor, cores, memory, system and
-FlexTool version), so the tables of different laptops can be compared.
+FlexTool version), so the tables of different laptops can be compared. Before each run it prints the run's number
+and scenario, and the time when the run ends; the whole default set of examples takes several minutes.
 
 ```bash
 flextool-time-runs                                  # every example and how-to scenario that comes with FlexTool
-flextool-time-runs --source templates_examples --scenario coal 'network_*'
+flextool-time-runs --source templates_examples --scenario coal "network_*"
 flextool-time-runs --db projects/Course/input_sources/exercises.sqlite --scenario Ex1 Ex2 --target 30 --strict
 ```
+
+Put a pattern in double quotes, as above: that works in bash, PowerShell and the Windows Command Prompt (which
+keeps single quotes as part of the name). On Windows, open the terminal with the FlexTool environment active
+(`.venv\Scripts\activate`, see [Installation](install_gui.md)) so that `flextool-time-runs` is found.
 
 The table has one row per run, slowest first, in seconds; `!` marks a run over the target (default 60 s):
 
 | Column | What it covers |
 |---|---|
-| `wall` | The whole run, as the FlexTool window would start it |
+| `wall` | The whole run, started with the command and thread count the FlexTool window uses by default (see `--threads`) |
 | `start-up` | Starting Python and loading FlexTool |
 | `read input` | Reading the input database, preparing the input data and setting up the run |
 | `preprocess` | Building each solve's data and its optimisation problem |
@@ -565,21 +570,24 @@ The table has one row per run, slowest first, in seconds; `!` marks a run over t
 | `outputs` | Writing the results (parquet) |
 | `viewer` | The data the result viewer needs (also written with plots off) |
 | `plots` | The scenario plots (png); zero with plots off |
-| `untimed` | The rest. A Benders solve writes no per-solve times, so its preprocessing and solving land here |
+| `untimed` | The rest. A Benders solve writes no per-solve problem-building, solving or result-writing times, so those land here |
 
 | Argument | Description |
 |---|---|
-| `--db PATH` | Run the scenarios of this `.sqlite` input database (a path or a `sqlite:///` URL; can be given several times) instead of the examples. The database is only read |
+| `--db PATH` | Run the scenarios of this `.sqlite` input database (a path or a `sqlite:///` URL; can be given several times) instead of the examples. The runs read a copy of it made in the temporary folder, so the file itself is never opened by a run |
 | `--source JSON` | Build and run a JSON database: a file, or a shipped one by name (`templates_examples`, `howto_demand`, …) |
 | `--scenario NAME [...]` | Scenario names or patterns (`*`, `?`); default every scenario. A name that matches nothing is an error |
 | `--plots off\|on\|both` | Write the scenario plots in the runs (default `off`); `both` runs each scenario twice |
+| `--threads N` | Threads for each run, as **Threads per run** in the FlexTool window (default 1, the window's default). Give the value the course project uses |
 | `--target SECONDS` | Mark runs longer than this (default 60) |
 | `--strict` | Exit code 2 when a run is over the target. A failed run always gives exit code 1 |
 | `--keep DIR` | Keep the runs' work folders, results and logs in `DIR` (default: a temporary folder that is removed) |
 | `--csv FILE` | Also write the table to a CSV file |
 
 The runs go one after another, because runs in parallel slow each other down. The run times come from each run's
-`timings.csv` (in `output_csv/<scenario>/`), which every run writes.
+`timings.csv` (in `output_csv/<scenario>/`), which every run writes. With `--plots on`, the runs draw the
+default plot set, not only the output configurations a project has made active, so the `plots` and `viewer`
+times can differ a little from that project's runs in the window.
 
 Plots are off in the timed runs by default because they are the slowest part of a small model's run and an
 exercise does not need them: participants see every plot in the result viewer, which draws them from the results.

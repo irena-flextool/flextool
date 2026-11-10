@@ -2,13 +2,14 @@
 
 - **New: `flextool-time-runs`, a timing check for exercises.** Runs scenarios one after another (default: every
   example and how-to scenario that comes with FlexTool; `--db PATH --scenario S ...` for a project's own database)
-  with plots off unless `--plots on|both`, and prints the computer (processor, cores, memory) and a table of each
+  with the FlexTool window's default threads per run (1; `--threads N` for another) and plots off unless
+  `--plots on|both`; a `--db` database is copied first and the runs read the copy. It prints the computer (processor, cores, memory) and a table of each
   run's seconds by phase: start-up, read input, preprocess, solve, outputs, viewer, plots and untimed, slowest
   first, with `!` on runs over `--target` (default 60 s). Exit code 1 when a run fails, 2 with `--strict` when a run
   is over the target; `--csv` writes the table to a file. See *Check that exercises run fast enough* in Running
   FlexTool from the terminal.
 - **New: `read_input` row in `timings.csv`**: the time to read the input database, prepare the input data and set
-  up the run, before the first solve.
+  up the run, up to the start of preprocessing.
 - **New: plotted data as CSV.** Each plot file can get a CSV file next to it with the data drawn in it (same name,
   `.csv`; a plot split into files gets `_01.csv`, `_02.csv`, …), for the scenario plots, the comparison plots and
   the dispatch plots. Rows are the plotted time steps or bars (no gap rows at timeline breaks), columns the plotted

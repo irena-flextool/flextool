@@ -77,3 +77,42 @@ def test_one_example_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Non
     parts = sum(float(row[f"{k}_s"]) for k in
                 ("startup", "read_input", "preprocess", "solve", "outputs", "viewer", "plots", "untimed"))
     assert parts == pytest.approx(wall, abs=0.01)
+
+
+def test_db_runs_from_a_copy_with_the_gui_threads(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """``--db``: the run gets a copy (the file is unchanged), ``--threads 1`` and the GUI's UTF-8 environment."""
+    import hashlib
+    import subprocess
+
+    from flextool.cli import cmd_time_runs
+
+    db_folder = tmp_path / "my #project"  # '#' would break an unencoded file: URI
+    url = cmd_time_runs._build_sqlite(cmd_time_runs._resolve_source("templates_examples"), db_folder)
+    db = Path(url.removeprefix("sqlite:///"))
+    before = hashlib.sha256(db.read_bytes()).hexdigest()
+    calls: list[tuple[list[str], dict[str, str]]] = []
+
+    def fake_run(cmd, *, env, **kwargs):
+        calls.append((cmd, env))
+        return subprocess.CompletedProcess(cmd, 0)
+
+    monkeypatch.setattr(cmd_time_runs.subprocess, "run", fake_run)
+    with redirect_stdout(io.StringIO()) as buf:
+        main(["--db", str(db), "--scenario", "coal"])
+    assert hashlib.sha256(db.read_bytes()).hexdigest() == before
+    (cmd, env), = [c for c in calls if "flextool.cli.cmd_run_flextool" in c[0]]
+    run_url = cmd[cmd.index("flextool.cli.cmd_run_flextool") + 1]
+    assert run_url.startswith("sqlite:///") and Path(run_url.removeprefix("sqlite:///")) != db
+    assert cmd[cmd.index("--threads") + 1] == "1"
+    assert env["PYTHONIOENCODING"] == "utf-8" and env["FLEXTOOL_PHASE_TIMING"] == "1"
+    assert "[1/1] coal (" in buf.getvalue()
+
+
+def test_db_that_is_not_flextool(tmp_path: Path) -> None:
+    """A .sqlite without a scenario table is one message, not a traceback."""
+    import sqlite3
+
+    other = tmp_path / "other.sqlite"
+    sqlite3.connect(other).execute("CREATE TABLE x (a)").connection.close()
+    with pytest.raises(SystemExit, match="not a FlexTool input database"):
+        main(["--db", str(other)])
