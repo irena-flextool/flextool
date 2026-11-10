@@ -2,8 +2,10 @@
 
 Export lists what every package holds (greyed), a checkbox tree of the project's result runs with their sizes, the
 external input files option and the package file; the total is the uncompressed size (parquet barely compresses).
-A ticked run whose input changed after the run is warned about.  Export is refused while the project has running
-jobs, and writes the zip on a worker thread.
+A ticked run whose input changed after the run is warned about; a run still being written (by this window, Spine
+Toolbox or the terminal, as its run record says) is marked and refused.  By default the run records lose this
+computer's paths, user and host name and the run logs stay home.  Export is refused while the project has running
+jobs, asks before replacing an existing package file, and writes the zip on a worker thread.
 
 Import reads the package's manifest without unpacking it, fills the project name (``<Name>_2`` when the name is
 taken), shows the version warnings and refuses a database newer than this FlexTool.  The work is done by
@@ -17,7 +19,7 @@ import tkinter as tk
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from tkinter import filedialog, ttk
+from tkinter import filedialog, messagebox, ttk
 
 from flextool import project_package as pp
 from flextool.gui.check_tree import CheckTreeController
@@ -104,7 +106,10 @@ class ExportDialog(tk.Toplevel):
         self._runs = {run.name: run for run in pp.list_runs(self._project_dir)}
         target = (target_dir or Path.cwd()) / pp.default_package_name(self._project_dir.name)
         self._target_var = tk.StringVar(value=str(target))
+        #: The package file the user agreed to replace (in the save dialog of Browse…, or when asked).
+        self._replace_ok: str | None = None
         self._external_var = tk.BooleanVar(value=True)
+        self._scrub_var = tk.BooleanVar(value=True)
         self._build()
         self._update_total()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -133,8 +138,13 @@ class ExportDialog(tk.Toplevel):
         config_dir = self._fixed["solver_config_dir"]
         lines.append(f"Solver options from {config_dir}: {', '.join(opts)}" if opts
                      else f"Solver options: no .opt files in {config_dir}")
+        lines.append("With each result run: its run record (_run_status.json), which can show this computer's "
+                     "folder paths, user name and host name, and its run log (_run.log)")
         for line in lines:
             ttk.Label(fixed, text=line, foreground=GREY_FG, wraplength=wrap, justify="left").pack(anchor="w")
+        ttk.Checkbutton(
+            fixed, text="Remove this computer's folder paths, user name and host name from the run records, and "
+                        "leave the run logs out", variable=self._scrub_var).pack(anchor="w", pady=(4, 0))
         external = self._fixed["external"]
         if external:
             present = [name for name, _path, exists in external if exists]
@@ -163,14 +173,20 @@ class ExportDialog(tk.Toplevel):
             self.tree.column(col, width=self._cw * width, stretch=col in ("run", "note"),
                              anchor="center" if col == "check" else "w")
         self.tree.tag_configure("stale", foreground=WARNING_FG)
+        self.tree.tag_configure("active", foreground=ERROR_FG)
         scroll = ttk.Scrollbar(frame, orient="vertical", command=self.tree.yview)
         self.tree.configure(yscrollcommand=scroll.set)
         self.tree.pack(side="left", fill="both", expand=True)
         scroll.pack(side="right", fill="y")
         for run in self._runs.values():
-            note = "input changed after the run" if run.stale else ""
+            if run.active:
+                note, tags = "running: cannot be exported yet", ("active",)
+            elif run.stale:
+                note, tags = "input changed after the run", ("stale",)
+            else:
+                note, tags = "", ()
             self.tree.insert("", "end", iid=run.name, values=(_UNCHECKED, run.name, format_size(run.bytes), note),
-                             tags=("stale",) if run.stale else ())
+                             tags=tags)
         if not self._runs:
             ttk.Label(runs, text="This project has no results.", foreground=GREY_FG).pack(anchor="w")
         self.checks = CheckTreeController(self.tree, checked_glyph=_CHECKED, unchecked_glyph=_UNCHECKED,
@@ -224,9 +240,9 @@ class ExportDialog(tk.Toplevel):
         total += sum((config_dir / name).stat().st_size for name in self._fixed["solver_config"])
         runs = self.selected_runs()
         total += sum(self._runs[name].bytes for name in runs)
-        if runs:
-            base = self._project_dir / pp.RESULTS_DIR
-            total += sum(p.stat().st_size for p in base.glob("_*") if p.is_file())
+        bounds = pp.axis_bounds_for_runs(self._project_dir, runs)
+        if bounds is not None:
+            total += len(bounds)
         return total
 
     def _update_total(self) -> None:
@@ -247,6 +263,7 @@ class ExportDialog(tk.Toplevel):
             filetypes=[("FlexTool project package", "*.zip"), ("All files", "*")])
         if chosen:
             self._target_var.set(chosen)
+            self._replace_ok = chosen          # the save dialog asked about replacing it
 
     def _set_status(self, text: str, colour: str = "") -> None:
         self.status_label.configure(text=text, foreground=colour)
@@ -266,7 +283,18 @@ class ExportDialog(tk.Toplevel):
             return
         zip_path = Path(target)
         runs = self.selected_runs()
+        active = [name for name in runs if self._runs[name].active]
+        if active:
+            self._set_status(pp.active_run_message(active), ERROR_FG)
+            return
+        overwrite = False
+        if zip_path.exists():
+            if self._replace_ok != target and not messagebox.askyesno(
+                    "Replace the package?", f"{zip_path} exists already. Replace it?", parent=self):
+                return
+            overwrite = True
         include_external = self._external_var.get()
+        scrub = self._scrub_var.get()
         self.export_button.configure(state="disabled")
         self._set_status("Exporting…")
 
@@ -275,7 +303,8 @@ class ExportDialog(tk.Toplevel):
 
         worker = _Worker(lambda: pp.export_project(
             self._project_dir, zip_path, runs, include_external,
-            solver_config_dir=self._solver_config_dir, progress=progress))
+            solver_config_dir=self._solver_config_dir, progress=progress, overwrite=overwrite,
+            scrub_run_records=scrub))
         self._worker = worker
         self.zip_path = zip_path
         self.after(_POLL_MS, self._poll)
@@ -304,6 +333,7 @@ class ExportDialog(tk.Toplevel):
             lines.append("The input of these runs changed after the run: " + ", ".join(self.manifest.stale_runs))
         if self.manifest.external_not_included:
             lines.append("Not in the package: " + ", ".join(self.manifest.external_not_included))
+        lines.extend(self.manifest.export_warnings)
         self._set_status("\n".join(lines))
         self.close_button.configure(text="Close")
 
@@ -386,6 +416,8 @@ class ImportDialog(tk.Toplevel):
         self.import_button = ttk.Button(bottom, text="Import", command=self._on_import, state="disabled")
         self.import_button.pack(side="left")
         ttk.Button(bottom, text="Cancel", command=self._on_cancel).pack(side="right")
+        self.status_label = ttk.Label(self, text="", foreground=ERROR_FG, wraplength=wrap, justify="left")
+        self.status_label.pack(anchor="w", padx=10)
 
     def _browse(self) -> None:
         from flextool.gui.dialogs.file_picker import FilePickerDialog
@@ -477,6 +509,7 @@ class ImportDialog(tk.Toplevel):
 
     def _on_cancel(self) -> None:
         if self._worker is not None:
+            self.status_label.configure(text="The project is still being imported; close when it is done.")
             return
         self.result = None
         self.grab_release()

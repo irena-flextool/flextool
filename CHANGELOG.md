@@ -20,6 +20,14 @@
   results are not flagged as made from a changed input), suggests `<Name>_2` when the name is taken (exit code 3
   in the terminal), refuses a database newer than this FlexTool, migrates older ones on open (asking first for a
   frozen one), and unpacks the shipped solver options to `imported_solver_config/` with a note on how to use them.
+  The viewer's axis ranges file is cut to the shipped runs; run records have this computer's folder paths, user
+  name and host name replaced and run logs stay home (on by default; `--keep-run-records` / untick to keep them);
+  a run still being written is refused (`--results all` leaves it out); a `.sqlite` input that may be in the middle
+  of a write is copied through SQLite, `-wal`/`-shm`/`-journal` files never; names Windows cannot hold, names that
+  differ only in case and a package that does not fit on the disk are refused before anything is written; an
+  existing package file is replaced only after asking (`--force` in the terminal); errors are one message, no
+  traceback; a stopped import's hidden `.<name>.partial` folder is not listed as a project; import names inputs
+  left out of the package; `verify` prints one `pip install` line pinning FlexTool, polar-high, highspy and polars.
 - **Fix: the Solver options dialog said the `.opt` files are in the project's `solver_config` folder.** They are
   in the `solver_config` folder of the FlexTool workspace (or `$FLEXTOOL_SOLVER_CONFIG_DIR`).
 - **Behaviour change: the model run refuses an input database that is not at the current FlexTool version.**

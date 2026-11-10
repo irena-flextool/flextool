@@ -1,5 +1,7 @@
-"""The project export and import dialogs (C-9): tick a run, the total follows, Export writes the package; Import
-reads its manifest and suggests ``<Name>_2`` while ``<Name>`` is taken.
+"""The project export and import dialogs (C-9): tick a run, the total follows, Export writes the package (asking
+before it replaces one); Import reads its manifest and suggests ``<Name>_2`` while ``<Name>`` is taken.
+
+Without ``--run-gui`` these tests are skipped.
 
 Run headless:  xvfb-run -a python -m pytest tests/gui/test_project_package.py --run-gui
 """
@@ -11,6 +13,8 @@ from pathlib import Path
 
 import pytest
 
+from flextool import project_package as pp
+from flextool.gui.dialogs import project_package_dialog as dialog_module
 from flextool.gui.dialogs.project_package_dialog import ExportDialog, ImportDialog, format_size
 from tests.test_project_package_cli import db_template, workspace  # noqa: F401  (fixtures)
 
@@ -36,7 +40,8 @@ def _wait(root: tk.Tk, done, timeout: float = 60.0) -> None:
         time.sleep(0.02)
 
 
-def test_export_then_import_suggests_free_name(root: tk.Tk, workspace: dict) -> None:  # noqa: F811
+def test_export_then_import_suggests_free_name(root: tk.Tk, workspace: dict,  # noqa: F811
+                                              monkeypatch: pytest.MonkeyPatch) -> None:
     busy = [True]
     out_dir: Path = workspace["root"] / "out"
     dlg = ExportDialog(root, workspace["project"], jobs_running=lambda: busy[0],
@@ -46,7 +51,7 @@ def test_export_then_import_suggests_free_name(root: tk.Tk, workspace: dict) -> 
         base = dlg.total_bytes()
         dlg.checks.set_checked("A_1", True)
         run_bytes = dlg._runs["A_1"].bytes
-        axis = (workspace["project"] / "output_parquet" / "_axis_bounds.json").stat().st_size
+        axis = len(pp.axis_bounds_for_runs(workspace["project"], ["A_1"]))   # cut to the ticked run
         assert dlg.total_bytes() == base + run_bytes + axis
         assert f"Total: {format_size(base + run_bytes + axis)} uncompressed, 1 of 2" in dlg.total_label.cget("text")
         assert dlg.stale_label.cget("text") == ""
@@ -64,6 +69,17 @@ def test_export_then_import_suggests_free_name(root: tk.Tk, workspace: dict) -> 
         zip_path = dlg.zip_path
     finally:
         dlg.destroy()
+
+    asked: list[str] = []
+    monkeypatch.setattr(dialog_module.messagebox, "askyesno", lambda *a, **_k: asked.append(a[1]) or False)
+    again = ExportDialog(root, workspace["project"], solver_config_dir=workspace["config"], target_dir=out_dir)
+    try:
+        before = zip_path.stat().st_mtime_ns
+        again.export_button.invoke()                    # the same file name: asked, and No keeps the old file
+        assert asked and "exists already" in asked[0]
+        assert again.manifest is None and zip_path.stat().st_mtime_ns == before
+    finally:
+        again.destroy()
 
     imp = ImportDialog(root, workspace["projects"], zip_path=zip_path, solver_config_dir=workspace["config"])
     try:
