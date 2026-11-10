@@ -323,8 +323,9 @@ default and then costs nothing.
   column is that series' own value, not the stacked total, so do not add the columns up again. Where a line is drawn
   as the sum over a dimension the plot does not show, the column is that sum. A cell that is empty in the
   results stays empty, also where a bar plot draws it as zero.
-- A dispatch plot's CSV has the flows of the plotted time window and the demand line as a `Demand` column, as in
-  the legend (`Demand (line)` if a flow is already called `Demand`).
+- A dispatch plot's CSV has a `period` and a `time` column for the steps of the plotted time window (the periods
+  one after another), the flows, and the demand line as a `Demand` column, as in the legend (`Demand (line)` if a
+  flow is already called `Demand`).
 - If a CSV cannot be written, the log has a warning naming the file, and the plots are still made.
 - In `plot_settings.yaml`, only `write_plot_data: true` (no quotes) turns this on; a quoted `"true"` or any value
   that is not `true` or `false` leaves it off with a warning.

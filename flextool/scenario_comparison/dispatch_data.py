@@ -92,8 +92,32 @@ def load_dispatch_bundle(
 # Shared helpers (S4, S5, S6)
 # ---------------------------------------------------------------------------
 
+def _scenario_rows(df: pd.DataFrame, scenario: str | None = None) -> pd.DataFrame:
+    """The rows of one scenario: its column slice without all-empty rows.
+
+    The combined comparison frames concatenate the scenarios side by side, so
+    the row index is the union of all scenarios' ``(period, time)`` steps.  A
+    step that only another scenario has is all-NaN in this slice; it is
+    dropped here, so that summing it does not turn it into a row of zeros.
+    ``scenario=None`` is for a frame without a scenario column level.
+    """
+    if scenario is not None:
+        df = df.xs(scenario, axis=1, level='scenario')
+    return df.dropna(how='all')
+
+
+def _per_step(data: pd.DataFrame | pd.Series) -> pd.DataFrame | pd.Series:
+    """Sum the rows of each step, keeping every row-index level and the order.
+
+    The row index is ``(period, time)`` (or ``time`` alone in old outputs), so
+    steps of the same name in different periods stay apart, and
+    ``sort=False`` keeps the realized order of the file.
+    """
+    return data.groupby(level=list(data.index.names), sort=False).sum()
+
+
 def _get_time_index(results: TimeSeriesResults, scenario: str) -> pd.Index | None:
-    """Find a time index from the first available result DataFrame.
+    """Find the scenario's own ``(period, time)`` steps from the first available result DataFrame.
 
     Tries unit flows and connection flows first, then falls back to
     slack and inflow data so that nodeGroups with only demand / loss-of-load
@@ -110,22 +134,22 @@ def _get_time_index(results: TimeSeriesResults, scenario: str) -> pd.Index | Non
             continue
         if isinstance(df.columns, pd.MultiIndex) and 'scenario' in df.columns.names:
             if scenario in df.columns.get_level_values('scenario'):
-                return df.xs(scenario, axis=1, level='scenario').groupby('time').sum().index
+                return _per_step(_scenario_rows(df, scenario)).index
         elif df.index.nlevels >= 2:
             # node_inflow__dt may not have a scenario column level
-            return df.groupby('time').sum().index
+            return _per_step(_scenario_rows(df)).index
     return None
 
 
 def _slice_scenario_df(
     df: pd.DataFrame | None, scenario: str,
 ) -> pd.DataFrame | None:
-    """Extract scenario columns and sum over time.  Returns None if scenario absent."""
+    """Extract the scenario's columns and rows, one row per step.  Returns None if scenario absent."""
     if df is None:
         return None
     if scenario not in df.columns.get_level_values('scenario'):
         return None
-    return df.xs(scenario, axis=1, level='scenario').groupby('time').sum()
+    return _per_step(_scenario_rows(df, scenario))
 
 
 def _connection_series_at_node(
@@ -723,10 +747,10 @@ def prepare_dispatch_data(
         if results.node_slack_up_dt_e is not None:
             slack = results.node_slack_up_dt_e
             if scenario in slack.columns.get_level_values('scenario'):
-                slack = slack.xs(scenario, axis=1, level='scenario')
+                slack = _scenario_rows(slack, scenario)
                 slack_filtered = slack.loc[:, slack.columns.isin(nodes_in_group)]
                 if not slack_filtered.empty:
-                    lol = slack_filtered.groupby('time').sum().sum(axis=1)
+                    lol = _per_step(slack_filtered).sum(axis=1)
                     if lol.abs().sum() > 0:
                         df_dispatch['LossOfLoad'] = lol
 
@@ -734,11 +758,11 @@ def prepare_dispatch_data(
         if results.unit_curtailment_outputNode_dt_ee is not None:
             curtail = results.unit_curtailment_outputNode_dt_ee
             if scenario in curtail.columns.get_level_values('scenario'):
-                curtail = curtail.xs(scenario, axis=1, level='scenario')
+                curtail = _scenario_rows(curtail, scenario)
                 node_level = 'sink' if 'sink' in curtail.columns.names else 'node'
                 curtail_filtered = curtail.loc[:, curtail.columns.get_level_values(node_level).isin(nodes_in_group)]
                 if not curtail_filtered.empty:
-                    curtailed = curtail_filtered.groupby('time').sum().sum(axis=1).clip(lower=0)
+                    curtailed = _per_step(curtail_filtered).sum(axis=1).clip(lower=0)
                     if curtailed.abs().sum() > 0:
                         df_dispatch['Curtailed'] = curtailed
 
@@ -755,14 +779,15 @@ def prepare_dispatch_data(
         if node_inflow is not None and not node_inflow.empty:
             if isinstance(node_inflow.columns, pd.MultiIndex):
                 if scenario in node_inflow.columns.get_level_values('scenario'):
-                    inflow_data = node_inflow.xs(scenario, axis=1, level='scenario')
+                    inflow_data = _scenario_rows(node_inflow, scenario)
                     inflow_filtered = inflow_data.loc[:, inflow_data.columns.isin(nodes_in_group)]
                     if not inflow_filtered.empty:
-                        inflow_series = -inflow_filtered.groupby('time').sum().sum(axis=1)
+                        inflow_series = -_per_step(inflow_filtered).sum(axis=1)
             else:
-                inflow_filtered = node_inflow.loc[:, node_inflow.columns.isin(nodes_in_group)]
+                inflow_rows = _scenario_rows(node_inflow)
+                inflow_filtered = inflow_rows.loc[:, inflow_rows.columns.isin(nodes_in_group)]
                 if not inflow_filtered.empty:
-                    inflow_series = -inflow_filtered.groupby('time').sum().sum(axis=1)
+                    inflow_series = -_per_step(inflow_filtered).sum(axis=1)
 
         return df_dispatch, inflow_series
 
@@ -877,9 +902,9 @@ def prepare_node_dispatch_data(
         if results.node_slack_up_dt_e is not None:
             slack = results.node_slack_up_dt_e
             if scenario in slack.columns.get_level_values('scenario'):
-                slack_data = slack.xs(scenario, axis=1, level='scenario')
+                slack_data = _scenario_rows(slack, scenario)
                 if node in slack_data.columns:
-                    lol = slack_data[node].groupby('time').sum()
+                    lol = _per_step(slack_data[node])
                     if lol.abs().sum() > 0:
                         df_dispatch['LossOfLoad'] = lol
 
@@ -898,12 +923,12 @@ def prepare_node_dispatch_data(
         if node_inflow is not None and not node_inflow.empty:
             if isinstance(node_inflow.columns, pd.MultiIndex):
                 if scenario in node_inflow.columns.get_level_values('scenario'):
-                    inflow_data = node_inflow.xs(scenario, axis=1, level='scenario')
+                    inflow_data = _scenario_rows(node_inflow, scenario)
                     if node in inflow_data.columns:
-                        inflow_series = -inflow_data[node].groupby('time').sum()
+                        inflow_series = -_per_step(inflow_data[node])
             else:
                 if node in node_inflow.columns:
-                    inflow_series = -node_inflow[node].groupby('time').sum()
+                    inflow_series = -_per_step(_scenario_rows(node_inflow)[node])
 
         return df_dispatch, inflow_series
 

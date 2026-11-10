@@ -108,6 +108,41 @@ def _compute_ylim(
     return (float(neg_min), float(pos_max))
 
 
+def _set_step_ticks(ax, index: pd.Index) -> None:
+    """Label the x axis (row positions) with the time steps, and the periods below them.
+
+    The rows are ``(period, time)`` steps in timeline order (``time`` alone in
+    old outputs).  A gap row at a timeline break carries the label of the row
+    before it and gets no label.  When the window covers several periods, the
+    first step of each period is marked with the period name on a second row.
+    """
+    from matplotlib.ticker import FuncFormatter
+
+    names = [str(n).lower() if n is not None else None for n in index.names]
+    if 'time' not in names:
+        return
+    times = index.get_level_values(names.index('time')).astype(str).to_numpy()
+    repeated = np.zeros(len(index), dtype=bool)
+    repeated[1:] = index[1:] == index[:-1]
+    labels = np.where(repeated, '', times)
+
+    def _label(x, _pos):
+        i = int(round(x))
+        return labels[i] if abs(x - i) < 1e-9 and 0 <= i < len(labels) else ''
+
+    ax.xaxis.set_major_formatter(FuncFormatter(_label))
+    ax.set_xlabel('time')
+    if 'period' in names and len(index):
+        periods = index.get_level_values(names.index('period')).astype(str).to_numpy()
+        starts = np.flatnonzero(np.r_[True, periods[1:] != periods[:-1]])
+        if len(starts) > 1:
+            period_axis = ax.secondary_xaxis(-0.1)
+            period_axis.set_xticks(starts, labels=periods[starts])
+            period_axis.tick_params(length=0)
+            period_axis.spines['bottom'].set_visible(False)
+            ax.set_xlabel('')
+
+
 def _build_dispatch_figure(
     df_dispatch: pd.DataFrame,
     inflow_series: pd.Series | None,
@@ -168,11 +203,12 @@ def _build_dispatch_figure(
     # Position axes to leave room for legend on the right
     left_margin = 0.08
     right_margin = (legend_width_in + 0.2) / fig_width
-    ax = fig.add_axes([left_margin, 0.15, 1.0 - left_margin - right_margin, 0.75])
+    ax = fig.add_axes([left_margin, 0.2, 1.0 - left_margin - right_margin, 0.7])
 
-    # Plot area chart (NaN rows create visual gaps at timeline breaks)
+    # Plot area chart (NaN rows create visual gaps at timeline breaks).  The
+    # x axis is the row position; _set_step_ticks labels it with the steps.
     if has_area:
-        df_plot[plot_cols].plot.area(
+        df_plot[plot_cols].reset_index(drop=True).plot.area(
             ax=ax,
             stacked=True,
             linewidth=0,
@@ -198,6 +234,7 @@ def _build_dispatch_figure(
         ax.plot(np.arange(len(inflow_plot)), inflow_plot.values, linestyle='solid', color='black', linewidth=1.5, label='Demand')
 
     ax.axhline(y=0, color='black', linestyle=':', linewidth=0.5)
+    _set_step_ticks(ax, df_plot.index)
 
     ax.set_ylabel(ylabel)
     ax.set_title(title)
@@ -239,10 +276,11 @@ def dispatch_plot_data(
 ) -> pd.DataFrame:
     """The data drawn in one dispatch plot: the time window of the flows plus the demand line.
 
-    Rows are the time steps of the window (no gap rows at timeline breaks), columns the stacked flows and
-    ``Curtailed`` as plotted, then the demand line as ``Demand`` (its legend label).  When a flow column is
-    already called ``Demand``, the line is ``Demand (line)`` (then ``Demand (line) 2``, ...).  A flow whose name
-    is an index column (``time``) is written as ``<name> (series)``.  Empty cells stay empty.
+    Rows are the ``(period, time)`` steps of the window, written as the ``period`` and ``time`` columns (no gap
+    rows at timeline breaks); columns are the stacked flows and ``Curtailed`` as plotted, then the demand line as
+    ``Demand`` (its legend label).  When a flow column is already called ``Demand``, the line is
+    ``Demand (line)`` (then ``Demand (line) 2``, ...).  A flow whose name is an index column (``period``,
+    ``time``) is written as ``<name> (series)``.  Empty cells stay empty.
     """
     out = df_dispatch.iloc[timeline[0]:timeline[1]]
     index_part = pd.DataFrame(index=out.index).reset_index()
