@@ -28,6 +28,7 @@ External changes (results will remain the same):
 Model changes (results will remain the same):
 
 - Disable outputs that you don't need. This will speed up the result processing. See: [How to enable/disable outputs](outputs.md#how-to-enabledisable-outputs)
+- Switch off the scenario plots (png) when the result viewer is enough; it shows every plot from the results. To see where a run's time goes, phase by phase, use `flextool-time-runs`. See: [Check that exercises run fast enough](../terminal_workflow.md#check-that-exercises-run-fast-enough)
 - When using HiGHS solver: in your solve's `solver_arguments` map, you can set `presolve = on` and `parallel = on` to speed up the optimisation. However, it can be better to turn HiGHS parallel off when executing multiple scnearios in parallel.
 - Especially with MIP problems, considering using a commercial solver like CPLEX (license required). See: [How to use CPLEX as the solver](#how-to-use-cplex-as-the-solver)
 

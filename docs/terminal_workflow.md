@@ -73,6 +73,7 @@ in the same process; their `_run.log` holds only FlexTool's own console output.
 | `migrate_database.py` | `flextool.cli.cmd_migrate_database` | Upgrade DB schema to latest version |
 | &mdash; | `flextool.cli.cmd_export_to_tabular` | Export Spine DB &rarr; Excel (.xlsx) |
 | `update_flextool.py` | `flextool.cli.cmd_update_flextool` | Git pull + project migration |
+| &mdash; | `flextool.cli.cmd_time_runs` (`flextool-time-runs`) | Time scenario runs phase by phase ([Check that exercises run fast enough](#check-that-exercises-run-fast-enough)) |
 
 ### Installed entry points
 
@@ -85,6 +86,7 @@ After `pip install -e .` or `pip install .`, these commands are available direct
 | `flextool-migrate-database` | `flextool.cli.cmd_migrate_database:main` |
 | `flextool-freeze` | `flextool.cli.cmd_freeze_database:main` |
 | `flextool-project` | `flextool.cli.cmd_project_package:main` |
+| `flextool-time-runs` | `flextool.cli.cmd_time_runs:main` |
 
 ---
 
@@ -538,6 +540,53 @@ The package holds the input sources (external input files copied in under their 
 Import refuses member names that would leave the project folder or that Windows cannot hold, refuses a package that does not fit on the disk, checks every checksum before it writes anything, unpacks into a hidden `projects/.<name>.partial/` folder, gives each file its recorded modification time back and then renames the folder into place. A database newer than this FlexTool is refused; an older one is migrated when the project is first opened, with the usual consent for a frozen one. The shipped `.opt` files go to `imported_solver_config/` in the project and the workspace's own are never overwritten; the import message says whether they differ (with the lines that differ) and how to use them: copy `imported_solver_config/*.opt` to the workspace's `solver_config/`, or set `FLEXTOOL_SOLVER_CONFIG_DIR=<project>/imported_solver_config`. It names any input left out of the package: its scenarios cannot be run again until that file is added. Errors such as a full disk or a folder that cannot be written are reported as one message (exit code 2); a stopped import leaves a hidden `projects/.<name>.partial/`, which the GUI does not list and the next import of that name removes. The checksums detect a file damaged on the way, not a deliberate change: the manifest is not signed.
 
 **Reproducing a delivered run.** Send a project with the inputs and the one scenario run to be reproduced (`--results WOM_1`). The receiver runs `flextool-project verify`: it prints the versions the run was made with and one line, `pip install flextool==X polar-high==Y highspy==Z polars==W`, that installs the same FlexTool, solver interface, HiGHS and polars (the results depend on all four; import warns when the installed polar-high or highspy differs). The receiver then imports the package, makes the shipped solver options active as above, runs the scenario again, and compares the new results with the shipped `WOM_1` (whose `_run_status.json` records the verdict, the solver and the input data version). Because the source number is kept, the re-run writes to the same `WOM_1` folder name, so first move the shipped folder **outside** `output_parquet/` (a renamed folder inside it shows up as another run), or compare against a copy of it kept elsewhere.
+
+### Check that exercises run fast enough
+
+For a course, `flextool-time-runs` runs scenarios one after another on the trainer's (or a participant's)
+computer and shows where each run's time goes. It prints the computer first (processor, cores, memory, system and
+FlexTool version), so the tables of different laptops can be compared.
+
+```bash
+flextool-time-runs                                  # every example and how-to scenario that comes with FlexTool
+flextool-time-runs --source templates_examples --scenario coal 'network_*'
+flextool-time-runs --db projects/Course/input_sources/exercises.sqlite --scenario Ex1 Ex2 --target 30 --strict
+```
+
+The table has one row per run, slowest first, in seconds; `!` marks a run over the target (default 60 s):
+
+| Column | What it covers |
+|---|---|
+| `wall` | The whole run, as the FlexTool window would start it |
+| `start-up` | Starting Python and loading FlexTool |
+| `read input` | Reading the input database, preparing the input data and setting up the run |
+| `preprocess` | Building each solve's data and its optimisation problem |
+| `solve` | The solver |
+| `outputs` | Writing the results (parquet) |
+| `viewer` | The data the result viewer needs (also written with plots off) |
+| `plots` | The scenario plots (png); zero with plots off |
+| `untimed` | The rest. A Benders solve writes no per-solve times, so its preprocessing and solving land here |
+
+| Argument | Description |
+|---|---|
+| `--db PATH` | Run the scenarios of this `.sqlite` input database (a path or a `sqlite:///` URL; can be given several times) instead of the examples. The database is only read |
+| `--source JSON` | Build and run a JSON database: a file, or a shipped one by name (`templates_examples`, `howto_demand`, …) |
+| `--scenario NAME [...]` | Scenario names or patterns (`*`, `?`); default every scenario. A name that matches nothing is an error |
+| `--plots off\|on\|both` | Write the scenario plots in the runs (default `off`); `both` runs each scenario twice |
+| `--target SECONDS` | Mark runs longer than this (default 60) |
+| `--strict` | Exit code 2 when a run is over the target. A failed run always gives exit code 1 |
+| `--keep DIR` | Keep the runs' work folders, results and logs in `DIR` (default: a temporary folder that is removed) |
+| `--csv FILE` | Also write the table to a CSV file |
+
+The runs go one after another, because runs in parallel slow each other down. The run times come from each run's
+`timings.csv` (in `output_csv/<scenario>/`), which every run writes.
+
+Plots are off in the timed runs by default because they are the slowest part of a small model's run and an
+exercise does not need them: participants see every plot in the result viewer, which draws them from the results.
+Switch them off for an exercise project with the **Auto-gen** tick of **Scenario pngs** in the FlexTool window
+(see [Outputs](flextool_gui_interface.md#outputs-unified-table); the tick is saved in the project's
+`settings.yaml`, so a shared project keeps it), with `--write-methods parquet` on `flextool-run`, or with
+`output-plot` in the Spine Toolbox settings database.
 
 ### Update FlexTool
 
