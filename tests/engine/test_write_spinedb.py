@@ -213,6 +213,35 @@ def test_cost_breakdown_by_entity_round_trips(tmp_path):
                     .get_value("s1").get_value("p2020") == 1.25)
 
 
+def _capacity_margin_frames():
+    """``nodeGroup_capacity_margin_d_g`` and ``_entity_d_g`` as ``out_ancillary.capacity_margin`` builds them: rows
+    (solve, period, group, binding_time), columns the measures / (class, entity)."""
+    idx = pd.MultiIndex.from_tuples([("s1", "p2020", "g1", "t02")],
+                                    names=["solve", "period", "group", "binding_time"])
+    summary = pd.DataFrame({"requirement": [1050.0], "firm": [1000.0], "shortfall": [50.0]}, index=idx)
+    summary.columns = pd.Index(summary.columns, name="parameter")
+    cols = pd.MultiIndex.from_tuples([("firm", "u1"), ("connection", "c1")], names=["class", "entity"])
+    entity = pd.DataFrame([[1000.0, -20.0]], index=idx, columns=cols)
+    return summary, entity
+
+
+def test_capacity_margin_tables_round_trip(tmp_path):
+    """``group.capacity_margin`` and ``group.capacity_margin_contribution`` are Map(category -> solve -> period);
+    the binding step is not carried (it is in the CSV / parquet tables, as the schema description says)."""
+    url = "sqlite:///" + str(tmp_path / "results.sqlite")
+    summary, entity = _capacity_margin_frames()
+    results = {"nodeGroup_capacity_margin_d_g": summary, "nodeGroup_capacity_margin_entity_d_g": entity}
+    assert write_spinedb(results, StubS(), url, "scenCM", "s1") > 0
+    with DatabaseMapping(url) as db:
+        margin = _read_value(db, "group", ("g1",), "capacity_margin", "scenCM")
+        assert set(margin.indexes) == {"requirement", "firm", "shortfall"}
+        assert margin.get_value("shortfall").get_value("s1").get_value("p2020") == 50.0
+        assert margin.get_value("requirement").get_value("s1").get_value("p2020") == 1050.0
+        contribution = _read_value(db, "group", ("g1",), "capacity_margin_contribution", "scenCM")
+        assert set(contribution.indexes) == {"firm__u1", "connection__c1"}
+        assert contribution.get_value("connection__c1").get_value("s1").get_value("p2020") == -20.0
+
+
 def test_two_runs_two_alternatives(tmp_path):
     url = "sqlite:///" + str(tmp_path / "results.sqlite")
     s = StubS()

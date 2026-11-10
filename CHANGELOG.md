@@ -37,8 +37,9 @@
   connections and consumption count there, the shortfall, its penalty and the shadow price of the margin.
   `capacity_margin_entity__d` (`group.capacity_margin_contribution`) has what each unit, connection and node counts.
   An investment solve keeps its rows under its own name (look-ahead and forecast branch periods included), and the
-  run log prints `capacity margin shortfall: group …, period …: … MW at … (penalty … M CUR)` after each solve that
-  leaves a shortfall.
+  run log prints `capacity margin shortfall: solve …, group …, period …: … MW at … (penalty … M CUR)` after each
+  solve that leaves a shortfall. The results database has both tables without the binding step (it is in the CSV
+  and parquet tables).
 
 - **Fix: a profile link without profile data held the flow at 0 without a word (#104).** `profile_method`
   defaults to *upper_limit* on `unit__node__profile`, and a profile without a value in the scenario is 0, so the

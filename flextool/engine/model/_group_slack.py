@@ -996,13 +996,11 @@ def _row_duals(sol, family: str, step: str) -> "pl.DataFrame | None":
         return None
     if raw is None or raw.height == 0 or "key" not in raw.columns:
         return None
-    rows = []
-    for key, dual in zip(raw["key"].to_list(), raw["dual"].to_list()):
-        parts = key.rsplit(",", 2)
-        if len(parts) != 3:
-            continue
-        rows.append((parts[0].strip("'"), parts[1].strip("'"), parts[2].strip("'"), float(dual)))
-    return pl.DataFrame(rows, schema={"g": pl.Utf8, "d": pl.Utf8, step: pl.Utf8, "dual": pl.Float64}, orient="row")
+    parts = raw.select(pl.col("key").cast(pl.Utf8).str.extract_groups(r"^(.*),([^,]*),([^,]*)$").alias("k"),
+                       pl.col("dual").cast(pl.Float64)).unnest("k")
+    names = parts.columns[:3]
+    return (parts.drop_nulls(names)
+            .select(*(pl.col(c).str.strip_chars("'").alias(a) for c, a in zip(names, ("g", "d", step))), "dual"))
 
 
 def capacity_margin_report(d, sol, *, scale_the_objective: "float | None" = None,
@@ -1194,10 +1192,15 @@ def capacity_margin_report(d, sol, *, scale_the_objective: "float | None" = None
     out = (out.join(price, on=["g", "d"], how="left") if price is not None
            else out.with_columns(capacity_price=pl.lit(None, dtype=pl.Float64)))
     out = out.sort("g", "__order")
+    # + 0.0 turns a −0.0 (a negated zero term) into 0.0.
+    measures = ["margin", "peak_demand", "demand", "requirement", *class_cols, "counted", "shortfall",
+                "penalty_cost", "capacity_price"]
     summary = out.select(pl.col("g").alias("group"), pl.col("d").alias("period"), pl.col("t").alias("binding_time"),
-                         "margin", "peak_demand", "demand", "requirement", *class_cols, "counted", "shortfall",
-                         "penalty_cost", "capacity_price")
-    entity = (contrib_df.join(out.select("g", "d", "t", "__order"), on=["g", "d", "t"], how="inner")
+                         *((pl.col(c) + 0.0).alias(c) for c in measures))
+    # The nodes that dumped nothing and the storage nodes whose slack made nothing are left out of the entity table.
+    quiet = pl.col("cls").is_in(["dumped", "storage_slack"]) & (pl.col("value") == 0.0)
+    entity = (contrib_df.filter(~quiet).with_columns(pl.col("value") + 0.0)
+              .join(out.select("g", "d", "t", "__order"), on=["g", "d", "t"], how="inner")
               .sort("g", "__order", "cls", "entity")
               .select(pl.col("g").alias("group"), pl.col("d").alias("period"), pl.col("t").alias("binding_time"),
                       pl.col("cls").alias("class"), "entity", "value"))

@@ -12,7 +12,9 @@ live, :func:`write_capacity_margin_report` evaluates the solve's capacity-margin
   dispatch solve realizes the period;
 * prints one line per group and period whose shortfall is above ``1e-6 · group_capacity_for_scaling``::
 
-      capacity margin shortfall: group <g>, period <d>: <X> MW at <t> (penalty <Y> M CUR)
+      capacity margin shortfall: solve <s>, group <g>, period <d>: <X> MW at <t> (penalty <Y> M CUR)
+
+  The solve name tells a look-ahead period of one investment solve from the same period of the next.
 
   ``print(flush=True)``: the solve site's logger output does not reach the console.
 """
@@ -46,7 +48,8 @@ def shortfall_lines(summary: pl.DataFrame, gcs: "pl.DataFrame | None") -> list[s
     else:
         rows = rows.with_columns(gcs=pl.lit(None, dtype=pl.Float64))
     rows = rows.filter(pl.col("shortfall") > SHORTFALL_TOLERANCE * pl.col("gcs").fill_null(1.0))
-    return [f"capacity margin shortfall: group {r['group']}, period {r['period']}: {r['shortfall']:.6g} MW at "
+    return [f"capacity margin shortfall: solve {r['solve']}, group {r['group']}, period {r['period']}: "
+            f"{r['shortfall']:.6g} MW at "
             f"{r['binding_time']} (penalty {r['penalty_cost']:.6g} M CUR)"
             for r in rows.iter_rows(named=True)]
 

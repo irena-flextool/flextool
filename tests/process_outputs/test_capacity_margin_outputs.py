@@ -11,7 +11,8 @@ west has no connection or consumption, and with 1000 MW of coal no step dumps en
 weeks peaks at t0037: 807 MW (the ``west`` inflow of the fixture, read from the JSON below).  So at t0037
 
     requirement = 243 + 807 = 1050 MW,  counted = 1000 MW,  shortfall = 1050 − 1000 = 50 MW,
-    penalty = 50 MW · 1000 CUR/kW/a · 1000 kW/MW · inflation 1 (p2020 is the first period) / 1e6 = 50 M CUR.
+    penalty = 50 MW · 1000 CUR/kW/a · 1000 kW/MW · inflation 1 / 1e6 = 50 M CUR (inflation_rate is unset, so
+    inflation_op = years_represented, 1 by default).
 
 Before item 85 the dispatch solve's zero row for p2020 overwrote the investment solve's shortfall: the slack table
 showed 0 and the costs no penalty.  Databases are built from JSON (never a checked-in ``.sqlite``).
@@ -131,7 +132,8 @@ def test_the_entity_breakdown_sums_to_the_left_hand_side(chain_run) -> None:
 def test_the_run_log_names_the_shortfall(chain_run) -> None:
     _, _, stdout = chain_run
     lines = [ln for ln in stdout.splitlines() if ln.startswith("capacity margin shortfall")]
-    assert lines == ["capacity margin shortfall: group cm, period p2020: 50 MW at t0037 (penalty 50 M CUR)"]
+    assert lines == [f"capacity margin shortfall: solve {INVEST}, group cm, period p2020: 50 MW at t0037 "
+                     "(penalty 50 M CUR)"]
 
 
 def test_a_coarse_row_is_evaluated_per_coarse_step(tmp_path_factory) -> None:

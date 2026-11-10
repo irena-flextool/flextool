@@ -38,8 +38,11 @@ again. When the investment solve leaves a shortfall (the plan does not hold the 
 cheaper than the capacity or the capacity cannot be built), the run log says so right after that solve:
 
 ```
-capacity margin shortfall: group <group>, period <period>: <MW> MW at <time step> (penalty <M CUR> M CUR)
+capacity margin shortfall: solve <solve>, group <group>, period <period>: <MW> MW at <time step> (penalty <M CUR> M CUR)
 ```
+
+A period that is a look-ahead period of one investment solve and an investment period of the next gets a line from
+each solve that leaves a shortfall in it: the solve name says which plan the line is about.
 
 The results then show:
 
