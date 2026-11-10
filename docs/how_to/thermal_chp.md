@@ -20,7 +20,7 @@ The heating systems tend to have some level of storage capability, so one could 
 
 Then the *coal_chp* `unit` is made with a high `efficiency` parameter, since CHP units convert fuel energy to power and heat at high overall rates. In FlexTool, `efficiency` is a property of the unit - it demarcates at what rate the sum of inputs is converted to the sum of outputs. However, without any additional constraints, the `unit` is free to choose in what proportion to use inputs and in what proportion to use outputs. In units with only one input and output, this freedom does not exist, but in here, the *coal_chp* needs to be constrained as otherwise the unit could produce only electricity and no heat at 90% efficiency, which is not feasible. 
 
-This CHP plant is an another example where the user defined `constraint` (see the last equation in the previous example) is used to achieve the desired behaviour. In a backpressure CHP, heat and power outputs are fixed - increase one of them, and you must also increase the other. In an extraction CHP plant the relation is more complicated - there is an allowed operating area between heat and power. Both can be represented in FlexTool, but here a backpressure example is given. An extraction plant would require two or more *greater_than* and/or *lesser_than* `constraints` to define an operating area.
+This CHP plant is an another example where the user defined `constraint` (see the last equation in the previous example) is used to achieve the desired behaviour. In a backpressure CHP, heat and power outputs are fixed - increase one of them, and you must also increase the other. In an extraction CHP plant the relation is more complicated - there is an allowed operating area between heat and power. Both can be represented in FlexTool, but here a backpressure example is given. An extraction plant would require two or more *greater_than* and/or *less_than* `constraints` to define an operating area: the extraction CHP of [How to model cogeneration with desalination](#how-to-model-cogeneration-with-desalination) is built this way. The shipped *coal_chp_extraction* alternative takes another way: it turns *coal_chp_fix* off (`is_enabled` *no*) and shapes the operating area with `conversion_flow_coeff` and `capacity_max_coeff` on the outputs, as the next paragraph explains.
 
 For extraction CHP specifically, the `unit__inputNode` / `unit__outputNode` coefficients interact. `conversion_flow_coeff` multiplies into the edge's contribution in the conversion equation (`conversion_indirect`) — a higher coefficient means more input energy per unit of that edge's output, so a premium electricity output might use `conversion_flow_coeff = 2` while a byproduct heat output uses `0.2`. The unit capacity caps the sum of the outputs, and `capacity_max_coeff` on an output adds a per-output upper cap. With a minimum load (`min_load` plus a `startup_method`), the floor `electricity + heat >= min_load × online capacity` applies once, to the sum of the outputs, so both the pure-condensing mode (heat = 0) and the pure-heat mode (electricity = 0) remain available while online with the default coefficients. Only if an output must carry part of the minimum load on its own, set `capacity_min_coeff` on that output (e.g. 1 on electricity: `electricity >= min_load × online capacity`, which rules out the pure-heat mode). On the inputs, `input_share_max` limits the share of the full-load input a single input may supply (default 1: no effective limit) and `input_share_min` sets the smallest share of the current input an input must supply while the unit runs (default 0). Without the capacity-coefficient split, each output would be capped individually at `conversion_flow_coeff × capacity`, which prevents the model from using the full operating envelope.
 
@@ -37,7 +37,7 @@ Create `unit_outputNode` (coal_chp|heat):
 
 Create `unit_outputNode` (coal_chp|west):
 
-- `constraint_flow_coeff` : *coal_chp_fix*, 2
+- `constraint_flow_coeff` : *coal_chp_fix*, 1
 
 
 Again, the negative value can be turned positive by arranging it to the right side of the equality, creating this:
@@ -47,6 +47,111 @@ Again, the negative value can be turned positive by arranging it to the right si
 ```
 
 ![Add CHP](../img/tutorial/coal_chp.png)
+
+## How to model cogeneration with desalination
+
+**(examples.sqlite scenarios: desal_backpressure, desal_extraction, desal_ro_invest, desal_water_storage)**
+***init - west - coal - desal_system - (one desalination alternative)***
+
+**Water is one more node.** A desalination plant turns heat or electricity into fresh water. In FlexTool the water is a `node` like any other, and its unit of measure is your choice. Here the node *water* is in m³: its flows are in m³/h, its demand in m³/h and its storage in m³. A thermal desalination unit (for example multi-effect distillation, MED) takes heat from a CHP plant. A reverse-osmosis (RO) unit takes electricity. The four examples show a backpressure CHP, an extraction CHP, an RO investment and a water storage.
+
+**The example system.** The alternatives *init*, *west* and *coal* are the tutorial's system: the 48-hour solve *y2020_2day_dispatch*, the node *west* and the 500 MW *coal_plant* fed from *coal_market*. Coal costs 20 CUR/MWh of fuel; at `efficiency` 0.4 that is 50 CUR/MWh of electricity. The alternative *desal_system* adds:
+
+| Alternative | Entity | Parameter | Value |
+|---|---|---|---|
+| *desal_system* | `node` *west* | `inflow` | −300 [MW] |
+| *desal_system* | `node` *desal_heat* | `node_type`, `penalty_up`, `penalty_down` | *balance*, 1000, 1000 [CUR/MWh] |
+| *desal_system* | `node` *water* | `node_type`, `inflow` | *balance*, −3000 [m³/h] |
+| *desal_system* | `node` *water* | `penalty_up`, `penalty_down` | 50, 50 [CUR/m³] |
+| *desal_system* | `unit` *bp_chp* | `conversion_method`, `efficiency`, `existing` | *constant_efficiency*, 0.85, 600 [MW] |
+| *desal_system* | `constraint` *bp_chp_ratio* | `sense`, `constant` | *equal*, 0 |
+| *desal_system* | `unit__outputNode` (*bp_chp*, *west*) | `constraint_flow_coeff` | (*bp_chp_ratio* \| 1) |
+| *desal_system* | `unit__outputNode` (*bp_chp*, *desal_heat*) | `constraint_flow_coeff` | (*bp_chp_ratio* \| −0.5) |
+| *desal_system* | `unit` *med_desal* | `conversion_method`, `efficiency`, `existing` | *constant_efficiency*, 12 [m³/MWh], 3000 [m³/h] |
+
+**Entities.** *desal_system* turns on the nodes *desal_heat* and *water* and the units *bp_chp* and *med_desal* (Entity Alternative). *bp_chp* has a `unit__inputNode` (*bp_chp*, *coal_market*) and two `unit__outputNode` entities, (*bp_chp*, *west*) and (*bp_chp*, *desal_heat*). *med_desal* has a `unit__inputNode` (*med_desal*, *desal_heat*) and a `unit__outputNode` (*med_desal*, *water*).
+
+**The results.** The results per hour are the same in all 48 hours. The objective is the cost per hour × 8760 / 10⁶ (the 48 hours scaled to a year).
+
+| Scenario | Water [m³/h] | CHP [MW] | *coal_plant* [MW] | Cost per hour [CUR] | Objective [M CUR] |
+|---|---|---|---|---|---|
+| *desal_backpressure* | MED 3000 | *bp_chp*: heat 250, power 125, fuel 441.18 | 175 | 17 573.5 | 153.944 |
+| *desal_extraction* | MED 3000 | *ext_chp*: heat 250, power 300, fuel 750 | 0 | 15 000 | 131.400 |
+| *desal_ro_invest* | MED 1000, RO 2000 | *bp_chp*: heat 83.33, power 41.67 | 266.33 | 16 257.8 + the RO annuity | 147.233 |
+| *desal_water_storage* | MED 3000 (demand 2000 or 4000) | *bp_chp*: heat 250, power 125 | 175 | 17 573.5 | 153.944 |
+
+### Backpressure CHP and thermal desalination
+
+**(examples.sqlite scenario: desal_backpressure)**
+***init - west - coal - desal_system***
+
+**What it does.** *med_desal* makes 12 m³ of water per MWh of heat, so 3000 m³/h needs 250 MW of heat. *bp_chp_ratio* is power − 0.5 × heat = 0, so heat = 2 × power, as in the [CHP example](#how-to-create-combined-heat-and-power-chp). The water demand therefore fixes the CHP: heat 250 MW, power 125 MW and fuel (125 + 250) / 0.85 = 441.18 MW. *coal_plant* makes the other 175 MW. This is the demand-driven must-run of [option 5](#option-5-demand-driven-running): nothing forces *bp_chp* to run except the water demand.
+
+**One equality.** A backpressure plant has one degree of freedom: the ratio fixes power and heat together. One *equal* user constraint is enough.
+
+**Efficiency above 1.** `efficiency` is output / input in the units of the nodes, here m³ per MWh. A value above 1 is fine. The unit's capacity is on its output side, so `existing` 3000 is in m³/h. At full load its input capacity factor (`unit_cf__inputNode`) is therefore 1/`efficiency`. With a very large ratio the input coefficients can fall below the `model` parameter `small_number_threshold` and become 0, so the unit would make water for free; see `efficiency` in [units](../reference/units.md#main-data-items-for-units). Rescale the unit of measure (for example 1000 m³) if that happens.
+
+### Extraction CHP: an operating region
+
+**(examples.sqlite scenario: desal_extraction)**
+***init - west - coal - desal_system - desal_extraction***
+
+**The data.** *desal_extraction* turns *bp_chp* off (its Entity Alternative is *false*) and turns on the unit *ext_chp*, with the same input and outputs as *bp_chp*:
+
+| Entity | Parameter | Value |
+|---|---|---|
+| `unit` *ext_chp* | `conversion_method`, `efficiency`, `existing` | *constant_efficiency*, 0.45, 1000 [MW] |
+| `unit__outputNode` (*ext_chp*, *west*) | `conversion_flow_coeff` | 1 |
+| `unit__outputNode` (*ext_chp*, *desal_heat*) | `conversion_flow_coeff` | 0.15 |
+| `constraint` *ext_chp_backpressure_line* | `sense`, `constant` | *greater_than*, 0 |
+| `constraint` *ext_chp_max_heat* | `sense`, `constant` | *less_than*, 0 |
+| `unit__outputNode` (*ext_chp*, *west*) | `constraint_flow_coeff` | (*ext_chp_backpressure_line* \| 1) |
+| `unit__outputNode` (*ext_chp*, *desal_heat*) | `constraint_flow_coeff` | (*ext_chp_backpressure_line* \| −0.5), (*ext_chp_max_heat* \| 1) |
+| `unit` *ext_chp* | `constraint_capacity_coeff` | (*ext_chp_max_heat* \| −0.6) |
+
+**What it does.** The conversion is 0.45 × fuel = power + 0.15 × heat: each MWh of heat costs 0.15 MWh of power (the power-loss ratio). The two constraints draw the operating region. *ext_chp_backpressure_line* is power − 0.5 × heat ≥ 0: the plant cannot make more heat than on its backpressure line. *ext_chp_max_heat* is heat − 0.6 × capacity ≤ 0: a flow term and a capacity term in one row, written for every time step. Inside the region the model chooses power and heat freely.
+
+**The results.** Power from *ext_chp* costs 20 / 0.45 = 44.4 CUR/MWh, less than the 50 of *coal_plant*. So *ext_chp* makes all 300 MW of power and the 250 MW of heat, with fuel (300 + 0.15 × 250) / 0.45 = 750 MW. Power ≥ 0.5 × heat holds (300 ≥ 125) and the heat limit (600 MW) does not bind.
+
+**A constraint with nothing in it.** *bp_chp_ratio* still exists here, but all its coefficients are on flows of *bp_chp*, which is off. Its row reads 0 = 0, so FlexTool leaves it out of the model and prints a warning that names it. To switch a constraint off on purpose, set its `is_enabled` to *no*, as the *coal_chp_extraction* alternative does.
+
+### Reverse osmosis investment
+
+**(examples.sqlite scenario: desal_ro_invest)**
+***init - west - coal - desal_system - desal_ro_invest***
+
+**The data.** *desal_ro_invest* turns on the unit *ro_desal*, with a `unit__inputNode` (*ro_desal*, *west*) and a `unit__outputNode` (*ro_desal*, *water*), and sets `invest_periods` [*p2020*] on the solve *y2020_2day_dispatch*:
+
+| Entity | Parameter | Value |
+|---|---|---|
+| `unit` *ro_desal* | `conversion_method`, `efficiency` | *constant_efficiency*, 250 [m³/MWh] |
+| `unit` *ro_desal* | `invest_method`, `invest_max_total` | *invest_total*, 2000 [m³/h] |
+| `unit` *ro_desal* | `invest_cost` | 30 (= 30 000 CUR per m³/h) |
+| `unit` *ro_desal* | `lifetime`, `discount_rate` | 20, 0.05 |
+
+**invest_cost is per kW of the unit's capacity unit.** FlexTool reads every capacity as if it were in MW, and `invest_cost` is per kW, that is per 0.001 of the capacity unit. For a capacity in m³/h, enter the cost per m³/h divided by 1000: 30 000 CUR per m³/h is `invest_cost` 30. The same holds for `fixed_cost`.
+
+**MED or RO.** A cubic metre from MED costs 1/12 MWh of heat. The heat costs 1.5/0.85 MWh of fuel at 20 CUR/MWh, but the CHP also makes 0.5/12 MWh of power that *coal_plant* would otherwise make at 50 CUR/MWh: 2.941 − 2.083 = 0.858 CUR/m³. A cubic metre from RO costs 0.004 MWh of power at 50 CUR/MWh = 0.2 CUR/m³. The saving, 0.658 CUR/m³ × 8760 h = 5 764 CUR per m³/h and year, is more than twice the annuity (30 000 × 0.0802 = 2 407 CUR per m³/h and year at 5 % over 20 years).
+
+**The results.** *ro_desal* is invested to its 2000 m³/h limit and uses 8 MW of power. MED makes the other 1000 m³/h, with 83.33 MW of heat, so *bp_chp* makes 41.67 MW of power and *coal_plant* 300 + 8 − 41.67 = 266.33 MW. The operation costs 16 257.8 CUR/h (142.419 M CUR a year) and the RO annuity is 2000 × 30 000 × 0.0802 = 4.815 M CUR: 147.233 M CUR. The investment is in `unit_capacity__d` and in the *unit investment & retirement* row of the costs.
+
+### Water storage
+
+**(examples.sqlite scenario: desal_water_storage)**
+***init - west - coal - desal_system - desal_water_storage***
+
+**The data.** *desal_water_storage* makes *water* a storage and gives it a demand that changes during the day:
+
+| Entity | Parameter | Value |
+|---|---|---|
+| `node` *water* | `node_type`, `existing` | *storage*, 15 000 [m³] |
+| `node` *water* | `storage_binding_method` | *bind_within_timeblock* |
+| `node` *water* | `storage_start_end_method`, `storage_state_start` | *fix_start*, 0 |
+| `node` *water* | `inflow` | a time series: in each day 12 h at −2000, then 12 h at −4000 [m³/h] |
+
+**What it does.** The mean demand is 3000 m³/h, the capacity of MED. Without the storage, MED could not cover the 4000 m³/h hours and the water slack would pay 50 CUR/m³. With it, MED runs flat at 3000 m³/h in every hour: the storage fills to 12 000 m³ in the 12 hours of low demand and empties in the 12 hours of high demand, twice. The cost is that of *desal_backpressure*. The case is tight by design (the MED capacity equals the mean demand), so the storage state is unique: see `node_state__dt`.
+
+**Storage in m³.** A water storage is a storage node in the water's own unit. `existing` is in m³ here, and a storage `invest_cost` would be per 0.001 m³ (as per kWh for an MWh storage).
 
 ## How to add a reserve
 **(examples.sqlite: scenario network_coal_wind_reserve)**
@@ -225,7 +330,7 @@ Startups and shutdowns count exactly the units coming online and going offline. 
 
 **The data.** The alternatives *coal_chp* and *heat* of the [CHP example](#how-to-create-combined-heat-and-power-chp) add a node *heat* with `inflow` −300 [MW] and the unit *coal_chp*, with input *coal_market*, outputs *west* and *heat* and `efficiency` 0.9. The constraint *coal_chp_fix* (`sense` *equal*) has the coefficient 1 on the *west* output and −0.5 on the *heat* output.
 
-**What it does.** Many plants that run all the time do so because their other product is needed. Here *coal_chp* must make 300 MW of heat for the *heat* node, and *coal_chp_fix* ties its electricity to half of the heat. So it makes 150 MW of electricity in every hour, although wind could cover the whole electricity demand. Model the demand that makes the plant run instead of forcing its output, when you know that demand. The heat demand, not an artificial floor, is then what makes the plant run, and the heat node's price shows what it costs.
+**What it does.** Many plants that run all the time do so because their other product is needed. Here *coal_chp* must make 300 MW of heat for the *heat* node, and *coal_chp_fix* ties its electricity to half of the heat. So it makes 150 MW of electricity in every hour, although wind could cover the whole electricity demand. Model the demand that makes the plant run instead of forcing its output, when you know that demand. The heat demand, not an artificial floor, is then what makes the plant run, and the heat node's price shows what it costs. A water demand works the same way: see [How to model cogeneration with desalination](#how-to-model-cogeneration-with-desalination).
 
 ### Option 6: user constraint on the units online
 

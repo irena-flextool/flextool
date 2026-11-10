@@ -205,9 +205,9 @@ Only for connections with a `startup_method`:
 For VRE units (units that use an `upper_limit` profile) the model also reports curtailment and potential generation against each output node:
 
 - table `unit_VRE_potential_outputNode_dt_ee` (not in the results database) — [MW] potential VRE generation at the timestep (`capacity × profile`)
-- table `unit_VRE_potential_outputNode_d_ee` (not in the results database) — [MWh] annualized potential VRE generation in the period
+- table `unit_VRE_potential_outputNode_d_ee` (not in the results database) — [MWh] potential VRE generation summed over the period's time steps (with the timestep weights), not scaled to a full year
 - `unit__node` entity `curtailment_t` parameter — [MW] potential minus actual generation at the timestep
-- table `unit_curtailment_outputNode_d_ee` (not in the results database) — [MWh] annualized curtailed energy in the period
+- table `unit_curtailment_outputNode_d_ee` (not in the results database) — [MWh] curtailed energy summed over the period's time steps (with the timestep weights), not scaled to a full year
 - table `unit_curtailment_share_outputNode_dt_ee` (not in the results database) — [0–1] timestep curtailment / potential
 - `unit__node` entity `curtailment_share` parameter — [0–1] period curtailment / period potential
 

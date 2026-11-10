@@ -150,3 +150,132 @@ Note the the `solve_mode`: *rolling_window* is not used! This is not for investm
 In the examples.sqlite, the solve entities can carry solver options in the `solver_arguments` map (e.g. `solver`, `parallel` and `presolve` for HiGHS). They only affect the speed and not the results, but usually the default values are good enough and the user should only change them if they understand how the solvers work.
 
 ![Solve data](../img/concept/data_for_one_solve.png)
+
+## How to model CSP with thermal storage
+
+**(examples.sqlite scenarios: csp_without, csp_existing, csp_fixed_design, csp_optimised_design, csp_gas_backup)**
+***init - west - coal - csp_system - csp_plant - (design alternatives)***
+
+**Three entities.** A concentrating solar power (CSP) plant with thermal storage is three generic entities: a solar *field* unit that makes heat from a profile, a heat *storage* node, and a *turbine* unit that turns the heat into electricity. Each has its own capacity and its own investment, so the model can choose the solar multiple and the storage hours itself, or you can fix them with user constraints. The heat storage is a storage node like a battery (see [How to add a storage unit](storage_hydro.md#how-to-add-a-storage-unit-battery) and [Using nodes as storages](../reference/nodes.md#using-nodes-as-storages)). Storing MWh of heat is the same model as a two-tank molten-salt system at fixed temperatures.
+
+**The example system.** The alternatives *init*, *west* and *coal* are the tutorial's system: the 48-hour solve *y2020_2day_dispatch*, the node *west* and the 500 MW *coal_plant* (coal 20 CUR/MWh of fuel, `efficiency` 0.4: 50 CUR/MWh of electricity), which is the backup. The other alternatives add:
+
+| Alternative | Entity | Parameter | Value |
+|---|---|---|---|
+| *csp_system* | `node` *west* | `inflow` | −150 [MW] |
+| *csp_system* | `profile` *csp_field_yield* | `profile` | a time series: 1.0 for t0007–t0018 and t0055–t0066 (clear days), 0.4 for t0031–t0042 (cloudy day), 0 otherwise |
+| *csp_plant* | `unit` *csp_field* | `conversion_method`, `existing` | *none*, 500 [MW_th] |
+| *csp_plant* | `unit__node__profile` (*csp_field*, *csp_heat*, *csp_field_yield*) | `profile_method` | *upper_limit* |
+| *csp_plant* | `node` *csp_heat* | `node_type`, `existing` | *storage*, 2500 [MWh_th] |
+| *csp_plant* | `node` *csp_heat* | `storage_binding_method` | *bind_within_timeblock* |
+| *csp_plant* | `node` *csp_heat* | `penalty_up`, `penalty_down` | 1000, 1000 [CUR/MWh] |
+| *csp_plant* | `unit` *csp_turbine* | `conversion_method`, `efficiency`, `existing` | *constant_efficiency*, 0.4, 100 [MW_e] |
+
+**Entities.** *csp_plant* turns on *csp_field*, *csp_heat* and *csp_turbine* (Entity Alternative). *csp_field* has no input and one `unit__outputNode` (*csp_field*, *csp_heat*). *csp_turbine* has a `unit__inputNode` (*csp_turbine*, *csp_heat*) and a `unit__outputNode` (*csp_turbine*, *west*).
+
+**The field-yield profile.** The profile is the heat the field delivers to the storage per MW_th of its design output, with the optical and receiver losses already taken off. Prepare it outside FlexTool, from the direct normal irradiance (DNI) of the site or from the hourly output of a plant simulation tool. The *upper_limit* lets the field deliver less than the profile: that is curtailment (defocusing), and it costs nothing.
+
+**The results.** Totals over the 48 hours; the objective is the 48-hour cost × 8760 / 48 / 10⁶ plus the annuities.
+
+| Scenario | Field used / curtailed [MWh_th] | Turbine [MWh_e] | Coal [MWh] | Objective [M CUR] |
+|---|---|---|---|---|
+| *csp_without* | – | – | 7200 | 65.700 |
+| *csp_existing* | 7900 / 500 | 3160 | 4040 | 36.865 |
+| *csp_fixed_design* | 7900 / 500 | 3160 | 4040 | 50.809 |
+| *csp_optimised_design* | 12 000 / 2000 | 4800 | 2400 | 43.353 |
+| *csp_gas_backup* | 7900 / 500, boiler 4100 | 4800 | 2400 | 31.877 |
+
+**Only totals are unique.** The field's heat is free and coal costs the same in every hour, so the model does not care when the turbine runs. The totals, the capacities and the costs are unique; the hourly dispatch and the storage state are not. Compare scenarios with period results (`unit__outputNode__d`, `unit_capacity__d`, `node_capacity__d`, the costs), not with hourly ones.
+
+### Existing plant
+
+**(examples.sqlite scenario: csp_existing)**
+***init - west - coal - csp_system - csp_plant***
+
+**What it does.** On the clear day the field makes 500 MW_th for 12 hours, 6000 MWh_th. The turbine takes 250 MW_th (100 MW_e / 0.4) directly, 3000 MWh_th, and the tank stores the rest until it is full at 2500 MWh_th; the last 500 MWh_th are curtailed. After sunset the tank runs the turbine for 10 more hours. On the cloudy day the field makes 200 MW_th for 12 hours, 2400 MWh_th, and all of it is used. The turbine makes 0.4 × 7900 = 3160 MWh_e, and coal makes the other 4040 MWh.
+
+### Fixed design: solar multiple and storage hours
+
+**(examples.sqlite scenario: csp_fixed_design)**
+***init - west - coal - csp_system - csp_plant - csp_invest_common - csp_fixed_design***
+
+**Investment data.** *csp_invest_common* sets `invest_periods` [*p2020*] on the solve *y2020_2day_dispatch*, and on each of the three entities `existing` 0, `invest_method` *invest_total*, `lifetime` 25 and `discount_rate` 0.07:
+
+| Entity | `invest_max_total` | `invest_cost` |
+|---|---|---|
+| `unit` *csp_turbine* | 100 [MW_e] | 500 [CUR/kW_e] |
+| `unit` *csp_field* | 1000 [MW_th] | 150 [CUR/kW_th] |
+| `node` *csp_heat* | 5000 [MWh_th] | 15 [CUR/kWh_th] |
+
+**The recipe.** The solar multiple (SM) is the field's thermal capacity divided by the turbine's thermal input at design point, and the storage hours (h) are the tank capacity divided by the same input. The turbine's thermal input is its capacity divided by its design efficiency η_d. So the ties are field − (SM / η_d) × turbine = 0 and tank − (h / η_d) × turbine = 0. With SM 2, 10 hours and η_d 0.4 the coefficients are −5 and −25.
+
+**The data.** *csp_fixed_design* adds the two constraints, both with `sense` *equal* and `constant` 0:
+
+| Entity | Parameter | Value |
+|---|---|---|
+| `constraint` *csp_solar_multiple*, *csp_storage_hours* | `sense`, `constant` | *equal*, 0 |
+| `unit` *csp_field* | `constraint_capacity_coeff` | (*csp_solar_multiple* \| 1) |
+| `node` *csp_heat* | `constraint_capacity_coeff` | (*csp_storage_hours* \| 1) |
+| `unit` *csp_turbine* | `constraint_capacity_coeff` | (*csp_solar_multiple* \| −5), (*csp_storage_hours* \| −25) |
+
+**Use the capacity, not the investment.** `constraint_capacity_coeff` ties the capacity in service: existing + invested − retired. `constraint_invested_capacity_coeff` ties only the new build of a period, so it breaks the ratio when there is existing capacity or when the parts are built in different periods. The rows have only capacity terms, so they are written once per period (see [user constraints](../reference/user_constraints.md#example-storage-size-tied-to-turbine-capacity)).
+
+**Use the design efficiency.** η_d in the coefficients is a constant, the turbine's efficiency at its design point, even when the turbine's `efficiency` is a time series (for example lower on hot days with dry cooling). For a solar multiple in a range instead of a fixed value, use two rows: *greater_than* with SM_min and *less_than* with SM_max.
+
+**The results.** The plant pays: it saves 288 350 CUR per MW_e and year of coal, against 139 442 CUR of annuities, so the turbine is built to its bound of 100 MW_e. The ties then give a field of 500 MW_th and a tank of 2500 MWh_th, the plant of *csp_existing*, with the same dispatch. The annuities are (100 × 500 + 500 × 150 + 2500 × 15) × 1000 × 0.0858 (7 % over 25 years) = 13.944 M CUR, so the objective is 36.865 + 13.944 = 50.809 M CUR.
+
+### Optimised design
+
+**(examples.sqlite scenario: csp_optimised_design)**
+***init - west - coal - csp_system - csp_plant - csp_invest_common***
+
+**What it does.** Without the ties the model chooses the three capacities within their bounds. It can still build the fixed design, so its objective can only be lower or the same: 43.353 against 50.809 M CUR. Here it builds the turbine and the tank to their bounds (100 MW_e and 5000 MWh_th) and a field of 833 MW_th: a solar multiple of 3.3 and 20 storage hours, with the turbine running in every hour. When a capacity reaches its `invest_max_total`, the bound, not the costs, decides the design: check `unit_capacity__d` and `node_capacity__d` against the bounds you set.
+
+### Gas backup
+
+**(examples.sqlite scenario: csp_gas_backup)**
+***init - west - coal - csp_system - csp_plant - csp_gas_backup***
+
+**The data.** *csp_gas_backup* adds a gas boiler that heats the storage node:
+
+| Entity | Parameter | Value |
+|---|---|---|
+| `commodity` *natural_gas* | `price` | 12 [CUR/MWh] |
+| `node` *natural_gas_market* | `node_type` | *commodity* |
+| `unit` *csp_backup_boiler* | `conversion_method`, `efficiency`, `existing` | *constant_efficiency*, 0.9, 250 [MW_th] |
+
+*csp_gas_backup* turns on *natural_gas_market* and *csp_backup_boiler*. The boiler has a `unit__inputNode` (*csp_backup_boiler*, *natural_gas_market*) and a `unit__outputNode` (*csp_backup_boiler*, *csp_heat*), and the `commodity__node` (*natural_gas*, *natural_gas_market*) links the price.
+
+**What it does.** Boiler heat costs 12 / 0.9 = 13.3 CUR/MWh_th, which is 33.3 CUR/MWh_e through the turbine, less than coal. So the turbine runs at 100 MW_e in every hour. The field still delivers 7900 MWh_th (the tank is still full on the clear day) and the boiler makes the other 4100 MWh_th from 4555.6 MWh of gas. Coal makes 2400 MWh, and the objective is 31.877 M CUR.
+
+**PV and an electric heater.** Another hybrid is a unit from the electricity node to *csp_heat* (an electric heater, `efficiency` about 0.99). Cheap PV power can then charge the tank in the middle of the day.
+
+### Plant summary from the outputs
+
+**One plant, three entities.** FlexTool reports the field, the tank and the turbine separately. The plant's figures come from the outputs as below; the values are those of *csp_existing* (the costs of *csp_fixed_design*). Mind the units: `unit__outputNode__d` is scaled to a full year (× 8760 / 48 here), while the potential and the curtailment `__d` tables are sums over the 48 hours.
+
+| Figure | Output | Value |
+|---|---|---|
+| Field potential | `unit_outputNode_VRE_potential__d` (*csp_field*, *csp_heat*) | 8400 MWh_th in the 48 h |
+| Field curtailed | `unit_curtailment__outputNode__d` (*csp_field*, *csp_heat*) | 500 MWh_th in the 48 h |
+| Curtailment share | `unit_outputNode_VRE_curtailment_share__d` | 500 / 8400 = 5.95 % |
+| Field used | `unit__outputNode__d` (*csp_field*, *csp_heat*) | 1 441 750 MWh_th/a (7900 × 182.5) |
+| Turbine output | `unit__outputNode__d` (*csp_turbine*, *west*) | 576 700 MWh_e/a (3160 × 182.5) |
+| Capacity factor | `unit_cf__outputNode__d` (*csp_turbine*, *west*) | 3160 / (100 × 48) = 65.8 % |
+| Tank cycles | the decreases of `node_state__dt` (*csp_heat*) summed, divided by the tank capacity | at least 1 in the 48 h (the 2500 MWh_th stored on the clear day) |
+| Plant cost | the *investment* columns of `cost_unit_annualized__d` (*csp_field*, *csp_turbine*) and *storage investment* of `cost_node_annualized__d` (*csp_heat*) | 6.436 + 4.291 + 3.218 = 13.944 M CUR/a |
+| Levelised cost | plant cost / turbine output | 13.944 M / 576 700 = 24.2 CUR/MWh |
+| Average price received | Σ turbine flow × `node_prices__dt` (*west*) / Σ turbine flow | 50 CUR/MWh (coal sets the price in every hour) |
+
+**Not unique.** The tank cycles depend on the hourly timing, which is free in this example, so they are not unique. The levelised cost is the plant's own cost, not its value to the system: show the average price received next to it.
+
+**Keep the heat out of the electricity indicators.** The field is a unit with an *upper_limit* profile, so FlexTool counts its curtailment as VRE curtailment. Do not put *csp_heat* in a `group` with `print_indicators` for electricity, or the field's curtailment counts in that group's VRE curtailment.
+
+### Caveats and limitations
+
+- **Net or gross output.** Use the net turbine efficiency (after the plant's own electricity use), so the turbine's output is the net output. For the own use as a separate flow, give the turbine a second input from the electricity node and tie it to the output with a user constraint.
+- **Capacity margin.** The capacity margin counts the turbine at its full capacity, whatever the tank holds.
+- **Representative periods.** The tank cycles every day. Use hourly representative days or weeks with a `*_blended_weights` `storage_binding_method` (see [Nested Rolling window solves](solve_sequences.md#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)); a long `new_stepduration` loses the daily cycle.
+- **No annual fossil share.** A rule such as "gas at most 15 % of the annual output" cannot be written today: user constraints with flow terms hold in each time step, and the cumulative limits of a `flowGroup` are absolute amounts.
+- **No start-up heat.** The turbine's start-up cannot draw heat from the tank; only a `startup_cost` is available.
+- **Standing losses.** `self_discharge_loss` is a share of the content; a loss proportional to the tank's size is not available.

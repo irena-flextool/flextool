@@ -21,6 +21,7 @@ Each example will either include an example database file that is located in the
 ## [Thermal, CHP and reserves](thermal_chp.md)
 
 - [How to create combined heat and power (CHP)](thermal_chp.md#how-to-create-combined-heat-and-power-chp)
+- [How to model cogeneration with desalination](thermal_chp.md#how-to-model-cogeneration-with-desalination)
 - [How to add a reserve](thermal_chp.md#how-to-add-a-reserve)
 - [How to add a minimum load, start-up and ramp](thermal_chp.md#how-to-add-a-minimum-load-start-up-and-ramp)
 - [How to add minimum uptime and downtime](thermal_chp.md#how-to-add-minimum-uptime-and-downtime)
@@ -30,6 +31,7 @@ Each example will either include an example database file that is located in the
 
 - [How to make investments (storage/unit)](investment.md#how-to-make-investments-storageunit)
 - [How to create a multi-year model](investment.md#how-to-create-a-multi-year-model)
+- [How to model CSP with thermal storage](investment.md#how-to-model-csp-with-thermal-storage)
 
 ## [Solve sequences, rolling and nested solves](solve_sequences.md)
 

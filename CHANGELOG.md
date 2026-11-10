@@ -9,6 +9,20 @@
 - **New: how-to "How to compare emission trajectories"** (Emissions and system limits): one `co2_max_period`
   trajectory per alternative on the same four-period system, without, with existing and with additional measures,
   and how to compare them. Three example scenarios `co2_*_measures` in examples.sqlite.
+- **New: how-to "How to model cogeneration with desalination"** (Thermal, CHP and reserves): a water node in m³,
+  a thermal desalination unit fed by a backpressure CHP, the same with an extraction CHP whose operating region is
+  made of user constraints, a reverse-osmosis investment (an `invest_cost` per m³/h is entered ÷ 1000) and a water
+  storage that lets the plant run flat. Four example scenarios `desal_*` in examples.sqlite.
+- **New: how-to "How to model CSP with thermal storage"** (Investment and multi-year models): a solar field, a heat
+  storage and a turbine; the solar multiple and the storage hours as user constraints on the capacities (with the
+  design efficiency and `constraint_capacity_coeff`), an optimised design, a gas backup, a plant summary (field
+  potential and curtailment, capacity factor, tank cycles, levelised cost) from the existing outputs, and the
+  limitations. Five example scenarios `csp_*` in examples.sqlite.
+- **Fix (docs): the CHP how-to gave the coefficient 2 on the electricity output of *coal_chp_fix*;** the example
+  has 1 (with −0.5 on heat, so heat = 2 × electricity). The how-to also says how the *coal_chp_extraction*
+  alternative builds its operating area.
+- **Fix (docs): the period potential and curtailment of VRE units** (`unit_VRE_potential_outputNode_d_ee`,
+  `unit_curtailment_outputNode_d_ee`) are sums over the period's time steps, not annualised as Model outputs said.
 - **Fix (docs): the ramp-limit text in Units no longer names the internal `p_fix_online`** as something a user
   sets; it names the online status a stochastic realization fixes and a user constraint on the units online.
 - **Fix: the reported input of a unit with a profile** (`unit__node__profile` on a unit that also has an input)
