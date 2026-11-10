@@ -113,7 +113,7 @@ Finally, the retirements work similar to investments using the same `inflation_r
 
     **With a minimum-load section.** When the unit has a `min_load_efficiency` section and an output coefficient other than 1, `efficiency` and `efficiency_at_min_load` are no longer the unit's energy efficiencies. The section is per unit of native output capacity and is not weighted by the output coefficient. The full-load energy efficiency is then `sink_flow_coef / (sink_flow_coef·slope⁰ + section⁰)`.
 
-    **A zero coefficient.** `conversion_flow_coeff = 0` takes the edge out of every per-edge capacity, ramp and min-load constraint. This is the hydro pass-through pattern. The edge stays uncapped: a zero coefficient is not folded into the slope and section, which would divide by zero or make the input free.
+    **A zero coefficient.** `conversion_flow_coeff = 0` takes the edge out of every per-edge capacity, ramp and min-load constraint. This is the hydro pass-through pattern. The edge stays uncapped: a zero coefficient is not folded into the slope and section, which would divide by zero or make the input free. Only `max_flow_for_unconstrained_variables` (model, default 1 000 000) bounds such a flow, so tie it to another flow with a user constraint (`constraint_flow_coeff`), a flowGroup `max_instant_flow` / `max_cumulative_flow` or an *upper_limit* / *fixed* profile. FlexTool warns about a zero-coefficient flow with none of these (a flowGroup minimum does not tie it: it bounds only from below), about a unit with an input whose outputs all have coefficient 0 (it uses no input, its outputs are free), and about `capacity_max_coeff` / `capacity_min_coeff` on a zero-coefficient output (no effect).
 
 - `capacity_max_coeff` (unit--outputNode) - [factor, default 1] The share of the unit's capacity that this output may use. Constant.
 
@@ -181,7 +181,7 @@ Finally, the retirements work similar to investments using the same `inflation_r
 | case | conversion_flow_coeff | capacity_max_coeff / input_share_max | capacity_min_coeff / input_share_min |
 |---|---|---|---|
 | standard unit, 1 source + 1 sink | 1 (default) | 1 (default) | 0 (default; the unit's `min_load` applies to its output) |
-| hydro pass-through (water sink on hydro plant) | 0 | any (skipped) | any (skipped) |
+| hydro pass-through (water sink on hydro plant) | 0 (tie the flow with a user constraint) | any (skipped) | any (skipped) |
 | extraction CHP, electricity output (premium, costs more input energy per unit) | 2 (say) | 1 | 0 (default) — or 1 if electricity alone must reach `min_load` while online (this rules out the pure-heat mode) |
 | extraction CHP, heat output (byproduct, cheap per unit of input energy) | 0.2 (say) | 1 (allow full-heat mode) | 0 (default; allows the zero-heat pure-condensing mode) |
 | input with lower energy content (e.g. 1.5 flow units per MWh of input energy) | 1.5 | input_share_max 1 (it can still run the unit alone) | – |
@@ -196,3 +196,5 @@ Finally, the retirements work similar to investments using the same `inflation_r
 ## Units constrained by profiles
 
 Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a `profile` entity with a `profile_method`, thats state whether the profile forces an *upper_limit*, *lower_limit* or *equal*ity. Finally `profile` entity is given a `profile` value: constant, period (applies to all timesteps of that period), time, period+time or stochastic time. One needs to use `node__profile`, `unit__node__profile` or `connection__profile` to apply the profile to specific energy flow (or storage state in the case of `node__profile`).
+
+`profile_method` defaults to *upper_limit* on `unit__node__profile` and to *none* (the profile is not applied) on `node__profile` and `connection__profile`. A profile without a value in the scenario is 0, so an *upper_limit* or *fixed* link to it would hold the flow (or the storage state) at 0: FlexTool stops with an error that names the link and the profile, and the alternatives that hold the profile's value when the scenario does not include them. Give the profile a value in an alternative of the scenario, set `profile_method` *lower_limit* (a floor of 0 does nothing) or *none*, or remove the link. A `node__profile` or `connection__profile` link with no `profile_method` gets a warning (an explicit *none* does not). A profile above 1 on an *upper_limit* / *fixed* unit link gets a warning: the profile is a share of the capacity (0.35, not 35).

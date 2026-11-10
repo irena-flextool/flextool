@@ -37,6 +37,10 @@ Connections can transfer energy between two nodes. Parameters for the connection
 - `virtual_unitsize` - [MW] Size of one unit of the connection. With it, `existing` is the number of units. Binary startups commit whole units of this size. Investments and retirements are continuous; their limits are in MW. No value: the existing capacity, or 1000 MW without it.
 - `availability` - [e.g. 0.9 means 90%] Fraction of capacity available for connection flows. Constant, period, time or period+time.
 
+## connection__profile
+
+- `profile_method` - limits the connection's flow with a profile (*upper_limit*, *lower_limit*, *fixed*; the profile is a share of the capacity). The default is *none*: the profile is not applied, and FlexTool warns about a link without a `profile_method`. An *upper_limit* or *fixed* link to a profile without a value in the scenario stops the run with an error (it would hold the flow at 0). See [units constrained by profiles](units.md#units-constrained-by-profiles).
+
 ## Investment parameters for connections
 
 These are the same as for units, see [here](units.md#investment-parameters-for-capacity-expansion)

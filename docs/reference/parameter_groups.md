@@ -67,3 +67,41 @@ The markers:
   retirements of earlier periods, also those decided in the same solve (before: only those of earlier solves of a
   chain). The notice names the user constraints whose pre-built entity can retire; results change only if the model
   retires capacity. Deleting the marker silences it.
+
+## Input checks
+
+Before it reads the parameters, FlexTool checks the data of the scenario for values it cannot use sensibly. An
+error stops the run and lists every offending value (class, entity, parameter, value, alternative and, for a map, the
+first key that is wrong) with what to do. A warning is printed once per run in the run log; the run goes on.
+
+**Errors**
+
+- An *upper_limit* or *fixed* `unit__node__profile`, `node__profile` or `connection__profile` link whose `profile`
+  has no value in the scenario (it would hold the flow or the storage state at 0). The message names the link and
+  the profile, and the alternatives that hold the profile's value when the scenario does not include them.
+  A *lower_limit* link without a value is allowed (a floor of 0).
+- `efficiency` of a unit or a connection at or below 0.
+- Unit `min_load` outside [0, 1]; `availability` below 0 (unit, connection, node).
+- `capacity_max_coeff` below 0.
+- A minimum above its maximum, when the `invest_method` uses that pair: `invest_min_period` / `invest_max_period`,
+  `retire_min_period` / `retire_max_period`, `cumulative_min_capacity` / `cumulative_max_capacity` (compared per
+  period; a constant applies to every period), `invest_min_total` / `invest_max_total`, `retire_min_total` /
+  `retire_max_total` (unit, connection, node, group). No capacity could meet both.
+- `lifetime` at or below 0 on an entity that can invest or retire (the investment would be charged for no years).
+- `existing` as a time series or a map keyed by time steps (it cannot vary over time; use a constant or a period
+  map), or a map keyed by numbers such as 2020 (periods are names such as *p2020*).
+
+**Warnings**
+
+- A `node__profile` or `connection__profile` link without a `profile_method` (the default *none* does not apply the
+  profile).
+- `availability` above 1, and a profile above 1 on an *upper_limit* / *fixed* unit link (shares entered as percent?).
+- Connection `efficiency` above 1 (creates energy).
+- `virtual_unitsize` at or below 0 (ignored).
+- A unit flow with `conversion_flow_coeff` 0 that no user constraint, flowGroup maximum or *upper_limit* / *fixed*
+  profile ties: only `max_flow_for_unconstrained_variables` bounds it. A unit with an input whose outputs all have
+  coefficient 0 gets one warning (it uses no input). `capacity_max_coeff` / `capacity_min_coeff` on such an output
+  has no effect.
+
+Negative `existing` is not reported: it is the supported "anti-energy" unit. Other checks (time series keys,
+timesets, input shares, minimum-load curves, ladders, group limits) are described with their parameters.

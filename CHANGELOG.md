@@ -1,5 +1,27 @@
 ## Unreleased
 
+- **Fix: a profile link without profile data held the flow at 0 without a word (#104).** `profile_method`
+  defaults to *upper_limit* on `unit__node__profile`, and a profile without a value in the scenario is 0, so the
+  linked unit did not run (typically when the profile's value is in an alternative the scenario leaves out). Now
+  an *upper_limit* or *fixed* link (unit, node or connection) to a profile without a value stops the run with an
+  error that names the link, the profile and the alternatives that hold its value; *lower_limit* stays allowed. A
+  `node__profile` or `connection__profile` link without a `profile_method` (default *none*: not applied) gets a
+  warning.
+- **Fix: a unit flow with `conversion_flow_coeff` 0 and nothing tying it was free without a word (#213).** Such a
+  flow is outside the conversion and every capacity, ramp and minimum-load limit, so a unit whose only output had
+  coefficient 0 produced free power. A warning, printed once per run, now names each zero-coefficient flow that no
+  user constraint, flowGroup maximum or *upper_limit* / *fixed* profile ties, a unit with an input whose outputs
+  all have coefficient 0 (it uses no input), and `capacity_max_coeff` / `capacity_min_coeff` on such an output (no
+  effect). The narrower "no minimum-load floor" warning for such units is replaced. The model is unchanged.
+- **Fix: typing mistakes in common values ran on silently (#170).** The run now stops, before the data is read,
+  with one error that lists every value of: unit or connection `efficiency` at or below 0, unit `min_load` outside
+  [0, 1], `availability` below 0, `capacity_max_coeff` below 0, an invest / retire / cumulative minimum above its
+  maximum (total, and per period) when the `invest_method` uses it, `lifetime` at or below 0 on an entity that can
+  invest or retire, and `existing` as a time series, keyed by time steps or keyed by numbers such as 2020. Before,
+  these turned a unit off, paid it to run, ended "infeasible" without a hint, gave no capacity or crashed.
+  Warnings: `availability` above 1, a profile above 1 on an *upper_limit* / *fixed* unit link, connection
+  `efficiency` above 1 and `virtual_unitsize` at or below 0. *Model parameters → Parameter groups and conventions*
+  has a new section *Input checks* listing them. Valid data runs as before.
 - **Fix: time series values whose time step is not on any timeline were dropped without a word.** Hourly data
   on a 3-hour timeline used every third value, keys past the end of the timeline or in a different case (`T0001`)
   were left out, and a series with no key on the timeline fell back to the parameter's default. Now a warning,

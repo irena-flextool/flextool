@@ -298,7 +298,7 @@ Startups and shutdowns count exactly the units coming online and going offline. 
 **What it does.** In every time step the flow is at least profile × `availability` × capacity, here 0.4 × 500 = 200 MW. The capacity includes invested capacity, so the floor grows with investments. The `profile` can be a constant, a period, a time series or both (see [units constrained by profiles](../reference/units.md#units-constrained-by-profiles)), so the floor can change from hour to hour.
 
 !!! tip "Give the profile a value"
-    A `unit__node__profile` entity whose `profile` has no value in the scenario holds the flow at 0: `profile_method` defaults to *upper_limit*, and a missing profile value is 0. Entities are the same in every scenario, so use one of these:
+    A `unit__node__profile` entity whose `profile` has no value in the scenario would hold the flow at 0: `profile_method` defaults to *upper_limit*, and a missing profile value is 0. FlexTool stops with an error that names the link. Entities are the same in every scenario, so fix it with one of these:
 
     - give the `profile` a value in an alternative that every scenario uses;
     - set `profile_method` *lower_limit* in such an alternative (a missing value is then a floor of 0, which does nothing);

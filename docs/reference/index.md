@@ -11,5 +11,5 @@ These pages list the entity classes of a FlexTool model and the parameters you c
 - [Flow groups](flow_groups.md) — cumulative and instant limits on summed flows.
 - [Reserves](reserves.md) — reserve requirements and the units and connections that provide them.
 - [User constraints](user_constraints.md) — linear constraints you write yourself over flows, states and capacities.
-- [Parameter groups and conventions](parameter_groups.md) — the parameter group labels and the behaviour-change notices of upgraded databases.
+- [Parameter groups and conventions](parameter_groups.md) — the parameter group labels, the behaviour-change notices of upgraded databases and the input checks a run makes before it starts.
 - [Parameter catalogue (web docs)](../parameter_catalogue.md) — every parameter in one table per entity class: unit, allowed shapes, default, allowed values and group, generated from the schema of this FlexTool version. `python -m flextool.docs_build --xlsx catalogue.xlsx` writes it as an Excel data dictionary (see [How to make a data dictionary for your model](../how_to/outputs.md#how-to-make-a-data-dictionary-for-your-model)).
