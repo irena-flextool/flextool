@@ -39,6 +39,9 @@ MESSAGES: dict[str, str] = {
     "busy_local": ("The local model server ({provider}) is still busy, likely loading a model. Ask again in a "
                    "minute."),
     "busy_streamed": "{provider} stopped the answer because it is overloaded. Ask again in a moment.",
+    "ended_early_retry": ("{provider} ended the answer before any of it came. Trying again in {seconds} seconds "
+                          "(attempt {n} of {max})."),
+    "ended_early": "{provider} ended the answer before any of it came, several times. Ask again in a moment.",
     "quota": ("Your {provider} quota is used up for now. It resets on the provider's schedule, which FlexTool "
               "cannot see. You can switch to another provider or model."),
     "credit": ("Your {provider} account has no credit left. Add credit in your provider account, or switch "

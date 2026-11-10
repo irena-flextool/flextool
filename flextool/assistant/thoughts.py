@@ -13,7 +13,8 @@ tag ends its block wherever it is; the whitespace after it is dropped with the b
 of the answer is dropped and noted in the log.
 
 :class:`ThoughtFilter` works on streamed pieces: a piece that might be the start of a tag is held back until the
-next piece settles it, so no half tag is ever shown.  :func:`stream_visible` wraps one backend request.
+next piece settles it, so no half tag is ever shown.  :func:`stream_visible` wraps one backend request.  An error
+after only reasoning was streamed counts as one before any part of the answer was shown, so it can be retried.
 """
 from __future__ import annotations
 
@@ -22,8 +23,8 @@ import logging
 import threading
 from typing import TYPE_CHECKING
 
-from flextool.assistant.llm_adapter import TextDelta
-from flextool.assistant.llm_errors import LLMError
+from flextool.assistant.llm_adapter import TextDelta, ToolCallStarted
+from flextool.assistant.llm_errors import MESSAGES, LLMError
 
 if TYPE_CHECKING:
     from flextool.assistant.llm_adapter import Backend, OnEvent, Reply, Request
@@ -124,21 +125,30 @@ def strip_thoughts(text: str) -> str:
 
 def stream_visible(backend: Backend, req: Request, on_event: OnEvent, cancel: threading.Event) -> Reply:
     """``backend.stream`` with the reasoning blocks removed from the text deltas, the reply's text and the text an
-    error keeps.  Other events and the usage pass unchanged."""
+    error keeps.  Other events and the usage pass unchanged.  An error after a stream whose text was all reasoning
+    and that started no tool call is marked as one before any part of the answer was shown (:func:`_not_shown`):
+    the backend counted that text as streamed, but the user saw none of it."""
     f = ThoughtFilter()
+    shown = False
 
     def visible(event: object) -> None:
+        nonlocal shown
         if isinstance(event, TextDelta):
             text = f.feed(event.text)
             if text:
+                shown = True
                 on_event(TextDelta(text))
             return
+        if isinstance(event, ToolCallStarted):
+            shown = True
         on_event(event)  # type: ignore[arg-type]
 
     try:
         reply = backend.stream(req, visible, cancel)
     except LLMError as err:
         err.partial_text = strip_thoughts(err.partial_text)
+        if err.streamed and not shown and not err.partial_text.strip():
+            _not_shown(err)
         raise
     tail = f.finish()
     if tail:
@@ -147,3 +157,14 @@ def stream_visible(backend: Backend, req: Request, on_event: OnEvent, cancel: th
         return reply
     return dataclasses.replace(reply, message=dataclasses.replace(reply.message,
                                                                   text=strip_thoughts(reply.message.text)))
+
+
+def _not_shown(err: LLMError) -> None:
+    """Mark *err* as an error before any part of the answer was shown; an overload then says so in the words of
+    one (the request may be retried, calibration 2026-11-10)."""
+    err.streamed = False
+    if err.message_key == "busy_streamed":
+        key = "busy_local" if err.local else "busy"
+        err.user_message = MESSAGES[key].format(**err.fields)
+        err.message_key = key
+        err.args = (err.user_message,)

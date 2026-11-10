@@ -43,6 +43,7 @@ from flextool.assistant.llm_adapter import (
 )
 from flextool.assistant.llm_errors import (
     LLMError,
+    ServerBusy,
     Truncated,
     cancelled,
     classify_openai,
@@ -52,6 +53,7 @@ from flextool.assistant.llm_errors import (
 )
 from flextool.assistant.net import build_http_client, key_header_value
 from flextool.assistant.providers import Preset, model_entries, request_fields, schemas_sent
+from flextool.assistant.thoughts import strip_thoughts
 
 #: Request fields the library takes as named arguments; any other field goes in ``extra_body``.
 _NAMED_FIELDS = frozenset({"store", "stream_options", "tool_choice", "parallel_tool_calls", "prompt_cache_key",
@@ -88,6 +90,7 @@ class _State:
     calls: dict[int, _Call] = field(default_factory=dict)
     message_extra: dict[str, Any] = field(default_factory=dict)
     reasoning: dict[str, list] = field(default_factory=dict)
+    plain_body: bool = False        # the answer was a JSON body without an error, no event stream
 
 
 def merge_reasoning(items: list, fragments: list) -> None:
@@ -109,32 +112,46 @@ def merge_reasoning(items: list, fragments: list) -> None:
                 existing[key] = copy.deepcopy(value)
 
 
-def _json_typed(response: Any) -> bool:
-    return response.headers.get("content-type", "").lower().startswith("application/json")
+#: The fields of a server-sent event; any other line is not part of an event stream.
+_SSE_FIELDS = frozenset({"data", "event", "id", "retry"})
 
 
-def _sse_data(parts: Iterable[bytes]) -> Iterator[str]:
-    """The ``data`` of each server-sent event in the byte *parts*: events end at a blank line, ``data:`` lines of
-    one event are joined with a newline, other fields and comments are skipped."""
+def _sse_data(parts: Iterable[bytes]) -> Iterator[tuple[str, str]]:
+    """The events in the byte *parts*, as ``("data", text)``: the ``data`` of one server-sent event (events end at a
+    blank line, ``data:`` lines of one event are joined with a newline, other fields and comments are skipped).  A
+    line that is no part of an event stream (no comment, no known field) is ``("other", line)``: a server can send
+    its error as a plain JSON body after some events."""
     buffer = b""
     data: list[str] = []
+
+    def line_of(raw: bytes) -> Iterator[tuple[str, str]]:
+        nonlocal data
+        text = raw.rstrip(b"\r").decode("utf-8", errors="replace")
+        if not text:
+            if data:
+                yield "data", "\n".join(data)
+            data = []
+        elif text.startswith("data:"):
+            data.append(text[5:].removeprefix(" "))
+        elif not text.startswith(":") and text.partition(":")[0] not in _SSE_FIELDS:
+            yield "other", text
+
     for part in parts:
         buffer += part
         *lines, buffer = buffer.split(b"\n")
         for line in lines:
-            text = line.rstrip(b"\r").decode("utf-8", errors="replace")
-            if not text:
-                if data:
-                    yield "\n".join(data)
-                data = []
-            elif text.startswith("data:"):
-                data.append(text[5:].removeprefix(" "))
+            yield from line_of(line)
     if buffer.strip():
-        text = buffer.rstrip(b"\r").decode("utf-8", errors="replace")
-        if text.startswith("data:"):
-            data.append(text[5:].removeprefix(" "))
+        yield from line_of(buffer)
     if data:
-        yield "\n".join(data)
+        yield "data", "\n".join(data)
+
+
+def _is_error_body(body: object) -> bool:
+    """Whether a decoded JSON body is an error: an object with ``error``, or a list of them (Google's form)."""
+    if isinstance(body, dict):
+        return bool(body.get("error"))
+    return isinstance(body, list) and bool(body) and all(isinstance(b, dict) and b.get("error") for b in body)
 
 
 def _index_for(part: dict, function: dict, calls: dict[int, _Call]) -> int:
@@ -260,14 +277,7 @@ class OpenAIChatBackend:
                 raise classify_openai(exc, self.ctx) from exc
             self._inflight.set(stream.response)
             try:
-                if _json_typed(stream.response):
-                    self._read_json_typed(stream.response, state, on_event, timer, cancel)
-                else:
-                    for chunk in stream:
-                        timer.touch()
-                        if cancel.is_set() or self._inflight.aborted.is_set():
-                            raise self._cancelled(state)
-                        self._consume(chunk.to_dict(), state, on_event)
+                self._read_answer(stream.response, state, on_event, timer, cancel)
             except LLMError:
                 raise
             except Exception as exc:
@@ -287,11 +297,14 @@ class OpenAIChatBackend:
                     stream.close()
         return self._reply(state, on_event)
 
-    def _read_json_typed(self, response: Any, state: _State, on_event: OnEvent, timer: SilenceTimer,
-                         cancel: threading.Event) -> None:
-        """Read an answer typed ``application/json``: a JSON object with ``error`` (an error answered with HTTP
-        200) is classified; an event stream sent under that type (some servers and proxies do) is read as one, as
-        it arrives.  The first bytes are only looked at, never lost: they start the events."""
+    def _read_answer(self, response: Any, state: _State, on_event: OnEvent, timer: SilenceTimer,
+                     cancel: threading.Event) -> None:
+        """Read the answer as it arrives.  It is read here, not by the library, whatever its type: an event stream
+        (also when typed ``application/json``, as some servers and proxies send it), or a JSON error body — the
+        whole answer (an error answered with HTTP 200), or the rest of it after some events (Google's endpoint
+        sends its error as a JSON array over several lines after a first event, calibration 2026-11-10).  An error
+        body is classified from its contents; any other body that is no event stream is an incomplete answer
+        (:meth:`_reply`).  The first bytes are only looked at, never lost: they start the events."""
         parts = response.iter_bytes()
         head = b""
         for part in parts:
@@ -299,29 +312,43 @@ class OpenAIChatBackend:
             head += part
             if head.strip():
                 break
-        if head.lstrip().startswith(b"{"):
-            raw = head + b"".join(parts)
-            try:
-                body: Any = json.loads(raw)
-            except ValueError:
-                body = raw.decode("utf-8", errors="replace")
-            if isinstance(body, dict) and "error" in body:
-                raise classify_status(None, body, response.headers, self.ctx,
-                                      fallback_text="the answer was an error")
+        if head.lstrip()[:1] in (b"{", b"["):
+            self._raise_error_body(head + b"".join(parts), response, state, fallback="the answer was an error")
+            state.plain_body = True
             return                  # no events: the answer is incomplete (_reply)
-        for data in _sse_data(itertools.chain([head], parts)):
+        body: list[str] = []        # the lines of a plain JSON body after the events
+        for kind, data in _sse_data(itertools.chain([head], parts)):
             timer.touch()
             if cancel.is_set() or self._inflight.aborted.is_set():
                 raise self._cancelled(state)
+            if kind == "other":
+                if body or data.lstrip()[:1] in ("{", "["):
+                    body.append(data)
+                continue
+            if body:
+                continue
             if data.startswith("[DONE]"):
                 break
             chunk = json.loads(data)
-            if isinstance(chunk, dict) and chunk.get("error"):
+            if _is_error_body(chunk):
                 raise classify_status(None, chunk, response.headers, self.ctx, streamed=state.streamed,
                                       partial_text=state.text, partial_usage=self._usage(state),
                                       fallback_text="the answer ended with an error")
             if isinstance(chunk, dict):
                 self._consume(chunk, state, on_event)
+        if body:
+            self._raise_error_body("\n".join(body).encode("utf-8"), response, state,
+                                   fallback="the answer ended with an error")
+
+    def _raise_error_body(self, raw: bytes, response: Any, state: _State, *, fallback: str) -> None:
+        """Raise the classified error when *raw* is a JSON error body; return when it is anything else."""
+        try:
+            body: Any = json.loads(raw)
+        except ValueError:
+            return
+        if _is_error_body(body):
+            raise classify_status(None, body, response.headers, self.ctx, streamed=state.streamed,
+                                  partial_text=state.text, partial_usage=self._usage(state), fallback_text=fallback)
 
     def _cancelled(self, state: _State) -> LLMError:
         return cancelled(self.ctx, streamed=state.streamed, partial_text=state.text,
@@ -412,6 +439,11 @@ class OpenAIChatBackend:
                                   partial_text=state.text, partial_usage=usage,
                                   fallback_text="the answer ended with an error")
         if state.finish is None:
+            if not state.plain_body and not state.calls and not strip_thoughts(state.text).strip():
+                # The events ended before any of the answer, at most some reasoning (Google's endpoint does this
+                # now and then, calibration 2026-11-10): the provider failed, the request may be retried.
+                raise make_error(ServerBusy, "ended_early", self.ctx, streamed=state.streamed,
+                                 partial_text=state.text, partial_usage=usage)
             raise make_error(Truncated, "length_no_finish", self.ctx, streamed=state.streamed,
                              partial_text=state.text, partial_usage=usage)
         calls = []

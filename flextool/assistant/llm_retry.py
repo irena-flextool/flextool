@@ -11,7 +11,8 @@ message.  While waiting, :class:`RetryWait` is pushed every second and the cance
   limit (:class:`~flextool.assistant.pacing.Pacer`).  When neither named a wait, the last message says that
   FlexTool now waits between requests (``rpm_paced``).
 * **A reported limit of 0** (:class:`AccessInactive`, review G9 / OR-2) is not retried and leaves the pacing alone.
-* **Overload**: at most ``max_retries`` retries, waiting ``retry_after`` or a doubling backoff with jitter.
+* **Overload**: at most ``max_retries`` retries, waiting ``retry_after`` or a doubling backoff with jitter.  An
+  answer the provider ended before any of it came (``ended_early``, a :class:`ServerBusy`) is retried the same way.
 * **Overload of a local or LAN model server** (``err.local``; the server is often loading or swapping a model):
   at most ``local_busy_retries`` retries, a doubling backoff from ``local_busy_backoff_start`` up to
   ``local_busy_backoff_cap`` per wait (``retry_after`` when named), and all these waits together at most
@@ -156,7 +157,8 @@ def call_with_retries(fn: Callable[[], Reply], policy: RetryPolicy, on_event: On
                     raise
                 retries += 1
                 busy_waited += wait
-                key = "busy_local_retry" if err.local else "busy_retry"
+                key = ("ended_early_retry" if err.message_key == "ended_early"
+                       else "busy_local_retry" if err.local else "busy_retry")
                 attempt, of = retries, busy_retries
             elif isinstance(err, Unreachable) and not err.local and not connection_retried:
                 connection_retried = True
