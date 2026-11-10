@@ -57,7 +57,9 @@
   `nodeGroup_VRE_share_d_g` was an average of the time-step shares and *VRE share of demand* lost the VRE of a
   time step without inflow. Every period share (`group` `indicator`, `nodeGroup_VRE_share_d_g`) is now the ratio of
   the period sums weighted by the time-step weights, so the values of these results change. The VRE share takes
-  the VRE generation into all member nodes, as the indicators do; the time-step VRE share is 0 (not infinite) at a
+  the VRE generation into all member nodes, as the indicators do; the curtailed VRE is taken on the arcs that have
+  a potential (VRE units with an `upper_limit` profile), so the flow of a VRE arc without a profile no longer offsets
+  it; the time-step VRE share is 0 (not infinite) at a
   time step without inflow; a realized time step without a time-step weight stops the output processing with an
   error.
 - **Fix (docs): the CHP how-to gave the coefficient 2 on the electricity output of *coal_chp_fix*;** the example

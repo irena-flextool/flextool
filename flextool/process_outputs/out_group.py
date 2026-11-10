@@ -126,14 +126,23 @@ def nodeGroup_indicators(par, s, v, r, debug):
         # 3. VRE generation (actual flow) into the group's nodes
         vre_flow_sum = _group_vre_flow(par, s, r, group_nodes)
 
-        # 4. Potential VRE generation and curtailment
+        # 4. Potential VRE generation and curtailment.  The curtailment is
+        # taken on the arcs that have a potential (VRE arcs with an
+        # upper_limit profile into a member node), as in
+        # unit_curtailment_outputNode: the flow of a VRE arc without a
+        # profile adds no potential, so it must not offset the curtailment.
         vre_processes = s.process_VRE.get_level_values('process')
         potential_cols = r.potentialVREgen_dt.columns[
             r.potentialVREgen_dt.columns.get_level_values(1).isin(group_nodes) &
             r.potentialVREgen_dt.columns.get_level_values(0).isin(vre_processes)
         ]
         potential_sum = r.potentialVREgen_dt[potential_cols].mul(step_dur, axis=0).sum(axis=1)
-        curtailed_vre = (potential_sum - vre_flow_sum).clip(lower=0)
+        flow_cols = r.flow_dt.columns
+        profiled_arc = pd.MultiIndex.from_arrays(
+            [flow_cols.get_level_values('process'), flow_cols.get_level_values('sink')]
+        ).isin(potential_cols) & flow_cols.isin(s.process_source_sink_alwaysProcess)
+        profiled_flow_sum = r.flow_dt[flow_cols[profiled_arc]].mul(step_dur, axis=0).sum(axis=1)
+        curtailed_vre = (potential_sum - profiled_flow_sum).clip(lower=0)
 
         # Filter balance nodes directly from the sets
         balance_set = set(s.node_balance) | set(s.node_balance_period)
@@ -215,8 +224,8 @@ def nodeGroup_indicators(par, s, v, r, debug):
     results.append((results_dt_indexed, 'nodeGroup_gdt_p'))
 
     # Period level: ratios of the weighted period sums (see the docstring)
-    sums_d = pd.concat(weighted_dt, ignore_index=True).groupby(['group', 'period']).sum()
-    annualized_inflow_d = results_dt_indexed['7. Annualized inflow'].groupby(level=['group', 'period']).sum()
+    sums_d = pd.concat(weighted_dt, ignore_index=True).groupby(['group', 'period'], sort=False).sum()
+    annualized_inflow_d = results_dt_indexed['7. Annualized inflow'].groupby(level=['group', 'period'], sort=False).sum()
 
     results_d_indexed = pd.DataFrame({
         '1. Loss of load share': _safe_ratio(sums_d['lol'], sums_d['inflow']),
@@ -284,8 +293,8 @@ def nodeGroup_VRE_share(par, s, v, r, debug):
     results.append((results_dt, 'nodeGroup_VRE_share_dt_g'))
 
     weight = _realized_timestep_weight(par, index)
-    vre_d = vre_dt.mul(weight, axis=0).groupby(level='period').sum()
-    inflow_d = inflow_dt.mul(weight, axis=0).groupby(level='period').sum()
+    vre_d = vre_dt.mul(weight, axis=0).groupby(level='period', sort=False).sum()
+    inflow_d = inflow_dt.mul(weight, axis=0).groupby(level='period', sort=False).sum()
     results_d = _safe_ratio(vre_d, inflow_d)
     results_d.columns.name = 'group'
     results.append((results_d, 'nodeGroup_VRE_share_d_g'))

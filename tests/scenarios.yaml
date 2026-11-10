@@ -37,6 +37,8 @@
     - node__d.csv
     - costs__dt.csv
     - summary_solve.csv
+    - group_node__d.csv
+    - group_node_VRE_share__d.csv
   # Same dispatch as base, but timeset weights redistribute costs.
   #   sum of `upward slack penalty` column in costs__dt.csv = 27,909,360 CUR
   #   objective (M CUR) = 27,909,360 * 365/2 / 1e6 = 5093.4582
@@ -209,6 +211,8 @@
     - unit__outputNode__dt.csv
     - unit_outputNode_VRE_potential__dt.csv
     - costs__dt.csv
+    - group_node__d.csv
+    - group_node_VRE_share__d.csv
   time_budget_seconds: 10.0
 
 - scenario: wind_battery

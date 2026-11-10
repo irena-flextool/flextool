@@ -104,9 +104,14 @@ def test_step_with_zero_inflow_keeps_its_vre():
 
 def test_vre_into_member_node_without_inflow_counts_in_both_tables():
     # w2 feeds the no-inflow member node h: 5, 10 → VRE (80+5)+(30+10) = 125 of 150
-    _, d, vre = _run(*_case(["t1", "t2"], [100, 50], [90, 70], [80, 30], [1, 1], extra_node=("h", [5, 10])))
+    dt, d, vre = _run(*_case(["t1", "t2"], [100, 50], [90, 70], [80, 30], [1, 1], extra_node=("h", [5, 10])))
     assert d["2. VRE share of demand"] == pytest.approx(125 / 150)
     assert vre["nodeGroup_VRE_share_d_g"].loc["d1", "g"] == pytest.approx(125 / 150)
+    # w2 has no profile (no potential), so its flow does not offset the curtailment of w:
+    # curtailed (90-80)+(70-30) = 50 of potential 160, and 50 of inflow 150
+    assert dt["4. Curtailed VRE"].tolist() == pytest.approx([10, 40])
+    assert d["6. Curtailed VRE of potential VRE"] == pytest.approx(50 / 160)
+    assert d["4. Curtailed VRE of demand"] == pytest.approx(50 / 150)
 
 
 def test_realized_step_without_weight_raises():

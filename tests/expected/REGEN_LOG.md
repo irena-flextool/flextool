@@ -1337,3 +1337,23 @@ byte-identical before and after the augment.
   file is compared.
 
 Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for each of the nine scenarios.
+
+## 2026-11-10 — new node-group indicator goldens for `base_weighted` and `wind` (item 198 review)
+
+**Context.** No golden held a node-group period table, so the weighted ratios of item 198 (`group_node__d.csv`,
+`group_node_VRE_share__d.csv`) were not pinned through the real loader.  The two files are added to `base_weighted`
+(the only scenario with time-step weights; it has no VRE, so it pins the weight alignment, the loss-of-load share and
+the annualized inflow) and to `wind` (curtailment, unit weights).  No existing golden changed.
+
+- Hand values, from the inputs in `tests/fixtures/tests.json` and the existing goldens (not from the new files):
+  - `wind`: from `unit__outputNode__dt.csv` (flow) and `unit_outputNode_VRE_potential__dt.csv` (potential), 48
+    steps of 1 h: *Curtailed VRE of potential VRE* = Σ(pot − flow) / Σ pot = 0.090211; *VRE share of demand* =
+    Σ flow / Σ inflow = 0.932516; *Curtailed VRE of demand* = 0.092465; *Annualized inflow* = Σ inflow · 8760/48 =
+    5 311 297.5.  The goldens (rounded to 4 decimals) are 0.0902, 0.9325, 0.0925, 5311297.5.
+  - `base_weighted`: `timeset_weights` of `2day` sum to 60 over the 48 steps and are normalised to a mean of 1
+    (factor 48/60), so *Annualized inflow* = Σ w·inflow · 0.8 · 8760/48 = 7 074 247.5 · 0.8 = 5 659 398 (golden
+    5659398.0); *Loss of load share* = 1 (no units, all demand is slack).
+
+Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the two scenarios; the other files the
+regeneration rewrote (number formatting of `costs__dt.csv`, `unit__outputNode__dt.csv`,
+`unit_outputNode_VRE_potential__dt.csv`, the timestamp of `summary_solve.csv`) were put back.

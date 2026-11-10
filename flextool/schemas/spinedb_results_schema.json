@@ -272,7 +272,7 @@
       "indicator",
       null,
       null,
-      "A set of results for all node members of the group. 'sum of annualized inflows' - [MWh] sum of inflow to the node which has been annualized (scaled to correspond to a year of timesteps). 'VRE share' - [0-1] how much the flows from VRE sources (inputs using ‘upper limit’ profile) are of the inflow.\n'curtailed VRE share' - [0-1] how much the unused flows from VRE sources would have been of the inflow. 'upward slack share' - [0-1] upward slack in relation to the inflow. 'downward slack share' - [0-1] downward slack in relation to the inflow.",
+      "A set of period results for all node members of the group. Each share is a ratio of two energies summed over the period's time steps, weighted by the time-step weights (not an average of the time-step shares). '1. Loss of load share' - [0-1] upward slack / inflow. '2. VRE share of demand' - [>= 0] generation of the VRE units (units using an 'upper_limit' profile) into the member nodes / inflow. '3. Excess load share' - [0-1] downward slack / inflow. '4. Curtailed VRE of demand' - [>= 0] curtailed VRE / inflow. '5. Annualized inflow' - [MWh] inflow to the member nodes scaled to a year. '6. Curtailed VRE of potential VRE' - [0-1] curtailed VRE / potential VRE generation of the profiled VRE units into the member nodes.",
       null
     ],
     [
