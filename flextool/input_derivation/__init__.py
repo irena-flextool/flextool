@@ -134,6 +134,10 @@ def run(
         warn_existing_not_whole_units,
         validate_unit_input_shares,
         validate_output_min_coeff,
+        validate_profile_links,
+        validate_zero_conversion_coeff,
+        validate_basic_sanity,
+        value_alternatives,
     )
     from flextool.input_derivation._dc_power_flow import derive_dc_power_flow
     from flextool.input_derivation._process_method import derive_process_method
@@ -164,6 +168,8 @@ def run(
             memory_recorder.checkpoint(label, logger, user_label=user_label)
 
     wf = work_folder if work_folder is not None else Path.cwd()
+    # Facts read from the whole database before the scenario filter (URL sources only).
+    whole_db: dict = {}
 
     def _do(db) -> None:
         # Step 1 — SpineDBBackend spec loops.
@@ -193,6 +199,9 @@ def run(
         time_vocab = _scenario_time_vocab(backend)
         validate_node_inflow_not_period(backend, time_vocab)
         validate_time_series_keys(backend, time_vocab)
+        validate_profile_links(db, whole_db.get("profile_alternatives"))
+        validate_basic_sanity(db, {step for steps in time_vocab[1].values() for step in steps})
+        validate_zero_conversion_coeff(db)
 
         timesteps: list[str] | None = None
         for spec in _PARAMETER_SPECS:
@@ -321,6 +330,7 @@ def run(
             # parameter_value lookups.
             db.fetch_all("entity")
             db.fetch_all("parameter_value")
+            whole_db["profile_alternatives"] = value_alternatives(db, "profile", "profile")
             if scen_config is not None:
                 api.filters.scenario_filter.scenario_filter_from_dict(db, scen_config)
             os.makedirs(wf / "input", exist_ok=True)

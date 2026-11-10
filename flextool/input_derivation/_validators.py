@@ -50,6 +50,10 @@ __all__ = [
     "validate_output_min_coeff",
     "validate_node_inflow_not_period",
     "validate_time_series_keys",
+    "validate_profile_links",
+    "validate_zero_conversion_coeff",
+    "validate_basic_sanity",
+    "value_alternatives",
 ]
 
 
@@ -1278,8 +1282,8 @@ def validate_output_min_coeff(db, provider, logger: logging.Logger) -> None:
       ``capacity_min_coeff_k · min_load > capacity_max_coeff_k`` may be
       unable to run while online (static values only; availability and
       time-varying values are not checked).
-    * Warning: an online min-load unit whose outputs all have
-      ``conversion_flow_coeff = 0`` has no output measure and no floor.
+    (A unit whose outputs all have ``conversion_flow_coeff = 0`` is reported by
+    :func:`validate_zero_conversion_coeff`.)
     """
     outputs = _arcs(db, "unit__outputNode")
     if not outputs:
@@ -1321,9 +1325,7 @@ def validate_output_min_coeff(db, provider, logger: logging.Logger) -> None:
         live = [n for n in nodes
                 if any(v != 0.0 for v in conv.get((unit, n), [1.0]))]
         if not live:
-            logger.warning(
-                "Unit '%s': all outputs have conversion_flow_coeff = 0, so "
-                "the unit has no minimum-load floor.", unit)
+            # All outputs have conversion_flow_coeff = 0: validate_zero_conversion_coeff reports it.
             continue
         if len(live) < 2:
             continue
@@ -1339,3 +1341,387 @@ def validate_output_min_coeff(db, provider, logger: logging.Logger) -> None:
                 (f"sum to {total:g} of the capacity" if total > 1.0 + 1e-9
                  else "exceed capacity_max_coeff on "
                  + ", ".join(over_cap)))
+
+
+# ---------------------------------------------------------------------------
+# Profile links, zero conversion coefficients and basic value checks (#104, #213, #170).  Called once per run from
+# ``input_derivation.run`` before the parameter read; ``db`` is the scenario-filtered DatabaseMapping.  Errors are
+# gathered and raised in one FlexToolConfigError; warnings are printed (``print(flush=True)``, as the other
+# once-per-run checks), so they reach the run log.
+
+
+def _warn(text: str) -> None:
+    print(f"Warning: {text}", flush=True)
+
+
+def _definition_default(db, entity_class: str, parameter: str):
+    """The parsed default value of a parameter definition (None when unset or unreadable)."""
+    for item in db.find_parameter_definitions(entity_class_name=entity_class, name=parameter):
+        if item["default_type"] is None or item["default_value"] is None:
+            return None
+        try:
+            return api.from_database(item["default_value"], item["default_type"])
+        except Exception:  # noqa: BLE001 - an unreadable default is treated as unset
+            return None
+    return None
+
+
+def _entity_names(db, entity_class: str) -> set[str]:
+    return {ent["entity_byname"][0] for ent in db.find_entities(entity_class_name=entity_class)}
+
+
+def _str_values(db, entity_class: str, parameter: str) -> dict[tuple[str, ...], str]:
+    """``{entity_byname: value}`` of the scenario's explicit string (list) values of ``entity_class.parameter``."""
+    return {tuple(pv["entity_byname"]): str(pv["parsed_value"])
+            for pv in db.find_parameter_values(entity_class_name=entity_class, parameter_definition_name=parameter)
+            if pv["type"] is not None}
+
+
+def value_alternatives(db, entity_class: str, parameter: str) -> dict[str, list[str]]:
+    """``{entity: [alternative, ...]}`` of the values of a one-dimensional class's ``parameter`` in ``db``.
+
+    ``input_derivation.run`` calls it on the whole database (before the scenario filter), so the profile-link
+    check can name the alternatives that hold a profile the scenario does not see."""
+    out: dict[str, list[str]] = {}
+    for pv in db.find_parameter_values(entity_class_name=entity_class, parameter_definition_name=parameter):
+        if pv["type"] is None:
+            continue
+        alts = out.setdefault(pv["entity_byname"][0], [])
+        if pv["alternative_name"] not in alts:
+            alts.append(pv["alternative_name"])
+    return out
+
+
+_PROFILE_LINKS = (
+    # (class, what the profile holds at 0)
+    ("unit__node__profile", "the flow"),
+    ("connection__profile", "the flow"),
+    ("node__profile", "the storage state"),
+)
+
+
+def validate_profile_links(db, profile_alternatives: dict[str, list[str]] | None = None) -> None:
+    """Check the links that apply a profile to a flow or a storage state (#104).
+
+    * Error: a ``unit__node__profile`` / ``connection__profile`` / ``node__profile`` link whose ``profile_method``
+      (authored, or the default: ``upper_limit`` for ``unit__node__profile``) is ``upper_limit`` or ``fixed`` and
+      whose profile has no ``profile`` value in the scenario.  A profile without a value is 0, so the link holds
+      the flow (the storage state) at 0.  ``lower_limit`` without a value is a floor of 0 and is allowed (a
+      documented way to switch a link off in a scenario); so is ``none``.
+    * Warning: a ``node__profile`` / ``connection__profile`` link with no authored ``profile_method`` (the
+      default is ``none``): the profile is not applied.  An explicit ``none`` is silent.
+
+    ``profile_alternatives`` (:func:`value_alternatives` of ``profile.profile`` over the whole database) lets the
+    error name the alternatives that hold the profile's value; without it the message says to check the
+    scenario's alternatives.  Only the links whose entities are in the scenario are checked.
+    """
+    with_data = {pv["entity_byname"][0]
+                 for pv in db.find_parameter_values(entity_class_name="profile", parameter_definition_name="profile")
+                 if pv["type"] is not None}
+    present = {cls: _entity_names(db, cls) for cls in ("unit", "connection", "node", "profile")}
+    errors: list[str] = []
+    for link_class, held in _PROFILE_LINKS:
+        links = [tuple(ent["entity_byname"]) for ent in db.find_entities(entity_class_name=link_class)]
+        if not links:
+            continue
+        authored = _str_values(db, link_class, "profile_method")
+        default = _definition_default(db, link_class, "profile_method")
+        default = str(default) if default is not None else "none"
+        owner = link_class.split("__")[0]
+        for link in sorted(links):
+            if link[0] not in present[owner] or link[-1] not in present["profile"]:
+                continue
+            profile = link[-1]
+            method = authored.get(link, default)
+            name = f"{link_class} ({', '.join(link)})"
+            if method in ("upper_limit", "fixed") and profile not in with_data:
+                elsewhere = (profile_alternatives or {}).get(profile)
+                if elsewhere:
+                    alts = ", ".join(f"'{a}'" for a in elsewhere)
+                    where = (f"profile '{profile}' has no value in this scenario: its value is only in alternative "
+                             f"{alts}, which the scenario does not include")
+                    fix = (f"Add alternative {alts} to the scenario, give the profile a value in an alternative of "
+                           "the scenario")
+                elif profile_alternatives is not None:
+                    where = f"profile '{profile}' has no value in any alternative"
+                    fix = "Give the profile a value in an alternative of the scenario"
+                else:
+                    where = f"profile '{profile}' has no value in this scenario"
+                    fix = "Give the profile a value in an alternative of the scenario"
+                how = "profile_method is " + (method if link in authored else f"{method} (the default)")
+                errors.append(f"{name}: {where}, so it holds {held} at 0 ({how}). {fix}, set profile_method "
+                              "lower_limit or none, or remove the link.")
+            elif link not in authored and method == "none" and link_class != "unit__node__profile":
+                _warn(f"{name} has no profile_method, so the profile is not applied (the default is none). Set "
+                      "profile_method upper_limit, lower_limit or fixed, or remove the link.")
+    if errors:
+        raise FlexToolConfigError("Profile links without profile data:\n  " + "\n  ".join(errors))
+
+
+def _max_flow_unconstrained(db) -> float:
+    for pv in db.find_parameter_values(entity_class_name="model",
+                                       parameter_definition_name="max_flow_for_unconstrained_variables"):
+        vals = _numeric_values(pv["parsed_value"]) if pv["type"] is not None else []
+        if vals:
+            return max(vals)
+    default = _definition_default(db, "model", "max_flow_for_unconstrained_variables")
+    return float(default) if isinstance(default, (int, float)) else 1e6
+
+
+def validate_zero_conversion_coeff(db) -> None:
+    """Warn about unit flows with ``conversion_flow_coeff = 0`` that nothing limits (#213).
+
+    An arc with an explicit 0 coefficient is out of the conversion equation and of every capacity, ramp and
+    minimum-load limit; its flow is bounded only by ``model.max_flow_for_unconstrained_variables``.  That is meant
+    when a user constraint ties the flow (the hydro pass-through pattern), so an arc is *tied* when it has a
+    non-zero ``constraint_flow_coeff``, is in a ``flowGroup__unit__node`` whose flowGroup has
+    ``max_instant_flow`` or ``max_cumulative_flow``, or carries a ``unit__node__profile`` link with an
+    ``upper_limit`` / ``fixed`` profile_method (the profile limits a zero arc too).  ``min_instant_flow`` /
+    ``min_cumulative_flow`` bound from below only and do not tie.  Warnings (data can mean it, e.g. a free
+    by-product output):
+
+    * W1: a unit with an input whose outputs all have coefficient 0, some of them untied: the unit uses no input
+      and those outputs are free (reported once per unit, not again by W2);
+    * W2: any other untied arc with coefficient 0;
+    * W3: ``capacity_max_coeff`` / ``capacity_min_coeff`` on an output with coefficient 0: no effect.
+    """
+    inputs = _arcs(db, "unit__inputNode")
+    outputs = _arcs(db, "unit__outputNode")
+    zero: dict[str, set[tuple[str, str]]] = {}
+    for cls in ("unit__inputNode", "unit__outputNode"):
+        zero[cls] = {arc for arc, vals in _arc_values(db, cls, "conversion_flow_coeff").items()
+                     if vals and all(v == 0.0 for v in vals)}
+    if not zero["unit__inputNode"] and not zero["unit__outputNode"]:
+        return
+    tied: set[tuple[str, str]] = set()
+    for cls in ("unit__inputNode", "unit__outputNode"):
+        tied.update(arc for arc, vals in _arc_values(db, cls, "constraint_flow_coeff").items()
+                    if any(v != 0.0 for v in vals))
+    limiting = (set(_explicit_values(db, "flowGroup", "max_instant_flow"))
+                | set(_explicit_values(db, "flowGroup", "max_cumulative_flow")))
+    for ent in db.find_entities(entity_class_name="flowGroup__unit__node"):
+        group, unit, node = ent["entity_byname"][:3]
+        if group in limiting:
+            tied.add((unit, node))
+    authored = _str_values(db, "unit__node__profile", "profile_method")
+    default = _definition_default(db, "unit__node__profile", "profile_method")
+    for ent in db.find_entities(entity_class_name="unit__node__profile"):
+        link = tuple(ent["entity_byname"])
+        if authored.get(link, str(default)) in ("upper_limit", "fixed"):
+            tied.add((link[0], link[1]))
+    limit = _max_flow_unconstrained(db)
+    reported: set[tuple[str, str]] = set()
+    for unit in sorted(outputs):
+        if unit not in inputs:
+            continue
+        arcs = [(unit, n) for n in outputs[unit]]
+        if all(a in zero["unit__outputNode"] for a in arcs) and any(a not in tied for a in arcs):
+            free = ", ".join(f"'{n}'" for u, n in arcs if (u, n) not in tied)
+            _warn(f"unit '{unit}' uses no input: all its outputs have conversion_flow_coeff 0, so its output to "
+                  f"{free} is free up to max_flow_for_unconstrained_variables ({limit:.15g}). Give an output a "
+                  "non-zero conversion_flow_coeff, or tie the flow with a user constraint.")
+            reported.update(arcs)
+    for cls, side in (("unit__inputNode", "input"), ("unit__outputNode", "output")):
+        for unit, node in sorted(zero[cls]):
+            if (unit, node) in tied or (unit, node) in reported:
+                continue
+            _warn(f"{cls} ({unit}, {node}): conversion_flow_coeff is 0 and the {side} flow is in no user "
+                  "constraint (constraint_flow_coeff), flowGroup maximum or profile limit, so it has no capacity, "
+                  "ramp, minimum-load or fuel limit; only max_flow_for_unconstrained_variables "
+                  f"({limit:.15g}) bounds it. (A flowGroup min_instant_flow / min_cumulative_flow bounds it only from "
+                  "below.)")
+    for param in ("capacity_max_coeff", "capacity_min_coeff"):
+        for unit, node in sorted(set(_arc_values(db, "unit__outputNode", param)) & zero["unit__outputNode"]):
+            _warn(f"unit__outputNode ({unit}, {node}): {param} has no effect on an output with "
+                  "conversion_flow_coeff 0 (the flow is outside the capacity limits).")
+
+
+# ---- basic value checks (#170) --------------------------------------------
+
+_INVEST_PAIRS = (
+    # (min parameter, max parameter, the word an invest_method must contain to use the pair, period-wise)
+    ("invest_min_period", "invest_max_period", "invest", "period"),
+    ("invest_min_total", "invest_max_total", "invest", "total"),
+    ("retire_min_period", "retire_max_period", "retire", "period"),
+    ("retire_min_total", "retire_max_total", "retire", "total"),
+    ("cumulative_min_capacity", "cumulative_max_capacity", "cumulative", "limits"),
+)
+
+
+def _keyed_numbers(parsed) -> dict[str, float] | None:
+    """``{key: value}`` of a one-level numeric map (a period map), ``{"": v}`` of a constant, None otherwise."""
+    if isinstance(parsed, bool) or parsed is None:
+        return None
+    if isinstance(parsed, (int, float)):
+        return {"": float(parsed)}
+    if isinstance(parsed, api.Map):
+        out: dict[str, float] = {}
+        for key, v in zip(parsed.indexes, parsed.values):
+            if isinstance(v, bool) or not isinstance(v, (int, float)):
+                return None
+            out[str(key)] = float(v)
+        return out
+    return None
+
+
+def _first_bad(parsed, bad) -> tuple[str | None, float] | None:
+    """``(key, value)`` of the first element of a constant / map / series for which ``bad(value)`` holds (key None
+    for a constant), else None."""
+    if isinstance(parsed, bool) or parsed is None or isinstance(parsed, str):
+        return None
+    if isinstance(parsed, (int, float)):
+        return (None, float(parsed)) if bad(float(parsed)) else None
+    indexes = getattr(parsed, "indexes", None)
+    values = getattr(parsed, "values", None)
+    if values is None:
+        return None
+    for i, v in enumerate(values):
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            if bad(float(v)):
+                return (str(indexes[i]) if indexes is not None else str(i), float(v))
+        elif hasattr(v, "values"):
+            hit = _first_bad(v, bad)
+            if hit is not None:
+                key = str(indexes[i]) if indexes is not None else str(i)
+                return (f"{key}, {hit[0]}" if hit[0] is not None else key, hit[1])
+    return None
+
+
+def _where(alt: str, key: str | None) -> str:
+    return f"(alternative '{alt}'" + (f", at {key})" if key is not None else ")")
+
+
+def validate_basic_sanity(db, timesteps: set[str] | None = None) -> None:
+    """Values that make no sense, or are almost surely a typing mistake (#170).
+
+    Explicit values only (defaults are fine), every element of a constant, a map or a time series; the first bad
+    element is named.  Errors (one FlexToolConfigError listing all):
+
+    * unit / connection ``efficiency`` ≤ 0 (no output, or paid to run);
+    * unit ``min_load`` outside [0, 1]; ``availability`` < 0 (unit, connection, node);
+    * unit__outputNode ``capacity_max_coeff`` < 0;
+    * a minimum above its maximum, both explicit, when the entity's ``invest_method`` uses the pair:
+      ``invest_min/max_period``, ``retire_min/max_period``, ``cumulative_min/max_capacity`` (per period: a constant
+      applies to every period, a period that only one of the two names is not compared), ``invest_min/max_total``,
+      ``retire_min/max_total`` (unit, connection, node, group); the problem would be infeasible;
+    * ``lifetime`` ≤ 0 on a unit / connection / node that can invest or retire (``invest_method`` other than
+      ``not_allowed``): the investment would be charged for no years;
+    * ``existing`` (unit, connection, node) as a time series or a map keyed by time steps (``timesteps``: the
+      scenario's): it cannot vary over time and such a value was read as no capacity; or a map keyed by numbers
+      (2020): periods are names, and such a value crashed the read.
+
+    Warnings: ``availability`` > 1 (entered as percent?); connection ``efficiency`` > 1 (creates energy);
+    ``virtual_unitsize`` ≤ 0 (ignored); the profile of a ``unit__node__profile`` ``upper_limit`` / ``fixed`` link
+    above 1 (capacity factors entered as percent?).  Negative ``existing`` is not reported: it is the supported
+    "anti-energy" unit.
+    """
+    errors: list[str] = []
+    warnings: list[str] = []
+
+    def scan(cls: str, param: str, bad, message, sink: list[str], only: set[str] | None = None) -> None:
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name=param):
+            if pv["type"] is None:
+                continue
+            name = ", ".join(pv["entity_byname"])
+            if only is not None and name not in only:
+                continue
+            hit = _first_bad(_parsed_then_evict(pv), bad)
+            if hit is not None:
+                sink.append(f"{cls} '{name}' {param} = {hit[1]:g} {_where(pv['alternative_name'], hit[0])}: "
+                            + message)
+
+    for cls in ("unit", "connection"):
+        scan(cls, "efficiency", lambda v: v <= 0.0,
+             "efficiency must be above 0 (0 gives no output, a negative value pays the unit to run). Use a "
+             "fraction such as 0.4.", errors)
+    scan("unit", "min_load", lambda v: v < 0.0 or v > 1.0,
+         "min_load is a share of the online capacity and must lie in [0, 1] (e.g. 0.3 for 30 %).", errors)
+    for cls in ("unit", "connection", "node"):
+        scan(cls, "availability", lambda v: v < 0.0,
+             "availability must lie in [0, 1].", errors)
+        scan(cls, "availability", lambda v: v > 1.0,
+             "availability above 1 makes more capacity available than there is; it is a share (0.95, not 95).",
+             warnings)
+    scan("unit__outputNode", "capacity_max_coeff", lambda v: v < 0.0,
+         "capacity_max_coeff must be 0 or above (it is the share of the capacity this output may use).", errors)
+    scan("connection", "efficiency", lambda v: v > 1.0,
+         "a connection efficiency above 1 creates energy on the way.", warnings)
+    for cls in ("unit", "connection", "node"):
+        scan(cls, "virtual_unitsize", lambda v: v <= 0.0,
+             "virtual_unitsize must be above 0; the value is ignored (the entity is one unit of its capacity).",
+             warnings)
+
+    methods: dict[str, dict[str, str]] = {
+        cls: {k[0]: v for k, v in _str_values(db, cls, "invest_method").items()}
+        for cls in ("unit", "connection", "node", "group")}
+    for cls in ("unit", "connection", "node", "group"):
+        for lo, hi, word, kind in _INVEST_PAIRS:
+            using = {e for e, m in methods[cls].items() if word in m and kind in m}
+            if not using:
+                continue
+            mins = {pv["entity_byname"][0]: pv for pv in db.find_parameter_values(
+                entity_class_name=cls, parameter_definition_name=lo) if pv["type"] is not None}
+            maxs = {pv["entity_byname"][0]: pv for pv in db.find_parameter_values(
+                entity_class_name=cls, parameter_definition_name=hi) if pv["type"] is not None}
+            for ent in sorted(using & set(mins) & set(maxs)):
+                a, b = _keyed_numbers(mins[ent]["parsed_value"]), _keyed_numbers(maxs[ent]["parsed_value"])
+                if a is None or b is None:
+                    continue
+                if "" in a and "" not in b:
+                    a = dict.fromkeys(b, a[""])
+                elif "" in b and "" not in a:
+                    b = dict.fromkeys(a, b[""])
+                for key in [k for k in a if k in b]:
+                    if a[key] > b[key] + 1e-9 * max(1.0, abs(b[key])):
+                        at = f" in period {key}" if key else ""
+                        errors.append(
+                            f"{cls} '{ent}' {lo} = {a[key]:g} is above {hi} = {b[key]:g}{at} (alternatives "
+                            f"'{mins[ent]['alternative_name']}', '{maxs[ent]['alternative_name']}'; invest_method "
+                            f"{methods[cls][ent]}): no capacity can meet both, so the problem is infeasible. Lower "
+                            f"{lo} or raise {hi}.")
+                        break
+
+    for cls in ("unit", "connection", "node"):
+        investing = {e for e, m in methods[cls].items() if m != "not_allowed"}
+        scan(cls, "lifetime", lambda v: v <= 0.0,
+             f"lifetime must be above 0 when the {cls} can invest or retire; with 0 the investment is charged for "
+             "no years. Give the lifetime in years.", errors, only=investing)
+
+    for cls in ("unit", "connection", "node"):
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="existing"):
+            if pv["type"] is None:
+                continue
+            where = f"{cls} '{pv['entity_byname'][0]}' existing (alternative '{pv['alternative_name']}')"
+            value = _parsed_then_evict(pv)
+            if isinstance(value, api.TimeSeries):
+                errors.append(f"{where} is a time series: existing cannot vary over time. Use a constant or a "
+                              "map keyed by period (p2020: 500, ...).")
+            elif isinstance(value, api.Map):
+                keys = list(value.indexes)
+                if value.index_type in (float, int) and keys:
+                    errors.append(f"{where} is a map keyed by numbers ({_fmt([float(k) for k in keys[:3]])}): "
+                                  "periods are names such as 'p2020'. Use the period names of the model as keys.")
+                elif keys and (value.index_type is not str or (timesteps and any(str(k) in timesteps for k in keys))):
+                    step = next((str(k) for k in keys if value.index_type is not str or str(k) in timesteps), "")
+                    errors.append(f"{where} is keyed by time step '{step}': existing cannot vary over time. Use a "
+                                  "constant or a map keyed by period (p2020: 500, ...).")
+
+    # Linked profiles above 1 (capacity factors entered as percent?).
+    authored = _str_values(db, "unit__node__profile", "profile_method")
+    default = _definition_default(db, "unit__node__profile", "profile_method")
+    limiting = {ent["entity_byname"][2] for ent in db.find_entities(entity_class_name="unit__node__profile")
+                if authored.get(tuple(ent["entity_byname"]), str(default)) in ("upper_limit", "fixed")}
+    for pv in db.find_parameter_values(entity_class_name="profile", parameter_definition_name="profile"):
+        if pv["type"] is None or pv["entity_byname"][0] not in limiting:
+            continue
+        hit = _first_bad(_parsed_then_evict(pv), lambda v: v > 1.0)
+        if hit is not None:
+            warnings.append(
+                f"profile '{pv['entity_byname'][0]}' = {hit[1]:g} {_where(pv['alternative_name'], hit[0])} limits "
+                "a unit flow (upper_limit or fixed) and is above 1: the profile is a share of the capacity "
+                "(0.35, not 35).")
+
+    if errors:
+        raise FlexToolConfigError("Input values out of range:\n  " + "\n  ".join(errors))
+    for text in warnings:
+        _warn(text)
