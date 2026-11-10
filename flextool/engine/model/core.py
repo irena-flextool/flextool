@@ -3641,6 +3641,7 @@ def _eq_user_constraints(b: _Build) -> None:
 
     online_terms: list = []
     online_cns: list = []
+    online_by_class: list = []
     online_coef = d.p_process_constraint_online_coeff
     if b.has_online and online_coef is not None:
         coef_frame = _collected(online_coef.frame)
@@ -3656,6 +3657,7 @@ def _eq_user_constraints(b: _Build) -> None:
             coef_k_param = Param(("p", "cn"), coef_k)
             online_terms.append(Sum(Where(v_online, coef_k.select("p", "cn")) * coef_k_param, over=("p",)))
             online_cns.extend(coef_k.get_column("cn").cast(pl.Utf8).unique().to_list())
+            online_by_class.append((v_online, coef_k))
 
     const_terms: list = []
     node_pre = d.p_node_constraint_prebuilt_capacity_coeff
@@ -3768,6 +3770,10 @@ def _eq_user_constraints(b: _Build) -> None:
         from flextool.engine.preprocess.flex_data import coarse_row_members
 
         uc_members = coarse_row_members(d, "user_constraint")
+    # constraint_period_method period_total: its constraints get the one annualised row per period below instead.
+    period_total = d.constraint_period_total
+    pt_cns = (sorted(period_total.get_column("cn").cast(pl.Utf8).unique().to_list())
+              if period_total is not None and period_total.height > 0 else [])
     for over, sense, name in (
         (d.cdt_eq, "==", "process_constraint_equal"),
         (d.cdt_le, "<=", "process_constraint_less_than"),
@@ -3775,6 +3781,10 @@ def _eq_user_constraints(b: _Build) -> None:
     ):
         if not _has_rows(over):
             continue
+        if pt_cns:
+            over = over.filter(~pl.col("cn").cast(pl.Utf8).is_in(pt_cns))
+            if over.height == 0:
+                continue
         is_op = pl.col("cn").cast(pl.Utf8).is_in(sorted(op_cns))
         for rows, terms, live, family in ((over.filter(is_op), step_terms, live_step, name),
                                           (over.filter(~is_op).select("cn", "d").unique(maintain_order=True),
@@ -3800,6 +3810,105 @@ def _eq_user_constraints(b: _Build) -> None:
                              else _coarse_flows.row_partition(b, uc_members, rows)),
             )
     _check_user_constraints_without_terms(b, empty_rows, const_terms)
+    if pt_cns:
+        _eq_user_constraints_period_total(b, pt_cns, invest_terms + capacity_terms, online_by_class, const_terms,
+                                          rhs_constant)
+
+
+def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_terms: list, online_by_class: list,
+                                      const_terms: list, rhs_constant: "Param | None") -> None:
+    """The rows of the user constraints with ``constraint_period_method`` ``period_total``: one per (cn, d)."""
+    d = b.d
+
+    # ─── EQ. ─── process_constraint_{equal,less_than,greater_than}_period_total ──
+    # ─────────────────────────────────────────────────────────────────────────────
+    # Σ_t w[d,t]·( Σ_{(p,s,k) ∈ flow_constraint[cn]} v_flow[p,s,k,d,t]·unitsize[p]·flow_coef[p,s,k,cn]
+    #              + Σ_{p ∈ process_online} v_online[p,d,t]·online_coef[p,cn] )
+    #   + H[d]·( Σ_e inv[e,d]·invested_coef[e,cn] + Σ_e con[e,d]·in_construction_coef[e,cn]
+    #            + Σ_e v_divest[e,d]·us[e]·retired_coef[e,cn] + Σ_e pre[e,d]·prebuilt_coef[e,cn]
+    #            + Σ_e cap[e,d]·capacity_coef[e,cn] )
+    #   = / ≤ / ≥  constant[cn] (or constant[cn,d] for a period map)
+    #   ∀ (cn,d) ∈ cdt_{eq,le,ge}, cn ∈ constraint_period_total, window_fraction[d] = 1
+    # w[d,t] = step_duration[d,t]·timestep_weight[d,t] / period_share[d];   H[d] = Σ_t w[d,t]
+    # inv, con, pre, cap, us and the existing / carried constants as in process_constraint_* (_eq_user_constraints).
+    # One row per period over the period's time-integrated, annualised terms (per year: flows in MWh, units online
+    # in unit-hours, the constant in the constraint's unit per year), the weighting of co2_max_period.  H is the
+    # number of hours the period's modelled steps stand for in a year (8760 for a full year, also with
+    # representative periods, whose weights are normalised); computed, not 8760, so a roll window or a varying step
+    # duration gets its own.  Every capacity term, and the existing / carried capacity constants, are multiplied by
+    # H: each term is its per-step quantity integrated over the period, so a coefficient keeps its per-step meaning
+    # (flow − 0.3·capacity ≤ 0 caps the annual capacity factor at 0.3).  State terms are rejected by the reader
+    # (a state summed over steps is not an energy).  A row needs the whole period in the solve: a period that the
+    # solve holds in part (window_fraction < 1, the look-ahead tail of a roll) has no row; a rolling solve whose
+    # rolls do not each realize whole periods has none at all (user_constraint_period_total_off, the run's
+    # pre-solve check names the constraints and the solve).  Stochastic branch periods are their own d (no
+    # probability weight: each forecast meets the limit).  Coarse flows and units online enter through their alias
+    # on the fine steps (exact: Σ_t v·Δt).  Dims: flow and online terms (cn, d, t) summed over t; capacity terms
+    # and constants (cn, d).
+    if d.user_constraint_period_total_off:
+        return
+    rows_by_sense = [(rows.filter(pl.col("cn").cast(pl.Utf8).is_in(pt_cns)).select("cn", "d")
+                      .unique(maintain_order=True), sense, name)
+                     for rows, sense, name in ((d.cdt_eq, "==", "process_constraint_equal_period_total"),
+                                               (d.cdt_le, "<=", "process_constraint_less_than_period_total"),
+                                               (d.cdt_ge, ">=", "process_constraint_greater_than_period_total"))
+                     if _has_rows(rows)]
+    rows_by_sense = [(rows, sense, name) for rows, sense, name in rows_by_sense if rows.height > 0]
+    if not rows_by_sense:
+        return
+    feature = "constraint_period_method period_total"
+    _check_covers_dt(d, "p_period_share", feature, positive=True)
+    _check_covers_dt(d, "p_timestep_weight", feature)
+    _check_covers_dt(d, "p_step_duration", feature)
+    w = d.p_step_duration * d.p_timestep_weight / d.p_period_share
+    w_frame = _collected(w.frame)
+    hours = Param(("d",), w_frame.group_by("d", maintain_order=True).agg(pl.col("value").sum()))
+    # The periods the solve holds whole (window_fraction 1); the others have no row.
+    whole = None
+    if d.p_window_fraction is not None:
+        frac = _collected(d.p_window_fraction.frame)
+        whole = (frac.filter(pl.col("value").cast(pl.Float64) >= 1.0 - 1e-9)
+                 .get_column("d").cast(pl.Utf8).to_list())
+
+    terms: list = []
+    if _has_rows(d.flow_constraint_idx):
+        idx = d.flow_constraint_idx.filter(pl.col("cn").cast(pl.Utf8).is_in(pt_cns))
+        if idx.height > 0:
+            terms.append(Sum(
+                Where(b.v_flow * d.p_unitsize, idx) * d.p_flow_constraint_coef * w,
+                over=("p", "source", "sink", "t"),
+            ))
+    if capacity_terms:
+        terms.append(_sum_terms(capacity_terms) * hours)
+    for v_online, coef_k in online_by_class:
+        coef_pt = coef_k.filter(pl.col("cn").cast(pl.Utf8).is_in(pt_cns))
+        if coef_pt.height == 0:
+            continue
+        terms.append(Sum(Where(v_online, coef_pt.select("p", "cn")) * Param(("p", "cn"), coef_pt) * w,
+                         over=("p", "t")))
+    consts = [const * hours for const in const_terms]
+    live = _user_constraint_live_keys(terms)
+    empty_rows: list[tuple[pl.DataFrame, str]] = []
+    for rows, sense, name in rows_by_sense:
+        if whole is not None:
+            rows = rows.filter(pl.col("d").cast(pl.Utf8).is_in(whole))
+        has_var = (pl.repeat(True, rows.height, eager=True) if "*" in live
+                   else _cn_d_key(rows).is_in(sorted(live)))
+        empty_rows.append((rows.filter(~has_var), sense))
+        rows = rows.filter(has_var)
+        if rows.height == 0:
+            continue
+        lhs: dict = {"contribution": _sum_terms(terms)}
+        for i, const in enumerate(consts):
+            lhs[f"prebuilt_const_{i}"] = const
+        b.m.add_cstr(
+            name,
+            over      = rows,
+            sense     = sense,
+            lhs_terms = lhs,
+            rhs_terms = {"constant": rhs_constant},
+        )
+    _check_user_constraints_without_terms(b, empty_rows, consts)
 
 
 def _cn_d_key(frame: pl.DataFrame) -> pl.Series:

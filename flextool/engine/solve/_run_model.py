@@ -529,6 +529,8 @@ def native_run_model(state, solver) -> int:
         active_time_lists.update(result.active_time_lists)
         fix_storage_time_lists.update(result.fix_storage_time_lists)
         realized_time_lists.update(copy.deepcopy(result.realized_time_lists))
+    # A period_total user constraint must hold in some solve of the run (rolls that split periods leave it out).
+    solve_builder.check_period_total_enforced()
 
     # ------------------------------------------------------------------
     # 1b. OC1 rolling separate_dispatch — INTERLEAVE the dispatch sibling's
@@ -1168,6 +1170,11 @@ def native_run_model(state, solver) -> int:
             else _roll_period_whole({}, {}, []))
         # Written for every sub-solve, as the level Provider is shared by the iters of a level.
         sub_solve_provider.put(RUN_CALENDAR_KEY, run_calendar)
+        # Whether this sub-solve leaves the period_total user constraints out (a roll of a rolling solve that
+        # does not realize whole periods in one roll); written for every sub-solve, the Provider is shared.
+        sub_solve_provider.put(_provider_keys.SOLVE_DATA_USER_CONSTRAINT_PERIOD_TOTAL_OFF,
+                               pl.DataFrame({"value": [solve in state.solve.period_total_off_solves]},
+                                            schema={"value": pl.Boolean}))
         sub_solve_provider.put(_provider_keys.SOLVE_DATA_STORAGE_SOLVE_AT_MODEL_END,
                                pl.DataFrame({"value": [storage_solve_at_model_end[i]]}, schema={"value": pl.Boolean}))
         pb_time, pb_succ = make_period_block(active_time_lists[solve])

@@ -329,7 +329,8 @@ _DYNAMIC_CONSTRAINT_SAMPLES = [
     "maxFlow_exact_forward_coarse", "maxFlow_exact_reverse_coarse", "dc_flow_eq", "dc_flow_eq_coarse",
     "capacityMargin", "capacityMargin_coarse", "inertia_constraint", "inertia_constraint_coarse",
     "non_sync_constraint", "non_sync_constraint_coarse", "maxInstant_flow_coarse", "minInstant_flow_coarse",
-    *(f"process_constraint_{s}{c}" for s in ("equal", "less_than", "greater_than") for c in ("", "_coarse")),
+    *(f"process_constraint_{s}{c}" for s in ("equal", "less_than", "greater_than")
+      for c in ("", "_coarse", "_period_total")),
     "non_anticipativity_storage_use", "non_anticipativity_storage_use_coarse",
 ]
 

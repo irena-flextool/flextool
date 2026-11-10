@@ -452,6 +452,10 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "process_constraint_equal_period": CstrFamily(None),
     "process_constraint_less_than_period": CstrFamily(None),
     "process_constraint_greater_than_period": CstrFamily(None),
+    # constraint_period_method period_total: one row per (cn, d) over the period's annualised terms.
+    "process_constraint_equal_period_total": CstrFamily(None),
+    "process_constraint_less_than_period_total": CstrFamily(None),
+    "process_constraint_greater_than_period_total": CstrFamily(None),
     # The row rule on coarse steps — _coarse_flows.add_row_rule_cstr (f"{name}_coarse").
     "process_constraint_equal_coarse": CstrFamily(None),
     "process_constraint_less_than_coarse": CstrFamily(None),

@@ -387,6 +387,12 @@ class SolveConfig:
         # no-op, preserving byte-parity on deterministic fixtures).
         self.realized_dispatch_parent: dict[str, str] = {}
 
+        # User constraints with constraint_period_method period_total (load_from_db); the rolls that leave their
+        # rows out and the solves that write them (RecursiveSolveBuilder._check_period_total_rolls).
+        self.period_total_constraints: list[str] = []
+        self.period_total_off_solves: set[str] = set()
+        self.period_total_enforcing_solves: set[str] = set()
+
         # Mutable tracking — populated during the recursive solve loop.
         self.real_solves: list[str] = []
         self.first_of_complete_solve: list[str] = []
@@ -717,6 +723,16 @@ class SolveConfig:
         )
         obj.fix_storage_periods = obj.periods_to_tuples(
             db=db, cl="solve", par="fix_storage_periods"
+        )
+        period_method: dict = params_to_dict(
+            db=db, cl="constraint", par="constraint_period_method", mode=DictMode.DICT
+        )
+        disabled = {name for name, value in params_to_dict(
+            db=db, cl="constraint", par="is_enabled", mode=DictMode.DICT
+        ).items() if value == "no"}
+        obj.period_total_constraints = sorted(
+            name for name, value in period_method.items()
+            if value == "period_total" and name not in disabled
         )
         # Slice G — tri-state operational non-anticipativity window
         # (read AFTER the four period dicts so any duplicate_solve they

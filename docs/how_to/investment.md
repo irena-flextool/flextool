@@ -256,6 +256,8 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 
 **What it does.** Boiler heat costs 12 / 0.9 = 13.3 CUR/MWh_th, which is 33.3 CUR/MWh_e through the turbine, less than coal. So the turbine runs at 100 MW_e in every hour. The field still delivers 7900 MWh_th (the tank is still full on the clear day) and the boiler makes the other 4100 MWh_th from 4555.6 MWh of gas. Coal makes 2400 MWh, and the objective is 31.877 M CUR.
 
+**A share of the yearly output.** Rules such as "the boiler makes at most 15 % of the plant's heat over the year" are a user constraint with `constraint_period_method` *period_total*: one row per period over the year's total, not one per time step. Add a `constraint` *csp_gas_share* with `sense` *less_than*, `constant` 0 and `constraint_period_method` *period_total*, and the coefficients `constraint_flow_coeff` (*csp_gas_share* | 1) on `unit__outputNode` (*csp_backup_boiler*, *csp_heat*) and (*csp_gas_share* | -0.15) on `unit__outputNode` (*csp_field*, *csp_heat*). The boiler may then make 15 % of the field's heat, in whichever hours it is most useful. See [Period total](../reference/user_constraints.md#period-total-units-and-weighting) for how the row is weighted.
+
 **PV and an electric heater.** Another hybrid is a unit from the electricity node to *csp_heat* (an electric heater, `efficiency` about 0.99). Cheap PV power can then charge the tank in the middle of the day.
 
 ### Plant summary from the outputs
@@ -284,6 +286,6 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 - **Net or gross output.** Use the net turbine efficiency (after the plant's own electricity use), so the turbine's output is the net output. For the own use as a separate flow, give the turbine a second input from the electricity node and tie it to the output with a user constraint.
 - **Capacity margin.** The turbine runs from the heat tank, so the capacity margin counts it by its actual flow at each time step, not at its capacity. With a gas backup input whose `input_share_max` is 1 (the gas can run the turbine alone), it counts at its capacity.
 - **Representative periods.** The tank cycles every day. Use hourly representative days or weeks with a `*_blended_weights` `storage_binding_method` (see [Nested Rolling window solves](solve_sequences.md#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)); a long `new_stepduration` loses the daily cycle.
-- **No annual fossil share.** A rule such as "gas at most 15 % of the annual output" cannot be written today: user constraints with flow terms hold in each time step, and the cumulative limits of a `flowGroup` are absolute amounts.
+- **Annual fossil share in rolling dispatch.** A *period_total* share (see [Gas backup](#gas-backup)) holds in an investment solve and in a single dispatch solve. A rolling dispatch solve whose rolls are shorter than the period leaves it out, with a warning in the run log.
 - **No start-up heat.** The turbine's start-up cannot draw heat from the tank; only a `startup_cost` is available.
 - **Standing losses.** `self_discharge_loss` is a share of the content; a loss proportional to the tank's size is not available.

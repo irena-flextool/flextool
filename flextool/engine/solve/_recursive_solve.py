@@ -115,6 +115,8 @@ class RecursiveSolveBuilder:
         # Keyed by base solve name so the warning fires once per PARENT rolling
         # solve, never once per roll.
         self._rolling_invest_warned: set[str] = set()
+        # Rolling solves already warned about leaving the period_total user constraints out.
+        self._period_total_warned: set[str] = set()
 
     # ------------------------------------------------------------------
     # Rolling expansion
@@ -241,7 +243,67 @@ class RecursiveSolveBuilder:
             )
             active_time_lists[solve_name] = active
             realized_time_lists[solve_name] = realized
+        self._check_period_total_rolls(solve, full_active_time_list, realized_time_lists, jump)
         return solves, active_time_lists, realized_time_lists
+
+    def _check_period_total_rolls(self, solve: str, full_active_time_list: dict, realized_time_lists: dict,
+                                  jump: float) -> None:
+        """Leave the ``constraint_period_method`` ``period_total`` rows out of the rolls of *solve* when some period
+        the rolls realize is not realized whole by one roll, and warn once per solve.
+
+        A period_total row sums the whole period; a roll that realizes only part of it would constrain the part
+        with the whole period's limit, and the next roll could not see what was already used.  The rolls are
+        recorded in ``state.solve.period_total_off_solves`` (read by ``_run_model`` into
+        ``solve_data/user_constraint_period_total_off``); a rolling solve whose rolls each realize whole periods
+        enforces the constraints and joins ``period_total_enforcing_solves``.  :meth:`check_period_total_enforced`
+        raises after the tree walk when no solve of the run enforces them.
+        """
+        names = getattr(self.state.solve, "period_total_constraints", None)
+        if not names:
+            return
+        touched = [p for p in full_active_time_list
+                   if any(realized.get(p) for realized in realized_time_lists.values())]
+        split = []
+        for period in touched:
+            full = [step.timestep for step in full_active_time_list[period]]
+            if not any([step.timestep for step in realized.get(period, [])] == full
+                       for realized in realized_time_lists.values()):
+                split.append(period)
+        if not split:
+            self.state.solve.period_total_enforcing_solves.add(solve)
+            return
+        self.state.solve.period_total_off_solves.update(realized_time_lists)
+        if solve in self._period_total_warned:
+            return
+        self._period_total_warned.add(solve)
+        first = split[0]
+        hours = sum(float(step.duration) for step in full_active_time_list[first])
+        more = f" (and {len(split) - 1} more)" if len(split) > 1 else ""
+        # Module logger: state.logger is silenced to ERROR during the cascade (see _warn_if_rolling_carries_invest).
+        _MODULE_LOGGER.warning(
+            "User constraints %s have constraint_period_method period_total, but rolling solve '%s' does not "
+            "realize period '%s'%s (%g h) within one roll (rolling_solve_jump %g h). The rolls of this solve leave "
+            "these constraints out; they hold only in the solves that solve whole periods. To enforce them here, "
+            "use constraint_period_method per_timestep, or a rolling_solve_jump that is a multiple of the period "
+            "length and starts at a period start.",
+            ", ".join(f"'{n}'" for n in names), solve, first, more, hours, float(jump))
+
+    def check_period_total_enforced(self) -> None:
+        """Raise when the run has ``period_total`` user constraints and no solve of it writes their rows: every
+        solve is a rolling solve whose rolls do not realize whole periods (:meth:`_check_period_total_rolls`)."""
+        names = getattr(self.state.solve, "period_total_constraints", None)
+        if not names or self.state.solve.period_total_enforcing_solves:
+            return
+        if not self.state.solve.period_total_off_solves:
+            return
+        solves = sorted(self._period_total_warned)
+        message = (
+            f"User constraints {', '.join(repr(n) for n in names)} have constraint_period_method period_total, "
+            f"but no solve of the run enforces them: the rolls of {', '.join(repr(s) for s in solves)} do not "
+            "realize whole periods, and there is no other solve. Use constraint_period_method per_timestep, or a "
+            "rolling_solve_jump that is a multiple of the period length and starts at a period start.")
+        self.logger.error(message)
+        raise FlexToolConfigError(message)
 
     @staticmethod
     def _extract_time_range(
@@ -576,6 +638,9 @@ class RecursiveSolveBuilder:
         complete_solves[solve] = complete_solve_name
         parent_roll_lists[solve] = parent_info.roll
         active_time_lists[solve] = full_active_time_list
+        # A single solve writes the period_total rows of the periods it holds whole.
+        if getattr(self.state.solve, "period_total_constraints", None):
+            self.state.solve.period_total_enforcing_solves.add(solve)
 
         # Period-shaped subsets of the full active time list.
         invest_time_lists[solve] = self._filter_time_list_by_periods(

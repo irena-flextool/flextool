@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **New: user constraints summed over a period (`constraint.constraint_period_method`).** *per_timestep*
+  (default) keeps the rows of before. *period_total* writes one row per period over the period's total: each step's
+  flow and online terms are multiplied by its duration and timestep weight and divided by the period's share of a
+  year, so flows count in MWh per year and units online in unit-hours per year, and the `constant` is per year.
+  Capacity terms and their existing capacity are multiplied by the hours of the year, so a flow − 0.3 × capacity row
+  caps the annual capacity factor at 30 %. Shares such as "gas backup at most 15 % of the CSP output over the year"
+  can now be written. A state coefficient on such a constraint is an error. A rolling solve whose rolls do not each
+  realize whole periods leaves the constraint out with a warning; the run stops when no solve enforces it. Each
+  forecast branch period has its own row. Schema: part of data version 79.
 - **Behaviour change: a realized investment period must be an investment period of the same solve (#319).** A
   solve whose `realized_invest_periods` lists a period that is not in its `invest_periods` now stops with an error
   naming the solve and the periods. This includes a solve with `realized_invest_periods` but no `invest_periods`

@@ -164,6 +164,34 @@ def p_constraint_constant_from_source(source: "InputSource",
     return Param(("cn", "d"), frame.lazy())
 
 
+def constraint_period_total_from_source(source: "InputSource") -> pl.DataFrame | None:
+    """``constraint.constraint_period_method`` → the ``(cn,)`` set of the constraints with ``period_total`` (one
+    annualised row per period, ``_eq_user_constraints``); None when no constraint has it (the default
+    ``per_timestep`` everywhere)."""
+    df = source.parameter("constraint", "constraint_period_method")
+    if df.height == 0:
+        return None
+    out = (df.filter(pl.col("value").cast(pl.Utf8) == "period_total")
+           .select(pl.col("name").cast(pl.Utf8).alias("cn")).unique(maintain_order=True))
+    return out if out.height > 0 else None
+
+
+def check_period_total_state_terms(period_total: pl.DataFrame | None, state_coef: "Param | None") -> None:
+    """Raise when a ``period_total`` constraint has a ``constraint_state_coeff``: a storage state summed over the
+    period's time steps (MWh·h) has no meaning next to the period's energy (MWh per year)."""
+    if period_total is None or state_coef is None:
+        return
+    frame = state_coef.frame.collect() if isinstance(state_coef.frame, pl.LazyFrame) else state_coef.frame
+    bad = (frame.select(pl.col("cn").cast(pl.Utf8), pl.col("n").cast(pl.Utf8))
+           .join(period_total, on="cn", how="semi").sort("cn", "n"))
+    if bad.height:
+        pairs = ", ".join(f"{cn} (node {n})" for cn, n in bad.iter_rows())
+        raise FlexToolConfigError(
+            f"User constraints with constraint_period_method period_total cannot have a constraint_state_coeff: "
+            f"{pairs}. A storage state summed over the time steps of a period is not an energy. Use "
+            "constraint_period_method per_timestep for a constraint on storage states.")
+
+
 def constraint_sense_from_source(source: "InputSource") -> pl.DataFrame:
     """Return the constraint sense set as ``[cn, sense]``.  Empty frame
     if no constraints carry a ``sense`` value (None-default policy).
@@ -2631,6 +2659,9 @@ def apply_direct_params_a(source: "InputSource",
         _process_constraint_coef(source, "constraint_invested_capacity_coeff"))
     flex_data.p_node_constraint_state_coeff = (
         _node_constraint_coef(source, "constraint_state_coeff"))
+    # constraint_period_method period_total: (cn,) set; a state coefficient on such a constraint is an error.
+    flex_data.constraint_period_total = constraint_period_total_from_source(source)
+    check_period_total_state_terms(flex_data.constraint_period_total, flex_data.p_node_constraint_state_coeff)
     flex_data.p_node_constraint_prebuilt_capacity_coeff = (
         _node_constraint_coef(source,
                               "constraint_cumulative_pre_built_capacity_coeff"))

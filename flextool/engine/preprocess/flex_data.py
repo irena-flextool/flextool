@@ -1217,6 +1217,11 @@ class FlexData:
     cdt_eq: pl.DataFrame | None = None  # (cn, d, t)
     cdt_le: pl.DataFrame | None = None  # (cn, d, t)
     cdt_ge: pl.DataFrame | None = None  # (cn, d, t)
+    # Constraints with constraint_period_method period_total (one annualised row per period); None = all per_timestep.
+    constraint_period_total: pl.DataFrame | None = None  # set: (cn,)
+    # A rolling solve whose rolls do not each realize whole periods leaves the period_total rows out
+    # (solve_data/user_constraint_period_total, written per sub-solve by _run_model).
+    user_constraint_period_total_off: bool = False
     p_node_constraint_invested_capacity_coeff: Param | None = None  # (n, cn)
     p_process_constraint_invested_capacity_coeff: Param | None = None  # (p, cn)
     p_node_constraint_state_coeff: Param | None = None  # (n, cn) — user-cstr v_state coefficient
@@ -5416,6 +5421,16 @@ def load_flextool(source: "Path | str | FlexInputSource",
             from flextool.engine.preprocess.params._derived import p_window_fraction_from_shares
             flex_data.p_window_fraction = p_window_fraction_from_shares(
                 flex_data.dt, flex_data.p_step_duration, flex_data.p_period_share)
+
+        # constraint_period_method period_total: off in the rolls of a rolling solve that does not realize whole
+        # periods in one roll (the run's pre-solve check warned).
+        from flextool.engine.preprocess import _provider_keys as _pk
+        if provider is not None and _provider_has(provider, _pk.SOLVE_DATA_USER_CONSTRAINT_PERIOD_TOTAL_OFF,
+                                                  sd / "user_constraint_period_total_off.csv"):
+            pto = _provider_read(provider, _pk.SOLVE_DATA_USER_CONSTRAINT_PERIOD_TOTAL_OFF,
+                                 sd / "user_constraint_period_total_off.csv")
+            if pto is not None and pto.height > 0 and "value" in pto.columns:
+                flex_data.user_constraint_period_total_off = bool(pto["value"].cast(pl.Boolean)[0])
 
         # Coarse new_stepduration groups: the coarse steps of their nodes, from this solve's own steps (every
         # solve, roll, nested and stochastic sub-solve).

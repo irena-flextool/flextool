@@ -71,6 +71,9 @@ SOLVE_DATA_ROLL_PERIOD_WHOLE = "solve_data/roll_period_whole"
 # (value) one Boolean row: whether the sub-solve's horizon holds the last step of the entire model (_run_model);
 # fix_end / fix_start_end pin the end state there only.
 SOLVE_DATA_STORAGE_SOLVE_AT_MODEL_END = "solve_data/storage_solve_at_model_end"
+# (value) one Boolean row: True when the sub-solve belongs to a rolling solve whose rolls do not each realize whole
+# periods (_recursive_solve.check_period_total_rolls); its constraint_period_method period_total rows are left out.
+SOLVE_DATA_USER_CONSTRAINT_PERIOD_TOTAL_OFF = "solve_data/user_constraint_period_total_off"
 # (period, step, upper_step) all-Utf8: a nested child's steps matched to its parent's steps (_run_model); read by
 # the fix_quantity / fix_usage rows (FlexData dtt_timeline_matching) and by the fix_price reference-price derive.
 SOLVE_DATA_TIMELINE_MATCHING_MAP = "solve_data/timeline_matching_map"
