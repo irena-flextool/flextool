@@ -360,8 +360,18 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
 def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
                                     *,
                                     provider: "object | None" = None,
-                                    engine: str = "eager") -> pl.DataFrame:
+                                    engine: str = "eager",
+                                    steps: "list[tuple[str, str]] | None" = None,
+                                    pt_inflow: "dict[tuple[str, str], float] | None" = None,
+                                    pbt_path: "Path | None" = None,
+                                    per_original_step: bool = False) -> pl.DataFrame:
     """Vectorized ``pdtNodeInflow`` derive — parity with the legacy.
+
+    The keyword overrides evaluate the same inflow on another grid (the capacity margin's peak demand over the
+    period's original timeline, :mod:`._capacity_margin_peak`): ``steps`` replaces the ``(period, time)`` grid of
+    ``steps_in_use``, ``pt_inflow`` the ``(node, time)`` inflow of ``ptNode_inflow``, ``pbt_path`` the stochastic
+    ``pbt_node_inflow`` frame, and ``per_original_step`` counts the peak section once per step (every step is an
+    original step).  Without them the output is the solve's ``pdtNodeInflow``.
 
     Replaces the per-cell 3-branch scalar cascade in
     :func:`derive_pdtNodeInflow` with vectorized polars, still per roll
@@ -391,7 +401,8 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
     """
     # --- Step 1: reader block copied VERBATIM from derive_pdtNodeInflow ----
     nodes = _read_singles(input_dir / "node.csv", provider=provider)
-    dt = _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider)
+    dt = (steps if steps is not None
+          else _read_pairs(solve_data_dir / "steps_in_use.csv", provider=provider))
 
     inflow_method_pairs = frozenset(
         _read_pairs(solve_data_dir / "node__inflow_method.csv",
@@ -428,7 +439,8 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
 
     # pbt_node_inflow{(n, branch, ts, t) → value}
     pbt_inflow: dict[tuple[str, str, str, str], float] = {}
-    pbt_path = solve_data_dir / "pbt_node_inflow.csv"
+    if pbt_path is None:
+        pbt_path = solve_data_dir / "pbt_node_inflow.csv"
     pbt_df = provider.get(_provider_key(pbt_path))
     if pbt_df is not None:
         for row in pbt_df.iter_rows():
@@ -443,9 +455,11 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
                     continue
 
     # ptNode_inflow{(n, t) → value}
-    pt_inflow: dict[tuple[str, str], float] = {}
-    pti_path = solve_data_dir / "ptNode_inflow.csv"
-    pti_df = provider.get(_provider_key(pti_path))
+    pti_df = None
+    if pt_inflow is None:
+        pt_inflow = {}
+        pti_path = solve_data_dir / "ptNode_inflow.csv"
+        pti_df = provider.get(_provider_key(pti_path))
     if pti_df is not None:
         for row in pti_df.iter_rows():
             if len(row) < 3:
@@ -505,6 +519,8 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
     # Original time steps per solve step (``new_stepduration``; absent → 1):
     # the peak section is per original step.
     n_of, _absorbed = read_new_step_base_steps(solve_data_dir, provider=provider)
+    if per_original_step:
+        n_of = {}
 
     eligible_nodes = [
         n for n in nodes if (n, "no_inflow") not in inflow_method_pairs
@@ -1191,7 +1207,7 @@ def emit_pdtConversion_rate_section_slope(
 
 # flextool_base.dat L196-201 — group period param taxonomies.
 _GROUP_PERIOD_PARAM: frozenset[str] = frozenset((
-    "capacity_margin", "co2_price", "co2_max_period", "co2_max_total",
+    "capacity_margin", "capacity_margin_share", "co2_price", "co2_max_period", "co2_max_total",
     "inertia_limit", "invest_max_period", "invest_min_period",
     "max_cumulative_flow", "min_cumulative_flow", "non_synchronous_limit",
     "penalty_inertia", "penalty_non_synchronous",

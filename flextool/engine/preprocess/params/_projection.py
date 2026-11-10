@@ -1332,7 +1332,27 @@ def _group_param_equals(
 
 
 def groupCapacityMargin(source: "InputSource") -> pl.DataFrame:
+    """Groups with a capacity margin: ``capacity_margin_method`` manual or share_of_peak.  Schema: ``[g]``."""
+    df = _try_param(source, "group", "capacity_margin_method")
+    if df is None:
+        return _empty({"g": pl.Utf8})
+    return (df.lazy()
+              .filter(pl.col("value").is_in(["manual", "share_of_peak"]))
+              .select(alias_to_axis("name", "g"))
+              .unique()
+              .sort("g")
+              .collect())
+
+
+def groupCapacityMarginManual(source: "InputSource") -> pl.DataFrame:
+    """Groups whose margin is ``capacity_margin`` MW (``capacity_margin_method = manual``).  Schema: ``[g]``."""
     return _group_param_equals(source, "capacity_margin_method", "manual")
+
+
+def groupCapacityMarginShareOfPeak(source: "InputSource") -> pl.DataFrame:
+    """Groups whose margin is ``capacity_margin_share`` times their peak demand (``capacity_margin_method =
+    share_of_peak``).  Schema: ``[g]``."""
+    return _group_param_equals(source, "capacity_margin_method", "share_of_peak")
 
 
 def groupInertia(source: "InputSource") -> pl.DataFrame:

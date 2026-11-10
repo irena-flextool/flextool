@@ -230,6 +230,16 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "energy_margin_adder_per_original_step"),
         ),
         BehaviourChange(
+            id="capacity_margin_counts_by_flow",
+            summary=("The capacity margin now counts firm and VRE units at their capacity derated by availability "
+                     "(and capacity_max_coeff), units fed from a storage node, connections and the units "
+                     "consuming from the group by their actual flow; energy dumped through the downward balance "
+                     "slack does not count. Before, availability was ignored, storage-backed units counted at full capacity and "
+                     "connections not at all. Exports and the losses of connections inside the group now add to "
+                     "the requirement (results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "capacity_margin_counts_by_flow"),
+        ),
+        BehaviourChange(
             id="gui_solver_defaults",
             summary=("Runs started from the FlexTool GUI now use the same solver settings as terminal and Spine "
                      "Toolbox runs: presolve is on (before: choose), and the MIP gap of each solve comes from its "

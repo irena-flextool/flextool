@@ -26,8 +26,8 @@ from polar_high.engine import Expr
 from flextool.engine.input._axis_enums import align_join_dtypes, join_aligned
 from flextool.engine.input._param_shapes import promote_param_to_dt
 from flextool.engine.preprocess._provider_io import _provider_key
-from flextool.engine.model import _coarse_flows
-from flextool.engine.model._common import _has_rows, _var_view
+from flextool.engine.model import _balance_terms, _coarse_flows
+from flextool.engine.model._common import _availability_factor, _has_rows, _var_view
 
 if TYPE_CHECKING:
     from flextool.engine.model.core import _Build
@@ -56,6 +56,7 @@ _FIELDS: tuple[str, ...] = (
     "process_sink_nonSync", "process_group_inside_nonSync",
     "p_inv_group_cap", "p_group_capacity_for_scaling",
     "pdGroup_capacity_margin", "pdGroup_penalty_capacity_margin",
+    "pdGroup_capacity_margin_share", "pdGroup_peak_demand",
     "pdtGroup_inertia_limit", "pdGroup_penalty_inertia",
     "pdtGroup_non_synchronous_limit", "pdGroup_penalty_non_synchronous",
     "p_process_sink_inertia_constant", "p_process_source_inertia_constant",
@@ -152,6 +153,13 @@ def load_data(inp: Path, sd: Path, dt: pl.DataFrame,
         out["p_group_capacity_for_scaling"] = Param(("g", "d"), ig.with_columns(value=1.0 / pl.col("value"))
                                                     .select("g", "d", "value"))
 
+    # The capacity-margin groups' peak demand over each period's original timeline (share_of_peak;
+    # preprocess.emit._capacity_margin_peak), MW.
+    df = _provider_get(provider, sd / "pdGroup_peak_demand.csv")
+    if df is not None and df.height > 0:
+        out["pdGroup_peak_demand"] = Param(("g", "d"), df.rename({"group": "g", "period": "d"})
+                                           .select("g", "d", pl.col("value").cast(pl.Float64)))
+
     # Arcs that carry an inertia constant (the constants themselves come from the direct-parameter pass).
     sink_df, src_df = _read_inertia_constants(inp, provider=provider)
     if sink_df is not None:
@@ -192,11 +200,11 @@ def _capacity_margin_branch_weight(d) -> Param | None:
 
 
 def has_capacity_margin(d) -> bool:
-    """True when some group has capacity_margin_method = manual, the group scaling is populated and the solve has
-    an investment period in dt.
+    """True when some group has capacity_margin_method manual or share_of_peak, the group scaling is populated and
+    the solve has an investment period in dt.
 
-    A group without a capacity_margin value has margin 0 (its capacity must cover the peak net load).  A solve
-    without investment periods (dispatch, rolling dispatch) has no capacity margin."""
+    A group without a margin value has margin 0 (its capacity must cover its demand).  A solve without investment
+    periods (dispatch, rolling dispatch) has no capacity margin."""
     return (_has_rows(getattr(d, "groupCapacityMargin", None)) and d.p_inv_group_cap is not None
             and _capacity_margin_periods(d) is not None)
 
@@ -333,12 +341,167 @@ def _invest_change(b: _Build, procs: pl.DataFrame, tag: str) -> tuple[Expr | Non
     return invest, divest
 
 
+def _utf8(frame: "pl.DataFrame | None", cols: tuple[str, ...]) -> "pl.DataFrame | None":
+    """``frame`` with ``cols`` cast to Utf8; None when absent, empty or missing a column."""
+    if frame is None or frame.height == 0 or any(c not in frame.columns for c in cols):
+        return None
+    return frame.select(*(pl.col(c).cast(pl.Utf8) for c in cols))
+
+
+def _names(frame: "pl.DataFrame | None", col: str) -> list[str]:
+    if frame is None or frame.height == 0 or col not in frame.columns:
+        return []
+    return sorted({str(v) for v in frame.get_column(col).to_list() if v is not None})
+
+
+def capacity_margin_nodes(d) -> pl.DataFrame | None:
+    """``(g, n)`` in ``group_node`` dtypes: N(g), the nodes of each capacity-margin group that are in
+    ``nodeBalance`` and have no storage state (the nodes whose demand the margin covers); None without any."""
+    gn = getattr(d, "group_node", None)
+    gcm = getattr(d, "groupCapacityMargin", None)
+    if gn is None or gcm is None or gn.height == 0 or gcm.height == 0:
+        return None
+    out = gn.filter(pl.col("g").cast(pl.Utf8).is_in(_names(gcm, "g")))
+    balance = _names(getattr(d, "nodeBalance", None), "n")
+    out = out.filter(pl.col("n").cast(pl.Utf8).is_in(balance))
+    state = _names(getattr(d, "nodeState", None), "n")
+    if state:
+        out = out.filter(~pl.col("n").cast(pl.Utf8).is_in(state))
+    out = out.select("g", "n").unique().sort("g", "n")
+    return out if out.height > 0 else None
+
+
+def capacity_margin_counted_arcs(d) -> pl.DataFrame | None:
+    """``(g, p, source, sink, f)`` Utf8: the unit output arcs into N(g) whose capacity counts in g's capacity
+    margin (``f`` the arc's upper_limit or fixed profile, null for a firm arc); None without any.
+
+    A unit's output arc into N(g) (:func:`capacity_margin_nodes`) counts at capacity unless
+
+    * the unit is storage-backed: it has an input from a node with a storage state and its other inputs cannot
+      run it at full output alone (Σ input_share_max over them < 1, the default 1 each); or
+    * it is a converter inside g: it has an input from a node of N(g) (a heat pump in an elec + heat group, an
+      inverter fed from a DC bus of the group); or
+    * the arc has conversion_flow_coeff 0 (uncapped: no capacity bounds it).
+
+    Inputs with conversion_flow_coeff 0 carry no energy and are left out of both rules.  input_share_max is a
+    constant, so a unit has one class in every period.  A counted arc with a profile is VRE (capacity × profile ×
+    availability), the others firm (capacity × capacity_max_coeff × availability): each is the arc's own dispatch
+    bound, so its counted capacity is never below its flow.  The arcs that do not count enter the row by their flow.
+    """
+    nodes = _utf8(capacity_margin_nodes(d), ("g", "n"))
+    pss = _utf8(getattr(d, "process_source_sink", None), ("p", "source", "sink"))
+    units = _names(getattr(d, "process_unit", None), "p")
+    if nodes is None or pss is None or not units:
+        return None
+    pss = pss.filter(pl.col("p").is_in(units))
+    out = pss.join(nodes.rename({"n": "sink"}), on="sink", how="inner")
+    if out.height == 0:
+        return None
+    uncapped = _utf8(getattr(d, "process_source_sink_uncapped", None), ("p", "source", "sink"))
+    inputs = pss.filter(pl.col("source") != pl.col("p")).select("p", "source").unique()
+    if uncapped is not None:
+        zero_in = uncapped.filter(pl.col("sink") == pl.col("p")).select("p", "source").unique()
+        inputs = inputs.join(zero_in, on=["p", "source"], how="anti")
+        out = out.join(uncapped, on=["p", "source", "sink"], how="anti")
+    state = _names(getattr(d, "nodeState", None), "n")
+    share = _utf8(_param_frame(getattr(d, "p_process_source_input_share_max", None)), ("p", "source"))
+    shares = inputs.with_columns(share=pl.lit(1.0))
+    if share is not None:
+        values = getattr(d, "p_process_source_input_share_max").frame
+        values = values.collect() if isinstance(values, pl.LazyFrame) else values
+        shares = (inputs.join(values.select(pl.col("p").cast(pl.Utf8), pl.col("source").cast(pl.Utf8),
+                                            pl.col("value").cast(pl.Float64).alias("share")),
+                              on=["p", "source"], how="left")
+                  .with_columns(pl.col("share").fill_null(1.0)))
+    is_state = pl.col("source").is_in(state)
+    storage_backed = (shares.group_by("p")
+                      .agg(is_state.any().alias("has_state"),
+                           pl.col("share").filter(~is_state).sum().alias("other"))
+                      .filter(pl.col("has_state") & (pl.col("other") < 1.0))
+                      .select("p"))
+    out = out.join(storage_backed, on="p", how="anti")
+    internal = inputs.join(nodes.rename({"n": "source"}), on="source", how="inner").select("g", "p").unique()
+    out = out.join(internal, on=["g", "p"], how="anti")
+    if out.height == 0:
+        return None
+    profiles = [f for f in (_utf8(getattr(d, "process_profile_upper", None), ("p", "source", "sink", "f")),
+                            _utf8(getattr(d, "process_profile_fixed", None), ("p", "source", "sink", "f")))
+                if f is not None]
+    out = out.select("g", "p", "source", "sink")
+    if profiles:
+        out = out.join(pl.concat(profiles).unique(), on=["p", "source", "sink"], how="left")
+    else:
+        out = out.with_columns(f=pl.lit(None, dtype=pl.Utf8))
+    return out.unique().sort("g", "p", "source", "sink", "f", nulls_last=True)
+
+
+def _param_frame(param) -> "pl.DataFrame | None":
+    if param is None:
+        return None
+    frame = param.frame
+    return frame.collect() if isinstance(frame, pl.LazyFrame) else frame
+
+
+def resolve_capacity_margin(d) -> None:
+    """The margin of the ``share_of_peak`` groups into ``pdGroup_capacity_margin`` [MW]:
+
+        M[g,d] = capacity_margin[g,d]                              g with capacity_margin_method manual
+               = capacity_margin_share[g,d] · P[g,d]                g with capacity_margin_method share_of_peak
+        P[g,d] = pdGroup_peak_demand (preprocess.emit._capacity_margin_peak): the peak demand of N(g) over the
+                 period's original timeline
+
+    The row, the group scaling, the Benders split and the outputs then read one MW value whatever the method.  A
+    share_of_peak group whose share is positive but whose peak is 0 (no demand) gets a warning: its margin is 0.
+    Rows of 0 are dropped (margin 0).  Idempotent: a group's rows are replaced, not added to.
+    """
+    share = _param_frame(getattr(d, "pdGroup_capacity_margin_share", None))
+    if share is None or share.height == 0:
+        return
+    peak = _param_frame(getattr(d, "pdGroup_peak_demand", None))
+    share_u = share.select(pl.col("g").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                           pl.col("value").cast(pl.Float64).alias("share"))
+    if peak is None:
+        peak_u = pl.DataFrame(schema={"g": pl.Utf8, "d": pl.Utf8, "peak": pl.Float64})
+    else:
+        peak_u = peak.select(pl.col("g").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                             pl.col("value").cast(pl.Float64).alias("peak"))
+    joined = share_u.join(peak_u, on=["g", "d"], how="left").with_columns(pl.col("peak").fill_null(0.0))
+    no_peak = sorted(set(joined.filter((pl.col("share") != 0.0) & (pl.col("peak") <= 0.0))["g"].to_list()))
+    if no_peak:
+        from flextool.engine import _behaviour_changes
+
+        _behaviour_changes.warn_once(
+            ("capacity_margin_share_no_peak", tuple(no_peak)),
+            f"Warning: capacity margin group(s) {', '.join(no_peak)} have capacity_margin_method share_of_peak but "
+            "no demand in some investment period: the margin there is 0.")
+    margin = (joined.with_columns(value=pl.col("share") * pl.col("peak"))
+              .filter(pl.col("value") != 0.0).select("g", "d", "value"))
+    groups = sorted(set(share_u["g"].to_list()))
+    current = _param_frame(getattr(d, "pdGroup_capacity_margin", None))
+    if current is not None:
+        g_dtype, d_dtype = current.schema["g"], current.schema["d"]
+        keep = current.filter(~pl.col("g").cast(pl.Utf8).is_in(groups))
+        margin = margin.select(pl.col("g").cast(g_dtype), pl.col("d").cast(d_dtype),
+                               pl.col("value").cast(current.schema["value"]))
+        frame = pl.concat([keep.select("g", "d", "value"), margin]).sort("g", "d")
+    else:
+        g_dtype, d_dtype = share.schema["g"], share.schema["d"]
+        frame = margin.select(pl.col("g").cast(g_dtype), pl.col("d").cast(d_dtype), "value").sort("g", "d")
+    d.pdGroup_capacity_margin = Param(("g", "d"), frame) if frame.height > 0 else None
+
+
 def _eq_capacity_margin(b: _Build) -> None:
-    """capacityMargin: available unit capacity of a group covers its net demand plus the margin."""
+    """capacityMargin: the firm and VRE capacity of a group covers its demand plus the margin, with the group's
+    other flows by their value."""
     if not b.has_capacity_margin:
         return
     d = b.d
     gcm = d.groupCapacityMargin
+    # Earlier releases counted the margin differently (behaviour-change notice; printed only while the input
+    # database carries the marker).
+    from flextool.engine import _behaviour_changes
+
+    _behaviour_changes.notice("capacity_margin_counts_by_flow", "groups", _names(gcm, "g"))
     invc = d.p_inv_group_cap
     p_us = d.p_unitsize
     exist_cnt = d.p_process_existing_count
@@ -346,151 +509,154 @@ def _eq_capacity_margin(b: _Build) -> None:
 
     # ─── EQ. ─── capacityMargin ──────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_{(p,s,k,f) ∈ prof(g)} (Σ_{d′} v_invest_p[p,d′] − Σ_{d′} v_divest_p[p,d′]) · unitsize[p] · profile[f,d,t]
-    #                                                                                         · icap[g,d]
-    #   + Σ_{(p,s,k) ∈ cap(g)} (Σ_{d′} v_invest_p[p,d′] − Σ_{d′} v_divest_p[p,d′]) · unitsize[p] · icap[g,d]
-    #   − Σ_{(p,s,k) ∈ use_eff(g)} v_flow[p,s,k,d,t] · unitsize[p] · slope[p,d,t] · icap[g,d]
-    #   − Σ_{(p,s,k) ∈ use_eff(g), p ∈ process_min_load_eff} v_online[p,d,t] · section[p] · unitsize[p] · icap[g,d]
-    #   − Σ_{(p,s,k) ∈ use_noEff(g)} v_flow[p,s,k,d,t] · unitsize[p] · icap[g,d]
+    # Σ_{(p,s,k) ∈ F(g)} (Σ_{d′} v_invest_p[p,d′] − Σ_{d′} v_divest_p[p,d′]) · unitsize[p] · c[p,s,k] · av[p,d,t]
+    #                                                                                               · icap[g,d]
+    #   + Σ_{(p,s,k) ∈ V(g)} (Σ_{d′} v_invest_p[p,d′] − Σ_{d′} v_divest_p[p,d′]) · unitsize[p] · profile[p,s,k,d,t]
+    #                                                                                     · av[p,d,t] · icap[g,d]
+    #   + Σ_{n ∈ N(g)} B¬FV[g,n,d,t] · icap[g,d]
+    #   − Σ_{n ∈ N(g)} vq_state_down[n,d,t] · icap[g,d]
     #   + vq_capacity_margin[g,d]
-    #   ≥ capacity_margin[g,d] · icap[g,d] − Σ_{n ∈ N(g)} inflow_real[n,d,t] / Δt[d,t] · icap[g,d]
-    #     − Σ_{prof(g)} existing_count[p,d] · unitsize[p] · profile[f,d,t] · icap[g,d]
-    #     − Σ_{cap(g)} existing_count[p,d] · unitsize[p] · icap[g,d]
+    #   ≥ (M[g,d] + Σ_{n ∈ N(g)} demand[n,d,t]) · icap[g,d]
+    #     − Σ_{(p,s,k) ∈ F(g)} existing_count[p,d] · unitsize[p] · c[p,s,k] · av[p,d,t] · icap[g,d]
+    #     − Σ_{(p,s,k) ∈ V(g)} existing_count[p,d] · unitsize[p] · profile[p,s,k,d,t] · av[p,d,t] · icap[g,d]
     #   ∀ g ∈ groupCapacityMargin, (d,t) ∈ dt : d ∈ D_inv
-    #   groupCapacityMargin = groups with capacity_margin_method = manual;  capacity_margin[g,d] = 0 where not authored
+    #   groupCapacityMargin = groups with capacity_margin_method manual or share_of_peak
     #   D_inv = period_invest ∩ periods of dt (investment periods of the solve; a period label has no dt, so a
     #   fan contributes its forecast branch periods, one row per forecast); a solve without investment periods
     #   has no capacity margin
-    #   N(g) = nodes of g without a storage state;  icap = inv_group_cap = 1 / group_capacity_for_scaling
-    #   prof(g) = unit arcs into N(g) with an upper_limit or fixed profile f;  cap(g) = the other unit arcs into N(g)
-    #   use_*(g) = unit arcs out of N(g);  Σ_{d′} over edd_invest_set / edd_divest_active
-    #   inflow_real = the node's inflow before the invest-solve energy margin (energy_margin_multiplier / _adder),
-    #   which is an adequacy device and not load; the margin's capacity is the capacity_margin parameter
-    #   (pdtNodeInflow_per_step = inflow_real / Δt)
-    # The capacity a group's units could deliver — existing plus invested
-    # minus divested, profile-limited where a profile caps the output — less
-    # what its units consume covers the group's net demand plus the margin;
-    # the shortfall is penalised.  Existing capacity is a constant and moves
-    # to the right-hand side.  Only units count (process_unit; all processes
-    # when the set is empty), so connections do not count as capacity.  The
-    # row is scaled by icap, which makes the slack a fraction of
-    # group_capacity_for_scaling.  Without group_node only the margin and the
-    # slack remain.
+    #   N(g) = nodes of g in nodeBalance without a storage state;  icap = inv_group_cap = 1 / group_capacity_for_scaling
+    #   F(g), V(g) = the unit output arcs into N(g) that count at capacity (capacity_margin_counted_arcs): not of a
+    #   storage-backed unit (an input from a storage-state node, Σ input_share_max of its other inputs < 1), not of
+    #   a unit with an input from N(g), not conversion_flow_coeff 0; V(g) those with an upper_limit or fixed profile
+    #   c = capacity_max_coeff (p_arc_max_cap_coef, default 1);  av = availability (default 1)
+    #   profile[p,s,k,d,t] = the smallest profile value of the arc's upper_limit and fixed profiles
+    #   B¬FV[g,n,d,t] = the flow terms of nodeBalance_eq at n (balance_flow_terms, power: no Δt) without the arcs
+    #   of F(g) ∪ V(g): the other units' output and input (slope, section), connections at both ends (v_flow,
+    #   v_flow_back), Benders half-flows; only at the (g, n) pairs of N(g)
+    #   demand = −inflow_real / Δt (pdtNodeInflow_per_step: the inflow before any energy margin)
+    #   M[g,d] = capacity_margin[g,d] (manual)  |  capacity_margin_share[g,d] · P[g,d] (share_of_peak), 0 where not
+    #   authored;  P[g,d] = max(0, max_t Σ_{n ∈ N(g)} demand[n,d,t]) over the period's original timeline
+    #   (before representative periods and new_stepduration; resolve_capacity_margin)
+    #   Σ_{d′} over edd_invest_set / edd_divest_active
+    # Substituting the balance of each n ∈ N(g) (flow_FV + B¬FV + q_up − q_down = demand) gives
+    #   Σ_{F ∪ V} (counted capacity − flow) + vq ≥ M + Σ_n q_up:
+    # only firm and VRE headroom holds the margin.  Each counted term is that arc's dispatch bound (maxFlow,
+    # profile_flow_*), so the headroom is never negative.  Storage-backed units, imports and the group's own
+    # consumption count by their flow: they help by displacing firm output, exports and the losses of
+    # connections inside the group add to the requirement, energy dumped with vq_state_down does not count, and
+    # unserved energy (q_up) raises it.  Units fed from fuel or commodity nodes count at capacity: the fuel is
+    # assumed to last through the peak.  Existing capacity is a constant and moves to the right-hand side.  The
+    # row is scaled by icap, which makes the slack a fraction of group_capacity_for_scaling.
     # A retirement v_divest[e,d′] counts in d iff (e,d′,d) ∈ edd_divest_active (ndd_divest_active):
     #   d′ ≤ d < EOL[e], the end of life of e's pre-existing capacity (none for reinvest_automatic).
-    # Row rule (coarse steps): a group whose consuming units are all coarse processes gets one row per coarse step,
-    # capacityMargin_coarse = the row's Δt-weighted mean over the step (_coarse_flows.add_cstr): the profile, the
-    # inflow and the slope act through their step means, so the margin covers the step-mean net demand, not its
-    # peak (named in the coarse-flow behaviour notice).  Otherwise the rows stay per solve step.
+    # Row rule (coarse steps): a group whose flow members (the processes of B¬FV) are all coarse processes gets one
+    # row per coarse step, capacityMargin_coarse = the row's Δt-weighted mean over the step
+    # (_coarse_flows.add_cstr): availability, the profile, the inflow and the slope act through their step means,
+    # so the margin covers the step-mean demand, not its peak (named in the coarse-flow behaviour notice).
+    # Otherwise the rows stay per solve step.
     lhs: dict = {"slack": b.vq_capacity_margin}
     rhs: dict = {}
+    dt_inv = d.dt.join(_capacity_margin_periods(d), on="d", how="semi")
+    gn = capacity_margin_nodes(d)
 
-    proc_unit = getattr(d, "process_unit", None)
-    gn_no_state = None
-    if d.group_node is not None:
-        gn_no_state = d.group_node.join(gcm, on="g", how="inner")
-        if d.nodeState is not None and d.nodeState.height > 0:
-            gn_no_state = gn_no_state.join(d.nodeState, on="n", how="anti")
+    counted = capacity_margin_counted_arcs(d)
+    arcs = None          # (g, p, source, sink) in process_source_sink dtypes: the counted arcs
+    kappa = None         # (g, p, source, sink, d, t): c · av (firm) or profile · av (VRE)
+    if counted is not None and gn is not None and exist_cnt is not None and p_us is not None:
+        pss = d.process_source_sink.select("p", "source", "sink")
+        arcs = (_arcs_at_group(pss, "sink", gn)
+                .with_columns(_g=pl.col("g").cast(pl.Utf8), _p=pl.col("p").cast(pl.Utf8),
+                              _s=pl.col("source").cast(pl.Utf8), _k=pl.col("sink").cast(pl.Utf8))
+                .join(counted.rename({"g": "_g", "p": "_p", "source": "_s", "sink": "_k", "f": "_f"}),
+                      on=["_g", "_p", "_s", "_k"], how="inner"))
+        kappa = _counted_coefficient(d, arcs, dt_inv, prof_val)
+        arcs = arcs.select("g", "p", "source", "sink").unique().sort("g", "p", "source", "sink")
+        if kappa is None or arcs.height == 0:
+            arcs = kappa = None
 
-    def _units(df: pl.DataFrame) -> pl.DataFrame:
-        if proc_unit is not None and proc_unit.height > 0:
-            return df.join(proc_unit.select("p"), on="p", how="inner")
-        return df
-
-    # Unit arcs into the group (p, source, sink, g), split into profile-limited and capacity-limited.
-    pss_to_grp = None
-    if d.process_source_sink is not None and gn_no_state is not None:
-        pss_to_grp = _arcs_at_group(_units(d.process_source_sink), "sink", gn_no_state)
-    profile_idx = None
-    prof_sets = [s for s in (d.process_profile_upper, d.process_profile_fixed) if s is not None and s.height > 0]
-    if prof_sets and pss_to_grp is not None:
-        profile_idx = (pl.concat([s.select("p", "source", "sink", "f") for s in prof_sets], how="vertical").unique()
-                       .join(pss_to_grp, on=["p", "source", "sink"], how="inner"))
-    capacity_idx = pss_to_grp
-    if pss_to_grp is not None and profile_idx is not None:
-        capacity_idx = pss_to_grp.join(profile_idx.select("p", "source", "sink").unique(),
-                                       on=["p", "source", "sink"], how="anti")
-    has_process_data = pss_to_grp is not None and exist_cnt is not None and p_us is not None
-
-    existing_frames: list[pl.DataFrame] = []     # existing capacity · icap, (g, d, t, value)
-    if has_process_data and profile_idx is not None and prof_val is not None:
-        invest, divest = _invest_change(b, profile_idx, "cap_margin")
+    if arcs is not None:
+        invest, divest = _invest_change(b, arcs, "cap_margin")
         if invest is not None:
-            lhs["prof_invest"] = Sum(Where(invest, profile_idx) * p_us * prof_val * invc,
-                                     over=("p", "source", "sink", "f"))
+            lhs["cap_invest"] = Sum(Where(invest, arcs) * p_us * kappa * invc, over=("p", "source", "sink"))
         if divest is not None:
-            lhs["prof_divest"] = Sum(-(Where(divest, profile_idx) * p_us * prof_val * invc),
-                                     over=("p", "source", "sink", "f"))
-        existing_frames.append(
-            profile_idx.join(exist_cnt.frame.rename({"value": "exist"}), on="p", how="inner")
-            .join(p_us.frame.rename({"value": "us"}), on="p", how="inner")
-            .join(prof_val.frame.rename({"value": "prof"}), on=["f", "d"], how="inner")
-            .join(invc.frame.rename({"value": "inv"}), on=["g", "d"], how="inner")
-            .with_columns(value=pl.col("exist") * pl.col("us") * pl.col("prof") * pl.col("inv"))
-            .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
-            .select("g", "d", "t", "value"))
-    if has_process_data and capacity_idx is not None and capacity_idx.height > 0:
-        invest, divest = _invest_change(b, capacity_idx, "cap_margin")
-        if invest is not None:
-            lhs["cap_invest"] = Sum(Where(invest, capacity_idx) * p_us * invc, over=("p", "source", "sink"))
-        if divest is not None:
-            lhs["cap_divest"] = Sum(-(Where(divest, capacity_idx) * p_us * invc), over=("p", "source", "sink"))
-        existing_frames.append(
-            capacity_idx.join(exist_cnt.frame.rename({"value": "exist"}), on="p", how="inner")
-            .join(p_us.frame.rename({"value": "us"}), on="p", how="inner")
-            .join(invc.frame.rename({"value": "inv"}), on=["g", "d"], how="inner")
-            .with_columns(value=pl.col("exist") * pl.col("us") * pl.col("inv"))
-            .group_by(["g", "d"]).agg(pl.col("value").sum())
-            .join(d.dt, on="d", how="inner").select("g", "d", "t", "value"))
-
-    # Consumption of the group's units.  The eff term counts input at the efficiency slope and needs
-    # p_slope; the min-load section input of online units is part of it.
-    if has_process_data and b.v_flow is not None:
-        pss_eff = d.process_source_sink_eff
-        if pss_eff is not None and pss_eff.height > 0:
-            use_eff = _arcs_at_group(_units(pss_eff), "source", gn_no_state)
-            if use_eff.height > 0 and d.p_slope is not None:
-                lhs["consume_eff"] = Sum(-(Where(b.v_flow, use_eff) * p_us * d.p_slope * invc),
-                                         over=("p", "source", "sink"))
-                if (d.process_min_load_eff is not None and d.process_min_load_eff.height > 0
-                        and d.p_section is not None):
-                    use_mle = use_eff.join(d.process_min_load_eff, on="p", how="inner")
-                    if use_mle.height > 0:
-                        if b.v_online_linear is not None:
-                            lhs["consume_section_lin"] = Sum(
-                                -(Where(b.v_online_linear, use_mle) * d.p_section * p_us * invc),
-                                over=("p", "source", "sink"))
-                        if b.v_online_integer is not None:
-                            lhs["consume_section_int"] = Sum(
-                                -(Where(b.v_online_integer, use_mle) * d.p_section * p_us * invc),
-                                over=("p", "source", "sink"))
-        pss_noEff = d.process_source_sink_noEff
-        if pss_noEff is not None and pss_noEff.height > 0:
-            use_noEff = _arcs_at_group(_units(pss_noEff), "source", gn_no_state)
-            if use_noEff.height > 0:
-                lhs["consume_noEff"] = Sum(-(Where(b.v_flow, use_noEff) * p_us * invc), over=("p", "source", "sink"))
-
-    if existing_frames:
-        ex = (pl.concat(existing_frames, how="vertical")
+            lhs["cap_divest"] = Sum(-(Where(divest, arcs) * p_us * kappa * invc), over=("p", "source", "sink"))
+        ex = (arcs.join(exist_cnt.frame.rename({"value": "exist"}), on="p", how="inner")
+              .join(p_us.frame.rename({"value": "us"}), on="p", how="inner")
+              .join(kappa.frame.rename({"value": "kappa"}), on=["g", "p", "source", "sink", "d"], how="inner")
+              .join(invc.frame.rename({"value": "inv"}), on=["g", "d"], how="inner")
+              .with_columns(value=-(pl.col("exist") * pl.col("us") * pl.col("kappa") * pl.col("inv")))
               .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
-              .with_columns(value=-pl.col("value")))
-        rhs["existing_neg"] = Param(("g", "d", "t"), ex.select("g", "d", "t", "value"))
+              .select("g", "d", "t", "value").sort("g", "d", "t"))
+        if ex.height > 0:
+            rhs["existing_neg"] = Param(("g", "d", "t"), ex)
+
+    if gn is not None and b.v_flow is not None:
+        flows = _balance_terms.balance_flow_terms(b, nodes=gn, group_nodes=gn, exclude_arcs=arcs, per_step=True)
+        for key, term in flows.items():
+            lhs[f"flow_{key}"] = Sum(term, over=("n",)) * invc
+        if getattr(b, "vq_state_down", None) is not None:
+            lhs["dump_neg"] = -(Sum(Where(b.vq_state_down, gn), over=("n",)) * invc)
+
     if d.pdGroup_capacity_margin is not None:
         rhs["floor"] = d.pdGroup_capacity_margin * invc
     inflow_per = getattr(d, "pdtNodeInflow_per_step", None)
-    if inflow_per is not None and gn_no_state is not None and gn_no_state.height > 0:
-        rhs_inflow = (gn_no_state.join(inflow_per.frame.rename({"value": "inflow"}), on="n", how="inner")
+    if inflow_per is not None and gn is not None:
+        rhs_inflow = (join_aligned(gn, inflow_per.frame.rename({"value": "inflow"}), on="n", how="inner")
                       .join(invc.frame.rename({"value": "inv"}), on=["g", "d"], how="inner")
                       .with_columns(value=-pl.col("inflow") * pl.col("inv"))
                       .group_by(["g", "d", "t"]).agg(pl.col("value").sum())
-                      .select("g", "d", "t", "value"))
+                      .select("g", "d", "t", "value").sort("g", "d", "t"))
         if rhs_inflow.height > 0:
             rhs["inflow_neg"] = Param(("g", "d", "t"), rhs_inflow)
 
-    dt_inv = d.dt.join(_capacity_margin_periods(d), on="d", how="semi")
     over = gcm.join(dt_inv, how="cross")
     _coarse_flows.add_row_rule_cstr(b, "capacityMargin", over=over, sense=">=", lhs_terms=lhs, rhs_terms=rhs,
                                     partition=_row_partition(b, "capacity_margin", over))
+
+
+def _counted_coefficient(d, arcs: pl.DataFrame, dt_inv: pl.DataFrame, prof_val: "Param | None") -> "Param | None":
+    """``Param(("g", "p", "source", "sink", "d", "t"))``: the capacity factor of each counted arc of ``arcs`` (with
+    the Utf8 key columns ``_p``, ``_s``, ``_k`` and the profile ``_f``) at the steps ``dt_inv``:
+
+        κ = c[p,s,k] · av[p,d,t]                          firm arc (no profile)
+          = min_f profile[f,d,t] · av[p,d,t]              VRE arc (its upper_limit and fixed profiles f)
+
+    c = p_arc_max_cap_coef (default 1), av = availability (default 1), the factors of the arc's dispatch bound."""
+    base = (arcs.select("g", "p", "source", "sink", "_p", "_s", "_k", "_f")
+            .join(dt_inv.select("d", "t"), how="cross")
+            .with_columns(_d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8)))
+    if d.p_process_availability is not None:
+        av = _availability_factor(d, arcs.select("p").unique()).frame
+        base = (base.join(av.select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("d").cast(pl.Utf8).alias("_d"),
+                                    pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("value").alias("av")),
+                          on=["_p", "_d", "_t"], how="left")
+                .with_columns(pl.col("av").fill_null(1.0)))
+    else:
+        base = base.with_columns(av=pl.lit(1.0))
+    coef = getattr(d, "p_arc_max_cap_coef", None)
+    if coef is not None:
+        cf = _param_frame(coef)
+        base = (base.join(cf.select(pl.col("p").cast(pl.Utf8).alias("_p"), pl.col("source").cast(pl.Utf8).alias("_s"),
+                                    pl.col("sink").cast(pl.Utf8).alias("_k"), pl.col("value").alias("c")),
+                          on=["_p", "_s", "_k"], how="left")
+                .with_columns(pl.col("c").fill_null(1.0)))
+    else:
+        base = base.with_columns(c=pl.lit(1.0))
+    firm = base.filter(pl.col("_f").is_null()).with_columns(value=pl.col("c") * pl.col("av"))
+    parts = [firm.select("g", "p", "source", "sink", "d", "t", "value")]
+    vre = base.filter(pl.col("_f").is_not_null())
+    if vre.height > 0:
+        if prof_val is None:
+            raise ValueError("capacityMargin: profile-limited arcs without p_profile_value")
+        pf = _param_frame(prof_val)
+        vre = (vre.join(pf.select(pl.col("f").cast(pl.Utf8).alias("_f"), pl.col("d").cast(pl.Utf8).alias("_d"),
+                                  pl.col("t").cast(pl.Utf8).alias("_t"), pl.col("value").alias("prof")),
+                        on=["_f", "_d", "_t"], how="inner")
+               .group_by("g", "p", "source", "sink", "d", "t")
+               .agg((pl.col("prof").min() * pl.col("av").first()).alias("value")))
+        parts.append(vre.select("g", "p", "source", "sink", "d", "t", "value"))
+    frame = pl.concat(parts).sort("g", "p", "source", "sink", "d", "t")
+    return Param(("g", "p", "source", "sink", "d", "t"), frame) if frame.height > 0 else None
 
 
 def _eq_inertia(b: _Build) -> None:

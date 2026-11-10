@@ -1,5 +1,24 @@
 ## Unreleased
 
+- **Behaviour change: the capacity margin counts what each entity can really deliver.** Before, every unit with an
+  output into the group counted at its full capacity, whatever its `availability`, also a turbine on an empty
+  storage, and connections did not count at all. Now, at each time step of an investment period, firm units count
+  at capacity × `availability` × `capacity_max_coeff`, VRE at capacity × profile × `availability`, and units fed
+  from a storage node, units fed from the group's own nodes, connections and consumption by their actual flow. So
+  only firm and VRE capacity can hold the margin: imports and storage help by what they deliver, exports and the
+  losses of connections inside the group add to the requirement, and energy dumped through a node's downward slack
+  no longer counts. Units fed from fuel or commodity nodes count at capacity (the fuel is assumed to last). Results
+  of models with a capacity margin change. An upgraded database with a *manual* capacity-margin group gets the
+  behaviour-change notice `capacity_margin_counts_by_flow`.
+- **New: `capacity_margin_method` *share_of_peak* with `group.capacity_margin_share`.** The margin is the share
+  times the group's peak demand, taken over the period's full time series (before representative periods and
+  `new_stepduration`), so a sample that misses the peak still gets the real peak's margin.
+- **New: a capacity-margin, inertia or non-synchronous group across Benders regions is an error.** Each region
+  subproblem required the whole requirement before; use one group per region.
+- **New: a `balance_within_period` node in a capacity-margin group is an error** (it balances per period, the
+  margin holds per time step), and the warning that storage nodes are left out of a capacity-margin group is gone
+  (their units now count by their flow).
+
 - **Fix: a profile link without profile data held the flow at 0 without a word (#104).** `profile_method`
   defaults to *upper_limit* on `unit__node__profile`, and a profile without a value in the scenario is 0, so the
   linked unit did not run (typically when the profile's value is in an alternative the scenario leaves out). Now

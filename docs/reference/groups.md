@@ -29,10 +29,46 @@ Flow aggregation (flow limits and aggregated flow outputs) lives on a separate [
 - `has_non_synchronous` - A flag whether the group of nodes has the non-synchronous share constraint active. Default *no*. Without *yes* the group has no non-synchronous constraint, even if `non_synchronous_limit` is given.
 - `non_synchronous_limit` - [share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group, of the group's supply measured with the real demand (without an energy margin). Flows between the group's nodes are excluded. Used only when `has_non_synchronous` is *yes*; with the flag and no value (or 0), no non-synchronous infeed is allowed (violations are penalised). Constant, period, time or period+time. A time map (or the time level of a period+time map) of a group with `has_non_synchronous` *yes* must give a value for every time step of the solve, look-ahead included (a missing time step is an error, reported before the first solve; an authored 0 is a limit of 0, give 1 for an hour without a limit). A solve whose `reduce_system_detail_method` leaves the non-synchronous limit out is not checked. A period map (or the period level of a period+time map) must give a value for every period of the solve, look-ahead periods included (a missing period is an error).
 - `penalty_non_synchronous` - [CUR/MWh] Penalty for violating the non synchronous constraint. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. Constant or period.
-- `capacity_margin_method` - How the group of nodes enforces a capacity margin constraint in the investment mode. Options: *none* (default, no constraint) and *manual* (require the group to have `capacity_margin` MW of capacity above the peak net load of the real demand; an energy margin does not count). The constraint applies in the investment periods of each solve (and their stochastic branch periods); a solve without `invest_periods` (dispatch, rolling dispatch) has none.
-- `capacity_margin` - [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode when `capacity_margin_method = manual`, in the investment periods of a solve; without that method the value is ignored. No value (or 0) requires capacity to cover the peak net load. Constant or period. A period map of a group with `capacity_margin_method = manual` must give a value for every investment period of the solve (a missing period is an error).
+- `capacity_margin_method` - Whether the group of nodes has a capacity margin in investment solves, and how the margin is given. Options: *none* (default, no margin), *manual* (the margin is `capacity_margin` MW) and *share_of_peak* (the margin is `capacity_margin_share` times the group's peak demand). The margin applies in the investment periods of each solve (and their stochastic branch periods); a solve without `invest_periods` (dispatch, rolling dispatch) has none. See [The capacity margin](#the-capacity-margin) below for what counts and how.
+- `capacity_margin` - [MW] The margin of a group with `capacity_margin_method` *manual*: the capacity the group needs above its demand at every time step of an investment period. Without that method the value is ignored (a warning says so). No value (or 0) means the capacity must still cover the demand. Constant or period. A period map must give a value for every investment period of the solve (a missing period is an error).
+- `capacity_margin_share` - [share, e.g. 0.15 means 15%] The margin of a group with `capacity_margin_method` *share_of_peak*, as a share of the group's peak demand in the period. Without that method the value is ignored (a warning says so). No value (or 0) means no margin. Constant or period. A period map must give a value for every investment period of the solve.
 - `penalty_capacity_margin` - [CUR/kW/a] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over lifetime like investment costs), so a penalty of e.g. 1000 CUR/kW is not comparable to an investment cost of 1000 CUR/kW which would be annualized to a much lower annual cost. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. In a stochastic fan each forecast branch period has its own shortfall, and its penalty is weighted by the forecast's probability. Constant or period.
 - `share_loss_of_load` - Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted
+
+
+### The capacity margin
+
+At every time step of an investment period, the capacity margin row of a group asks:
+
+*firm capacity + VRE potential + what the group's other entities deliver or take at that step ≥ the group's demand + the margin.*
+
+The demand is the real demand of the group's nodes (the negative inflow, without an energy margin). Storage nodes have no demand in the row; a group of storage nodes only is an error, and so is a `balance_within_period` node in the group (its balance is per period, the margin per time step). The entities count as follows:
+
+| Entity | Counts as |
+|---|---|
+| **Firm unit**: a unit with an output into the group that is not one of the kinds below. Units fed from fuel or commodity nodes, from balance nodes, and units without inputs (e.g. demand response) | its capacity × `availability` × `capacity_max_coeff` of the output, for each of its outputs into the group |
+| **VRE unit**: a unit whose output into the group has an *upper_limit* or *fixed* profile | its capacity × profile × `availability` |
+| **Storage-backed unit**: a unit with an input from a storage node, unless its other inputs can run it at full output alone (their `input_share_max` adds up to at least 1; the default is 1) | its actual flow |
+| **Unit inside the group**: a unit with an input from one of the group's nodes (a heat pump in an electricity + heat group, an inverter fed from a DC bus of the group) | its actual flow, and its input as consumption |
+| **Connection** (imports, exports, a battery behind an inverter connection) | its actual flow, into the group positive, out of it negative |
+| **Consumption** by the units fed from the group's nodes (electrolysers, pumps, chargers) | its actual flow, negative |
+
+Inputs and outputs with `conversion_flow_coeff` 0 carry no energy limit: such an output counts by its flow, and such an input is left out of the storage and inside-the-group rules.
+
+What this means in practice:
+
+- **Only firm and VRE capacity can hold the margin.** Imports, storage and the group's own consumption help only by what they deliver at that step, which lets the firm units run less. A group fed only by imports cannot hold any margin. Energy dumped through the node's downward slack does not count.
+- **Fuel is assumed to last.** A unit fed from a fuel or commodity node, or from a balance node, counts at its capacity, even if the fuel is limited (a fuel node with a storage state makes its units storage-backed). To have a fuel-limited unit count by its flow, model the fuel as a storage node.
+- **Storage counts by what it delivers.** A battery, a hydro reservoir or a CSP heat tank counts with its discharge at that step, which is conservative when the storage is full. Pumped hydro: the turbine counts by its flow, the pump as consumption. Run-of-river (a balance node with inflow, no storage state) counts at capacity.
+- **Exports add to the requirement.** A connection out of the group counts negative, so the capacity behind an export cannot also hold the margin.
+- **Losses inside the group add to the requirement.** A connection with both ends in the group enters at both ends, so its losses at that step count as demand.
+- **A CHP unit with both outputs in the group** counts each output at its own capacity limit (capacity × `capacity_max_coeff`).
+
+The margin of a *share_of_peak* group is `capacity_margin_share` × the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series, on the period's original timeline (before representative periods and `new_stepduration`, and the same in every roll of a solve). If the representative periods leave the peak out, the margin still uses the real peak. A stochastic branch period has its own peak, from its own branch data.
+
+With representative periods, the row holds at the sampled time steps only, and the storage that counts is the storage of the sampled days: force-include the peak days. Over a coarse time step (`new_stepduration`) the row may be averaged (see below).
+
+Under spatial Benders decomposition (`decomposition_method` *benders_regional*), a capacity margin group (and an inertia or non-synchronous group) with nodes in more than one region is an error: each region would have to hold the whole margin. Use one group per region.
 
 ## CO2 costs and limits
 

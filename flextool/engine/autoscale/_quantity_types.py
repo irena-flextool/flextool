@@ -63,6 +63,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('candidate_precapacity_to_avoid_big_m', 'group'): QuantityType.POWER,
     # [MW] Small pre-existing capacity assigned to investment candidate connections in DC power flow groups that have zero existing capacity. This...
     ('capacity_margin', 'group'): QuantityType.POWER,
+    ('capacity_margin_share', 'group'): QuantityType.FRACTION,
+    # [-] Capacity margin as a share of the group's peak demand (capacity_margin_method share_of_peak).
     # [MW] Capacity the group needs above its peak net load. Used only with capacity_margin_method manual, and only in investment periods. No valu...
     # Pre-v70 input-side names, carried during the migration window
     # (renamed to input_share_max / input_share_min by db_migration v70).

@@ -282,7 +282,7 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 ### Caveats and limitations
 
 - **Net or gross output.** Use the net turbine efficiency (after the plant's own electricity use), so the turbine's output is the net output. For the own use as a separate flow, give the turbine a second input from the electricity node and tie it to the output with a user constraint.
-- **Capacity margin.** The capacity margin counts the turbine at its full capacity, whatever the tank holds.
+- **Capacity margin.** The turbine runs from the heat tank, so the capacity margin counts it by its actual flow at each time step, not at its capacity. With a gas backup input whose `input_share_max` is 1 (the gas can run the turbine alone), it counts at its capacity.
 - **Representative periods.** The tank cycles every day. Use hourly representative days or weeks with a `*_blended_weights` `storage_binding_method` (see [Nested Rolling window solves](solve_sequences.md#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)); a long `new_stepduration` loses the daily cycle.
 - **No annual fossil share.** A rule such as "gas at most 15 % of the annual output" cannot be written today: user constraints with flow terms hold in each time step, and the cumulative limits of a `flowGroup` are absolute amounts.
 - **No start-up heat.** The turbine's start-up cannot draw heat from the tank; only a `startup_cost` is available.

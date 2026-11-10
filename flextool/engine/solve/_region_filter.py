@@ -726,6 +726,48 @@ def _master_side_feature_groups(
     return kept
 
 
+def _validate_feature_groups_in_one_region(
+    data: FlexData,
+    region_nodes: dict[str, set[str]],
+) -> None:
+    """A capacity-margin, inertia or non-synchronous group whose nodes lie in more than one region is an error.
+
+    Each region subproblem would get its own copy of the group's row over the group's nodes in that region, so
+    the requirement (the whole margin, inertia limit or share) would apply once per region instead of once for the
+    group.  Only the families active in the solve are checked (``_group_slack.has_*``: a capacity margin needs
+    investment periods; ``reduce_system_detail_method`` may leave inertia and non-synchronous out).  Nodes in no
+    region (shared, replicated into every region) do not count.
+    """
+    from flextool.engine.model import _group_slack
+
+    families = (("capacity margin", "groupCapacityMargin", _group_slack.has_capacity_margin),
+                ("inertia", "groupInertia", _group_slack.has_inertia),
+                ("non-synchronous", "groupNonSync", _group_slack.has_non_sync))
+    gn = data.group_node
+    if gn is None or gn.height == 0:
+        return
+    region_of: dict[str, str] = {}
+    for r, ns in region_nodes.items():
+        for n in ns:
+            region_of[n] = r
+    members: dict[str, set[str]] = {}
+    for g, n in gn.select(pl.col("g").cast(pl.Utf8), pl.col("n").cast(pl.Utf8)).iter_rows():
+        members.setdefault(g, set()).add(n)
+    errors: list[str] = []
+    for what, set_name, active in families:
+        groups = getattr(data, set_name, None)
+        if groups is None or groups.height == 0 or not active(data):
+            continue
+        for g in sorted({str(x) for x in groups.get_column("g").to_list()}):
+            regions = sorted({region_of[n] for n in members.get(g, ()) if n in region_of})
+            if len(regions) > 1:
+                errors.append(f"{what} group {g!r} has nodes in regions {', '.join(regions)}")
+    if errors:
+        raise RuntimeError(
+            "split: " + "; ".join(errors) + ". A group's requirement cannot be split between Benders region "
+            "subproblems (each region would require all of it). Use one group per region.")
+
+
 def _co2_master_partition(
     data: FlexData,
     master_local_triples: set[tuple[str, str, str]],
@@ -2310,6 +2352,8 @@ def split(
             RegionSplit(region=r, data=data, half_flows=[])
             for r in regions
         ]
+
+    _validate_feature_groups_in_one_region(data, region_nodes)
 
     pss_tagged, cross, region_master, master_local = _classify_arcs(
         data.process_source_sink, region_nodes,

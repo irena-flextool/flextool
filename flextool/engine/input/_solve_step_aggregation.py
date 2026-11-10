@@ -122,6 +122,7 @@ NOT_TIME_SERIES: frozenset[tuple[str, str]] = frozenset({
     ("flowGroup", "max_cumulative_flow"),
     ("flowGroup", "min_cumulative_flow"),
     ("group", "capacity_margin"),
+    ("group", "capacity_margin_share"),
     ("group", "co2_max_period"),
     ("group", "cumulative_max_capacity"),
     ("group", "cumulative_min_capacity"),

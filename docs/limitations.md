@@ -50,11 +50,15 @@ FlexTool is a linear (or mixed-integer) optimisation model of an energy system. 
     [Several milestones](how_to/solve_sequences.md#several-milestones-representative-period-investment-then-a-full-year-dispatch-of-each).
     The net-load re-selection of representative periods is the one loop that FlexTool runs for you.
 
-- **The capacity margin counts units at their capacity.** A unit counts with its full capacity (a unit with a profile at capacity × profile), whatever its `availability`.
+- **The capacity margin is held by firm and VRE capacity only.** Firm units count at capacity × `availability`, VRE
+    at capacity × profile × `availability`; storage-backed units, connections and consumption count by their actual
+    flow at the time step (see [The capacity margin](reference/groups.md#the-capacity-margin)).
 
-    A unit that runs from a storage, such as a CSP turbine fed by its heat tank or a hydro turbine, counts in full
-    even when the storage is empty. Connections do not count, so neither do imports nor a battery modelled with a
-    connection.
+    Storage counts only with what it discharges at that step, which is conservative for a full reservoir or a
+    long-duration store. Imports count only as their actual flow, so a group fed only by imports cannot hold a
+    margin. A unit fed from a fuel or commodity node, or from a balance node with limited supply, counts at its
+    capacity: the fuel is assumed to last through the peak. Under spatial Benders decomposition, a capacity-margin
+    group with nodes in more than one region is an error.
 
 - **Representative periods leave hours out.** An investment made on a sample of weeks cannot see the hours outside the sample; check the plan with a full-year dispatch.
 - **Costs count only within the model horizon.** The annuity and the fixed cost of new capacity are paid in the periods it operates within the model; the years after the last period are not counted.

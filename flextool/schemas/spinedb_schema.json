@@ -290,6 +290,10 @@
       "manual"
     ],
     [
+      "capacity_margin_methods",
+      "share_of_peak"
+    ],
+    [
       "co2_methods",
       "none"
     ],
@@ -1505,7 +1509,7 @@
       "capacity_margin",
       null,
       null,
-      "[MW] Capacity the group needs above its peak net load. Used only with capacity_margin_method manual, and only in investment periods. No value means 0. Constant or period.",
+      "[MW] Capacity the group needs above its demand at every time step of an investment period. Used only with capacity_margin_method manual. No value means 0 (the demand must still be covered). Constant or period.",
       "investment"
     ],
     [
@@ -1513,7 +1517,15 @@
       "capacity_margin_method",
       "none",
       "capacity_margin_methods",
-      "[choice] Whether the group needs a capacity margin in investment solves. none: no margin. manual: the group needs capacity_margin MW above its peak net load.",
+      "[choice] Whether the group needs a capacity margin in investment solves, and how the margin is given. none (default): no margin. manual: capacity_margin MW. share_of_peak: capacity_margin_share times the group's peak demand in the period. At every time step of an investment period, the capacity of the group's firm units (capacity x availability x capacity_max_coeff) and VRE units (capacity x profile x availability) must cover the group's demand plus the margin. Units fed from a storage node, connections and the units consuming from the group count by their actual flow, so exports and losses inside the group add to the requirement. Units fed from fuel or commodity nodes count at capacity: the fuel is assumed to last.",
+      "investment"
+    ],
+    [
+      "group",
+      "capacity_margin_share",
+      null,
+      null,
+      "[-] e.g. 0.15 means 15%. Capacity margin as a share of the group's peak demand: the largest sum of the demand of the group's nodes over the period's full time series (before representative periods and new_stepduration). Used only with capacity_margin_method share_of_peak. No value means 0. Constant or period.",
       "investment"
     ],
     [
@@ -3647,6 +3659,18 @@
       "capacity_margin_method",
       "str",
       0
+    ],
+    [
+      "group",
+      "capacity_margin_share",
+      "float",
+      0
+    ],
+    [
+      "group",
+      "capacity_margin_share",
+      "map",
+      1
     ],
     [
       "group",

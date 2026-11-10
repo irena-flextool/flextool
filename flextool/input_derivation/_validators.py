@@ -711,16 +711,18 @@ def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] 
 
 
 def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
-    """Storage nodes are excluded from the capacity-margin constraint.
-    Raise if any capacity_margin_method='manual' group contains *only*
-    storage nodes (constraint would have no valid members); warn if a
-    mix is present.
+    """The nodes of a capacity-margin group (``capacity_margin_method`` manual or share_of_peak).
+
+    Storage nodes are left out of the group's demand, and the units fed from them count by their flow, so a group
+    of storage nodes only has no demand to cover: an error.  A ``balance_within_period`` node balances its energy
+    over the period, not at each time step, so the per-step margin cannot hold for it: an error.
     """
+    del logger
     capacity_margin_groups: dict[str, list[str]] = {}
     for pv in db.find_parameter_values(
         entity_class_name="group", parameter_definition_name="capacity_margin_method",
     ):
-        if pv["parsed_value"] == "manual":
+        if pv["parsed_value"] in ("manual", "share_of_peak"):
             capacity_margin_groups[pv["entity_byname"][0]] = []
     if not capacity_margin_groups:
         return
@@ -728,25 +730,26 @@ def validate_capacity_margin_groups(db, logger: logging.Logger) -> None:
         g, n = ent["entity_byname"][0], ent["entity_byname"][1]
         if g in capacity_margin_groups:
             capacity_margin_groups[g].append(n)
-    storage_nodes: set[str] = set()
+    node_type: dict[str, str] = {}
     for pv in db.find_parameter_values(
         entity_class_name="node", parameter_definition_name="node_type",
     ):
-        if pv["parsed_value"] == "storage":
-            storage_nodes.add(pv["entity_byname"][0])
-    for g, nodes in capacity_margin_groups.items():
-        storage_in_group = [n for n in nodes if n in storage_nodes]
+        node_type[pv["entity_byname"][0]] = pv["parsed_value"]
+    for g, nodes in sorted(capacity_margin_groups.items()):
+        storage_in_group = [n for n in nodes if node_type.get(n) == "storage"]
         if storage_in_group and len(storage_in_group) == len(nodes):
             raise FlexToolConfigError(
                 f"Capacity margin group '{g}' contains only storage nodes "
-                f"({', '.join(storage_in_group)}). The capacity margin constraint "
-                f"excludes storage nodes, so this group has no valid nodes."
+                f"({', '.join(storage_in_group)}). The capacity margin covers the demand of the group's "
+                f"other nodes, so this group has none. Add the nodes whose demand the margin is for."
             )
-        elif storage_in_group:
-            logger.warning(
-                "Capacity margin group '%s' contains storage nodes (%s) which will "
-                "be excluded from the capacity margin constraint.",
-                g, ', '.join(storage_in_group),
+        period_nodes = sorted(n for n in nodes if node_type.get(n) == "balance_within_period")
+        if period_nodes:
+            raise FlexToolConfigError(
+                f"Capacity margin group '{g}' contains balance_within_period nodes "
+                f"({', '.join(period_nodes)}). Their energy balances over the period, not at each time step, "
+                f"so the capacity margin, which holds at each time step, cannot apply to them. Leave them out "
+                f"of the group."
             )
 
 
@@ -771,13 +774,15 @@ def _entities_with_value(db, entity_class: str, parameter: str, value: str) -> s
 # (limit parameter, method/flag parameter, value that switches the limit on)
 _GROUP_LIMIT_FLAGS: tuple[tuple[str, str, str], ...] = (
     ("capacity_margin", "capacity_margin_method", "manual"),
+    ("capacity_margin_share", "capacity_margin_method", "share_of_peak"),
     ("inertia_limit", "has_inertia", "yes"),
     ("non_synchronous_limit", "has_non_synchronous", "yes"),
 )
 
 # What a flagged group without the limit gets (the model reads the limit as 0).
 _GROUP_LIMIT_ABSENT: dict[str, str] = {
-    "capacity_margin": "its capacity must cover the peak net load (margin 0)",
+    "capacity_margin": "its capacity must cover its demand (margin 0)",
+    "capacity_margin_share": "its capacity must cover its demand (margin 0)",
     "inertia_limit": "it has no inertia requirement",
     "non_synchronous_limit": "it reads as 0, so no non-synchronous infeed is allowed (violations are penalised)",
 }
@@ -787,8 +792,9 @@ def validate_group_limit_flags(db, logger: logging.Logger) -> None:
     """Warn about group limits and their method / flag that do not go together.
 
     The capacity margin, inertia and non-synchronous constraints are built for the groups whose
-    ``capacity_margin_method`` is ``manual`` / ``has_inertia`` is ``yes`` / ``has_non_synchronous``
-    is ``yes``, and nowhere else.  Warnings (``db`` is scenario-filtered):
+    ``capacity_margin_method`` is ``manual`` (``capacity_margin``) or ``share_of_peak``
+    (``capacity_margin_share``) / ``has_inertia`` is ``yes`` / ``has_non_synchronous`` is ``yes``, and
+    nowhere else.  Warnings (``db`` is scenario-filtered):
 
     * a non-zero limit on a group without its method / flag: the limit is ignored;
     * the method / flag on a group with no limit value at all: the model reads the limit as 0.  An

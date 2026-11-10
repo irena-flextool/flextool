@@ -263,6 +263,10 @@ def run(
     # ── L8 batch 54 ───────────────────────────────────────────────────
     _period.emit_pdtNodeInflow(input_dir, solve_data_dir, provider=provider)
     _ck("pdtNodeInflow")
+    # ── capacity margin share_of_peak: the groups' peak demand over each period's original timeline ──
+    from flextool.engine.preprocess.emit import _capacity_margin_peak
+    _capacity_margin_peak.emit_capacity_margin_peak(input_dir, solve_data_dir, provider=provider)
+    _ck("capacity_margin_peak")
     # ── energy_margin: invest-only, positive-inflow demand margin ─────
     # Multiplies matching nodes' pdtNodeInflow rows by their margin ONLY
     # in the invest solve; runs BEFORE the positive/negative split (batch

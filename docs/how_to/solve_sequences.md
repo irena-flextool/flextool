@@ -371,7 +371,7 @@ The margin is extra demand for the investment decision only, not load: it does n
 
 The energy margin is a per-node lever for regions whose adequacy gap is driven by VRE optimism and can be closed by building more of an investable response (more VRE, storage, or imports). It cannot help a region whose VRE collapses to near zero during the stress period when the only investable response is more VRE that serves the same demand — those regions need firm capacity or imports instead.
 
-It is complementary to the `capacity_margin_method` (see the [group reference](../reference/groups.md#limits-for-nodes)): `capacity_margin_method` targets peak-capacity adequacy (headroom above the peak net load), whereas the energy margin targets sustained-energy adequacy across the year.
+It is complementary to the `capacity_margin_method` (see the [group reference](../reference/groups.md#the-capacity-margin)): `capacity_margin_method` targets peak-capacity adequacy (firm and VRE capacity above the demand at every time step), whereas the energy margin targets sustained-energy adequacy across the year.
 
 ### Peak memory in long rolling and nested chains
 

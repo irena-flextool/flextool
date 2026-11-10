@@ -16,7 +16,11 @@ Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
   ``timeset_duration`` typo;
 * writes the behaviour-change markers only on a database whose results change (a
   solve with ``new_stepduration``; with also an ``energy_margin_adder`` value, the
-  adder marker too).
+  adder marker too);
+* adds ``share_of_peak`` to ``capacity_margin_methods`` and ``group.capacity_margin_share``
+  (float / 1d_map, group ``investment``, no default), rewrites the ``capacity_margin_method`` /
+  ``capacity_margin`` descriptions, and writes the marker ``capacity_margin_counts_by_flow``
+  only on a database with a ``manual`` capacity-margin group.
 
 It changes no other definition and no value, and a rerun commits nothing.
 """
@@ -52,9 +56,11 @@ ADDER = ("node", "energy_margin_adder")
 DURATION = ("timeset", "timeset_duration")
 EFFICIENCY_CHANGED = {("unit", name) for name in m._V79_UNIT_EFFICIENCY_DESCRIPTIONS}
 COEFF_CHANGED = set(m._V79_CONSTRAINT_COEFF_PARAMETERS)
+SHARE_NEW = ("group", "capacity_margin_share")
+MARGIN_CHANGED = {("group", "capacity_margin_method"), ("group", "capacity_margin")}
 #: Every definition the step adds or changes.
 ALL_CHANGED = (set(ONLINE_NEW) | set(RAMP_CHANGED) | set(REDUCE_NEW) | set(GROUP_LIMITS_CHANGED)
-               | {ADDER, DURATION} | EFFICIENCY_CHANGED | COEFF_CHANGED)
+               | {ADDER, DURATION} | EFFICIENCY_CHANGED | COEFF_CHANGED | {SHARE_NEW} | MARGIN_CHANGED)
 
 
 def _defs(db) -> dict:
@@ -122,6 +128,8 @@ def _migrate(tmp_path_factory, tag: str, values: dict) -> dict:
             _set(db, "solve", solve, "new_stepduration", values["solve"], alt)
         if "node" in values:
             _set(db, "node", node, "energy_margin_adder", values["node"], alt)
+        if "group" in values:
+            _set(db, "group", "stoch_g", "capacity_margin_method", values["group"], alt)
         if values:
             db.commit_session("test values")
         before, lists_before, markers_before = _defs(db), _lists(db), _markers(db)
@@ -267,6 +275,33 @@ def test_markers_name_the_solves_and_nodes(tmp_path_factory, monkeypatch) -> Non
         _rerun_changes_nothing(db, m._migrate_v79_schema_batch, monkeypatch)
 
 
+# ─── capacity margin by entity class, share_of_peak ─────────────────────
+
+
+def test_adds_share_of_peak_and_the_share(plain) -> None:
+    shipped = _shipped()
+    assert plain["lists_before"]["capacity_margin_methods"] == ["none", "manual"]
+    assert plain["lists_after"]["capacity_margin_methods"] == ["none", "manual", "share_of_peak"]
+    assert SHARE_NEW not in plain["before"]
+    types, group, description, default, value_list = plain["after"][SHARE_NEW][:5]
+    assert types == ("float", "1d_map") and group == "investment" and default is None and value_list is None
+    assert description == shipped[SHARE_NEW] and description.startswith("[-] ")
+    for key in MARGIN_CHANGED:
+        assert plain["after"][key][2] == shipped[key] != plain["before"][key][2]
+        assert plain["after"][key][:2] + plain["after"][key][3:] == plain["before"][key][:2] + plain["before"][key][3:]
+    assert "share_of_peak" in shipped[("group", "capacity_margin_method")]
+
+
+def test_capacity_margin_marker_only_with_a_manual_group(tmp_path_factory, plain, monkeypatch) -> None:
+    assert "capacity_margin_counts_by_flow" not in plain["markers"]
+    none = _migrate(tmp_path_factory, "v79_cm_none", {"group": "none"})
+    assert "capacity_margin_counts_by_flow" not in none["markers"]
+    manual = _migrate(tmp_path_factory, "v79_cm_manual", {"group": "manual"})
+    assert json.loads(manual["markers"]["capacity_margin_counts_by_flow"]) == {"since": 79, "groups": ["stoch_g"]}
+    with DatabaseMapping(manual["url"]) as db:
+        _rerun_changes_nothing(db, m._v79_capacity_margin, monkeypatch)
+
+
 # ─── the step as a whole ─────────────────────────────────────────────────
 
 
@@ -275,12 +310,14 @@ def test_changes_nothing_else(plain) -> None:
     assert ({k: v for k, v in plain["after"].items() if k not in skip}
             == {k: v for k, v in plain["before"].items() if k not in skip})
     lists_after = {k: v for k, v in plain["lists_after"].items() if k not in REDUCE_NEW.values()}
-    assert lists_after == plain["lists_before"]
+    lists_before = dict(plain["lists_before"])
+    lists_before["capacity_margin_methods"] = [*lists_before["capacity_margin_methods"], "share_of_peak"]
+    assert lists_after == lists_before
 
 
 @pytest.mark.parametrize("part", [
     "_v79_constraint_online_coeff", "_v79_ramp_cost_descriptions", "_v79_reduce_detail_methods",
-    "_v79_group_limits_by_time", "_v79_solve_step_series", "_migrate_v79_schema_batch"])
+    "_v79_group_limits_by_time", "_v79_solve_step_series", "_v79_capacity_margin", "_migrate_v79_schema_batch"])
 def test_rerun_is_idempotent(plain, part: str, monkeypatch) -> None:
     with DatabaseMapping(plain["url"]) as db:
         _rerun_changes_nothing(db, getattr(m, part), monkeypatch)

@@ -527,25 +527,50 @@ def test_user_constraint_mixing_coarse_and_fine_flows_stays_per_step(tmp_path_fa
     assert sorted(_keys(c)[-1] for c in pipe) == _DAYS
 
 
-# Capacity margin of h2_A in an investment solve: its consuming unit liquefier_A is coarse.
+# Capacity margin in an investment solve.  Its flow members are the processes at its nodes that do not count at
+# capacity (storage-backed units, connections, consumption).  h2_A has the hourly connection electrolyser_A (from
+# elec_A) and the coarse liquefier_A: a mixed row.  h2_sink, a daily node fed only by the daily connection h2_link
+# from h2_A, has one coarse member.
+_INVEST = [["solve", "lh2_week", "invest_periods", b64({"value_type": "str", "data": ["y2030"]}, "array")],
+           ["solve", "lh2_week", "realized_invest_periods", b64({"value_type": "str", "data": ["y2030"]}, "array")]]
 _CM_ENTS = _group("cm_h2", ["h2_A"])
 _CM = [["group", "cm_h2", "capacity_margin_method", _s("manual")], ["group", "cm_h2", "capacity_margin", _f(10.0)],
-       ["group", "cm_h2", "penalty_capacity_margin", _f(100.0)],
-       ["solve", "lh2_week", "invest_periods", b64({"value_type": "str", "data": ["y2030"]}, "array")],
-       ["solve", "lh2_week", "realized_invest_periods", b64({"value_type": "str", "data": ["y2030"]}, "array")]]
+       ["group", "cm_h2", "penalty_capacity_margin", _f(100.0)]] + _INVEST
+_CM_SINK_ENTS = (_group("cm_sink", ["h2_sink"])
+                 + [["node", "h2_sink", None], ["group__node", ["daily_group", "h2_sink"], None],
+                    ["connection", "h2_link", None], ["connection__node__node", ["h2_link", "h2_A", "h2_sink"], None]])
+_CM_SINK = [["node", "h2_sink", "node_type", _s("balance")], ["node", "h2_sink", "inflow", _f(-5.0)],
+            ["connection", "h2_link", "existing", _f(100.0)], ["connection", "h2_link", "efficiency", _f(1.0)],
+            ["connection", "h2_link", "transfer_method", _s("regular")],
+            ["group", "cm_sink", "capacity_margin_method", _s("manual")],
+            ["group", "cm_sink", "capacity_margin", _f(10.0)],
+            ["group", "cm_sink", "penalty_capacity_margin", _f(100.0)]] + _INVEST
 
 
-def test_capacity_margin_of_coarse_consumers_is_one_row_per_day(tmp_path_factory, monkeypatch) -> None:
-    """Group cm_h2 (h2_A) with a capacity margin: the unit consuming from h2_A (liquefier_A) is coarse, so the
-    margin has one capacityMargin_coarse row per day and none per hour; without a time-varying profile or inflow
-    at h2_A it is the hourly row, so the objective equals the tied hourly model's."""
-    coarse = _case(tmp_path_factory, "rr_cm", _CM, _CM_ENTS)
+def test_capacity_margin_of_coarse_flows_is_one_row_per_day(tmp_path_factory, monkeypatch) -> None:
+    """Group cm_sink (h2_sink): its only flow member, the connection h2_link, is coarse, so the margin has one
+    capacityMargin_coarse row per day and none per hour; with constant inflow it is the hourly row, so the
+    objective equals the tied hourly model's."""
+    coarse = _case(tmp_path_factory, "rr_cm", _CM_SINK, _CM_SINK_ENTS)
     fd = last_stochastic(coarse).flex_data
+    assert "h2_link" in _coarse_procs(fd)
     pb = build(fd)
-    assert _steps_of(row_terms(pb, "capacityMargin_coarse", "cm_h2,")) == _DAYS
-    assert not row_terms(pb, "capacityMargin", "cm_h2,")
+    assert _steps_of(row_terms(pb, "capacityMargin_coarse", "cm_sink,")) == _DAYS
+    assert not row_terms(pb, "capacityMargin", "cm_sink,")
     _tied_fine(monkeypatch)
-    _assert_equals_tied(coarse, _case(tmp_path_factory, "rr_cm_fine", _CM, _CM_ENTS))
+    _assert_equals_tied(coarse, _case(tmp_path_factory, "rr_cm_fine", _CM_SINK, _CM_SINK_ENTS))
+
+
+def test_capacity_margin_mixing_coarse_and_fine_flows_stays_per_step(tmp_path_factory) -> None:
+    """Group cm_h2 (h2_A): the hourly connection electrolyser_A and the coarse liquefier_A both enter by their
+    flow, so the rows stay per solve step (168) and read liquefier_A's flow at one column per day."""
+    fd = last_stochastic(_case(tmp_path_factory, "rr_cm_mixed", _CM, _CM_ENTS)).flex_data
+    assert "liquefier_A" in _coarse_procs(fd)
+    pb = build(fd)
+    rows = row_terms(pb, "capacityMargin", "cm_h2,")
+    assert len(rows) == 168 and not row_terms(pb, "capacityMargin_coarse", "cm_h2,")
+    liq = {c for terms in rows.values() for c in terms if c.startswith("v_flow[liquefier_A,")}
+    assert sorted({_keys(c)[-1] for c in liq}) == _DAYS
 
 
 # ---------------------------------------------------------------------------

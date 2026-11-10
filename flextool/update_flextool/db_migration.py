@@ -6148,6 +6148,67 @@ def _v79_solve_step_series(db) -> None:
                             json.dumps({"since": 79, "solves": solves, "nodes": nodes}))
 
 
+#: v79: the capacity margin counts firm and VRE capacity derated by availability, and storage-backed units,
+#: connections and consumption by their flow; ``share_of_peak`` sets the margin as a share of the peak demand.
+_V79_CAPACITY_MARGIN_DESCRIPTIONS: dict[tuple[str, str], str] = {
+    ("group", "capacity_margin_method"): (
+        "[choice] Whether the group needs a capacity margin in investment solves, and how the margin is given. "
+        "none (default): no margin. manual: capacity_margin MW. share_of_peak: capacity_margin_share times the "
+        "group's peak demand in the period. At every time step of an investment period, the capacity of the "
+        "group's firm units (capacity x availability x capacity_max_coeff) and VRE units (capacity x profile x "
+        "availability) must cover the group's demand plus the margin. Units fed from a storage node, "
+        "connections and the units consuming from the group count by their actual flow, so exports and losses "
+        "inside the group add to the requirement. Units fed from fuel or commodity nodes count at capacity: the "
+        "fuel is assumed to last."),
+    ("group", "capacity_margin"): (
+        "[MW] Capacity the group needs above its demand at every time step of an investment period. Used only "
+        "with capacity_margin_method manual. No value means 0 (the demand must still be covered). Constant or "
+        "period."),
+    ("group", "capacity_margin_share"): (
+        "[-] e.g. 0.15 means 15%. Capacity margin as a share of the group's peak demand: the largest sum of the "
+        "demand of the group's nodes over the period's full time series (before representative periods and "
+        "new_stepduration). Used only with capacity_margin_method share_of_peak. No value means 0. Constant or "
+        "period."),
+}
+
+
+def _v79_capacity_margin(db) -> None:
+    """The capacity margin counts by entity class and gets a ``share_of_peak`` method (part of v79).
+
+    ``share_of_peak`` joins the ``capacity_margin_methods`` value list, ``group.capacity_margin_share`` (float or
+    1d_map, no default, group ``investment``) is added, and the ``capacity_margin_method`` / ``capacity_margin``
+    descriptions are rewritten.  No value is rewritten.  Behaviour-change marker ``capacity_margin_counts_by_flow``
+    (``{"since": 79, "groups": [...]}``) only on a database that has a group with ``capacity_margin_method``
+    ``manual``: its results change.  Idempotent: a rerun finds the value, the definition, the descriptions and the
+    marker written.
+    """
+    if not db.get_item("entity_class", name="group"):
+        return
+    if db.get_item("parameter_value_list", name="capacity_margin_methods"):
+        items = db.get_items("list_value", parameter_value_list_name="capacity_margin_methods")
+        if "share_of_peak" not in {x["parsed_value"] for x in items}:
+            val, typ = to_database("share_of_peak")
+            db.add_list_value(parameter_value_list_name="capacity_margin_methods", value=val, type=typ,
+                              index=max((x["index"] for x in items), default=-1) + 1)
+    for (cls, name), text in sorted(_V79_CAPACITY_MARGIN_DESCRIPTIONS.items()):
+        pdef = _pdef_or_none(db, cls, name)
+        if name == "capacity_margin_share":
+            fields = {"parameter_type_list": ("float", "1d_map"), "parameter_group_name": "investment",
+                      "description": text}
+            if pdef is None:
+                db.add_parameter_definition(entity_class_name=cls, name=name, **fields)
+            elif any((tuple(pdef[k] or ()) if k == "parameter_type_list" else pdef[k]) != v
+                     for k, v in fields.items()):
+                db.update_parameter_definition(id=pdef["id"], **fields)
+        elif pdef is not None and (pdef["description"] or "") != text:
+            db.update_parameter_definition(id=pdef["id"], description=text)
+    groups = sorted({pv["entity_byname"][0] for pv in db.find_parameter_values(
+        entity_class_name="group", parameter_definition_name="capacity_margin_method")
+        if from_database(pv["value"], pv["type"]) == "manual"})
+    if groups:
+        _v77_set_marker(db, "capacity_margin_counts_by_flow", json.dumps({"since": 79, "groups": groups}))
+
+
 def _migrate_v79_schema_batch(db) -> None:
     """All schema changes of database version 79 (v78 -> v79), in one step.
 
@@ -6158,6 +6219,9 @@ def _migrate_v79_schema_batch(db) -> None:
     5. A solve's ``new_stepduration`` combines every time series by its kind: descriptions and the
        behaviour-change markers ``solve_step_series_combined`` / ``energy_margin_adder_per_original_step``
        (:func:`_v79_solve_step_series`).
+    6. The capacity margin counts firm and VRE capacity derated by availability and the other entities by their
+       flow; ``share_of_peak`` and ``group.capacity_margin_share``; the behaviour-change marker
+       ``capacity_margin_counts_by_flow`` (:func:`_v79_capacity_margin`).
 
     No value is rewritten.  Each part is idempotent, so a rerun of the step changes nothing.
     """
@@ -6166,8 +6230,10 @@ def _migrate_v79_schema_batch(db) -> None:
     _v79_reduce_detail_methods(db)
     _v79_group_limits_by_time(db)
     _v79_solve_step_series(db)
+    _v79_capacity_margin(db)
     _commit_step(db, "v79: constraint_online_coeff, ramp_cost, reduce_*_detail_method, time-varying group "
-                     "limits, time series combined over a solve's new_stepduration step")
+                     "limits, time series combined over a solve's new_stepduration step, capacity margin by "
+                     "entity class and share_of_peak")
 
 
 def _v79_adder_has_value(value) -> bool:

@@ -829,7 +829,8 @@ def coarse_row_members(flex_data: "FlexData", family: str) -> pl.DataFrame:
     variable keyed like the row (the inertia and non-synchronous slacks) has the steps of its row.  A superset of
     the row's entities is safe (one more member can only keep the row at the solve's step).
 
-    * ``capacity_margin`` (key ``g``): the units consuming from a node of g without a storage state;
+    * ``capacity_margin`` (key ``g``): the processes whose flows enter the row (storage-backed units, connections,
+      consumption: the arcs at N(g) that do not count at capacity, ``_group_slack.capacity_margin_counted_arcs``);
     * ``inertia`` (``g``): the processes with an inertia constant on a side at a node of g;
     * ``non_sync`` (``g``): the processes with an arc at a node of g, without those inside g;
     * ``instant_flow`` (``g``): the processes of the flow group (``group_process_node``);
@@ -857,15 +858,18 @@ def coarse_row_members(flex_data: "FlexData", family: str) -> pl.DataFrame:
             return empty
         nodes = gn.filter(pl.col("g").is_in(sorted(gs)))
         if family == "capacity_margin":
-            nodes = nodes.filter(~pl.col("n").is_in(sorted(_frame_values(getattr(d, "nodeState", None), "n"))))
-            units = _frame_values(getattr(d, "process_unit", None), "p")
-            for frame in (d.process_source_sink_eff, d.process_source_sink_noEff):
-                arcs = _utf8_frame(frame, ("p", "source", "sink"))
-                if arcs is None:
-                    continue
-                if units:
-                    arcs = arcs.filter(pl.col("p").is_in(sorted(units)))
-                procs(_arcs_at_nodes(arcs, nodes, "source"))
+            from flextool.engine.model import _group_slack
+
+            nodes = _utf8_frame(_group_slack.capacity_margin_nodes(d), ("g", "n"))
+            if nodes is None:
+                return empty
+            at = pl.concat([_arcs_at_nodes(pss, nodes, "source"), _arcs_at_nodes(pss, nodes, "sink")],
+                           how="diagonal_relaxed").select("g", "p", "source", "sink")
+            counted = _group_slack.capacity_margin_counted_arcs(d)
+            if counted is not None:
+                at = at.join(counted.select("g", "p", "source", "sink"), on=["g", "p", "source", "sink"],
+                             how="anti")
+            procs(at.select("g", "p").unique())
         elif family == "inertia":
             for side in ("source", "sink"):
                 idx = _utf8_frame(getattr(d, f"process_{side}_inertia", None), ("p", side))
@@ -1557,7 +1561,9 @@ class FlexData:
     process_group_inside_nonSync: pl.DataFrame | None = None  # (p, g)
     p_inv_group_cap: Param | None = None                 # (g, d)
     p_group_capacity_for_scaling: Param | None = None    # (g, d)
-    pdGroup_capacity_margin: Param | None = None         # (g, d)
+    pdGroup_capacity_margin: Param | None = None         # (g, d) MW: manual, and share_of_peak once resolved
+    pdGroup_capacity_margin_share: Param | None = None   # (g, d) share of the peak (share_of_peak groups)
+    pdGroup_peak_demand: Param | None = None             # (g, d) MW: peak demand over the period's timeline
     pdGroup_penalty_capacity_margin: Param | None = None # (g, d)
     pdtGroup_inertia_limit: Param | None = None          # authored dims ⊆ (g, d, t)
     pdGroup_penalty_inertia: Param | None = None         # (g, d)
@@ -5422,6 +5428,12 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # Reserves of groups without nodes in the solve are left out (with a warning).  After every producer
         # of the reserve sets and parameters, and of group_node.
         _reserve.drop_groups_without_nodes(flex_data)
+
+        # The margin of a share_of_peak capacity-margin group: capacity_margin_share times its peak demand, in
+        # pdGroup_capacity_margin with the manual groups' MW.  After the direct-parameter pass (the share) and
+        # load_data (the peak).
+        if db_reader is not None:
+            _group_slack.resolve_capacity_margin(flex_data)
 
         # The minFlow_minload floor's units: min_load > 0 on some (d, t) of this solve, read from the
         # solve-resolved p_min_load (every DB path, synthetic sub-solves included, has produced it by now).
