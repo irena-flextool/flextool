@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING
 import polars as pl
 import spinedb_api as api
 from flextool.update_flextool.db_handle import open_database_mapping
+from flextool.engine.input._solve_state import FlexToolConfigError
 
 if TYPE_CHECKING:
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
@@ -139,6 +140,7 @@ def run(
         validate_profile_links,
         validate_zero_conversion_coeff,
         validate_basic_sanity,
+        warn_profiles_as_percent,
         value_alternatives,
     )
     from flextool.input_derivation._dc_power_flow import derive_dc_power_flow
@@ -201,10 +203,19 @@ def run(
         time_vocab = _scenario_time_vocab(backend)
         validate_node_inflow_not_period(backend, time_vocab)
         validate_time_series_keys(backend, time_vocab, whole_db.get("time"))
-        validate_period_keys(backend, whole_db.get("time"))
-        validate_profile_links(db, whole_db.get("profile_alternatives"))
-        validate_basic_sanity(db, {step for steps in time_vocab[1].values() for step in steps})
+        # The input-value checks report together: one FlexToolConfigError with the errors of all three (their
+        # warnings are printed as they go), so a database with several kinds of mistake needs one rerun.
+        input_errors: list[str] = []
+        for check in (lambda: validate_period_keys(backend, whole_db.get("time")),
+                      lambda: validate_profile_links(db, whole_db.get("profile_alternatives")),
+                      lambda: validate_basic_sanity(backend)):
+            try:
+                check()
+            except FlexToolConfigError as err:
+                input_errors.append(str(err))
         validate_zero_conversion_coeff(db)
+        if input_errors:
+            raise FlexToolConfigError("\n\n".join(input_errors))
 
         timesteps: list[str] | None = None
         for spec in _PARAMETER_SPECS:
@@ -240,6 +251,7 @@ def run(
                     .drop("__explicit")
                 )
             provider.put(_provider_key(spec["filename"]), frame)
+        warn_profiles_as_percent(backend, provider)
         _mem("spine_db_read_end", "Spine DB loaded")
 
         # Step 2 — DB-driven derivations.

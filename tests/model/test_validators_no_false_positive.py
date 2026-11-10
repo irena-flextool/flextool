@@ -55,11 +55,10 @@ def _check(url: str, scenario: str) -> str:
         backend._db = db
         backend._api = api
         backend._scenario_name = scenario
-        _periods, timelines = v._scenario_time_vocab(backend)
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             v.validate_profile_links(db, alternatives)
-            v.validate_basic_sanity(db, {step for steps in timelines.values() for step in steps})
+            v.validate_basic_sanity(backend)
             v.validate_zero_conversion_coeff(db)
             v.validate_timeline_timestep_duration(db)
             v.validate_period_keys(backend, whole)

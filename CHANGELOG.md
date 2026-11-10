@@ -10,18 +10,21 @@
 - **Fix: a unit flow with `conversion_flow_coeff` 0 and nothing tying it was free without a word (#213).** Such a
   flow is outside the conversion and every capacity, ramp and minimum-load limit, so a unit whose only output had
   coefficient 0 produced free power. A warning, printed once per run, now names each zero-coefficient flow that no
-  user constraint, flowGroup maximum or *upper_limit* / *fixed* profile ties, a unit with an input whose outputs
-  all have coefficient 0 (it uses no input), and `capacity_max_coeff` / `capacity_min_coeff` on such an output (no
-  effect). The narrower "no minimum-load floor" warning for such units is replaced. The model is unchanged.
-- **Fix: typing mistakes in common values ran on silently (#170).** The run now stops, before the data is read,
-  with one error that lists every value of: unit or connection `efficiency` at or below 0, unit `min_load` outside
-  [0, 1], `availability` below 0, `capacity_max_coeff` below 0, an invest / retire / cumulative minimum above its
-  maximum (total, and per period) when the `invest_method` uses it, `lifetime` at or below 0 on an entity that can
-  invest or retire, and `existing` as a time series, keyed by time steps or keyed by numbers such as 2020. Before,
-  these turned a unit off, paid it to run, ended "infeasible" without a hint, gave no capacity or crashed.
-  Warnings: `availability` above 1, a profile above 1 on an *upper_limit* / *fixed* unit link, connection
-  `efficiency` above 1 and `virtual_unitsize` at or below 0. *Model parameters → Parameter groups and conventions*
-  has a new section *Input checks* listing them. Valid data runs as before.
+  user constraint, flowGroup maximum or *upper_limit* / *fixed* profile ties (an input is a free dump load on its
+  node, an output a free source), a unit with an input whose outputs all have coefficient 0 (it uses no input), and
+  `capacity_max_coeff` / `capacity_min_coeff` on such an output (no effect). The narrower "no minimum-load floor"
+  warning for such units is replaced. The model is unchanged.
+- **Fix: typing mistakes in common values ran on silently (#170).** The run now stops, before the data is read, with
+  one error that lists every value of (together with the period-key and profile-link errors): unit or connection
+  `efficiency` at or below 0, unit `min_load` outside [0, 1], `availability` below 0, `capacity_max_coeff` below 0,
+  an invest / retire / cumulative minimum above its maximum (total, and per period) when the `invest_method` uses
+  it, `lifetime` at or below 0 on an entity that can invest or retire, and `existing` as a time series, keyed by
+  time steps or keyed by numbers such as 2020 (a period whose name is also a time step is fine). Before, these
+  turned a unit off, paid it to run, ended "infeasible" without a hint, gave no capacity or crashed. Warnings:
+  `availability` above 1.5 and a profile above 1.5 on an *upper_limit* / *fixed* unit link (values above 1.5 look
+  like percentages; capacity factors slightly above 1 are not reported), connection `efficiency` above 1 and
+  `virtual_unitsize` at or below 0. *Model parameters → Parameter groups and conventions* has a new section *Input
+  checks* listing them. Valid data runs as before.
 - **Fix: a mistyped period key was dropped without a word (items 46, 65).** A period map keyed *y2020* in a
   model whose period is *p2020* gave `existing` 0, an extra key such as *p2030x* was ignored, and `startup_cost`
   keyed by time steps or by 2020 vanished or crashed. Now a map key of a period parameter that is not a period of

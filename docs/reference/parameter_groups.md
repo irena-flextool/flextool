@@ -71,8 +71,9 @@ The markers:
 ## Input checks
 
 Before it reads the parameters, FlexTool checks the data of the scenario for values it cannot use sensibly. An
-error stops the run and lists every offending value (class, entity, parameter, value, alternative and, for a map, the
-first key that is wrong) with what to do. A warning is printed once per run in the run log; the run goes on.
+error stops the run; one message lists every offending value of the period-key, profile-link and value checks
+(class, entity, parameter, value, alternative and, for a map, the first key that is wrong) with what to do, so one
+rerun fixes them all. A warning is printed once per scenario read in the run log; the run goes on.
 
 **Errors**
 
@@ -88,8 +89,6 @@ first key that is wrong) with what to do. A warning is printed once per run in t
   period; a constant applies to every period), `invest_min_total` / `invest_max_total`, `retire_min_total` /
   `retire_max_total` (unit, connection, node, group). No capacity could meet both.
 - `lifetime` at or below 0 on an entity that can invest or retire (the investment would be charged for no years).
-- `existing` as a time series or a map keyed by time steps (it cannot vary over time; use a constant or a period
-  map), or a map keyed by numbers such as 2020 (periods are names such as *p2020*).
 - A map key of a period parameter (`existing`, `invest_cost`, `startup_cost`, `co2_max_period`, `lifetime`, and
   every other parameter that takes a period map) that is not a period: the readers would drop the value without a
   word (*y2020* for *p2020* gave no capacity). Periods are the keys of every `period_timeset`, the solve period lists,
@@ -99,7 +98,9 @@ first key that is wrong) with what to do. A warning is printed once per run in t
   model), add the extra periods to `model.periods_available`. Maps keyed by something else (`constraint_flow_coeff`
   by constraint, `delay` by hours) are not period maps and are not checked.
 - A time-step key, a `time` level or a time series on a period parameter that cannot vary over time
-  (`startup_cost`, `invest_cost`, `lifetime`, ...), and numeric map keys (2020) on any period parameter.
+  (`existing`, `startup_cost`, `invest_cost`, `lifetime`, ...; use a constant or a period map), and numeric map
+  keys (2020) on any period parameter (periods are names such as *p2020*). A name that is both a period and a time
+  step is read as a period.
 - A timeline used by a solve (through a timeset named in a `period_timeset`) without `timestep_duration`, or with a
   step of 0 hours or less. Only the timelines a solve uses need durations: a spare timeline in the database is
   ignored.
@@ -108,13 +109,17 @@ first key that is wrong) with what to do. A warning is printed once per run in t
 
 - A `node__profile` or `connection__profile` link without a `profile_method` (the default *none* does not apply the
   profile).
-- `availability` above 1, and a profile above 1 on an *upper_limit* / *fixed* unit link (shares entered as percent?).
+- `availability` above 1.5, and a profile above 1.5 on an *upper_limit* / *fixed* unit link: values above 1.5 look
+  like percentages (95 for 0.95). A capacity factor slightly above 1 (rounding, measured data) is not reported. The
+  profile check runs right after the data is read.
 - Connection `efficiency` above 1 (creates energy).
 - `virtual_unitsize` at or below 0 (ignored).
 - A map of a period parameter that can also vary over time (`availability`, `other_operational_cost`, ...) without
   an index name whose keys are neither periods nor time steps (the value is not used).
 - A unit flow with `conversion_flow_coeff` 0 that no user constraint, flowGroup maximum or *upper_limit* / *fixed*
-  profile ties: only `max_flow_for_unconstrained_variables` bounds it. A unit with an input whose outputs all have
+  profile ties: only `max_flow_for_unconstrained_variables` bounds it. Such an input is a free dump load on its node,
+  such an output a free source. Tie it with a user constraint (`constraint_flow_coeff`), or give it a non-zero
+  `conversion_flow_coeff`. A unit with an input whose outputs all have
   coefficient 0 gets one warning (it uses no input). `capacity_max_coeff` / `capacity_min_coeff` on such an output
   has no effect.
 

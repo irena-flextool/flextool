@@ -1605,14 +1605,6 @@
     [
       "unit__inputNode",
       [
-        "ARG_H2toMeOH",
-        "ARG_elec"
-      ],
-      null
-    ],
-    [
-      "unit__inputNode",
-      [
         "ARG_H2toNH3",
         "ARG_H2"
       ],
@@ -1735,14 +1727,6 @@
       [
         "AUS_H2toMeOH",
         "AUS_H2"
-      ],
-      null
-    ],
-    [
-      "unit__inputNode",
-      [
-        "AUS_H2toMeOH",
-        "AUS_elec"
       ],
       null
     ],
@@ -1895,14 +1879,6 @@
       [
         "CHI_H2toMeOH",
         "CHI_H2"
-      ],
-      null
-    ],
-    [
-      "unit__inputNode",
-      [
-        "CHI_H2toMeOH",
-        "CHI_elec"
       ],
       null
     ],
@@ -5245,15 +5221,6 @@
     [
       "unit__inputNode",
       [
-        "ARG_H2toMeOH",
-        "ARG_elec"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "unit__inputNode",
-      [
         "ARG_H2toNH3",
         "ARG_H2"
       ],
@@ -5391,15 +5358,6 @@
       [
         "AUS_H2toMeOH",
         "AUS_H2"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "unit__inputNode",
-      [
-        "AUS_H2toMeOH",
-        "AUS_elec"
       ],
       "shared",
       true
@@ -5571,15 +5529,6 @@
       [
         "CHI_H2toMeOH",
         "CHI_H2"
-      ],
-      "shared",
-      true
-    ],
-    [
-      "unit__inputNode",
-      [
-        "CHI_H2toMeOH",
-        "CHI_elec"
       ],
       "shared",
       true
@@ -22673,19 +22622,6 @@
     [
       "unit__inputNode",
       [
-        "ARG_H2toMeOH",
-        "ARG_elec"
-      ],
-      "conversion_flow_coeff",
-      [
-        "MC4w",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit__inputNode",
-      [
         "AUS_H2toMeOH",
         "AUS_CO2"
       ],
@@ -22718,19 +22654,6 @@
       "conversion_flow_coeff",
       [
         "MS4w",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit__inputNode",
-      [
-        "AUS_H2toMeOH",
-        "AUS_elec"
-      ],
-      "conversion_flow_coeff",
-      [
-        "MC4w",
         "float"
       ],
       "shared"
@@ -22848,19 +22771,6 @@
       "conversion_flow_coeff",
       [
         "MS4w",
-        "float"
-      ],
-      "shared"
-    ],
-    [
-      "unit__inputNode",
-      [
-        "CHI_H2toMeOH",
-        "CHI_elec"
-      ],
-      "conversion_flow_coeff",
-      [
-        "MC4w",
         "float"
       ],
       "shared"

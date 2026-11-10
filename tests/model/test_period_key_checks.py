@@ -119,7 +119,9 @@ def test_numeric_existing_keys_stop_the_run_without_a_polars_error(tmp_path_fact
                         values=[["unit", "coal_plant", "existing", _map([[2020.0, 500.0]], index_type="float")]])
     with pytest.raises(FlexToolConfigError) as err:
         run(tmp_path_factory, url, scen)
-    assert "is a map keyed by numbers (2020): periods are names such as 'p2020'" in str(err.value)
+    assert str(err.value) == PREFIX + (
+        "unit 'coal_plant', parameter 'existing' (alternative 'b46_num_ex'): map keys are numbers ('2020.0'); "
+        "periods are names such as 'p2020'. Did you mean 'p2020'?") + ESCAPE
 
 
 def test_existing_time_map_stops_the_run(tmp_path_factory) -> None:
@@ -127,8 +129,26 @@ def test_existing_time_map_stops_the_run(tmp_path_factory) -> None:
                         values=[["unit", "coal_plant", "existing", _map([["t0001", 500.0], ["t0002", 500.0]])]])
     with pytest.raises(FlexToolConfigError) as err:
         run(tmp_path_factory, url, scen)
-    assert "existing (alternative 'b46_ex_t') is keyed by time step 't0001': existing cannot vary over time" \
-        in str(err.value)
+    assert str(err.value) == PREFIX + (
+        "unit 'coal_plant', parameter 'existing' (alternative 'b46_ex_t'): map key 't0001' is a time step, but "
+        "existing cannot vary over time. Use a constant or a map keyed by period (p2020: ..., p2030: ...).") + ESCAPE
+
+
+def test_existing_as_a_time_series_is_an_error(tmp_path_factory) -> None:
+    series = b64({"index": {"start": "2020-01-01T00:00:00", "resolution": "1h"}, "data": [500.0, 500.0]},
+                 "time_series")
+    msg = _error(tmp_path_factory, "b46_ex_ts", [["unit", "coal_plant", "existing", series]])
+    assert msg == PREFIX + (
+        "unit 'coal_plant', parameter 'existing' (alternative 'b46_ex_ts') is a time series, but existing cannot "
+        "vary over time. Use a constant or a map keyed by period (p2020: ..., p2030: ...).") + ESCAPE
+
+
+@pytest.mark.parametrize("index_name", ["period", None])
+def test_period_named_like_a_time_step_is_a_period(tmp_path_factory, index_name) -> None:
+    """#76: a period whose name is also a time step name ('t0001', in model.periods_available) keys a period map."""
+    _silent(tmp_path_factory, f"b46_p76_{index_name}", [
+        ["model", "flexTool", "periods_available", b64({"value_type": "str", "data": ["t0001"]}, "array")],
+        ["unit", "coal_plant", "existing", _map([["p2020", 500.0], ["t0001", 400.0]], index_name)]])
 
 
 def test_period_of_another_scenario_is_fine(tmp_path_factory) -> None:

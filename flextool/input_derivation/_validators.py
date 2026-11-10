@@ -29,9 +29,11 @@ import functools
 import json
 import logging
 import re
+import warnings
 from collections.abc import Iterable
 from dataclasses import dataclass
 
+import numpy as np
 import spinedb_api as api
 
 from flextool.engine.input._solve_state import FlexToolConfigError
@@ -58,6 +60,7 @@ __all__ = [
     "validate_profile_links",
     "validate_zero_conversion_coeff",
     "validate_basic_sanity",
+    "warn_profiles_as_percent",
     "value_alternatives",
 ]
 
@@ -1436,11 +1439,11 @@ def _entity_names(db, entity_class: str) -> set[str]:
     return {ent["entity_byname"][0] for ent in db.find_entities(entity_class_name=entity_class)}
 
 
-def _str_values(db, entity_class: str, parameter: str) -> dict[tuple[str, ...], str]:
-    """``{entity_byname: value}`` of the scenario's explicit string (list) values of ``entity_class.parameter``."""
+def _str_values(src, entity_class: str, parameter: str) -> dict[tuple[str, ...], str]:
+    """``{entity_byname: value}`` of the scenario's explicit string (list) values of ``entity_class.parameter``
+    (``src``: a ``SpineDBBackend`` or a DatabaseMapping, :func:`_pv_rows`)."""
     return {tuple(pv["entity_byname"]): str(pv["parsed_value"])
-            for pv in db.find_parameter_values(entity_class_name=entity_class, parameter_definition_name=parameter)
-            if pv["type"] is not None}
+            for pv in _pv_rows(src, entity_class, parameter) if pv["type"] is not None}
 
 
 def value_alternatives(db, entity_class: str, parameter: str) -> dict[str, list[str]]:
@@ -1591,10 +1594,13 @@ def validate_zero_conversion_coeff(db) -> None:
         for unit, node in sorted(zero[cls]):
             if (unit, node) in tied or (unit, node) in reported:
                 continue
-            _warn(f"{cls} ({unit}, {node}): conversion_flow_coeff is 0 and the {side} flow is in no user "
-                  "constraint (constraint_flow_coeff), flowGroup maximum or profile limit, so it has no capacity, "
-                  "ramp, minimum-load or fuel limit; only max_flow_for_unconstrained_variables "
-                  f"({limit:.15g}) bounds it. (A flowGroup min_instant_flow / min_cumulative_flow bounds it only from "
+            risk = (f"the unit can take any amount from '{node}' for free (a dump load on that node)"
+                    if side == "input" else
+                    f"the unit can put any amount into '{node}' for free (a free source on that node)")
+            _warn(f"{cls} ({unit}, {node}): conversion_flow_coeff is 0 and no user constraint, flowGroup maximum "
+                  f"or profile limit ties the {side} flow, so {risk}, up to max_flow_for_unconstrained_variables "
+                  f"({limit:.15g}). Tie it with a user constraint (constraint_flow_coeff), or give it a non-zero "
+                  "conversion_flow_coeff. (A flowGroup min_instant_flow / min_cumulative_flow bounds it only from "
                   "below.)")
     for param in ("capacity_max_coeff", "capacity_min_coeff"):
         for unit, node in sorted(set(_arc_values(db, "unit__outputNode", param)) & zero["unit__outputNode"]):
@@ -1653,15 +1659,100 @@ def _first_bad(parsed, bad) -> tuple[str | None, float] | None:
     return None
 
 
+_RAW_PUNCT = bytes.maketrans(b"{}[],:", b"      ")
+_RAW_RANK = re.compile(rb'"rank"\s*:\s*\d+')
+
+
+def _raw_numbers(raw, kind: str):
+    """The numeric elements of a ``float`` / ``map`` / ``time_series`` value read from its database JSON (one
+    ``json.loads``, the values as numpy arrays; no spinedb-api parse), or None when the fast read cannot tell
+    (another type, booleans or strings among the values, an unknown nested value): the caller then parses."""
+    if isinstance(raw, str):
+        raw = raw.encode()
+    if kind == "float":
+        try:
+            return [np.array([float(raw)])]
+        except ValueError:
+            return None
+    if kind not in ("map", "time_series"):
+        return None
+    if b"\\" not in raw and b'"float"' not in raw:
+        # Byte-level read (no JSON parse): outside the quoted strings (the keys, labels and stamps; no escape, so
+        # the quotes pair) and the ``"rank": n`` fields, a value's JSON holds only punctuation, the numbers and
+        # true / false / null (booleans and nulls are not numbers, as in :func:`_first_bad`).  A float index (unquoted keys) takes the JSON read.
+        bare = (b" ".join(_RAW_RANK.sub(b"", raw).split(b'"')[0::2]).translate(_RAW_PUNCT)
+                .replace(b"true", b" ").replace(b"false", b" ").replace(b"null", b" "))
+        if not bare.strip():
+            return []
+        with warnings.catch_warnings():
+            # A token that is not a number ends the C parse with a warning (a ValueError in later numpy).
+            warnings.simplefilter("error")
+            try:
+                return [np.fromstring(bare, sep=" ")]
+            except (ValueError, DeprecationWarning):
+                pass
+    try:
+        value = json.loads(raw)
+    except ValueError:
+        return None
+    out: list = []
+    stack = [value]
+    while stack:
+        node = stack.pop()
+        data = node.get("data") if isinstance(node, dict) else None
+        if isinstance(data, dict):
+            elements = list(data.values())
+        elif isinstance(data, list):
+            elements = [e[1] for e in data] if data and isinstance(data[0], list) else data
+        else:
+            return None
+        try:
+            arr = np.array(elements)
+        except ValueError:  # ragged
+            arr = None
+        if arr is not None and arr.dtype.kind in "fiu":
+            out.append(arr.astype(float, copy=False))
+            continue
+        for e in elements:
+            if isinstance(e, dict) and e.get("type") in ("map", "time_series"):
+                stack.append(e)
+            elif isinstance(e, (int, float)) and not isinstance(e, bool):
+                out.append(np.array([float(e)]))
+            elif e is not None and not isinstance(e, str):
+                return None
+    return out
+
+
+_UNREAD = object()
+
+
+def _bad_hit(pv, bad, numbers=_UNREAD) -> tuple[str | None, float] | None:
+    """:func:`_first_bad` of ``pv``'s value: the numeric screen (``numbers``, :func:`_raw_numbers` of the value
+    unless given; ``bad`` on arrays) first; the value is parsed only to name the key of a hit (or when the screen
+    cannot read it)."""
+    if numbers is _UNREAD:
+        numbers = _raw_numbers(pv["value"], pv["type"])
+    if numbers is not None and not any(arr.size and np.any(bad(arr)) for arr in numbers):
+        return None
+    return _first_bad(_parsed_then_evict(pv), bad)
+
+
 def _where(alt: str, key: str | None) -> str:
     return f"(alternative '{alt}'" + (f", at {key})" if key is not None else ")")
 
 
-def validate_basic_sanity(db, timesteps: set[str] | None = None) -> None:
+# Shares entered as percent: a share above this is reported.  Capacity factors slightly above 1 (rounding,
+# over-performance in measured or reanalysis series) are common; only percent data reaches 1.5.
+_PERCENT_SUSPECT = 1.5
+
+
+def validate_basic_sanity(src) -> None:
     """Values that make no sense, or are almost surely a typing mistake (#170).
 
-    Explicit values only (defaults are fine), every element of a constant, a map or a time series; the first bad
-    element is named.  Errors (one FlexToolConfigError listing all):
+    ``src``: the scenario-filtered ``SpineDBBackend`` (its bulk ``(class, param)`` index, shared with
+    :func:`validate_period_keys`) or a DatabaseMapping.  Explicit values only (defaults are fine), every element of a
+    constant, a map or a time series; the first bad element is named.  The values are screened from their database
+    JSON (numpy over the numbers); only a value with a hit is parsed.  Errors (one FlexToolConfigError listing all):
 
     * unit / connection ``efficiency`` ≤ 0 (no output, or paid to run);
     * unit ``min_load`` outside [0, 1]; ``availability`` < 0 (unit, connection, node);
@@ -1671,66 +1762,68 @@ def validate_basic_sanity(db, timesteps: set[str] | None = None) -> None:
       applies to every period, a period that only one of the two names is not compared), ``invest_min/max_total``,
       ``retire_min/max_total`` (unit, connection, node, group); the problem would be infeasible;
     * ``lifetime`` ≤ 0 on a unit / connection / node that can invest or retire (``invest_method`` other than
-      ``not_allowed``): the investment would be charged for no years;
-    * ``existing`` (unit, connection, node) as a time series or a map keyed by time steps (``timesteps``: the
-      scenario's): it cannot vary over time and such a value was read as no capacity; or a map keyed by numbers
-      (2020): periods are names, and such a value crashed the read.
+      ``not_allowed``): the investment would be charged for no years.
 
-    Warnings: ``availability`` > 1 (entered as percent?); connection ``efficiency`` > 1 (creates energy);
-    ``virtual_unitsize`` ≤ 0 (ignored); the profile of a ``unit__node__profile`` ``upper_limit`` / ``fixed`` link
-    above 1 (capacity factors entered as percent?).  Negative ``existing`` is not reported: it is the supported
-    "anti-energy" unit.
+    ``existing`` as a time series, keyed by time steps or by numbers is :func:`validate_period_keys`'.
+
+    Warnings: ``availability`` above 1.5 (entered as percent?); connection ``efficiency`` > 1 (creates energy);
+    ``virtual_unitsize`` ≤ 0 (ignored).  Profiles above 1.5 are :func:`warn_profiles_as_percent`' (after the read).
+    Negative ``existing`` is not reported: it is the supported "anti-energy" unit.  The warnings are printed before
+    an error is raised.
     """
     errors: list[str] = []
     warnings: list[str] = []
+    percent = (f"values above {_PERCENT_SUSPECT:g} look like percentages; {{what}} is a share (0.95, not 95)."
+               ).format
 
-    def scan(cls: str, param: str, bad, message, sink: list[str], only: set[str] | None = None) -> None:
-        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name=param):
+    def scan(cls: str, param: str, checks, only: set[str] | None = None) -> None:
+        """``checks``: ``[(bad, message, sink), ...]`` on the values of ``cls.param`` (one read per value)."""
+        for pv in _pv_rows(src, cls, param):
             if pv["type"] is None:
                 continue
             name = ", ".join(pv["entity_byname"])
             if only is not None and name not in only:
                 continue
-            hit = _first_bad(_parsed_then_evict(pv), bad)
-            if hit is not None:
-                sink.append(f"{cls} '{name}' {param} = {hit[1]:g} {_where(pv['alternative_name'], hit[0])}: "
-                            + message)
+            numbers = _raw_numbers(pv["value"], pv["type"])
+            for bad, message, sink in checks:
+                hit = _bad_hit(pv, bad, numbers)
+                if hit is not None:
+                    sink.append(f"{cls} '{name}' {param} = {hit[1]:g} {_where(pv['alternative_name'], hit[0])}: "
+                                + message)
 
-    for cls in ("unit", "connection"):
-        scan(cls, "efficiency", lambda v: v <= 0.0,
-             "efficiency must be above 0 (0 gives no output, a negative value pays the unit to run). Use a "
-             "fraction such as 0.4.", errors)
-    scan("unit", "min_load", lambda v: v < 0.0 or v > 1.0,
-         "min_load is a share of the online capacity and must lie in [0, 1] (e.g. 0.3 for 30 %).", errors)
+    scan("unit", "efficiency", [(lambda v: v <= 0.0,
+         "efficiency must be above 0 (0 gives no output, a negative value pays the unit to run). Use a "
+         "fraction such as 0.4.", errors)])
+    scan("connection", "efficiency", [
+        (lambda v: v <= 0.0, "efficiency must be above 0 (0 gives no output, a negative value pays the unit to "
+         "run). Use a fraction such as 0.4.", errors),
+        (lambda v: v > 1.0, "a connection efficiency above 1 creates energy on the way.", warnings)])
+    scan("unit", "min_load", [(lambda v: (v < 0.0) | (v > 1.0),
+         "min_load is a share of the online capacity and must lie in [0, 1] (e.g. 0.3 for 30 %).", errors)])
     for cls in ("unit", "connection", "node"):
-        scan(cls, "availability", lambda v: v < 0.0,
-             "availability must lie in [0, 1].", errors)
-        scan(cls, "availability", lambda v: v > 1.0,
-             "availability above 1 makes more capacity available than there is; it is a share (0.95, not 95).",
-             warnings)
-    scan("unit__outputNode", "capacity_max_coeff", lambda v: v < 0.0,
-         "capacity_max_coeff must be 0 or above (it is the share of the capacity this output may use).", errors)
-    scan("connection", "efficiency", lambda v: v > 1.0,
-         "a connection efficiency above 1 creates energy on the way.", warnings)
+        scan(cls, "availability", [
+            (lambda v: v < 0.0, "availability must be 0 or above.", errors),
+            (lambda v: v > _PERCENT_SUSPECT, percent(what="availability"), warnings)])
+    scan("unit__outputNode", "capacity_max_coeff", [(lambda v: v < 0.0,
+         "capacity_max_coeff must be 0 or above (it is the share of the capacity this output may use).", errors)])
     for cls in ("unit", "connection", "node"):
-        scan(cls, "virtual_unitsize", lambda v: v <= 0.0,
+        scan(cls, "virtual_unitsize", [(lambda v: v <= 0.0,
              "virtual_unitsize must be above 0; the value is ignored (the entity is one unit of its capacity).",
-             warnings)
+             warnings)])
 
     methods: dict[str, dict[str, str]] = {
-        cls: {k[0]: v for k, v in _str_values(db, cls, "invest_method").items()}
+        cls: {k[0]: v for k, v in _str_values(src, cls, "invest_method").items()}
         for cls in ("unit", "connection", "node", "group")}
     for cls in ("unit", "connection", "node", "group"):
         for lo, hi, word, kind in _INVEST_PAIRS:
             using = {e for e, m in methods[cls].items() if word in m and kind in m}
             if not using:
                 continue
-            mins = {pv["entity_byname"][0]: pv for pv in db.find_parameter_values(
-                entity_class_name=cls, parameter_definition_name=lo) if pv["type"] is not None}
-            maxs = {pv["entity_byname"][0]: pv for pv in db.find_parameter_values(
-                entity_class_name=cls, parameter_definition_name=hi) if pv["type"] is not None}
+            mins = {pv["entity_byname"][0]: pv for pv in _pv_rows(src, cls, lo) if pv["type"] is not None}
+            maxs = {pv["entity_byname"][0]: pv for pv in _pv_rows(src, cls, hi) if pv["type"] is not None}
             for ent in sorted(using & set(mins) & set(maxs)):
-                a, b = _keyed_numbers(mins[ent]["parsed_value"]), _keyed_numbers(maxs[ent]["parsed_value"])
+                a = _keyed_numbers(_parsed_then_evict(mins[ent]))
+                b = _keyed_numbers(_parsed_then_evict(maxs[ent]))
                 if a is None or b is None:
                     continue
                 if "" in a and "" not in b:
@@ -1749,48 +1842,55 @@ def validate_basic_sanity(db, timesteps: set[str] | None = None) -> None:
 
     for cls in ("unit", "connection", "node"):
         investing = {e for e, m in methods[cls].items() if m != "not_allowed"}
-        scan(cls, "lifetime", lambda v: v <= 0.0,
+        scan(cls, "lifetime", [(lambda v: v <= 0.0,
              f"lifetime must be above 0 when the {cls} can invest or retire; with 0 the investment is charged for "
-             "no years. Give the lifetime in years.", errors, only=investing)
+             "no years. Give the lifetime in years.", errors)], only=investing)
 
-    for cls in ("unit", "connection", "node"):
-        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="existing"):
-            if pv["type"] is None:
-                continue
-            where = f"{cls} '{pv['entity_byname'][0]}' existing (alternative '{pv['alternative_name']}')"
-            value = _parsed_then_evict(pv)
-            if isinstance(value, api.TimeSeries):
-                errors.append(f"{where} is a time series: existing cannot vary over time. Use a constant or a "
-                              "map keyed by period (p2020: 500, ...).")
-            elif isinstance(value, api.Map):
-                keys = list(value.indexes)
-                if value.index_type in (float, int) and keys:
-                    errors.append(f"{where} is a map keyed by numbers ({_fmt([float(k) for k in keys[:3]])}): "
-                                  "periods are names such as 'p2020'. Use the period names of the model as keys.")
-                elif keys and (value.index_type is not str or (timesteps and any(str(k) in timesteps for k in keys))):
-                    step = next((str(k) for k in keys if value.index_type is not str or str(k) in timesteps), "")
-                    errors.append(f"{where} is keyed by time step '{step}': existing cannot vary over time. Use a "
-                                  "constant or a map keyed by period (p2020: 500, ...).")
+    for text in warnings:
+        _warn(text)
+    if errors:
+        raise FlexToolConfigError("Input values out of range:\n  " + "\n  ".join(errors))
 
-    # Linked profiles above 1 (capacity factors entered as percent?).
-    authored = _str_values(db, "unit__node__profile", "profile_method")
+
+_PROFILE_FRAMES = (("input/p_profile", "p_profile"), ("input/pd_profile", "pd_profile"),
+                   ("input/pt_profile", "pt_profile"), ("input/pbt_profile", "pbt_profile"))
+
+
+def warn_profiles_as_percent(src, provider) -> None:
+    """Warn about a profile above 1.5 that limits a unit flow (#170: capacity factors entered as percent, 35 for
+    0.35).  Capacity factors slightly above 1 (rounding, over-performance in measured or reanalysis series) are
+    common and not reported.
+
+    Runs after the parameter read, on the profile frames the reader built (``input/p_profile``, ``pd_profile``,
+    ``pt_profile``, ``pbt_profile``: a polars filter, no second parse of the series); only a profile with a hit is
+    parsed again, to name the alternative and the first key above 1.5.  Profiles of ``unit__node__profile`` links
+    with ``profile_method`` (authored or the default) ``upper_limit`` or ``fixed`` only.  ``src``: the
+    scenario-filtered ``SpineDBBackend`` or a DatabaseMapping."""
+    import polars as pl
+
+    db = getattr(src, "_db", src)
+    authored = _str_values(src, "unit__node__profile", "profile_method")
     default = _definition_default(db, "unit__node__profile", "profile_method")
     limiting = {ent["entity_byname"][2] for ent in db.find_entities(entity_class_name="unit__node__profile")
                 if authored.get(tuple(ent["entity_byname"]), str(default)) in ("upper_limit", "fixed")}
-    for pv in db.find_parameter_values(entity_class_name="profile", parameter_definition_name="profile"):
-        if pv["type"] is None or pv["entity_byname"][0] not in limiting:
+    if not limiting:
+        return
+    hits: set[str] = set()
+    for key, column in _PROFILE_FRAMES:
+        frame = provider.get(key) if provider.has(key) else None
+        if frame is None or frame.height == 0 or column not in frame.columns:
             continue
-        hit = _first_bad(_parsed_then_evict(pv), lambda v: v > 1.0)
+        over = frame.filter(pl.col("profile").cast(pl.Utf8).is_in(sorted(limiting))
+                            & (pl.col(column).cast(pl.Float64, strict=False) > _PERCENT_SUSPECT))
+        hits.update(over.get_column("profile").cast(pl.Utf8).unique().to_list())
+    for pv in _pv_rows(src, "profile", "profile"):
+        if pv["type"] is None or pv["entity_byname"][0] not in hits:
+            continue
+        hit = _first_bad(_parsed_then_evict(pv), lambda v: v > _PERCENT_SUSPECT)
         if hit is not None:
-            warnings.append(
-                f"profile '{pv['entity_byname'][0]}' = {hit[1]:g} {_where(pv['alternative_name'], hit[0])} limits "
-                "a unit flow (upper_limit or fixed) and is above 1: the profile is a share of the capacity "
-                "(0.35, not 35).")
-
-    if errors:
-        raise FlexToolConfigError("Input values out of range:\n  " + "\n  ".join(errors))
-    for text in warnings:
-        _warn(text)
+            _warn(f"profile '{pv['entity_byname'][0]}' = {hit[1]:g} {_where(pv['alternative_name'], hit[0])} limits "
+                  f"a unit flow (upper_limit or fixed): values above {_PERCENT_SUSPECT:g} look like percentages; the "
+                  "profile is a share of the capacity (0.35, not 35).")
 
 
 # ---- period keys (items 46 / 65) ------------------------------------------
@@ -1939,13 +2039,14 @@ def _shown(keys: list[str]) -> str:
     return ", ".join(repr(k) for k in keys[:3]) + (", …" if len(keys) > 3 else "")
 
 
-def _period_key_finding(raw: bytes, takes_time: bool, is_existing: bool, universe: set[str],
+def _period_key_finding(raw: bytes, takes_time: bool, universe: set[str],
                         timesteps: frozenset[str] | set[str], timesteps_b: frozenset[bytes]):
     """``(code, level keys, offending keys)`` of one Map value of a period-axis parameter, or None when its keys
     are fine (or not period keys; rank 3 and deeper are not checked).  A value of a time-capable parameter whose
     first key is a time step is a time series: it is never parsed (one regex on the database JSON).  Codes: ``unknown`` (keys that are no period), ``time`` (a time-step key on a
-    parameter that cannot vary over time), ``number`` (numeric keys), ``nothing`` (a silent map of a time-capable
-    parameter whose keys are neither periods nor time steps).  See :func:`validate_period_keys`."""
+    parameter that cannot vary over time; a key that is also a period of the database is a period, #76),
+    ``number`` (numeric keys), ``nothing`` (a silent map of a time-capable parameter whose keys are neither periods
+    nor time steps).  See :func:`validate_period_keys`."""
     from flextool.engine.input._param_shapes import _normalise_label
 
     if takes_time:
@@ -1964,7 +2065,7 @@ def _period_key_finding(raw: bytes, takes_time: bool, is_existing: bool, univers
     if not keys:
         return None
     if value.get("index_type") == "float":
-        return None if is_existing else ("number", keys, keys)
+        return ("number", keys, keys)
 
     def unknown():
         bad = [k for k in keys if k not in universe]
@@ -1979,12 +2080,16 @@ def _period_key_finding(raw: bytes, takes_time: bool, is_existing: bool, univers
             return unknown()
         return None
     if label in ("time", "t"):
-        return None if takes_time or is_existing else ("time", keys, keys)
+        return None if takes_time else ("time", keys, keys)
     if label is not None:
         return None
-    steps = [k for k in keys if k in timesteps]
-    if steps:
-        return None if takes_time or is_existing else ("time", keys, steps)
+    if takes_time:
+        if any(k in timesteps for k in keys):
+            return None
+    else:
+        steps = [k for k in keys if k in timesteps and k not in universe]
+        if steps:
+            return ("time", keys, steps)
     if takes_time and universe.isdisjoint(keys):
         return ("nothing", keys, keys)
     return unknown()
@@ -2005,8 +2110,9 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None) -> None:
     every ``timestep_duration`` key of the whole database.  Rules:
 
     * a level labelled ``period``: every key not in the universe → error;
-    * a silent (``x``) rank-1 map of a parameter that cannot vary over time: a time-step key → error (``existing``
-      is :func:`validate_basic_sanity`'s), any other key not in the universe → error;
+    * a silent (``x``) rank-1 map of a parameter that cannot vary over time (``existing``, ``lifetime``, ...): a
+      time-step key that is no period → error (a name that is both a period and a time step is a period, #76), any
+      other key not in the universe → error;
     * a silent map of a parameter that takes a time map: a key that is a time step makes it a time series (not
       checked here); else keys hitting the periods make it a period map (the other keys → error); no key a period
       → warning (the value is not used);
@@ -2014,8 +2120,9 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None) -> None:
     * numeric keys (2020) → error (periods are names; such a value crashed the read).
 
     Each error names the entity, the parameter, the alternative and up to 3 keys, with the closest period
-    (:func:`_period_suggestions`).  Without ``whole`` (a source that is not a URL) the universe is the scenario's
-    and the errors are printed as warnings.  No period at all (no solve periods, no ``periods_available``) → no
+    (:func:`_period_suggestions`).  Without ``whole`` (a source that is not a URL) the universe is the scenario's,
+    so the keys that are not periods are printed as warnings; the time-step, time-series and numeric-key errors
+    still stop the run.  No period at all (no solve periods, no ``periods_available``) → no
     check (the time-structure checks report that).  Each distinct raw value is classified once.
     """
     scenario_periods = _period_universe(src)
@@ -2028,17 +2135,17 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None) -> None:
         timesteps |= whole.timesteps
     timesteps_b = frozenset(t.encode() for t in timesteps)
     seen: dict[tuple, object] = {}
-    errors: list[str] = []
+    errors: list[str] = []      # keys that are no period (depend on the universe)
+    shape_errors: list[str] = []  # time steps, time series and numbers (always errors)
     warnings: list[str] = []
     for (cls, par), takes_time in sorted(_period_axis_params().items()):
-        is_existing = par == "existing"
         for pv in _pv_rows(src, cls, par):
             kind = pv["type"]
             where = (f"{cls} '{', '.join(str(b) for b in pv['entity_byname'])}', parameter '{par}' "
                      f"(alternative '{pv['alternative_name']}')")
             if kind == "time_series":
-                if not takes_time and not is_existing:
-                    errors.append(f"{where} is a time series, but {par} cannot vary over time. Use a constant or "
+                if not takes_time:
+                    shape_errors.append(f"{where} is a time series, but {par} cannot vary over time. Use a constant or "
                                   "a map keyed by period (p2020: ..., p2030: ...).")
                 continue
             if kind != "map":
@@ -2046,11 +2153,10 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None) -> None:
             raw = pv["value"]
             if isinstance(raw, str):
                 raw = raw.encode()
-            cache_key = (raw, takes_time, is_existing)
+            cache_key = (raw, takes_time)
             finding = seen.get(cache_key, False)
             if finding is False:
-                finding = seen[cache_key] = _period_key_finding(raw, takes_time, is_existing, universe, timesteps,
-                                                                timesteps_b)
+                finding = seen[cache_key] = _period_key_finding(raw, takes_time, universe, timesteps, timesteps_b)
             if finding is None:
                 continue
             code, keys, bad = finding
@@ -2060,20 +2166,22 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None) -> None:
                     f"{where}: map key{'' if one else 's'} {_shown(bad)} {'is not a period' if one else 'are not periods'}"
                     f" of the model.{_did_you_mean(bad[:3], keys, scenario_periods, universe)}")
             elif code == "time":
-                errors.append(f"{where}: map key {bad[0]!r} is a time step, but {par} cannot vary over time. Use a "
+                shape_errors.append(f"{where}: map key {bad[0]!r} is a time step, but {par} cannot vary over time. Use a "
                               "constant or a map keyed by period (p2020: ..., p2030: ...).")
             elif code == "number":
-                errors.append(f"{where}: map keys are numbers ({_shown(bad)}); periods are names such as "
+                shape_errors.append(f"{where}: map keys are numbers ({_shown(bad)}); periods are names such as "
                               f"'p2020'.{_did_you_mean(bad[:1], [], scenario_periods, universe)}")
             else:
                 warnings.append(f"{where}: map keys ({_shown(keys)}) are neither periods nor time steps of the "
                                 "model; the value is not used.")
-    if errors:
-        text = ("Map keys that are not periods of the model:\n  " + "\n  ".join(errors)
-                + "\nIf a key is a period of data you keep for other models, add it to model.periods_available.")
-        if whole is None:
-            _warn(text)
-        else:
-            raise FlexToolConfigError(text)
     for text in warnings:
         _warn(text)
+    if whole is None and errors:
+        _warn("Map keys that are not periods of the model:\n  " + "\n  ".join(errors)
+              + "\nIf a key is a period of data you keep for other models, add it to model.periods_available.")
+        errors = []
+    errors += shape_errors
+    if errors:
+        raise FlexToolConfigError(
+            "Map keys that are not periods of the model:\n  " + "\n  ".join(errors)
+            + "\nIf a key is a period of data you keep for other models, add it to model.periods_available.")
