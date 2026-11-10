@@ -1748,6 +1748,7 @@ class MainWindow(tk.Tk):
         dlg = ProjectDialog(
             self, current_project=self.current_project,
             before_project_change=self._assistant.before_project_change,
+            jobs_running=self._project_jobs_running,
         )
 
         # The open project under the name the dialog left it with (it may
@@ -1776,6 +1777,11 @@ class MainWindow(tk.Tk):
             # failed left it open: keep its AI assistant runtime file.
             if self.current_project and not deleted:
                 self._assistant.ensure_open(self.current_project)
+
+    def _project_jobs_running(self, name: str) -> bool:
+        """Whether project *name* has running or pending execution jobs (only the open project can)."""
+        return (name == self.current_project and self.execution_mgr is not None
+                and self.execution_mgr.has_pending_or_running())
 
     def _reset_to_no_project(self) -> None:
         """Tear down per-project state after the open project is deleted."""
@@ -6065,7 +6071,8 @@ class MainWindow(tk.Tk):
             text=(
                 "These are the common knobs. The full set of solver "
                 "options can be set\nthrough the .opt files (e.g. "
-                "highs.opt) in the project's solver_config folder;\n"
+                "highs.opt) in the solver_config folder of the FlexTool\n"
+                "workspace (or $FLEXTOOL_SOLVER_CONFIG_DIR);\n"
                 "the MIP gap is set per solve (solver_mip_gap) or in "
                 "highs.opt."
             ),
