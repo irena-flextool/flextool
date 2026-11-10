@@ -1044,9 +1044,17 @@
 
 - scenario: csp_optimised_design
   csvs:
+    - unit__outputNode__d.csv
+    - unit_capacity__d.csv
+    - node_capacity__d.csv
     - summary_solve.csv
-  # No ties: not solved by hand.  tests/model/test_howto_csp.py checks that it
-  # costs no more than csp_fixed_design (50.809209) and keeps the bounds.
+  # No ties: the turbine (100 MW_e) and the tank (5000 MWh_th) reach their
+  # bounds and the tank bound sets the field: (9000 - 5000) / 4.8 = 833.33
+  # MW_th.  Turbine 4800 MWh_e in the 48 h (every hour), coal 2400 MWh:
+  # 120 000 x 182.5 = 21.9 M; annuities (100 x 500 + 833.33 x 150 + 5000 x 15)
+  # x 1000 x CRF(7 %, 25) = 250 M x 0.0858105 = 21.452629 -> 43.352629.
+  expected_objective: 43.352629
+  expected_objective_tolerance: 1.0e-5
   time_budget_seconds: 10.0
 
 - scenario: csp_gas_backup

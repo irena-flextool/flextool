@@ -154,7 +154,7 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 ## How to model CSP with thermal storage
 
 **(examples.sqlite scenarios: csp_without, csp_existing, csp_fixed_design, csp_optimised_design, csp_gas_backup)**
-***init - west - coal - csp_system - csp_plant - (design alternatives)***
+***init - west - coal - csp_system - (plant and design alternatives)***
 
 **Three entities.** A concentrating solar power (CSP) plant with thermal storage is three generic entities: a solar *field* unit that makes heat from a profile, a heat *storage* node, and a *turbine* unit that turns the heat into electricity. Each has its own capacity and its own investment, so the model can choose the solar multiple and the storage hours itself, or you can fix them with user constraints. The heat storage is a storage node like a battery (see [How to add a storage unit](storage_hydro.md#how-to-add-a-storage-unit-battery) and [Using nodes as storages](../reference/nodes.md#using-nodes-as-storages)). Storing MWh of heat is the same model as a two-tank molten-salt system at fixed temperatures.
 
@@ -229,7 +229,13 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 **(examples.sqlite scenario: csp_optimised_design)**
 ***init - west - coal - csp_system - csp_plant - csp_invest_common***
 
-**What it does.** Without the ties the model chooses the three capacities within their bounds. It can still build the fixed design, so its objective can only be lower or the same: 43.353 against 50.809 M CUR. Here it builds the turbine and the tank to their bounds (100 MW_e and 5000 MWh_th) and a field of 833 MW_th: a solar multiple of 3.3 and 20 storage hours, with the turbine running in every hour. When a capacity reaches its `invest_max_total`, the bound, not the costs, decides the design: check `unit_capacity__d` and `node_capacity__d` against the bounds you set.
+**What it does.** Without the ties the model chooses the three capacities within their bounds. It can still build the fixed design, so its objective can only be lower or the same: 43.353 against 50.809 M CUR. Here it builds the turbine and the tank to their bounds (100 MW_e and 5000 MWh_th) and a field of 833 MW_th: a solar multiple of 3.3 and 20 storage hours, with the turbine running in every hour.
+
+**Which bound decides what.** Two bounds bind. Each extra MW_e of turbine still pays: it saves 438 000 CUR of coal a year against about 285 000 CUR of turbine and field annuities. A tank MWh_th is cheaper than the field it replaces, so the tank also runs to its bound. The field of 833 MW_th is then set by the tank bound: a smaller tank needs a larger field to carry the cloudy day.
+
+**Without the bounds.** With the tank bound lifted, the costs alone would choose a field of 714 MW_th and a tank of 5571 MWh_th (solar multiple 2.86, 22.3 h). With the turbine bound lifted, free heat against the flat 50 CUR/MWh of coal makes every MW_e pay until the plant meets the whole demand.
+
+**What to do.** Set `invest_max_total` from real limits (land, grid connection, the planned plant size) and use realistic costs. If a bound binds without such a reason, the design is the bound's, not the model's: raise or remove the bound, or fix the ratios with the ties of the [previous section](#fixed-design-solar-multiple-and-storage-hours). Check `unit_capacity__d` and `node_capacity__d` against the bounds you set.
 
 ### Gas backup
 
@@ -262,8 +268,8 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 | Field used | `unit__outputNode__d` (*csp_field*, *csp_heat*) | 1 441 750 MWh_th/a (7900 × 182.5) |
 | Turbine output | `unit__outputNode__d` (*csp_turbine*, *west*) | 576 700 MWh_e/a (3160 × 182.5) |
 | Capacity factor | `unit_cf__outputNode__d` (*csp_turbine*, *west*) | 3160 / (100 × 48) = 65.8 % |
-| Tank cycles | the decreases of `node_state__dt` (*csp_heat*) summed, divided by the tank capacity | at least 1 in the 48 h (the 2500 MWh_th stored on the clear day) |
-| Plant cost | the *investment* columns of `cost_unit_annualized__d` (*csp_field*, *csp_turbine*) and *storage investment* of `cost_node_annualized__d` (*csp_heat*) | 6.436 + 4.291 + 3.218 = 13.944 M CUR/a |
+| Tank cycles | the decreases of `node_state__dt` (*csp_heat*) summed, divided by the tank capacity | at least 1 in the 48 h (the 2500 MWh_th stored on the clear day: day 1 must store ≥ 2500 MWh_th because the turbine can take only 3000 of the 5500 used) |
+| Plant cost | the *investment* columns of `cost_unit_annualized__d` (*csp_field*, *csp_turbine*) and *storage investment* of `cost_node_annualized__d` (*csp_heat*) | 6.4355 + 4.2905 + 3.2179 = 13.944 M CUR/a |
 | Levelised cost | plant cost / turbine output | 13.944 M / 576 700 = 24.2 CUR/MWh |
 | Average price received | Σ turbine flow × `node_prices__dt` (*west*) / Σ turbine flow | 50 CUR/MWh (coal sets the price in every hour) |
 

@@ -87,9 +87,15 @@ Again, the negative value can be turned positive by arranging it to the right si
 
 **What it does.** *med_desal* makes 12 m³ of water per MWh of heat, so 3000 m³/h needs 250 MW of heat. *bp_chp_ratio* is power − 0.5 × heat = 0, so heat = 2 × power, as in the [CHP example](#how-to-create-combined-heat-and-power-chp). The water demand therefore fixes the CHP: heat 250 MW, power 125 MW and fuel (125 + 250) / 0.85 = 441.18 MW. *coal_plant* makes the other 175 MW. This is the demand-driven must-run of [option 5](#option-5-demand-driven-running): nothing forces *bp_chp* to run except the water demand.
 
+**The water slack price.** The `penalty_up` of *water* (50 CUR/m³) must be above the cost of the dearest real way to make a cubic metre, including the cost of the power the CHP is forced to make with it. Otherwise the model leaves water demand unserved instead. In a winter with low electricity demand, the power made with the water can exceed the demand; the model then weighs dumping that power at the `penalty_down` of *west* against unserved water. Check that `node_slack_up` of *water* is 0, and give the system flexibility through RO, water storage or heat storage rather than a low penalty.
+
+**Own electricity use.** A real MED or MSF plant also draws about 1.5–4 kWh of electricity per m³ for its pumps; the example leaves this out. To include it, give *med_desal* a second `unit__inputNode` (*med_desal*, *west*) with `conversion_flow_coeff` 0, so it stays out of the conversion. Then tie it to the water output with an *equal* user constraint: electricity input − 0.0025 × water output = 0 for 2.5 kWh/m³.
+
 **One equality.** A backpressure plant has one degree of freedom: the ratio fixes power and heat together. One *equal* user constraint is enough.
 
-**Efficiency above 1.** `efficiency` is output / input in the units of the nodes, here m³ per MWh. A value above 1 is fine. The unit's capacity is on its output side, so `existing` 3000 is in m³/h. At full load its input capacity factor (`unit_cf__inputNode`) is therefore 1/`efficiency`. With a very large ratio the input coefficients can fall below the `model` parameter `small_number_threshold` and become 0, so the unit would make water for free; see `efficiency` in [units](../reference/units.md#main-data-items-for-units). Rescale the unit of measure (for example 1000 m³) if that happens.
+**Efficiency above 1.** `efficiency` is output / input in the units of the nodes, here m³ per MWh. A value above 1 is fine. The unit's capacity is on its output side, so `existing` 3000 is in m³/h. At full load its input capacity factor (`unit_cf__inputNode`) is therefore 1/`efficiency`.
+
+**Very large ratios.** With a very large ratio the input coefficients can fall below the `model` parameter `small_number_threshold` and become 0, so the unit would make water for free; see `efficiency` in [units](../reference/units.md#main-data-items-for-units). Rescale the unit of measure (for example 1000 m³) if that happens.
 
 ### Extraction CHP: an operating region
 
@@ -111,9 +117,11 @@ Again, the negative value can be turned positive by arranging it to the right si
 
 **What it does.** The conversion is 0.45 × fuel = power + 0.15 × heat: each MWh of heat costs 0.15 MWh of power (the power-loss ratio). The two constraints draw the operating region. *ext_chp_backpressure_line* is power − 0.5 × heat ≥ 0: the plant cannot make more heat than on its backpressure line. *ext_chp_max_heat* is heat − 0.6 × capacity ≤ 0: a flow term and a capacity term in one row, written for every time step. Inside the region the model chooses power and heat freely.
 
+**What the capacity caps.** The unit's capacity (`existing` 1000) caps power + heat, the sum of the outputs (see `capacity_max_coeff` in [units](../reference/units.md#main-data-items-for-units)), not the fuel. So the top edge of the region is power + heat ≤ 1000, not the iso-fuel line power + 0.15 × heat ≤ constant that is drawn for an extraction turbine. For an iso-fuel edge, add a *less_than* row with the flow coefficients power 1 and heat 0.15 and a `constraint_capacity_coeff` −c on the unit, with c the full-condensing power per unit of capacity. Size the capacity so that the sum cap does not cut that edge: power + heat is largest on the backpressure line, at 1.5 / 0.65 = 2.31 × the full-condensing power. A minimum condensing flow or a minimum power line is one more *greater_than* row of the same kind.
+
 **The results.** Power from *ext_chp* costs 20 / 0.45 = 44.4 CUR/MWh, less than the 50 of *coal_plant*. So *ext_chp* makes all 300 MW of power and the 250 MW of heat, with fuel (300 + 0.15 × 250) / 0.45 = 750 MW. Power ≥ 0.5 × heat holds (300 ≥ 125) and the heat limit (600 MW) does not bind.
 
-**A constraint with nothing in it.** *bp_chp_ratio* still exists here, but all its coefficients are on flows of *bp_chp*, which is off. Its row reads 0 = 0, so FlexTool leaves it out of the model and prints a warning that names it. To switch a constraint off on purpose, set its `is_enabled` to *no*, as the *coal_chp_extraction* alternative does.
+**A constraint with nothing in it.** *bp_chp_ratio* still exists here, but all its coefficients are on flows of *bp_chp*, which is off. Its row reads 0 = 0, so FlexTool leaves it out of the model and prints a warning that names it: in *desal_extraction* this warning is expected. To switch a constraint off on purpose, set its `is_enabled` to *no*, as the *coal_chp_extraction* alternative does.
 
 ### Reverse osmosis investment
 
@@ -129,7 +137,7 @@ Again, the negative value can be turned positive by arranging it to the right si
 | `unit` *ro_desal* | `invest_cost` | 30 (= 30 000 CUR per m³/h) |
 | `unit` *ro_desal* | `lifetime`, `discount_rate` | 20, 0.05 |
 
-**invest_cost is per kW of the unit's capacity unit.** FlexTool reads every capacity as if it were in MW, and `invest_cost` is per kW, that is per 0.001 of the capacity unit. For a capacity in m³/h, enter the cost per m³/h divided by 1000: 30 000 CUR per m³/h is `invest_cost` 30. The same holds for `fixed_cost`.
+**invest_cost is per kW of the unit's capacity unit.** FlexTool reads every capacity as if it were in MW, and `invest_cost` is per kW, that is per 0.001 of the capacity unit. For a capacity in m³/h, enter the cost per m³/h divided by 1000: 30 000 CUR per m³/h is `invest_cost` 30. The same holds for `fixed_cost`. The capacities themselves are entered in m³/h unchanged: `existing`, `invest_max_total` and `invest_min_total` of 2000 m³/h are 2000, not 2. An `other_operational_cost` on a water flow is per m³ directly (it is per MWh of flow, no ÷ 1000).
 
 **MED or RO.** A cubic metre from MED costs 1/12 MWh of heat. The heat costs 1.5/0.85 MWh of fuel at 20 CUR/MWh, but the CHP also makes 0.5/12 MWh of power that *coal_plant* would otherwise make at 50 CUR/MWh: 2.941 − 2.083 = 0.858 CUR/m³. A cubic metre from RO costs 0.004 MWh of power at 50 CUR/MWh = 0.2 CUR/m³. The saving, 0.658 CUR/m³ × 8760 h = 5 764 CUR per m³/h and year, is more than twice the annuity (30 000 × 0.0802 = 2 407 CUR per m³/h and year at 5 % over 20 years).
 
@@ -151,7 +159,7 @@ Again, the negative value can be turned positive by arranging it to the right si
 
 **What it does.** The mean demand is 3000 m³/h, the capacity of MED. Without the storage, MED could not cover the 4000 m³/h hours and the water slack would pay 50 CUR/m³. With it, MED runs flat at 3000 m³/h in every hour: the storage fills to 12 000 m³ in the 12 hours of low demand and empties in the 12 hours of high demand, twice. The cost is that of *desal_backpressure*. The case is tight by design (the MED capacity equals the mean demand), so the storage state is unique: see `node_state__dt`.
 
-**Storage in m³.** A water storage is a storage node in the water's own unit. `existing` is in m³ here, and a storage `invest_cost` would be per 0.001 m³ (as per kWh for an MWh storage).
+**Storage in m³.** A water storage is a storage node in the water's own unit. `existing` is in m³ here, and for a storage `invest_cost` enter the cost per m³ ÷ 1000 (as per kWh for an MWh storage), the same rule as for RO.
 
 ## How to add a reserve
 **(examples.sqlite: scenario network_coal_wind_reserve)**

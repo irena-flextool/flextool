@@ -11,7 +11,10 @@ is the backup.  The field yield *csp_field_yield* is 1.0 for t0007..t0018 (clear
     csp_fixed_design  invested, field = 5 x turbine and tank = 25 x turbine (solar multiple 2, 10 h at the
                       design efficiency 0.4): 100 / 500 / 2500, the dispatch totals of csp_existing,
                       objective 36.865 + 162.5 M x CRF(7 %, 25) = 50.809209 M CUR
-    csp_optimised_design  no ties: costs no more than csp_fixed_design, within the investment bounds
+    csp_optimised_design  no ties: the turbine (100 MW_e) and the tank (5000 MWh_th) reach their bounds; the cyclic
+                      heat balance needs tank >= 9000 - 4.8 x field and 16.8 x field >= 12 000, and 4.8 MWh_th
+                      of tank is cheaper than 1 MW_th of field, so field = (9000 - 5000) / 4.8 = 833.33 MW_th;
+                      the turbine runs at 100 MW_e in every hour (4800 MWh_e from 12 000 MWh_th), coal 2400 MWh
     csp_gas_backup    the boiler's heat (12 / 0.9 / 0.4 = 33.3 CUR/MWh_e) is cheaper than coal: turbine 100 MW_e in
                       every hour, field 7900, boiler 4100 MWh_th, coal 2400 MWh
 
@@ -119,6 +122,19 @@ def test_optimised_design_no_dearer_than_fixed(tmp_path_factory, test_db_url):
     assert _objective(optimised) <= _objective(fixed) + 1e-6
     for entity, cap in _invested(optimised).items():
         assert -1e-6 <= cap <= BOUNDS[entity] + 1e-6, (entity, cap)
+
+
+def test_optimised_design_capacities(tmp_path_factory, test_db_url):
+    """The turbine and the tank are built to their bounds and the tank bound sets the field: (9000 - 5000) / 4.8
+    = 833.33 MW_th.  The turbine then runs at 100 MW_e in every hour and coal makes the other 2400 MWh."""
+    step = _step(tmp_path_factory, test_db_url, "csp_optimised_design")
+    cap = _invested(step)
+    assert cap["csp_turbine"] == pytest.approx(100.0, rel=1e-6)
+    assert cap["csp_field"] == pytest.approx(2500.0 / 3.0, rel=1e-6)
+    assert cap["csp_heat"] == pytest.approx(5000.0, rel=1e-6)
+    assert _mwh(step, "csp_field", "csp_field", "csp_heat") == pytest.approx(12000.0, rel=1e-6)
+    assert _mwh(step, "csp_turbine", "csp_heat", "west") == pytest.approx(4800.0, rel=1e-6)
+    assert _mwh(step, "coal_plant", "coal_market", "west") == pytest.approx(2400.0, rel=1e-6)
 
 
 def test_turbine_efficiency_constant_or_map(tmp_path_factory, test_db_url):
