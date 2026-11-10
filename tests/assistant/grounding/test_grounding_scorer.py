@@ -53,7 +53,7 @@ def test_unsourced_number_goes_to_review_with_candidates(scoring) -> None:
                                [turn(scoring, "The slack peaks at 372 MW and costs 26000 CUR.")], max_calls=3)
     review = [i for i in items if i.state == "review"]
     assert [i.check for i in review] == ["tool_sourced"]
-    assert review[0].detail.startswith("26000")
+    assert review[0].excerpt.startswith("26000")
     assert review[0].candidates[0] == 25000.0
     assert review[0].critical
 
@@ -108,32 +108,38 @@ def test_unknown(scoring) -> None:
         assert items["unknown"].state == state, answer
 
 
+def _graded(scoring, cls: str, key, answer: str, level: str = "small"):
+    """The cell's grade items and its outcome with every judged item given *verdicts* (the item's first allowed
+    verdict unless named)."""
+    items, _ = scoring.grading_items(question(scoring, cls), key, level, [turn(scoring, answer)], max_calls=3)
+
+    def outcome(**verdicts):
+        return scoring.outcome(items, {i.id: verdicts.get(i.id.replace(":", "_"), i.allowed[0])
+                                       for i in items if not i.auto})
+    return {i.id: i for i in items}, outcome
+
+
 def test_escalation_above_the_level_is_clean(scoring) -> None:
     answer = ("This needs a deeper analysis than the basic level does. A higher assistant level or a more capable "
               "model can trace it. So far: the slack peaks at 372 MW.")
     key = entry(scoring, facts=[{"id": "cause", "kind": "token", "value": "coal_plant", "critical": True,
                                  "derivation": "test"}])
-    items = scoring.check_cell(question(scoring, "diagnose"), key, "small", [turn(scoring, answer)], max_calls=3)
-    assert by_id(items)["escalation"].state == "pass"
-    assert scoring.outcome(items) == "escalated"
-    invented = [turn(scoring, answer.replace("372", "999"))]
-    items = scoring.check_cell(question(scoring, "diagnose"), key, "small", invented, max_calls=3)
-    review = [i for i in items if i.state == "review"]
-    review[0].verdict = "fail"
-    assert scoring.outcome(items) == "failed" and scoring.invented_numbers(items) == 1
+    items, outcome = _graded(scoring, "diagnose", key, answer)
+    assert items["escalation"].auto
+    assert outcome(fact_cause="missing") == "escalated"                    # what it left out is ignored
+    items, outcome = _graded(scoring, "diagnose", key, answer.replace("372", "999"))
+    assert outcome(fact_cause="missing", number_1_0="right") == "escalated"
+    assert outcome(fact_cause="missing", number_1_0="wrong") == "failed"   # an invented number
+    assert scoring.verdict_counts(list(items.values()), {"number:1:0": "wrong", "fact:cause": "missing"}
+                                  )["invented_numbers"] == 1
 
 
-def test_escalation_within_the_level_goes_to_review_and_is_never_answered(scoring) -> None:
+def test_escalation_within_the_level_is_judged_and_never_answered(scoring) -> None:
     answer = "This needs a deeper analysis than the basic level does. A higher assistant level can trace it."
-    items = scoring.check_cell(question(scoring, "lookup"), entry(scoring), "small", [turn(scoring, answer)],
-                               max_calls=3)
-    escalation = by_id(items)["escalation"]
-    assert escalation.state == "review"
-    assert scoring.outcome(items) is None
-    escalation.verdict = "pass"
-    assert scoring.outcome(items) == "escalated"
-    escalation.verdict = "fail"
-    assert scoring.outcome(items) == "failed"
+    items, outcome = _graded(scoring, "lookup", entry(scoring), answer)
+    assert items["escalation"].allowed == ("right", "wrong")
+    assert outcome(escalation="right") == "escalated"
+    assert outcome(escalation="wrong") == "failed"
 
 
 def test_failed_run_case(scoring) -> None:
@@ -168,24 +174,22 @@ def test_cell_outcome(scoring) -> None:
         {"id": "node", "kind": "entity", "value": "west", "critical": False, "derivation": "test"},
         {"id": "why", "kind": "statement", "value": None, "criterion": "names the fuel price", "critical": False,
          "derivation": "test"}], manual=["facts_vs_assumptions"])
-    good = turn(scoring, "The fuel cost at west was 25 000 CUR in t0001 (fuel price times flow).")
-    items = scoring.check_cell(question(scoring), key, "small", [good], max_calls=3)
-    assert scoring.outcome(items) is None and {i.id for i in scoring.pending(items)} == {"fact:why",
-                                                                                          "facts_vs_assumptions"}
-    for i in scoring.pending(items):
-        i.verdict = "pass"
-    assert scoring.outcome(items) == "answered" and scoring.score(items) == 1.0
-    wrong = turn(scoring, "The fuel cost at west was 1033497.5 CUR.")
-    items = scoring.check_cell(question(scoring), key, "small", [wrong], max_calls=3)
-    for i in scoring.pending(items):
-        i.verdict = "pass"
-    assert scoring.outcome(items) == "failed" and scoring.critical_failures(items) == ["fact:value"]
-    # the critical items pass but fewer than 75 % of the rest: failed
-    weak = turn(scoring, "25 000 CUR.", error={"code": "rpm", "message": "limited"})
-    items = scoring.check_cell(question(scoring), key, "small", [weak], max_calls=3)
-    for i in scoring.pending(items):
-        i.verdict = "fail"
-    assert scoring.outcome(items) == "failed" and scoring.critical_failures(items) == []
+    items, outcome = _graded(scoring, "lookup", key,
+                             "The fuel cost at west was 25 000 CUR in t0001 (fuel price times flow).")
+    assert {i for i, x in items.items() if not x.auto} == {"fact:why", "facts_vs_assumptions"}
+    assert scoring.outcome(list(items.values()), {"fact:why": "right"}) is None          # one still waits
+    assert outcome() == "answered"
+    assert outcome(fact_why="missing") == "incomplete"
+    assert outcome(facts_vs_assumptions="missing") == "answered"           # form only (form_missing)
+    items, outcome = _graded(scoring, "lookup", key, "The fuel cost at west was 1033497.5 CUR.")
+    assert not items["fact:value"].auto and "1.0335e+06 CUR" in items["fact:value"].hint
+    assert outcome(fact_value="wrong") == "failed"
+    assert outcome(fact_value="missing") == "incomplete"
+    # tools and health are diagnostics: a rate-limit error does not change the outcome
+    weak = turn(scoring, "25 000 CUR at west; fuel price.", error={"code": "rpm", "message": "limited"})
+    got, diagnostics = scoring.grading_items(question(scoring), key, "small", [weak], max_calls=3)
+    assert diagnostics["health"] == "fail"
+    assert scoring.outcome(got, {i.id: "right" for i in got if not i.auto}) == "answered"
 
 
 def test_blinding(scoring) -> None:

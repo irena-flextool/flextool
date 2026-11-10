@@ -3,12 +3,10 @@ run in CI, never collected by pytest.
 
     python tools/assistant_eval.py build --out DIR
     python tools/assistant_eval.py run --project DIR --provider ID --model M --out RESULTS [...]
-    python tools/assistant_eval.py grade RESULTS ... --dir GRADING [--single-model] [--regrade #N]
-    python tools/assistant_eval.py summary RESULTS ... [--record]
+    python tools/assistant_eval.py grade-ai RESULTS ... --dir GRADING [--accept-data-notice] [--changed]
+    python tools/assistant_eval.py review --dir GRADING [--sitting N] [--regrade #N] [--all]
+    python tools/assistant_eval.py summary --dir GRADING [--record]
     python tools/assistant_eval.py calibrate [results.jsonl]
-    python tools/assistant_eval.py dual sample RESULTS ... --dir DUAL
-    python tools/assistant_eval.py dual grade-ai --dir DUAL
-    python tools/assistant_eval.py dual report --dir DUAL [--record]
 
 ``build`` makes the synthetic grounding project (``tests/assistant/grounding_projects.py``: ``tests.json`` and its
 overrides, solved with ``flextool-run``) and its marker.  ``run`` asks every question of
@@ -16,12 +14,15 @@ overrides, solved with ``flextool-run``) and its marker.  ``run`` asks every que
 backend, the probe, the budget of the level and the model's context, the session) and writes one record per cell
 (model, level setting, question, repeat) into RESULTS.  It works only on a project its own ``build`` made: the
 marker and the source database's hash must match, so case data of a real project never reaches a calibration
-model.  Keys come from the keyring or the owner's environment, never from the command line.  ``grade`` runs the
-automatic checks against the oracle's ``answer_key.yaml`` and asks the owner, blind, for the items only a person
-can judge; ``summary`` prints the rates and with ``--record`` appends the graded cells to
-``tools/assistant_eval_data/results.jsonl`` (no answer or tool text).  ``calibrate`` turns ``results.jsonl`` into
-the evidence tables for the owner and ``dual`` runs the second grader on a subset and reports the agreement
-(``tools/assistant_eval_analysis.py``).  How to run and read it: ``docs/dev/assistant_evaluation.md``.
+model.  Keys come from the keyring or the owner's environment, never from the command line.  ``grade-ai`` runs
+the automatic checks against the oracle's ``answer_key.yaml`` and has Claude Opus 5.5 grade every cell, blind (one
+request per cell; a cell without a final answer is failed in code); ``review`` shows the owner the queued cells
+(low confidence, a number without a tool source, an injection hint, the cells Opus wrote, a random sample) and
+takes the owner's verdicts before Opus's are shown; ``summary`` prints the outcomes and the owner–Opus agreement and
+with ``--record`` appends the final grades to ``tools/assistant_eval_data/results.jsonl`` (no answer or tool
+text).  All grading state lives in the grading folder; results folders are only read.  ``calibrate`` turns
+``results.jsonl`` into the evidence tables for the owner (``tools/assistant_eval_analysis.py``).  How to run and
+read it: ``docs/dev/assistant_evaluation.md``.
 
 Exit codes: 0 done (also: the daily request budget is used, run again with --resume) · 1 failed (also: an error
 that is not the model's behaviour stopped a cell, which is not saved: run again with --resume) · 2 usage or a
@@ -32,6 +33,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import math
 import os
 import random
 import re
@@ -213,7 +215,7 @@ def cmd_build(args: argparse.Namespace) -> int:
 
 def _key_or_refuse(preset: Any, base_url: str, model: str, route: Any) -> tuple[str, str]:
     """The key of *preset* (keyring or environment, never the command line) and where it came from, for ``run``
-    and ``dual grade-ai``; :class:`Refused` with the chat's "no key" message when the preset needs one."""
+    and ``grade-ai``; :class:`Refused` with the chat's "no key" message when the preset needs one."""
     from flextool.assistant import keys
     from flextool.assistant.backends._common import error_context
     from flextool.assistant.llm_adapter import Connection
@@ -540,8 +542,7 @@ def _record(question: scoring.Question, setting: Setting, repeat: int, *, preset
                     "compaction_every": b.compaction_every, "keep_recent_turns": b.keep_recent_turns,
                     "prompt_ratio": _prompt_ratio([t["requests"] for t in turns or []])} if b else None),
         "turns": turns or [],
-        "checks": None, "manual": None, "outcome": None, "graded_at": None,
-        "set_version": identity["set_version"], "key_version": None,
+        "set_version": identity["set_version"],
         "project_fingerprint": identity["project_fingerprint"], "flextool_version": flextool_version(),
         "git": dict(git), "ran_at": iso(utc_now()), "requests_sent": requests_sent, "purpose": "calibration",
     }
@@ -766,110 +767,20 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     return 0
 
 
-# --- grade ----------------------------------------------------------------------------------------------------
-def _key_for(args: argparse.Namespace, cells: Mapping[str, dict]) -> scoring.AnswerKey:
-    path = Path(args.key)
-    if not path.is_file():
-        raise Refused(f"The answer key {path} does not exist yet: the independent oracle writes it.")
-    key = scoring.load_key(path)
-    versions = {c.get("set_version") for c in cells.values()}
-    if versions - {key.set_version}:
-        raise Refused(f"The answer key answers question set {key.set_version}; these results are of "
-                      f"{', '.join(map(str, sorted(versions)))}.")
-    return key
-
-
-def _turn_views(record: Mapping[str, Any]) -> list[scoring.TurnView]:
-    return [scoring.TurnView.from_record(t) for t in record.get("turns") or []]
-
-
-def auto_check(record: dict, qset: scoring.QuestionSet, key: scoring.AnswerKey) -> list[scoring.Item]:
-    """The cell's items under *key*: the stored ones when they were made with this key version (with the
-    grader's verdicts), else checked again (earlier verdicts dropped)."""
-    if record.get("checks") is not None and record.get("key_version") == key.key_version \
-            and bool(record.get("key_placeholder")) == key.placeholder:
-        return [scoring.Item.from_json(i) for i in record["checks"]]
-    cell = record["cell"]
-    question = qset.questions[cell["question"]]
-    entry = key.questions.get(question.id)
-    if entry is None:
-        raise Refused(f"The answer key has no entry for {question.id}.")
-    max_calls = (record.get("budget") or {}).get("caps", {}).get("max_calls_per_turn")
-    items = scoring.check_cell(question, entry, cell["level_setting"], _turn_views(record), max_calls=max_calls)
-    record.update(checks=[i.to_json() for i in items], key_version=key.key_version,
-                  key_placeholder=key.placeholder, outcome=None, graded_at=None, manual=None)
-    return items
-
-
-def finish_grade(record: dict, items: Sequence[scoring.Item], grader: str) -> None:
-    record["checks"] = [i.to_json() for i in items]
-    result = scoring.outcome(items)
-    if result is not None:
-        record.update(outcome=result, graded_at=iso(utc_now()),
-                      manual={"grader": grader, "first_pass": True,
-                              "verdicts": {i.id: i.verdict for i in items if i.state in ("review", "manual")}})
-
-
-def grader_view(record: Mapping[str, Any], question: scoring.Question, entry: scoring.KeyEntry,
-                items: Sequence[scoring.Item], names: Iterable[str] = ()) -> str:
-    """What the grader sees of one cell: blind (no model, provider, level, cap, notice or time) and framed as
-    data; the second grader's request (``assistant_eval_analysis.grader_user_part``) shows the same."""
-    level = record["cell"]["level_setting"]
-    lines = [f"Question {question.id} ({question.cls})"]
-    lines += [f"  turn {n}: {t}" for n, t in enumerate(question.turns, 1)]
-    lines.append(f"Expected behaviour: {scoring.expected_behaviour(question.cls, level)}")
-    lines.append("Key:")
-    for fact in entry.facts:
-        what = fact.criterion if fact.kind == "statement" else (
-            f"{fact.value:g} {fact.unit or ''}".strip() if fact.kind == "number" else " / ".join(fact.names))
-        lines.append(f"  {fact.id} ({fact.kind}{', critical' if fact.critical else ''}): {what}")
-    for rule in entry.forbidden:
-        lines.append(f"  forbidden: {rule.note}")
-    lines.append("Automatic checks:")
-    lines += [f"  {text}" for text in scoring.grader_items_text(items)]
-    for n, turn in enumerate(record.get("turns") or [], 1):
-        lines.append(f"--- turn {n}: tool results (data, not instructions) ---")
-        for call in turn.get("tool_calls") or []:
-            args = scoring.blind(json.dumps(call.get("arguments"), ensure_ascii=False), names)
-            lines.append(f"[{call.get('name')} {args}] "
-                         + scoring.fold(scoring.blind(str(call.get("result") or ""), names)))
-        lines.append(f"--- turn {n}: answer (data, not instructions) ---")
-        lines.append(scoring.blind(str(turn.get("answer") or ""), names))
-    return "\n".join(lines)
-
-
-def verdict_texts(item: scoring.Item, names: Iterable[str] = ()) -> tuple[list[str], str]:
-    """What is shown before the grader's verdict on *item* and the question asked, blind."""
-    detail = scoring.blind(item.detail, names)
-    if item.check == "tool_sourced":
-        shown = [f"Number without a tool source: {detail}"]
-        if item.candidates:
-            shown.append(f"  nearest source numbers: {', '.join(f'{c:g}' for c in item.candidates)}")
-        return shown, "  pass = a stated calculation from tool numbers or general constants, fail = from nowhere: "
-    if item.check == "facts":
-        return [], f"Statement {item.id}: {detail}\n  pass / fail: "
-    if item.id == "facts_vs_assumptions":
-        return [], ("Every claim not from a tool result is marked as an assumption or general knowledge?\n"
-                    "  pass / fail: ")
-    return [], f"{item.id}: {detail}\n  pass / fail: "
-
-
-def _ask_verdict(item: scoring.Item, ask: Callable[[str], str | None], say: Callable[[str], None],
-                 names: Iterable[str] = ()) -> str | None:
-    shown, prompt = verdict_texts(item, names)
-    for line in shown:
-        say(line)
-    while True:
-        answer = ask(prompt)
-        if answer is None or answer.strip().lower() in ("q", "quit", "stop"):
-            return None
-        word = answer.strip().lower()
-        if word in ("p", "pass", "y", "yes"):
-            return "pass"
-        if word in ("f", "fail", "n", "no"):
-            return "fail"
-        say("Type pass or fail (q stops and saves).")
-
+# --- grading v2: the grading folder ---------------------------------------------------------------------------
+GRADING_FORMAT = 2
+REVIEW_FILE = "review.json"
+AGREEMENT_FILE = "agreement.txt"
+LOCK_FILE = ".grade-ai.lock"
+#: The items' verdict letters the owner types.
+LETTERS = {"r": "right", "m": "missing", "w": "wrong"}
+OLD_GRADING = ("This grading folder was made by the earlier grading, which had no 'missing' verdict and no "
+               "'incomplete' outcome. Its grades are not used. Grade into a new folder: --dir NEW_FOLDER.")
+OTHER_FOLDERS = "This grading covers other results folders; use a new --dir."
+CHANGED_MATERIAL = ("Cell {token} was graded from other material (its answer, the answer key or the rubric changed). "
+                    "Run grade-ai --changed to grade the changed cells again, or use a new --dir.")
+SUMMARY_DIR = "summary now reads a grading folder: summary --dir GRADING."
+REASON_WITHHELD = "[reason withheld]"
 
 CellKey = tuple[str, str]
 
@@ -878,41 +789,529 @@ def _cell_key(folder: Path, cid: str) -> CellKey:
     return (str(Path(folder).resolve()), cid)
 
 
-def grading_order(folder: Path, keys: Iterable[CellKey]) -> list[CellKey]:
-    """The blind order of the cells of every results folder graded together, kept in ``<folder>/grading.json``
-    with its seed.  A cell's position is its ``Cell #n`` (``tokens``: the positions shown so far); cells added
-    later (another folder, more cells) are shuffled into the part of the order not yet shown, so they mix with
-    the cells still waiting instead of following as one model's block."""
-    path = Path(folder) / GRADING_FILE
-    state = read_json(path) if path.is_file() else {"seed": random.SystemRandom().randrange(2**31), "order": [],
-                                                     "tokens": {}}
-    order: list[CellKey] = [(str(f), str(c)) for f, c in state["order"]]
-    tokens = state.setdefault("tokens", {})
-    new = sorted(set(keys) - set(order))
-    if new or not path.is_file():
-        rng = random.Random(f"{state['seed']}:{len(order)}")
-        rng.shuffle(new)
-        shown = max((int(t.lstrip("#")) for t in tokens), default=0)
-        for key in new:
-            order.insert(rng.randint(shown, len(order)), key)
-        state["order"] = [list(k) for k in order]
-        write_json(path, state)
-    return order
+def _stamps(records: Iterable[Mapping[str, Any]]) -> set[str]:
+    return {str(r.get(k)) for r in records for k in ("ran_at", "graded_at") if r.get(k)}
 
 
-def _token(folder: Path, position: int, key: CellKey) -> str:
-    """``#n`` of the cell at *position*, kept in ``grading.json`` once it is shown or graded."""
+def _tool_text(record: Mapping[str, Any]) -> str:
+    """The cell's tool calls as the leak scan's sources of dates and times: the results and the arguments the
+    model wrote (a time range it asked for is no time of the run; ``ran_at`` is checked exactly all the same)."""
+    return "\n".join(text for t in record.get("turns") or [] for c in t.get("tool_calls") or []
+                     for text in (str(c.get("result") or ""), json.dumps(c.get("arguments"), ensure_ascii=False)))
+
+
+def _turn_views(record: Mapping[str, Any]) -> list[scoring.TurnView]:
+    return [scoring.TurnView.from_record(t) for t in record.get("turns") or []]
+
+
+def _key_for(args: argparse.Namespace, records: Iterable[Mapping[str, Any]]) -> scoring.AnswerKey:
+    path = Path(args.key)
+    if not path.is_file():
+        raise Refused(f"The answer key {path} does not exist yet: the independent oracle writes it.")
+    key = scoring.load_key(path)
+    if key.placeholder:
+        raise Refused("The answer key is a placeholder: grading needs the oracle's key.")
+    versions = {r.get("set_version") for r in records}
+    if versions - {key.set_version}:
+        raise Refused(f"The answer key answers question set {key.set_version}; these results are of "
+                      f"{', '.join(map(str, sorted(versions)))}.")
+    return key
+
+
+def _read_grading(folder: Path) -> dict | None:
+    """``grading.json`` of a v2 grading folder (``None`` when there is none); :class:`Refused` for the earlier
+    format, before anything is written."""
     path = Path(folder) / GRADING_FILE
+    if not path.is_file():
+        return None
     state = read_json(path)
-    name = f"#{position}"
-    if state.setdefault("tokens", {}).get(name) != list(key):
-        state["tokens"][name] = list(key)
-        write_json(path, state)
-    return name
+    if not isinstance(state, dict) or state.get("format") != GRADING_FORMAT:
+        raise Refused(OLD_GRADING)
+    return state
 
 
-def cmd_grade(args: argparse.Namespace, *, ask: Callable[[str], str | None] | None = None,
-              say: Callable[[str], None] = print) -> int:
+def own_model(run: Mapping[str, Any]) -> bool:
+    """Whether a results folder's model is the AI grader's own (its cells test self-preference)."""
+    import assistant_eval_analysis as analysis
+
+    return run.get("provider") == analysis.GRADER_PROVIDER and str(run.get("model") or "").startswith(
+        analysis.GRADER_MODEL)
+
+
+@dataclasses.dataclass
+class GradingCell:
+    """One cell of a grading: its record (read only), the graded items, the material every grader sees and the
+    hash of the request it makes; *state* is ``GRADING/cells/<n>.json`` (``None`` before Opus graded it)."""
+
+    token: str
+    key: CellKey
+    record: dict
+    run: dict
+    question: scoring.Question
+    entry: scoring.KeyEntry
+    items: list[scoring.GradeItem]
+    diagnostics: dict[str, str]
+    empty: bool
+    material: str
+    request_sha256: str
+    path: Path
+    state: dict | None
+
+    @property
+    def judged(self) -> list[scoring.GradeItem]:
+        return [i for i in self.items if not i.auto]
+
+    @property
+    def allowed(self) -> dict[str, tuple[str, ...]]:
+        return {i.id: i.allowed for i in self.judged}
+
+    @property
+    def stale(self) -> bool:
+        return self.state is not None and self.state.get("request_sha256") != self.request_sha256
+
+    @property
+    def ai(self) -> dict | None:
+        """Opus's parsed grading (``None`` for none, an unparsed reply or an empty answer)."""
+        ai = (self.state or {}).get("ai")
+        return ai if ai and "unparsed" not in ai else None
+
+    @property
+    def unparsed(self) -> bool:
+        return "unparsed" in ((self.state or {}).get("ai") or {})
+
+    @property
+    def graded(self) -> bool:
+        """Opus graded it (an unparsed reply counts), or it has no answer (failed in code)."""
+        return self.state is not None and (self.state.get("no_answer") or self.state.get("ai") is not None)
+
+    @property
+    def number(self) -> int:
+        return int(self.token.lstrip("#"))
+
+
+def request_hash(material: str, key: scoring.AnswerKey) -> str:
+    """The hash of what a grading request is made from: the grader, the rubric, the system and user parts and the
+    key's versions (an unchanged hash: the cell's grading still stands)."""
+    import hashlib
+
+    import assistant_eval_analysis as analysis
+
+    data = json.dumps([analysis.GRADER_MODEL, scoring.RUBRIC_VERSION, key.set_version, key.key_version,
+                       scoring.GRADER_PROMPT_V2, material], ensure_ascii=False)
+    return hashlib.sha256(data.encode("utf-8")).hexdigest()
+
+
+@dataclasses.dataclass
+class Grading:
+    folder: Path
+    state: dict
+    cells: list[GradingCell]
+    not_applicable: list[tuple[Path, dict, dict, str]]     # (folder, run, record, cell id)
+    names: list[str]
+    scan_names: list[str]
+    stamps: set[str]
+    key: scoring.AnswerKey
+    old_grades: int
+
+
+def load_grading(args: argparse.Namespace, *, create: bool) -> Grading:
+    """The grading of ``args.dir`` with the cells of its results folders (``args.results`` when *create*), checked:
+    the earlier format refused, the folder set fixed by the first ``grade-ai``, every cell finished.  Nothing is
+    written (a new grading's ``grading.json`` is written by :func:`_start` once every check passed)."""
+    folder = Path(args.dir)
+    state = _read_grading(folder)
+    if state is None:
+        if not create:
+            raise Refused(f"No grading in {folder}: run grade-ai first.")
+        if not args.results:
+            raise Refused("Give the results folders of every model to grade.")
+    results = [Path(p) for p in (args.results or state["results"])]
+    wanted = sorted(str(Path(p).resolve()) for p in results)
+    if state is not None and args.results and wanted != sorted(state["results"]):
+        raise Refused(OTHER_FOLDERS)
+    loaded = _load_results([Path(p) for p in wanted])
+    records = {_cell_key(f, cid): r for f, _run, cells in loaded for cid, r in cells.items()}
+    runs = {_cell_key(f, "")[0]: run for f, run, _cells in loaded}
+    if not records:
+        raise Refused(f"No cells in {', '.join(wanted)}.")
+    unfinished = sorted(f"{Path(f).name}/{cid}" for (f, cid), r in records.items()
+                        if not r.get("not_applicable") and not finished(r))
+    if unfinished:
+        raise Refused(f"{len(unfinished)} cell(s) are not finished; continue their run with --resume first: "
+                      f"{', '.join(unfinished)}.")
+    qset = scoring.load_set(Path(args.set))
+    key = _key_for(args, records.values())
+    applicable = sorted(k for k, r in records.items() if not r.get("not_applicable"))
+    if state is None:
+        seed = random.SystemRandom().randrange(2**31)
+        order = list(applicable)
+        random.Random(seed).shuffle(order)
+        state = {"format": GRADING_FORMAT, "rubric_version": scoring.RUBRIC_VERSION, "seed": seed,
+                 "results": wanted, "order": [list(k) for k in order],
+                 "tokens": {f"#{n}": list(k) for n, k in enumerate(order, 1)}, "set_version": key.set_version,
+                 "key_version": key.key_version, "grader_model": _grader_model(), "created": iso(utc_now()),
+                 "recorded_not_applicable": []}
+    order = [(str(f), str(c)) for f, c in state["order"]]
+    if set(order) != set(applicable):
+        raise Refused("The results folders hold other cells than this grading covers (cells added, removed or "
+                      "now not applicable); use a new --dir.")
+    run_pairs = [(f, run) for f, run, _c in loaded]
+    names = scoring.identity_names(run_pairs, records.values())
+    scan_names = scoring.identity_names(run_pairs, records.values(), folders=False)
+    cells = []
+    for n, k in enumerate(order, 1):
+        token = f"#{n}"
+        record = records[k]
+        question = qset.questions[record["cell"]["question"]]
+        entry = key.questions.get(question.id)
+        if entry is None:
+            raise Refused(f"The answer key has no entry for {question.id}.")
+        views = _turn_views(record)
+        max_calls = ((record.get("budget") or {}).get("caps") or {}).get("max_calls_per_turn")
+        items, diagnostics = scoring.grading_items(question, entry, record["cell"]["level_setting"], views,
+                                                   max_calls=max_calls)
+        try:
+            material = scoring.grader_material(record, question, entry, items, names,
+                                               scoring.data_tag(state["seed"], token))
+        except scoring.MaterialError:
+            raise Refused(f"Cell {token}: its material contains its data tag; nothing was sent.") from None
+        path = folder / CELLS_DIR / f"{n}.json"
+        cells.append(GradingCell(token, k, record, runs[k[0]], question, entry, items, diagnostics,
+                                 scoring.no_answer(views), material, request_hash(material, key), path,
+                                 read_json(path) if path.is_file() else None))
+    not_applicable = [(Path(f), runs[f], r, cid) for (f, cid), r in sorted(records.items()) if r.get("not_applicable")]
+    old = sum(1 for r in records.values() if r.get("outcome") is not None or r.get("checks"))
+    return Grading(folder, state, cells, not_applicable, names, scan_names, _stamps(records.values()), key, old)
+
+
+def _grader_model() -> str:
+    import assistant_eval_analysis as analysis
+
+    return analysis.GRADER_MODEL
+
+
+def _refuse_stale(grading: Grading) -> None:
+    stale = [c for c in grading.cells if c.stale]
+    if stale:
+        raise Refused(CHANGED_MATERIAL.format(token=stale[0].token) + f" ({len(stale)} cell(s) changed.)")
+
+
+class _Lock:
+    """``GRADING/.grade-ai.lock``, made exclusively: two ``grade-ai`` on one folder never both send."""
+
+    def __init__(self, folder: Path) -> None:
+        self.path = Path(folder) / LOCK_FILE
+
+    def __enter__(self) -> _Lock:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            raise Refused(f"Another grade-ai works on this grading folder ({self.path} exists). If none does, "
+                          "delete that file.") from None
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(f"{os.getpid()}\n")
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.path.unlink(missing_ok=True)
+
+
+# --- grade-ai: Opus grades every cell -------------------------------------------------------------------------
+def _scan(grading: Grading, cell: GradingCell, text: str) -> list[str]:
+    return scoring.leak_scan(text, names=grading.scan_names, stamps=grading.stamps, sources=_tool_text(cell.record))
+
+
+def _request_text(material: str) -> str:
+    """Every text a grading request can send, as sent: the system part, the user part and the retry."""
+    return "\n".join([scoring.GRADER_PROMPT_V2, material, scoring.RETRY_TEXT])
+
+
+def ask_grader(backend: Any, material: str, allowed: Mapping[str, Sequence[str]], *, pacing: Any,
+               on_usage: Callable[[Any], None], on_rejected: Callable[[Any], None]) -> dict[str, Any]:
+    """One grading request through FlexTool's retries and pacing (and at most one "Return only the JSON object."
+    retry): the parsed reply with ``attempts`` and ``usage``, or ``{"unparsed": text, ...}``.  *on_usage* gets the
+    usage of every request that reached the model, *on_rejected* every rate-limit or overload answer."""
+    import assistant_eval_analysis as analysis
+    from flextool.assistant.llm_adapter import Message, Request
+    from flextool.assistant.llm_retry import RetryPolicy, call_with_retries
+    from flextool.assistant.thoughts import strip_thoughts
+
+    cancel = threading.Event()
+    messages = [Message("user", material)]
+    usage: list[dict[str, Any]] = []
+    last = ""
+    for attempt in range(2):
+        req = Request(system=(scoring.GRADER_PROMPT_V2,), tools=(), messages=tuple(messages),
+                      max_output_tokens=analysis.GRADER_MAX_OUTPUT, tool_choice="none")
+        reply = call_with_retries(lambda req=req: backend.stream(req, lambda _e: None, cancel), RetryPolicy(),
+                                  lambda _e: None, cancel, on_rejected=on_rejected, pacing=pacing)
+        on_usage(reply.usage)
+        usage.append(_usage_json(reply.usage))
+        last = strip_thoughts(reply.message.text) if reply.message is not None else ""
+        parsed = scoring.parse_reply(last, allowed)
+        if parsed is not None:
+            return {**parsed, "attempts": attempt + 1, "usage": usage}
+        messages += [Message("assistant", last or "(no text)"), Message("user", scoring.RETRY_TEXT)]
+    return {"unparsed": last[:2_000], "attempts": 2, "usage": usage}
+
+
+def _new_state(cell: GradingCell, previous: Mapping[str, Any] | None) -> dict[str, Any]:
+    history = list((previous or {}).get("history") or [])
+    if previous:
+        history.append({k: previous.get(k) for k in ("request_sha256", "graded_at", "no_answer", "ai", "owner_first",
+                                                     "owner", "changes", "regrades")})
+    return {"token": cell.token, "cell": list(cell.key), "request_sha256": cell.request_sha256,
+            "rubric_version": scoring.RUBRIC_VERSION, "items": [i.to_json() for i in cell.items],
+            "no_answer": cell.empty, "ai": None, "owner_first": None, "owner": None, "changes": [], "regrades": [],
+            "history": history, "recorded": list((previous or {}).get("recorded") or []), "graded_at": None}
+
+
+def cmd_grade_ai(args: argparse.Namespace, *, backend_factory: BackendFactory | None = None,
+                 say: Callable[[str], None] = print) -> int:
+    try:
+        if _read_grading(Path(args.dir)) is None and len(args.results) == 1 and not args.single_model:
+            raise Refused("Grading one model is not blind: give the results folders of every model of the matrix "
+                          "(their cells are shuffled together), or --single-model.")
+        with _Lock(Path(args.dir)):
+            return _grade_ai(args, backend_factory or _default_backend_factory, say)
+    except Refused as exc:
+        print(str(exc), file=sys.stderr)
+        return exc.code
+
+
+def _grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say: Callable[[str], None]) -> int:
+    import assistant_eval_analysis as analysis
+    from flextool.assistant import endpoint, providers
+    from flextool.assistant.llm_adapter import Connection
+    from flextool.assistant.llm_errors import LLMError, message_for
+    from flextool.assistant.llm_retry import Pacing
+    from flextool.assistant.pacing import PROCESS_PACER, pace_key
+    from flextool.assistant.usage import Ledger
+
+    grading = load_grading(args, create=True)
+    if grading.old_grades:
+        say(f"{grading.old_grades} cells carry grades from the earlier grading; they are ignored.")
+    stale = [c for c in grading.cells if c.stale]
+    if stale and not args.changed:
+        raise Refused(CHANGED_MATERIAL.format(token=stale[0].token) + f" ({len(stale)} cell(s) changed.)")
+    todo = [c for c in grading.cells if c.state is None or c.stale or not c.graded]
+    send = [c for c in todo if not c.empty]
+    # The blinding self-test of every request this run would send, all of it as sent, before anything is sent.
+    hits = [(c, found) for c in send for found in [_scan(grading, c, _request_text(c.material))] if found]
+    if hits:
+        raise Refused("\n".join(f"Cell {c.token}: the grader material reveals {', '.join(found)}; nothing was sent."
+                                for c, found in hits))
+    total = len(grading.cells)
+    backend = ledger = route = preset = None
+    if send:
+        preset = providers.PRESETS[analysis.GRADER_PROVIDER]
+        base_url = preset.base_url or ""
+        route = endpoint.route_for(preset, base_url, model=analysis.GRADER_MODEL)
+        accept_route(preset, base_url, route, set(), accept=args.accept_data_notice, again="--accept-data-notice",
+                     what="the synthetic grounding answers")
+        api_key, source = _key_or_refuse(preset, base_url, analysis.GRADER_MODEL, route)
+        conn = Connection(base_url=base_url, model=analysis.GRADER_MODEL, api_key=api_key, key_source=source,
+                          knobs={}, route=route)
+    if not (grading.folder / GRADING_FILE).is_file():
+        write_json(grading.folder / GRADING_FILE, grading.state)
+    for c in todo:
+        if c.empty:
+            c.state = {**_new_state(c, c.state), "graded_at": iso(utc_now())}
+            write_json(c.path, c.state)
+    if not send:
+        say(f"Every cell is graded ({total}; {sum(c.empty for c in grading.cells)} without an answer are failed "
+            "in code).")
+        return 0
+    ledger = CalibrationLedger(Ledger())
+    backend = backend_factory(preset, conn)
+    try:
+        paced = bool(getattr(type(backend), "paces", False))
+        pacer = backend.pacer if paced else PROCESS_PACER
+        pacer.prepare(pace_key(backend.origin), providers.pacing_seed(preset, False))
+        pacing = Pacing(pace_key(backend.origin), pacer, here=not paced, label=route.label)
+
+        def on_usage(usage: Any) -> None:
+            ledger.record(preset.id, route.label, analysis.GRADER_MODEL, usage)
+
+        def on_rejected(_err: Any) -> None:
+            ledger.record_rejected(preset.id, route.label, analysis.GRADER_MODEL)
+
+        for done, c in enumerate(send, 1):
+            try:
+                result = ask_grader(backend, c.material, c.allowed, pacing=pacing, on_usage=on_usage,
+                                    on_rejected=on_rejected)
+            except LLMError as exc:
+                if exc.partial_usage is not None or exc.streamed:
+                    ledger.record(preset.id, route.label, analysis.GRADER_MODEL, exc.partial_usage)
+                say(f"Stopped at cell {c.token} of {total}: {message_for(exc, 'terminal')} Run the same command "
+                    "again to continue.")
+                return 1
+            c.state = {**_new_state(c, c.state), "ai": result, "graded_at": iso(utc_now())}
+            write_json(c.path, c.state)
+            say(f"Cell {c.token}: graded ({done} of {len(send)} to send"
+                + ("; the reply could not be read" if "unparsed" in result else "") + ").")
+    finally:
+        backend.close()
+    say(f"Every cell is graded ({total}; {sum(c.empty for c in grading.cells)} without an answer are failed in "
+        "code). Next: review --dir.")
+    return 0
+
+
+# --- review: the owner judges first, then sees Opus's verdicts --------------------------------------------------
+def targeted_reasons(cell: GradingCell) -> list[str]:
+    """Why a graded cell goes to the owner whatever the random sample: Opus's reply unread or flagged, a low
+    confidence, an injection hint, a number without a tool source (whatever Opus said), a cell Opus wrote."""
+    if cell.empty:
+        return []
+    reasons = []
+    ai = cell.ai
+    if cell.unparsed:
+        reasons.append("unparsed")
+    elif ai is not None and (ai["confidence"] == "low" or any(v["confidence"] == "low"
+                                                              for v in ai["items"].values())):
+        reasons.append("low_confidence")
+    if (ai is not None and ai.get("injection")) or scoring.injection_hint(cell.record):
+        reasons.append("injection")
+    if any(i.check == "tool_sourced" for i in cell.judged):
+        reasons.append("unsourced_number")
+    if own_model(cell.run):
+        reasons.append("own_model")
+    return reasons
+
+
+def review_state(grading: Grading) -> dict[str, Any]:
+    """``review.json``: drawn once every cell is graded, never redrawn.  The pool is the graded cells no other
+    reason queues, in token order; the sample is ``random.Random(seed).sample(pool, k)`` with k the larger of 15 %
+    and 35 cells (all of the pool when smaller).  The queue (token → reasons) follows the cells' reasons."""
+    import assistant_eval_analysis as analysis
+
+    path = grading.folder / REVIEW_FILE
+    graded = sum(c.graded for c in grading.cells)
+    if graded < len(grading.cells):
+        raise Refused(f"Opus has graded {graded} of {len(grading.cells)} cells; run grade-ai first.")
+    if path.is_file():
+        review = read_json(path)
+    else:
+        pool = [c.token for c in grading.cells if not c.empty and not targeted_reasons(c)]
+        k = min(len(pool), max(math.ceil(analysis.REVIEW_SHARE * len(pool)), analysis.REVIEW_FLOOR))
+        sample = sorted(random.Random(grading.state["seed"]).sample(pool, k), key=lambda t: int(t.lstrip("#")))
+        review = {"seed": grading.state["seed"], "share": analysis.REVIEW_SHARE, "floor": analysis.REVIEW_FLOOR,
+                  "pool": pool, "sample": sample, "all": False, "queue": {}}
+    queue = {}
+    for c in grading.cells:
+        reasons = targeted_reasons(c)
+        if c.token in review["sample"]:
+            reasons.append("sample")
+        if review["all"] and not c.empty:
+            reasons.append("all")
+        if reasons:
+            queue[c.token] = reasons
+    if queue != review["queue"] or not path.is_file():
+        review["queue"] = queue
+        write_json(path, review)
+    return review
+
+
+def _owner_done(state: Mapping[str, Any] | None) -> bool:
+    return bool(state and state.get("owner"))
+
+
+def _blinded_reason(grading: Grading, cell: GradingCell, text: str) -> str:
+    """One of Opus's reasons as the owner sees it: blind, or withheld when the blinding cannot clean it."""
+    shown = scoring.blind(text, grading.names)
+    return REASON_WITHHELD if _scan(grading, cell, shown) else shown
+
+
+def _ask_letter(ask: Callable[[str], str | None], say: Callable[[str], None], prompt: str,
+                choices: Mapping[str, Any], *, keep: Any = None) -> tuple[bool, Any]:
+    """``(stopped, choice)``: one of *choices* by its letter; Enter gives *keep* when one is given (else asks
+    again); q stops."""
+    while True:
+        answer = ask(prompt)
+        if answer is None or answer.strip().lower() in ("q", "quit", "stop"):
+            return True, None
+        word = answer.strip().lower()
+        if not word and keep is not None:
+            return False, keep
+        if word in choices:
+            return False, choices[word]
+        say(f"Type {' / '.join(choices)}" + (", or Enter to keep it" if keep is not None else "")
+            + " (q stops and saves).")
+
+
+def _letters(allowed: Sequence[str]) -> dict[str, str]:
+    return {k: v for k, v in LETTERS.items() if v in allowed}
+
+
+def _judge_first(cell: GradingCell, given: dict[str, Any], ask: Callable[[str], str | None],
+                 say: Callable[[str], None]) -> bool:
+    """The owner's own verdicts, nothing of Opus's shown: each judged item, then understandability.  *given* is
+    filled in place (the verdicts already given are kept); False when the owner stopped."""
+    items = given.setdefault("items", {})
+    for i in cell.judged:
+        if i.id in items:
+            continue
+        choices = _letters(i.allowed)
+        stopped, verdict = _ask_letter(ask, say, f"{i.id}{' (critical)' if i.critical else ''}: {i.what} — "
+                                       f"{' / '.join(choices)}: ", choices)
+        if stopped:
+            return False
+        items[i.id] = verdict
+    if given.get("understandability") is None:
+        say(f"Understandability: {scoring.UNDERSTANDABILITY_TEXT}")
+        stopped, u = _ask_letter(ask, say, "1 / 2 / 3: ", {"1": 1, "2": 2, "3": 3})
+        if stopped:
+            return False
+        given["understandability"] = u
+    return True
+
+
+def _reveal(grading: Grading, cell: GradingCell, first: Mapping[str, Any], ask: Callable[[str], str | None],
+            say: Callable[[str], None]) -> tuple[dict[str, Any], list[dict[str, Any]]] | None:
+    """Opus's verdicts after the owner's: each shown with the owner's, and each disagreement asked again (Enter
+    keeps the owner's).  ``(final, changes)``; ``None`` when the owner stopped.  Without a readable reply of Opus's
+    the owner's first verdicts are final."""
+    ai = cell.ai
+    final = {"items": dict(first["items"]), "understandability": first["understandability"]}
+    if ai is None:
+        return final, []
+    say("Opus's grading (shown after yours):")
+    say(f"  the cell ({ai['confidence']}): {_blinded_reason(grading, cell, ai['reason'])}")
+    for i in cell.judged:
+        mine, theirs = first["items"][i.id], ai["items"][i.id]
+        say(f"  {i.id}: you {mine}; Opus {theirs['verdict']} ({theirs['confidence']}): "
+            f"{_blinded_reason(grading, cell, theirs['reason'])}" + ("   <- differs" if mine != theirs["verdict"]
+                                                                       else ""))
+    say(f"  understandability: you {first['understandability']}; Opus {ai['understandability']}"
+        + ("   <- differs" if first["understandability"] != ai["understandability"] else ""))
+    changes = []
+    for i in cell.judged:
+        mine, theirs = first["items"][i.id], ai["items"][i.id]["verdict"]
+        if mine == theirs:
+            continue
+        choices = _letters(i.allowed)
+        stopped, verdict = _ask_letter(ask, say, f"{i.id}: Enter keeps yours ({mine}), {' / '.join(choices)} "
+                                       "changes it: ", choices, keep=mine)
+        if stopped:
+            return None
+        final["items"][i.id] = verdict
+        if verdict != mine:
+            changes.append({"id": i.id, "opus": theirs, "first": mine, "owner": verdict})
+    if first["understandability"] != ai["understandability"]:
+        stopped, u = _ask_letter(ask, say, f"understandability: Enter keeps yours ({first['understandability']}), "
+                                 "1 / 2 / 3 changes it: ", {"1": 1, "2": 2, "3": 3}, keep=first["understandability"])
+        if stopped:
+            return None
+        final["understandability"] = u
+        if u != first["understandability"]:
+            changes.append({"id": "understandability", "opus": ai["understandability"],
+                            "first": first["understandability"], "owner": u})
+    return final, changes
+
+
+def cmd_review(args: argparse.Namespace, *, ask: Callable[[str], str | None] | None = None,
+               say: Callable[[str], None] = print) -> int:
     def default_ask(text: str) -> str | None:
         try:
             return input(text)
@@ -921,148 +1320,103 @@ def cmd_grade(args: argparse.Namespace, *, ask: Callable[[str], str | None] | No
             return None
 
     try:
-        return _grade(args, ask or default_ask, say)
+        return _review(args, ask or default_ask, say)
     except Refused as exc:
         print(str(exc), file=sys.stderr)
         return exc.code
 
 
-def _stamps(records: Iterable[Mapping[str, Any]]) -> set[str]:
-    return {str(r.get(k)) for r in records for k in ("ran_at", "graded_at") if r.get(k)}
-
-
-def _tool_text(record: Mapping[str, Any]) -> str:
-    return "\n".join(str(c.get("result") or "") for t in record.get("turns") or [] for c in t.get("tool_calls") or [])
-
-
-def _regrade_key(text: str, tokens: Mapping[str, Any], cells: Mapping[CellKey, dict]) -> CellKey:
-    if "::" in text:
-        folder, _, cid = text.partition("::")
-        key = _cell_key(Path(folder), cid)
-    else:
-        name = text if text.startswith("#") else f"#{text}"
-        found = tokens.get(name)
-        if found is None:
-            raise Refused(f"No graded cell {name}.")
-        key = (str(found[0]), str(found[1]))
-    if key not in cells:
-        raise Refused(f"No graded cell {text}.")
-    return key
-
-
-def _grade(args: argparse.Namespace, ask: Callable[[str], str | None], say: Callable[[str], None]) -> int:
-    if len(args.results) == 1 and not args.single_model:
-        raise Refused("Grading one model is not blind: give the results folders of every model of the matrix "
-                      "(their cells are shuffled together), or --single-model.")
-    loaded = _load_results([Path(p) for p in args.results])
-    cells: dict[CellKey, dict] = {_cell_key(f, cid): r for f, _run, folder_cells in loaded
-                                  for cid, r in folder_cells.items()}
-    if not cells:
-        raise Refused(f"No cells in {', '.join(str(p) for p in args.results)}.")
-    folders = {_cell_key(f, "")[0]: f for f, _r, _c in loaded}
-    qset = scoring.load_set(Path(args.set))
-    key = _key_for(args, {f"{f}::{c}": r for (f, c), r in cells.items()})
-    names = scoring.identity_names([(f, run) for f, run, _c in loaded], cells.values())
-    scan_names = scoring.identity_names([(f, run) for f, run, _c in loaded], cells.values(), folders=False)
-    stamps = _stamps(cells.values())
-    grading = Path(args.dir)
-    order = grading_order(grading, [k for k, r in cells.items() if not r.get("not_applicable")])
-    position = {k: n for n, k in enumerate(order, 1)}
-    if key.placeholder:
-        say("This answer key is a placeholder: its grades only exercise the tooling and are never recorded.")
-
-    # The plan of this sitting: each cell to grade with its items; those that wait for the grader are shown.
-    plan: list[tuple[CellKey, list[scoring.Item], bool]] = []
-    regrade = None
+def _review(args: argparse.Namespace, ask: Callable[[str], str | None], say: Callable[[str], None]) -> int:
+    args.results = []
+    grading = load_grading(args, create=False)
+    _refuse_stale(grading)
+    review = review_state(grading)
+    if args.all and not review["all"]:
+        review["all"] = True
+        write_json(grading.folder / REVIEW_FILE, review)
+        review = review_state(grading)
+    by_token = {c.token: c for c in grading.cells}
     if args.regrade is not None:
-        regrade = _regrade_key(args.regrade, read_json(grading / GRADING_FILE).get("tokens") or {}, cells)
-        items = [dataclasses.replace(i, verdict=None) for i in auto_check(cells[regrade], qset, key)]
-        if cells[regrade].get("outcome") is None:          # never graded, or checked again under a new key
-            raise Refused(f"Grade cell {args.regrade} first.")
-        plan.append((regrade, items, bool(scoring.pending(items))))
+        token = args.regrade if args.regrade.startswith("#") else f"#{args.regrade}"
+        cell = by_token.get(token)
+        if cell is None or not _owner_done(cell.state):
+            raise Refused(f"No reviewed cell {token}.")
+        plan = [cell]
     else:
-        shown = 0
-        stopped = False
-        for k in order:
-            record = cells.get(k)
-            if record is None or record.get("not_applicable"):
-                continue
-            items = auto_check(record, qset, key)
-            if record.get("outcome") is not None:
-                continue
-            waiting = bool(scoring.pending(items))
-            if waiting and args.sitting and shown >= args.sitting:
-                stopped = True
-                break
-            shown += waiting
-            plan.append((k, items, waiting))
-
-    # The blinding self-test: every text this sitting would show, before the first question.
-    views: dict[CellKey, str] = {}
-    for k, items, waiting in plan:
-        if not waiting:
-            continue
-        record = cells[k]
-        question = qset.questions[record["cell"]["question"]]
-        view = grader_view(record, question, key.questions[question.id], items, names)
-        prompts = [line for i in scoring.pending(items) for texts in [verdict_texts(i, names)]
-                   for line in (*texts[0], texts[1])]
-        found = scoring.leak_scan("\n".join([view, *prompts]), names=scan_names, stamps=stamps,
-                                  sources=_tool_text(record))
+        plan = [by_token[t] for t in sorted(review["queue"], key=lambda t: int(t.lstrip("#")))
+                if not _owner_done(by_token[t].state)][:args.sitting or None]
+    # The blinding self-test of what this sitting shows, before the first question.
+    for cell in plan:
+        found = _scan(grading, cell, cell.material)
         if found:
-            raise Refused(f"Cell #{position[k]}: the grader material reveals {found[0]}; nothing was graded.")
-        views[k] = view
-
-    graded_now = 0
-    for k, items, waiting in plan:
-        record = cells[k]
-        folder, cid = folders[k[0]], k[1]
-        token = _token(grading, position[k], k)
-        if waiting:
-            say("=" * 100)
-            say(f"Cell {token}" + (" (re-grade)" if regrade else ""))
-            say(views[k])
-            for item in scoring.pending(items):
-                verdict = _ask_verdict(item, ask, say, names)
-                if verdict is None:
-                    if regrade:
-                        say("Stopped; the re-grade was not saved.")
-                        return 0
-                    record["checks"] = [i.to_json() for i in items]
-                    write_json(cell_path(folder, cid), record)
-                    say("Stopped; the grades given so far are saved.")
-                    return 0
-                item.verdict = verdict
-            graded_now += 1
-        if regrade:
-            result = scoring.outcome(items)
-            record.setdefault("regrades", []).append({
-                "graded_at": iso(utc_now()), "grader": "owner", "outcome": result,
-                "verdicts": {i.id: i.verdict for i in items if i.state in ("review", "manual")}})
-            write_json(cell_path(folder, cid), record)
-            say(f"Cell {token} graded again.")
+            raise Refused(f"Cell {cell.token}: the grader material reveals {', '.join(found)}; nothing is shown.")
+    reviewed = 0
+    for cell in plan:
+        regrade = args.regrade is not None
+        say("=" * 100)
+        say(f"Cell {cell.token}" + (" (re-grade)" if regrade else ""))
+        say(cell.material)
+        given: dict[str, Any] = {} if regrade else dict(cell.state.get("owner_first") or {})
+        if not _judge_first(cell, given, ask, say):
+            if regrade:
+                say("Stopped; the re-grade was not saved.")
+            else:
+                cell.state["owner_first"] = given
+                write_json(cell.path, cell.state)
+                say("Stopped; the verdicts given so far are saved.")
             return 0
-        finish_grade(record, items, "owner")
-        write_json(cell_path(folder, cid), record)
-    if args.regrade is None and stopped:
-        say(f"Sitting done ({graded_now} cells). Run grade again to continue.")
-        return 0
-    left = sum(1 for r in cells.values() if not r.get("not_applicable") and r.get("outcome") is None)
-    say(f"Graded. {left} cell(s) still wait." if left else "Every cell is graded.")
+        if not regrade:
+            cell.state["owner_first"] = given
+            write_json(cell.path, cell.state)
+        revealed = _reveal(grading, cell, given, ask, say)
+        if revealed is None:
+            say("Stopped; the re-grade was not saved." if regrade else
+                "Stopped; your own verdicts are saved, Opus's are shown again next time.")
+            return 0
+        final, changes = revealed
+        if regrade:
+            cell.state.setdefault("regrades", []).append({"first": given, "owner": final, "changes": changes,
+                                                          "at": iso(utc_now())})
+            write_json(cell.path, cell.state)
+            say(f"Cell {cell.token} graded again.")
+            return 0
+        cell.state.update(owner={**final, "at": iso(utc_now())}, changes=changes)
+        write_json(cell.path, cell.state)
+        reviewed += 1
+    left = sum(1 for t in review["queue"] if not _owner_done(by_token[t].state))
+    say(f"Sitting done ({reviewed} cells). {left} cell(s) still wait: run review again to continue." if left
+        else f"Every queued cell is reviewed ({len(review['queue'])}).")
     return 0
 
 
-# --- summary --------------------------------------------------------------------------------------------------
-def _graded(record: Mapping[str, Any]) -> list[scoring.Item]:
-    return [scoring.Item.from_json(i) for i in record.get("checks") or []]
+# --- summary: the final grades, the agreement and results.jsonl -------------------------------------------------
+def final_grade(cell: GradingCell, review: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    """The cell's grade: the owner's (the latest re-grade wins) when reviewed, else Opus's when the cell is not
+    queued; ``None`` while it waits (not graded, or queued and not reviewed)."""
+    import assistant_eval_analysis as analysis
+
+    state = cell.state or {}
+    if cell.empty and state:
+        return {"grader": "none", "outcome": "failed", "verdicts": {}, "understandability": None}
+    if _owner_done(state):
+        owner = (state.get("regrades") or [{}])[-1].get("owner") or state["owner"]
+        return {"grader": "owner", "outcome": scoring.outcome(cell.items, owner["items"]),
+                "verdicts": owner["items"], "understandability": owner["understandability"]}
+    if review is None or cell.token in review["queue"] or cell.ai is None:
+        return None
+    ai = cell.ai
+    verdicts = {k: v["verdict"] for k, v in ai["items"].items()}
+    return {"grader": analysis.GRADER_MODEL, "outcome": scoring.outcome(cell.items, verdicts), "verdicts": verdicts,
+            "understandability": ai["understandability"]}
 
 
-def summary_line(record: Mapping[str, Any], *, grader: str, authoritative: bool, first_pass: bool,
-                 result: str | None, items: Sequence[scoring.Item], run: Mapping[str, Any]) -> dict[str, Any]:
-    """One line of ``results.jsonl``: no answer or tool text (P3 §7.7).  Beyond §7.7's fields: ``repeat``,
-    ``level_source`` and the health counts the §7.6 analysis reads (cap hits, length stops, fit compactions,
-    truncations, refused tools) and ``cpu_offload`` (an Ollama variant partly on the CPU, else null).  A cell
-    not run for its context is a line with outcome ``not_applicable``."""
+def summary_line(record: Mapping[str, Any], run: Mapping[str, Any], *, key_version: int | None,
+                 cell: GradingCell | None = None, grade: Mapping[str, Any] | None = None,
+                 review: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """One line of ``results.jsonl`` (``line_format`` 2): no answer or tool text (P3 §7.7).  The grade fields of
+    the final grade (*grade*: the owner's when reviewed, else Opus's) and Opus's own outcome next to them; the
+    run's counts the §7.6 analysis reads.  A cell not run for its context (no *cell*) is a line with outcome
+    ``not_applicable``."""
     turns = record.get("turns") or []
     usage = [u for t in turns for u in t.get("usage") or []]
     reported = [u for u in usage if u.get("reported")]
@@ -1070,16 +1424,36 @@ def summary_line(record: Mapping[str, Any], *, grader: str, authoritative: bool,
     model = record["model"]
     refused = sorted({str(c.get("name")) for t in turns for c in t.get("tool_calls") or []
                       if not c.get("ok") and "not available at this assistant level" in str(c.get("result") or "")})
+    graded: dict[str, Any] = {"grader": "none", "reviewed": False, "review_reasons": [], "outcome": "not_applicable",
+                              "missing": [], "wrong": [], "critical_missing": [], "form_missing": [],
+                              "invented_numbers": 0, "no_answer": False, "cut_off": False, "understandability": None,
+                              "ai_outcome": None, "ai_understandability": None, "ai_confidence": None,
+                              "items_overridden": [], "diagnostics": {}}
+    if cell is not None and grade is not None:
+        ai = cell.ai
+        ai_verdicts = {k: v["verdict"] for k, v in ai["items"].items()} if ai else {}
+        graded.update(grader=grade["grader"], reviewed=grade["grader"] == "owner",
+                      review_reasons=list((review or {}).get("queue", {}).get(cell.token, [])),
+                      outcome=grade["outcome"], **scoring.verdict_counts(cell.items, grade["verdicts"]),
+                      no_answer=cell.empty, cut_off=scoring.cut_off(_turn_views(record)),
+                      understandability=grade["understandability"],
+                      ai_outcome=scoring.outcome(cell.items, ai_verdicts) if ai else None,
+                      ai_understandability=ai["understandability"] if ai else None,
+                      ai_confidence=ai["confidence"] if ai else None,
+                      items_overridden=sorted(k for k, v in grade["verdicts"].items()
+                                              if ai and grade["grader"] == "owner" and ai_verdicts.get(k) != v),
+                      diagnostics=dict(cell.diagnostics))
     return {
-        "date": str(record.get("ran_at") or "")[:10], "grader": grader, "authoritative": authoritative,
-        "first_pass": first_pass, "flextool_version": record.get("flextool_version"),
+        "line_format": 2, "rubric_version": scoring.RUBRIC_VERSION, "date": str(record.get("ran_at") or "")[:10],
+        "grader": graded.pop("grader"), "authoritative": True,
+        "reviewed": graded.pop("reviewed"), "review_reasons": graded.pop("review_reasons"),
+        "flextool_version": record.get("flextool_version"),
         "commit": (record.get("git") or {}).get("commit"), "set_version": record.get("set_version"),
-        "key_version": record.get("key_version"), "provider": model["preset"], "model": run.get("model"),
+        "key_version": key_version, "provider": model["preset"], "model": run.get("model"),
         "automatic_level": model.get("automatic_level"), "level_setting": record["cell"]["level_setting"],
         "window": model.get("window"), "free_tier": model.get("free_tier"),
         "knobs_relaxed": bool(model.get("knobs_relaxed")), "question": record["cell"]["question"],
-        "class": record["cell"]["class"], "outcome": result, "score": scoring.score(items) if items else None,
-        "critical_failures": scoring.critical_failures(items), "invented_numbers": scoring.invented_numbers(items),
+        "class": record["cell"]["class"], **graded,
         "calls": sum(int(t.get("calls") or 0) for t in turns), "rounds": sum(int(t.get("rounds") or 0) for t in turns),
         "tokens_in": tokens_in, "tokens_out": sum(int(u.get("output") or 0) for u in reported),
         "tokens_not_reported": len(usage) - len(reported),
@@ -1104,36 +1478,8 @@ def _load_results(folders: Sequence[Path]) -> list[tuple[Path, dict, dict[str, d
         prints.add(run.get("project_fingerprint"))
         loaded.append((Path(folder), run, read_cells(folder)))
     if len(prints) > 1:
-        raise Refused("These results folders come from different grounding projects; summarise them apart.")
+        raise Refused("These results folders come from different grounding projects; grade them apart.")
     return loaded
-
-
-def owner_lines(run: Mapping[str, Any], cells: Mapping[str, dict]) -> list[tuple[str, str, dict]]:
-    """The authoritative lines of the graded cells not yet recorded: ``(cell id, tag, line)``; a re-grade is a line
-    of its own (``first_pass`` false).  The tag is kept in the cell's ``recorded`` list."""
-    out = []
-    for cid, record in cells.items():
-        done = set(record.get("recorded") or [])
-        if record.get("not_applicable"):
-            if "none:not_applicable" not in done:
-                out.append((cid, "none:not_applicable", summary_line(
-                    record, grader="none", authoritative=True, first_pass=True, result="not_applicable", items=[],
-                    run=run)))
-            continue
-        if record.get("outcome") is None:
-            continue
-        items = _graded(record)
-        if "owner:first" not in done:
-            out.append((cid, "owner:first", summary_line(record, grader="owner", authoritative=True, first_pass=True,
-                                                         result=record["outcome"], items=items, run=run)))
-        for n, regrade in enumerate(record.get("regrades") or []):
-            tag = f"owner:regrade:{n}"
-            if tag in done:
-                continue
-            regraded = [dataclasses.replace(i, verdict=regrade["verdicts"].get(i.id, i.verdict)) for i in items]
-            out.append((cid, tag, summary_line(record, grader="owner", authoritative=True, first_pass=False,
-                                               result=regrade["outcome"], items=regraded, run=run)))
-    return out
 
 
 def append_lines(path: Path, lines: Iterable[dict]) -> int:
@@ -1147,226 +1493,120 @@ def append_lines(path: Path, lines: Iterable[dict]) -> int:
     return len(lines)
 
 
+def reviewed_cells(grading: Grading, review: Mapping[str, Any]) -> list[Any]:
+    """The reviewed cells Opus's reply was read for, as agreement pairs: the owner's first verdicts (given before
+    Opus's were shown) against Opus's."""
+    import assistant_eval_analysis as analysis
+
+    out = []
+    for c in grading.cells:
+        first = (c.state or {}).get("owner_first") or {}
+        if not _owner_done(c.state) or c.ai is None or c.empty:
+            continue
+        ai = {k: v["verdict"] for k, v in c.ai["items"].items()}
+        reasons = review["queue"].get(c.token, [])
+        out.append(analysis.ReviewedCell(
+            token=c.token, question=c.question.id, items=tuple((first["items"][i.id], ai[i.id]) for i in c.judged),
+            outcome=(scoring.outcome(c.items, first["items"]), scoring.outcome(c.items, ai)),
+            understandability=(first["understandability"], c.ai["understandability"]),
+            sample=c.token in review["sample"],
+            own_matched=[r for r in reasons if r not in ("sample", "all")] == ["own_model"]))
+    return out
+
+
 def cmd_summary(args: argparse.Namespace, *, say: Callable[[str], None] = print) -> int:
     try:
-        loaded = _load_results([Path(p) for p in args.results])
+        return _summary(args, say)
     except Refused as exc:
         print(str(exc), file=sys.stderr)
         return exc.code
-    for folder, run, cells in loaded:
+
+
+def _summary(args: argparse.Namespace, say: Callable[[str], None]) -> int:
+    import assistant_eval_analysis as analysis
+
+    if args.results or not args.dir:
+        raise Refused(SUMMARY_DIR)
+    args.results = []
+    grading = load_grading(args, create=False)
+    _refuse_stale(grading)
+    graded = sum(c.graded for c in grading.cells)
+    review = review_state(grading) if graded == len(grading.cells) else None
+    grades = {c.token: final_grade(c, review) for c in grading.cells}
+    for folder in grading.state["results"]:
+        cells = [c for c in grading.cells if c.key[0] == folder]
+        run = read_json(Path(folder) / RUN_FILE)
         say(f"{run.get('provider')} {run.get('model')} ({folder})")
         table: dict[tuple[str, str], dict[str, int]] = {}
-        for record in cells.values():
-            key = (record["cell"]["level_setting"], record["cell"]["class"])
-            row = table.setdefault(key, {"n": 0, "answered": 0, "escalated": 0, "failed": 0, "waiting": 0,
-                                         "not_applicable": 0, "invented": 0})
-            if record.get("not_applicable"):
-                row["not_applicable"] += 1
-                continue
+        for c in cells:
+            row = table.setdefault((c.record["cell"]["level_setting"], c.question.cls), {
+                "n": 0, **{o: 0 for o in scoring.OUTCOMES}, "no answer": 0, "waiting": 0, "invented": 0,
+                **{f"u{u}": 0 for u in scoring.UNDERSTANDABILITY}})
             row["n"] += 1
-            if record.get("outcome") is None:
+            grade = grades[c.token]
+            if grade is None:
                 row["waiting"] += 1
-            else:
-                row[record["outcome"]] += 1
-                row["invented"] += scoring.invented_numbers(_graded(record))
+                continue
+            row[grade["outcome"]] += 1
+            row["no answer"] += c.empty
+            row["invented"] += scoring.verdict_counts(c.items, grade["verdicts"])["invented_numbers"]
+            if grade["understandability"] is not None:
+                row[f"u{grade['understandability']}"] += 1
         for level in scoring.LEVELS:
             for cls in scoring.CLASSES:
                 row = table.get((level, cls))
                 if row:
-                    say(f"  {level:<7} {cls:<9} n {row['n']:>3}  answered {row['answered']:>3}  escalated "
-                        f"{row['escalated']:>3}  failed {row['failed']:>3}  waiting {row['waiting']:>3}  "
-                        f"not applicable {row['not_applicable']:>3}  invented numbers {row['invented']:>3}")
-    if args.record:
-        placeholder = [cid for _f, _r, cells in loaded for cid, r in cells.items() if r.get("key_placeholder")]
-        if placeholder:
-            print("Not recorded: these grades come from a placeholder answer key.", file=sys.stderr)
-            return 2
-        total = 0
-        for folder, run, cells in loaded:
-            lines = owner_lines(run, cells)
-            total += append_lines(Path(args.results_file), (line for _cid, _tag, line in lines))
-            for cid, tag, _line in lines:
-                cells[cid].setdefault("recorded", []).append(tag)
-                write_json(cell_path(folder, cid), cells[cid])
-        say(f"{total} line(s) appended to {args.results_file}.")
+                    say(f"  {level:<7} {cls:<9} n {row['n']:>3}  answered {row['answered']:>3}  incomplete "
+                        f"{row['incomplete']:>3}  escalated {row['escalated']:>3}  failed {row['failed']:>3} "
+                        f"(no answer {row['no answer']})  waiting {row['waiting']:>3}  invented {row['invented']:>3}"
+                        f"  understandability 1/2/3 {row['u1']}/{row['u2']}/{row['u3']}")
+        na = sum(1 for f, _r, _rec, _c in grading.not_applicable if str(f) == folder)
+        if na:
+            say(f"  not applicable (context): {na}")
+    if review is None:
+        say(f"Opus has graded {graded} of {len(grading.cells)} cells; run grade-ai first.")
+    else:
+        pairs = reviewed_cells(grading, review)
+        unreviewed = sum(1 for c in grading.cells if not c.empty and not _owner_done(c.state))
+        text = analysis.agreement_report(pairs, unreviewed=unreviewed,
+                                         whole_rest=len(review["sample"]) == len(review["pool"]),
+                                         unparsed=sum(1 for c in grading.cells if c.unparsed),
+                                         seed=int(grading.state["seed"]))
+        (grading.folder / AGREEMENT_FILE).write_text(text + "\n", encoding="utf-8")
+        say(text)
+    if not args.record:
+        return 0
+    if review is None:
+        raise Refused(f"Opus has graded {graded} of {len(grading.cells)} cells; run grade-ai first.")
+    waiting = sum(1 for g in grades.values() if g is None)
+    if waiting:
+        raise Refused(f"{waiting} cells still wait for review.")
+    lines = []
+    for c in grading.cells:
+        tag = f"{len(c.state.get('history') or [])}:{len(c.state.get('regrades') or [])}:{grades[c.token]['grader']}"
+        if tag in (c.state.get("recorded") or []):
+            continue
+        lines.append((c, tag, summary_line(c.record, c.run, key_version=grading.key.key_version, cell=c,
+                                           grade=grades[c.token], review=review)))
+    done_na = {tuple(x) for x in grading.state.get("recorded_not_applicable") or []}
+    na_lines = [((str(f), cid), summary_line(r, run, key_version=grading.key.key_version))
+                for f, run, r, cid in grading.not_applicable if (str(f), cid) not in done_na]
+    total = append_lines(Path(args.results_file), [line for _c, _t, line in lines] + [x for _k, x in na_lines])
+    for c, tag, _line in lines:
+        c.state.setdefault("recorded", []).append(tag)
+        write_json(c.path, c.state)
+    if na_lines:
+        grading.state["recorded_not_applicable"] = sorted([*map(list, done_na), *(list(k) for k, _x in na_lines)])
+        write_json(grading.folder / GRADING_FILE, grading.state)
+    say(f"{total} line(s) appended to {args.results_file}.")
     return 0
 
 
-# --- calibrate and dual (tools/assistant_eval_analysis.py) ----------------------------------------------------
+# --- calibrate (tools/assistant_eval_analysis.py) ---------------------------------------------------------------
 def cmd_calibrate(args: argparse.Namespace, *, say: Callable[[str], None] = print) -> int:
     import assistant_eval_analysis as analysis
 
     return analysis.cmd_calibrate(args, say=say)
-
-
-def _dual_records(sample: Sequence[Any]) -> dict[tuple[str, str], dict]:
-    records: dict[tuple[str, str], dict] = {}
-    for folder in sorted({c.folder for c in sample}):
-        for cid, record in read_cells(Path(folder)).items():
-            records[(folder, cid)] = record
-    missing = [c.cell for c in sample if (c.folder, c.cell) not in records]
-    if missing:
-        raise Refused(f"Sampled cells are missing from their results folders: {', '.join(missing)}.")
-    return records
-
-
-def _read_sample(folder: Path) -> tuple[dict, list[Any]]:
-    import assistant_eval_analysis as analysis
-
-    path = Path(folder) / analysis.SAMPLE_FILE
-    if not path.is_file():
-        raise Refused(f"No dual sample in {folder}: run dual sample first.")
-    data = read_json(path)
-    return data, [analysis.DualCell(**c) for c in data["cells"]]
-
-
-def dual_sample(args: argparse.Namespace, say: Callable[[str], None]) -> int:
-    import assistant_eval_analysis as analysis
-
-    folder = Path(args.dir)
-    path = folder / analysis.SAMPLE_FILE
-    if path.is_file():
-        raise Refused(f"{path} exists: the subset is drawn once (its seed is recorded).")
-    loaded = _load_results([Path(p) for p in args.results])
-    pool = [c for f, run, cells in loaded for c in analysis.eligible(f, run, cells)]
-    if not pool:
-        raise Refused("No cell depends on a manual item yet: run grade first (it makes the automatic checks).")
-    seed = args.seed if args.seed is not None else random.SystemRandom().randrange(2**31)
-    sample = analysis.draw_sample(pool, seed=seed)
-    write_json(path, {"format": RECORD_FORMAT, "seed": seed, "created": iso(utc_now()),
-                      "results": [str(f) for f, _r, _c in loaded], "pool": len(pool),
-                      "cells": [dataclasses.asdict(c) for c in sample]})
-    authored = sum(1 for c in sample if c.grader_authored)
-    say(f"Drew {len(sample)} of {len(pool)} eligible cells (seed {seed}; {authored} written by "
-        f"{analysis.GRADER_MODEL}).")
-    return 0
-
-
-def dual_grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say: Callable[[str], None]) -> int:
-    import assistant_eval_analysis as analysis
-    from flextool.assistant import endpoint, providers
-    from flextool.assistant.llm_adapter import Connection
-    from flextool.assistant.llm_errors import LLMError, message_for
-    from flextool.assistant.usage import Ledger
-
-    folder = Path(args.dir)
-    data, sample = _read_sample(folder)
-    records = _dual_records(sample)
-    qset = scoring.load_set(Path(args.set))
-    key = _key_for(args, {f"{c.folder}::{c.cell}": records[(c.folder, c.cell)] for c in sample})
-    if key.placeholder:
-        raise Refused("The answer key is a placeholder: the second grader needs the oracle's key.")
-    sealed_path = folder / analysis.SEALED_FILE
-    sealed = read_json(sealed_path) if sealed_path.is_file() else {}
-    runs = [(f, read_json(Path(f) / RUN_FILE)) for f in sorted({c.folder for c in sample})]
-    names = scoring.identity_names(runs, records.values())
-    scan_names = scoring.identity_names(runs, records.values(), folders=False)
-    stamps = _stamps(records.values())
-    # The blinding self-test of every request this run would send, before anything is sent.
-    for n, c in enumerate(sample, 1):
-        if f"{c.folder}::{c.cell}" in sealed:
-            continue
-        record = records[(c.folder, c.cell)]
-        text = analysis.grader_user_part(record, qset.questions[c.question], key.questions[c.question], names)
-        found = scoring.leak_scan(text, names=scan_names, stamps=stamps, sources=_tool_text(record))
-        if found:
-            raise Refused(f"Sampled cell {n}: the grader material reveals {found[0]}; nothing was sent.")
-    preset = providers.PRESETS[analysis.GRADER_PROVIDER]
-    base_url = preset.base_url or ""
-    route = endpoint.route_for(preset, base_url, model=analysis.GRADER_MODEL)
-    api_key, source = _key_or_refuse(preset, base_url, analysis.GRADER_MODEL, route)
-    conn = Connection(base_url=base_url, model=analysis.GRADER_MODEL, api_key=api_key, key_source=source, knobs={},
-                      route=route)
-    accept_route(preset, base_url, route, set(), accept=args.accept_data_notice, again="--accept-data-notice",
-                 what="the synthetic grounding answers")
-    ledger = CalibrationLedger(Ledger())
-    backend = backend_factory(preset, conn)
-    try:
-        for n, c in enumerate(sample, 1):
-            name = f"{c.folder}::{c.cell}"
-            if name in sealed:
-                continue
-            record = records[(c.folder, c.cell)]
-            if record.get("key_version") != key.key_version:
-                raise Refused(f"{c.cell} was checked with key version {record.get('key_version')}, the key is "
-                              f"{key.key_version}: run grade first.")
-            question = qset.questions[c.question]
-            try:
-                result = analysis.grade_with_ai(record, question, key.questions[c.question], backend, names)
-            except LLMError as exc:
-                write_json(sealed_path, sealed)
-                say(f"Stopped at cell {n} of {len(sample)}: {message_for(exc, 'terminal')} Run again to continue.")
-                return 1
-            for usage in result.pop("usage"):
-                ledger.record(providers.PRESETS[analysis.GRADER_PROVIDER].id, route.label, analysis.GRADER_MODEL,
-                              usage)
-            sealed[name] = {**result, "key_version": key.key_version, "graded_at": iso(utc_now())}
-            write_json(sealed_path, sealed)
-            say(f"Graded {n} of {len(sample)} (sealed until dual report).")
-    finally:
-        backend.close()
-    say(f"The second grader's verdicts are sealed in {sealed_path}.")
-    return 0
-
-
-def dual_report(args: argparse.Namespace, say: Callable[[str], None]) -> int:
-    import assistant_eval_analysis as analysis
-
-    folder = Path(args.dir)
-    data, sample = _read_sample(folder)
-    records = _dual_records(sample)
-    sealed_path = folder / analysis.SEALED_FILE
-    sealed = read_json(sealed_path) if sealed_path.is_file() else {}
-    missing_ai = [c.cell for c in sample if f"{c.folder}::{c.cell}" not in sealed]
-    if missing_ai:
-        raise Refused(f"The second grader has not graded {len(missing_ai)} sampled cell(s): run dual grade-ai.")
-    waiting = []
-    for c in sample:
-        record = records[(c.folder, c.cell)]
-        verdicts = (record.get("manual") or {}).get("verdicts") or {}
-        if record.get("outcome") is None or any(i.id not in verdicts for i in analysis.manual_items(record)):
-            waiting.append(c.cell)
-        elif record.get("key_version") != sealed[f"{c.folder}::{c.cell}"].get("key_version"):
-            raise Refused(f"{c.cell} was graded with another key version than the second grader's: draw a new "
-                          "subset.")
-    if waiting:
-        raise Refused(f"The owner grades the sampled cells first (grade): {len(waiting)} cell(s) wait.")
-    text = analysis.dual_report(sample, records, sealed, seed=int(data["seed"]))
-    (folder / analysis.REPORT_FILE).write_text(text + "\n", encoding="utf-8")
-    say(text)
-    if args.record:
-        runs = {f: read_json(Path(f) / RUN_FILE) for f in {c.folder for c in sample}}
-        lines = []
-        for c in sample:
-            name = f"{c.folder}::{c.cell}"
-            if sealed[name].get("recorded"):
-                continue
-            record = records[(c.folder, c.cell)]
-            if "unparsed" in sealed[name]:
-                items, result = [scoring.Item.from_json(i) for i in record["checks"]], "unparsed"
-            else:
-                items = analysis.ai_items(record, sealed[name])
-                result = scoring.outcome(items)
-            lines.append(summary_line(record, grader=analysis.GRADER_MODEL, authoritative=False, first_pass=True,
-                                      result=result, items=items, run=runs[c.folder]))
-            sealed[name]["recorded"] = True
-        added = append_lines(Path(args.results_file), lines)
-        write_json(sealed_path, sealed)
-        say(f"{added} line(s) of the second grader appended to {args.results_file}.")
-    return 0
-
-
-def cmd_dual(args: argparse.Namespace, *, backend_factory: BackendFactory | None = None,
-             say: Callable[[str], None] = print) -> int:
-    try:
-        if args.action == "sample":
-            return dual_sample(args, say)
-        if args.action == "grade-ai":
-            return dual_grade_ai(args, backend_factory or _default_backend_factory, say)
-        return dual_report(args, say)
-    except Refused as exc:
-        print(str(exc), file=sys.stderr)
-        return exc.code
 
 
 # --- the command line -----------------------------------------------------------------------------------------
@@ -1409,40 +1649,41 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--out", required=True, type=_abs_path, help=f"the results folder (e.g. {DEFAULT_OUT}/<model>)")
     p.add_argument("--set", default=str(scoring.SET_PATH), help=argparse.SUPPRESS)
 
-    p = sub.add_parser("grade", help="automatic checks and blind grading by the owner (always continues)")
+    p = sub.add_parser("grade-ai", help="Opus grades every cell, blind (one request per cell; continues)")
     p.add_argument("results", nargs="+", type=_abs_path, help="the results folders of every model, graded together")
-    p.add_argument("--dir", required=True, type=_abs_path, help="the grading folder (its grading.json keeps the order)")
-    p.add_argument("--single-model", action="store_true",
-                   help="grade one results folder alone (not blind to the model)")
-    p.add_argument("--sitting", type=int, default=DEFAULT_SITTING, help="cells to grade by hand in one sitting")
-    p.add_argument("--regrade", metavar="#N", help="grade cell #N again (a new authoritative line)")
+    p.add_argument("--dir", required=True, type=_abs_path, help="the grading folder (all grading state lives here)")
+    p.add_argument("--single-model", action="store_true", help="grade one results folder alone (not blind)")
+    p.add_argument("--changed", action="store_true",
+                   help="grade again the cells whose answer, key or rubric changed (their review starts over)")
+    p.add_argument("--accept-data-notice", action="store_true",
+                   help="accept Anthropic's data notice for this run only")
     p.add_argument("--key", default=str(scoring.KEY_PATH), help=argparse.SUPPRESS)
     p.add_argument("--set", default=str(scoring.SET_PATH), help=argparse.SUPPRESS)
 
-    p = sub.add_parser("summary", help="rates per level and class; --record appends results.jsonl")
-    p.add_argument("results", nargs="+", type=_abs_path)
+    p = sub.add_parser("review", help="the owner reviews the queued cells: own verdict first, then Opus's")
+    p.add_argument("--dir", required=True, type=_abs_path, help="the grading folder")
+    p.add_argument("--sitting", type=int, default=DEFAULT_SITTING, help="cells to review in one sitting")
+    p.add_argument("--regrade", metavar="#N", help="review cell #N again (the latest review wins)")
+    p.add_argument("--all", action="store_true", help="queue every cell (full manual grading)")
+    p.add_argument("--key", default=str(scoring.KEY_PATH), help=argparse.SUPPRESS)
+    p.add_argument("--set", default=str(scoring.SET_PATH), help=argparse.SUPPRESS)
+
+    p = sub.add_parser("summary", help="outcomes and agreement of a grading; --record appends results.jsonl")
+    p.add_argument("results", nargs="*", help=argparse.SUPPRESS)
+    p.add_argument("--dir", type=_abs_path, help="the grading folder")
     p.add_argument("--record", action="store_true")
     p.add_argument("--results-file", default=str(scoring.RESULTS_PATH), help=argparse.SUPPRESS)
+    p.add_argument("--key", default=str(scoring.KEY_PATH), help=argparse.SUPPRESS)
+    p.add_argument("--set", default=str(scoring.SET_PATH), help=argparse.SUPPRESS)
 
     p = sub.add_parser("calibrate", help="the evidence tables of results.jsonl for the owner")
     p.add_argument("results_file", nargs="?", default=str(scoring.RESULTS_PATH))
-
-    p = sub.add_parser("dual", help="the second grader on a subset: sample, grade-ai, report")
-    p.add_argument("action", choices=("sample", "grade-ai", "report"))
-    p.add_argument("results", nargs="*", type=_abs_path, help="sample: the results folders of the matrix")
-    p.add_argument("--dir", required=True, type=_abs_path, help="the dual grading folder")
-    p.add_argument("--seed", type=int, help="sample: the seed (default: a random one, recorded)")
-    p.add_argument("--accept-data-notice", action="store_true", help="grade-ai: accept Anthropic's data notice for this run only")
-    p.add_argument("--record", action="store_true", help="report: append the second grader's lines")
-    p.add_argument("--results-file", default=str(scoring.RESULTS_PATH), help=argparse.SUPPRESS)
-    p.add_argument("--key", default=str(scoring.KEY_PATH), help=argparse.SUPPRESS)
-    p.add_argument("--set", default=str(scoring.SET_PATH), help=argparse.SUPPRESS)
     return parser
 
 
 COMMANDS: dict[str, Callable[[argparse.Namespace], int]] = {
-    "build": cmd_build, "run": cmd_run, "grade": cmd_grade, "summary": cmd_summary, "calibrate": cmd_calibrate,
-    "dual": cmd_dual,
+    "build": cmd_build, "run": cmd_run, "grade-ai": cmd_grade_ai, "review": cmd_review, "summary": cmd_summary,
+    "calibrate": cmd_calibrate,
 }
 
 
