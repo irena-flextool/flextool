@@ -299,7 +299,9 @@ _ONLINE_NAMES = {
 _NOT_A_USE = {"online_model", "validation", "non_anticipativity"}
 CONSUMERS: dict[str, set[str]] = {
     "_balance_terms:balance_flow_terms": {"min_load_efficiency"},
-    "_group_slack:_eq_capacity_margin": {"min_load_efficiency"},
+    # The same terms evaluated at the solution (the capacity-margin breakdown); the capacityMargin row reads the
+    # units online only through balance_flow_terms (test_the_capacity_margin_reads_online_only_by_the_section).
+    "_balance_terms:balance_flow_values": {"min_load_efficiency"},
     "_group_slack:_eq_inertia": {"inertia"},
     "_group_slack:_eq_non_sync": {"min_load_efficiency"},
     "_non_anticipativity:add_dispatch_constraints": {"non_anticipativity"},
@@ -370,6 +372,53 @@ def test_every_online_row_family_is_classified() -> None:
     text = (MODEL_DIR / "_online.py").read_text(encoding="utf-8")
     names = set(re.findall(r'add_(?:cstr|twin)\(\s*(?:b,\s*)?f?"([A-Za-z_]+?)(?:\{|")', text, flags=re.S))
     assert names == set(ONLINE_ROWS)
+
+
+def _margin_step(tmp_path_factory):
+    """``elec`` (150 MW) in group ``electricity`` with a manual capacity margin of 10 MW in an investment solve;
+    ``gf`` fuel -> elec (200 MW, counted at capacity) and ``gb`` elec -> ``h2`` (100 MW, h2 demand 50 MW; a unit
+    consuming from the group, counted by its input flow), startup_method binary; ``gb`` has min_load_efficiency
+    (min_load 0.5, efficiency 0.4 at min load).  Neither has another use of its online variables."""
+    periods = b64({"type": "array", "value_type": "str", "data": ["p2020"]}, "array")
+    ents = [["node", "elec", None], ["node", "fuel", None], ["node", "h2", None], ["commodity", "fuelc", None],
+            ["group__node", ["electricity", "elec"], None], ["commodity__node", ["fuelc", "fuel"], None]]
+    vals = [["timeset", "2day", "timeset_duration", b64({"index_type": "str", "data": [["t0001", 2.0]]}, "map")],
+            ["solve", SOLVE, "solver_mip_gap", _f(0.0)],
+            ["solve", SOLVE, "invest_periods", periods], ["solve", SOLVE, "realized_invest_periods", periods],
+            ["node", "elec", "node_type", _s("balance")], ["node", "elec", "inflow", _f(-150.0)],
+            ["node", "h2", "node_type", _s("balance")], ["node", "h2", "inflow", _f(-50.0)],
+            ["node", "fuel", "node_type", _s("commodity")], ["commodity", "fuelc", "price", _f(20.0)],
+            ["group", "electricity", "capacity_margin_method", _s("manual")],
+            ["group", "electricity", "capacity_margin", _f(10.0)],
+            ["group", "electricity", "penalty_capacity_margin", _f(1000.0)],
+            ["unit", "gb", "conversion_method", _s("min_load_efficiency")], ["unit", "gb", "min_load", _f(0.5)],
+            ["unit", "gb", "efficiency_at_min_load", _f(0.4)]]
+    for u, src, sink, cap in (("gf", "fuel", "elec", 400.0), ("gb", "elec", "h2", 100.0)):
+        ents += [["unit", u, None], ["unit__inputNode", [u, src], None], ["unit__outputNode", [u, sink], None]]
+        vals += [["unit", u, "existing", _f(cap)], ["unit", u, "efficiency", _f(0.5)],
+                 ["unit", u, "startup_method", _s("binary")]]
+    steps, _wf, _scen = _RUNS.get(tmp_path_factory, alt="ou_margin", values=vals, base_chain=["init"],
+                                  entities=ents)
+    assert len(steps) == 1, list(steps)
+    return next(iter(steps.values()))
+
+
+@pytest.mark.parametrize("level", ["integers", "integers_min_limits", "integers_ramps_min_limits"])
+def test_the_capacity_margin_reads_online_only_by_the_section(tmp_path_factory, level) -> None:
+    """The capacity margin is no use of its own: gf counts at capacity (no online term in capacityMargin) and loses
+    its online variables under every integers* level; gb counts by its input from elec, whose min_load_efficiency
+    section reads gb online, and that use keeps them, so the margin row still reads v_online of gb."""
+    from tests.engine._lp_rows import row_terms
+
+    fd = _margin_step(tmp_path_factory).flex_data
+    assert online_uses(fd)["min_load_efficiency"] == {"gb"}
+    reduced, report = apply_reduce_detail(fd, level)
+    assert report.removed["online_unused"] == ["gf"]
+    rows = row_terms(build(reduced), "capacityMargin")
+    assert rows
+    for terms in rows.values():
+        online_cols = {c.split("[", 1)[1].split(",", 1)[0] for c in terms if c.startswith("v_online_")}
+        assert online_cols == {"gb"}, terms
 
 
 # ---------------------------------------------------------------------------

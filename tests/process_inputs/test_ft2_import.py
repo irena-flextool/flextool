@@ -256,6 +256,12 @@ def imported(imported_with_report: tuple[str, ImportReport]) -> str:
 #: * chained_solve_costs_from_run_start: cost reporting of an FT4 solve chain,
 #:   not the meaning of an input -> n/a.
 #: * acceptance_ceiling_follows_tolerance: solver acceptance -> n/a.
+#: * capacity_margin_counts_by_flow: written because the importer maps an FT2
+#:   capacity_margin_MW to capacity_margin_method manual (margin_group).  The
+#:   new counting is FT2's own (flexModel capacityMarginNodeGroup): units at
+#:   availability x capacity, the other units and transfers by their flow,
+#:   exports on the demand side.  It is the pre-v79 counting that differed
+#:   from FT2, so a new import has nothing to warn about -> removed like the rest.
 #: The data-dependent markers (storage_fix_method_rewritten,
 #: solve_step_series_combined, energy_margin_adder_per_original_step,
 #: ladder_tier_labels_as_written, unnamed_maps_read_per_depth) are NOT written:
@@ -263,7 +269,8 @@ def imported(imported_with_report: tuple[str, ImportReport]) -> str:
 #: energy margin, ladder or unnamed map.  A marker added by a later migration
 #: fails this test: desk-check it the same way, then add it here.
 EXPECTED_MARKERS = sorted("flextool_behaviour_change:" + name for name in (
-    "acceptance_ceiling_follows_tolerance", "chained_solve_costs_from_run_start",
+    "acceptance_ceiling_follows_tolerance", "capacity_margin_counts_by_flow",
+    "chained_solve_costs_from_run_start",
     "coarse_process_flows", "construction_lead_time_commissioning",
     "dc_power_flow_lines_beside_dc_links", "price_ladder_periods_from_solve_periods",
     "ramp_branch_point_shutdown_once", "retirement_of_existing_capacity_only",
