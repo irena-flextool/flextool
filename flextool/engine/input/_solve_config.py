@@ -350,6 +350,9 @@ class SolveConfig:
         # duplicates), keyed by parameter name.  Read by
         # ``_check_realized_invest_periods``.
         self.map2d_period_parents: defaultdict = defaultdict(set)
+        # ``{<solve>_<outer>: (solve, outer)}`` of those duplicates, so an
+        # error can name the database solve and its 2D-map entry.
+        self.map2d_duplicate_of: dict[str, tuple[str, str]] = {}
         # Slice G (Axis B) — operational non-anticipativity window.
         # TRI-STATE per solve, distinct from the period dicts above:
         #   absent key / None -> unset -> legacy realized u fix window;
@@ -838,20 +841,36 @@ class SolveConfig:
             for s in solves:
                 if s not in running:
                     running.append(s)
+        problems: list[str] = []
         for s in running:
             realized = [t[1] for t in self.realized_invest_periods.get(s, [])]
             if not realized:
                 continue
             invest = [t[1] for t in self.invest_periods.get(s, [])]
             bad = [p for p in dict.fromkeys(realized) if p not in set(invest)]
-            if bad:
-                raise FlexToolConfigError(
-                    f"solve '{s}': realized_invest_periods lists period(s) "
+            if not bad:
+                continue
+            if s in self.map2d_duplicate_of:
+                parent, outer = self.map2d_duplicate_of[s]
+                where = f"solve '{parent}' (2D-map entry '{outer}')"
+            else:
+                where = f"solve '{s}'"
+            if not invest:
+                problems.append(
+                    f"{where} has realized_invest_periods {bad} but no "
+                    "invest_periods: remove realized_invest_periods (or set "
+                    "invest_periods if this solve should invest)"
+                )
+            else:
+                problems.append(
+                    f"{where}: realized_invest_periods lists period(s) "
                     f"{bad} that are not in its invest_periods "
                     f"{list(dict.fromkeys(invest))}. A realized investment "
                     "period must also be an investment period: add it to "
                     "invest_periods, or remove it from realized_invest_periods"
                 )
+        if problems:
+            raise FlexToolConfigError("; ".join(problems))
 
     def make_roll_counter(self) -> dict[str, int]:
         """Return a roll counter initialised to 0 for every rolling-window
@@ -1288,6 +1307,10 @@ class SolveConfig:
                                 )
                                 self.map2d_period_parents[par].add(
                                     param["entity_name"]
+                                )
+                                self.map2d_duplicate_of[new_name] = (
+                                    param["entity_name"],
+                                    str(param_value.indexes[i]),
                                 )
                                 result_dict[new_name].append(
                                     (

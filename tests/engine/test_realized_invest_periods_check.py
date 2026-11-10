@@ -35,8 +35,11 @@ def test_a_realized_invest_period_outside_invest_periods_stops(tmp_path) -> None
 def test_realized_invest_periods_without_invest_periods_stops(tmp_path) -> None:
     # A dispatch solve with a leftover realized_invest_periods.
     solves = {"disp": T.dispatch_solve(realized_invest_periods=T.arr(["p1"]))}
-    with pytest.raises(FlexToolConfigError, match=r"solve 'disp'.*\['p1'\].*invest_periods \[\]"):
+    with pytest.raises(FlexToolConfigError) as err:
         _load(tmp_path, solves)
+    msg = str(err.value)
+    assert "solve 'disp'" in msg and "['p1']" in msg and "no invest_periods" in msg
+    assert "remove realized_invest_periods" in msg and "add it to invest_periods" not in msg
 
 
 def test_a_subset_loads(tmp_path) -> None:
@@ -60,5 +63,7 @@ def test_matching_2d_maps_are_checked_per_duplicated_solve(tmp_path) -> None:
 def test_a_2d_realized_invest_entry_without_its_invest_entry_stops(tmp_path) -> None:
     solves = {"inv": T.invest_rp_solve(invest_periods=_map2d({"a": ["p1"]}),
                                        realized_invest_periods=_map2d({"a": ["p1"], "b": ["p1"]}))}
-    with pytest.raises(FlexToolConfigError, match=r"solve 'inv_b'.*\['p1'\]"):
+    with pytest.raises(FlexToolConfigError) as err:
         _load(tmp_path, solves)
+    msg = str(err.value)
+    assert "solve 'inv' (2D-map entry 'b')" in msg and "['p1']" in msg and "inv_b" not in msg
