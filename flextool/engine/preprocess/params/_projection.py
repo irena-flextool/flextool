@@ -691,15 +691,16 @@ def _ramp_cost_side(source: "InputSource", relationship_class: str, side: str) -
     """``[p, <side>, value]``: the ``ramp_cost`` of the ``relationship_class`` sides whose own ``ramp_method`` is
     ``ramp_cost`` or ``both`` (``side`` = ``source`` for ``unit__inputNode``, ``sink`` for ``unit__outputNode``).
     A negative value is an error: the up / down split of ``ramp_change_eq`` needs a cost > 0."""
-    schema = {"p": pl.Utf8, side: pl.Utf8, "value": pl.Float64}
     df = _try_param(source, relationship_class, "ramp_cost")
     if df is None:
-        return pl.DataFrame(schema=schema).lazy()
+        # Through ``rename_to_axis`` like the found case, so ``p`` / ``side`` take the axis dtype of
+        # ``process_source_sink_canonical`` (Enum in axis-Enum mode) and the join keys match.
+        empty = pl.DataFrame(schema={"unit": pl.Utf8, "node": pl.Utf8, "value": pl.Float64}).lazy()
+        return empty.pipe(rename_to_axis, {"unit": "p", "node": side})
     gated = (df.lazy()
                .filter(pl.col("value").is_not_null())
                .join(_ramp_pairs(source, relationship_class, _RAMP_COST_METHOD), on=["unit", "node"], how="semi")
-               .select(pl.col("unit").cast(pl.Utf8), pl.col("node").cast(pl.Utf8),
-                       pl.col("value").cast(pl.Float64))
+               .select("unit", "node", pl.col("value").cast(pl.Float64))
                .collect())
     negative = gated.filter(pl.col("value") < 0.0)
     if negative.height > 0:
