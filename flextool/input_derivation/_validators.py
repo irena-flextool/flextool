@@ -90,49 +90,75 @@ def _str_leaves(value, out: list[str]) -> None:
         out.append(value)
 
 
+class _RowsView:
+    """``find_parameter_values`` / ``find_entities`` over :func:`_pv_rows` (a backend's bulk index), for the
+    readers that take a backend-like object (``_timeline_rules.time_structure_from_backend``): a
+    ``DatabaseMapping.find_parameter_values`` per parameter scans the whole value table each time."""
+
+    def __init__(self, src) -> None:
+        self._src = src
+
+    def find_parameter_values(self, *, entity_class_name: str, parameter_definition_name: str) -> list:
+        return list(_pv_rows(self._src, entity_class_name, parameter_definition_name))
+
+    def find_entities(self, *, entity_class_name: str) -> list:
+        return self._src.find_entities(entity_class_name=entity_class_name)
+
+
 def validate_timeline_timestep_duration(db) -> None:
-    """Raise FlexToolConfigError when a timeline that a solve uses has no ``timestep_duration``, or a step of
-    0 h or less (audit bug 8).
+    """Raise FlexToolConfigError when a timeline that a solve uses has no ``timestep_duration``, or a step that
+    does not last more than 0 h (0, negative or NaN; audit bug 8).
 
     Without durations ``step_duration`` silently falls to 0 and every time-weighted quantity (balances, costs,
     ramps) collapses to zero; a step of 0 h or less does the same for that step.  Only the used timelines are
-    checked: the timelines of the timesets named in the scenario's ``solve.period_timeset`` values (any solve
-    entity of the scenario).  A timeline no solve uses (a spare one kept in the database) needs no durations: the
-    timeline reader builds the timelines from the ``timestep_duration`` values, so it is invisible to the model.
-    When no solve has a ``period_timeset`` (the implicit time-structure rules), the timelines named by any
-    ``timeset.timeline`` are checked, or every timeline when no timeset names one.
+    checked: the timelines of the timesets each solve of the scenario uses (the solves of ``model.solves`` and
+    ``solve.contains_solves``, else Rule 4's choice, else every solve), resolved as the engine resolves them
+    (``_timeline_rules.solve_period_timesets``: the solve's ``period_timeset``, else the Rule 1 / 2 / 5b default,
+    so a solve without its own ``period_timeset`` is checked too).  A timeset without ``timeline`` uses the sole
+    timeline (Rule 3).  A solve whose timesets cannot be resolved (no default applies) brings the timelines named
+    by any ``timeset.timeline``, or every timeline when no timeset names one (the check before the scoping).  A
+    timeline no solve uses (a spare one kept in the database) needs no durations: the timeline reader builds the
+    timelines from the ``timestep_duration`` values, so it is invisible to the model.
 
-    ``db`` is the scenario-filtered DatabaseMapping.  All the offenders go into one error.
+    ``db`` is the scenario-filtered ``SpineDBBackend`` (its bulk value index, ``input_derivation.run``) or
+    DatabaseMapping.  All the offenders go into one error.
     """
+    from flextool.engine.input._timeline_rules import (
+        rule5_model_solves, solve_period_timesets, time_structure_from_backend)
+
     timelines = [ent["entity_byname"][0]
                  for ent in db.find_entities(entity_class_name="timeline")]
     if not timelines:
         return
     timeline_of: dict[str, str] = {}
-    for pv in db.find_parameter_values(entity_class_name="timeset", parameter_definition_name="timeline"):
+    for pv in _pv_rows(db, "timeset", "timeline"):
         if pv["type"] is not None:
             timeline_of[pv["entity_byname"][0]] = str(pv["parsed_value"])
-    # used timeline -> (timeset, solve) that first names it
+    sole = timelines[0] if len(timelines) == 1 else None
+    structure = time_structure_from_backend(_RowsView(db))
+    # used timeline -> (timeset, solve) that first names it (None: the unresolved-solve fallback)
     used: dict[str, tuple[str, str] | None] = {}
-    any_period_timeset = False
-    for pv in db.find_parameter_values(entity_class_name="solve", parameter_definition_name="period_timeset"):
-        if pv["type"] is None:
+    unresolved = False
+    solves = list(dict.fromkeys([s for _model, listed in structure.model_solves for s in listed]
+                                + sorted(structure.contained_solves)))
+    if not solves:
+        solves = rule5_model_solves(structure)[1] or list(structure.solves)
+    for solve in solves:
+        pairs = solve_period_timesets(solve, structure)
+        if not pairs:
+            unresolved = True
             continue
-        any_period_timeset = True
-        names: list[str] = []
-        _str_leaves(_parsed_then_evict(pv), names)
-        for timeset in names:
-            timeline = timeline_of.get(timeset)
+        for _period, timeset in pairs:
+            timeline = timeline_of.get(timeset, sole)  # Rule 1's synthetic timeset and Rule 3: the sole timeline
             if timeline is not None:
-                used.setdefault(timeline, (timeset, pv["entity_byname"][0]))
-    if not any_period_timeset:
+                used.setdefault(timeline, (timeset, solve))
+    if unresolved or not solves:
         named = set(timeline_of.values())
-        used = {t: None for t in timelines if not named or t in named}
+        for timeline in timelines:
+            if not named or timeline in named:
+                used.setdefault(timeline, None)
     durations: dict[str, list] = {}
-    for pv in db.find_parameter_values(
-        entity_class_name="timeline",
-        parameter_definition_name="timestep_duration",
-    ):
+    for pv in _pv_rows(db, "timeline", "timestep_duration"):
         if pv["type"] is None or pv["entity_byname"][0] not in used:
             continue
         durations.setdefault(pv["entity_byname"][0], []).append(pv)
@@ -151,7 +177,7 @@ def validate_timeline_timestep_duration(db) -> None:
               "without it all time-weighted quantities collapse to zero.")
     for timeline in sorted(durations):
         for pv in durations[timeline]:
-            hit = _first_bad(_parsed_then_evict(pv), lambda v: v <= 0.0)
+            hit = _first_bad(_parsed_then_evict(pv), lambda v: not v > 0.0)
             if hit is not None:
                 errors.append(
                     f"timeline '{timeline}'{why(timeline)} timestep_duration = {hit[1]:g} "
@@ -1901,21 +1927,67 @@ class DatabaseTimeFacts:
     """The period and time-step names of the **whole** database (every alternative, so every scenario), read by
     ``input_derivation.run`` from the mapping it already fetched, before the scenario filter (no second open).
 
-    ``periods``: :func:`_period_universe` of the whole database; ``timesteps``: every key of every
-    ``timeline.timestep_duration``; ``timelines``: ``(timeline, alternative, steps)`` per ``timestep_duration``
-    value (for :class:`_DatabaseTimeVocab`)."""
+    ``periods``: :func:`_period_universe` of the whole database, its stochastic branch periods included;
+    ``branch_periods``: those branch periods (``p2035_high``; left out of the "did you mean" suggestions);
+    ``timesteps``: every key of every ``timeline.timestep_duration``; ``timelines``: ``(timeline, alternative,
+    steps)`` per ``timestep_duration`` value (for :class:`_DatabaseTimeVocab`)."""
 
     periods: frozenset[str]
     timesteps: frozenset[str]
     timelines: tuple[tuple[str, str, frozenset[str]], ...]
+    branch_periods: frozenset[str] = frozenset()
 
 
-def _period_universe(src) -> set[str]:
-    """Every period name ``src`` defines: the periods of :func:`_scenario_periods` (``solve.period_timeset`` keys,
-    the solve period arrays / maps), the keys of ``solve.years_represented``, the first-level keys of
-    ``solve.stochastic_branches`` (the branch-anchor periods; the inner levels are branch names, flags and analysis
-    times) and ``model.periods_available`` (periods kept in the data that no solve names)."""
-    periods = _scenario_periods(src)
+def _branch_periods(src) -> set[str]:
+    """The stochastic branch periods of ``src``, named as the engine names them (``period + "_" + branch``,
+    ``spinedb_backend._axis_enums._collect_stochastic_branch_period_tokens``): each level-1 (period) x level-2
+    (branch) key pair of ``solve.stochastic_branches``, and each period of the declaring solve x each of its
+    branch names (the continuation after the branching period).  The periods of a solve are its
+    ``period_timeset`` keys, else (Rule 5) its ``invest_periods`` + ``realized_periods``, else every
+    ``model.periods_available``.  A branch period's own value in a period map wins over its anchor's
+    (``_param_shapes._with_branch_periods``), so these names are period keys too."""
+    branches: dict[str, set[str]] = {}
+    out: set[str] = set()
+    for pv in _pv_rows(src, "solve", "stochastic_branches"):
+        if pv["type"] != "map":
+            continue
+        names = branches.setdefault(pv["entity_byname"][0], set())
+        value = _parsed_then_evict(pv)
+        for period, sub in zip(value.indexes, value.values):
+            if isinstance(sub, api.Map):
+                for branch in sub.indexes:
+                    out.add(f"{period}_{branch}")
+                    names.add(str(branch))
+    if not branches:
+        return out
+    timeset_periods: dict[str, set[str]] = {}
+    for pv in _pv_rows(src, "solve", "period_timeset"):
+        if pv["type"] == "map" and pv["entity_byname"][0] in branches:
+            timeset_periods.setdefault(pv["entity_byname"][0], set()).update(
+                str(k) for k in _parsed_then_evict(pv).indexes)
+    listed: dict[str, set[str]] = {}
+    for par in ("invest_periods", "realized_periods"):
+        for pv in _pv_rows(src, "solve", par):
+            if pv["type"] == "array" and pv["entity_byname"][0] in branches:
+                listed.setdefault(pv["entity_byname"][0], set()).update(
+                    str(v) for v in _parsed_then_evict(pv).values)
+    available: set[str] = set()
+    for pv in _pv_rows(src, "model", "periods_available"):
+        if pv["type"] == "array":
+            available.update(str(v) for v in _parsed_then_evict(pv).values)
+    for solve, names in branches.items():
+        periods = timeset_periods.get(solve) or listed.get(solve) or available
+        out.update(f"{period}_{branch}" for period in periods for branch in names)
+    return out
+
+
+def _period_universe(src, scenario_periods: set[str] | None = None) -> set[str]:
+    """Every period name ``src`` defines, the stochastic branch periods (:func:`_branch_periods`) not included:
+    the periods of :func:`_scenario_periods` (``solve.period_timeset`` keys, the solve period arrays / maps;
+    ``scenario_periods`` when the caller has them already), the keys of ``solve.years_represented``, the
+    first-level keys of ``solve.stochastic_branches`` (the branch-anchor periods) and ``model.periods_available``
+    (periods kept in the data that no solve names)."""
+    periods = set(scenario_periods) if scenario_periods is not None else _scenario_periods(src)
     for par in ("years_represented", "stochastic_branches"):
         for pv in _pv_rows(src, "solve", par):
             if pv["type"] == "map":
@@ -1961,7 +2033,9 @@ def database_time_facts(db) -> DatabaseTimeFacts:
         steps = frozenset(str(k) for k in _parsed_then_evict(pv).indexes)
         timesteps |= steps
         timelines.append((pv["entity_byname"][0], pv["alternative_name"], steps))
-    return DatabaseTimeFacts(frozenset(_period_universe(db)), frozenset(timesteps), tuple(timelines))
+    branch = frozenset(_branch_periods(db))
+    return DatabaseTimeFacts(frozenset(_period_universe(db)) | branch, frozenset(timesteps), tuple(timelines),
+                             branch)
 
 
 @functools.lru_cache(maxsize=1)
@@ -2004,30 +2078,34 @@ def _digit_run(key: str) -> str:
     return max(runs, key=len) if runs else ""
 
 
-def _period_suggestions(key: str, missing: list[str], rest: list[str]) -> list[str]:
+def _period_suggestions(key: str, missing: list[str], rest: list[str], branch: list[str] = ()) -> list[str]:
     """Periods ``key`` was probably meant to be: first among the scenario periods the map misses (``missing``),
-    then among the other periods (``rest``); by the same longest digit run, else by spelling
-    (``difflib.get_close_matches``, cutoff 0.6).  Up to 3."""
+    then among the other periods (``rest``), then among the stochastic branch periods (``branch``); by the same
+    longest digit run, else by spelling (``difflib.get_close_matches``, cutoff 0.6).  Up to 3."""
     run = _digit_run(key)
     if run:
-        for pool in (missing, rest):
+        for pool in (missing, rest, branch):
             hits = [p for p in pool if _digit_run(p) == run]
             if hits:
                 return hits[:3]
-    for pool in (missing, rest):
+    for pool in (missing, rest, branch):
         hits = difflib.get_close_matches(key, pool, n=3, cutoff=0.6)
         if hits:
             return hits
     return []
 
 
-def _did_you_mean(bad: list[str], keys: list[str], scenario_periods: set[str], universe: set[str]) -> str:
-    """`` Did you mean 'p2020'?`` for the shown offending keys (empty when no period is close)."""
+def _did_you_mean(bad: list[str], keys: list[str], scenario_periods: set[str], universe: set[str],
+                  branch: set[str] = frozenset()) -> str:
+    """`` Did you mean 'p2020'?`` for the shown offending keys (empty when no period is close).  The candidates
+    are the scenario periods the map misses, then the other periods of ``universe`` (no branch periods), then the
+    branch periods ``branch``; a period the map already has is never suggested."""
     missing = sorted(scenario_periods.difference(keys))
-    rest = sorted(universe.difference(missing))
+    rest = sorted(universe.difference(missing).difference(keys))
+    branch_rest = sorted(set(branch).difference(keys))
     parts: list[str] = []
     for key in bad:
-        hits = _period_suggestions(key, missing, rest)
+        hits = _period_suggestions(key, missing, rest, branch_rest)
         if not hits:
             continue
         text = repr(hits[0]) if len(hits) == 1 else "one of " + ", ".join(repr(h) for h in hits)
@@ -2043,10 +2121,11 @@ def _period_key_finding(raw: bytes, takes_time: bool, universe: set[str],
                         timesteps: frozenset[str] | set[str], timesteps_b: frozenset[bytes]):
     """``(code, level keys, offending keys)`` of one Map value of a period-axis parameter, or None when its keys
     are fine (or not period keys; rank 3 and deeper are not checked).  A value of a time-capable parameter whose
-    first key is a time step is a time series: it is never parsed (one regex on the database JSON).  Codes: ``unknown`` (keys that are no period), ``time`` (a time-step key on a
-    parameter that cannot vary over time; a key that is also a period of the database is a period, #76),
-    ``number`` (numeric keys), ``nothing`` (a silent map of a time-capable parameter whose keys are neither periods
-    nor time steps).  See :func:`validate_period_keys`."""
+    first key is a time step is a time series: it is never parsed (one regex on the database JSON).  Codes:
+    ``unknown`` (keys that are no period), ``time`` (a time-step key on a parameter that cannot vary over time; a
+    key that is also a period of the database is a period, #76), ``number`` (numeric keys), ``nothing`` (a silent
+    map of a time-capable parameter whose keys are neither periods nor time steps).  See
+    :func:`validate_period_keys`."""
     from flextool.engine.input._param_shapes import _normalise_label
 
     if takes_time:
@@ -2095,7 +2174,13 @@ def _period_key_finding(raw: bytes, takes_time: bool, universe: set[str],
     return unknown()
 
 
-def validate_period_keys(src, whole: DatabaseTimeFacts | None = None) -> None:
+_PERIOD_KEY_HEADER = "Map keys that are not periods of any solve in the database:\n  "
+_PERIOD_KEY_ESCAPE = "\nIf a key is a period of data you keep for other models, add it to model.periods_available."
+_PERIOD_SHAPE_HEADER = "Period maps that the model cannot read:\n  "
+
+
+def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
+                         time_vocab: tuple[set[str], dict[str, list[str]]] | None = None) -> None:
     """Stop the run on map keys of a period-axis parameter that are not periods (items 46 / 65).
 
     The readers join a period map with the solve's periods, so a mistyped key (``y2020`` for ``p2020``, ``2020``,
@@ -2106,7 +2191,9 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None) -> None:
     ladder maps, is out of scope), time series.
 
     Period universe: the periods of the **whole** database (``whole``, :func:`database_time_facts`), so a key
-    that is a period of another scenario's solve, or listed in ``model.periods_available``, is fine.  Time steps:
+    that is a period of another scenario's solve, or listed in ``model.periods_available``, is fine; the
+    stochastic branch periods (``p2035_high``, :func:`_branch_periods`) are periods too, because a branch
+    period's own value wins over its anchor's.  Time steps:
     every ``timestep_duration`` key of the whole database.  Rules:
 
     * a level labelled ``period``: every key not in the universe → error;
@@ -2124,12 +2211,21 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None) -> None:
     so the keys that are not periods are printed as warnings; the time-step, time-series and numeric-key errors
     still stop the run.  No period at all (no solve periods, no ``periods_available``) → no
     check (the time-structure checks report that).  Each distinct raw value is classified once.
+
+    ``time_vocab``: :func:`_scenario_time_vocab` of ``src`` when the caller has it (``input_derivation.run``),
+    so the scenario's periods and timelines are not read twice.  The error lists the keys that are not periods
+    (header :data:`_PERIOD_KEY_HEADER`, then the ``periods_available`` hint) and the maps of the wrong kind
+    (:data:`_PERIOD_SHAPE_HEADER`) as two blocks.
     """
-    scenario_periods = _period_universe(src)
-    universe = set(scenario_periods) | (set(whole.periods) if whole is not None else set())
+    if time_vocab is None:
+        time_vocab = _scenario_time_vocab(src)
+    scenario_periods = _period_universe(src, time_vocab[0])
+    branch = _branch_periods(src) | (set(whole.branch_periods) if whole is not None else set())
+    universe = scenario_periods | branch | (set(whole.periods) if whole is not None else set())
     if not universe:
         return
-    _p, timelines = _scenario_time_vocab(src)
+    suggestable = universe - branch
+    timelines = time_vocab[1]
     timesteps: set[str] = {step for steps in timelines.values() for step in steps}
     if whole is not None:
         timesteps |= whole.timesteps
@@ -2164,24 +2260,24 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None) -> None:
                 one = len(bad) == 1
                 errors.append(
                     f"{where}: map key{'' if one else 's'} {_shown(bad)} {'is not a period' if one else 'are not periods'}"
-                    f" of the model.{_did_you_mean(bad[:3], keys, scenario_periods, universe)}")
+                    f".{_did_you_mean(bad[:3], keys, scenario_periods, suggestable, branch)}")
             elif code == "time":
                 shape_errors.append(f"{where}: map key {bad[0]!r} is a time step, but {par} cannot vary over time. Use a "
                               "constant or a map keyed by period (p2020: ..., p2030: ...).")
             elif code == "number":
                 shape_errors.append(f"{where}: map keys are numbers ({_shown(bad)}); periods are names such as "
-                              f"'p2020'.{_did_you_mean(bad[:1], [], scenario_periods, universe)}")
+                              f"'p2020'.{_did_you_mean(bad[:1], [], scenario_periods, suggestable)}")
             else:
                 warnings.append(f"{where}: map keys ({_shown(keys)}) are neither periods nor time steps of the "
                                 "model; the value is not used.")
     for text in warnings:
         _warn(text)
-    if whole is None and errors:
-        _warn("Map keys that are not periods of the model:\n  " + "\n  ".join(errors)
-              + "\nIf a key is a period of data you keep for other models, add it to model.periods_available.")
-        errors = []
-    errors += shape_errors
-    if errors:
-        raise FlexToolConfigError(
-            "Map keys that are not periods of the model:\n  " + "\n  ".join(errors)
-            + "\nIf a key is a period of data you keep for other models, add it to model.periods_available.")
+    unknown = _PERIOD_KEY_HEADER + "\n  ".join(errors) + _PERIOD_KEY_ESCAPE if errors else ""
+    if whole is None and unknown:
+        _warn(unknown)
+        unknown = ""
+    blocks = [unknown] if unknown else []
+    if shape_errors:
+        blocks.append(_PERIOD_SHAPE_HEADER + "\n  ".join(shape_errors))
+    if blocks:
+        raise FlexToolConfigError("\n".join(blocks))

@@ -1,7 +1,8 @@
 """The input checks of #104 / #213 / #170, items 46 / 65 and audit bug 8 raise nothing on the shipped data.
 
-Every scenario of ``tests/fixtures/tests.json`` and of each canonical JSON (``flextool/schemas/canonical_databases``)
-is read as ``input_derivation.run`` reads it (the profile alternatives from the whole database, then the scenario
+Every scenario of ``tests/fixtures/tests.json``, of ``h2_trade_parity.json`` (representative periods), of
+``stoch_two_period.json`` and ``stochastics.json`` (stochastic branch periods) and of each canonical JSON
+(``flextool/schemas/canonical_databases``) is read as ``input_derivation.run`` reads it (the profile alternatives from the whole database, then the scenario
 filter) and goes through ``validate_profile_links``, ``validate_basic_sanity``,
 ``validate_zero_conversion_coeff``, ``validate_period_keys`` (with the whole database's periods) and
 ``validate_timeline_timestep_duration`` (no solve).  None may raise, and none may warn: every zero
@@ -22,7 +23,9 @@ from flextool._resources import package_data_path
 
 FLEXTOOL_ROOT = Path(__file__).resolve().parents[2]
 CANONICAL = sorted(Path(str(package_data_path("schemas/canonical_databases"))).glob("*.json"))
-SOURCES = [FLEXTOOL_ROOT / "tests" / "fixtures" / "tests.json", *CANONICAL]
+# h2_trade_parity: representative periods; stoch_two_period / stochastics: stochastic branch periods.
+SOURCES = [FLEXTOOL_ROOT / "tests" / "fixtures" / name
+           for name in ("tests.json", "h2_trade_parity.json", "stoch_two_period.json", "stochastics.json")] + CANONICAL
 
 
 def _build(json_path: Path, work: Path) -> str:

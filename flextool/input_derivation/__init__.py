@@ -199,14 +199,14 @@ def run(
             )
             provider.put(_provider_key(spec.filename), frame)
 
-        validate_timeline_timestep_duration(db)
+        validate_timeline_timestep_duration(backend)
         time_vocab = _scenario_time_vocab(backend)
         validate_node_inflow_not_period(backend, time_vocab)
         validate_time_series_keys(backend, time_vocab, whole_db.get("time"))
         # The input-value checks report together: one FlexToolConfigError with the errors of all three (their
         # warnings are printed as they go), so a database with several kinds of mistake needs one rerun.
         input_errors: list[str] = []
-        for check in (lambda: validate_period_keys(backend, whole_db.get("time")),
+        for check in (lambda: validate_period_keys(backend, whole_db.get("time"), time_vocab),
                       lambda: validate_profile_links(db, whole_db.get("profile_alternatives")),
                       lambda: validate_basic_sanity(backend)):
             try:

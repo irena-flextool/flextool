@@ -2965,9 +2965,18 @@ def broadcast_to_period(
     # vocabulary becomes ``null``, and the MAP_PERIOD split below reads a
     # null ``d`` as a scalar default and broadcasts it over every active
     # period.  Drop the rows whose ``period`` was non-null before the cast
-    # and null after (DEBUG log); never treat them as a scalar.  The input
-    # check (``validate_period_keys``) stops a mistyped DB key before this
-    # runs, so for valid data nothing is dropped (byte-for-byte no-op).
+    # and null after (DEBUG log); never treat them as a scalar.
+    #
+    # The cast runs only while an axis-Enum vocabulary is live
+    # (``provider.axis_enums``; production loads leave it None, so there
+    # the explicit rows meet the solve's periods in the inner join below
+    # and an inactive key drops out the same way).  The input check
+    # (``validate_period_keys``) stops a mistyped key before this runs,
+    # but valid data can still carry a key outside the Enum: a period of
+    # another scenario's solve, or one only in ``model.periods_available``
+    # (the Enum is the scenario's periods and branch periods).  Without
+    # the guard such a row was spread as a scalar over every period, next
+    # to the entity's own rows (duplicate (entity, d) keys).
     _has_period = "period" in lf.collect_schema().names()
     if _has_period:
         lf = lf.with_columns(pl.col("period").is_null().alias("__period_was_null"))

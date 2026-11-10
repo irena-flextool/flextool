@@ -193,9 +193,9 @@ def test_errors_of_the_input_checks_come_in_one_message(tmp_path_factory) -> Non
     with pytest.raises(FlexToolConfigError) as err:
         run(tmp_path_factory, url, scen)
     assert str(err.value) == (
-        "Map keys that are not periods of the model:\n  unit 'coal_plant', parameter 'startup_cost' (alternative "
-        "'b170_all'): map key 'y2020' is not a period of the model. Did you mean 'p2020'?\nIf a key is a period of "
-        "data you keep for other models, add it to model.periods_available."
+        "Map keys that are not periods of any solve in the database:\n  unit 'coal_plant', parameter "
+        "'startup_cost' (alternative 'b170_all'): map key 'y2020' is not a period. Did you mean 'p2020'?\nIf a key "
+        "is a period of data you keep for other models, add it to model.periods_available."
         "\n\nProfile links without profile data:\n  unit__node__profile (coal_plant, west, ghost): profile 'ghost' "
         "has no value in any alternative, so it holds the flow at 0 (profile_method is upper_limit (the default)). "
         "Give the profile a value in an alternative of the scenario, set profile_method lower_limit or none, or "

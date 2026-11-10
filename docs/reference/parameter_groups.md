@@ -92,7 +92,8 @@ rerun fixes them all. A warning is printed once per scenario read in the run log
 - A map key of a period parameter (`existing`, `invest_cost`, `startup_cost`, `co2_max_period`, `lifetime`, and
   every other parameter that takes a period map) that is not a period: the readers would drop the value without a
   word (*y2020* for *p2020* gave no capacity). Periods are the keys of every `period_timeset`, the solve period lists,
-  `years_represented`, the first level of `stochastic_branches` and `model.periods_available`, over the **whole**
+  `years_represented`, the first level of `stochastic_branches`, the stochastic branch periods (*p2035_high*: the
+  period, an underscore and the branch name) and `model.periods_available`, over the **whole**
   database, so a key that is a period of another scenario is fine. The message suggests the closest period
   (*p2030x* → *p2030*). When the data covers more years than any solve names (a 2020–2050 trajectory for a 2030
   model), add the extra periods to `model.periods_available`. Maps keyed by something else (`constraint_flow_coeff`
@@ -101,8 +102,9 @@ rerun fixes them all. A warning is printed once per scenario read in the run log
   (`existing`, `startup_cost`, `invest_cost`, `lifetime`, ...; use a constant or a period map), and numeric map
   keys (2020) on any period parameter (periods are names such as *p2020*). A name that is both a period and a time
   step is read as a period.
-- A timeline used by a solve (through a timeset named in a `period_timeset`) without `timestep_duration`, or with a
-  step of 0 hours or less. Only the timelines a solve uses need durations: a spare timeline in the database is
+- A timeline used by a solve (through a timeset named in a `period_timeset`, or the timeset a solve without
+  `period_timeset` takes by default) without `timestep_duration`, or with a step of 0 hours or less (or not a
+  number). Only the timelines a solve uses need durations: a spare timeline in the database is
   ignored.
 
 **Warnings**
