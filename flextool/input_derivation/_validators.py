@@ -24,6 +24,7 @@ monolith; Step 2.5 item 6 extracted them here.
 """
 from __future__ import annotations
 
+import functools
 import json
 import logging
 import re
@@ -232,9 +233,9 @@ _RAW_LABEL = re.compile(rb'"index_name"\s*:\s*"([^"]*)"')
 _RAW_STRUCTURE = frozenset((b"type", b"map", b"index_type", b"str", b"date_time", b"duration", b"index_name",
                             b"data", b"rank"))
 # Database JSON whose keys the fast path cannot see: an escape (the quotes no longer pair), a time series, a float
-# index (unquoted keys), a dict-form ``data``.  (A date_time or duration index has quoted keys, read as written.)
-_RAW_SLOW_MARKERS = (b"\\", b"time_series", b'"index_type": "float"', b'"index_type":"float"', b'"data": {',
-                     b'"data":{')
+# index (unquoted keys; any ``float`` in the text takes the parse, one scan), a dict-form ``data``.  (A date_time
+# or duration index has quoted keys: a non-canonical stamp is not a time step's bytes, so it takes the parse.)
+_RAW_SLOW_MARKERS = (b"\\", b"time_series", b"float", b'"data": {', b'"data":{')
 
 
 def _scenario_time_vocab(src) -> tuple[set[str], dict[str, list[str]]]:
@@ -249,19 +250,81 @@ def _scenario_time_vocab(src) -> tuple[set[str], dict[str, list[str]]]:
     return periods, timelines
 
 
-def _raw_keys_on_timeline(raw: bytes, periods_b: frozenset[bytes], timesteps_b: frozenset[bytes]) -> bool:
+class _DatabaseTimeVocab:
+    """The periods and timelines of the **whole** database (every alternative, so every scenario), read on first
+    use only (a run whose values all classify on the scenario's own vocabulary never opens it).
+
+    :func:`validate_time_series_keys` uses it for two cases that are plain data of another scenario, not errors:
+    an unnamed map level keyed by periods of another scenario (a period level: that entity gets no value in this
+    solve, docs/reference/entities_and_time.md), and a series keyed on the steps of a timeline that is not one of
+    this scenario's.  ``src`` is the scenario-filtered ``SpineDBBackend``; any other ``src`` (or a backend without
+    a scenario) is taken as the whole database already.
+    """
+
+    def __init__(self, src, periods: set[str], timelines: dict[str, list[str]]) -> None:
+        self._src = src
+        self._loaded = False
+        self.periods: set[str] = set(periods)
+        # (timeline, alternative, steps) of the timestep_duration values that are not this scenario's timelines
+        self.other_timelines: list[tuple[str, str, frozenset[str]]] = []
+        self._own = {name: frozenset(steps) for name, steps in timelines.items()}
+
+    def _load(self) -> None:
+        if self._loaded:
+            return
+        self._loaded = True
+        url = getattr(self._src, "db_url", None)
+        if not url or not getattr(self._src, "scenario_name", None):
+            return
+        from flextool.update_flextool.db_handle import open_database_mapping
+
+        with open_database_mapping(url) as db:
+            self.periods |= _scenario_periods(db)
+            for pv in _pv_rows(db, "timeline", "timestep_duration"):
+                if pv["type"] not in ("map", "time_series"):
+                    continue
+                name = pv["entity_byname"][0]
+                steps = frozenset(str(k) for k in pv["parsed_value"].indexes)
+                if self._own.get(name) != steps:
+                    self.other_timelines.append((name, pv["alternative_name"], steps))
+
+    def all_periods(self) -> set[str]:
+        self._load()
+        return self.periods
+
+    def other_timelines_holding(self, keys) -> list[tuple[str, str]] | None:
+        """``[(timeline, alternative), ...]`` of the timelines outside this scenario whose steps together hold
+        every key of ``keys``; None when some key is a step of none of them."""
+        self._load()
+        left = set(keys)
+        found: list[tuple[str, str]] = []
+        for name, alt, steps in self.other_timelines:
+            if not left.isdisjoint(steps):
+                found.append((name, alt))
+                left -= steps
+                if not left:
+                    return found
+        return None
+
+
+def _raw_keys_on_timeline(raw: bytes, periods_b: frozenset[bytes], base_b: frozenset[bytes],
+                          unions: dict[frozenset[bytes], frozenset[bytes]]) -> bool:
     """Fast path of :func:`validate_time_series_keys`: True when the database JSON of a str-indexed Map shows,
     without parsing it, that no time key can be off the timeline: every quoted string is a time step, a word of the
     JSON structure, a level label, or a period name that keys a nested map (the period level of a period x time
     map).  A C-speed split and set comparison (the quoted strings are every other piece between quotes); False
     means "parse and classify" (not that a key is off).  An escape, a float index, a dict-form ``data``, a string
     value or a time series inside the value always takes the parse.  Known limit: a time key that is one of those
-    words or a period name of the map's period level is not reported."""
+    words or a period name of the map's period level is not reported.
+
+    ``base_b`` is the time steps, the structure words and the usual labels (built once per check); ``unions``
+    caches ``base_b`` plus the other words of a value (its period keys, another label), so the values of the same
+    periods share one set."""
     for marker in _RAW_SLOW_MARKERS:
         if marker in raw:
             return False
     quoted = raw.split(b'"')[1::2]
-    extra: set[bytes] = set(_RAW_LABEL.findall(raw))
+    extra: set[bytes] = set()
     # The keys of the nested maps: the last key before each nested value (few, one per period).
     for match in _RAW_NESTED.finditer(raw):
         pos = match.start()
@@ -273,13 +336,40 @@ def _raw_keys_on_timeline(raw: bytes, periods_b: frozenset[bytes], timesteps_b: 
         if key not in periods_b:
             return False
         extra.add(key)
-    return timesteps_b.union(_RAW_STRUCTURE, extra).issuperset(quoted)
+    extra.difference_update(base_b)
+    if not extra:
+        allowed = base_b
+    else:
+        frozen = frozenset(extra)
+        allowed = unions.get(frozen)
+        if allowed is None:
+            allowed = unions[frozen] = base_b | frozen
+    if allowed.issuperset(quoted):
+        return True
+    # A level label other than time / period / t (rare): read the labels only now and try again.
+    labels = set(_RAW_LABEL.findall(raw)).difference(allowed)
+    return bool(labels) and allowed.union(labels).issuperset(quoted)
+
+
+@functools.lru_cache(maxsize=65536)
+def _index_key_str(key: str, index_type: str) -> str:
+    """A Map key as the reader sees it: ``str()`` of the parsed index (spinedb_api parses a ``date_time`` or
+    ``duration`` key, so ``2050-01-01 00:00:00`` and ``2050-01-01T00:00`` read as ``2050-01-01T00:00:00``)."""
+    try:
+        if index_type == "date_time":
+            return str(api.DateTime(key))
+        if index_type == "duration":
+            return str(api.Duration(key))
+    except Exception:  # noqa: BLE001 - a key spinedb_api cannot parse is compared as written
+        return str(key)
+    return str(key)
 
 
 def _value_levels(value) -> list[tuple[str | None, list]]:
     """``[(index_name, keys), ...]`` per level of a parsed database JSON value (outer to inner): the depth and the
     labels follow the first entry of each level, as the reader's ``_discover_index_cols`` does, and the keys of a
-    level are those of all its maps.  Keys are ``str(key)``; a time series level is ``("time", stamps)``."""
+    level are those of all its maps.  Keys are stringified as the reader does (``str()`` of the parsed index:
+    :func:`_index_key_str`); a time series level is ``("time", stamps)``."""
     levels: list[tuple[str | None, list]] = []
     current = [value]
     while current:
@@ -300,11 +390,13 @@ def _value_levels(value) -> list[tuple[str | None, list]]:
         for m in current:
             if not isinstance(m, dict) or m.get("type") == "time_series":
                 continue
+            index_type = m.get("index_type")
+            parse = index_type in ("date_time", "duration")
             data = m.get("data")
             entries = data.items() if isinstance(data, dict) else data or []
             for entry in entries:
                 k, v = entry[0], entry[1]
-                keys.append(str(k))
+                keys.append(_index_key_str(str(k), index_type) if parse else str(k))
                 if isinstance(v, dict) and v.get("type") in ("map", "time_series"):
                     children.append(v)
         levels.append((first.get("index_name"), keys))
@@ -313,7 +405,7 @@ def _value_levels(value) -> list[tuple[str | None, list]]:
 
 
 def _time_levels(levels: list[tuple[str | None, list]], allowed, periods: set[str],
-                 timesteps: set[str]) -> list[int]:
+                 timesteps: set[str], all_periods=None) -> list[int]:
     """The positions of the time levels in ``levels`` (:func:`_value_levels`), classified as the readers do:
     by depth, label and the parameter's allowed shapes (``PARAM_ALLOWED_SHAPES``), then by the keys.
 
@@ -321,8 +413,10 @@ def _time_levels(levels: list[tuple[str | None, list]], allowed, periods: set[st
     - A level labelled ``period`` is not checked, one labelled ``time`` / ``t`` is; another label is left to the
       shape checks (not checked).
     - An unnamed level takes the allowed shapes' unique label at that depth and position; otherwise it is a period
-      level when its keys hit the periods and no time step, else a time level.  On 2 levels an unnamed outer level
-      that hits no period is not checked (a branch level of a 2-level stochastic profile).
+      level when its keys hit the periods and no time step, or (``all_periods``, a callable giving the periods of
+      the whole database) hit no time step but a period of another scenario: such an entity gets no value in this
+      solve, as documented; else it is a time level.  On 2 levels an unnamed outer level that hits no period is
+      not checked (a branch level of a 2-level stochastic profile).
     """
     from flextool.engine.input._param_shapes import _infer_silent_default_labels, _normalise_label
 
@@ -340,10 +434,13 @@ def _time_levels(levels: list[tuple[str | None, list]], allowed, periods: set[st
             out.append(pos)
         elif label is None:
             key_set = set(keys)
+            hits_step = not key_set.isdisjoint(timesteps)
             hits_period = not key_set.isdisjoint(periods)
-            if hits_period and key_set.isdisjoint(timesteps):
+            if hits_period and not hits_step:
                 continue
-            if depth == 2 and pos == 0 and not hits_period and key_set.isdisjoint(timesteps):
+            if not hits_step and all_periods is not None and not key_set.isdisjoint(all_periods()):
+                continue
+            if depth == 2 and pos == 0 and not hits_period and not hits_step:
                 continue
             out.append(pos)
     if depth == 2 and len(out) == 2:
@@ -366,6 +463,26 @@ def _timelines_text(timelines: dict[str, list[str]]) -> str:
     return f"Timelines {shown}{more}."
 
 
+_ISO_STAMP = re.compile(r"^(\d{4})-\d\d-\d\d[T ]")
+
+
+def _off_keys_hint(keys: list[str], lower_steps: dict[str, str], timelines: dict[str, list[str]]) -> str:
+    """Why the keys of a value may be off: a case-insensitive match (``did you mean``), or date-time stamps of
+    another year than the timelines'.  Empty when neither applies."""
+    for k in keys:
+        match = lower_steps.get(k.lower())
+        if match is not None:
+            return f" Did you mean {match!r} (for {k!r})? Time step names are case sensitive."
+    key_years = {m.group(1) for k in keys[:50] if (m := _ISO_STAMP.match(k))}
+    if key_years:
+        step_years = {m.group(1) for steps in timelines.values() for s in steps[:1] + steps[-1:]
+                      if (m := _ISO_STAMP.match(s))}
+        if step_years and key_years.isdisjoint(step_years):
+            return (f" Its stamps are of year {', '.join(sorted(key_years))}, the timelines' of "
+                    f"{', '.join(sorted(step_years))}.")
+    return ""
+
+
 def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] | None = None) -> None:
     """Warn about time-series keys that are not a time step of any timeline; error when none of a value's are (#205).
 
@@ -379,13 +496,20 @@ def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] 
       the number of off keys and the first 5;
     - no time key of a value is on a timeline → :class:`FlexToolConfigError` (every value of it would be dropped
       and the parameter would fall back to its default), naming the entity, the parameter, the alternative and the
-      first keys (up to 5 values shown).
+      first keys (up to 5 values shown), with a case or year hint when one applies;
+    - ... unless every key is a time step of a timeline that is not one of this scenario's (another alternative's
+      ``timestep_duration``): plain data of another scenario → a warning (the value is not used).
 
     The time levels are classified as the readers do (:func:`_time_levels`): a stochastic branch name or a period
-    key is never checked. Known limit: a period-level key that is not a period of the scenario is not reported.
+    key is never checked; an unnamed level keyed by periods of another scenario is a period level (no value in
+    this solve, as documented). Date-time and duration keys are compared as the reader parses them
+    (:func:`_index_key_str`). Known limit: a period-level key that is not a period of the scenario is not reported.
 
     Performance: a str-indexed Map is first read as raw database JSON (:func:`_raw_keys_on_timeline`, a C-speed
-    regex and set comparison); only a value with a key that is not a period or a time step is parsed.
+    regex and set comparison); only a value with a key that is not a period or a time step is parsed. Each
+    distinct raw value is checked once (copies of one profile on many entities cost a dict lookup); the cache
+    holds the database mapping's own bytes, so it adds no copy of them. The whole database's periods and timelines
+    are read only when a value needs them (:class:`_DatabaseTimeVocab`).
 
     ``vocab`` is the ``(periods, timelines)`` of :func:`_scenario_time_vocab` (built here when not given).
     """
@@ -399,13 +523,20 @@ def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] 
     if not timesteps:
         return
     periods_b = frozenset(p.encode() for p in periods)
-    timesteps_b = frozenset(t.encode() for t in timesteps)
+    base_b = frozenset(t.encode() for t in timesteps) | _RAW_STRUCTURE | {b"time", b"period", b"t"}
+    unions: dict[frozenset[bytes], frozenset[bytes]] = {}
+    database = _DatabaseTimeVocab(src, periods, timelines)
+    lower_steps: dict[str, str] | None = None
+    # raw value -> True (fast path: nothing off), or per allowed shapes -> the value's time keys (in order)
+    fast_seen: dict[bytes, bool] = {}
+    keys_seen: dict[tuple[bytes, frozenset | None], dict[str, None]] = {}
 
     errors: list[str] = []
+    other_timeline_warnings: list[str] = []
     warnings: list[str] = []
     for (cls, par) in TIME_AGGREGATION:
-        key = (cls, par)
-        allowed = PARAM_ALLOWED_SHAPES.get(key)
+        allowed = PARAM_ALLOWED_SHAPES.get((cls, par))
+        allowed_key = frozenset(allowed) if allowed else None
         off_entities: list[str] = []
         all_keys: dict[str, None] = {}
         off_keys: dict[str, None] = {}
@@ -416,26 +547,45 @@ def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] 
             raw = pv["value"]
             if isinstance(raw, str):
                 raw = raw.encode()
-            if kind == "map" and _raw_keys_on_timeline(raw, periods_b, timesteps_b):
-                continue
-            value = json.loads(raw)
-            if kind == "time_series" and isinstance(value, dict):
-                value = {**value, "type": "time_series"}
-            levels = _value_levels(value)
-            keys: dict[str, None] = {}
-            for pos in _time_levels(levels, allowed, periods, timesteps):
-                keys.update(dict.fromkeys(levels[pos][1]))
+            if kind == "map":
+                fast = fast_seen.get(raw)
+                if fast is None:
+                    fast = fast_seen[raw] = _raw_keys_on_timeline(raw, periods_b, base_b, unions)
+                if fast:
+                    continue
+            keys = keys_seen.get((raw, allowed_key))
+            if keys is None:
+                if kind == "time_series":
+                    levels = [("time", [str(k) for k in api.from_database(raw, "time_series").indexes])]
+                else:
+                    levels = _value_levels(json.loads(raw))
+                keys = {}
+                for pos in _time_levels(levels, allowed, periods, timesteps, database.all_periods):
+                    keys.update(dict.fromkeys(levels[pos][1]))
+                keys_seen[(raw, allowed_key)] = keys
             if not keys:
                 continue
             off = [k for k in keys if k not in timesteps]
             if not off:
                 continue
             entity = "/".join(str(b) for b in pv["entity_byname"])
+            where = f"{cls} {entity!r} parameter {par!r} (alternative {pv['alternative_name']!r})"
             if len(off) == len(keys):
                 first = ", ".join(list(keys)[:3]) + (" ..." if len(keys) > 3 else "")
+                others = database.other_timelines_holding(keys)
+                if others is not None:
+                    names = ", ".join(f"{name!r} (alternative {alt!r})" for name, alt in others[:2])
+                    other_timeline_warnings.append(
+                        f"Warning: {where}: its keys ({first}) are time steps of timeline {names}, which is not a "
+                        "timeline of this scenario; the value is not used.")
+                    continue
+                if lower_steps is None:
+                    lower_steps = {}
+                    for s in timesteps:
+                        lower_steps.setdefault(s.lower(), s)
                 errors.append(
-                    f"{cls} {entity!r} parameter {par!r} (alternative {pv['alternative_name']!r}): none of its "
-                    f"{len(keys)} time keys ({first}) is a time step of a timeline")
+                    f"{where}: none of its {len(keys)} time keys ({first}) is a time step of a timeline."
+                    + _off_keys_hint(list(keys), lower_steps, timelines))
                 continue
             off_entities.append(entity)
             all_keys.update(keys)
@@ -448,14 +598,16 @@ def validate_time_series_keys(src, vocab: tuple[set[str], dict[str, list[str]]] 
             rest = len(off_keys) - len(first)
             shown = ", ".join(first) + (f" and {rest} more" if rest else "")
             warnings.append(
-                f"Warning: {cls} {names} parameter {par!r}: {len(off_keys)} of {len(all_keys)} time keys are not "
-                f"time steps of any timeline ({shown}); their values are not used. {_timelines_text(timelines)}")
+                f"Warning: {cls} {names} parameter {par!r}: {len(off_keys)} of {len(all_keys)} distinct time keys "
+                f"are not time steps of any timeline ({shown}); their values are not used. "
+                f"{_timelines_text(timelines)}")
     if errors:
         more = f" (+{len(errors) - 5} more)" if len(errors) > 5 else ""
         timeline_list = ", ".join(f"{name}: {_span(steps)}" for name, steps in list(timelines.items())[:3])
         raise FlexToolConfigError(
-            "; ".join(errors[:5]) + more + f" ({timeline_list}). Time step names are case sensitive.")
-    for text in warnings:
+            "Time series with no key on a timeline: " + " ".join(errors[:5]) + more
+            + f" (timelines {timeline_list}). Rename the keys to time steps of a timeline, or remove the value.")
+    for text in other_timeline_warnings + warnings:
         print(text, flush=True)
 
 

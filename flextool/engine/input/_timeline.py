@@ -87,16 +87,6 @@ if TYPE_CHECKING:
     from flextool.engine.input._solve_config import SolveConfig
 
 
-# The timeset blocks already warned about in this run (:meth:`TimelineConfig.validate_timeset_blocks` runs at
-# both TimelineConfig construction sites of a run). :func:`run_chain_from_db` resets it at the start of a run.
-_TIMESET_BLOCK_WARNED: set[tuple] = set()
-
-
-def reset_timeset_block_warnings() -> None:
-    """Forget the timeset block warnings printed so far: a new run prints them again."""
-    _TIMESET_BLOCK_WARNED.clear()
-
-
 # ---------------------------------------------------------------------------
 # TimelineConfig — main container
 # ---------------------------------------------------------------------------
@@ -452,7 +442,7 @@ class TimelineConfig:
                     self.timeset_durations[ts] = block_chunks[ts]
                     self.timesets__timeline[ts] = new_timeline_name
 
-    def validate_timeset_blocks(self, solve_config: "SolveConfig") -> None:
+    def validate_timeset_blocks(self, solve_config: "SolveConfig", warned: set[tuple] | None = None) -> None:
         """Check the ``timeset_duration`` blocks of the timesets the model's solves use, against their timelines.
 
         Runs on the original blocks, after :meth:`create_assumptive_parts` and before
@@ -463,10 +453,15 @@ class TimelineConfig:
 
         - A block whose start is not a step of the timeline → :class:`FlexToolConfigError` (with a
           case-insensitive suggestion). Before this check, such a block was skipped without a word.
-        - A block that runs past the end of the timeline → a warning (printed once per run, see
-          :func:`reset_timeset_block_warnings`); the expansion cuts it at the end of the timeline, as before.
+        - A block that runs past the end of the timeline → a warning; the expansion cuts it at the end of the
+          timeline, as before. ``warned`` is the set of the warnings already printed in this run: a run passes
+          the same set to each of its construction sites (``run_chain_from_db`` → ``FlexToolRunner``), so a
+          warning is printed once per run, and a new run (any entry point) starts with a new set. Without it,
+          every call prints its warnings (no state is kept between calls or runs).
           On a representative-period timeset (one with ``representative_period_weights``) the block cannot be
           cut (the base-period mapping needs whole blocks) → error.
+        - A block length that is not a whole number of time steps → a warning (the expansion uses the whole
+          part, as before).
         - A used timeset with blocks whose timeline has no steps (not a timeline of the scenario) → error.
 
         All the errors go into one :class:`FlexToolConfigError` (up to 5 shown).
@@ -500,14 +495,20 @@ class TimelineConfig:
                 lower.setdefault(str(s).lower(), s)
             for start, count in blocks:
                 n = int(float(count))
+                if float(count) != n:
+                    warnings.append((
+                        (ts, "fraction", start, float(count)),
+                        f"Warning: timeset {ts!r} (solve {solve_name!r}): the block starting {str(start)!r} has "
+                        f"length {float(count):g}, which is not a whole number of time steps; {n} time steps "
+                        "are used."))
                 idx = index_of.get(start)
                 if idx is None:
                     hint = lower.get(str(start).lower())
-                    hint_txt = f" Did you mean {hint!r}?" if hint is not None else ""
+                    hint_txt = (f" Did you mean {hint!r}? Time step names are case sensitive."
+                                if hint is not None else "")
                     errors.append(
                         f"{where}: the block starting {str(start)!r} does not start at a time step of timeline "
-                        f"{timeline_id!r} ({steps[0]!r} .. {steps[-1]!r}).{hint_txt} Time step names are case "
-                        "sensitive.")
+                        f"{timeline_id!r} ({steps[0]!r} .. {steps[-1]!r}).{hint_txt}")
                     continue
                 left = len(steps) - idx
                 if n <= left:
@@ -528,9 +529,10 @@ class TimelineConfig:
             more = f" (+{len(errors) - 5} more)" if len(errors) > 5 else ""
             raise FlexToolConfigError("timeset_duration: " + " ".join(shown) + more)
         for key, text in warnings:
-            if key in _TIMESET_BLOCK_WARNED:
-                continue
-            _TIMESET_BLOCK_WARNED.add(key)
+            if warned is not None:
+                if key in warned:
+                    continue
+                warned.add(key)
             print(text, flush=True)
 
     def create_assumptive_parts(self, solve_config: "SolveConfig") -> None:

@@ -35,9 +35,8 @@ def _blocks(blocks: dict[str, float], timeset: str = "2day") -> list:
 def _check(url: str, scenario: str) -> None:
     """The check alone, as at the run's construction sites (after create_assumptive_parts)."""
     from flextool.engine.input._solve_config import SolveConfig
-    from flextool.engine.input._timeline import TimelineConfig, reset_timeset_block_warnings
+    from flextool.engine.input._timeline import TimelineConfig
 
-    reset_timeset_block_warnings()
     logger = logging.getLogger("test_timeset_block_check")
     sc = SolveConfig.load_from_db_url(url, scenario, logger=logger)
     tc = TimelineConfig.load_from_db_url(url, scenario, logger=logger)
@@ -68,7 +67,8 @@ def test_block_start_in_wrong_case_is_an_error(tmp_path_factory) -> None:
     with pytest.raises(FlexToolConfigError) as err:
         _check(url, scen)
     msg = str(err.value)
-    assert "'2day'" in msg and "'T0001'" in msg and "Did you mean 't0001'?" in msg, msg
+    assert "'2day'" in msg and "'T0001'" in msg and "Did you mean 't0001'? Time step names are case sensitive." \
+        in msg, msg
 
 
 def test_only_the_block_off_the_timeline_is_named(tmp_path_factory) -> None:
@@ -77,6 +77,22 @@ def test_only_the_block_off_the_timeline_is_named(tmp_path_factory) -> None:
         _check(url, scen)
     msg = str(err.value)
     assert "the block starting 'x9999'" in msg and msg.count("the block starting") == 1, msg
+    # no case-insensitive match: no "did you mean", no case sentence
+    assert "Did you mean" not in msg and "case sensitive" not in msg, msg
+
+
+def test_fractional_block_length_warns(tmp_path_factory, capsys) -> None:
+    _check(*_db(tmp_path_factory, "b222_frac", [_blocks({"t0001": 47.5})]))
+    assert ("Warning: timeset '2day' (solve 'y2020_2day_dispatch'): the block starting 't0001' has length 47.5, "
+            "which is not a whole number of time steps; 47 time steps are used.") in capsys.readouterr().out
+
+
+def test_each_run_in_one_process_warns_once(tmp_path_factory, capsys) -> None:
+    """The warn-once state belongs to a run: a second run in the same process prints the warning again."""
+    url, scen = _db(tmp_path_factory, "b222_twice", [_blocks({"t0030": 48.0})])
+    for _ in range(2):
+        run(tmp_path_factory, url, scen)
+        assert capsys.readouterr().out.count(LATE_WARNING) == 1
 
 
 def test_timeset_no_solve_uses_is_not_checked(tmp_path_factory, capsys) -> None:

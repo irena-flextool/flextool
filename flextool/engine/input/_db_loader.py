@@ -39,6 +39,7 @@ class FlexToolRunner:
         auto_scale=False,
         timing_recorder: "TimingRecorder | None" = None,
         run_options: "RunOptions | None" = None,
+        timeset_warned: "set[tuple] | None" = None,
     ):
         logger = logging.getLogger(__name__)
         # Resolve work_folder: default to cwd for backward compatibility
@@ -107,7 +108,8 @@ class FlexToolRunner:
 
         # Post-DB initialization of timeline
         timeline.create_assumptive_parts(solve)
-        timeline.validate_timeset_blocks(solve)
+        # ``timeset_warned``: the warnings this run printed already (see validate_timeset_blocks).
+        timeline.validate_timeset_blocks(solve, timeset_warned)
         timeline.create_timeline_from_timestep_duration(solve)
 
         # Assemble RunnerState — the single cross-cutting state container

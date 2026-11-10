@@ -4935,10 +4935,10 @@ def run_chain_from_db(
             "to that scenario. Pass the scenario to run (CLI: --scenario-name)."
         )
     from flextool.engine.input._db_loader import FlexToolRunner
-    from flextool.engine.input._timeline import reset_timeset_block_warnings
 
-    # A new run prints the timeset block warnings again (once per run).
-    reset_timeset_block_warnings()
+    # The timeset block warnings of this run, shared by its two TimelineConfig construction sites so each is
+    # printed once per run (a new run starts with a new set).
+    _timeset_warned: set[tuple] = set()
 
     if logger is None:
         logger = logging.getLogger(
@@ -5106,6 +5106,7 @@ def run_chain_from_db(
                 solver_config_dir=solver_config_dir_resolved,
                 work_folder=work_folder,
                 run_options=run_options,
+                timeset_warned=_timeset_warned,
             )
             runner.state.logger.setLevel(logging.ERROR)
             _recorder = runner.state.timing_recorder
@@ -5130,7 +5131,7 @@ def run_chain_from_db(
                            user_label="SolveConfig loaded (from DB)")
         tc = TimelineConfig.load_from_db_url(db_url, scenario_name, logger=logger)
         tc.create_assumptive_parts(sc)
-        tc.validate_timeset_blocks(sc)
+        tc.validate_timeset_blocks(sc, _timeset_warned)
         tc.create_timeline_from_timestep_duration(sc)
         _memrec.checkpoint("timeline_constructed", logger,
                            user_label="TimelineConfig constructed (from DB)")

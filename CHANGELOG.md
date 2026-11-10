@@ -6,8 +6,9 @@
   printed once per run for each class and parameter, names the entities, the number of such time steps and the
   first five, and the timelines; a time series with none of its time steps on a timeline stops the run with an
   error that names the entity, the parameter and the alternative. The keys are compared with the steps of all the
-  scenario's timelines; stochastic branch names and the periods of a period+time map are not checked. The model is
-  unchanged.
+  scenario's timelines; stochastic branch names and the periods of a period+time map (also the periods of another
+  scenario, in a map without `index_name`) are not checked. Date-time stamps are compared as dates. A series on a
+  timeline of another scenario gets a warning, not an error. The model is unchanged.
 - **Fix: a timeset block that starts off its timeline, or runs past its end, was skipped or cut without a word.**
   A `timeset_duration` block whose start is not a time step of the timeset's timeline (a typo, a different case
   such as `T0001`) was left out of the model, and when no block was left the error pointed at the `timeline`
@@ -16,7 +17,8 @@
   end of the timeline, but a warning, printed once per run, names the timeset, the block, the timeline and the
   number of time steps not used; on a representative-period timeset this is an error (before, the run crashed
   later with an internal error). A timeset whose `timeline` is not a timeline of the scenario is an error. Only
-  the timesets used by the solves of the model are checked. No change to the model otherwise.
+  the timesets used by the solves of the model are checked. A block length that is not a whole number gets a
+  warning. No change to the model otherwise.
 - **Docs: planning-practitioner pages.** New pages *Reading results* (where to look first, units) and *Model
   limitations*; a tutorial step that lets the model invest; how-tos for a minimum inertia (with a synchronous
   condenser), a sensitivity as one alternative on top of a scenario, replacing a dataset through a partial Excel
