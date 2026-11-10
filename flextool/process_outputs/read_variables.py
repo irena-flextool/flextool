@@ -411,6 +411,13 @@ def _read_from_parquet(parquet_dir: Path) -> SimpleNamespace:
 
     v.capacity_margin_report = read_capacity_margin_parts(parquet_dir, REPORT_PREFIX, solve_order)
     v.capacity_margin_entity = read_capacity_margin_parts(parquet_dir, ENTITY_PREFIX, solve_order)
+    # The reserve requirement of each reserve group (engine.output._reserve_report): long polars frames over the
+    # realized steps, a step from the last solve that realizes it; None without a reserve requirement.
+    from flextool.engine.output._reserve_report import PROVIDER_PREFIX, REPORT_PREFIX as RESERVE_PREFIX
+    from flextool.engine.output._reserve_report import read_reserve_report_parts
+
+    v.reserve_group = read_reserve_report_parts(parquet_dir, RESERVE_PREFIX, solve_order)
+    v.reserve_group_provider = read_reserve_report_parts(parquet_dir, PROVIDER_PREFIX, solve_order)
 
     # ``group_entity_invest`` is set by the caller (``read_variables``) from the
     # sub-solve's FlexDataProvider — item 163 addendum; no polars producer

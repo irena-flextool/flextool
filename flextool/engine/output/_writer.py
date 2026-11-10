@@ -500,6 +500,15 @@ def write_outputs_for_solve(
     except Exception as exc:  # noqa: BLE001
         _logger.error("capacity margin report failed for solve '%s': %s", solve_name, exc)
 
+    # The reserve requirement of each reserve group (#234): its per-solve tables over the realized steps (unioned
+    # with the last solve winning a step, as the other per-step outputs) and the run-log line of a broken check.
+    try:
+        from flextool.engine.output._reserve_report import write_reserve_report
+
+        write_reserve_report(sol, flex_data, output_dir=output_dir, solve_name=roll_name)
+    except Exception as exc:  # noqa: BLE001
+        _logger.error("reserve requirement report failed for solve '%s': %s", solve_name, exc)
+
     try:
         write_all_handoffs(
             h, solve_name=roll_name, work_folder=work_folder,

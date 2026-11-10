@@ -33,6 +33,9 @@ class Slack:
     related_inputs: tuple[str, ...]
     node_level: str | None = None          # the column level that names a node (for feeding_entities)
     detail_tables: tuple[str, ...] = ()    # the tables that break the slack down (listed when present)
+    # (table, {key in the entry: quantity}): values of a period table with the slack's column levels plus a
+    # ``quantity`` level, shown in each entry next to the slack (the requirement the slack falls short of).
+    beside: tuple[str, dict[str, str]] | None = None
 
 
 SLACKS: tuple[Slack, ...] = (
@@ -52,8 +55,16 @@ SLACKS: tuple[Slack, ...] = (
           "Inertia the group lacked against its requirement, annualized.",
           ("group.inertia_limit", "group.penalty_inertia")),
     Slack("vq_reserve", "nodeGroup_slack_reserve_d_eeg",
-          "Reserve requirement the group did not meet, annualized.",
-          ("reserve__upDown__group.reservation", "reserve__upDown__group.penalty_reserve")),
+          "Reserve requirement the group did not meet, annualized. Each entry also gives the period's "
+          "requirement and shortfall in MW (time-step-weighted averages, nodeGroup_reserve_d_eegp); "
+          "nodeGroup_reserve_dt_eegp has them per step with the need of each method (timeseries, dynamic, n-1) and "
+          "the reserve counted, and nodeGroup_reserve_provider_dt_eegee what each unit and connection counts.",
+          ("reserve__upDown__group.reservation", "reserve__upDown__group.reserve_method",
+           "reserve__upDown__group.penalty_reserve"),
+          detail_tables=("nodeGroup_reserve_d_eegp", "nodeGroup_reserve_dt_eegp",
+                         "nodeGroup_reserve_provider_dt_eegee"),
+          beside=("nodeGroup_reserve_d_eegp", {"requirement_avg_MW": "requirement_avg",
+                                               "shortfall_avg_MW": "shortfall_avg"})),
     Slack("vq_capacity_margin", "nodeGroup_slack_capacity_margin_d_g",
           "Capacity the group lacked against its capacity margin in the period (not annualized). An investment "
           "solve's shortfall is shown under the solve that realizes the period; nodeGroup_capacity_margin_d_g has "
@@ -126,6 +137,27 @@ def _feeding(ctx: AssistantContext, rr: _runs.ResolvedRun, nodes: list[str]) -> 
     return out, note
 
 
+def _add_beside(rr: _runs.ResolvedRun, beside: tuple[str, dict[str, str]], entity_levels: list[str],
+                entries: list[dict]) -> None:
+    """Add to each entry the values of ``beside`` (:attr:`Slack.beside`) at its entity and period (None where the
+    table has none); nothing when the table is not there."""
+    import polars as pl
+
+    stem, keys = beside
+    if not (rr.folder / f"{stem}.parquet").is_file():
+        return
+    long = _long(_query.open_table(rr.folder, stem, where=rr.folder.name))
+    if "quantity" not in long.columns or any(c not in long.columns for c in entity_levels):
+        return
+    long = long.filter(pl.col("quantity").is_in(list(keys.values())))
+    found = {(tuple(row[c] for c in entity_levels), row.get("period"), row["quantity"]): row["value"]
+             for row in long.iter_rows(named=True)}
+    for entry in entries:
+        for key, quantity in keys.items():
+            value = found.get((tuple(entry["entity"]), entry["period"], quantity))
+            entry[key] = None if value is None else _query._number(value)
+
+
 def slack_summary(ctx: AssistantContext, run: str, *, min_value: float, max_rows: int) -> dict:
     import polars as pl
 
@@ -145,6 +177,8 @@ def slack_summary(ctx: AssistantContext, run: str, *, min_value: float, max_rows
         long = long.sort("value", descending=True, maintain_order=True)
         entries = [{"entity": [row[c] for c in entity_levels], "period": row.get("period"),
                     "value": _query._number(row["value"])} for row in long.head(max_rows).iter_rows(named=True)]
+        if spec.beside is not None:
+            _add_beside(rr, spec.beside, entity_levels, entries)
         record: dict[str, Any] = {
             "slack": spec.slack,
             "table": spec.table,

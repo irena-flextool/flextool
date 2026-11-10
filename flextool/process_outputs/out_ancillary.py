@@ -556,6 +556,84 @@ def capacity_margin(par, s, v, r, debug):
     return results
 
 
+#: The quantities of ``nodeGroup_reserve_dt_eegp``, in column order (engine.model._reserve.reserve_requirement_report).
+RESERVE_GROUP_QUANTITIES = (
+    "requirement", "requirement_timeseries", "requirement_dynamic", "requirement_n_1",
+    "provided", "counted", "shortfall",
+)
+#: The per-method requirements: a column of a group without the method holds no value and is left out.
+_RESERVE_METHOD_QUANTITIES = ("requirement_timeseries", "requirement_dynamic", "requirement_n_1")
+_RESERVE_GROUP = ["reserve", "updown", "node_group"]
+
+
+def _reserve_wide(frame, columns: list[str], values: list[str], dt_index) -> pd.DataFrame:
+    """The long frame (period, time, *columns, *values) as a (period, time) × (*columns[, quantity]) table on the
+    realized steps ``dt_index``: a step no solve reported (one that left reserves out) is an empty row."""
+    long = frame.to_pandas().astype({c: str for c in ("period", "time", *columns)})
+    wide = long.set_index(["period", "time", *columns])[values]
+    if len(values) > 1:
+        wide.columns = pd.Index(values, name="quantity")
+        wide = wide.unstack(columns)
+        wide = wide.reorder_levels([*range(1, len(columns) + 1), 0], axis=1)
+        groups = list(dict.fromkeys(long[columns].itertuples(index=False, name=None)))
+        wide = wide.reindex(columns=pd.MultiIndex.from_tuples(
+            [(*g, q) for g in groups for q in values], names=[*columns, "quantity"]))
+    else:
+        wide = wide[values[0]].unstack(columns)
+        wide = wide.reindex(columns=pd.MultiIndex.from_tuples(
+            list(dict.fromkeys(long[columns].itertuples(index=False, name=None))), names=columns))
+    return wide.reindex(dt_index).astype(float)
+
+
+def reserve_requirement(par, s, v, r, debug):
+    """The reserve requirement of each reserve group (#234), from the requirement rows evaluated at the solution
+    (``engine.model._reserve.reserve_requirement_report``):
+
+    * ``nodeGroup_reserve_dt_eegp`` (period, time) × (reserve, updown, node_group, quantity): the binding row's
+      ``requirement`` and ``counted`` reserve (so ``shortfall = requirement − counted`` when there is one), each
+      method's requirement, the reserve ``provided`` (Σ v_reserve · unitsize · reliability) and the ``shortfall``;
+    * ``nodeGroup_reserve_d_eegp`` period × (…, quantity): ``requirement_avg``, ``provided_avg``,
+      ``shortfall_avg`` (Σ_t w·Δt·X / Σ_t w·Δt over the period's steps that have a value) and the plain step
+      maxima ``requirement_max``, ``shortfall_max``;
+    * ``nodeGroup_reserve_provider_dt_eegee`` (period, time) × (reserve, updown, node_group, process, node): each
+      provider's counted reserve (× reliability), summing to ``provided``.
+
+    Rows are the realized steps; a step whose solve left reserves out (``reduce_system_detail_method``) is empty.
+    """
+    from flextool.process_outputs._annualize import realized_timestep_weight, weighted_period_average
+
+    summary = getattr(v, "reserve_group", None)
+    if summary is None or summary.height == 0:
+        return []
+    dt_index = s.dt_realize_dispatch
+    dt = _reserve_wide(summary, _RESERVE_GROUP, list(RESERVE_GROUP_QUANTITIES), dt_index)
+    quantity = dt.columns.get_level_values("quantity")
+    unused = quantity.isin(_RESERVE_METHOD_QUANTITIES) & dt.isna().all(axis=0).to_numpy()
+    dt = dt.loc[:, ~unused]
+    results = [(dt, 'nodeGroup_reserve_dt_eegp')]
+
+    weight = realized_timestep_weight(par, dt.index, what='Reserve group results')
+    pick = dt.columns.get_level_values("quantity")
+    parts = {}
+    for q in ("requirement", "provided", "shortfall"):
+        parts[f"{q}_avg"] = weighted_period_average(dt.loc[:, pick == q], weight, par.step_duration)
+    for q in ("requirement", "shortfall"):
+        parts[f"{q}_max"] = dt.loc[:, pick == q].groupby(level="period", sort=False).max()
+    period = pd.concat([p.droplevel("quantity", axis=1) for p in parts.values()], axis=1, keys=list(parts),
+                       names=["quantity"])
+    period = period.reorder_levels([1, 2, 3, 0], axis=1)
+    groups = list(dict.fromkeys(dt.columns.droplevel("quantity")))
+    period = period.reindex(columns=pd.MultiIndex.from_tuples(
+        [(*g, q) for g in groups for q in parts], names=[*_RESERVE_GROUP, "quantity"]))
+    results.append((period, 'nodeGroup_reserve_d_eegp'))
+
+    provider = getattr(v, "reserve_group_provider", None)
+    if provider is not None and provider.height > 0:
+        results.append((_reserve_wide(provider, [*_RESERVE_GROUP, "process", "node"], ["value"], dt_index),
+                        'nodeGroup_reserve_provider_dt_eegee'))
+    return results
+
+
 def dc_power_flow(par, s, v, r, debug):
     """DC power flow voltage angles and angle differences per connection"""
 

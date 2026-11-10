@@ -120,6 +120,9 @@ class TimeSeriesResults:
     nodeGroup_slack_nonsync_dt_g: pd.DataFrame | None = None
     nodeGroup_slack_reserve_d_eeg: pd.DataFrame | None = None
     nodeGroup_slack_reserve_dt_eeg: pd.DataFrame | None = None
+    nodeGroup_reserve_dt_eegp: pd.DataFrame | None = None
+    nodeGroup_reserve_d_eegp: pd.DataFrame | None = None
+    nodeGroup_reserve_provider_dt_eegee: pd.DataFrame | None = None
 
     # --- Costs ---
     costs_dt_p: pd.DataFrame | None = None

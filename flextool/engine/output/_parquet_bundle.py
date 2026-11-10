@@ -233,6 +233,24 @@ for _key, _cols, _note in (
     )
 del _key, _cols, _note
 
+# -- raw / the reserve requirement of each reserve group (engine.output._reserve_report) --------------------
+for _key, _cols, _idx, _note in (
+    ("reserve_group",
+     ("requirement", "requirement_timeseries", "requirement_dynamic", "requirement_n_1", "n_1_process",
+      "binding_method", "binding_process", "provided", "counted", "shortfall"),
+     ("solve", "reserve", "updown", "node_group", "period", "time"),
+     "reserve requirement per (reserve, updown, group) and realized step of the solve; only with reserves active."),
+    ("reserve_group_provider", ("value",),
+     ("solve", "reserve", "updown", "node_group", "process", "node", "period", "time"),
+     "each provider's counted reserve (× reliability) per group and realized step; only with reserves active."),
+):
+    REGISTRY[_key] = ParquetSpec(
+        key=_key, category="raw", filename=f"{_key}__*.parquet",
+        columns=(*_idx, *_cols), indices=_idx, note=_note,
+        producer="flextool.engine.output._reserve_report.write_reserve_report",
+    )
+del _key, _cols, _idx, _note
+
 
 # NOTE: the legacy raw/handoff capacity CSVs (``entity_all_capacity.csv``,
 # ``{unit,connection,node}_capacity__period.csv``) were removed 2026-08-07.
@@ -360,6 +378,9 @@ for _key, _producer, _note in (
     ("process_reserve_upDown_node_dt_eppe", "out_ancillary.reserves",   "Per-(period,time) reserve provision; only with reserves active."),
     ("process_reserve_average_d_eppe",      "out_ancillary.reserves",   "Per-period average reserve provision; only with reserves active."),
     ("reserve_prices_dt_ppg",               "out_ancillary.reserves",   "Per-(period,time) reserve price (dual); only with reserves active."),
+    ("nodeGroup_reserve_dt_eegp",           "out_ancillary.reserve_requirement", "Per-(period,time) reserve requirement, provision and shortfall by group; only with reserves active."),
+    ("nodeGroup_reserve_d_eegp",            "out_ancillary.reserve_requirement", "Per-period weighted averages and maxima of the reserve requirement by group; only with reserves active."),
+    ("nodeGroup_reserve_provider_dt_eegee", "out_ancillary.reserve_requirement", "Per-(period,time) counted reserve of each provider by group; only with reserves active."),
 ):
     REGISTRY[_key] = _proc(
         _key, note=_note, producer=f"flextool.process_outputs.{_producer}",

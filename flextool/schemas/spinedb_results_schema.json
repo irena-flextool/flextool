@@ -364,6 +364,22 @@
       null
     ],
     [
+      "group__reserve__upDown",
+      "requirement_t",
+      null,
+      null,
+      "[MW] The reserve requirement of the group in each timestep, from its requirement rows evaluated at the solution, keyed by quantity. 'requirement' - the need of the binding requirement row (the row with the largest need - counted). 'requirement_timeseries', 'requirement_dynamic', 'requirement_n_1' - the need of each method the group has (n-1: the largest failure). 'provided' - the reserve of the group's providers (reserve x unitsize x reliability). 'counted' - the reserve the binding row counts (for an n-1 row, without the failing process's own reserve), so shortfall = requirement - counted when there is a shortfall. 'shortfall' - the requirement not met. The per-provider breakdown is in the reserve__group__provider__dt CSV / Excel table, not here.",
+      null
+    ],
+    [
+      "group__reserve__upDown",
+      "requirement",
+      null,
+      null,
+      "[MW] The reserve requirement of the group in each period, keyed by quantity: 'requirement_avg', 'provided_avg', 'shortfall_avg' - the time-step-weighted averages over the period's realized steps where the reserve was modelled; 'requirement_max', 'shortfall_max' - the largest step values.",
+      null
+    ],
+    [
       "model",
       "cost_annualized",
       null,

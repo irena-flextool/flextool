@@ -40,6 +40,26 @@
   run log prints `capacity margin shortfall: solve …, group …, period …: … MW at … (penalty … M CUR)` after each
   solve that leaves a shortfall. The results database has both tables without the binding step (it is in the CSV
   and parquet tables).
+- **New: the reserve requirement of each reserve group (#234).** `reserve__upDown__group__dt` (results database
+  `group__reserve__upDown.requirement_t`) has, per reserve, direction, group and time step, the requirement of
+  each method the group has (timeseries, dynamic, large failure: the largest failure), the requirement that binds
+  (the largest deficit), the reserve provided (× `reliability`), the reserve that requirement counts (a
+  large-failure requirement does not count the failing unit's own reserve, so the shortfall is requirement −
+  counted) and the shortfall. `reserve__upDown__group__d` (`group__reserve__upDown.requirement`) has the period's
+  time-step-weighted averages of the requirement, the provision and the shortfall and their step maxima;
+  `reserve__group__provider__dt` (CSV and Excel only) what each unit and connection counts for each group. The
+  requirements are the model's own constraints evaluated at the solution; the run log prints `reserve requirement
+  check: …` for a step where they disagree with the solver's shortfall.
+- **Fix: the period average of the reserve a unit or connection holds ignored the time-step weights (item 188).**
+  `process__reserve__upDown__node__d_average` (`reservation_average`) was the plain mean of the steps, too high
+  or too low on representative periods with unequal weights. It is now the time-step-weighted average over the
+  period's realized steps, and the steps of a solve that left reserves out (`reduce_system_detail_method`) no
+  longer count as 0 MW. Models without time-step weights are unchanged.
+- **Fix: an Excel sheet name over 31 characters lost its time-resolution suffix (audit bug 4).** Excel cuts sheet
+  names at 31 characters, so `unit_curtailment__outputNode__dt` became the sheet `unit_curtailment__outputNode__d`
+  and the real per-period table `unit_curtailment__outputNode_1`. A long name now keeps its `__d` / `__dt` suffix
+  and is shortened in front of it, with `_1`, `_2`, … before the suffix when two names would be the same (also
+  without regard to case, as Excel compares them).
 
 - **Fix: a profile link without profile data held the flow at 0 without a word (#104).** `profile_method`
   defaults to *upper_limit* on `unit__node__profile`, and a profile without a value in the scenario is 0, so the

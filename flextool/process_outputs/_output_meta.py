@@ -274,7 +274,28 @@ ONLINE_AVG = Transform(
 )
 RESERVE_AVG = Transform(
     "MW", Semantics.AVERAGE,
-    "Average reserve held over the period.",
+    "Time-step-weighted average MW held over the period's realized steps.",
+    algebra="Σₜ w·Δt·MW / Σₜ w·Δt over the realized steps where reserves were modelled (w = timestep_weight)",
+)
+RESERVE_REQUIREMENT_MW = Transform(
+    "MW", Semantics.LEVEL,
+    "Reserve requirement term of the group at the time step (MW held, not an energy).",
+    algebra="the group's reserveBalance rows evaluated at the solution: need, counted reserve, shortfall",
+)
+RESERVE_REQUIREMENT_AVG = Transform(
+    "MW", Semantics.AVERAGE,
+    "Time-step-weighted average over the period's realized steps where reserves were modelled.",
+    algebra="Σₜ w·Δt·X / Σₜ w·Δt (w = timestep_weight)",
+)
+RESERVE_REQUIREMENT_MAX = Transform(
+    "MW", Semantics.LEVEL,
+    "Largest value of the period's time steps (not weighted).",
+    algebra="maxₜ X",
+)
+RESERVE_PROVIDER_MW = Transform(
+    "MW", Semantics.LEVEL,
+    "Counted reserve (× reliability) of the provider for the group at the time step.",
+    algebra="v_reserve · unitsize · reliability",
 )
 ANGLE = Transform(
     "rad", Semantics.LEVEL,
@@ -355,6 +376,13 @@ _NODEGROUP_GD_P = {
     '4. Curtailed VRE of demand': RATIO,
     '5. Annualized inflow': PREENERGY_ANNUAL,
     '6. Curtailed VRE of potential VRE': RATIO,
+}
+_RESERVE_REQUIREMENT_D = {
+    'requirement_avg': RESERVE_REQUIREMENT_AVG,
+    'provided_avg': RESERVE_REQUIREMENT_AVG,
+    'shortfall_avg': RESERVE_REQUIREMENT_AVG,
+    'requirement_max': RESERVE_REQUIREMENT_MAX,
+    'shortfall_max': RESERVE_REQUIREMENT_MAX,
 }
 _CAPACITY_MARGIN_D_G = {
     '*': CAPACITY_MARGIN_MW,
@@ -473,6 +501,9 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "flowGroup_gd_t": RATE,
     "nodeGroup_slack_reserve_dt_eeg": RATE,
     "nodeGroup_slack_reserve_d_eeg": ENERGY_ANNUAL,
+    "nodeGroup_reserve_dt_eegp": RESERVE_REQUIREMENT_MW,
+    "nodeGroup_reserve_d_eegp": _RESERVE_REQUIREMENT_D,
+    "nodeGroup_reserve_provider_dt_eegee": RESERVE_PROVIDER_MW,
     "nodeGroup_slack_capacity_margin_d_g": SLACK_CAP_MARGIN,
     "nodeGroup_capacity_margin_d_g": _CAPACITY_MARGIN_D_G,
     "nodeGroup_capacity_margin_entity_d_g": CAPACITY_MARGIN_MW,
@@ -735,7 +766,16 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
     "process_reserve_upDown_node_dt_eppe": "Reserve held by each unit or connection for each reserve, direction "
                                            "and node in each time step.",
     "process_reserve_average_d_eppe": "Reserve held by each unit or connection for each reserve, direction and "
-                                      "node, averaged over the period.",
+                                      "node, the time-step-weighted average MW over the period's realized steps.",
+    "nodeGroup_reserve_dt_eegp": "Reserve requirement of each reserve, direction and group in each time step: the "
+                                 "need of the binding requirement row and the reserve it counts (for an n-1 row "
+                                 "without the failing process's own reserve, so requirement − counted is the "
+                                 "shortfall), the need of each method, the reserve provided and the shortfall.",
+    "nodeGroup_reserve_d_eegp": "Reserve requirement, provision and shortfall of each reserve, direction and group "
+                                "in each period: time-step-weighted averages and step maxima.",
+    "nodeGroup_reserve_provider_dt_eegee": "Counted reserve (× reliability) of each unit or connection at each "
+                                           "node for each reserve, direction and group in each time step, summing "
+                                           "to the group's provided reserve.",
     # Inertia
     "nodeGroup_inertia_dt_g": "Inertia available in each inertia group in each time step.",
     "nodeGroup_unit_node_inertia_dt_gee": "Inertia contribution of each unit or connection at each node of each "
@@ -881,6 +921,15 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "nodeGroup_slack_nonsync_d_g": OutputDims(_D, ("group",), "nodeGroup_slack_nonsync_dt_g"),
     "nodeGroup_slack_reserve_dt_eeg": OutputDims(_DT, ("reserve", "updown", "node_group"),
                                                  "nodeGroup_slack_reserve_d_eeg", _RESERVE_QUANTITY),
+    "nodeGroup_reserve_dt_eegp": OutputDims(_DT, ("reserve", "updown", "node_group", "quantity"),
+                                            "nodeGroup_reserve_d_eegp",
+                                            (*_RESERVE_QUANTITY, ("quantity", "quantity"))),
+    "nodeGroup_reserve_d_eegp": OutputDims(_D, ("reserve", "updown", "node_group", "quantity"),
+                                           "nodeGroup_reserve_dt_eegp",
+                                           (*_RESERVE_QUANTITY, ("quantity", "quantity"))),
+    "nodeGroup_reserve_provider_dt_eegee": OutputDims(_DT, ("reserve", "updown", "node_group", "process", "node"),
+                                                      None,
+                                                      (*_RESERVE_QUANTITY, ("process", "part"), ("node", "part"))),
     "nodeGroup_slack_reserve_d_eeg": OutputDims(_D, ("reserve", "updown", "node_group"),
                                                 "nodeGroup_slack_reserve_dt_eeg", _RESERVE_QUANTITY),
     "flowGroup_gd_p": OutputDims(("group", "period"), ("parameter",), "flowGroup_gd_t", _PARAMETER_QUANTITY),

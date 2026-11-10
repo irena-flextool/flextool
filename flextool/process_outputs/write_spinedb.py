@@ -287,6 +287,12 @@ SPINEDB_OUTPUT_SPEC: dict[str, dict[str, Any]] = {
                                            param="slack_reserve_t",
                                            entity_dims=3, has_time=True,
                                            category=None),
+    # The reserve requirement (#234): one Map parameter per table, its quantity column level the outermost key
+    # (category "header").  The per-provider table stays out (it would need a 5-dimensional class).
+    "nodeGroup_reserve_dt_eegp": dict(ec="group__reserve__upDown", param="requirement_t",
+                                      entity_dims=3, has_time=True, category="header"),
+    "nodeGroup_reserve_d_eegp": dict(ec="group__reserve__upDown", param="requirement",
+                                     entity_dims=3, has_time=False, category="header"),
     # --- unit/connection__reserve__upDown__node --------------------------
     "process_reserve_upDown_node_dt_eppe": dict(
         ec="unit__reserve__upDown__node", param="reservation_t",

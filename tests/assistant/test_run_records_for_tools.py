@@ -390,6 +390,13 @@ def _slack_tables(folder: Path) -> None:
                                                               ("r2", "down", "g1")],
                                                              names=["reserve", "updown", "node_group"]))
     write_result(folder, "nodeGroup_slack_reserve_d_eeg", reserve, "coal")
+    # nodeGroup_reserve_d_eegp [MW]: the period's requirement and shortfall of r1 (r2 has no row: None).
+    req = pd.DataFrame([[40.0, 4.5, 30.0, 3.5], [0.0, 0.0, 0.0, 0.0]], index=periods,
+                       columns=pd.MultiIndex.from_tuples(
+                           [("r1", "up", "g1", "requirement_avg"), ("r1", "up", "g1", "shortfall_avg"),
+                            ("r1", "up", "g2", "requirement_avg"), ("r1", "up", "g2", "shortfall_avg")],
+                           names=["reserve", "updown", "node_group", "quantity"]))
+    write_result(folder, "nodeGroup_reserve_d_eegp", req, "coal")
 
 
 def test_get_slack_summary_with_feeding_entities(tmp_path: Path, tests_db: Path) -> None:
@@ -405,6 +412,10 @@ def test_get_slack_summary_with_feeding_entities(tmp_path: Path, tests_db: Path)
     assert reserve["slack"] == "vq_reserve" and reserve["total"] is None
     assert reserve["total_note"].startswith("No total: the values of reserve, updown, node_group are not added up")
     assert [e["value"] for e in reserve["entries"]] == [4.0, 3.0, 2.0]
+    # #234: the requirement and shortfall in MW beside each reserve slack, from nodeGroup_reserve_d_eegp.
+    assert [(e["requirement_avg_MW"], e["shortfall_avg_MW"]) for e in reserve["entries"]] == [
+        (40.0, 4.5), (30.0, 3.5), (None, None)]
+    assert reserve["detail_tables"] == ["nodeGroup_reserve_d_eegp"]
     assert (slack["slack"], slack["table"], slack["unit"]) == ("vq_state_up", "node_slack_up_d_e",
                                                                 "MWh/a (default convention)")
     assert slack["entries"] == [{"entity": ["west"], "period": "p2020", "value": 12.5}]
