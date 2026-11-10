@@ -1249,6 +1249,44 @@ def test_saved_error_cell_reruns_and_graded_stop_kept(evaluator, grounding: Path
     assert [(e["cell"], e["requests"], e["code"]) for e in spent] == [("G01__small__r1", 1, "replaced")]
 
 
+def test_a_provider_failure_saved_as_cut_off_is_asked_again(evaluator, grounding: Path, tmp_path: Path) -> None:
+    """Calibration 2026-11-10: a turn saved with "the connection ended before the answer was complete", no answer
+    text and no output tokens in its last request (0, or no usage at all) is a provider failure: --resume asks
+    the cell again and says how many.  A cut-off answer with text and output is a graded stop and kept."""
+    from flextool.assistant.llm_errors import MESSAGES
+
+    out = tmp_path / "out"
+    harness = Harness()
+    qids = "G01,G03,G04,G05"
+    assert run(evaluator, grounding, out, "--questions", qids, "--levels", "basic", harness=harness, model=PAID) == 0
+    ended = {"code": "length", "message": MESSAGES["length_no_finish"]}
+    zero = {"input_uncached": 1437, "cache_read": 0, "cache_write": None, "output": 0, "cost": None,
+            "reported": True}
+    edits = {"G01__small__r1": {"answer": "", "usage": [zero]},          # thought, then the break
+             "G03__small__r1": {"answer": "", "usage": []},              # no usage at all
+             "G04__small__r1": {"answer": "In scenario coal the energy", "usage": [{**zero, "output": 14}]},
+             "G05__small__r1": {"answer": "", "usage": [{**zero, "output": 30}]}}   # a tool call came
+    for cid, edit in edits.items():
+        path = evaluator.cell_path(out, cid)
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["turns"][0].update(stop="length", error=ended, **edit)
+        evaluator.write_json(path, record)
+    kept = {cid: evaluator.cell_path(out, cid).read_bytes() for cid in ("G04__small__r1", "G05__small__r1")}
+    said: list[str] = []
+    args = evaluator.build_parser().parse_args(
+        ["run", "--project", str(grounding), "--provider", "openrouter", "--model", PAID, "--out", str(out),
+         "--accept-data-notice", "--questions", qids, "--levels", "basic", "--resume"])
+    assert evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
+                             say=said.append, allow_unsolved=True) == 0
+    assert harness.requests == 4 + 2
+    assert ("2 saved cell(s) are a provider failure saved as cut off (the answer broke off before any of it "
+            "came); they are asked again: G01__small__r1, G03__small__r1.") in said
+    assert "G01__small__r1: asked again (a provider failure saved as cut off)" in said
+    cells = evaluator.read_cells(out)
+    assert [cells[c]["turns"][0]["stop"] for c in ("G01__small__r1", "G03__small__r1")] == ["end", "end"]
+    assert {cid: evaluator.cell_path(out, cid).read_bytes() for cid in kept} == kept
+
+
 def test_spend_of_a_failed_cell_counts(evaluator, grounding: Path, tmp_path: Path, no_waits) -> None:
     """C6-M5: the requests a stopped cell sent count against the day: 1 (the tool call) + 1 (the resumed cell)
     reaches the budget of 2."""

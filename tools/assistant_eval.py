@@ -294,12 +294,35 @@ def read_spent(out: Path) -> list[dict]:
     return list(read_json(path)) if path.is_file() else []
 
 
+def ended_before_answer(turn: Mapping[str, Any]) -> bool:
+    """Whether a saved *turn* is a provider failure saved as a cut-off answer (calibration 2026-11-10): it stopped
+    with "the connection ended before the answer was complete", without answer text, and its last request reported
+    no output tokens (0 or none: a model's reasoning streamed before the break is not counted as output, a tool
+    call or text is).  Saved by a runner from before the adapter retried such answers."""
+    from flextool.assistant.llm_errors import MESSAGES
+
+    error = turn.get("error") or {}
+    if error.get("code") != "length" or error.get("message") != MESSAGES["length_no_finish"]:
+        return False
+    if str(turn.get("answer") or "").strip():
+        return False
+    usage = turn.get("usage") or []
+    return not usage or not (usage[-1] or {}).get("output")
+
+
+def misclassified(record: Mapping[str, Any]) -> bool:
+    """Whether a saved cell has a turn that :func:`ended_before_answer`."""
+    return any(ended_before_answer(t) for t in record.get("turns") or [])
+
+
 def finished(record: Mapping[str, Any]) -> bool:
-    """Whether a saved cell is done: run (not ``not_applicable``) and no turn stopped by an error other than the
-    graded stops (an older folder can hold a cell saved with a connection error: ``--resume`` asks it again)."""
+    """Whether a saved cell is done: run (not ``not_applicable``), no turn stopped by an error other than the
+    graded stops (an older folder can hold a cell saved with a connection error: ``--resume`` asks it again), and
+    no turn a provider failure saved as cut off (:func:`misclassified`; asked again too)."""
     if record.get("not_applicable"):
         return False
-    return all((t.get("error") or {}).get("code") in (None, *GRADED_STOPS) for t in record.get("turns") or [])
+    return (all((t.get("error") or {}).get("code") in (None, *GRADED_STOPS) for t in record.get("turns") or [])
+            and not misclassified(record))
 
 
 def daily_budget(preset_id: str, model: str, given: int | None) -> int | None:
@@ -662,6 +685,10 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     git = git_state()
     cells = read_cells(out)
     spent = read_spent(out)
+    failed = sorted(cid for cid, record in cells.items() if misclassified(record))
+    if failed:
+        say(f"{len(failed)} saved cell(s) are a provider failure saved as cut off (the answer broke off before "
+            f"any of it came); they are asked again: {', '.join(failed)}.")
 
     def budget_used() -> bool:
         return daily is not None and requests_today(cells.values(), iso(utc_now())[:10], spent) >= daily
@@ -702,6 +729,8 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 if budget_used():
                     say(done)
                     return 0
+                if saved is not None and misclassified(saved):
+                    say(f"{cid}: asked again (a provider failure saved as cut off)")
                 if saved is not None:
                     # Asked again (an error stop of an older folder, or now applicable): its requests stay
                     # counted for their day before the record goes.
