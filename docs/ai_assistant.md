@@ -460,6 +460,11 @@ how many steps it may take; it never changes what a tool returns.
 - **Advanced** — diagnose problems in several steps: trace slack and penalty costs to a limit and back to the inputs
   behind it, read the model's equations, and explain investment differences between scenarios; every tool.
 
+**Which model for which question.** Smaller models and free plans suit look-up questions. For diagnosis — why there
+is slack, why two scenarios differ — use a larger model or a paid plan. Free plans often limit how much text one
+request may carry (for example a small number of input tokens per minute), and a diagnosis builds up long requests
+as the assistant reads more results; such a request can then be refused however long you wait.
+
 ### How the level is chosen
 
 FlexTool places each model from its name and, once it has checked the model, its context size (how much text the
