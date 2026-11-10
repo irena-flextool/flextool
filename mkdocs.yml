@@ -82,6 +82,7 @@ nav:
     - 'Performance and solvers': how_to/performance.md
   - Concepts:
     - 'Model outputs': results.md
+    - 'Reading results': reading_results.md
     - 'Results catalogue': results_catalogue.md
     - 'Model formulation': formulation.md
     - 'Advanced concepts': advanced_concepts.md

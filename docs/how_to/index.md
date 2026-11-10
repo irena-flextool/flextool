@@ -11,6 +11,7 @@ Each example will either include an example database file that is located in the
 - [How to set the demand in a node](basics.md#how-to-set-the-demand-in-a-node)
 - [How to create a delay between two nodes](basics.md#how-to-create-a-delay-between-two-nodes)
 - [How to use timeset weights (non-RP weighted timesteps)](basics.md#how-to-use-timeset-weights-non-rp-weighted-timesteps)
+- [How to run a sensitivity (one alternative on top of a scenario)](basics.md#how-to-run-a-sensitivity-one-alternative-on-top-of-a-scenario)
 
 ## [Storage and hydro](storage_hydro.md)
 
@@ -36,6 +37,8 @@ Each example will either include an example database file that is located in the
 ## [Solve sequences, rolling and nested solves](solve_sequences.md)
 
 - [How to run solves in a sequence (investment + dispatch)](solve_sequences.md#how-to-run-solves-in-a-sequence-investment-dispatch)
+- [How to make an LP investment and a detailed dispatch check](solve_sequences.md#how-to-make-an-lp-investment-and-a-detailed-dispatch-check)
+    - [Several milestones: representative-period investment, then a full-year dispatch of each](solve_sequences.md#several-milestones-representative-period-investment-then-a-full-year-dispatch-of-each)
 - [How to use a rolling window for a dispatch model](solve_sequences.md#how-to-use-a-rolling-window-for-a-dispatch-model)
 - [How to use Nested Rolling window solves (investments and long-term storage)](solve_sequences.md#how-to-use-nested-rolling-window-solves-investments-and-long-term-storage)
     - [How to force-include adequacy-critical weeks in representative-period selection](solve_sequences.md#how-to-force-include-adequacy-critical-weeks-in-representative-period-selection)
@@ -52,6 +55,7 @@ Each example will either include an example database file that is located in the
 - [How to add CO2 emissions, costs and limits](emissions.md#how-to-add-co2-emissions-costs-and-limits)
 - [How to compare emission trajectories](emissions.md#how-to-compare-emission-trajectories)
 - [How to create a non-synchronous limit](emissions.md#how-to-create-a-non-synchronous-limit)
+- [How to set a minimum inertia](emissions.md#how-to-set-a-minimum-inertia)
 
 ## [Outputs, diagnostics and Excel templates](outputs.md)
 
@@ -60,6 +64,7 @@ Each example will either include an example database file that is located in the
 - [How to enable/disable outputs](outputs.md#how-to-enabledisable-outputs)
 - [How to read the LP scaling diagnostic report](outputs.md#how-to-read-the-lp-scaling-diagnostic-report)
 - [How to export a partial Excel template (parameter-group picker)](outputs.md#how-to-export-a-partial-excel-template-parameter-group-picker)
+- [How to replace a dataset and keep the old one as an alternative](outputs.md#how-to-replace-a-dataset-and-keep-the-old-one-as-an-alternative)
 - [How to make a data dictionary for your model](outputs.md#how-to-make-a-data-dictionary-for-your-model)
 
 ## [Performance and solvers](performance.md)
@@ -67,3 +72,9 @@ Each example will either include an example database file that is located in the
 - [How to use CPLEX as the solver](performance.md#how-to-use-cplex-as-the-solver)
 - [How to make the Flextool run faster](performance.md#how-to-make-the-flextool-run-faster)
 - [How to use Benders decomposition (spatial)](performance.md#how-to-use-benders-decomposition-spatial)
+
+## Elsewhere: running, reading results and limitations
+
+- [Run several scenarios in a batch (terminal)](../terminal_workflow.md#7-run-several-scenarios-in-a-batch)
+- [Reading results](../reading_results.md)
+- [Model limitations](../limitations.md)

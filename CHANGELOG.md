@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **Docs: planning-practitioner pages.** New pages *Reading results* (where to look first, units) and *Model
+  limitations*; a tutorial step that lets the model invest; how-tos for a minimum inertia (with a synchronous
+  condenser), a sensitivity as one alternative on top of a scenario, replacing a dataset through a partial Excel
+  import (`--no-purge`), several milestones with representative-period investment and full-year dispatch, and a
+  terminal batch loop (bash and PowerShell); *Advanced concepts* says how costs are discounted between milestones
+  (set `inflation_rate` to the social discount rate in a real-terms model). **Fix (docs):** the fixed cost of new
+  capacity counts only within the model horizon, not over its full lifetime as *Advanced concepts* said, and the
+  solve-sequence how-to used old names for `rolling_solve_jump`, `rolling_solve_horizon`, `contains_solves` and
+  `fix_storage_periods`.
 - **New: how-to "How to make a unit run all the time (must-run)"** (Thermal, CHP and reserves). Six ways to make
   a unit or a fleet run (profile lower limit, a user constraint on a flow or on a fleet's output, a flowGroup
   `min_instant_flow`, a demand that needs the unit's other product, a user constraint on the units online) with

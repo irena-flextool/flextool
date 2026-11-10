@@ -29,7 +29,9 @@ include docs/how_to/emissions.md
 include docs/how_to/outputs.md
 include docs/how_to/performance.md
 include docs/results.md
+include docs/reading_results.md
 include docs/advanced_concepts.md
+include docs/limitations.md
 include docs/flextool_gui_interface.md
 include docs/spine_toolbox.md
 include docs/spine_database.md
