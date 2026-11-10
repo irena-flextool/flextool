@@ -51,6 +51,15 @@ reported prompt fills 99 % of the loaded context is treated as an overflow: the 
 the prompt.  A question may use at most ``max_calls_per_turn`` tool calls; a tool outside the level is refused
 before the registry.
 
+**Checkpoints** (the calibration's ``run --resume``, item 216): with *on_checkpoint* the session hands over a
+snapshot (plain JSON data) just before each request is sent: the conversation (provider data, kinds, compaction),
+the turn's state (:class:`_TurnState`), its usage, the token correction, the notes sent, the paths the redaction
+learned, and the pending request (where it is sent from, its ``tool_choice``, the recoveries it used, its hash).
+:meth:`Session.restore` takes a snapshot over in a new session, strictly (another format, other instructions, tools
+or model, or a history that no longer gives the same request is refused, never filled with defaults), and
+:meth:`Session.resume_turn` sends the pending request again and runs the turn on: the same requests as a run that
+retried that request.
+
 Tool calls run under the context's lock (one per process), taken in a loop that checks the cancel event; before
 the first call of a round the conversation is saved with every call answered "not run", so the saved file is a
 valid history even if FlexTool closes mid-call.  Usage is recorded in the ledger and the conversation for every
@@ -68,6 +77,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 from flextool.assistant import _files
@@ -503,6 +513,49 @@ class _TurnState:
     seen: set[str] = field(default_factory=set)                 # signatures of the calls made in this question
     tried: list[_Carried] = field(default_factory=list)         # made in earlier parts, not kept
     repeated: bool = False                                      # a fresh part repeated earlier calls
+    limit_reached: bool = False                                 # the tool-less request is the next one
+    final_text: str = ""                                        # the last answer text of the turn so far
+    note_candidates: list[_Carried] = field(default_factory=list)   # the results the pending note may keep
+
+
+@dataclass(frozen=True)
+class _Pending:
+    """Where a resumed turn goes on: the request about to be sent (its *site*: the turn's loop or the note of a
+    continuation; its *tool_choice*) and whether its overflow and rejected-signature recoveries were used."""
+
+    site: Literal["turn", "note"]
+    tool_choice: Literal["auto", "none"]
+    overflow_done: bool
+    history_done: bool
+
+
+class CheckpointMismatch(Exception):
+    """A checkpoint that cannot be resumed here; *reason* says why in a few words (:data:`MISMATCH_REASONS`)."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(MISMATCH_REASONS[reason])
+        self.reason = reason
+
+
+#: Why a checkpoint is not resumed, in the calibration runner's words.
+MISMATCH_REASONS = {
+    "format": "a checkpoint of another format",
+    "tools": "the instructions or tools changed",
+    "model": "the checkpoint was made with another model",
+    "request": "the checkpoint no longer gives the same request",
+}
+
+#: The format of :meth:`Session.on_checkpoint`'s snapshots.  Bump it whenever a key below, a field of
+#: :class:`_TurnState`, :class:`Message`, :class:`ToolCall`, :class:`Usage`, :class:`RequestTokens`,
+#: :class:`_Carried` or :class:`~flextool.assistant.budget.TokenCorrection` is added or changed: a snapshot of another
+#: format is never restored with defaults (tests/assistant/llm/test_session_checkpoint.py pins every one).
+SNAPSHOT_FORMAT = 1
+SNAPSHOT_KEYS = ("format", "conversation", "turn_no", "last_block", "free_notice_shown", "hint_asked", "correction",
+                 "notes_sent", "known_paths", "turn_usage", "state", "pending")
+SNAPSHOT_CONVERSATION_KEYS = ("id", "origin", "system_hash", "tools_hash", "usage", "messages")
+SNAPSHOT_PENDING_KEYS = ("site", "tool_choice", "overflow_done", "history_done", "request_sha256", "body_sha256",
+                         "est_input")
+SNAPSHOT_CORRECTION_KEYS = ("factor", "recent")
 
 
 class Session:
@@ -514,14 +567,17 @@ class Session:
                  retry_policy: RetryPolicy | None = None, sleep: Callable[[float], bool] | None = None,
                  clock: Callable[[], float] = time.monotonic, rng: random.Random | None = None,
                  pacer: Pacer | None = None,
-                 on_attempt_error: Callable[[LLMError], None] | None = None) -> None:
+                 on_attempt_error: Callable[[LLMError], None] | None = None,
+                 on_checkpoint: Callable[[dict], None] | None = None) -> None:
         """*budget* sets the compaction rhythm (unless *compaction_every* / *keep_recent_turns* are given), the
         pre-send fit and the free plan.  *free_tier_hint(route_key)* is asked when a rate limit the provider named
         a wait for ends a question with the free plan off (the route's usage-ledger key); it answers whether the
         free-plan hint should be shown (once per route, P3 §4.6).  *pacer* paces the requests (default the
         process's; a backend that paces itself, the window's gate, brings its own).  *on_attempt_error* is told of
         every request attempt that ended in an error, retried or not (the calibration keeps what the provider
-        said)."""
+        said).  *on_checkpoint* gets a snapshot (plain JSON data) just before each request is sent: the state after
+        the previous answered request and its tool calls, from which :meth:`restore` and :meth:`resume_turn` send the
+        same request again (the calibration's ``run --resume``)."""
         self.ctx = ctx
         self.conversation = conversation
         self.caps = caps
@@ -537,6 +593,9 @@ class Session:
         self._rng = rng
         self._pacer = pacer
         self.on_attempt_error = on_attempt_error
+        self.on_checkpoint = on_checkpoint
+        #: What :meth:`restore` set up for :meth:`resume_turn`: the turn's state, usage and the request to send.
+        self._resumed: tuple[_TurnState, list[Usage], _Pending] | None = None
         self._turn_lock = threading.Lock()
         self._cancel: threading.Event | None = None
         self._turn_no = 0
@@ -762,9 +821,13 @@ class Session:
         return earlier + current
 
     def _ask(self, tool_choice: Literal["auto", "none"], turn: int, cancel: threading.Event, emit: OnEvent,
-             turn_usage: list[Usage], state: _TurnState | None = None) -> Reply:
-        """One model request with the retries, and the overflow and rejected-signature recoveries (one each)."""
-        overflow_done = history_done = False
+             turn_usage: list[Usage], state: _TurnState | None = None, *, site: Literal["turn", "note"] = "turn",
+             resumed: _Pending | None = None) -> Reply:
+        """One model request with the retries, and the overflow and rejected-signature recoveries (one each).  Just
+        before each send, :attr:`on_checkpoint` gets the snapshot to resume from (*site*: who asks).  *resumed*: the
+        request of a restored checkpoint, with the recoveries it had used."""
+        overflow_done = resumed.overflow_done if resumed is not None else False
+        history_done = resumed.history_done if resumed is not None else False
         state = state if state is not None else _TurnState()
 
         pacing = Pacing(self.pace_key, self.pacer, here=not self._paced_by_backend, label=self.route.label,
@@ -775,6 +838,7 @@ class Session:
             req = self._request(tool_choice)
             text_part, tool_part = budget_module.request_parts(req, self.backend.origin,
                                                                schemas=schemas_sent(self.preset, tool_choice))
+            self._checkpoint(_Pending(site, tool_choice, overflow_done, history_done), req, state, turn_usage)
             try:
                 reply = call_with_retries(lambda: stream_visible(self.backend, req, emit, cancel), self.retry_policy,
                                           emit, cancel, sleep=self._sleep, clock=self._clock, rng=self._rng,
@@ -1040,6 +1104,26 @@ class Session:
                 self._cancel = None
                 self._live = None
 
+    def resume_turn(self, on_event: OnEvent, cancel: threading.Event) -> TurnResult:
+        """Go on with the turn :meth:`restore` set up: its pending request is sent as it was (same history, same
+        ``tool_choice``, same output limit, a fresh retry budget), then the turn runs on as :meth:`run_turn`."""
+        with self._turn_lock:
+            if self._resumed is None:
+                raise RuntimeError("resume_turn needs a restored checkpoint")
+            state, turn_usage, pending = self._resumed
+            self._resumed = None
+            self._cancel = cancel
+            self._live = None
+            try:
+                emit = self._emitter(on_event, cancel)
+                self._live = (state, turn_usage, emit)
+                return self._loop(self._turn_no, state, turn_usage, emit, cancel, pending)
+            except Exception as exc:  # noqa: BLE001 — every turn ends with a result (review G11, C5-3)
+                return self._fault(exc, on_event, cancel)
+            finally:
+                self._cancel = None
+                self._live = None
+
     def _fault(self, exc: Exception, on_event: OnEvent, cancel: threading.Event) -> TurnResult:
         """End a turn that raised an exception other than a model request's: the history is repaired and saved,
         and the result says what happened — "Stopped." when the user stopped the turn (closing the response can
@@ -1068,12 +1152,17 @@ class Session:
                      and m.kind != "note" and m.text.strip()), "")
         return self._fail(err, text, state.rounds, usage, state, emit)
 
-    def _turn(self, user_text: str, on_event: OnEvent, cancel: threading.Event) -> TurnResult:
+    @staticmethod
+    def _emitter(on_event: OnEvent, cancel: threading.Event) -> OnEvent:
         def emit(event: Event) -> None:
             if cancel.is_set() and isinstance(event, _STREAM_EVENTS):
                 return
             on_event(event)
 
+        return emit
+
+    def _turn(self, user_text: str, on_event: OnEvent, cancel: threading.Event) -> TurnResult:
+        emit = self._emitter(on_event, cancel)
         # The session's own message that got no answer (a conversation saved before this rule): dropped, not merged
         # into the question.  The stopped question then goes with the next one (P1 m12).
         self._drop_dangling_control()
@@ -1094,18 +1183,34 @@ class Session:
         turn_usage: list[Usage] = []
         state = _TurnState()
         self._live = (state, turn_usage, emit)
-        final_text = ""
-        limit_reached = False
+        return self._loop(turn, state, turn_usage, emit, cancel, None)
+
+    def _loop(self, turn: int, state: _TurnState, turn_usage: list[Usage], emit: OnEvent, cancel: threading.Event,
+              pending: _Pending | None) -> TurnResult:
+        """The turn's requests and tool calls until it ends.  *pending*: a restored checkpoint's request, sent first
+        (a note's request goes on as the continuation it belongs to)."""
         try:
             while True:
-                if not limit_reached and (state.part_rounds >= self.caps.max_rounds or state.limit_hit):
+                resumed, pending = pending, None
+                if resumed is not None and resumed.site == "note":
+                    if self._note(turn, cancel, emit, turn_usage, state, resumed):
+                        continue
+                    state.limit_reached = True
+                    self._append_limit(turn)
+                    resumed = None
+                elif resumed is None and not state.limit_reached and (state.part_rounds >= self.caps.max_rounds
+                                                                      or state.limit_hit):
                     if state.part <= self.caps.max_continuations and self._continue(turn, cancel, emit, turn_usage,
                                                                                     state):
                         continue
-                    limit_reached = True
+                    state.limit_reached = True
                     self._append_limit(turn)
-                limit_reached = self._fit(turn, limit_reached, state, emit)
-                reply = self._ask("none" if limit_reached else "auto", turn, cancel, emit, turn_usage, state)
+                if resumed is None:
+                    state.limit_reached = self._fit(turn, state.limit_reached, state, emit)
+                    choice: Literal["auto", "none"] = "none" if state.limit_reached else "auto"
+                else:
+                    choice = resumed.tool_choice
+                reply = self._ask(choice, turn, cancel, emit, turn_usage, state, resumed=resumed)
                 state.rounds += 1
                 state.part_rounds += 1
                 if reply.message is None or (not reply.message.text.strip() and not reply.message.tool_calls
@@ -1119,7 +1224,7 @@ class Session:
                 self.messages.append(message)
                 calls = list(message.tool_calls)
                 if message.text.strip():
-                    final_text = message.text
+                    state.final_text = message.text
                 if reply.stop in ("length", "refused"):
                     if calls:
                         self._answer_all(calls, "cut_off_call" if reply.stop == "length" else "declined_call",
@@ -1128,22 +1233,23 @@ class Session:
                         self.messages.pop()         # a blank cut-off answer is not kept (C5-9)
                         self._drop_dangling_control()
                     self._save()
-                    return self._fail(self._stop_error(reply), final_text, state.rounds, turn_usage, state, emit)
+                    return self._fail(self._stop_error(reply), state.final_text, state.rounds, turn_usage, state,
+                                      emit)
                 if not calls:
                     self._text_call_notice(message.text, emit)
                     self._save()
-                    return self._done(final_text, turn_usage, state, emit)
-                if limit_reached:
+                    return self._done(state.final_text, turn_usage, state, emit)
+                if state.limit_reached:
                     self._answer_all(calls, "limit_call", turn)
                     self._save()
-                    return self._done(final_text, turn_usage, state, emit)
+                    return self._done(state.final_text, turn_usage, state, emit)
                 if state.part > 1 and any(call_signature(c) in state.seen for c in calls):
                     # A fresh part that asks again what the question already asked goes in circles: no further
                     # part, and an answer with what the model has.
                     state.repeated = True
                     self._answer_all(calls, "repeated_call", turn)
                     self._save()
-                    limit_reached = True
+                    state.limit_reached = True
                     self._append_limit(turn)
                     continue
                 self._run_calls(calls, turn, cancel, emit, state)
@@ -1151,16 +1257,113 @@ class Session:
         except _Stopped:
             self._drop_dangling_control()
             self._save()
-            return self._fail(cancelled(self.error_ctx), final_text, state.rounds, turn_usage, state, emit)
+            return self._fail(cancelled(self.error_ctx), state.final_text, state.rounds, turn_usage, state, emit)
         except LLMError as err:
             if err.partial_text.strip():
                 # A stopped or broken answer keeps what was shown, without calls or provider data.  It answers the
                 # session's message before it, if any, so that message stays.
                 self.messages.append(Message("assistant", err.partial_text, turn=turn))
-                final_text = err.partial_text
+                state.final_text = err.partial_text
             self._drop_dangling_control()
             self._save()
-            return self._fail(err, final_text, state.rounds + (1 if err.streamed else 0), turn_usage, state, emit)
+            return self._fail(err, state.final_text, state.rounds + (1 if err.streamed else 0), turn_usage, state,
+                              emit)
+
+    # --- checkpoints (the calibration's run --resume) ------------------------------------------------------------
+    def request_sha256(self, req: Request) -> str:
+        """``sha256`` of what *req* sends: the backend's request body without its ``stream`` and ``stream_options``
+        fields (a whole answer and a streamed one carry the same history, CAL-D5), else the request itself."""
+        return hashlib.sha256(_canonical(self._request_data(req, whole=False)).encode("utf-8")).hexdigest()
+
+    def _request_data(self, req: Request, *, whole: bool) -> object:
+        body_of = getattr(self.backend, "request_body", None)
+        if callable(body_of):
+            body = dict(body_of(req))
+            if not whole:
+                body.pop("stream", None)
+                body.pop("stream_options", None)
+            return body
+        return _request_json(req)
+
+    def _checkpoint(self, pending: _Pending, req: Request, state: _TurnState, turn_usage: list[Usage]) -> None:
+        if self.on_checkpoint is None:
+            return
+        self.on_checkpoint({
+            "format": SNAPSHOT_FORMAT,
+            "conversation": _conversation_json(self.conversation),
+            "turn_no": self._turn_no,
+            "last_block": self._last_block,
+            "free_notice_shown": self._free_notice_shown,
+            "hint_asked": self._hint_asked,
+            "correction": {"factor": self.correction.factor, "recent": list(self.correction.recent)},
+            "notes_sent": sorted(self.ctx.notes_sent),
+            "known_paths": self.ctx.redactor.known_paths(),
+            "turn_usage": [dataclasses.asdict(u) for u in turn_usage],
+            "state": _state_json(state),
+            "pending": {"site": pending.site, "tool_choice": pending.tool_choice,
+                        "overflow_done": pending.overflow_done, "history_done": pending.history_done,
+                        "request_sha256": self.request_sha256(req),
+                        "body_sha256": hashlib.sha256(_canonical(self._request_data(req, whole=True))
+                                                      .encode("utf-8")).hexdigest(),
+                        "est_input": budget_module.request_tokens(req, self.correction, self.backend.origin,
+                                                                  schemas=schemas_sent(self.preset, pending.tool_choice))},
+        })
+
+    def restore(self, snapshot: object) -> None:
+        """Take over the conversation and turn of a snapshot :attr:`on_checkpoint` gave, for :meth:`resume_turn`.
+        Strict: a snapshot of another format (a key missing or unknown, a value of another type), made with other
+        instructions, tools or model, or whose pending request this session would not send byte for byte raises
+        :class:`CheckpointMismatch`; the session is then not used."""
+        with self._turn_lock:
+            try:
+                snap = _keys(snapshot, SNAPSHOT_KEYS)
+                if snap["format"] != SNAPSHOT_FORMAT:
+                    raise CheckpointMismatch("format")
+                conv = _keys(snap["conversation"], SNAPSHOT_CONVERSATION_KEYS)
+                pending_json = _keys(snap["pending"], SNAPSHOT_PENDING_KEYS)
+                correction = _keys(snap["correction"], SNAPSHOT_CORRECTION_KEYS)
+                messages = [_message_strict(m) for m in _list(conv["messages"])]
+                origin = tuple(_list(conv["origin"]))
+                state = _state_from_json(snap["state"])
+                turn_usage = [_usage_from_json(u) for u in _list(snap["turn_usage"])]
+                pending = _Pending(_choice(pending_json["site"], ("turn", "note")),
+                                   _choice(pending_json["tool_choice"], ("auto", "none")),
+                                   _typed(pending_json["overflow_done"], bool),
+                                   _typed(pending_json["history_done"], bool))
+                usage = _typed(conv["usage"], dict)
+                turn_no = _typed(snap["turn_no"], int)
+                last_block = snap["last_block"]
+                if last_block is not None and not isinstance(last_block, str):
+                    raise CheckpointMismatch("format")
+                flags = (_typed(snap["free_notice_shown"], bool), _typed(snap["hint_asked"], bool))
+                factor = float(_typed(correction["factor"], (int, float)))
+                recent = [float(_typed(v, (int, float))) for v in _list(correction["recent"])]
+                notes = {_typed(v, str) for v in _list(snap["notes_sent"])}
+                known = [_typed(v, str) for v in _list(snap["known_paths"])]
+                expected = _typed(pending_json["request_sha256"], str)
+                _typed(pending_json["body_sha256"], str)
+                _typed(pending_json["est_input"], int)
+                if conv["system_hash"] != self.system_hash or conv["tools_hash"] != self.tools_hash:
+                    raise CheckpointMismatch("tools")
+                if origin != tuple(self.backend.origin):
+                    raise CheckpointMismatch("model")
+            except (KeyError, TypeError, ValueError) as exc:
+                raise CheckpointMismatch("format") from exc
+            self.conversation.id = _typed(conv["id"], str)
+            self.conversation.messages = messages
+            self.conversation.usage = dict(usage)
+            self._turn_no = turn_no
+            self._last_block = last_block
+            self._free_notice_shown, self._hint_asked = flags
+            self.correction = budget_module.TokenCorrection()
+            self.correction.factor = factor
+            self.correction.recent.extend(recent)
+            self.ctx.notes_sent = notes
+            for path in known:
+                self.ctx.redactor.add_known(Path(path))
+            if self.request_sha256(self._request(pending.tool_choice)) != expected:
+                raise CheckpointMismatch("request")
+            self._resumed = (state, turn_usage, pending)
 
     # --- continuation with a fresh context (P3 §4.7) ----------------------------------------------------------
     def _carry_limit(self) -> int:
@@ -1196,35 +1399,34 @@ class Session:
         no note: the question then ends as without a continuation."""
         if cancel.is_set():
             raise _Stopped
-        def request_text(found: list[_Carried]) -> str:
-            lines = [SESSION_MESSAGES["note_request"]]
-            if found:
-                lines.append(SESSION_MESSAGES["note_keep"])
-                lines += [f"[{i}] {c.label}{'' if c.ok else SESSION_MESSAGES['note_failed']}"
-                          for i, c in enumerate(found, start=1)]
-            return "\n".join(lines)
-
         candidates = self._candidates(state)
-        self.messages.append(Message("user", request_text(candidates), turn=turn, kind="note_request"))
+        self.messages.append(Message("user", _note_request_text(candidates), turn=turn, kind="note_request"))
         self._fit(turn, True, state, emit)
         # The fit may have shortened some of them: the model is offered only the results it can still see, numbered
         # as it sees them (review G11, C5-11).  Fewer lines only shorten the request, so it still fits.
         fitted = self._candidates(state)
         if fitted != candidates:
             candidates = fitted
-            self.messages[-1] = dataclasses.replace(self.messages[-1], text=request_text(candidates))
+            self.messages[-1] = dataclasses.replace(self.messages[-1], text=_note_request_text(candidates))
+        state.note_candidates = candidates
+        return self._note(turn, cancel, emit, turn_usage, state, None)
 
+    def _note(self, turn: int, cancel: threading.Event, emit: OnEvent, turn_usage: list[Usage], state: _TurnState,
+              resumed: _Pending | None) -> bool:
+        """The note request (*resumed*: a restored checkpoint's) and the start of the next part (P3 §4.7); the
+        results the note may keep are ``state.note_candidates``."""
         def quiet(event: Event) -> None:            # the note is for the next part, not for the user
             if not isinstance(event, (TextDelta, ToolCallStarted)):
                 emit(event)
 
         try:
-            reply = self._ask("none", turn, cancel, quiet, turn_usage, state)
+            reply = self._ask("none", turn, cancel, quiet, turn_usage, state, site="note", resumed=resumed)
         except LLMError as err:
             if err.partial_text.strip():
                 self.messages.append(Message("assistant", err.partial_text, turn=turn, kind="note"))
                 err.partial_text = ""              # a note is not an answer
             raise
+        candidates, state.note_candidates = state.note_candidates, []
         state.rounds += 1
         if reply.message is None:
             self.messages.pop()
@@ -1317,6 +1519,156 @@ def _summary(outcome: registry.ToolOutcome) -> str:
         if isinstance(value, list):
             return f"{len(value)} {key.replace('_', ' ')}"
     return f"{len(outcome.text)} characters"
+
+
+# --- the checkpoint's plain data (Session.on_checkpoint / Session.restore) ----------------------------------------
+def _note_request_text(found: list[_Carried]) -> str:
+    """The note request of a continuation: the instruction, and the numbered results the note may keep."""
+    lines = [SESSION_MESSAGES["note_request"]]
+    if found:
+        lines.append(SESSION_MESSAGES["note_keep"])
+        lines += [f"[{i}] {c.label}{'' if c.ok else SESSION_MESSAGES['note_failed']}"
+                  for i, c in enumerate(found, start=1)]
+    return "\n".join(lines)
+
+
+def _canonical(data: object) -> str:
+    return json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+
+
+def _request_json(req: Request) -> dict:
+    """*req* as plain data, for a backend without a request body of its own."""
+    from flextool.assistant.store import message_to_json
+
+    return {"system": list(req.system), "tools": [[t.name, t.description, t.input_schema] for t in req.tools],
+            "messages": [message_to_json(m) for m in req.messages], "max_output_tokens": req.max_output_tokens,
+            "tool_choice": req.tool_choice, "prefix_key": req.prefix_key, "cache": req.cache}
+
+
+def _conversation_json(conv: Conversation) -> dict:
+    from flextool.assistant.store import message_to_json
+
+    return {"id": conv.id, "origin": list(conv.origin) if conv.origin is not None else None,
+            "system_hash": conv.system_hash, "tools_hash": conv.tools_hash, "usage": dict(conv.usage),
+            "messages": [message_to_json(m) for m in conv.messages]}
+
+
+def _keys(value: object, keys: tuple[str, ...]) -> dict:
+    """*value* as an object with exactly *keys*; else :class:`CheckpointMismatch` (another format)."""
+    if not isinstance(value, dict) or set(value) != set(keys):
+        raise CheckpointMismatch("format")
+    return value
+
+
+def _list(value: object) -> list:
+    if not isinstance(value, list):
+        raise CheckpointMismatch("format")
+    return value
+
+
+def _typed(value: object, kind: type | tuple[type, ...]) -> object:
+    kinds = kind if isinstance(kind, tuple) else (kind,)
+    if isinstance(value, bool) and bool not in kinds:
+        raise CheckpointMismatch("format")
+    if not isinstance(value, kinds):
+        raise CheckpointMismatch("format")
+    return value
+
+
+def _choice(value: object, allowed: tuple[str, ...]) -> str:
+    if value not in allowed:
+        raise CheckpointMismatch("format")
+    return str(value)
+
+
+#: The keys :func:`~flextool.assistant.store.message_to_json` writes: always, and only when not the default.
+_MESSAGE_ALWAYS = frozenset({"role", "text", "turn"})
+_MESSAGE_OPTIONAL = frozenset({"tool_calls", "tool_call_id", "tool_name", "is_error", "provider_extra", "origin",
+                               "compacted", "kind"})
+_CALL_ALWAYS = frozenset({"id", "name", "arguments", "raw_arguments"})
+_CALL_OPTIONAL = frozenset({"provider_extra"})
+
+
+def _message_strict(value: object) -> Message:
+    """A stored message of the checkpoint: the keys the chat format writes, no other (a field added to
+    :class:`Message` later is another format)."""
+    from flextool.assistant.store import message_from_json
+
+    if not isinstance(value, dict) or not _MESSAGE_ALWAYS <= set(value) <= _MESSAGE_ALWAYS | _MESSAGE_OPTIONAL:
+        raise CheckpointMismatch("format")
+    for call in value.get("tool_calls") or []:
+        if not isinstance(call, dict) or not _CALL_ALWAYS <= set(call) <= _CALL_ALWAYS | _CALL_OPTIONAL:
+            raise CheckpointMismatch("format")
+    return message_from_json(value)
+
+
+_USAGE_KEYS = tuple(f.name for f in dataclasses.fields(Usage))
+_CARRIED_KEYS = tuple(f.name for f in dataclasses.fields(_Carried))
+_REQUEST_TOKENS_KEYS = tuple(f.name for f in dataclasses.fields(RequestTokens))
+
+
+def _usage_from_json(value: object) -> Usage:
+    return Usage(**_keys(value, _USAGE_KEYS))
+
+
+def _carried_from_json(value: object) -> _Carried:
+    d = _keys(value, _CARRIED_KEYS)
+    return _Carried(_typed(d["label"], str), _typed(d["text"], str), _typed(d["ok"], bool), _typed(d["outcome"], str))
+
+
+def _carried_list(value: object) -> list[_Carried]:
+    return [_carried_from_json(c) for c in _list(value)]
+
+
+def _request_tokens(value: object) -> RequestTokens:
+    d = _keys(value, _REQUEST_TOKENS_KEYS)
+    reported = d["reported"]
+    return RequestTokens(_typed(d["text"], int), _typed(d["tools"], int),
+                         None if reported is None else _typed(reported, int))
+
+
+def _int(value: object) -> int:
+    return _typed(value, int)
+
+
+def _bool(value: object) -> bool:
+    return _typed(value, bool)
+
+
+def _text(value: object) -> str:
+    return _typed(value, str)
+
+
+#: Each :class:`_TurnState` field as plain data and back.  A field without an entry fails the checkpoint loudly.
+_STATE_CODECS: dict[str, tuple[Callable[[object], object], Callable[[object], object]]] = {
+    "calls": (int, _int),
+    "total_calls": (int, _int),
+    "limit_hit": (bool, _bool),
+    "fit_notice": (bool, _bool),
+    "requests": (lambda v: [dataclasses.asdict(r) for r in v], lambda v: [_request_tokens(r) for r in _list(v)]),
+    "rounds": (int, _int),
+    "part_rounds": (int, _int),
+    "part": (int, _int),
+    "carried": (lambda v: [dataclasses.asdict(c) for c in v], _carried_list),
+    "ran": (list, lambda v: [_text(x) for x in _list(v)]),
+    "outcomes": (dict, lambda v: {_text(k): _text(x) for k, x in _typed(v, dict).items()}),
+    "seen": (sorted, lambda v: {_text(x) for x in _list(v)}),
+    "tried": (lambda v: [dataclasses.asdict(c) for c in v], _carried_list),
+    "repeated": (bool, _bool),
+    "limit_reached": (bool, _bool),
+    "final_text": (str, _text),
+    "note_candidates": (lambda v: [dataclasses.asdict(c) for c in v], _carried_list),
+}
+
+
+def _state_json(state: _TurnState) -> dict:
+    return {f.name: _STATE_CODECS[f.name][0](getattr(state, f.name)) for f in dataclasses.fields(_TurnState)}
+
+
+def _state_from_json(value: object) -> _TurnState:
+    names = tuple(f.name for f in dataclasses.fields(_TurnState))
+    d = _keys(value, names)
+    return _TurnState(**{name: _STATE_CODECS[name][1](d[name]) for name in names})
 
 
 class TurnWorker:

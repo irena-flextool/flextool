@@ -24,6 +24,9 @@ MESSAGES: dict[str, str] = {
     "rpm_retry": ("{provider} is limiting how often requests can be sent. Trying again in {seconds} seconds "
                   "(attempt {n} of {max})."),
     "rpm": "{provider} is still limiting requests. Wait a minute and ask again.",
+    "tpm_input": ("{provider} still refuses this request: it limits the input tokens it accepts per minute, and one "
+                  "request this long may be over that limit by itself. Wait a minute and ask again; if it is "
+                  "refused again, start a new conversation, or switch to a model or plan with a higher limit."),
     "rpm_paced": ("{provider} limits how many requests per second a free plan may send. FlexTool now waits between "
                   "requests; ask again."),
     "pace_wait": "{provider} limits how fast requests may be sent. Sending the next one in {seconds} seconds.",
@@ -283,6 +286,14 @@ class RateLimited(LLMError):
     code = "rpm"
 
 
+class InputTokensPerMinute(RateLimited):
+    """A rate limit whose quota counts the input tokens per minute (Google's ``…InputTokensPer…Minute`` quota, or its
+    input-token quota line without a period): retried like any rate limit, but a request whose input alone is over
+    the limit is refused every time, so the calibration stops resuming it (calibration fixes 2026-11-10)."""
+
+    code = "tpm_input"
+
+
 class AccessInactive(LLMError):
     """The provider reports a request limit of 0: the account's API access is not active (review G9, OR-2).  Not
     retried, and the pacing does not change."""
@@ -372,7 +383,8 @@ class InternalFault(LLMError):
 
 
 ERROR_CLASSES: tuple[type[LLMError], ...] = (
-    RateLimited, AccessInactive, ServerBusy, QuotaExhausted, NoCredit, AuthFailed, NotPermitted, ContextTooLong, HistoryRejected,
+    RateLimited, InputTokensPerMinute, AccessInactive, ServerBusy, QuotaExhausted, NoCredit, AuthFailed, NotPermitted,
+    ContextTooLong, HistoryRejected,
     NoMatchingEndpoint, ToolsUnsupported, ModelNotFound, Unreachable, TimedOut, ContextTooSmall, Refused, Truncated,
     NoKey, Cancelled, ProviderError, InternalFault)
 
@@ -539,6 +551,17 @@ def _quota_of(info: _Body) -> tuple[QuotaViolation, ...]:
         out = [QuotaViolation(line["metric"], "", (line["limit"] or "").rstrip("."), (line["model"] or "").rstrip("."))
                for line in lines]
     return tuple(dict.fromkeys(out))
+
+
+def _input_per_minute(q: QuotaViolation) -> bool:
+    """Whether *q* counts input tokens per minute: its metric or quota id names input tokens and its quota id names
+    no other period (a quota line of the message alone names none; Google's free tier counts input tokens per
+    minute, CAL-FINDING 2026-11-10).  A daily quota is classified before."""
+    both = f"{q.metric} {q.quota_id}".lower()
+    if "input_token" not in both and "inputtoken" not in both:
+        return False
+    ident = q.quota_id.lower()
+    return not ident or "perminute" in ident
 
 
 #: Error types (Anthropic) and Google status names, with the HTTP status they stand for.
@@ -751,7 +774,9 @@ def _classify_status(status: int | None, body: object, headers: Any, ctx: ErrorC
     if rate_limited:
         from flextool.assistant.pacing import rate_headers   # pacing imports this module
 
-        err = make(RateLimited, "rpm", retry_after=retry_after_from(headers, info, now=now))
+        input_tokens = any(_input_per_minute(q) for q in _quota_of(info))
+        err = make(InputTokensPerMinute if input_tokens else RateLimited, "tpm_input" if input_tokens else "rpm",
+                   retry_after=retry_after_from(headers, info, now=now))
         err.rate_headers = rate_headers(headers) if headers is not None else None
         return err
     if "overloaded_error" in types or (effective in _BUSY_STATUS):

@@ -546,7 +546,8 @@ def test_gemini_per_minute_quota_names_the_quota_and_the_wait():
                                   "quotaId": "GenerateContentInputTokensPerModelPerMinute-FreeTier",
                                   "quotaDimensions": {"location": "global", "model": "gemma-4-31b-it"},
                                   "quotaValue": "15000"}], "34s"))
-    assert type(err) is E.RateLimited and err.retry_after == 34.0
+    assert type(err) is E.InputTokensPerMinute and err.code == "tpm_input" and err.retry_after == 34.0
+    assert isinstance(err, E.RateLimited)        # retried as any rate limit
     said = err.provider_said
     assert said.message == ("quota: input tokens per minute (limit 15000, model gemma-4-31b-it); Google suggests "
                             "waiting 34 s. You exceeded your current quota, please check your plan and billing "
@@ -581,7 +582,7 @@ def test_gemini_quota_from_the_message_alone():
     """Without QuotaFailure and RetryInfo, the "* Quota exceeded for metric:" line and "Please retry in" of the
     message stand in.  Before: no wait (a minute's guess) and the metric cut off."""
     err = _gemini([{"error": {"code": 429, "message": GOOGLE_429_MESSAGE, "status": "RESOURCE_EXHAUSTED"}}])
-    assert type(err) is E.RateLimited and err.retry_after == pytest.approx(34.36)
+    assert type(err) is E.InputTokensPerMinute and err.retry_after == pytest.approx(34.36)
     assert err.provider_said.message == ("quota: input tokens (limit 15000, model gemma-4-31b-it); Google suggests "
                                          "waiting 35 s. You exceeded your current quota, please check your plan "
                                          "and billing details.")

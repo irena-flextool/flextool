@@ -1022,7 +1022,7 @@ def test_a_stop_keeps_what_the_provider_said(evaluator, grounding: Path, tmp_pat
     metric = "generativelanguage.googleapis.com/generate_content_free_tier_input_token_count"
     assert [{k: e[k] for k in ("cell", "requests", "code", "provider", "attempts")} for e in spent] == [
         {"cell": "G01__small__r1", "requests": 0, "code": "busy", "provider": busy,
-         "attempts": [{"code": "rpm", "status": 429, "provider_code": "RESOURCE_EXHAUSTED", "message": quota,
+         "attempts": [{"code": "tpm_input", "status": 429, "provider_code": "RESOURCE_EXHAUSTED", "message": quota,
                        "quota": [{"metric": metric, "quota_id": "", "limit": "15000", "model": "gemma-4-31b"}],
                        "retry_delay": 0.0},
                       busy]}]

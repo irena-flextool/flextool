@@ -214,6 +214,11 @@ class Redactor:
                 self._add(p.parent, SOURCE_FOLDER_TOKEN)
         self._build()
 
+    def known_paths(self) -> list[str]:
+        """The input sources from outside the project registered with :meth:`add_known`, sorted (a checkpoint
+        keeps them, so a resumed calibration cell redacts them before a tool learns them again)."""
+        return sorted(str(p) for p in self._known)
+
     # --- redaction ---------------------------------------------------------------------------------------------
     def redact(self, text: str) -> str:
         if not text:
