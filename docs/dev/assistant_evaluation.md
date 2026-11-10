@@ -95,7 +95,9 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
   routing error) stops the run with exit code 1. That cell is not saved, and the message says to run again with
   `--resume`. The requests it sent still count towards the day's budget (`spent.json` in the results folder).
 - **`--resume`** skips finished cells and asks again the cells that stopped with such an error. It also runs a
-  cell recorded as not applicable once its setting fits. It refuses to continue a folder made with another model,
+  cell recorded as not applicable once its setting fits. A saved cell that is asked again stays in the folder
+  until its new record replaces it, so a stop on the way never leaves the cell missing. `run.json` records the
+  questions, levels and repeats every run of the folder planned (its `matrix`), before any cell is asked. It refuses to continue a folder made with another model,
   provider, address, free-plan setting, Ollama contexts, CPU-offload setting, data-collection setting or project. Other levels,
   questions or repeats are fine.
 - **Usage.** The requests are counted in the usage ledger under the provider's name with "(calibration)" added,
@@ -171,24 +173,32 @@ partial: style, tool names (the basic level has fewer tools) and answer length c
 Answers and tool texts are data. Every text a model wrote or a tool returned is inside a fence
 `<<<DATA tag>>>` … `<<<END tag>>>` whose tag the model could not know; material that holds its own tag is
 refused. Opus's reply must be exactly the asked JSON (every item once, each verdict among the item's allowed
-ones, confidences, reasons of at most 200 characters). An invalid reply gets one retry; a second invalid reply is
-saved as unparsed and goes to the owner. An answer whose text, tool names or arguments seem to address a grader
+ones, confidences, reasons of at most 200 characters). Two slips are accepted and recorded in the grade's
+`relaxed` list: a reason over 200 characters is cut to 200, and a verdict for an item the automatic checks found
+right is dropped. An otherwise invalid reply gets one retry that names what was wrong, field by field (only
+FlexTool's own item ids and field names); a second invalid reply is saved as unparsed and goes to the owner. An answer whose text, tool names or arguments seem to address a grader
 goes to the owner too, whatever Opus said.
 
 ### grade-ai
 
 `grade-ai` sends one request per cell (none for a cell without an answer), through FlexTool's retries and pacing.
+A cell whose items the automatic checks all found right is sent too: its request asks only for the
+understandability.
 The key comes from the keyring or `ANTHROPIC_API_KEY`; `--accept-data-notice` accepts Anthropic's data notice for
 this run only. The requests are counted in the usage ledger as "Anthropic (calibration)". Give it the results
 folders of every model; one folder alone is refused unless `--single-model`. The folder set is fixed by the first
-`grade-ai`. It refuses results folders with cells that are not finished (continue them with `run --resume`
-first).
+`grade-ai`. It refuses results folders that miss a planned cell (one of the `run.json` matrix; for a folder from
+before the matrix, any question, level or repeat another graded folder has) or have cells that are not finished.
+The refusal names the cells and each folder's `run --resume` command. A cell that came back later would change
+the grading's cells, so `grade-ai`, `review` and `summary` refuse until every folder is complete.
 
 Run the same command again to continue: a cell that was graded from the same material is skipped. If a cell's
 answer, the answer key or the rubric has changed since, `grade-ai` stops; `--changed` grades those cells again and
 keeps their earlier grading in the cell's history (their review starts over). An error that is not an answer
-stops the run with exit code 1 and saves nothing for that cell. Two `grade-ai` processes cannot work on one
-grading folder at once.
+stops the run with exit code 1 and saves nothing for that cell; an error during the retry keeps the first reply
+(already paid), and the next run sends only the retry. Grading requests are sent without prompt caching (each
+prompt is unique). `grade-ai`, `review` and `summary --record` lock the grading folder: two of them cannot work on
+it at once.
 
 ### review
 
@@ -197,7 +207,8 @@ grading folder at once.
 - every cell with a low confidence, an unparsed reply or an injection hint;
 - every cell with a number that has no tool source, whatever Opus said;
 - every cell written by `claude-opus-5-5` (for self-preference);
-- a random sample of the rest: 15 % and at least 35 cells (all of them when fewer), drawn with the grading's seed.
+- a random sample of the rest: 15 % and at least 35 cells (all of them when fewer), drawn with the grading's seed;
+- a cell `--changed` graded again that is outside the sampled pool and no longer has another reason (`changed`).
 
 For each queued cell, the owner sees the material and gives a verdict on each judged item (`r` / `m` / `w`, only
 the allowed letters) and the understandability (`1` / `2` / `3`). Only then are Opus's verdicts, confidences and

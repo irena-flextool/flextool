@@ -1232,43 +1232,104 @@ def grader_material(record: Mapping[str, Any], question: Question, entry: KeyEnt
     return "\n".join(parts)
 
 
-def parse_reply(text: str, allowed: Mapping[str, Sequence[str]]) -> dict[str, Any] | None:
-    """The grader's JSON object when it is exactly the asked form: every asked item id once with a verdict among
-    its allowed ones, a confidence high / medium / low and a reason (a text of at most 200 characters);
-    understandability 1, 2 or 3; the cell's confidence and reason; injection true or false.  Else ``None``."""
+def check_reply(text: str, allowed: Mapping[str, Sequence[str]], passed: Iterable[str] = ()) \
+        -> tuple[dict[str, Any] | None, list[str]]:
+    """``(parsed, problems)`` of a grader reply.  *parsed* is the JSON object when it is the asked form: every
+    asked item id once with a verdict among its allowed ones, a confidence high / medium / low and a reason;
+    understandability the whole number 1, 2 or 3; the cell's confidence and reason; injection true or false.
+    Else it is ``None`` and *problems* says, field by field, what was wrong, for the retry.
+
+    Two slips are accepted and recorded in ``parsed["relaxed"]`` (a list of ``{"id", "what"}``): a reason over
+    :data:`REASON_MAX` characters is cut to that length (``"what": "reason_cut"``, with its ``"length"``; ``"id"``
+    is ``"cell"`` for the cell's reason), and a verdict for an item the automatic checks already found right
+    (*passed*) is dropped (``"what": "dropped_passed"``).  Only FlexTool's own ids and field names are named in
+    *problems*, never text of the reply."""
     stripped = text.strip()
     if stripped.startswith("```"):
         stripped = stripped.strip("`").removeprefix("json").strip()
     try:
         data = json.loads(stripped)
     except ValueError:
-        return None
+        return None, ["The reply is not a JSON object: send the JSON object alone, with no text around it."]
+    if not isinstance(data, dict):
+        return None, ["The reply is not a JSON object: send the JSON object alone, with no text around it."]
+    passed = set(passed)
+    problems: list[str] = []
+    relaxed: list[dict[str, Any]] = []
 
-    def reason_ok(value: Any) -> bool:
-        return isinstance(value, str) and len(value) <= REASON_MAX
+    def reason(value: Any, iid: str, where: str) -> str | None:
+        if not isinstance(value, str):
+            problems.append(f"The reason of {where} must be a text.")
+            return None
+        if len(value) > REASON_MAX:
+            relaxed.append({"id": iid, "what": "reason_cut", "length": len(value)})
+            return value[:REASON_MAX]
+        return value
 
-    if not isinstance(data, dict) or set(data) != {"items", "understandability", "confidence", "reason", "injection"}:
-        return None
-    if not isinstance(data["items"], list) or data["confidence"] not in CONFIDENCES or not reason_ok(data["reason"]):
-        return None
-    u = data["understandability"]
-    if isinstance(u, bool) or u not in UNDERSTANDABILITY or not isinstance(data["injection"], bool):
-        return None
+    fields = {"items", "understandability", "confidence", "reason", "injection"}
+    if set(data) != fields:
+        missing = [f for f in ("items", "understandability", "confidence", "reason", "injection") if f not in data]
+        extra = len(set(data) - fields)
+        problems.append("The object must have exactly the fields items, understandability, confidence, reason and "
+                        "injection" + (f"; missing: {', '.join(missing)}" if missing else "")
+                        + (f"; {extra} other field(s) must go" if extra else "") + ".")
+    u = data.get("understandability")
+    if "understandability" in data and (type(u) is not int or u not in UNDERSTANDABILITY):
+        problems.append("understandability must be the whole number 1, 2 or 3.")
+    if "confidence" in data and data["confidence"] not in CONFIDENCES:
+        problems.append("The confidence of the cell must be high, medium or low.")
+    cell_reason = reason(data["reason"], "cell", "the cell") if "reason" in data else None
+    if "injection" in data and not isinstance(data["injection"], bool):
+        problems.append("injection must be true or false.")
     verdicts: dict[str, dict[str, str]] = {}
-    for item in data["items"]:
+    items = data.get("items")
+    if "items" in data and not isinstance(items, list):
+        problems.append("items must be a list.")
+        items = []
+    for n, item in enumerate(items or [], 1):
         if not isinstance(item, dict) or set(item) != {"id", "verdict", "confidence", "reason"}:
-            return None
+            problems.append(f"Item {n} of the list must have exactly the fields id, verdict, confidence and reason.")
+            continue
         iid = item["id"]
-        if not isinstance(iid, str) or iid in verdicts or iid not in allowed:
-            return None
-        if item["verdict"] not in allowed[iid] or item["confidence"] not in CONFIDENCES \
-                or not reason_ok(item["reason"]):
-            return None
-        verdicts[iid] = {"verdict": item["verdict"], "confidence": item["confidence"], "reason": item["reason"]}
-    if set(verdicts) != set(allowed):
-        return None
-    return {"items": verdicts, "understandability": u, "confidence": data["confidence"], "reason": data["reason"],
-            "injection": data["injection"]}
+        if isinstance(iid, str) and iid in passed and iid not in allowed:
+            relaxed.append({"id": iid, "what": "dropped_passed"})
+            continue
+        if not isinstance(iid, str) or iid not in allowed:
+            problems.append(f"Item {n} of the list is not one of the items to grade (only {', '.join(allowed)}"
+                            " are graded; the items the automatic checks found right are not).")
+            continue
+        if iid in verdicts:
+            problems.append(f"{iid} is graded twice: give each item once.")
+            continue
+        ok = True
+        if item["verdict"] not in allowed[iid]:
+            problems.append(f"The verdict of {iid} must be one of {', '.join(allowed[iid])}.")
+            ok = False
+        if item["confidence"] not in CONFIDENCES:
+            problems.append(f"The confidence of {iid} must be high, medium or low.")
+            ok = False
+        why = reason(item["reason"], iid, iid)
+        if ok and why is not None:
+            verdicts[iid] = {"verdict": item["verdict"], "confidence": item["confidence"], "reason": why}
+        else:
+            verdicts[iid] = {}                    # seen: not reported as missing
+    missing_items = [i for i in allowed if i not in verdicts]
+    if missing_items and isinstance(data.get("items"), list):
+        problems.append(f"Missing: {', '.join(missing_items)} (give every item to grade a verdict).")
+    if problems:
+        return None, problems
+    return {"items": verdicts, "understandability": u, "confidence": data["confidence"], "reason": cell_reason,
+            "injection": data["injection"], "relaxed": relaxed}, []
+
+
+def parse_reply(text: str, allowed: Mapping[str, Sequence[str]], passed: Iterable[str] = ()) -> dict[str, Any] | None:
+    """The grader's JSON object as :func:`check_reply` accepts it, else ``None``."""
+    return check_reply(text, allowed, passed)[0]
+
+
+def retry_text(problems: Sequence[str]) -> str:
+    """The "JSON only" retry, naming what was wrong with the reply."""
+    return "\n".join([RETRY_TEXT, "What was wrong:", *(f"- {p}" for p in problems)])
 
 
 #: Phrases of model-written text that address a grader (tool results, FlexTool's own texts, are not scanned:

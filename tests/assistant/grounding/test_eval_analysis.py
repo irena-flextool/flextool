@@ -654,6 +654,58 @@ def test_transient_error_not_saved_and_resumed(evaluator, grounding: Path, tmp_p
     assert all(t["stop"] == "end" for r in cells.values() for t in r["turns"])
 
 
+def test_run_plans_its_matrix_and_a_stopped_folder_is_incomplete(evaluator, scoring, grounding: Path,
+                                                                 tmp_path: Path, no_waits) -> None:
+    """Grading v2 B1: run.json records the questions, levels and repeats a run plans (and whether the
+    automatic-level question is asked at each level reached) before any cell is asked, so a folder a stop left
+    short names its missing cells: G01 saved, G03 stopped, G04 never asked → G03 and G04 missing."""
+    out = tmp_path / "out"
+    harness = Scripted([[_answer()], [_error("connection")] * 4])
+    args = evaluator.build_parser().parse_args(
+        ["run", "--project", str(grounding), "--provider", "openrouter", "--model", PAID, "--out", str(out),
+         "--accept-data-notice", "--questions", "G01,G03,G04", "--levels", "basic"])
+    assert evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
+                             say=lambda _t: None, allow_unsolved=True) == 1
+    run_json = json.loads((out / evaluator.RUN_FILE).read_text(encoding="utf-8"))
+    matrix = run_json[evaluator.MATRIX_KEY]
+    assert (matrix["questions"], matrix["levels"], matrix["repeat"]) == (["G01", "G03", "G04"], ["small"], 1)
+    assert set(matrix["automatic_at"]) == {"small"}
+    cells = evaluator.read_cells(out)
+    assert sorted(cells) == ["G01__small__r1"]
+    with pytest.raises(evaluator.Refused) as refused:
+        evaluator._refuse_incomplete([(out, run_json, cells)], scoring.load_set())
+    text = str(refused.value)
+    assert text.startswith("2 cell(s) are missing or not finished")
+    assert "out: G03__small__r1 (missing), G04__small__r1 (missing)" in text
+    assert f"run --resume --project PROJECT --provider openrouter --model {PAID} --out {out}" in text
+
+
+def test_a_cell_asked_again_stays_until_replaced(evaluator, grounding: Path, tmp_path: Path, no_waits) -> None:
+    """Grading v2 B1: a saved cell asked again is replaced only by its new record; a stop on the way leaves the old
+    record (the folder never lacks the cell), its requests counted once; the rerun replaces it."""
+    out = tmp_path / "out"
+    harness = Harness()
+    assert run(evaluator, grounding, out, "--questions", "G01", "--levels", "basic", harness=harness,
+               model=PAID) == 0
+    path = evaluator.cell_path(out, "G01__small__r1")
+    record = json.loads(path.read_text(encoding="utf-8"))
+    record["turns"][0].update(stop="connection", error={"code": "connection", "message": "scripted"})
+    evaluator.write_json(path, record)
+    old = path.read_bytes()
+    stopping = Scripted([[_error("connection")] * 4])
+    assert run(evaluator, grounding, out, "--resume", "--questions", "G01", "--levels", "basic", harness=stopping,
+               model=PAID) == 1
+    assert path.read_bytes() == old
+    spent = json.loads((out / evaluator.SPENT_FILE).read_text(encoding="utf-8"))
+    assert [(e["cell"], e["code"]) for e in spent] == [("G01__small__r1", "connection")]
+    assert run(evaluator, grounding, out, "--resume", "--questions", "G01", "--levels", "basic", harness=harness,
+               model=PAID) == 0
+    assert json.loads(path.read_text(encoding="utf-8"))["turns"][0]["stop"] == "end"
+    spent = json.loads((out / evaluator.SPENT_FILE).read_text(encoding="utf-8"))
+    assert [(e["cell"], e["code"]) for e in spent] == [("G01__small__r1", "connection"),
+                                                       ("G01__small__r1", "replaced")]
+
+
 def test_saved_error_cell_reruns_and_graded_stop_kept(evaluator, grounding: Path, tmp_path: Path) -> None:
     """C6-M5: a cell an older folder saved with a connection stop is asked again; a length stop is a graded
     outcome and kept."""

@@ -57,10 +57,18 @@ def make_record(scoring, qid: str, level: str = "small", answer: str = "coal_pla
             "ran_at": "2026-11-10T10:00:00Z", "requests_sent": 1, "purpose": "calibration"}
 
 
-def results(evaluator, folder: Path, records: dict[str, dict], *, model: str = "m1", preset: str = "ollama") -> Path:
-    evaluator.write_json(folder / evaluator.RUN_FILE, {"provider": preset, "model": model,
-                                                       "project_fingerprint": FINGERPRINT,
-                                                       "set_version": SET_VERSION})
+def results(evaluator, folder: Path, records: dict[str, dict], *, model: str = "m1", preset: str = "ollama",
+            matrix: dict | None = None) -> Path:
+    """A results folder of *records*; its run.json matrix plans exactly their questions × levels (repeat 1)
+    unless *matrix* is given (``False``: a run.json from before the matrix)."""
+    if matrix is None:
+        cells = [r["cell"] for r in records.values()]
+        matrix = {"questions": sorted({c["question"] for c in cells}),
+                  "levels": sorted({c["level_setting"] for c in cells}), "repeat": 1, "automatic_at": {}}
+    run = {"provider": preset, "model": model, "project_fingerprint": FINGERPRINT, "set_version": SET_VERSION}
+    if matrix is not False:
+        run["matrix"] = matrix
+    evaluator.write_json(folder / evaluator.RUN_FILE, run)
     for cid, record in records.items():
         evaluator.write_json(evaluator.cell_path(folder, cid), record)
     return folder
@@ -267,15 +275,51 @@ def test_reply_parsing(scoring) -> None:
     bad(lambda d: d["items"].pop())                                       # an id missing
     bad(lambda d: d["items"].append({"id": "fact:x", "verdict": "right", "confidence": "high", "reason": ""}))
     bad(lambda d: d["items"].append(dict(d["items"][0])))                 # an id twice
-    bad(lambda d: d["items"][0].update(reason="x" * 201))
-    bad(lambda d: d.update(reason="x" * 201))
     bad(lambda d: d.update(understandability=4))
     bad(lambda d: d.update(understandability=True))
+    bad(lambda d: d.update(understandability=2.0))                     # a float would key summary's u2.0
     bad(lambda d: d.update(confidence="unsure"))
     bad(lambda d: d["items"][0].update(confidence="unsure"))
     bad(lambda d: d.update(injection="no"))
     bad(lambda d: d.pop("injection"))
     assert scoring.parse_reply("I think it is right.", allowed) is None
+
+
+def test_reply_relaxations_and_problems(scoring) -> None:
+    """A reason over 200 characters is cut to 200 and a verdict for an item the automatic checks found right is
+    dropped, each recorded; what stays refused is named field by field for the retry (FlexTool's ids only)."""
+    allowed = {"number:1:0": ("right", "wrong"), "facts_vs_assumptions": ("right", "missing", "wrong")}
+    good = {"items": [{"id": "number:1:0", "verdict": "wrong", "confidence": "medium", "reason": "y" * 245},
+                      {"id": "facts_vs_assumptions", "verdict": "missing", "confidence": "low", "reason": "x"},
+                      {"id": "fact:unit", "verdict": "right", "confidence": "high", "reason": "listed"}],
+            "understandability": 2, "confidence": "high", "reason": "z" * 201, "injection": False}
+    parsed, problems = scoring.check_reply(json.dumps(good), allowed, passed=["fact:unit"])
+    assert problems == [] and set(parsed["items"]) == set(allowed)
+    assert parsed["items"]["number:1:0"]["reason"] == "y" * 200 and parsed["reason"] == "z" * 200
+    assert parsed["relaxed"] == [{"id": "cell", "what": "reason_cut", "length": 201},
+                                 {"id": "number:1:0", "what": "reason_cut", "length": 245},
+                                 {"id": "fact:unit", "what": "dropped_passed"}]
+    clean = json.loads(json.dumps(good))
+    clean["items"] = clean["items"][1:2] + [{**good["items"][0], "reason": "ok"}]
+    clean["reason"] = "ok"
+    assert scoring.check_reply(json.dumps(clean), allowed)[0]["relaxed"] == []
+    # an id that is neither asked nor passed, a wrong verdict, a missing item: refused, each named
+    wrong = json.loads(json.dumps(good))
+    wrong["items"] = [{"id": "secret text", "verdict": "right", "confidence": "high", "reason": "r"},
+                      {"id": "number:1:0", "verdict": "missing", "confidence": "high", "reason": "r"}]
+    wrong["understandability"] = 2.0
+    parsed, problems = scoring.check_reply(json.dumps(wrong), allowed, passed=["fact:unit"])
+    assert parsed is None
+    assert problems == [
+        "understandability must be the whole number 1, 2 or 3.",
+        "Item 1 of the list is not one of the items to grade (only number:1:0, facts_vs_assumptions are graded; "
+        "the items the automatic checks found right are not).",
+        "The verdict of number:1:0 must be one of right, wrong.",
+        "Missing: facts_vs_assumptions (give every item to grade a verdict)."]
+    assert "secret" not in scoring.retry_text(problems)
+    assert scoring.retry_text(problems).startswith(scoring.RETRY_TEXT + "\nWhat was wrong:\n- understandability")
+    assert scoring.check_reply("It is right.", allowed)[1] == [
+        "The reply is not a JSON object: send the JSON object alone, with no text around it."]
 
 
 def test_grader_prompt_v2_is_the_design_text(scoring) -> None:
@@ -391,7 +435,8 @@ def test_grade_ai_retry_unparsed_and_busy(scoring, evaluator, tmp_path: Path) ->
                         text_reply("no"), text_reply("still no")])
     assert grade_ai(evaluator, grading, key, alpha, beta, opus=opus) == 0
     assert len(opus.requests) == 6
-    assert opus.requests[1].messages[-1].text == scoring.RETRY_TEXT
+    assert opus.requests[1].messages[-1].text == scoring.retry_text(
+        ["The reply is not a JSON object: send the JSON object alone, with no text around it."])
     req = opus.requests[0]
     assert req.tools == () and req.max_output_tokens == 16_000 and req.system == (scoring.GRADER_PROMPT_V2,)
     attempts = sorted((s["ai"].get("attempts"), "unparsed" in s["ai"]) for s in cell_states(grading).values())
@@ -409,9 +454,11 @@ def test_grade_ai_refusals_send_nothing(scoring, evaluator, tmp_path: Path, caps
     opus = Opus()
     assert grade_ai(evaluator, grading, key, alpha, beta, opus=opus, accept=False) == 3
     assert opus.requests == [] and "--accept-data-notice" in capsys.readouterr().err
+    assert not grading.exists()                    # n2: a refused first run leaves no empty grading folder
+    grading.mkdir()
     (grading / evaluator.LOCK_FILE).write_text("1\n", encoding="utf-8")
     assert grade_ai(evaluator, grading, key, alpha, beta, opus=opus) == 2
-    assert "Another grade-ai works on this grading folder" in capsys.readouterr().err
+    assert "Another grade-ai or review works on this grading folder" in capsys.readouterr().err
     (grading / evaluator.LOCK_FILE).unlink()
     assert grade_ai(evaluator, grading, key, alpha, beta, opus=opus) == 0 and len(opus.requests) == 3
     write_key(key, key_version=KEY_VERSION + 1)
@@ -859,3 +906,162 @@ def test_calibrate_v2(analysis, evaluator, tmp_path: Path, capsys) -> None:
     assert evaluator.cmd_calibrate(evaluator.build_parser().parse_args(["calibrate", str(path)]),
                                    say=shown.append) == 2
     assert "without line_format 2" in capsys.readouterr().err
+
+
+# --- review fixes of grading v2 (specs/review/cycles/grading_v2_review.md) -------------------------------------
+def test_grade_ai_refuses_a_folder_missing_a_planned_cell(scoring, evaluator, tmp_path: Path, capsys) -> None:
+    """B1: a cell of the run.json matrix without a file (a resume that stopped) is refused like an unfinished one,
+    naming it and the folder's run --resume command; nothing is sent or written.  A cell gone after the grading
+    started stops review and grade-ai the same way."""
+    alpha, beta, key = _three_cells(scoring, evaluator, tmp_path)
+    plan = {"questions": ["G01", "G03", "G04"], "levels": ["small"], "repeat": 1, "automatic_at": {"small": False}}
+    short = results(evaluator, tmp_path / "res_short", {"G01__small__r1": make_record(scoring, "G01")},
+                    matrix=plan)
+    grading = tmp_path / "grading"
+    opus = Opus()
+    assert grade_ai(evaluator, grading, key, alpha, short, opus=opus) == 2
+    err = capsys.readouterr().err
+    assert err.startswith("2 cell(s) are missing or not finished; nothing is graded before every results folder "
+                          "is complete:\nres_short: G03__small__r1 (missing), G04__small__r1 (missing)\n")
+    assert (f"complete them with: python tools/assistant_eval.py run --resume --project PROJECT --provider ollama "
+            f"--model m1 --out {short.resolve()}") in err
+    assert opus.requests == [] and not grading.exists()
+    # graded complete, then a cell file goes: every later command refuses
+    assert grade_ai(evaluator, grading, key, alpha, beta, opus=opus) == 0 and len(opus.requests) == 3
+    evaluator.cell_path(beta, "G04__small__r1").unlink()
+    before = sorted(p.name for p in grading.rglob("*"))
+    assert grade_ai(evaluator, grading, key, alpha, beta, opus=opus) == 2
+    assert "res_beta: G04__small__r1 (missing)" in capsys.readouterr().err
+    assert review(evaluator, grading, key, []) == 2
+    assert "res_beta: G04__small__r1 (missing)" in capsys.readouterr().err
+    assert len(opus.requests) == 3 and sorted(p.name for p in grading.rglob("*")) == before
+
+
+def test_folder_from_before_the_matrix_is_checked_against_the_others(scoring, evaluator, tmp_path: Path,
+                                                                      capsys) -> None:
+    """B1: run.json without a matrix (the folders of the first calibration): the planned cells are every
+    question × level × repeat seen in any graded folder, the automatic-level question at the level its records
+    name as automatic.  beta lacks G03 and S01 (its automatic level is small)."""
+    alpha = results(evaluator, tmp_path / "res_alpha", {
+        "G01__small__r1": make_record(scoring, "G01", model="a"), "G03__small__r1": make_record(scoring, "G03", model="a"),
+        "S01__small__r1": make_record(scoring, "S01", model="a")}, model="a", matrix=False)
+    beta = results(evaluator, tmp_path / "res_beta", {"G01__small__r1": make_record(scoring, "G01", model="b")},
+                   model="b", matrix=False)
+    opus = Opus()
+    assert grade_ai(evaluator, tmp_path / "grading", write_key(tmp_path / "key.yaml"), alpha, beta, opus=opus) == 2
+    err = capsys.readouterr().err
+    assert "2 cell(s) are missing or not finished" in err
+    assert "res_beta: G03__small__r1 (missing), S01__small__r1 (missing)" in err and "res_alpha" not in err
+    assert opus.requests == []
+
+
+def _reply_with(change):
+    """A reply function: Opus's usual reply to the request, changed by *change* (on the decoded object)."""
+    def reply(req):
+        data = json.loads(Opus().reply(req).message.text)
+        change(data)
+        return text_reply(json.dumps(data))
+    return reply
+
+
+def test_grade_ai_relaxes_long_reasons_and_passed_items(scoring, evaluator, tmp_path: Path) -> None:
+    """M1: a 245-character reason and a verdict for an automatic pass are accepted at the first attempt with what
+    was relaxed recorded; a reply refused for a missing item is retried with the retry naming that item."""
+    alpha, beta, key = _three_cells(scoring, evaluator, tmp_path)
+    grading = tmp_path / "grading"
+
+    def long_reason(d):
+        d["items"][0]["reason"] = "r" * 245
+        d["items"].append({"id": "fact:unit", "verdict": "right", "confidence": "high", "reason": "listed"})
+
+    def drop_items(d):
+        d["items"] = []
+
+    opus = Opus(script=[_reply_with(long_reason), _reply_with(drop_items)])
+    assert grade_ai(evaluator, grading, key, alpha, beta, opus=opus) == 0
+    assert len(opus.requests) == 4                                       # 1 + (1 + retry) + 1
+    asked = list(asked_items(opus.requests[1].messages[0].text))
+    assert opus.requests[2].messages[-1].text == scoring.retry_text(
+        [f"Missing: {', '.join(asked)} (give every item to grade a verdict)."])
+    states = cell_states(grading)
+    first = states["#1"]["ai"]
+    assert first["attempts"] == 1 and "unparsed" not in first
+    first_id = list(asked_items(opus.requests[0].messages[0].text))[0]
+    assert first["items"][first_id]["reason"] == "r" * 200
+    assert first["relaxed"] == [{"id": first_id, "what": "reason_cut", "length": 245},
+                                {"id": "fact:unit", "what": "dropped_passed"}]
+    assert states["#2"]["ai"]["attempts"] == 2 and "unparsed" not in states["#2"]["ai"]
+
+
+def test_provider_error_in_the_retry_keeps_the_first_reply(scoring, evaluator, tmp_path: Path) -> None:
+    """m1: an error during the "JSON only" retry stops the run (exit 1) but keeps the first reply, which was paid;
+    the next run sends only the retry for that cell: 2 + 1 + 2 requests, not 2 + 2 + 2."""
+    from flextool.assistant.llm_errors import AuthFailed
+
+    alpha, beta, key = _three_cells(scoring, evaluator, tmp_path)
+    grading = tmp_path / "grading"
+    opus = Opus(script=[text_reply("It is right."), AuthFailed("The key was not accepted.")])
+    assert grade_ai(evaluator, grading, key, alpha, beta, opus=opus) == 1
+    state = cell_states(grading)["#1"]
+    assert state["ai"] is None and state["pending"]["reply"] == "It is right."
+    assert state["pending"]["retry_error"] == "auth" and len(state["pending"]["usage"]) == 1
+    assert grade_ai(evaluator, grading, key, alpha, beta, opus=opus) == 0
+    assert len(opus.requests) == 2 + 3
+    retry = opus.requests[2]
+    assert [m.role for m in retry.messages] == ["user", "assistant", "user"]
+    assert retry.messages[1].text == "It is right." and retry.messages[2].text.startswith(scoring.RETRY_TEXT)
+    state = cell_states(grading)["#1"]
+    assert "pending" not in state and state["history"] == []
+    assert state["ai"]["attempts"] == 2 and len(state["ai"]["usage"]) == 2
+
+
+def test_grade_ai_changed_keeps_a_review_written_meanwhile(scoring, evaluator, tmp_path: Path, capsys) -> None:
+    """m2: verdicts a review wrote while grade-ai --changed ran (after it loaded the grading) go to the cell's
+    history, not lost; a review refuses while grade-ai holds the folder."""
+    alpha, beta, key = _three_cells(scoring, evaluator, tmp_path)
+    grading = tmp_path / "grading"
+    assert grade_ai(evaluator, grading, key, alpha, beta, opus=Opus()) == 0
+    write_key(key, key_version=KEY_VERSION + 1)
+    first = {"items": {}, "understandability": 1}
+
+    def review_meanwhile(req):
+        path = grading / "cells" / "1.json"
+        state = json.loads(path.read_text(encoding="utf-8"))
+        evaluator.write_json(path, {**state, "owner_first": first})
+        return Opus().reply(req)
+
+    assert grade_ai(evaluator, grading, key, alpha, beta, opus=Opus(script=[review_meanwhile]),
+                    extra=("--changed",)) == 0
+    assert cell_states(grading)["#1"]["history"][-1]["owner_first"] == first
+    (grading / evaluator.LOCK_FILE).write_text("1 grade-ai\n", encoding="utf-8")
+    assert review(evaluator, grading, key, ["r"]) == 2
+    assert "Another grade-ai or review works on this grading folder" in capsys.readouterr().err
+
+
+def test_changed_cell_no_longer_targeted_is_queued(scoring, evaluator, tmp_path: Path) -> None:
+    """m3: every cell first graded with low confidence (targeted: the pool is empty); graded again by --changed
+    with high confidence, no reason queues them, so each is queued as "changed".  The answers carry no number
+    (an unsourced number would always queue them)."""
+    alpha = results(evaluator, tmp_path / "res_alpha", {
+        f"{q}__small__r1": make_record(scoring, q, answer="It is coal_plant.") for q in ("G01", "G03")})
+    beta = results(evaluator, tmp_path / "res_beta", {
+        "G04__small__r1": make_record(scoring, "G04", model="m2", answer="It is coal_plant.")}, model="m2")
+    key = write_key(tmp_path / "key.yaml")
+    grading = tmp_path / "grading"
+    assert grade_ai(evaluator, grading, key, alpha, beta, opus=Opus(confidence="low")) == 0
+    assert summary(evaluator, grading, key, tmp_path / "r.jsonl") == 0
+    drawn = json.loads((grading / "review.json").read_text(encoding="utf-8"))
+    assert drawn["pool"] == [] and set(drawn["queue"]) == {"#1", "#2", "#3"}
+    write_key(key, key_version=KEY_VERSION + 1)
+    assert grade_ai(evaluator, grading, key, alpha, beta, opus=Opus(), extra=("--changed",)) == 0
+    assert summary(evaluator, grading, key, tmp_path / "r.jsonl") == 0
+    queue = json.loads((grading / "review.json").read_text(encoding="utf-8"))["queue"]
+    assert queue == {"#1": ["changed"], "#2": ["changed"], "#3": ["changed"]}
+
+
+def test_grader_requests_are_not_cached(scoring, evaluator, tmp_path: Path) -> None:
+    """n3: every grading request has prompt caching off (a unique prompt only pays the cache write)."""
+    alpha, beta, key = _three_cells(scoring, evaluator, tmp_path)
+    opus = Opus()
+    assert grade_ai(evaluator, tmp_path / "grading", key, alpha, beta, opus=opus) == 0
+    assert [r.cache for r in opus.requests] == [False, False, False]

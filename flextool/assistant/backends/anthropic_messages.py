@@ -104,17 +104,22 @@ class AnthropicMessagesBackend:
         return out
 
     def request_params(self, req: Request) -> dict[str, Any]:
-        """The arguments of ``messages.stream`` (the request body without ``stream``)."""
+        """The arguments of ``messages.stream`` (the request body without ``stream``); no ``cache_control`` for a
+        request with ``cache=False``."""
         params: dict[str, Any] = {"model": self.conn.model, "max_tokens": req.max_output_tokens,
-                                  "messages": self.wire_messages(req), "cache_control": dict(EPHEMERAL)}
+                                  "messages": self.wire_messages(req)}
+        if req.cache:
+            params["cache_control"] = dict(EPHEMERAL)
         if req.system:
             system = [{"type": "text", "text": layer} for layer in req.system]
-            system[-1]["cache_control"] = dict(EPHEMERAL)
+            if req.cache:
+                system[-1]["cache_control"] = dict(EPHEMERAL)
             params["system"] = system
         if req.tools:
             tools = [{"name": t.name, "description": t.description, "input_schema": t.input_schema}
                      for t in req.tools]
-            tools[-1]["cache_control"] = dict(EPHEMERAL)
+            if req.cache:
+                tools[-1]["cache_control"] = dict(EPHEMERAL)
             params["tools"] = tools
             if req.tool_choice == "none":
                 params["tool_choice"] = {"type": "none"}

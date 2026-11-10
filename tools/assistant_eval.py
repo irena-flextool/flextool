@@ -351,7 +351,72 @@ def _open_results(out: Path, identity: dict[str, Any], resume: bool) -> None:
         return
     if (Path(out) / CELLS_DIR).is_dir() and any((Path(out) / CELLS_DIR).iterdir()):
         raise Refused(OTHER_RESULTS)
-    write_json(run_file, {**identity, "format": RECORD_FORMAT, "created": iso(utc_now())})
+    write_json(run_file, {**identity, "format": RECORD_FORMAT, "created": iso(utc_now()),
+                          MATRIX_KEY: {"questions": [], "levels": [], "repeat": 0, "automatic_at": {}}})
+
+
+#: run.json's record of the cells its runs planned (every run adds its questions, levels and repeats; the
+#: grading refuses a folder that misses one of them).  ``automatic_at``: level → whether the question asked only
+#: at the automatic level is asked there (known once that level's setting is made).  A folder from before has
+#: none; its planned cells are taken from the cells of every folder graded with it (:func:`expected_cells`).
+MATRIX_KEY = "matrix"
+
+
+def _plan_matrix(out: Path, questions: Sequence[str], levels: Sequence[str], repeat: int) -> None:
+    """Add this run's questions, levels and repeats to run.json's matrix, before any cell is asked (a folder
+    without a matrix, from before, is left as it is)."""
+    run_file = Path(out) / RUN_FILE
+    run = read_json(run_file)
+    matrix = run.get(MATRIX_KEY)
+    if matrix is None:
+        return
+    matrix["questions"] = [*matrix["questions"], *(q for q in questions if q not in matrix["questions"])]
+    matrix["levels"] = [*matrix["levels"], *(lv for lv in levels if lv not in matrix["levels"])]
+    matrix["repeat"] = max(int(matrix["repeat"]), repeat)
+    write_json(run_file, run)
+
+
+def _plan_automatic(out: Path, level: str, asked: bool) -> None:
+    run_file = Path(out) / RUN_FILE
+    run = read_json(run_file)
+    matrix = run.get(MATRIX_KEY)
+    if matrix is not None and matrix["automatic_at"].get(level) != asked:
+        matrix["automatic_at"][level] = asked
+        write_json(run_file, run)
+
+
+def expected_cells(run: Mapping[str, Any], cells: Mapping[str, Mapping[str, Any]], qset: scoring.QuestionSet,
+                   fallback: Mapping[str, Any]) -> tuple[set[str], list[str]]:
+    """``(expected cell ids, unknown)`` of a results folder: its run.json matrix (or *fallback*, for a folder from
+    before the matrix: the questions, levels and repeats of every folder graded with it).  A question asked only
+    at the automatic level is expected at a level whose setting asks it; where that is not known yet (the level
+    was never reached) it is in *unknown* as ``"S01__<level>__r1 (if <level> is the automatic level)"``."""
+    matrix = run.get(MATRIX_KEY) or fallback
+    automatic_at = dict(matrix.get("automatic_at") or {})
+    if MATRIX_KEY not in run:
+        # From the folder's own records: a level asks the automatic-only question where its applicable cells
+        # name that level as the automatic one.
+        for record in cells.values():
+            level = record["cell"]["level_setting"]
+            if record.get("not_applicable"):
+                automatic_at.setdefault(level, False)
+            else:
+                automatic_at[level] = automatic_at.get(level, False) or (
+                    (record.get("model") or {}).get("automatic_level") == level)
+    expected: set[str] = set()
+    unknown: list[str] = []
+    for qid in matrix["questions"]:
+        question = qset.questions.get(qid)
+        if question is None:
+            continue
+        for level in matrix["levels"]:
+            for repeat in range(1, int(matrix["repeat"]) + 1):
+                cid = cell_id(qid, level, repeat)
+                if not question.automatic_level_only or automatic_at.get(level):
+                    expected.add(cid)
+                elif level not in automatic_at and cid not in cells:
+                    unknown.append(f"{cid} (if {level} is the automatic level)")
+    return expected, unknown
 
 
 # --- run ------------------------------------------------------------------------------------------------------
@@ -671,6 +736,7 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 "project_fingerprint": marker["fingerprint"], "set_version": qset.set_version,
                 "cpu_offload_allowed": bool(args.allow_cpu_offload)}
     _open_results(out, identity, args.resume)
+    _plan_matrix(out, wanted, levels, args.repeat)
 
     key, source = _key_or_refuse(preset, base_url, args.model, endpoint.route_for(preset, base_url, model=args.model))
     knobs = dict(DEFAULT_KNOBS)
@@ -709,6 +775,8 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
             # The probe sent only the model name, to the local server.
             accept_route(preset, base_url, setting.route, accepted, accept=args.accept_data_notice,
                          again="--resume --accept-data-notice", what=what)
+        _plan_automatic(out, level, bool(not setting.not_applicable and setting.choice is not None
+                                         and setting.choice.automatic == level))
         done = DAILY_DONE_REMOTE if accepted else DAILY_DONE
         for qid in wanted:
             question = qset.questions[qid]
@@ -732,14 +800,9 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                     return 0
                 if saved is not None and misclassified(saved):
                     say(f"{cid}: asked again (a provider failure saved as cut off)")
-                if saved is not None:
-                    # Asked again (an error stop of an older folder, or now applicable): its requests stay
-                    # counted for their day before the record goes.
-                    if int(saved.get("requests_sent") or 0):
-                        spend({"ran_at": saved.get("ran_at"), "requests": int(saved["requests_sent"]), "cell": cid,
-                               "code": "replaced"})
-                    cell_path(out, cid).unlink(missing_ok=True)
-                    del cells[cid]
+                # A saved cell asked again (an error stop of an older folder, a provider failure saved as cut
+                # off, or now applicable) stays on disk until its new record replaces it: a stop on the way
+                # leaves the folder with the old record, never without the cell.
                 backend = backend_factory(preset, conn_for(setting.model, setting.route))
                 try:
                     turns = run_cell(project, qset, question, setting, backend=backend, preset=preset,
@@ -757,7 +820,12 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                     backend.close()
                 record = _record(question, setting, repeat, preset=preset, identity=identity,
                                  knobs_sent=knobs_sent, free_tier=free, git=git, turns=turns)
-                write_json(cell_path(out, cid), record)
+                if saved is not None and int(saved.get("requests_sent") or 0):
+                    # The replaced record's requests stay counted for their day (written first: a crash
+                    # between the two counts them twice, never not at all).
+                    spend({"ran_at": saved.get("ran_at"), "requests": int(saved["requests_sent"]), "cell": cid,
+                           "code": "replaced"})
+                write_json(cell_path(out, cid), record)              # temp + os.replace: the old one goes
                 cells[cid] = record
                 say(f"{cid}: saved")
                 if budget_used():
@@ -916,7 +984,8 @@ class Grading:
 
 def load_grading(args: argparse.Namespace, *, create: bool) -> Grading:
     """The grading of ``args.dir`` with the cells of its results folders (``args.results`` when *create*), checked:
-    the earlier format refused, the folder set fixed by the first ``grade-ai``, every cell finished.  Nothing is
+    the earlier format refused, the folder set fixed by the first ``grade-ai``, every planned cell there and
+    finished (:func:`_refuse_incomplete`).  Nothing is
     written (a new grading's ``grading.json`` is written by :func:`_start` once every check passed)."""
     folder = Path(args.dir)
     state = _read_grading(folder)
@@ -934,12 +1003,8 @@ def load_grading(args: argparse.Namespace, *, create: bool) -> Grading:
     runs = {_cell_key(f, "")[0]: run for f, run, _cells in loaded}
     if not records:
         raise Refused(f"No cells in {', '.join(wanted)}.")
-    unfinished = sorted(f"{Path(f).name}/{cid}" for (f, cid), r in records.items()
-                        if not r.get("not_applicable") and not finished(r))
-    if unfinished:
-        raise Refused(f"{len(unfinished)} cell(s) are not finished; continue their run with --resume first: "
-                      f"{', '.join(unfinished)}.")
     qset = scoring.load_set(Path(args.set))
+    _refuse_incomplete(loaded, qset)
     key = _key_for(args, records.values())
     applicable = sorted(k for k, r in records.items() if not r.get("not_applicable"))
     if state is None:
@@ -984,6 +1049,33 @@ def load_grading(args: argparse.Namespace, *, create: bool) -> Grading:
     return Grading(folder, state, cells, not_applicable, names, scan_names, _stamps(records.values()), key, old)
 
 
+def _refuse_incomplete(loaded: Sequence[tuple[Path, dict, dict[str, dict]]], qset: scoring.QuestionSet) -> None:
+    """:class:`Refused` when a results folder misses a cell of its run.json matrix, or holds one that is not
+    finished: a cell that came back later would change the grading's cells, so nothing is graded before every
+    folder is complete.  The refusal names the cells and the ``run --resume`` command of each folder."""
+    seen = [r["cell"] for _f, _run, cells in loaded for r in cells.values()]
+    fallback = {"questions": sorted({c["question"] for c in seen}),
+                "levels": [lv for lv in scoring.LEVELS if any(c["level_setting"] == lv for c in seen)],
+                "repeat": max((int(c.get("repeat") or 1) for c in seen), default=1)}
+    lines = []
+    total = 0
+    for folder, run, cells in loaded:
+        expected, unknown = expected_cells(run, cells, qset, fallback)
+        missing = sorted(expected - set(cells))
+        unfinished = sorted(cid for cid, r in cells.items() if not r.get("not_applicable") and not finished(r))
+        named = [f"{cid} (missing)" for cid in missing] + unknown + [f"{cid} (not finished)" for cid in unfinished]
+        if not named:
+            continue
+        total += len(named)
+        command = (f"python tools/assistant_eval.py run --resume --project PROJECT --provider {run.get('provider')} "
+                   f"--model {run.get('model')} --out {folder}")
+        lines.append(f"{Path(folder).name}: {', '.join(named)}\n  complete them with: {command} (with the "
+                     "levels, repeats and other options of its first run)")
+    if lines:
+        raise Refused(f"{total} cell(s) are missing or not finished; nothing is graded before every results "
+                      "folder is complete:\n" + "\n".join(lines))
+
+
 def _grader_model() -> str:
     import assistant_eval_analysis as analysis
 
@@ -997,24 +1089,34 @@ def _refuse_stale(grading: Grading) -> None:
 
 
 class _Lock:
-    """``GRADING/.grade-ai.lock``, made exclusively: two ``grade-ai`` on one folder never both send."""
+    """``GRADING/.grade-ai.lock``, made exclusively by ``grade-ai`` and ``review``: two of them on one folder never
+    both write (a review's verdicts are never overwritten by a ``grade-ai --changed``).  A grading folder the lock
+    created is removed again when nothing else was written into it (a refused first ``grade-ai``)."""
 
-    def __init__(self, folder: Path) -> None:
+    def __init__(self, folder: Path, command: str = "grade-ai") -> None:
         self.path = Path(folder) / LOCK_FILE
+        self.command = command
+        self.created = False
 
     def __enter__(self) -> _Lock:
+        self.created = not self.path.parent.exists()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
             fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError:
-            raise Refused(f"Another grade-ai works on this grading folder ({self.path} exists). If none does, "
-                          "delete that file.") from None
+            raise Refused(f"Another grade-ai or review works on this grading folder ({self.path} exists). If none "
+                          "does, delete that file.") from None
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.write(f"{os.getpid()}\n")
+            f.write(f"{os.getpid()} {self.command}\n")
         return self
 
     def __exit__(self, *exc: object) -> None:
         self.path.unlink(missing_ok=True)
+        if self.created:
+            try:
+                self.path.parent.rmdir()            # only when empty
+            except OSError:
+                pass
 
 
 # --- grade-ai: Opus grades every cell -------------------------------------------------------------------------
@@ -1022,18 +1124,37 @@ def _scan(grading: Grading, cell: GradingCell, text: str) -> list[str]:
     return scoring.leak_scan(text, names=grading.scan_names, stamps=grading.stamps, sources=_tool_text(cell.record))
 
 
-def _request_text(material: str) -> str:
-    """Every text a grading request can send, as sent: the system part, the user part and the retry."""
-    return "\n".join([scoring.GRADER_PROMPT_V2, material, scoring.RETRY_TEXT])
+def _request_text(material: str, allowed: Iterable[str] = ()) -> str:
+    """Every text a grading request can send, as sent: the system part, the user part and the retry (the retry
+    names only FlexTool's own item ids and field names)."""
+    return "\n".join([scoring.GRADER_PROMPT_V2, material,
+                      scoring.retry_text([f"Missing: {', '.join(allowed)} (give every item to grade a verdict)."])])
+
+
+class RetryStopped(Exception):
+    """A provider error during the "JSON only" retry: *pending* keeps the first reply (already paid), so the next
+    ``grade-ai`` sends only the retry."""
+
+    def __init__(self, error: Exception, pending: dict[str, Any]) -> None:
+        super().__init__(str(error))
+        self.error = error
+        self.pending = pending
 
 
 def ask_grader(backend: Any, material: str, allowed: Mapping[str, Sequence[str]], *, pacing: Any,
-               on_usage: Callable[[Any], None], on_rejected: Callable[[Any], None]) -> dict[str, Any]:
-    """One grading request through FlexTool's retries and pacing (and at most one "Return only the JSON object."
-    retry): the parsed reply with ``attempts`` and ``usage``, or ``{"unparsed": text, ...}``.  *on_usage* gets the
-    usage of every request that reached the model, *on_rejected* every rate-limit or overload answer."""
+               on_usage: Callable[[Any], None], on_rejected: Callable[[Any], None], passed: Iterable[str] = (),
+               pending: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """One grading request through FlexTool's retries and pacing, and at most one "JSON only" retry that names
+    what was wrong: the parsed reply with ``attempts`` and ``usage``, or ``{"unparsed": text, ...}``.  *passed*
+    are the items the automatic checks found right (a verdict for one is dropped, see
+    :func:`scoring.check_reply`).  *on_usage* gets the usage of every request that reached the model,
+    *on_rejected* every rate-limit or overload answer.
+
+    A provider error in the retry raises :class:`RetryStopped` with the first reply; given back as *pending*, the
+    next call sends only the retry (the first request is not paid twice)."""
     import assistant_eval_analysis as analysis
     from flextool.assistant.llm_adapter import Message, Request
+    from flextool.assistant.llm_errors import LLMError
     from flextool.assistant.llm_retry import RetryPolicy, call_with_retries
     from flextool.assistant.thoughts import strip_thoughts
 
@@ -1041,19 +1162,31 @@ def ask_grader(backend: Any, material: str, allowed: Mapping[str, Sequence[str]]
     messages = [Message("user", material)]
     usage: list[dict[str, Any]] = []
     last = ""
-    for attempt in range(2):
+    problems: list[str] = []
+    start = 0
+    if pending:
+        last, usage, problems, start = str(pending["reply"]), list(pending["usage"]), list(pending["problems"]), 1
+        messages += [Message("assistant", last or "(no text)"), Message("user", scoring.retry_text(pending["problems"]))]
+    for attempt in range(start, 2):
+        # No prompt caching: every cell's prompt is unique, so a cache write would only cost more.
         req = Request(system=(scoring.GRADER_PROMPT_V2,), tools=(), messages=tuple(messages),
-                      max_output_tokens=analysis.GRADER_MAX_OUTPUT, tool_choice="none")
-        reply = call_with_retries(lambda req=req: backend.stream(req, lambda _e: None, cancel), RetryPolicy(),
-                                  lambda _e: None, cancel, on_rejected=on_rejected, pacing=pacing)
+                      max_output_tokens=analysis.GRADER_MAX_OUTPUT, tool_choice="none", cache=False)
+        try:
+            reply = call_with_retries(lambda req=req: backend.stream(req, lambda _e: None, cancel), RetryPolicy(),
+                                      lambda _e: None, cancel, on_rejected=on_rejected, pacing=pacing)
+        except LLMError as exc:
+            if attempt == 0:
+                raise
+            raise RetryStopped(exc, {"reply": last, "usage": usage, "problems": problems,
+                                     "retry_error": exc.code}) from exc
         on_usage(reply.usage)
         usage.append(_usage_json(reply.usage))
         last = strip_thoughts(reply.message.text) if reply.message is not None else ""
-        parsed = scoring.parse_reply(last, allowed)
+        parsed, problems = scoring.check_reply(last, allowed, passed)
         if parsed is not None:
             return {**parsed, "attempts": attempt + 1, "usage": usage}
-        messages += [Message("assistant", last or "(no text)"), Message("user", scoring.RETRY_TEXT)]
-    return {"unparsed": last[:2_000], "attempts": 2, "usage": usage}
+        messages += [Message("assistant", last or "(no text)"), Message("user", scoring.retry_text(problems))]
+    return {"unparsed": last[:2_000], "attempts": 2, "usage": usage, "problems": problems}
 
 
 def _new_state(cell: GradingCell, previous: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -1065,6 +1198,16 @@ def _new_state(cell: GradingCell, previous: Mapping[str, Any] | None) -> dict[st
             "rubric_version": scoring.RUBRIC_VERSION, "items": [i.to_json() for i in cell.items],
             "no_answer": cell.empty, "ai": None, "owner_first": None, "owner": None, "changes": [], "regrades": [],
             "history": history, "recorded": list((previous or {}).get("recorded") or []), "graded_at": None}
+
+
+def _fresh_state(cell: GradingCell) -> dict | None:
+    """``cells/<n>.json`` as it is now on disk: what a ``review`` wrote since the grading was loaded is kept."""
+    return read_json(cell.path) if cell.path.is_file() else None
+
+
+def _current_state(cell: GradingCell) -> dict[str, Any]:
+    """The cell's state re-read from disk (a pending retry continued: no new history entry)."""
+    return dict(_fresh_state(cell) or cell.state or {})
 
 
 def cmd_grade_ai(args: argparse.Namespace, *, backend_factory: BackendFactory | None = None,
@@ -1098,7 +1241,7 @@ def _grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say: Ca
     todo = [c for c in grading.cells if c.state is None or c.stale or not c.graded]
     send = [c for c in todo if not c.empty]
     # The blinding self-test of every request this run would send, all of it as sent, before anything is sent.
-    hits = [(c, found) for c in send for found in [_scan(grading, c, _request_text(c.material))] if found]
+    hits = [(c, found) for c in send for found in [_scan(grading, c, _request_text(c.material, c.allowed))] if found]
     if hits:
         raise Refused("\n".join(f"Cell {c.token}: the grader material reveals {', '.join(found)}; nothing was sent."
                                 for c, found in hits))
@@ -1117,7 +1260,7 @@ def _grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say: Ca
         write_json(grading.folder / GRADING_FILE, grading.state)
     for c in todo:
         if c.empty:
-            c.state = {**_new_state(c, c.state), "graded_at": iso(utc_now())}
+            c.state = {**_new_state(c, _fresh_state(c)), "graded_at": iso(utc_now())}
             write_json(c.path, c.state)
     if not send:
         say(f"Every cell is graded ({total}; {sum(c.empty for c in grading.cells)} without an answer are failed "
@@ -1138,16 +1281,26 @@ def _grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say: Ca
             ledger.record_rejected(preset.id, route.label, analysis.GRADER_MODEL)
 
         for done, c in enumerate(send, 1):
+            # A first reply kept from a retry a provider error stopped: only the retry is sent again.
+            pending = (c.state or {}).get("pending") if not c.stale else None
             try:
                 result = ask_grader(backend, c.material, c.allowed, pacing=pacing, on_usage=on_usage,
-                                    on_rejected=on_rejected)
-            except LLMError as exc:
+                                    on_rejected=on_rejected, passed=[i.id for i in c.items if i.auto],
+                                    pending=pending)
+            except (LLMError, RetryStopped) as raised:
+                exc = raised.error if isinstance(raised, RetryStopped) else raised
                 if exc.partial_usage is not None or exc.streamed:
                     ledger.record(preset.id, route.label, analysis.GRADER_MODEL, exc.partial_usage)
+                if isinstance(raised, RetryStopped):
+                    base = _current_state(c) if pending else _new_state(c, _fresh_state(c))
+                    c.state = {**base, "pending": raised.pending}
+                    write_json(c.path, c.state)
                 say(f"Stopped at cell {c.token} of {total}: {message_for(exc, 'terminal')} Run the same command "
                     "again to continue.")
                 return 1
-            c.state = {**_new_state(c, c.state), "ai": result, "graded_at": iso(utc_now())}
+            base = _current_state(c) if pending else _new_state(c, _fresh_state(c))
+            base.pop("pending", None)
+            c.state = {**base, "ai": result, "graded_at": iso(utc_now())}
             write_json(c.path, c.state)
             say(f"Cell {c.token}: graded ({done} of {len(send)} to send"
                 + ("; the reply could not be read" if "unparsed" in result else "") + ").")
@@ -1183,7 +1336,9 @@ def targeted_reasons(cell: GradingCell) -> list[str]:
 def review_state(grading: Grading) -> dict[str, Any]:
     """``review.json``: drawn once every cell is graded, never redrawn.  The pool is the graded cells no other
     reason queues, in token order; the sample is ``random.Random(seed).sample(pool, k)`` with k the larger of 15 %
-    and 35 cells (all of the pool when smaller).  The queue (token → reasons) follows the cells' reasons."""
+    and 35 cells (all of the pool when smaller).  The queue (token → reasons) follows the cells' reasons; a cell
+    ``grade-ai --changed`` graded again that is outside the pool and has no other reason is queued as
+    ``changed``."""
     import assistant_eval_analysis as analysis
 
     path = grading.folder / REVIEW_FILE
@@ -1205,6 +1360,10 @@ def review_state(grading: Grading) -> dict[str, Any]:
             reasons.append("sample")
         if review["all"] and not c.empty:
             reasons.append("all")
+        if not reasons and not c.empty and c.token not in review["pool"] and (c.state or {}).get("history"):
+            # Graded again by --changed and no longer targeted: outside the pool the sample estimates, so the
+            # owner reviews it.
+            reasons.append("changed")
         if reasons:
             queue[c.token] = reasons
     if queue != review["queue"] or not path.is_file():
@@ -1320,7 +1479,8 @@ def cmd_review(args: argparse.Namespace, *, ask: Callable[[str], str | None] | N
             return None
 
     try:
-        return _review(args, ask or default_ask, say)
+        with _Lock(Path(args.dir), "review"):
+            return _review(args, ask or default_ask, say)
     except Refused as exc:
         print(str(exc), file=sys.stderr)
         return exc.code
@@ -1516,6 +1676,9 @@ def reviewed_cells(grading: Grading, review: Mapping[str, Any]) -> list[Any]:
 
 def cmd_summary(args: argparse.Namespace, *, say: Callable[[str], None] = print) -> int:
     try:
+        if args.record and args.dir and not args.results:
+            with _Lock(Path(args.dir), "summary --record"):       # it writes the cells' states
+                return _summary(args, say)
         return _summary(args, say)
     except Refused as exc:
         print(str(exc), file=sys.stderr)

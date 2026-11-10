@@ -84,6 +84,7 @@ class Request:
     max_output_tokens: int
     tool_choice: Literal["auto", "none"] = "auto"
     prefix_key: str = ""            # see :func:`prefix_key`
+    cache: bool = True              # False: no prompt-cache marks (a one-off prompt pays no cache write)
 
 
 @dataclass

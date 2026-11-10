@@ -83,6 +83,20 @@ def test_cached_prefix_and_nothing_else_is_sent():
     assert body["max_tokens"] == 1000 and body["stream"] is True
 
 
+def test_no_cache_marks_for_an_uncached_request():
+    """Grading v2 n3: a one-off prompt (``cache=False``, the grader's) carries no cache_control at all, so it pays
+    no cache write."""
+    import dataclasses
+
+    backend, recorder = backend_for([answer("text_end")])
+    backend.stream(dataclasses.replace(request(ask()), cache=False), lambda e: None, threading.Event())
+    body = recorder.last.body
+    assert _count(body, "cache_control") == 0
+    assert body["system"] == [{"type": "text", "text": "You are the assistant."},
+                              {"type": "text", "text": "Layer two."}]
+    assert set(body) == {"model", "max_tokens", "messages", "system", "tools", "stream"}
+
+
 def test_tool_choice_none():
     backend, recorder = backend_for([answer("text_end"), answer("text_end")])
     backend.stream(request(ask(), tool_choice="none"), lambda e: None, threading.Event())
