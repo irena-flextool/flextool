@@ -258,17 +258,27 @@ def test_coefficient_gives_zero_cost_entity_its_variables(tmp_path_factory, kind
     assert has(fd.ed_divest_set) is divest
 
 
-def test_constant_kept_beside_capacity_terms_of_other_constraints(tmp_path_factory) -> None:
-    """A flow-only constraint keeps its constant as the right-hand side when other constraints have capacity
-    terms: ``flow ≤ 7`` (hand value).  Before: the (cn,) constant summed with the (cn, d) existing-capacity
-    constants of the other constraints lost its period, and the row read ``flow ≤ 0``."""
-    values = TWIN_VALUES + _constraint("c_flow_cap", "less_than", 7.0) + [
-        ["unit__outputNode", [PLANT, "west"], "constraint_flow_coeff", _map({"c_flow_cap": 1.0})]]
-    url, scen = make_db(tmp_path_factory, alt="uc_flow_cap", values=values, base_chain=SINGLE,
-                        entities=TWIN_ENTITIES + [["constraint", "c_flow_cap", None]])
-    step = list(run(tmp_path_factory, url, scen).values())[-1]
-    pb = build(step.flex_data)
-    bounds = row_bounds(pb, "process_constraint_less_than", "c_flow_cap,")
-    assert len(bounds) == step.flex_data.dt.height
-    assert {upper for _, upper in bounds.values()} == {7.0}
-    _assert_twin(pb)
+@pytest.mark.parametrize("chain", [SINGLE, CHAIN], ids=["single_solve", "chain_of_solves"])
+def test_constant_kept_beside_capacity_terms_of_other_constraints(tmp_path_factory, chain) -> None:
+    """Constraints without existing-capacity terms keep their constant as the right-hand side when other
+    constraints have such terms: the per-step ``flow ≤ 7`` and the once-per-period ``invested ≤ 5`` (hand
+    values), in a single solve and in a chain of solves.  Before: the (cn,) constant summed with the (cn, d)
+    existing-capacity constants of the other constraints lost its period, and the rows read ``≤ 0``."""
+    unit_twin = [v for v in _twin_values("unit", PLANT) if v[2] != "constraint_invested_capacity_coeff"]
+    values = (RETIRABLE + _constraint("c_cap") + _constraint("c_twin") + unit_twin
+              + [["unit", PLANT, "constraint_invested_capacity_coeff", _map({"c_twin": 1.0, "c_inv": 1.0})]]
+              + _twin_values("node", "battery")
+              + _constraint("c_flow_cap", "less_than", 7.0) + _constraint("c_inv", "less_than", 5.0)
+              + [["unit__outputNode", [PLANT, "west"], "constraint_flow_coeff", _map({"c_flow_cap": 1.0})]])
+    url, scen = make_db(tmp_path_factory, alt="uc_flow_cap", values=values, base_chain=chain,
+                        entities=TWIN_ENTITIES + [["constraint", "c_flow_cap", None], ["constraint", "c_inv", None]])
+    for step in run(tmp_path_factory, url, scen).values():
+        pb = build(step.flex_data)
+        bounds = row_bounds(pb, "process_constraint_less_than", "c_flow_cap,")
+        assert len(bounds) == step.flex_data.dt.height
+        assert {upper for _, upper in bounds.values()} == {7.0}
+        per_period = _period_rows(pb, "process_constraint_less_than_period", "c_inv")
+        assert per_period, "no once-per-period rows"
+        assert {upper for _, (_, upper) in per_period.values()} == {5.0}
+        assert all(any(c.startswith("v_invest") for c in terms) for terms, _ in per_period.values())
+        _assert_twin(pb)
