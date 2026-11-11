@@ -79,10 +79,12 @@ jobs:
           # Install WITH dependencies — proves the full dependency set resolves
           # from PyPI (spinedb-api, spinetoolbox, polar-high, highspy, …).
           /tmp/wheeltest/bin/pip install dist/*.whl
+          # `python -P`: the checkout (the working directory) stays off sys.path, so `import flextool` and the
+          # supervisor below load the INSTALLED wheel, not the source tree (which has no assistant/_docs/).
           # Import + confirm bundled package-data resolves from the installed
           # wheel (guards the packaging-completeness fix), and that the console
           # entry points are on PATH.
-          /tmp/wheeltest/bin/python - <<'PY'
+          /tmp/wheeltest/bin/python -P - <<'PY'
           import importlib.metadata as md
           from flextool._resources import package_data_path
           print("installed flextool", md.version("flextool"))
@@ -106,7 +108,7 @@ jobs:
           PY
           # The flextool-run supervisor is a top-level module (py-modules): it must be in
           # the wheel and load the run-record files by path without importing flextool.
-          /tmp/wheeltest/bin/python - <<'PY'
+          /tmp/wheeltest/bin/python -P - <<'PY'
           import sys
           import flextool_run_supervisor as s
           s.load_owner()
