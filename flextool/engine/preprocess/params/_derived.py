@@ -4163,6 +4163,49 @@ def edd_divest_active_from_source(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 
+def unitsize_cascade(base: pl.LazyFrame,
+                     vu: "pl.LazyFrame | None",
+                     ex: "pl.LazyFrame | None",
+                     *, key: str) -> pl.LazyFrame:
+    """The unitsize cascade, ``[key, us]`` for every row of ``base``::
+
+        unitsize = virtual_unitsize (if explicitly set non-zero)
+                  OR existing       (if explicitly set non-zero)
+                  OR UNITSIZE_DEFAULT (1000.0)
+
+    ``base`` is ``[key]`` (one row per entity); ``vu`` is ``[key, vu]``
+    and ``ex`` is ``[key, ex]`` with only the explicitly set values
+    (``None`` when there are none).  ``existing`` is a constant (one row
+    per entity) or a period Map (one row per period): it is reduced to
+    the per-entity MAX, which is non-zero iff any period is — the cascade
+    only checks "non-zero".  ``virtual_unitsize`` is a constant in the
+    schema; it is reduced the same way so a stray row cannot duplicate
+    an entity.
+
+    The ONE implementation of the cascade: the DB-side
+    :func:`_entity_unitsize_lf` / :func:`_node_unitsize_lf` and the
+    per-solve ``solve_data/p_entity_unitsize.csv`` emitter
+    (``emit._dispatchers._compute_p_entity_unitsize``, which reads
+    ``p_process`` / ``pd_process`` and ``p_node`` / ``pd_node``) all call
+    it, so the per-solve CSV seed and the DB rebuild cannot disagree.
+    """
+    out = base
+    for name, frame in (("vu", vu), ("ex", ex)):
+        if frame is None:
+            out = out.with_columns(pl.lit(None, dtype=pl.Float64).alias(name))
+            continue
+        reduced = (frame.select(key, pl.col(name).cast(pl.Float64))
+                   .group_by(key).agg(pl.col(name).max()))
+        out = out.join(reduced, on=key, how="left")
+    return out.with_columns(
+        us=pl.when(pl.col("vu").fill_null(0.0) != 0.0)
+              .then(pl.col("vu"))
+              .when(pl.col("ex").fill_null(0.0) != 0.0)
+              .then(pl.col("ex"))
+              .otherwise(pl.lit(UNITSIZE_DEFAULT))
+    ).select(key, "us")
+
+
 def _entity_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
     """Per-entity unitsize cascade across unit + node + connection,
     mirroring ``entity_period_calc_params.py:159-202``::
@@ -4222,32 +4265,19 @@ def _entity_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
             # per CLAUDE.md Invariant #2; a scalar's single row makes the
             # group_by a no-op.  The cascade only checks "non-zero", and
             # the per-period MAX is non-zero iff any period is.
-            ex_parts.append(ex.lazy()
-                .select(alias_to_axis("name", "e"),
-                          pl.col("value").cast(pl.Float64).alias("v"))
-                .group_by("e")
-                .agg(pl.col("v").max().alias("ex")))
+            # (The per-entity MAX is taken in :func:`unitsize_cascade`.)
+            ex_parts.append(ex.lazy().select(
+                alias_to_axis("name", "e"),
+                pl.col("value").cast(pl.Float64).alias("ex")))
     if not base_parts:
         return pl.LazyFrame(schema={"e": schema_dtype(_enums, "e"),
                                      "us": pl.Float64})
-    base = pl.concat(base_parts).unique()
-    if us_parts:
-        vu_lf = pl.concat(us_parts).unique(subset=["e"], keep="last")
-        base = base.join(vu_lf, on="e", how="left")
-    else:
-        base = base.with_columns(vu=pl.lit(None, dtype=pl.Float64))
-    if ex_parts:
-        ex_lf = pl.concat(ex_parts).unique(subset=["e"], keep="last")
-        base = base.join(ex_lf, on="e", how="left")
-    else:
-        base = base.with_columns(ex=pl.lit(None, dtype=pl.Float64))
-    result = base.with_columns(
-        us=pl.when(pl.col("vu").fill_null(0.0) != 0.0)
-              .then(pl.col("vu"))
-              .when(pl.col("ex").fill_null(0.0) != 0.0)
-              .then(pl.col("ex"))
-              .otherwise(pl.lit(UNITSIZE_DEFAULT))
-    ).select("e", "us").collect()
+    result = unitsize_cascade(
+        pl.concat(base_parts).unique(),
+        pl.concat(us_parts) if us_parts else None,
+        pl.concat(ex_parts) if ex_parts else None,
+        key="e",
+    ).collect()
     try:
         _ENTITY_UNITSIZE_CACHE[source] = result
     except TypeError:
@@ -7929,51 +7959,22 @@ def _node_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
     if nodes is None or nodes.height == 0:
         return pl.LazyFrame(schema={"n": schema_dtype(_enums, "n"),
                                      "us": pl.Float64})
-    base = nodes.lazy().select(alias_to_axis("name", "n"))
-    # virtual_unitsize may carry a period dim authored as a Spine Map; the
-    # index column inherits the Map's ``index_name`` and may be named
-    # ``period``, ``x``, etc.  Treat any non-(name|value) column as the
-    # period axis and collapse to one row per node before joining.
-    if us is not None and us.height > 0:
-        us_cols = us.columns
-        us_extra = [c for c in us_cols if c not in ("name", "value")]
-        us_base = us.lazy().select(alias_to_axis("name", "n"),
-                                      pl.col("value").cast(pl.Float64))
-        if us_extra:
-            us_lf = (us_base
-                       .group_by("n")
-                       .agg(pl.col("value").max().alias("vu")))
-        else:
-            us_lf = us_base.rename({"value": "vu"})
-        base = base.join(us_lf, on="n", how="left")
-    else:
-        base = base.with_columns(vu=pl.lit(None, dtype=pl.Float64))
-    # Existing has no default (schema-None policy); rows present == explicit.
-    # Same Map-index naming applies as for virtual_unitsize above.
-    if ex is not None and ex.height > 0:
-        ex_cols = ex.columns
-        ex_extra = [c for c in ex_cols if c not in ("name", "value")]
-        ex_base = ex.lazy().select(alias_to_axis("name", "n"),
-                                      pl.col("value").cast(pl.Float64))
-        if ex_extra:
-            ex_lf = (ex_base
-                       .group_by("n")
-                       .agg(pl.col("value").max().alias("ex")))
-        else:
-            ex_lf = ex_base.rename({"value": "ex"})
-        base = base.join(ex_lf, on="n", how="left")
-    else:
-        base = base.with_columns(ex=pl.lit(None, dtype=pl.Float64))
-    # Apply formula: virtual_unitsize (explicit non-zero)
-    #                OR existing (explicit non-zero)
-    #                OR 1000.
-    result = base.with_columns(
-        us=pl.when(pl.col("vu").fill_null(0.0) != 0.0)
-             .then(pl.col("vu"))
-             .when(pl.col("ex").fill_null(0.0) != 0.0)
-             .then(pl.col("ex"))
-             .otherwise(pl.lit(UNITSIZE_DEFAULT))
-    ).select("n", "us").collect()
+    # virtual_unitsize / existing may carry a period dim authored as a Spine
+    # Map; the index column inherits the Map's ``index_name`` and may be
+    # named ``period``, ``x``, etc.  :func:`unitsize_cascade` collapses any
+    # number of rows per node to one (per-node MAX), so the index column
+    # is not read.  Existing has no default (schema-None policy); rows
+    # present == explicit.
+    def _rows(frame, name):
+        if frame is None or frame.height == 0:
+            return None
+        return frame.lazy().select(alias_to_axis("name", "n"),
+                                   pl.col("value").cast(pl.Float64).alias(name))
+
+    result = unitsize_cascade(
+        nodes.lazy().select(alias_to_axis("name", "n")),
+        _rows(us, "vu"), _rows(ex, "ex"), key="n",
+    ).collect()
     try:
         _NODE_UNITSIZE_CACHE[source] = result
     except TypeError:

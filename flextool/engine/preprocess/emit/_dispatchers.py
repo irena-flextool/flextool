@@ -543,28 +543,6 @@ def _entity_period_inputs(input_dir: Path, solve_data_dir: Path,
     }
 
 
-def _read_p_table(path: Path,
-                  *, provider: "object | None" = None,
-                  ) -> dict[tuple[str, str], float]:
-    """Read a 3-col (entity, paramName, value) table, silently skipping
-    rows whose value isn't a float.  Mirrors the legacy local-loop that
-    preceded :func:`emit_entity_period_calc_params`."""
-    out: dict[tuple[str, str], float] = {}
-    df = provider.get(_provider_key(path))
-    if df is None:
-        return out
-    for row in df.iter_rows():
-        if len(row) < 3:
-            continue
-        c0, c1 = _cell_str(row[0]), _cell_str(row[1])
-        if c0 and c1:
-            try:
-                out[(c0, c1)] = float(row[2])
-            except (ValueError, TypeError):
-                continue
-    return out
-
-
 def _compute_pdProcess(inp: dict) -> pl.DataFrame:
     rows: list[tuple[str, str, str, str]] = []
     pp = inp["pp"]
@@ -645,29 +623,43 @@ def _compute_ed_fixed_cost(inp: dict) -> pl.DataFrame:
     )
 
 
-def _compute_p_entity_unitsize(input_dir: Path, inp: dict,
-                                *, provider: "object | None" = None,
-                                ) -> pl.DataFrame:
-    p_process = _read_p_table(input_dir / "p_process.csv", provider=provider)
-    p_node = _read_p_table(input_dir / "p_node.csv", provider=provider)
+def _compute_p_entity_unitsize(inp: dict) -> pl.DataFrame:
+    """``solve_data/p_entity_unitsize.csv``: ``(entity, value)`` per entity, the
+    unitsize cascade (``virtual_unitsize`` non-zero, else ``existing`` non-zero,
+    else 1000) of :func:`params._derived.unitsize_cascade` — the same function
+    the DB-side ``_entity_unitsize_lf`` / ``_node_unitsize_lf`` use.  ``existing``
+    is read from both ``p_<class>`` (a constant) and ``pd_<class>`` (a period
+    Map, reduced to the per-entity MAX); reading the constant table only gave a
+    period-Map ``existing`` the 1000 fallback, which the per-roll rolling solves
+    carried into ``p_unitsize`` and ``p_process_existing_count`` (capacity/1000
+    units: integer online units could not start).  Entities that are neither a
+    process nor a node get 0.  Values are rendered with ``repr`` in
+    ``entity.csv`` order.
+    """
+    from flextool.engine.preprocess.params._derived import unitsize_cascade
+
     process_set = inp["process_set"]
     node_set = inp["node_set"]
-    rows: list[tuple[str, str]] = []
-    for e in inp["entities"]:
-        if e in process_set:
-            v = (p_process.get((e, "virtual_unitsize"), 0.0)
-                 or p_process.get((e, "existing"), 0.0)
-                 or 1000.0)
-        elif e in node_set:
-            v = (p_node.get((e, "virtual_unitsize"), 0.0)
-                 or p_node.get((e, "existing"), 0.0)
-                 or 1000.0)
-        else:
-            v = 0.0
-        rows.append((e, repr(v)))
+    entities = inp["entities"]
+    lookup_of = ((process_set, inp["pp"]), (node_set - process_set, inp["pn"]))
+    unitsize: dict[str, float] = {}
+    for members, lookup in lookup_of:
+        names = [e for e in dict.fromkeys(entities) if e in members]
+        if not names:
+            continue
+        frames = {}
+        for col, param in (("vu", "virtual_unitsize"), ("ex", "existing")):
+            rows = [(e, v) for e, v in lookup.explicit_rows(param) if e in members]
+            frames[col] = (pl.LazyFrame({"e": [r[0] for r in rows], col: [r[1] for r in rows]},
+                                        schema={"e": pl.Utf8, col: pl.Float64})
+                           if rows else None)
+        res = unitsize_cascade(pl.LazyFrame({"e": names}, schema={"e": pl.Utf8}),
+                               frames["vu"], frames["ex"], key="e").collect()
+        unitsize.update(zip(res["e"].to_list(), res["us"].to_list()))
+    values = [repr(unitsize[e]) if e in unitsize else repr(0.0) for e in entities]
     return pl.DataFrame(
-        {"entity": [r[0] for r in rows],
-         "value":  [r[1] for r in rows]},
+        {"entity": list(entities),
+         "value":  values},
         schema={"entity": pl.Utf8, "value": pl.Utf8},
     )
 
@@ -687,4 +679,4 @@ def emit_entity_period_calc_params(input_dir: Path,
     _emit(provider, "solve_data/ed_fixed_cost.csv",
           _compute_ed_fixed_cost(inp))
     _emit(provider, "solve_data/p_entity_unitsize.csv",
-          _compute_p_entity_unitsize(input_dir, inp, provider=provider))
+          _compute_p_entity_unitsize(inp))
