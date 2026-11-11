@@ -55,6 +55,8 @@ from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.input._solve_step_aggregation import active_base_steps, base_steps_of
 from flextool.engine.preprocess.emit._leaf_sets import _CO2_MAX_PERIOD_METHOD, _CO2_MAX_TOTAL_METHOD
 from flextool.engine.preprocess.params._existing import (
+    DIVEST_NOT_ALLOWED,
+    INVEST_NOT_ALLOWED,
     _DIVEST_PERIOD_METHODS,
     _INVEST_PERIOD_METHODS,
     _construction_lag_configured,
@@ -484,13 +486,9 @@ def _entity_methods_pairs(source: "InputSource") -> set[tuple[str, str]]:
     return out
 
 
-# Mirror ``invest_method_sets.py:22-27``.
-_INVEST_METHOD_NOT_ALLOWED = frozenset((
-    "not_allowed", "retire_period", "retire_total", "retire_no_limit",
-))
-_DIVEST_METHOD_NOT_ALLOWED = frozenset((
-    "not_allowed", "invest_period", "invest_total", "invest_no_limit",
-))
+# The invest/retire method lists live once in params/_existing.py.
+_INVEST_METHOD_NOT_ALLOWED = INVEST_NOT_ALLOWED
+_DIVEST_METHOD_NOT_ALLOWED = DIVEST_NOT_ALLOWED
 
 
 def _entity_invest_universe(source: "InputSource",

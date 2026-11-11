@@ -82,6 +82,10 @@ from flextool.engine.input._param_shapes import (
     promote_param_to_dt,
     resolve_param_shape,
 )
+from flextool.engine.preprocess.params._existing import (
+    DIVEST_NOT_ALLOWED as _DIVEST_NOT_ALLOWED,
+    INVEST_NOT_ALLOWED as _INVEST_NOT_ALLOWED,
+)
 
 
 def _provider_has_key(provider, path: "Path | str") -> bool:
@@ -3093,13 +3097,8 @@ def _entityDivest_set(source: "InputSource") -> pl.LazyFrame:
     return _entity_invest_filter(source, _INVEST_METHODS_DIVEST_ALLOWED)
 
 
-# Mirror flextool/flextool_base.dat:211-212 (cf. entity_annual_calc_params.py).
-_INVEST_NOT_ALLOWED: frozenset[str] = frozenset((
-    "not_allowed", "retire_period", "retire_total", "retire_no_limit",
-))
-_DIVEST_NOT_ALLOWED: frozenset[str] = frozenset((
-    "not_allowed", "invest_period", "invest_total", "invest_no_limit",
-))
+# The invest/retire method lists (_INVEST_NOT_ALLOWED / _DIVEST_NOT_ALLOWED)
+# are imported from params/_existing.py, their one definition.
 _INVEST_METHODS_ALL: frozenset[str] = frozenset((
     "not_allowed", "invest_no_limit", "invest_period", "invest_total",
     "invest_period_total",

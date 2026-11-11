@@ -37,6 +37,7 @@ import numpy as np
 import spinedb_api as api
 
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.engine.preprocess.params._existing import DIVEST_NOT_ALLOWED, INVEST_NOT_ALLOWED
 from flextool.input_derivation._method_constants import METHOD_2WAY_1VAR, METHOD_LP, METHOD_MIP
 
 
@@ -1989,10 +1990,9 @@ def _where(alt: str, key: str | None) -> str:
 _PERCENT_SUSPECT = 1.5
 
 
-# invest_method values that allow investing / retiring (preprocess/params/_npv.py _INVEST_NOT_ALLOWED /
-# _DIVEST_NOT_ALLOWED are their complements).
-_NO_INVEST = frozenset(("not_allowed", "retire_period", "retire_total", "retire_no_limit"))
-_NO_RETIRE = frozenset(("not_allowed", "invest_period", "invest_total", "invest_no_limit"))
+# invest_method values that forbid investing / retiring: the one definition in preprocess/params/_existing.py.
+_NO_INVEST = INVEST_NOT_ALLOWED
+_NO_RETIRE = DIVEST_NOT_ALLOWED
 _BOUNDED_LIFETIME = frozenset(("reinvest_choice", "no_investment"))
 
 

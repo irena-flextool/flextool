@@ -178,10 +178,14 @@ def test_bounded_lifetime_method_with_existing_needs_a_lifetime(tmp_path_factory
     ("le_life_default", []),
     ("le_life_retire_stray_cost", [["unit", "coal_plant", "invest_method", b64("retire_no_limit", "str")],
                                    ["unit", "coal_plant", "invest_cost", _f(400.0)]]),
+    ("le_life_invest_period_total_salvage", [
+        ["unit", "coal_plant", "invest_method", b64("invest_period_total", "str")],
+        ["unit", "coal_plant", "salvage_value", _f(100.0)]]),
 ])
 def test_lifetime_not_needed_is_silent(tmp_path_factory, alt, values) -> None:
-    """The default reinvest_automatic without investment, and a retiring unit with a stray invest_cost (its
-    annuity uses salvage_value), need no lifetime."""
+    """The default reinvest_automatic without investment, a retiring unit with a stray invest_cost (its
+    annuity uses salvage_value), and an invest_period_total unit with existing capacity and a stray
+    salvage_value (it cannot retire) need no lifetime."""
     _validate(*make_db(tmp_path_factory, alt=alt, base_chain=PLANT_CHAIN,
                        values=values or [["unit", "coal_plant", "efficiency", _f(0.4)]]))
 

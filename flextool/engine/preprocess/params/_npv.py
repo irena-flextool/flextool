@@ -104,6 +104,10 @@ from flextool.engine.preprocess._annuity import (
     require_lifetime,
 )
 from flextool.engine.preprocess.params._branch import inherit_active_branch_periods
+from flextool.engine.preprocess.params._existing import (
+    DIVEST_NOT_ALLOWED as _DIVEST_NOT_ALLOWED,
+    INVEST_NOT_ALLOWED as _INVEST_NOT_ALLOWED,
+)
 
 # Substrate handle for the cascade-wide axis enum vocabulary.
 # Bare ``None`` here; ``cast_dim`` / ``schema_dtype`` in
@@ -116,13 +120,8 @@ if TYPE_CHECKING:
     from flextool.engine.input._input_source import InputSource
 
 
-# Mirror flextool/flextool_base.dat:211-212 (cf. entity_annual_calc_params.py).
-_INVEST_NOT_ALLOWED: frozenset[str] = frozenset((
-    "not_allowed", "retire_period", "retire_total", "retire_no_limit",
-))
-_DIVEST_NOT_ALLOWED: frozenset[str] = frozenset((
-    "not_allowed", "invest_period", "invest_total", "invest_no_limit",
-))
+# The invest/retire method lists (_INVEST_NOT_ALLOWED / _DIVEST_NOT_ALLOWED)
+# are imported from params/_existing.py, their one definition.
 
 # Default lifetime_method when an entity has no explicit row
 # (preprocessing/method_with_fallback_sets.py::_LIFETIME_METHOD_DEFAULT).

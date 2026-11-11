@@ -94,14 +94,28 @@ if TYPE_CHECKING:
     from flextool.engine.preprocess._solve_context import SolveContext
 
 
-# -- Method-enum constants (mirror flextool/flextool_base.dat:211-212) -------
+# -- Method-enum constants ---------------------------------------------------
+# The one definition of which ``invest_method`` values forbid investing /
+# retiring.  Every other module imports these (pinned against the schema
+# value lists ``invest_methods`` / ``group_invest_methods`` by
+# tests/engine/test_invest_method_lists.py).
 
-_INVEST_NOT_ALLOWED: frozenset[str] = frozenset((
+INVEST_NOT_ALLOWED: frozenset[str] = frozenset((
     "not_allowed", "retire_period", "retire_total", "retire_no_limit",
+    "retire_period_total",
 ))
-_DIVEST_NOT_ALLOWED: frozenset[str] = frozenset((
+DIVEST_NOT_ALLOWED: frozenset[str] = frozenset((
     "not_allowed", "invest_period", "invest_total", "invest_no_limit",
+    "invest_period_total",
 ))
+# Groups have their own value list (``group_invest_methods``, database
+# version 77): ``not_active`` is the group's "no limits" value.
+GROUP_INVEST_NOT_ACTIVE: frozenset[str] = frozenset(
+    {"not_active"} | (INVEST_NOT_ALLOWED - {"not_allowed"}))
+GROUP_DIVEST_NOT_ACTIVE: frozenset[str] = frozenset(
+    {"not_active"} | (DIVEST_NOT_ALLOWED - {"not_allowed"}))
+_INVEST_NOT_ALLOWED = INVEST_NOT_ALLOWED
+_DIVEST_NOT_ALLOWED = DIVEST_NOT_ALLOWED
 # preprocessing/invest_total_sets.py:25-32
 _INVEST_TOTAL_METHODS: frozenset[str] = frozenset((
     "invest_total", "invest_period_total",
@@ -1840,6 +1854,8 @@ def apply_existing_chain(flex_data: object,
 
 __all__ = [
     # Method-enum constants (re-exported for direct-test use).
+    "INVEST_NOT_ALLOWED", "DIVEST_NOT_ALLOWED",
+    "GROUP_INVEST_NOT_ACTIVE", "GROUP_DIVEST_NOT_ACTIVE",
     "_INVEST_NOT_ALLOWED", "_DIVEST_NOT_ALLOWED",
     "_INVEST_TOTAL_METHODS", "_DIVEST_TOTAL_METHODS",
     "_INVEST_PERIOD_METHODS", "_DIVEST_PERIOD_METHODS",

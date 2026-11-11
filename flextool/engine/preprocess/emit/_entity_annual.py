@@ -34,18 +34,18 @@ from flextool.engine.preprocess._annuity import (
 )
 from flextool.engine.preprocess.params._branch import annuity_window_pairs
 from flextool.engine.preprocess._provider_io import _emit
+from flextool.engine.preprocess.params._existing import (
+    DIVEST_NOT_ALLOWED as _DIVEST_NOT_ALLOWED,
+    INVEST_NOT_ALLOWED as _INVEST_NOT_ALLOWED,
+)
 
 
 # ---------------------------------------------------------------------------
 # Method-enum constants — mirror flextool/flextool_base.dat:211-212.
 # ---------------------------------------------------------------------------
 
-_INVEST_NOT_ALLOWED: frozenset[str] = frozenset((
-    "not_allowed", "retire_period", "retire_total", "retire_no_limit",
-))
-_DIVEST_NOT_ALLOWED: frozenset[str] = frozenset((
-    "not_allowed", "invest_period", "invest_total", "invest_no_limit",
-))
+# The invest/retire method lists (_INVEST_NOT_ALLOWED / _DIVEST_NOT_ALLOWED)
+# are imported from params/_existing.py, their one definition.
 
 
 # ---------------------------------------------------------------------------
