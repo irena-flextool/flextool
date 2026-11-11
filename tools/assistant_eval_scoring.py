@@ -53,6 +53,7 @@ tagged data fence.
 """
 from __future__ import annotations
 
+import html
 import json
 import math
 import re
@@ -1230,6 +1231,66 @@ def grader_material(record: Mapping[str, Any], question: Question, entry: KeyEnt
     if not judged:
         parts.append("(none: rate the understandability only)")
     return "\n".join(parts)
+
+
+def _md_code(text: str) -> str:
+    """*text* as a fenced code block whose fence is longer than any run of backticks in it."""
+    longest = max((len(m) for m in re.findall(r"`+", text)), default=0)
+    bar = "`" * max(3, longest + 1)
+    return f"{bar}\n{text}\n{bar}"
+
+
+def _md_quote(text: str) -> str:
+    """*text* (model-written markdown) as a blockquote, its headings three levels lower (at most ``######``) so they
+    stay below the cell's own; lines inside its code blocks are left as they are."""
+    out, code = [], None
+    for line in text.split("\n"):
+        stripped = line.lstrip()
+        bar = re.match(r"(`{3,}|~{3,})", stripped)
+        if bar and (code is None or bar.group(1).startswith(code)):
+            code = None if code is not None else bar.group(1)
+        elif code is None:
+            heading = re.match(r"(#{1,6})(\s.*)$", line)
+            if heading:
+                line = "#" * min(6, len(heading.group(1)) + 3) + heading.group(2)
+        out.append(f"> {line}" if line else ">")
+    return "\n".join(out)
+
+
+def owner_markdown(material: str, tag: str) -> str:
+    """The owner's view of *material* (:func:`grader_material`) as markdown under a cell heading: its ``##``
+    sections become ``###``, the data fences go, the question, the answers and the excerpts are blockquotes (their
+    markdown renders) and each tool call is a code block folded under its number, state and name.  The text is the
+    graders' own; only its form changes."""
+    out: list[str] = []
+    section = call = ""
+    block: list[str] | None = None
+    for line in material.split("\n"):
+        if block is not None:
+            if line == f"<<<END {tag}>>>":
+                text = "\n".join(block)
+                if section.startswith("Tool calls"):
+                    name = html.escape(block[0].removeprefix("name: ") if block else "")
+                    out.extend([f"<details><summary>{call} {name}</summary>", "", _md_code(text), "",
+                                "</details>"])
+                else:
+                    out.append(_md_quote(text))
+                out.append("")
+                block = None
+            else:
+                block.append(line)
+        elif line == f"<<<DATA {tag}>>>":
+            block = []
+        elif line.startswith("## "):
+            section = line[3:]
+            out.extend(["", f"### {section}", ""])
+        elif re.fullmatch(r"\[\d+\] (ok|failed)", line):
+            call = line
+        else:
+            out.append(line)
+    if block is not None:
+        raise MaterialError("the material has a data fence that is not closed")
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip("\n")
 
 
 def check_reply(text: str, allowed: Mapping[str, Sequence[str]], passed: Iterable[str] = ()) \

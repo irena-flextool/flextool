@@ -727,6 +727,94 @@ def test_review_owner_first_then_opus(scoring, evaluator, tmp_path: Path) -> Non
         "failed", 1, "owner", "failed")
 
 
+# --- 8b. the review through markdown files ---------------------------------------------------------------------
+def test_owner_markdown_renders_the_material(scoring) -> None:
+    """The fences go, ## sections become ###, the question and answers are blockquotes whose own headings drop
+    three levels (not inside their code blocks), each tool call is a code block folded under its number, state
+    and name, with a fence longer than the backticks inside."""
+    tag = "0123456789ab"
+    material = "\n".join([
+        "## Question", scoring.fence("turn 1: How much?", tag),
+        "## Tool calls and results of turn 1", "[1] ok",
+        scoring.fence('name: get_entity\narguments: {}\nresult: {"x": "```"}', tag),
+        "## Final answer of turn 1", scoring.fence("## Short\n500 MW.\n\n```\n# not a heading\n```", tag),
+        "## Items to grade", "- facts_vs_assumptions: x. Allowed: right, missing, wrong"])
+    md = scoring.owner_markdown(material, tag)
+    assert "<<<" not in md and "\n## " not in md
+    assert "### Question\n\n> turn 1: How much?" in md
+    assert '<details><summary>[1] ok get_entity</summary>\n\n````\nname: get_entity' in md
+    assert "> ##### Short\n> 500 MW.\n>\n> ```\n> # not a heading\n> ```" in md
+    assert md.endswith("### Items to grade\n\n- facts_vs_assumptions: x. Allowed: right, missing, wrong")
+
+
+def test_review_through_markdown_files(scoring, evaluator, tmp_path: Path) -> None:
+    """--export-md writes the owner's form without anything of Opus's; --import-md records the first verdicts, a
+    cell that agrees with Opus is final at once, the others go to FILE.final.md with Opus's verdicts and the
+    owner's letters already in; its import records the final verdicts and the changes.  An imported first verdict
+    is never replaced; a file with letters not imported yet is never overwritten; a bad letter is a problem."""
+    folder = results(evaluator, tmp_path / "res", {
+        "G01__small__r1": make_record(scoring, "G01"),
+        "G03__small__r1": make_record(scoring, "G03", answer="coal_plant is the unit.")})
+    key = write_key(tmp_path / "key.yaml")
+    grading = tmp_path / "grading"
+    # Opus: the number right (its first allowed), facts_vs_assumptions missing, understandability 1, reason "checked"
+    assert grade_ai(evaluator, grading, key, folder, opus=Opus(verdicts={"facts_vs_assumptions": "missing"}),
+                    extra=("--single-model",)) == 0
+    form = tmp_path / "review.md"
+    assert review(evaluator, grading, key, [], "--all", "--export-md", str(form)) == 0
+    text = form.read_text(encoding="utf-8")
+    assert text.count("\n# Cell #") == 2 and "<<<DATA" not in text
+    assert "checked" not in text and "(high)" not in text and "fine" not in text     # Opus's reasons, confidences
+    number = next(t for t in ("#1", "#2") if f"first {t} " in text.split("`number:1:0`")[0].rsplit("# Cell", 1)[1])
+    other = "#2" if number == "#1" else "#1"
+
+    def fill(text: str, token: str, answers: dict[str, str]) -> str:
+        head, rest = text.split(f"# Cell {token}\n", 1)
+        block, sep, tail = rest.partition("\n# Cell #")
+        for iid, letter in answers.items():
+            block = re.sub(rf"^(- `{re.escape(iid)}`[^:\n]*:)$", rf"\g<1> {letter}", block, flags=re.MULTILINE)
+        return f"{head}# Cell {token}\n{block}{sep}{tail}"
+
+    # the number cell agrees with Opus; the other differs on facts_vs_assumptions and has a bad understandability
+    text = fill(text, number, {"number:1:0": "r", "facts_vs_assumptions": "m", "understandability": "1"})
+    form.write_text(fill(text, other, {"facts_vs_assumptions": "r", "understandability": "x"}), encoding="utf-8")
+    said: list[str] = []
+    assert review(evaluator, grading, key, [], "--import-md", str(form), said=said) == 1
+    assert any("'x' is not one of 1 / 2 / 3" in s for s in said)
+    states = cell_states(grading)
+    assert states[number]["owner"]["items"] == {"number:1:0": "right", "facts_vs_assumptions": "missing"}
+    assert states[number]["changes"] == [] and states[other]["owner"] is None
+    assert states[other]["owner_first"] == {"items": {"facts_vs_assumptions": "right"}}
+    final = tmp_path / "review.final.md"
+    assert not final.exists()                                           # the other cell is not complete yet
+    # the export refuses to overwrite the bad letter; the fixed file imports, and changing the imported
+    # facts_vs_assumptions to w keeps the first verdict r
+    assert review(evaluator, grading, key, [], "--export-md", str(form)) == 2
+    form.write_text(form.read_text(encoding="utf-8").replace("(1 / 2 / 3): x", "(1 / 2 / 3): 2")
+                    .replace("(r / m / w): r", "(r / m / w): w"), encoding="utf-8")
+    said.clear()
+    assert review(evaluator, grading, key, [], "--import-md", str(form), said=said) == 1
+    assert any("first verdict right was imported already and is kept" in s for s in said)
+    assert cell_states(grading)[other]["owner_first"] == {"items": {"facts_vs_assumptions": "right"},
+                                                          "understandability": 2}
+    shown = final.read_text(encoding="utf-8")
+    assert f"# Cell {other}" in shown and f"# Cell {number}" not in shown and "checked" in shown
+    assert "- `facts_vs_assumptions` (r / m / w; yours right, Opus missing): r" in shown
+    assert "- `understandability` (1 / 2 / 3; yours 2, Opus 1): 2" in shown
+    final.write_text(shown.replace("yours right, Opus missing): r", "yours right, Opus missing): m"),
+                     encoding="utf-8")
+    assert review(evaluator, grading, key, [], "--import-md", str(final)) == 0
+    state = cell_states(grading)[other]
+    assert state["owner"]["items"] == {"facts_vs_assumptions": "missing"} and state["owner"]["understandability"] == 2
+    assert state["changes"] == [{"id": "facts_vs_assumptions", "opus": "missing", "first": "right",
+                                 "owner": "missing"}]
+    assert state["owner_first"]["items"] == {"facts_vs_assumptions": "right"}       # agreement uses it
+    said.clear()
+    assert review(evaluator, grading, key, [], "--export-md", str(form), said=said) == 0
+    assert said == ["Every queued cell is reviewed (2)."]
+    assert summary(evaluator, grading, key, tmp_path / "results.jsonl", "--record") == 0
+
+
 # --- 9. agreement ---------------------------------------------------------------------------------------------
 def test_agreement_by_hand(analysis) -> None:
     """Items (owner, Opus): (r,r)×3, (m,m), (w,w), (r,m), (m,r), (w,r).  Agreement 5/8.  Owner margins r 4, m 2,

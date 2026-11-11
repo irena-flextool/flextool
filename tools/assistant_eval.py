@@ -2392,6 +2392,301 @@ def _reveal(grading: Grading, cell: GradingCell, first: Mapping[str, Any], ask: 
     return final, changes
 
 
+# --- review through markdown files: the owner fills a form in an editor -----------------------------------------
+MD_MARK = re.compile(r"^<!-- flextool-review (first|final) (#\d+) ([0-9a-f]{16}) -->$", re.MULTILINE)
+MD_LINE = re.compile(r"^- `([^`]+)`([^:\n]*):[ \t]*(.*?)[ \t]*$")
+MD_FIRST_HEAD = """<!-- flextool-review file: your own verdicts. Opus's are not in this file. -->
+# Review: your own verdicts
+
+Each cell ends with **Your verdicts**: write one letter after each colon, `r` right, `m` missing, `w` wrong
+(only the letters in its brackets), and the understandability `1`, `2` or `3`. {understandability}
+
+Leave a line empty to answer it later: import the file whenever you like
+(`review --dir GRADING --import-md FILE`); the verdicts given are kept and an empty line is asked again by the next
+`--export-md`. A verdict once imported stays your first verdict (agreement uses it); edit only the letters.
+After the import, the cells where Opus judged otherwise go to a second file, `{reveal}`, where you see Opus's
+verdicts and can change yours.
+"""
+MD_FINAL_HEAD = """<!-- flextool-review file: Opus's verdicts after yours. -->
+# Review: Opus's verdicts after yours
+
+Your own verdicts are recorded. For each cell, Opus's verdicts are shown next to yours; under **Your final
+verdicts** each line where you differ already holds your letter. Leave it to keep yours, or write another letter
+to change it, then import this file (`review --dir GRADING --import-md FILE`).
+"""
+
+
+def _md_letter(verdict: Any) -> str:
+    return next((k for k, v in LETTERS.items() if v == verdict), "") if isinstance(verdict, str) else \
+        str(verdict) if verdict is not None else ""
+
+
+def _md_cell(grading: Grading, cell: GradingCell, kind: str) -> str:
+    """The markdown of one cell: its heading, its mark (kind, token, request hash) and either the owner's form
+    (``first``) or Opus's verdicts and the final form (``final``), with the material."""
+    tag = scoring.data_tag(grading.state["seed"], cell.token)
+    parts = [f"# Cell {cell.token}", f"<!-- flextool-review {kind} {cell.token} {cell.request_sha256[:16]} -->", ""]
+    material = scoring.owner_markdown(cell.material, tag)
+    if kind == "first":
+        given = cell.state.get("owner_first") or {}
+        parts += [material, "", "### Your verdicts", ""]
+        for i in cell.judged:
+            letter = _md_letter((given.get("items") or {}).get(i.id))
+            parts.append(f"- `{i.id}`{' (critical)' if i.critical else ''} "
+                         f"({' / '.join(_letters(i.allowed))}): {letter}".rstrip())
+        parts.append(f"- `understandability` (1 / 2 / 3): {_md_letter(given.get('understandability'))}".rstrip())
+        return "\n".join(parts)
+    first, ai = cell.state["owner_first"], cell.ai
+    parts += ["### Opus's grading (shown after yours)", "",
+              f"The cell ({ai['confidence']}): {_blinded_reason(grading, cell, ai['reason'])}", "",
+              "| item | yours | Opus | Opus's reason |", "|---|---|---|---|"]
+    form = []
+    for i in cell.judged:
+        mine, theirs = first["items"][i.id], ai["items"][i.id]
+        differs = mine != theirs["verdict"]
+        reason = _blinded_reason(grading, cell, theirs["reason"]).replace("|", "\\|").replace("\n", " ")
+        parts.append(f"| `{i.id}` | {mine} | {'**' if differs else ''}{theirs['verdict']}{'**' if differs else ''} "
+                     f"({theirs['confidence']}) | {reason} |")
+        if differs:
+            form.append(f"- `{i.id}` ({' / '.join(_letters(i.allowed))}; yours {mine}, Opus {theirs['verdict']}): "
+                        f"{_md_letter(mine)}")
+    u_differs = first["understandability"] != ai["understandability"]
+    parts.append(f"| understandability | {first['understandability']} | {'**' if u_differs else ''}"
+                 f"{ai['understandability']}{'**' if u_differs else ''} | |")
+    if u_differs:
+        form.append(f"- `understandability` (1 / 2 / 3; yours {first['understandability']}, Opus "
+                    f"{ai['understandability']}): {first['understandability']}")
+    parts += ["", "### Your final verdicts", "", *form, "", "### The cell", "", material]
+    return "\n".join(parts)
+
+
+def _md_disagrees(cell: GradingCell, first: Mapping[str, Any]) -> bool:
+    ai = cell.ai
+    return ai is not None and (any(first["items"][i.id] != ai["items"][i.id]["verdict"] for i in cell.judged)
+                               or first["understandability"] != ai["understandability"])
+
+
+def _md_first_done(cell: GradingCell) -> bool:
+    first = cell.state.get("owner_first") or {}
+    return all(i.id in (first.get("items") or {}) for i in cell.judged) and first.get("understandability") is not None
+
+
+def _md_reveal_path(path: Path) -> Path:
+    return path.with_name(f"{path.name.removesuffix('.md')}.final.md")
+
+
+def _md_recorded(cell: GradingCell, kind: str, iid: str) -> Any:
+    """What a review file's line *iid* of *kind* stands for in the cell's state now: the first verdict, or the
+    final one (the first while the cell is not finished)."""
+    state = cell.state or {}
+    source = state.get("owner") if kind == "final" and _owner_done(state) else state.get("owner_first") or {}
+    return source.get("understandability") if iid == "understandability" else (source.get("items") or {}).get(iid)
+
+
+def _md_unimported(grading: Grading, text: str) -> list[str]:
+    """The cells of a review file with a line whose letter is not what the grading records (a letter written and
+    not imported yet, or one that is no letter)."""
+    by_token = {c.token: c for c in grading.cells}
+    out = []
+    for kind, token, _sha, lines in _md_blocks(text):
+        cell = by_token.get(token)
+        if cell is None:
+            continue
+        for iid, word in lines:
+            allowed = {"1": 1, "2": 2, "3": 3} if iid == "understandability" else \
+                next((_letters(i.allowed) for i in cell.judged if i.id == iid), LETTERS)
+            try:
+                given, value = _md_answer(word, allowed)
+            except ValueError:
+                out.append(token)
+                break
+            if given and value != _md_recorded(cell, kind, iid):
+                out.append(token)
+                break
+    return out
+
+
+def _md_settle(cell: GradingCell) -> bool:
+    """Finish a cell whose first verdicts are all given and that Opus has nothing else on (agrees, or no
+    readable reply): the first verdicts are final.  True when it did."""
+    if _owner_done(cell.state) or not _md_first_done(cell) or _md_disagrees(cell, cell.state["owner_first"]):
+        return False
+    first = cell.state["owner_first"]
+    cell.state.update(owner={"items": dict(first["items"]), "understandability": first["understandability"],
+                             "at": iso(utc_now())}, changes=[])
+    write_json(cell.path, cell.state)
+    return True
+
+
+def _md_write(grading: Grading, path: Path, kind: str, cells: Sequence[GradingCell]) -> None:
+    """*cells* as one file at *path*.  A file there is overwritten only when it holds no letter the owner wrote
+    and that is not imported yet (it equals the file written from the cells it names); else :class:`Refused`."""
+    head = (MD_FIRST_HEAD.format(understandability=scoring.UNDERSTANDABILITY_TEXT, reveal=_md_reveal_path(path).name)
+            if kind == "first" else MD_FINAL_HEAD)
+    blocks = []
+    for cell in cells:
+        # The material as shown (the forms hold only item ids and letters; Opus's reasons are scanned one by one
+        # in _blinded_reason, as in the terminal, and the file's own words name Opus).
+        found = _scan(grading, cell, scoring.owner_markdown(cell.material,
+                                                            scoring.data_tag(grading.state["seed"], cell.token)))
+        if found:
+            raise Refused(f"Cell {cell.token}: the review file would reveal {', '.join(found)}; nothing is written.")
+        blocks.append(_md_cell(grading, cell, kind))
+    content = head + "".join(f"\n\n{b}" for b in blocks) + "\n"
+    unimported = _md_unimported(grading, path.read_text(encoding="utf-8")) if path.is_file() else []
+    if unimported:
+        raise Refused(f"{path} has letters that are not imported yet ({', '.join(unimported[:5])}"
+                      f"{' …' if len(unimported) > 5 else ''}): import it first (review --dir {grading.folder} "
+                      f"--import-md {path}), or move it away.")
+    path.write_text(content, encoding="utf-8")
+
+
+def _export_md(grading: Grading, review: Mapping[str, Any], path: Path, say: Callable[[str], None]) -> int:
+    by_token = {c.token: c for c in grading.cells}
+    queued = [by_token[t] for t in sorted(review["queue"], key=lambda t: int(t.lstrip("#")))
+              if not _owner_done(by_token[t].state)]
+    queued = [c for c in queued if not _md_settle(c)]
+    first = [c for c in queued if not _md_first_done(c)]
+    final = [c for c in queued if _md_first_done(c)]
+    if first:
+        _md_write(grading, path, "first", first)
+        say(f"{len(first)} cell(s) for your own verdicts: {path}")
+    if final:
+        _md_write(grading, _md_reveal_path(path), "final", final)
+        say(f"{len(final)} cell(s) with Opus's verdicts after yours: {_md_reveal_path(path)}")
+    if not queued:
+        say(f"Every queued cell is reviewed ({len(review['queue'])}).")
+    return 0
+
+
+def _md_answer(word: str, allowed: Mapping[str, Any]) -> tuple[bool, Any]:
+    """``(given, value)`` of what the owner wrote on a line: empty is not given; a letter (or its word) of
+    *allowed*; anything else :class:`ValueError`."""
+    word = word.strip().strip("*_`").strip().lower()
+    if not word:
+        return False, None
+    if word in allowed:
+        return True, allowed[word]
+    for value in allowed.values():
+        if str(value) == word:
+            return True, value
+    raise ValueError(word)
+
+
+def _md_blocks(text: str) -> list[tuple[str, str, str, list[tuple[str, str]]]]:
+    """``(kind, token, request hash prefix, [(id, written)])`` of each cell of a review file: the form lines that
+    follow its mark (until the next mark)."""
+    marks = list(MD_MARK.finditer(text))
+    out = []
+    for n, m in enumerate(marks):
+        body = text[m.end():marks[n + 1].start() if n + 1 < len(marks) else len(text)]
+        form = body.split("\n### Your final verdicts\n" if m.group(1) == "final" else "\n### Your verdicts\n", 1)
+        lines = form[1].split("\n### ", 1)[0] if len(form) == 2 else ""
+        out.append((m.group(1), m.group(2), m.group(3),
+                    [(lm.group(1), lm.group(3)) for lm in map(MD_LINE.match, lines.split("\n")) if lm]))
+    return out
+
+
+def _import_md(grading: Grading, path: Path, say: Callable[[str], None]) -> int:
+    if not path.is_file():
+        raise Refused(f"No review file {path}.")
+    blocks = _md_blocks(path.read_text(encoding="utf-8"))
+    if not blocks:
+        raise Refused(f"{path} holds no cell of a review file (written by review --export-md).")
+    by_token = {c.token: c for c in grading.cells}
+    done = partial = kept = 0
+    problems: list[str] = []
+    for kind, token, sha, lines in blocks:
+        cell = by_token.get(token)
+        if cell is None or cell.state is None:
+            problems.append(f"{token}: no such graded cell")
+            continue
+        if cell.request_sha256[:16] != sha:
+            problems.append(f"{token}: the cell's material changed since the file was written; export again")
+            continue
+        if _owner_done(cell.state):
+            kept += 1
+            continue
+        written = dict(lines)
+        if kind == "first":
+            first = cell.state["owner_first"] = cell.state.get("owner_first") or {}
+            items = first.setdefault("items", {})
+            asked = [(i.id, _letters(i.allowed)) for i in cell.judged] + \
+                    [("understandability", {"1": 1, "2": 2, "3": 3})]
+            for iid, allowed in asked:
+                try:
+                    given, value = _md_answer(written.get(iid, ""), allowed)
+                except ValueError as exc:
+                    problems.append(f"{token} {iid}: '{exc}' is not one of {' / '.join(allowed)}")
+                    continue
+                before = first.get(iid) if iid == "understandability" else items.get(iid)
+                if not given:
+                    continue
+                if before is not None and before != value:
+                    problems.append(f"{token} {iid}: your first verdict {before} was imported already and is kept "
+                                    f"(review --regrade {token} gives a later one)")
+                elif iid == "understandability":
+                    first["understandability"] = value
+                else:
+                    items[iid] = value
+            write_json(cell.path, cell.state)
+            if not _md_first_done(cell):
+                partial += 1
+            elif _md_settle(cell):
+                done += 1
+            continue
+        if not _md_first_done(cell) or cell.ai is None:
+            problems.append(f"{token}: your own verdicts are not all imported; import the first file first")
+            continue
+        first, ai = cell.state["owner_first"], cell.ai
+        final = {"items": dict(first["items"]), "understandability": first["understandability"]}
+        changes, bad = [], False
+        for i in cell.judged:
+            if first["items"][i.id] == ai["items"][i.id]["verdict"]:
+                continue
+            try:
+                given, value = _md_answer(written.get(i.id, ""), _letters(i.allowed))
+            except ValueError as exc:
+                problems.append(f"{token} {i.id}: '{exc}' is not one of {' / '.join(_letters(i.allowed))}")
+                bad = True
+                continue
+            if given and value != first["items"][i.id]:
+                final["items"][i.id] = value
+                changes.append({"id": i.id, "opus": ai["items"][i.id]["verdict"], "first": first["items"][i.id],
+                                "owner": value})
+        if first["understandability"] != ai["understandability"]:
+            try:
+                given, value = _md_answer(written.get("understandability", ""), {"1": 1, "2": 2, "3": 3})
+            except ValueError as exc:
+                problems.append(f"{token} understandability: '{exc}' is not one of 1 / 2 / 3")
+                bad = True
+                given = False
+            if given and value != first["understandability"]:
+                final["understandability"] = value
+                changes.append({"id": "understandability", "opus": ai["understandability"],
+                                "first": first["understandability"], "owner": value})
+        if bad:
+            continue
+        cell.state.update(owner={**final, "at": iso(utc_now())}, changes=changes)
+        write_json(cell.path, cell.state)
+        done += 1
+    for p in problems:
+        say(f"  {p}")
+    review = review_state(grading)
+    left = [by_token[t] for t in review["queue"] if not _owner_done(by_token[t].state)]
+    reveal = [c for c in left if _md_first_done(c)]
+    say(f"Imported {path.name}: {done} cell(s) reviewed, {partial} with verdicts still to give, {len(problems)} "
+        f"problem(s){f', {kept} already reviewed (left as they are)' if kept else ''}. {len(left)} cell(s) still "
+        "wait.")
+    if reveal and blocks[0][0] == "first":
+        target = _md_reveal_path(path)
+        _md_write(grading, target, "final", reveal)
+        say(f"{len(reveal)} cell(s) where Opus judged otherwise: {target}")
+    elif reveal:
+        say("Export again (review --export-md) for the cells still to finish.")
+    return 1 if problems else 0
+
+
 def cmd_review(args: argparse.Namespace, *, ask: Callable[[str], str | None] | None = None,
                say: Callable[[str], None] = print) -> int:
     def default_ask(text: str) -> str | None:
@@ -2418,6 +2713,12 @@ def _review(args: argparse.Namespace, ask: Callable[[str], str | None], say: Cal
         review["all"] = True
         write_json(grading.folder / REVIEW_FILE, review)
         review = review_state(grading)
+    if args.export_md or args.import_md:
+        if args.regrade is not None:
+            raise Refused("--regrade works in the terminal only.")
+        if args.export_md:
+            return _export_md(grading, review, args.export_md, say)
+        return _import_md(grading, args.import_md, say)
     by_token = {c.token: c for c in grading.cells}
     if args.regrade is not None:
         token = args.regrade if args.regrade.startswith("#") else f"#{args.regrade}"
@@ -2804,6 +3105,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--sitting", type=int, default=DEFAULT_SITTING, help="cells to review in one sitting")
     p.add_argument("--regrade", metavar="#N", help="review cell #N again (the latest review wins)")
     p.add_argument("--all", action="store_true", help="queue every cell (full manual grading)")
+    md = p.add_mutually_exclusive_group()
+    md.add_argument("--export-md", metavar="FILE", type=_abs_path,
+                    help="write the queued cells to a markdown file to fill in an editor (every cell, no sitting)")
+    md.add_argument("--import-md", metavar="FILE", type=_abs_path,
+                    help="record the verdicts written in a review file; disagreements go to FILE.final.md")
     p.add_argument("--key", default=str(scoring.KEY_PATH), help=argparse.SUPPRESS)
     p.add_argument("--set", default=str(scoring.SET_PATH), help=argparse.SUPPRESS)
 

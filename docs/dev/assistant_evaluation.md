@@ -338,6 +338,37 @@ A sitting is 37 cells (`--sitting N`; 0 for no limit). `q` or Ctrl-C keeps the v
 next `review` asks the rest. `--regrade #n` reviews a cell again; the latest review wins. `--all` queues every
 cell (full manual grading).
 
+### review in a markdown editor
+
+The terminal shows the material as plain text. The same review can be done in files that a markdown viewer
+renders:
+
+```
+python tools/assistant_eval.py review --dir GRADING --export-md REVIEW.md
+# fill in the letters under "Your verdicts", then
+python tools/assistant_eval.py review --dir GRADING --import-md REVIEW.md
+# the cells where Opus judged otherwise are now in REVIEW.final.md: keep or change your letters, then
+python tools/assistant_eval.py review --dir GRADING --import-md REVIEW.final.md
+```
+
+`--export-md` writes every queued cell not yet reviewed (no sitting limit) as `# Cell #n`. The material is the
+graders' own, rendered: its sections are `###` headings, the fences are gone, the question, the answers and the
+excerpts are blockquotes (their headings three levels lower), and each tool call is a code block folded under
+its number, state and name. Each cell ends with **Your verdicts**, one line per judged item and one for the
+understandability; the owner writes the letter after the colon. Nothing of Opus's is in this file, and every
+cell's material is leak-scanned as for the terminal.
+
+`--import-md` records the letters as the owner's first verdicts; an empty line is asked again by the next
+export, so a file can be imported part-filled, as often as wanted. A first verdict once imported is never
+replaced (a different letter is reported and kept; `--regrade` in the terminal gives a later review). A cell
+whose first verdicts are complete and that Opus agrees with (or that has no readable reply of Opus's) is
+reviewed at once, as in the terminal. The other cells go to `REVIEW.final.md`: Opus's verdicts, confidences and
+reasons (blinded, as in the terminal) next to the owner's, then **Your final verdicts** with each differing line
+already holding the owner's letter (leaving it keeps it, as Enter does), then the material again. Its import
+records the final verdicts and the changes. A letter that is not allowed is reported and its cell left as it
+was (exit code 1). An export never overwrites a file that holds letters not imported yet; a cell whose material
+changed since the file was written is refused.
+
 ### summary
 
 `summary --dir` prints, per model, level setting and class: answered, incomplete, escalated, failed (and how many
