@@ -22,7 +22,7 @@ from flextool.process_outputs.solve_order import INVESTMENT_PERIOD_TABLES, perio
 from flextool.process_outputs._output_meta import (
     datapackage_resource,
     derive_column_meta,
-    load_unit_context,
+    replay_unit_context,
     row_units,
     write_unit_context,
 )
@@ -1016,8 +1016,9 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                     results[key] = results[key].squeeze()
                 else:
                     results[key] = results[key].droplevel('scenario', axis=1)
-        # The node units of the run that wrote the parquets (None: every node is MWh).
-        unit_ctx = load_unit_context(parquet_dir)
+        # The units the run that wrote the parquets resolved: each table's footer first, then the node units of
+        # its _unit_context.json (none: every node is MWh) for what the footers do not hold.
+        unit_ctx = replay_unit_context(parquet_dir)
         start = log_time("Read parquet files", start, timing_recorder)
 
     # Read original raw outputs from FlexTool
@@ -1142,11 +1143,11 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         if not single_result:
             _note_parquet_written(parquet_dir)
 
-    # The node units beside the parquets: written when some node is not MWh, deleted otherwise, on every
-    # non-replay call (also a single-result one, and without parquet output when the folder exists), so a
-    # replay never reads the units of an earlier run.
+    # The node units beside the parquets: written with the parquets when some node is not MWh, deleted
+    # otherwise, on every non-replay call (also a single-result one).  A call that writes no parquets deletes
+    # the file, so the units of this run never sit beside an earlier run's parquets (their footers hold theirs).
     if not read_parquet_dir and ('parquet' in write_methods or os.path.isdir(parquet_dir)):
-        write_unit_context(parquet_dir, unit_ctx)
+        write_unit_context(parquet_dir, unit_ctx if 'parquet' in write_methods else None)
 
     # Raw horizon dump (``model.output_horizon``): stream the per-roll parts
     # from ``output_raw/horizon/`` into ``<parquet_dir>/horizon/``.  An

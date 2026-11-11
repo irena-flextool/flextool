@@ -1265,8 +1265,11 @@ class UnitContext:
     (:func:`flextool.units_of_measure.shares_capacity`), ``connection_nodes`` maps a connection to its two ends,
     ``group_nodes`` a nodeGroup to its member nodes and ``flowgroup_nodes`` a flowGroup to the nodes of its arcs.
     :data:`UNIT_SOURCE` says which of them a table's unit comes from.  A context without ``node_units`` gives
-    exactly the default units, whatever the other maps hold.  Holds dicts, so it is not hashable: do not key a
-    cache on it."""
+    the default units, except that ``entity_annuity_d_p`` tells its storage nodes (CUR per amount, ``CUR/MWh``)
+    from its units and connections (CUR per rate, ``CUR/MW``) whenever the context knows the units and
+    connections (:func:`_follows_nodes`).  ``footer`` holds the units a writer already resolved
+    (:class:`FooterUnits`, set by :func:`replay_unit_context`); a replay reads them first.  Holds dicts, so it is
+    not hashable: do not key a cache on it."""
 
     node_units: Mapping[str, str] = field(default_factory=dict)
     capacity_nodes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
@@ -1274,6 +1277,7 @@ class UnitContext:
     group_nodes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     connection_nodes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
     flowgroup_nodes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    footer: "FooterUnits | None" = field(default=None, compare=False)
 
     @property
     def is_default(self) -> bool:
@@ -1324,6 +1328,63 @@ def write_unit_context(parquet_dir: str, ctx: "UnitContext | None") -> None:
     os.makedirs(parquet_dir, exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(ctx.to_json(), fh, indent=1)
+
+
+class FooterUnits:
+    """The units the writer resolved into the parquet footers of one scenario folder (``units`` of each column
+    and ``flextool_row_units``), read from a table's file on first use.  A replay takes a table's units from
+    here before it resolves them again, so a replay shows what the run wrote (one source of the units)."""
+
+    def __init__(self, parquet_dir) -> None:
+        import os
+
+        self._dir = str(parquet_dir)
+        self._cache: dict[str, "tuple[dict[str, str], dict | None] | None"] = {}
+        self._exists = os.path.isdir(self._dir)
+
+    def table(self, output_key: str) -> "tuple[dict[str, str], dict | None] | None":
+        """``({column: unit}, row units or None)`` of *output_key*'s footer, ``None`` without a file or units."""
+        if output_key in self._cache:
+            return self._cache[output_key]
+        found = None
+        if self._exists:
+            import os
+
+            path = os.path.join(self._dir, f"{output_key}.parquet")
+            if os.path.isfile(path):
+                from flextool.lean_parquet import read_lean_parquet_column_meta, read_lean_parquet_row_units
+                try:
+                    meta = read_lean_parquet_column_meta(path)
+                    rows = read_lean_parquet_row_units(path)
+                except Exception:  # noqa: BLE001 - an unreadable footer: resolve the units instead
+                    meta, rows = None, None
+                if meta:
+                    found = ({str(k): str(v.get("unit", "")) for k, v in meta.items() if isinstance(v, dict)}, rows)
+        self._cache[output_key] = found
+        return found
+
+
+def replay_unit_context(parquet_dir) -> UnitContext:
+    """The :class:`UnitContext` of a replay of the scenario folder *parquet_dir*: its
+    :data:`UNIT_CONTEXT_FILE` (an empty context without one) with the folder's footers
+    (:class:`FooterUnits`), so the replayed units are those the run wrote."""
+    from dataclasses import replace
+
+    ctx = load_unit_context(parquet_dir) or UnitContext()
+    return replace(ctx, footer=FooterUnits(parquet_dir))
+
+
+def _footer_of(ctx, output_key: str) -> "tuple[dict[str, str], dict | None] | None":
+    """The written units of *output_key* in the footer of *ctx* (one context), ``None`` without them."""
+    footer = getattr(ctx, "footer", None) if ctx is not None else None
+    return footer.table(output_key) if footer is not None else None
+
+
+def _leaf_name(label: tuple, scen_pos: "int | None") -> str:
+    """The footer key of a column: ``str`` of its label without the comparison ``scenario`` level (a one-level
+    label as its value, as the writer keyed it)."""
+    leaf = label if scen_pos is None else label[:scen_pos] + label[scen_pos + 1:]
+    return str(leaf[0]) if len(leaf) == 1 else str(tuple(leaf))
 
 
 def load_unit_context(parquet_dir) -> "UnitContext | None":
@@ -1477,17 +1538,33 @@ def _any_node_units(ctx) -> bool:
 
 
 def _follows_nodes(output_key: str, tf: Transform, ctx: "UnitContext | None") -> bool:
-    """Whether the unit of a column of *output_key* that underwent *tf* follows its nodes in *ctx*: the context
-    has a node that is not MWh, the transform has a template, and the table is in :data:`UNIT_SOURCE` and not in
-    :data:`DEFAULT_UNITS_ONLY` (checked first: the power features stay MW whatever their nodes)."""
-    return (ctx is not None and not ctx.is_default and bool(tf.template)
-            and output_key not in DEFAULT_UNITS_ONLY and output_key in UNIT_SOURCE)
+    """Whether the unit of a column of *output_key* that underwent *tf* follows its nodes in *ctx*: the transform
+    has a template, the table is in :data:`UNIT_SOURCE` and not in :data:`DEFAULT_UNITS_ONLY` (checked first:
+    the power features stay MW whatever their nodes), and the context has a node that is not MWh.
+
+    Also with every node MWh, a table of entities by class (``entity_annuity_d_p``: storage nodes, units and
+    connections in one table) follows when the context knows the units and connections: a storage node's
+    capacity is an amount, so its cost is per amount (``CUR/MWh``); a unit's or connection's capacity is a
+    rate, so its cost is per rate (``CUR/MW``)."""
+    if ctx is None or not tf.template or output_key in DEFAULT_UNITS_ONLY or output_key not in UNIT_SOURCE:
+        return False
+    if not ctx.is_default:
+        return True
+    return (bool(tf.node_template) and UNIT_SOURCE[output_key].kind is _U.ENTITY_BY_CLASS
+            and bool(ctx.capacity_nodes or ctx.connection_nodes))
 
 
 def entity_unit(tf: Transform, kind: UnitSourceKind, value, ctx: UnitContext) -> str:
     """The unit of a quantity that underwent *tf* for the level value *value* (a node, unit, connection or group,
     read as *kind* says), with the node units of *ctx*."""
-    template = tf.template
+    return entity_label(tf.template, kind, value, ctx, node_template=tf.node_template)
+
+
+def entity_label(template: str, kind: UnitSourceKind, value, ctx: UnitContext, *, node_template: str = "") -> str:
+    """*template* (a unit template, or a plot label with unit tokens) filled for the level value *value* (a node,
+    unit, connection or group, read as *kind* says) with the node units of *ctx*.  *node_template* is the
+    template of an ``entity`` level value that is a node (:attr:`Transform.node_template`; ``""`` =
+    *template*).  The one rule of :func:`entity_unit` and the plot labels."""
     units = ctx.node_units
     name = str(value)
     if kind is _U.ENTITY_BY_CLASS:
@@ -1496,7 +1573,7 @@ def entity_unit(tf: Transform, kind: UnitSourceKind, value, ctx: UnitContext) ->
         elif name in ctx.capacity_nodes:
             kind = _U.CAPACITY_SIDE
         else:
-            return uom.fill(tf.node_template or template, uom.node_unit(name, units))
+            return uom.fill(node_template or template, uom.node_unit(name, units))
     if kind is _U.NODE:
         return uom.fill(template, uom.node_unit(name, units))
     if kind is _U.CAPACITY_SIDE:
@@ -1581,21 +1658,49 @@ def row_units(output_key: str, index, columns, ctx=None, *, level_names=None) ->
     template is filled for the entity, so a mixed-column table (``nodeGroup_gdt_p``: m3, a ratio, m3/a) gets one
     unit per column.  A column that does not follow its nodes keeps its unit (``""`` for a unitless one)."""
     source = UNIT_SOURCE.get(output_key)
-    if source is None or not source.row or output_key in DEFAULT_UNITS_ONLY or not _any_node_units(ctx):
+    if source is None or not source.row or output_key in DEFAULT_UNITS_ONLY:
+        return None
+    if not _any_node_units(ctx) and not _any_footer_rows(ctx, output_key):
         return None
     entities = _row_entities(index, source.level)
     if entities is None:
         return None
-    cols, _names = _column_transforms(output_key, columns, level_names)
+    cols, names = _column_transforms(output_key, columns, level_names)
     if not cols:
         return None
-    measures = [(str(col), tf, _context_for(ctx, scen)) for col, _label, tf, scen in cols if tf is not None]
+    measures = []
+    for col, label, tf, scen in cols:
+        if tf is None:
+            continue
+        c = _context_for(ctx, scen)
+        footer = _footer_of(c, output_key)
+        written = footer[1] if footer is not None else None
+        leaf = _leaf_name(label, _scenario_level(output_key, len(label), names))
+        measures.append((str(col), tf, c, written, leaf))
     out: dict[str, dict[str, str]] = {}
     for entity in entities:
-        out[entity] = {name: (entity_unit(tf, source.kind, entity, c) if _follows_nodes(output_key, tf, c)
-                              else tf.unit)
-                       for name, tf, c in measures}
+        units: dict[str, str] = {}
+        for name, tf, c, written, leaf in measures:
+            if written is not None and leaf in written.get(entity, {}):
+                units[name] = written[entity][leaf]
+            elif _follows_nodes(output_key, tf, c):
+                units[name] = entity_unit(tf, source.kind, entity, c)
+            else:
+                units[name] = tf.unit
+        out[entity] = units
     return out
+
+
+def _any_footer_rows(ctx, output_key: str) -> bool:
+    """Whether a footer of *ctx* (one context, or one per scenario) holds row units of *output_key*."""
+    if ctx is None:
+        return False
+    contexts = [ctx] if isinstance(ctx, UnitContext) else list(ctx.values())
+    for c in contexts:
+        footer = _footer_of(c, output_key)
+        if footer is not None and footer[1]:
+            return True
+    return False
 
 
 def resolve_columns(
@@ -1627,8 +1732,13 @@ def resolve_columns(
             out.append(ColumnMeta(name, "", Semantics.DIMENSION, "Index / key dimension."))
             continue
         c = _context_for(ctx, scenario)
+        footer = _footer_of(c, output_key)
+        written = (footer[0].get(_leaf_name(label, _scenario_level(output_key, len(label), names)))
+                   if footer is not None else None)
         if by_row is not None:
             unit = summarise_units(units[name] for units in by_row.values()) or tf.unit
+        elif written is not None:
+            unit = written
         elif source is not None and not source.row and _follows_nodes(output_key, tf, c):
             pos = _level_position(output_key, source.level, len(label), names)
             unit = _unit_of(tf, c, output_key, label[pos] if pos is not None else None)

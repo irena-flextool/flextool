@@ -48,6 +48,7 @@ from flextool.update_flextool.db_handle import open_database_mapping
 from flextool._file_lock import lock_exclusive as _lock_exclusive, unlock as _unlock
 from spinedb_api.parameter_value import Map
 
+from flextool import units_of_measure as uom
 from flextool.process_outputs._output_meta import FACTOR, result_key_summary
 from flextool.process_outputs.solve_order import period_solve_labels
 
@@ -652,7 +653,9 @@ def _node_unit_payload(unit_ctx, alternative_name: str) -> tuple[list, list[tupl
     otherwise)."""
     if unit_ctx is None or unit_ctx.is_default:
         return [], []
-    definitions = [("node", NODE_UNIT_PARAMETER, None, None, NODE_UNIT_DESCRIPTION)]
+    # The default MWh makes Spine's value-or-default lookup right for every node and alternative (an MWh node,
+    # or every node of a default run's alternative, has no value of its own).
+    definitions = [("node", NODE_UNIT_PARAMETER, uom.DEFAULT_A, None, NODE_UNIT_DESCRIPTION)]
     values = [("node", (node,), NODE_UNIT_PARAMETER, unit, alternative_name)
               for node, unit in sorted(unit_ctx.node_units.items())]
     return definitions, values

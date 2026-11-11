@@ -1,9 +1,9 @@
 """Build the :class:`~flextool.process_outputs._output_meta.UnitContext` of one run from its sets.
 
 The node units come from the provider frame ``input/node__unit_of_measure`` (the explicit, non-MWh values of
-``node.unit_of_measure``).  When every node is MWh the context is empty and nothing else is read, so the default
-run does exactly what it did before.  Otherwise the maps that say which nodes a result column (or row) carries
-are built once per run from the post-processing sets ``s`` and the conversion coefficients in ``par``:
+``node.unit_of_measure``).  The maps that say which nodes a result column (or row) carries are built once per run
+from the post-processing sets ``s`` and the conversion coefficients in ``par``, also when every node is MWh (then
+only ``entity_annuity_d_p`` uses them, to tell its storage nodes from its units and connections):
 
 * a unit's capacity side: its output nodes (``s.process_sink``, in arc order) whose ``conversion_flow_coeff``
   is not 0 (a 0 output is not in the capacity constraints), else its input nodes (``s.process_source``);
@@ -65,13 +65,10 @@ def _methods(provider) -> list[tuple[str, str]]:
 
 
 def unit_context_from(s, par=None, provider=None) -> UnitContext:
-    """The :class:`UnitContext` of a run: its node units (from *provider*) and, when some node is not MWh, the
-    capacity sides, shared-capacity units, connection ends and group members from the sets *s* (see the module
-    docstring).  An empty context when every node is MWh, when there is no provider or when the database has no
-    ``unit_of_measure`` definition."""
+    """The :class:`UnitContext` of a run: its node units (from *provider*; none when every node is MWh, when
+    there is no provider or when the database has no ``unit_of_measure`` definition) and the capacity sides,
+    shared-capacity units, connection ends and group members from the sets *s* (see the module docstring)."""
     node_units = uom.read_node_units(provider)
-    if not node_units:
-        return UnitContext()
     units = {str(u) for u in getattr(s, "process_unit", [])}
     connections = {str(c) for c in getattr(s, "process_connection", [])}
     sinks = _pairs(getattr(s, "process_sink", None))

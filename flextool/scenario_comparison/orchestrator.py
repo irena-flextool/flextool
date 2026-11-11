@@ -198,15 +198,27 @@ def _derive_comparison_settings(plots_flat: dict) -> dict:
     return out
 
 
-def comparison_unit_context(scenario_folders, parquet_dirs) -> "dict | None":
-    """``{scenario folder name: UnitContext}`` of the compared scenarios (from each folder's
-    ``_unit_context.json``), or ``None`` when every node of every scenario is MWh."""
-    from flextool.process_outputs._output_meta import UnitContext, load_unit_context
+def comparison_unit_context(scenario_folders, parquet_dirs) -> dict:
+    """``{scenario folder name: UnitContext}`` of the compared scenarios: each folder's ``_unit_context.json``
+    (an empty context when every node is MWh) with the folder's parquet footers, so a compared table shows the
+    units each scenario's run wrote (:func:`~flextool.process_outputs._output_meta.replay_unit_context`)."""
+    from flextool.process_outputs._output_meta import replay_unit_context
 
-    contexts = {name: load_unit_context(d) for name, d in zip(scenario_folders, parquet_dirs)}
-    if all(c is None or c.is_default for c in contexts.values()):
-        return None
-    return {name: c if c is not None else UnitContext() for name, c in contexts.items()}
+    return {name: replay_unit_context(d) for name, d in zip(scenario_folders, parquet_dirs)}
+
+
+def comparison_column_units(name: str, df, unit_ctx) -> "tuple[dict | None, dict | None]":
+    """``(column metadata, row units)`` of the combined comparison table *name* for its parquet footer, as a
+    scenario's own parquet carries them: the units of each scenario's columns (keyed by the full column label,
+    the ``scenario`` level included) and, for a table whose unit varies by row, the units per row entity.
+    ``(None, None)`` for an undeclared table."""
+    from flextool.process_outputs._output_meta import derive_column_meta, row_units
+
+    if not isinstance(df, pd.DataFrame):
+        return None, None
+    derived = derive_column_meta(name, df.columns, ctx=unit_ctx, rows=df.index)
+    meta = {k: v.as_dict() for k, v in derived.items()} if derived else None
+    return meta, row_units(name, df.index, df.columns, unit_ctx)
 
 
 def unit_differences(sheets, unit_ctx) -> list[str]:
@@ -398,8 +410,8 @@ def run(
     scenario_break_times = {
         name: load_timeline_breaks(d) for name, d in zip(scenario_folders, break_dirs)
     }
-    # The node units of each scenario folder (keyed like the data's ``scenario`` level: the folder name); None
-    # when every node of every scenario is MWh, so a default comparison is written as before.
+    # The units of each scenario folder (keyed like the data's ``scenario`` level: the folder name): its
+    # parquet footers first, then its node units.
     unit_ctx = comparison_unit_context(scenario_folders, break_dirs)
 
     # Write combined comparison parquets if output directory specified
@@ -410,7 +422,9 @@ def run(
         write_id = new_write_id()
         for name, df in combined_dfs.items():
             if not df.empty:
-                write_lean_parquet(df, os.path.join(comparison_parquet_dir, f"{name}.parquet"), write_id=write_id)
+                col_meta, table_row_units = comparison_column_units(name, df, unit_ctx)
+                write_lean_parquet(df, os.path.join(comparison_parquet_dir, f"{name}.parquet"), write_id=write_id,
+                                   column_metadata=col_meta, row_units=table_row_units)
         # Also write a metadata file with the scenario list and the runs the folders held, checked again now that
         # every member file has been read (parquets, dispatch mappings, timeline breaks)
         write_comparison_metadata(

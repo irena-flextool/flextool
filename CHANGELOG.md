@@ -1,5 +1,12 @@
 ## Unreleased
 
+- **Fixed (labels only): the unit of a storage node's annuity.** `entity_annuity_d_p` holds units, connections and
+  storage nodes in one table. A storage node's capacity is an amount (how much it holds), so its annuity is per
+  amount unit: `CUR/MWh` (was `CUR/MW`), or `CUR/m3` for a node whose `unit_of_measure` is m3. A unit's or
+  connection's capacity is a rate, so its annuity stays per rate unit (`CUR/MW`, or `CUR/(m3/h)`). This changes the
+  storage-node columns' unit in the parquet footer, the Excel unit row, `Units` and `_output_metadata` sheets,
+  `units.csv` and `datapackage.json`; values are unchanged. The combined scenario-comparison parquets now carry the
+  units of each scenario's columns in their footer, as the scenarios' own parquets do.
 - **New: units of measure in the result workbooks and CSV folder; layout change of the Excel sheets.** The scenario
   workbook and the scenario-comparison workbook (which had no units at all) open on a new `Units` sheet: one row
   per result sheet with its table, unit(s), semantics and description, the sheet names linking to the sheets;

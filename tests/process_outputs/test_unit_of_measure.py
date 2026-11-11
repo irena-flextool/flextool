@@ -48,7 +48,7 @@ def test_template_at_mwh_is_the_default_unit() -> None:
         "INVEST_COST_DISCOUNTED", "DUAL_INVEST_KW", "DUAL_INVEST_KWH"}
     for name, tf in templated.items():
         assert uom.fill(tf.template, "MWh") == tf.unit, name
-    # The annuity of a storage node is per MWh (critique M2); the default text stays CUR/MW for every entity.
+    # The annuity of a storage node is per its amount unit (critique M2, also in a default run: CUR/MWh).
     assert meta.INVEST_COST_DISCOUNTED.node_template == "CUR/{A}"
 
 
@@ -156,11 +156,16 @@ def test_annuity_and_duals_by_class() -> None:
 
 
 def test_default_context_is_the_default() -> None:
-    """No node units: the transforms' units, no row units, whatever the other maps hold."""
+    """No node units: the transforms' units, no row units, whatever the other maps hold; only the annuity of a
+    storage node is per its amount (CUR/MWh) once the context knows the units and connections (WP2 review 1)."""
     ctx = UnitContext(capacity_nodes=CTX.capacity_nodes, group_nodes=CTX.group_nodes)
     cols = pd.MultiIndex.from_tuples([("desal", "water")], names=["unit", "node"])
     assert _units("unit_outputNode_dt_ee", cols, ctx=ctx) == ["MW"]
-    assert _units("entity_annuity_d_p", pd.Index(["water"], name="entity"), ctx=ctx) == ["CUR/MW"]
+    entities = pd.Index(["water", "desal"], name="entity")
+    assert _units("entity_annuity_d_p", entities, ctx=ctx) == ["CUR/MWh", "CUR/MW"]
+    # Without the class maps (no run context) every entity keeps the transform's CUR/MW.
+    assert _units("entity_annuity_d_p", entities, ctx=UnitContext()) == ["CUR/MW", "CUR/MW"]
+    assert _units("entity_annuity_d_p", entities, ctx=None) == ["CUR/MW", "CUR/MW"]
     rows = pd.MultiIndex.from_tuples([("desal", "p1")], names=["unit", "period"])
     assert row_units("unit_capacity_ed_p", rows, pd.Index(["total"], name="parameter"), ctx) is None
     assert row_units("unit_capacity_ed_p", rows, pd.Index(["total"], name="parameter"), None) is None
@@ -327,9 +332,11 @@ def test_rerun_with_mwh_nodes_deletes_the_context(case) -> None:
     _solve_and_write(case["url"], DEFAULT_SCENARIO, work, case["solver"], subdir=SCENARIO,
                      write_methods=["parquet"], single_result=single)
     assert not (pq_dir / UNIT_CONTEXT_FILE).exists()
-    _solve_and_write(case["url"], SCENARIO, work, case["solver"], subdir=SCENARIO, write_methods=["csv"])
+    _solve_and_write(case["url"], SCENARIO, work, case["solver"], subdir=SCENARIO, write_methods=["parquet"])
     assert (pq_dir / UNIT_CONTEXT_FILE).exists()
-    _solve_and_write(case["url"], DEFAULT_SCENARIO, work, case["solver"], subdir=SCENARIO, write_methods=["csv"])
+    # A run that writes no parquets deletes the file even with node units: they must not sit beside an
+    # earlier run's parquets (WP2 review 3; the footers hold each run's units).
+    _solve_and_write(case["url"], SCENARIO, work, case["solver"], subdir=SCENARIO, write_methods=["csv"])
     assert not (pq_dir / UNIT_CONTEXT_FILE).exists()
 
 
@@ -344,7 +351,7 @@ def test_comparison_keeps_each_scenarios_units(tmp_path) -> None:
     b.mkdir()
     ctx = comparison_unit_context({"A_1": "x", "B": "y"}, [a, b])
     assert set(ctx) == {"A_1", "B"} and ctx["B"].is_default
-    assert comparison_unit_context({"B": "y"}, [b]) is None
+    assert unit_differences([], comparison_unit_context({"B": "y"}, [b])) == []
     cols = pd.MultiIndex.from_tuples([("A_1", "water"), ("B", "water")], names=["scenario", "node"])
     df = pd.DataFrame([[1.0, 2.0]], columns=cols, index=pd.MultiIndex.from_tuples([("p1", "t1")],
                                                                                   names=["period", "time"]))
@@ -355,3 +362,48 @@ def test_comparison_keeps_each_scenarios_units(tmp_path) -> None:
     write_excel_with_metadata(path, [("node_state__dt", "node_state_dt_e", df)], ctx=ctx)
     units_row = next(r for r in openpyxl.load_workbook(path)["Units"].iter_rows(min_row=2, values_only=True))
     assert units_row[2] == "MWh; m3 (by column)"
+
+
+def test_replay_reads_the_footers(case, tmp_path) -> None:
+    """WP2 review 3: a replay takes the units the run wrote into the footers (here without _unit_context.json),
+    and the results database defines node.unit_of_measure with the default MWh (review 2)."""
+    from spinedb_api import DatabaseMapping, from_database
+    from flextool.process_outputs.write_outputs import write_outputs
+
+    replay = tmp_path / "replay"
+    shutil.copytree(case["work"] / "output_parquet", replay / "output_parquet")
+    (replay / "output_parquet" / SCENARIO / UNIT_CONTEXT_FILE).unlink(missing_ok=True)
+    write_outputs(scenario_name=SCENARIO, output_location=str(replay), subdir=SCENARIO,
+                  output_config_path=str(REPO / "templates" / "default_plots.yaml"), write_methods=["csv"],
+                  fallback_output_location=str(replay), read_parquet_dir=True)
+    units = _units_csv(replay / "output_csv" / SCENARIO)
+    desal = [r["unit"] for r in units if r["file"] == "unit__outputNode__dt.csv" and r["header_1"] == "med_desal"
+             and r["header_2"] == "water"]
+    assert desal == ["m3/h"]
+    capacity = [r["unit"] for r in units if r["row"] == "med_desal" and r["file"].startswith("unit_capacity")
+                and r["header_1"] == "total"]
+    assert capacity == ["m3/h"]
+    with DatabaseMapping("sqlite:///" + str(case["work"] / "results.sqlite")) as db:
+        definition = db.find_parameter_definitions(entity_class_name="node", name="unit_of_measure")[0]
+        assert from_database(definition["default_value"], definition["default_type"]) == "MWh"
+
+
+def test_comparison_parquets_carry_units(tmp_path) -> None:
+    """WP2 review 4: a combined comparison table's footer holds each scenario's column units."""
+    from flextool.lean_parquet import write_lean_parquet
+    from flextool.scenario_comparison.orchestrator import comparison_column_units, comparison_unit_context
+
+    a, b = tmp_path / "A_1", tmp_path / "B"
+    meta.write_unit_context(str(a), UnitContext(node_units={"water": "m3"}))
+    b.mkdir()
+    cols = pd.MultiIndex.from_tuples([("A_1", "water"), ("B", "water")], names=["scenario", "node"])
+    df = pd.DataFrame([[1.0, 2.0]], columns=cols, index=pd.MultiIndex.from_tuples([("p1", "t1")],
+                                                                                  names=["period", "time"]))
+    col_meta, rows = comparison_column_units("node_state_dt_e", df, comparison_unit_context(
+        {"A_1": "x", "B": "y"}, [a, b]))
+    assert rows is None
+    path = tmp_path / "node_state_dt_e.parquet"
+    write_lean_parquet(df, path, column_metadata=col_meta)
+    written = read_lean_parquet_column_meta(path)
+    assert written[str(("A_1", "water"))]["unit"] == "m3"
+    assert written[str(("B", "water"))]["unit"] == "MWh"
