@@ -91,3 +91,23 @@ def test_dimension_rule_sum_keeps_an_all_empty_cell_empty_in_a_time_chart() -> N
     assert chart_type == "time"
     assert out.loc[("t2",)].isna().all()
     assert out.loc[("t4",), "n2"].item() == 19.0
+
+
+def test_comparison_dispatch_plot_draws_nothing_at_gap_rows() -> None:
+    """The scenario comparison's dispatch plot: a timeline break leaves a gap (pandas' stacked plot.area drew
+    the inserted gap rows at 0)."""
+    from flextool.scenario_comparison.dispatch_plots import _build_dispatch_figure
+
+    index = pd.MultiIndex.from_tuples([("p1", t) for t in _TIMES], names=["period", "time"])
+    df = pd.DataFrame({"coal": np.arange(6, dtype=float) + 1.0, "wind": np.full(6, 2.0)}, index=index)
+    breaks = pd.MultiIndex.from_tuples([("p1", "t3")], names=["period", "time"])
+    fig = _build_dispatch_figure(df, None, title="gaps", timeline=(0, len(df)), break_times=breaks)
+    ax = fig.axes[0]
+    assert len(ax.collections) == 2
+    covered: set[int] = set()
+    for coll in ax.collections:
+        for path in coll.get_paths():
+            covered.update(int(round(x)) for x in path.vertices[:, 0])
+    # t0..t2 at 0-2, the 3 gap rows at 3-5, t3..t5 at 6-8.
+    assert covered == {0, 1, 2, 6, 7, 8}
+    assert ax.get_xlim() == (0.0, 8.0)

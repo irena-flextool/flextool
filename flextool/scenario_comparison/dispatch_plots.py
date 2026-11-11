@@ -16,6 +16,7 @@ from flextool.scenario_comparison.dispatch_data import (
     prepare_node_dispatch_data,
 )
 from flextool.plot_outputs.format_helpers import unique_series_names
+from flextool.plot_outputs.plot_lines import draw_stacked_area
 from flextool.process_outputs._sheet_names import excel_sheet_name
 
 logger = logging.getLogger(__name__)
@@ -206,16 +207,11 @@ def _build_dispatch_figure(
     right_margin = (legend_width_in + 0.2) / fig_width
     ax = fig.add_axes([left_margin, 0.2, 1.0 - left_margin - right_margin, 0.7])
 
-    # Plot area chart (NaN rows create visual gaps at timeline breaks).  The
-    # x axis is the row position; _set_step_ticks labels it with the steps.
+    # Plot area chart.  A timeline-break row (all NaN) is a gap: nothing is
+    # drawn there (pandas' stacked plot.area filled it with 0).  The x axis is
+    # the row position; _set_step_ticks labels it with the steps.
     if has_area:
-        df_plot[plot_cols].reset_index(drop=True).plot.area(
-            ax=ax,
-            stacked=True,
-            linewidth=0,
-            color=plot_colors,
-            legend=False
-        )
+        draw_stacked_area(ax, df_plot[plot_cols].reset_index(drop=True), plot_colors)
 
     # Use integer x-positions for line overlays so NaN gap rows create visible gaps
     # (matching the area chart's internal integer positioning)
@@ -242,6 +238,11 @@ def _build_dispatch_figure(
 
     if ylim:
         ax.set_ylim(ylim)
+
+    # No x margin (as pandas' plot.area).  Last: set_xlim turns the x
+    # autoscale off, so nothing drawn after it can widen the axis.
+    if len(df_plot) > 1:
+        ax.set_xlim(0, len(df_plot) - 1)
 
     # Legend — read top-to-bottom to match the VISUAL stack.  The area draw
     # order is neg-block (stacks down, first = nearest axis = top of the

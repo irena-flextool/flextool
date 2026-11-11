@@ -640,13 +640,16 @@ def build_line_figures(
 #  Stacked area
 # ---------------------------------------------------------------------------
 
-def _draw_stacked_area(ax, df: pd.DataFrame, colors) -> None:
+def draw_stacked_area(ax, df: pd.DataFrame, colors) -> None:
     """Draw *df*'s columns as stacked areas at x = 0, 1, ...: positive columns upward from zero, negative ones
     downward, in column order (as pandas' stacked ``plot.area``).
 
     A row whose cells are all empty (an empty result row or a timeline-gap row) is a gap: nothing is drawn there.
     pandas' ``plot.area`` would draw it as 0.  An empty cell in a row that has other values adds nothing to the
-    stack there.  Each column must be all >= 0 or all <= 0 (the caller splits mixed columns).
+    stack there.  Each column must be all >= 0 or all <= 0 (the caller splits mixed columns); a column with both
+    signs raises ``ValueError``, as pandas did.  Each area is labelled ``str(column)``, so a caller that matches
+    legend labels against ``df.columns`` needs string column names.  Used by the stack plots and by the scenario
+    comparison's dispatch plots.
     """
     n = len(df)
     x = np.arange(n)
@@ -655,6 +658,9 @@ def _draw_stacked_area(ax, df: pd.DataFrame, colors) -> None:
     neg = np.zeros(n)
     for col, color in zip(df.columns, colors):
         y = df[col].fillna(0).to_numpy(dtype=float)
+        if (y > 0).any() and (y < 0).any():
+            raise ValueError(f"stacked area column {col!r} has both positive and negative values; split it into "
+                             "a positive and a negative column")
         if (y >= 0).all():
             base, pos = pos, pos + y
             top = pos
@@ -823,7 +829,7 @@ def _build_stack_figure(
             colors = plt.colormaps['tab10'].colors[:n_columns]
             if n_columns > 10:
                 colors = plt.colormaps['tab20'].colors[:n_columns]
-        _draw_stacked_area(ax, df_to_plot, colors)
+        draw_stacked_area(ax, df_to_plot, colors)
 
         # Subplot formatting
         if eff_title is not None:
