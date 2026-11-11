@@ -54,7 +54,9 @@ import logging
 import os
 import queue
 import re
+import shutil
 import subprocess
+import tempfile
 import threading
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -66,7 +68,14 @@ from flextool.gui.calibrate_commands import (
     command_to_display_string,
     overshoot_pct_to_multiplier,
 )
-from flextool.gui.execution_manager import ExecutionManager, JobType
+from flextool.gui.execution_manager import (
+    KILL_REASON_WINDOW,
+    ExecutionManager,
+    JobStatus,
+    JobType,
+    stop_aux_tree,
+)
+from flextool.run_record import RUN_STOP_FILE_ENV
 
 logger = logging.getLogger(__name__)
 
@@ -267,6 +276,13 @@ def _run_aux_subprocess(
     cannot run before the subprocess has actually finished. Its own failure is
     caught and streamed into the job log — it never propagates out of the
     worker and never flips the already-recorded SUCCESS.
+
+    The process gets ``FLEXTOOL_RUN_STOP_FILE`` (a file in a private folder of
+    its own), which every ``flextool-run`` supervisor it starts inherits: a
+    stop from the GUI writes that file, so each supervisor records its engine
+    run as killed (``ExecutionManager._stop_job_locked``).  Once a stop has
+    started, its stop thread owns the folder and removes it; otherwise this
+    worker removes it at the end.
     """
     job = mgr.add_auxiliary_job(JobType.OUTPUT_ACTION, display_name, action_key)
     # Mark exempt from the memory watchdog (long run, no cap estimate).
@@ -277,8 +293,11 @@ def _run_aux_subprocess(
     mgr.append_stdout(job.job_id, "")
 
     success = False
+    stop_dir: Path | None = None
     try:
-        env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+        stop_dir = Path(tempfile.mkdtemp(prefix="flextool-stop-"))
+        stop_file = stop_dir / "stop"
+        env = {**os.environ, "PYTHONUNBUFFERED": "1", RUN_STOP_FILE_ENV: str(stop_file)}
         proc = subprocess.Popen(
             argv,
             stdout=subprocess.PIPE,
@@ -288,8 +307,16 @@ def _run_aux_subprocess(
             cwd=cwd,
             env=env,
         )
+        stop_now = False
         with mgr._lock:
-            job.process = proc
+            if job.status is JobStatus.KILLED:
+                # Stopped (or replaced) before its process existed: stop it the same way, here.
+                job.stop_started = stop_now = True
+            else:
+                job.process = proc
+                job.stop_file = stop_file
+        if stop_now:
+            stop_aux_tree(proc, stop_file, job.kill_reason or KILL_REASON_WINDOW)
         assert proc.stdout is not None
         for line in proc.stdout:
             mgr.append_stdout(job.job_id, line.rstrip("\n"))
@@ -306,6 +333,9 @@ def _run_aux_subprocess(
     finally:
         with mgr._lock:
             job.process = None
+            stop_started = job.stop_started
+        if stop_dir is not None and not stop_started:
+            shutil.rmtree(stop_dir, ignore_errors=True)
         mgr.finish_job(job.job_id, success)
 
     # Post-success wiring runs only after a clean, finalised success. A

@@ -131,7 +131,7 @@ def test_spine_merge_injects_authoritative_units():
     write_spinedb._apply_derived_descriptions(schema)
     desc = {(e[0], e[1]): e[4] for e in schema["parameter_definitions"]}
     # corrected units now lead each description
-    assert desc[("group", "flow_t")].startswith("[MW] ")          # rate, not MWh
+    assert desc[("group", "flow_t")].startswith("[MWh] ")         # group inflow: MWh per time step
     assert desc[("node", "balance_t")].startswith("[MW] ")
     assert desc[("unit", "CO2_annualized")].startswith("[t/a] ")   # was [MtCO2]
     assert desc[("group", "CO2_annualized")].startswith("[t/a] ")  # was [Mt]
@@ -143,8 +143,9 @@ def test_spine_merge_injects_authoritative_units():
     assert "existing" in desc[("node", "capacity")]
     assert "categor" in desc[("model", "cost_annualized")].lower() \
         or "investment" in desc[("model", "cost_annualized")].lower()
-    # params with no mapped transform keep their hand-written description
-    assert desc[("connection__node__node", "cf")].lstrip().startswith("[per unit]")
+    # capacity factors are ratios: "[per unit]", the hand-written prose kept
+    assert desc[("connection__node__node", "cf")].startswith("[per unit] average capacity factor")
+    assert desc[("unit__node", "cf")].startswith("[per unit] average capacity factor")
 
 
 def test_spine_merge_units_match_output_meta():
@@ -225,12 +226,18 @@ def test_result_variant_summary_none_base_returns_none():
 
 # ── Corrected units + two-layer description ─────────────────────────────────
 
-def test_dt_group_and_node_flows_are_rate_mw():
-    # un-integrated dt flows/balances are MW levels, not per-step MWh
-    assert result_key_summary("nodeGroup_flows_dt_g") == \
-        ("MW",) + result_key_summary("nodeGroup_flows_dt_g")[1:]
+def test_dt_node_balance_is_rate_mw_and_inflow_is_mwh_per_step():
+    # the un-integrated dt node balance is an MW level; inflow is MWh per time step as given
     assert output_metadata_rows("node_dt_ep", ["from_units"])[0]["unit"] == "MW"
-    assert output_metadata_rows("node_inflow__dt", ["x"])[0]["unit"] == "MW"
+    assert result_key_summary("nodeGroup_flows_dt_g")[:2] == ("MWh", "per_step")
+    assert output_metadata_rows("node_inflow__dt", ["x"])[0]["unit"] == "MWh"
+    assert output_metadata_rows("nodeGroup_gdt_p", ["5. Timestep inflow"])[0]["unit"] == "MWh"
+
+
+def test_entity_annuity_is_discounted_cost_per_mw_and_cf_is_a_ratio():
+    assert result_key_summary("entity_annuity_d_p")[:2] == ("CUR/MW", "discounted")
+    for stem in ("unit_outputs_cf_d_ee", "unit_inputs_cf_d_ee", "connection_cf_d_e"):
+        assert result_key_summary(stem)[:2] == ("ratio", "ratio"), stem
 
 
 def test_co2_system_total_is_megatonnes_horizon():

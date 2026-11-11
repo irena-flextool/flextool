@@ -6,7 +6,8 @@ from datetime import datetime
 from pathlib import Path
 from tkinter import ttk
 
-from flextool.gui.data_models import ExecutedScenarioInfo, ProjectSettings, ScenarioInfo
+from flextool import run_record
+from flextool.gui.data_models import TIMESTAMP_FORMAT, ExecutedScenarioInfo, ProjectSettings, ScenarioInfo
 from flextool.gui.scenario_key import (
     format_key,
     parse_key,
@@ -22,6 +23,97 @@ logger = logging.getLogger(__name__)
 # than ballot box characters at the same font size.
 CHECK_ON = "\u25a0"   # ■
 CHECK_OFF = "\u25a1"  # □
+
+
+def row_checkable(info: ExecutedScenarioInfo) -> bool:
+    """Whether an executed-scenario row may be checked for plots and comparison (``run_record.results_usable``)."""
+    return run_record.results_usable(info.status)
+
+
+def folder_results_usable(folder: Path) -> bool:
+    """Whether the results in a run folder may be offered: :func:`row_checkable` read from the folder itself."""
+    return run_record.results_usable(run_record.read_status_file(folder, strict=True))
+
+
+def describe_unusable(status: dict | None, state: str | None = None) -> str | None:
+    """``run_record.unusable_reason`` for display: a stale ``running`` reads as abandoned.
+
+    *state* is ``run_record.effective_state(status)`` when the caller has it already.
+    """
+    reason = run_record.unusable_reason(status)
+    if reason is None or status is None or status.get("state") != "running":
+        return reason
+    if state is None:
+        state = run_record.effective_state(status)
+    if state == "abandoned":
+        return "latest run was abandoned: it stopped without finishing its record"
+    if state == "unknown":
+        return "latest run did not finish its record and may still be running elsewhere"
+    return reason
+
+
+#: The check-column glyph of a row that cannot be checked, by its latest run's state: a run that did not
+#: succeed (and an abandoned record) shows a cross, a run in progress (or one whose process cannot be found
+#: here) an ellipsis, a succeeded run without parquet of its own a dash.  A record that could not be read now
+#: (most often one being written) shows the ellipsis, one that is damaged the cross.
+STATE_GLYPHS = {
+    "failed": "\u2717",       # ✗
+    "interrupted": "\u2717",
+    "killed": "\u2717",
+    "crashed": "\u2717",
+    "abandoned": "\u2717",
+    "running": "\u2026",      # …
+    "unknown": "\u2026",
+    "unreadable": "\u2026",
+    "malformed": "\u2717",
+    "succeeded": "\u2013",    # –
+}
+#: The executed-tree row tag of a row that cannot be checked (its style), by the same states.
+STATE_TAGS = {
+    "failed": "run_failed",
+    "interrupted": "run_failed",
+    "killed": "run_failed",
+    "crashed": "run_failed",
+    "abandoned": "run_failed",
+    "running": "run_running",
+    "unknown": "run_running",
+    "unreadable": "run_running",
+    "malformed": "run_failed",
+    "succeeded": "run_no_results",
+}
+
+
+def row_check_glyph(info: ExecutedScenarioInfo, checked: bool) -> str:
+    """The check-column text of a row: ■ / □ when it is checkable, else the glyph of its latest run's state."""
+    if info.checkable:
+        return CHECK_ON if checked else CHECK_OFF
+    return STATE_GLYPHS.get(info.run_state or "", "\u2717")
+
+
+def row_state_tag(info: ExecutedScenarioInfo) -> str | None:
+    """The row tag of a row that cannot be checked (``None`` for a checkable row)."""
+    if info.checkable:
+        return None
+    return STATE_TAGS.get(info.run_state or "", "run_failed")
+
+
+def _folder_timestamp(folder: Path, status: dict | None) -> str:
+    """The row's time: the run's finish (else start) time from its status, else the newest result file's."""
+    if status is not None:
+        when = run_record.parse_iso(status.get("finished_at")) or run_record.parse_iso(status.get("started_at"))
+        if when is not None:
+            return when.astimezone().strftime(TIMESTAMP_FORMAT)
+    try:
+        file_mtimes = [
+            f.stat().st_mtime
+            for f in folder.iterdir()
+            if f.is_file() and f.name not in run_record.RUN_RECORD_FILES
+            and not f.name.startswith(run_record.STATUS_TMP_PREFIX)
+        ]
+        mtime = max(file_mtimes) if file_mtimes else folder.stat().st_mtime
+        return datetime.fromtimestamp(mtime).strftime(TIMESTAMP_FORMAT)
+    except OSError:
+        return ""
 
 
 class AvailableScenarioManager:
@@ -112,6 +204,13 @@ class ExecutedScenarioManager:
         ``<scenario_name>_<source_number>`` when another source already
         owns the bare name. Ownership is recorded in project settings and
         is used here to reverse-map bare folders to their source.
+
+        Each row carries its folder's run record (``_run_status.json``): a
+        running, failed, interrupted, killed or crashed latest run is listed
+        with its state and is not checkable (``row_checkable``), also when
+        an earlier run's parquet is still in the folder.  The timestamp is
+        the run's finish (else start) time, else that of the newest result
+        file.
         """
         parquet_dir = self.project_path / "output_parquet"
         if not parquet_dir.is_dir():
@@ -124,27 +223,31 @@ class ExecutedScenarioManager:
             if entry.name.startswith("_"):
                 # Skip manifest files/directories (e.g. _axis_bounds.json).
                 continue
-            try:
-                file_mtimes = [
-                    f.stat().st_mtime
-                    for f in entry.iterdir()
-                    if f.is_file()
-                ]
-                mtime = max(file_mtimes) if file_mtimes else entry.stat().st_mtime
-                ts = datetime.fromtimestamp(mtime).strftime("%d.%m.%y %H:%M")
-            except OSError:
-                ts = ""
+            status = run_record.read_status_file(entry, strict=True)
+            ts = _folder_timestamp(entry, status)
+            run_state = None
+            parquet_state = None
+            if status is not None:
+                run_state = status.get("state")
+                if run_state == "running":
+                    run_state = run_record.effective_state(status)
+                outputs = status.get("outputs")
+                parquet_state = outputs.get("parquet_state") if isinstance(outputs, dict) else None
 
             source_number, scenario_name = resolve_source_number(
                 entry.name, self._bare_owners
             )
-            results.append(
-                ExecutedScenarioInfo(
-                    name=scenario_name,
-                    source_number=source_number,
-                    timestamp=ts,
-                )
+            info = ExecutedScenarioInfo(
+                name=scenario_name,
+                source_number=source_number,
+                timestamp=ts,
+                status=status,
+                run_state=run_state,
+                parquet_state=parquet_state,
+                unusable_reason=describe_unusable(status, run_state),
             )
+            info.checkable = row_checkable(info)
+            results.append(info)
 
         return results
 

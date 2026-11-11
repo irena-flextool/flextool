@@ -14,6 +14,8 @@ The result tables are stored as **parquet** (the canonical store) and a configur
 
 `output_parquet/<scenario>/timeline_breaks.parquet` (columns `period`, `time`) lists the realized steps at which time-series plots start a new line, so a plot leaves a gap there instead of drawing a straight line across it: the step after a gap in the timeline, the start of every representative period (also when two representative periods are adjacent on the timeline, since they represent different base periods), and the first step of a period that does not continue the previous one (also a later year that reuses the same timeset). Rolling windows that follow each other on the timeline, and periods that continue the previous one, are drawn as one line. The file is written also when there are no breaks. Results saved before this file had the `period` and `time` columns are drawn without gaps until the scenario is run again. In scenario comparison plots the scenarios share one time axis, so a break of any selected scenario cuts every scenario's line at that step.
 
+Every result table, with its parquet and CSV file names, its index and column levels, the unit of each column and its name in the results database, is listed in the [Results catalogue](results_catalogue.md), generated from the code. Below, a result is named by its results-database parameter (`class` entity `parameter`) where it is written to the results database, else by its table name.
+
 The CSV / Excel / plot files are **derived** from the parquets, so deleting or regenerating them is safe. `summary_solve.csv` is a diagnostic file aimed at a quick overview of a solve — it lists objective decomposition, period weighting, CO2 total, and any non-zero slack uses.
 
 All annualized numbers are scaled to **a full year of operation** by dividing through by `complete_period_share_of_year`. All values are returned in user units — auto-scaling (see [LP scaling pipeline](dev/scaling.md)) and time-block aggregation under flex-temporal decomposition are unwound before they reach the parquets, so users always read MW / MWh / [CUR] in the original problem space.
@@ -148,9 +150,9 @@ These are period-level tables only — there are no per-timestep per-entity cost
 ## Prices
 
 - `node` entity `price_t` parameter — [CUR/MWh] the cost of one more MWh of demand at that node and time step (the dual of the node's energy balance; positive when more demand would cost more), for every node that maintains an energy balance. It is in the price base of the cost inputs: the inflation / discounting of the period and the years it represents are removed, and it is not weighted by the timestep weight (`timeset_weights`, representative-period weights) or by the branch probability — in a stochastic solve each forecast branch reports its own price, not its probability-weighted contribution (the cost outputs per step are probability-weighted, so price × flow is not the branch's cost row). A step that the objective does not weigh (e.g. a step that `timeset_weights` leaves out) has no price (empty). A node of a group with a coarser `new_stepduration` (and a `bind_intraperiod_blocks` storage node) has one balance per coarse step (per timeset block); its price is that balance's dual, the same at every time step of the coarse step when the steps have the same weight. Within a coarse step the energy may be moved freely between time steps, so for such a node the hour at which a slack (or any flow that only the coarse balance limits) is reported is one of several equally good choices; with a time-varying penalty the solver picks the cheapest hour. For a storage node the price is the value of stored energy.
-- `group__reserve__upDown` entity `reserve_price_t` parameter — [CUR/MWh] the cost of one more MW of reserve requirement held for one hour (in the same price base and with the same weights removed as `price_t`): the sum of the duals of the group's requirement constraints at the step (the timeseries requirement, the dynamic requirement and the large-failure requirement of every failing unit or connection), i.e. the cost of one more MW of every requirement of the group at once. Reported for every group with a requirement. When the requirement is not met it equals `penalty_reserve`.
-- `group` entity `co2_price_period` parameter — [CUR/tCO2] shadow price of the per-period CO2 cap (nominal currency, sign-flipped so a binding cap shows positive). In a rolling solve where a period's hours are split across more than one roll, the reported price is the hour-weighted average of the rolls that realize it (weighted by the hours each roll keeps of the period). In a stochastic solve each scenario path reports its own price, not its price times the path's branch probability.
-- `group` entity `co2_price_total` parameter — [CUR/tCO2] shadow price of the cumulative CO2 cap, per tonne over the represented years (NPV currency, broadcast across periods)
+- table `reserve_prices_dt_ppg` (`group__reserve__upDown`, not in the results database) — [CUR/MWh] the cost of one more MW of reserve requirement held for one hour (in the same price base and with the same weights removed as `price_t`): the sum of the duals of the group's requirement constraints at the step (the timeseries requirement, the dynamic requirement and the large-failure requirement of every failing unit or connection), i.e. the cost of one more MW of every requirement of the group at once. Reported for every group with a requirement. When the requirement is not met it equals `penalty_reserve`.
+- table `co2_price_period_d_g` (`group`, not in the results database) — [CUR/tCO2] shadow price of the per-period CO2 cap (nominal currency, sign-flipped so a binding cap shows positive). In a rolling solve where a period's hours are split across more than one roll, the reported price is the hour-weighted average of the rolls that realize it (weighted by the hours each roll keeps of the period). In a stochastic solve each scenario path reports its own price, not its price times the path's branch probability.
+- table `co2_price_total_d_g` (`group`, not in the results database) — [CUR/tCO2] shadow price of the cumulative CO2 cap, per tonne over the represented years (NPV currency, broadcast across periods)
 
 ## Energy flows
 
@@ -158,8 +160,8 @@ These are period-level tables only — there are no per-timestep per-entity cost
 - `unit__node` entity `flow_t` parameter — [MW] flow at each timestep
 - `connection__node__node` entity `flow_annualized` parameter — [MWh] annualized cumulative flow through the connection (left-to-right is positive)
 - `connection__node__node` entity `flow_t` parameter — [MW] flow through the connection at each timestep
-- `connection__node__node` entity `connection_losses_annualized` parameter — [MWh] annualized losses on the connection
-- `connection__node__node` entity `connection_losses_t` parameter — [MW] losses on the connection at each timestep
+- table `connection_losses_d_eee` (not in the results database) — [MWh] annualized losses on the connection
+- table `connection_losses_dt_eee` (not in the results database) — [MW] losses on the connection at each timestep
 
 ### Optional output: output_connection_flows_separate
 
@@ -171,7 +173,7 @@ These are period-level tables only — there are no per-timestep per-entity cost
 ## Capacity factors
 
 - `unit__node` entity `cf` parameter — [per unit] average capacity factor of the flow: time-average of flow [MWh/h] divided by capacity [MW] of the unit input or output. One table per direction (`unit_cf__inputNode`, `unit_cf__outputNode`).
-- `connection` entity `cf` parameter — [per unit] average capacity factor of the absolute flow (flows in either direction count as utilization), divided by connection capacity
+- `connection__node__node` entity `cf` parameter — [per unit] average capacity factor of the absolute flow (flows in either direction count as utilization), divided by connection capacity
 
 ## Energy balance in nodes
 
@@ -183,7 +185,7 @@ These are period-level tables only — there are no per-timestep per-entity cost
 
 - `unit` entity `online_t` parameter — [count] number of units online at each timestep
 - `unit` entity `online_average` parameter — [count] average online status over the period (weighted by step duration)
-- `unit` entity `startup_annualized` parameter — [count] startups during the period scaled to a full year (weighted by `rp_cost_weight` to handle representative periods correctly)
+- `unit` entity `startup_cumulative` parameter — [count] startups during the period scaled to a full year (weighted by `rp_cost_weight` to handle representative periods correctly)
 
 ## Connection online and startup
 
@@ -197,11 +199,11 @@ Only for connections with a `startup_method`:
 
 For VRE units (units that use an `upper_limit` profile) the model also reports curtailment and potential generation against each output node:
 
-- `unit__node` entity `VRE_potential_t` parameter — [MW] potential VRE generation at the timestep (`capacity × profile`)
-- `unit__node` entity `VRE_potential_annualized` parameter — [MWh] annualized potential VRE generation in the period
+- table `unit_VRE_potential_outputNode_dt_ee` (not in the results database) — [MW] potential VRE generation at the timestep (`capacity × profile`)
+- table `unit_VRE_potential_outputNode_d_ee` (not in the results database) — [MWh] annualized potential VRE generation in the period
 - `unit__node` entity `curtailment_t` parameter — [MW] potential minus actual generation at the timestep
-- `unit__node` entity `curtailment_annualized` parameter — [MWh] annualized curtailed energy in the period
-- `unit__node` entity `curtailment_share_t` parameter — [0–1] timestep curtailment / potential
+- table `unit_curtailment_outputNode_d_ee` (not in the results database) — [MWh] annualized curtailed energy in the period
+- table `unit_curtailment_share_outputNode_dt_ee` (not in the results database) — [0–1] timestep curtailment / potential
 - `unit__node` entity `curtailment_share` parameter — [0–1] period curtailment / period potential
 
 ## Node group results
@@ -215,16 +217,16 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
     - *Curtailed VRE of demand* — [0–1] curtailed VRE relative to inflow
     - *Annualized inflow* — [MWh] sum of `inflow` to member nodes scaled to a year
     - *Curtailed VRE of potential VRE* — [0–1] curtailed share of potential VRE
-- `group` entity `indicator_t` (timestep table) — exposes the timestep-level building blocks of the above: *Loss of load* [MWh/step], *VRE generation* [MWh/step], *Excess load* [MWh/step], *Curtailed VRE* [MWh/step], *Timestep inflow* [MWh/step], *Curtailed VRE of potential VRE* [0–1], *Annualized inflow* [MWh], *VRE share of demand* [0–1]
+- table `nodeGroup_gdt_p` (timestep table, not in the results database) — exposes the timestep-level building blocks of the above: *Loss of load* [MWh/step], *VRE generation* [MWh/step], *Excess load* [MWh/step], *Curtailed VRE* [MWh/step], *Timestep inflow* [MWh/step], *Curtailed VRE of potential VRE* [0–1], *Annualized inflow* [MWh], *VRE share of demand* [0–1]
 - `group` entity `VRE_share_t` parameter — [0–1] share of inflow served by VRE sources at each timestep (one column per node group)
-- `group` entity `VRE_share` parameter — [0–1] period-average VRE share
-- `group` entity `total_inflow_annualized` parameter — [MWh] annualized sum of `inflow` to member nodes
-- `group` entity `total_inflow_t` parameter — [MWh/step] timestep inflow to member nodes
+- table `nodeGroup_VRE_share_d_g` (not in the results database) — [0–1] period-average VRE share
+- `group` entity `flow_annualized` parameter — [MWh] annualized sum of `inflow` to member nodes
+- `group` entity `flow_t` parameter — [MWh/step] timestep inflow to member nodes
 
 `group` entities with `print_dispatch = yes` produce a multi-column dispatch table over the group:
 
-- `group` entity `flows_t` parameter — [MWh/step] dispatch decomposed by `(type, item)` where `type` is one of: *slack* (upward/downward), *from_unit*, *from_unitGroup*, *to_unit*, *to_unitGroup*, *from_connection*, *from_connectionGroup*, *to_connection*, *to_connectionGroup*, *inflow*, *internal_losses* (units/connections/storages)
-- `group` entity `flows_annualized` parameter — [MWh] same decomposition, annualized period totals
+- `group` entity `sum_flow_t` parameter — [MWh/step] dispatch decomposed by `(type, item)` where `type` is one of: *slack* (upward/downward), *from_unit*, *from_unitGroup*, *to_unit*, *to_unitGroup*, *from_connection*, *from_connectionGroup*, *to_connection*, *to_connectionGroup*, *inflow*, *internal_losses* (units/connections/storages)
+- `group` entity `sum_flow_annualized` parameter — [MWh] same decomposition, annualized period totals
 
 ## Flow group results
 
@@ -253,9 +255,9 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
 
 ## CO2 emissions
 
-- `model` entity `CO2` parameter — [Mt] horizon-total CO2 across all groups and units (uses `years_represented_d` to convert annualized emissions to horizon totals). In a stochastic solve with more than one scenario path this is reported per path (one column per path) instead of pooling every path's emissions into one number — the anchor's shared pre-reveal history and each forecast branch's own periods are alternative futures, not consecutive years to add together.
+- table `CO2__` (not in the results database) — [Mt] horizon-total CO2 across all groups and units (uses `years_represented_d` to convert annualized emissions to horizon totals). In a stochastic solve with more than one scenario path this is reported per path (one column per path) instead of pooling every path's emissions into one number — the anchor's shared pre-reveal history and each forecast branch's own periods are alternative futures, not consecutive years to add together.
 - `group` entity `CO2_annualized` parameter — [Mt/yr] annualized CO2 emissions caused (or removed) by units and connections in the group
-- `unit__source__sink` entity `CO2_annualized` parameter — [Mt/yr] annualized CO2 emissions per flow leg
+- `unit` entity `CO2_annualized` parameter — [Mt/yr] annualized CO2 emissions of the unit's flows, by commodity and node
 
 ## Reserves
 
@@ -278,8 +280,8 @@ The "ramp room" envelope on the `node` entity (additional headroom for upward / 
 
 When the network contains DC-power-flow connections / nodes (`is_dc_power_flow = yes`):
 
-- `node` entity `dc_angle_t` parameter — [rad] voltage angle at each timestep
-- `connection` entity `dc_angle_diff_t` parameter — [rad] angle difference across the connection at each timestep
+- table `dc_angle_dt_e` (not in the results database) — [rad] voltage angle at each timestep
+- table `dc_angle_diff_dt_e` (not in the results database) — [rad] angle difference across the connection at each timestep
 
 ## Slack and penalty values
 

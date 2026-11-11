@@ -525,7 +525,7 @@ For a hydro pump storage one needs the following components:
 - a source for external energy (pumped storage plant will lose energy due to charging losses). Wind power plant will be used as a source for external energy.
 
 There are two ways to handle the water to electricity coefficient. Here, we convert the reservoir capacity and inflow to potential energy. 
-The unit of the inflow should be the power that can be created from the quantity of the incoming water at maximum efficiency [MW]. In the same way, the existing storage capacity should be the maximum amount of stored energy that the reservoir can hold [MWh].
+The inflow should be the energy that can be created from the incoming water of each time step at maximum efficiency [MWh] per time step (on hourly steps, the potential power in MW). In the same way, the existing storage capacity should be the maximum amount of stored energy that the reservoir can hold [MWh].
 In this implementation of reservoir hydro power, there is an option to spill water (energy) from the storage so that it does not run through the plant. The simplest way of allowing spilling is setting the downward penalty of the node to 0. This way the energy can disappear from the storage without a cost. The quantity of spilled energy can be seen from the results as the 'downward slack' of the node.
 
 The *reservoir* `node` needs to be added to an alternative in the `Entity Alternative` sheet (if Toolbox 0.8, after 5/2024).
@@ -533,7 +533,7 @@ The *reservoir* `node` needs to be added to an alternative in the `Entity Altern
 The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):
 
 - `node_type`: storage
-- `inflow`: Mapping of the incoming water as the potential power [MW]
+- `inflow`: Mapping of the incoming water as the potential energy [MWh] per time step (on hourly steps, the potential power in MW)
 - `existing`: The maximum size of the reservoir as the potential energy [MWh]
 - `penalty_up`: a large number to prefer not creating energy from nowhere
 - `penalty_down`: 0 or a large number (spilling or not)
@@ -1136,13 +1136,13 @@ The energy-margin lever lets you de-rate a node's energy balance in the investme
 
 - `energy_margin_method` - *none* (default, off), *inflow_multiplier*, or *inflow_adder*.
 - `energy_margin_multiplier` - the factor (default 1.0). When `energy_margin_method = inflow_multiplier`, the node's demand (inflow) is multiplied by this factor **in the investment solve only** — the dispatch solves always see the true demand. A value of 1.1 makes the investment stage build for about 10% more demand, so the real capacity is enough to meet the real demand under the true annual VRE. A value of 1.0 has no effect.
-- `energy_margin_adder` - the extra demand in MWh (default 0.0). When `energy_margin_method = inflow_adder`, this many MWh of extra demand (negative inflow) is added at the node **in the investment solve only**; the dispatch solves always see the true demand. A value of 0.0 has no effect.
+- `energy_margin_adder` - the extra demand in MWh per time step (default 0.0). When `energy_margin_method = inflow_adder`, this many MWh of extra demand (negative inflow) is added to every time step at the node **in the investment solve only**; the dispatch solves always see the true demand. A value of 0.0 has no effect.
 
 For example, to build about 10% more into a demand node, set `energy_margin_method = inflow_multiplier` and `energy_margin_multiplier = 1.1` on that node.
 
 The energy margin enters only the node balance. The reserve requirement, the non-synchronous limit and the capacity margin of a group follow the real demand; use `capacity_margin` for a capacity surplus.
 
-Use `inflow_adder` as the additive alternative to the multiplier. Because the multiplier scales the node's *existing* demand, it is a no-op on a node whose native inflow is zero — a common shape for a bare adequacy / slack node that carries no demand series of its own. `inflow_adder` instead adds a fixed block of demand at the node: it deepens the node's demand where it already has inflow and, crucially, **creates** the demand where the node had none, spreading the MWh uniformly across every investment-stage timestep (a constant adder), or placing per-period values if authored as a period map. Set `energy_margin_method = inflow_adder` and `energy_margin_adder = <MWh>` on the node to raise investment-stage adequacy headroom without touching dispatch demand.
+Use `inflow_adder` as the additive alternative to the multiplier. Because the multiplier scales the node's *existing* demand, it is a no-op on a node whose native inflow is zero — a common shape for a bare adequacy / slack node that carries no demand series of its own. `inflow_adder` instead adds a fixed block of demand at the node: it deepens the node's demand where it already has inflow and, crucially, **creates** the demand where the node had none, adding the same MWh to every investment-stage time step (a constant adder; on 24 h steps a margin of 10 MW needs a value of 240), or placing per-period values if authored as a period map. Set `energy_margin_method = inflow_adder` and `energy_margin_adder = <MWh>` on the node to raise investment-stage adequacy headroom without touching dispatch demand.
 
 The margin is extra demand for the investment decision only, not load: it does not raise reserve requirements (a reserve group's `increase_reserve_ratio` follows the un-margined demand).
 
@@ -1430,7 +1430,7 @@ decomposed (optionally tuning `benders_max_iter` and `benders_tolerance`;
 they default to `50` / `1e-3`). Then run normally:
 
 ```bash
-python -m flextool.cli.cmd_run_flextool \
+flextool-run \
     sqlite:///input_data.sqlite \
     --scenario-name multi_region
 ```

@@ -14,6 +14,7 @@ import polars as pl
 import yaml
 from spinedb_api import from_database, Array
 from flextool.update_flextool.db_handle import open_database_mapping
+from flextool import run_record
 
 from flextool.lean_parquet import read_lean_parquet, write_lean_parquet
 from flextool.process_outputs._output_meta import (
@@ -853,6 +854,65 @@ def _resolve_settings(write_methods, output_config_path, active_configs, plot_ro
     return write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format, results_db_url
 
 
+def resolve_output_settings(*, write_methods, output_location, settings_db_url, fallback_output_location):
+    """Where a run's outputs land and which write methods run: ``(absolute output location, write methods)``.
+
+    The same rule as :func:`write_outputs` (explicit argument > settings DB > default), so a caller that resolves
+    once can name the output folder before the solve (the run record) and pass both values on.
+    """
+    write_methods, _, _, _, output_location, _, _ = _resolve_settings(
+        write_methods, None, None, None, output_location, None, settings_db_url, fallback_output_location,
+    )
+    return os.path.abspath(output_location), list(write_methods)
+
+
+def _is_run_record_file(filename: str) -> bool:
+    """``_run_status.json``, ``_run.log`` or a status temp file: kept when a parquet folder is emptied."""
+    return filename in run_record.RUN_RECORD_FILES or (
+        filename.startswith(run_record.STATUS_TMP_PREFIX) and filename.endswith(run_record.STATUS_TMP_SUFFIX)
+    )
+
+
+def _note_parquet(parquet_dir: str, *, written: bool) -> None:
+    """Tell the run record that the parquet files of *parquet_dir* are being replaced (*written* false: the
+    folder was just emptied) or are complete (*written* true).
+
+    During an engine run the active recorder takes it.  Without one (``flextool-write-outputs`` rewriting the
+    outputs of an earlier run) an existing ``_run_status.json`` gets ``outputs.parquet_state = partial`` while
+    the files are rewritten, then ``written`` with ``outputs.by = write_outputs`` and a new ``written_at`` (so a
+    comparison built from the old files, or during the rewrite, is not taken as this folder's results).  A run
+    whose recorder stopped (another run took the folder over) leaves the file alone: it is the other run's record.
+    """
+    rec = run_record.active()
+    if rec.is_recording:
+        if written:
+            rec.outputs_written()
+        else:
+            rec.outputs_cleared()
+        return
+    if rec.stopped:
+        return
+    status = run_record.read_status_file(parquet_dir)
+    if status is None:
+        return
+    outputs = dict(status.get("outputs") or {})
+    if written:
+        outputs.update(parquet_state="written", by="write_outputs", written_at=run_record.now_iso(),
+                       previous=None, reason=None)
+    else:
+        outputs.update(parquet_state="partial", previous=None, reason=None)
+    status["outputs"] = outputs
+    try:
+        run_record.write_status_atomic(parquet_dir, status)
+    except OSError as exc:
+        logging.warning("Could not update the run record in %s: %s", parquet_dir, exc)
+
+
+def _note_parquet_written(parquet_dir: str) -> None:
+    """:func:`_note_parquet` for complete parquet files."""
+    _note_parquet(parquet_dir, written=True)
+
+
 def write_outputs(scenario_name, output_config_path=None, active_configs=None, output_funcs=None, output_location=None, subdir=None, read_parquet_dir=False, write_methods=None, plot_rows=None, debug=False, single_result=None, settings_db_url=None, fallback_output_location=None, plot_file_format=None, raw_output_dir=None, only_first_file=False, timing_recorder=None, flex_data=None, solution=None, solve_name=None, solve_steps=None, flex_data_provider=None, results_db_url=None):
     """
     Write FlexTool outputs to various formats.
@@ -1057,8 +1117,12 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         # regenerated ``_dispatch_metadata.json`` are rewritten later in this
         # same call.  Mirrors the csv-dir cleanup below, including the
         # single-result guard (partial runs must not wipe sibling outputs).
+        # The run record (``_run_status.json``, ``_run.log``) stays.
         if not single_result:
+            _note_parquet(parquet_dir, written=False)
             for filename in os.listdir(parquet_dir):
+                if _is_run_record_file(filename):
+                    continue
                 file_path = os.path.join(parquet_dir, filename)
                 if os.path.isfile(file_path):
                     os.remove(file_path)
@@ -1087,6 +1151,8 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         write_timeline_breaks(parquet_dir, break_index)
 
         start = log_time("Wrote to parquet", start, timing_recorder)
+        if not single_result:
+            _note_parquet_written(parquet_dir)
 
     # Raw horizon dump (``model.output_horizon``): stream the per-roll parts
     # from ``output_raw/horizon/`` into ``<parquet_dir>/horizon/``.  An

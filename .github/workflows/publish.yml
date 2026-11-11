@@ -91,16 +91,39 @@ jobs:
               "schemas/default_plots.yaml",
               "solver_config",
               "process_inputs/import_old_excel_input.json",
+              # The curated documentation the build step copies in (_flextool_build.py).
+              "assistant/_docs/md/reference.md",
           ]
           for rel in required:
               p = package_data_path(rel)
               assert p.exists(), f"bundled resource missing from wheel: {rel}"
               print("resource ok:", rel)
+          # python -m build makes the wheel from the sdist, so this also proves MANIFEST.in carries the docs.
+          from flextool.docs_build.scope import CURATED_DOCS
+          missing = [rel for rel in CURATED_DOCS if not package_data_path(f"assistant/_docs/md/{rel}").is_file()]
+          assert not missing, f"documentation missing from wheel: {missing}"
+          print("documentation ok:", len(CURATED_DOCS), "files")
           PY
-          for script in flextool-run flextool-update flextool-write-outputs flextool-read-tabular-input; do
+          # The flextool-run supervisor is a top-level module (py-modules): it must be in
+          # the wheel and load the run-record files by path without importing flextool.
+          /tmp/wheeltest/bin/python - <<'PY'
+          import sys
+          import flextool_run_supervisor as s
+          s.load_owner()
+          s.load_env_check()
+          loaded = sorted(m for m in sys.modules if m.split(".")[0] in ("flextool", "polars"))
+          assert not loaded, f"the supervisor imported {loaded}"
+          print("supervisor ok:", s.__file__)
+          PY
+          for script in flextool-run flextool-update flextool-write-outputs flextool-read-tabular-input flextool-assistant; do
             command -v "/tmp/wheeltest/bin/$script" >/dev/null || { echo "::error::console script missing: $script"; exit 1; }
             echo "entry point ok: $script"
           done
+          # The connection for AI agents starts from the wheel (its entry module is a
+          # top-level module) and keeps stdout for protocol messages only.
+          mkdir -p /tmp/assistant-project
+          /tmp/wheeltest/bin/python .github/scripts/mcp_smoke.py --tools 18 -- \
+            /tmp/wheeltest/bin/flextool-assistant --mcp --project-path /tmp/assistant-project
 
       - name: Check distribution metadata
         run: |

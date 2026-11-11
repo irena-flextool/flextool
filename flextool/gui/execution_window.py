@@ -803,10 +803,8 @@ class ExecutionWindow(tk.Toplevel):
 
     def _show_output_menu(self, event: tk.Event) -> None:  # type: ignore[type-arg]
         """Pop up the log context menu at the pointer."""
-        try:
-            self._output_menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            self._output_menu.grab_release()
+        # No grab_release after tk_popup: on X11 the menu's global grab is what closes it on a click elsewhere.
+        self._output_menu.tk_popup(event.x_root, event.y_root)
 
     def _on_key_press(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
         """Block text-mutating keys in the read-only output widget while
@@ -820,22 +818,9 @@ class ExecutionWindow(tk.Toplevel):
 
     @staticmethod
     def _blend(base16: tuple[int, int, int], target_hex: str, frac: float) -> str:
-        """Blend a 16-bit ``(r, g, b)`` base colour ``frac`` of the way toward
-        ``target_hex`` (``#rrggbb``) and return an ``#rrggbb`` string.
-
-        ``base16`` comes from ``winfo_rgb`` (each channel 0–65535), so the
-        result tracks the widget's *actual* theme background/foreground:
-        blending a near-black dark-mode base toward grey lightens it, while
-        blending a near-white light-mode base toward grey darkens it — the
-        same call gives the right "touch" of tint in either theme.
-        """
-        tr = int(target_hex[1:3], 16) * 257
-        tg = int(target_hex[3:5], 16) * 257
-        tb = int(target_hex[5:7], 16) * 257
-        r = int(base16[0] + (tr - base16[0]) * frac)
-        g = int(base16[1] + (tg - base16[1]) * frac)
-        b = int(base16[2] + (tb - base16[2]) * frac)
-        return f"#{r // 256:02x}{g // 256:02x}{b // 256:02x}"
+        """Blend a theme colour toward ``target_hex`` (:func:`ui_metrics.blend_rgb`)."""
+        from flextool.gui.ui_metrics import blend_rgb
+        return blend_rgb(base16, target_hex, frac)
 
     def _configure_log_tags(self) -> None:
         """Configure the colour tags for the log, derived from the widget's
@@ -1226,10 +1211,7 @@ class ExecutionWindow(tk.Toplevel):
         menu.add_command(label="Kill", command=self._on_kill_selected, state=can_kill)
         menu.add_separator()
         menu.add_command(label="Remove", command=self._on_remove_selected, state=can_remove)
-        try:
-            menu.tk_popup(event.x_root, event.y_root)
-        finally:
-            menu.grab_release()
+        menu.tk_popup(event.x_root, event.y_root)   # no grab_release: the grab closes it on a click elsewhere
 
     def _on_memory_guard_toggled(self) -> None:
         """Apply the memory-guard master switch (session-only, not persisted)."""

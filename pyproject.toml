@@ -128,6 +128,32 @@ dependencies = [
     # back to a maximise-probe if this is unavailable.
     "screeninfo",
     "pywin32; sys_platform == 'win32'",
+    # The per-user cache folder of the assistant's documentation index (built on
+    # first use, flextool.assistant.docs_store) on every platform, instead of
+    # reading LOCALAPPDATA / XDG_* by hand; later also the user config folder.
+    "platformdirs>=4",
+    # The assistant tools validate each call's arguments against the tool's JSON schema
+    # (flextool.assistant.registry); the connection server for AI agents does not.
+    "jsonschema>=4.18",
+    # The connection server for AI agents (``flextool-assistant --mcp``) speaks the Model
+    # Context Protocol over stdin/stdout.  2.x: the low-level server takes its handlers in
+    # the constructor (flextool.assistant.mcp_server); the next major is capped.  Loaded
+    # only by ``--mcp`` and ``--call``.
+    "mcp>=2.3,<3",
+    # The assistant's chat talks to AI services through their own libraries, imported only
+    # when a chat backend is built (flextool.assistant.llm_adapter.make_backend), never by
+    # ``--mcp`` / ``--call``.  FlexTool passes its own HTTP client (header allow-list, proxy
+    # decision, no redirects) and does its own retries.  anthropic 2.6: the httpx2 line and
+    # the ``open_telemetry`` switch; the next major is capped.
+    "anthropic>=2.6,<3",
+    # Every OpenAI-compatible service (OpenAI, Mistral, OpenRouter, Gemini, Ollama, LM Studio,
+    # any other base URL).  3.46: chunks keep unknown fields in ``model_extra`` and
+    # ``extra_body`` reaches the request body; the next major is capped.
+    "openai>=3.46,<4",
+    # The assistant chat keeps the AI services' keys in the system keyring (Windows Credential
+    # Manager, macOS Keychain, Secret Service on Linux; flextool.assistant.keys).  Never
+    # keyrings.alt: FlexTool refuses backends that store keys unencrypted.
+    "keyring>=25",
 ]
 
 [project.urls]
@@ -174,7 +200,10 @@ flextool-gui = "flextool.gui.__main__:main"
 
 [project.scripts]
 # Primary entry points — kept hyphen-cased for `flextool-*` CLI uniformity.
-flextool-run = "flextool.cli.cmd_run_flextool:main"
+# ``flextool-run`` is the stdlib-only supervisor that runs the engine
+# (``flextool.cli.cmd_run_flextool``) as its child and writes the run's
+# ``_run.log``; it never imports ``flextool`` (see ``[tool.setuptools]``).
+flextool-run = "flextool_run_supervisor:main"
 flextool-update = "flextool.cli.cmd_update_flextool:main"
 flextool-write-outputs = "flextool.cli.cmd_write_outputs:main"
 flextool-migrate-database = "flextool.cli.cmd_migrate_database:main"
@@ -187,6 +216,10 @@ flextool-read-self-describing-tabular-input = "flextool.cli.cmd_read_self_descri
 flextool-read-old = "flextool.cli.cmd_read_old_flextool:main"
 flextool-import-sensitivities = "flextool.cli.cmd_import_sensitivities:main"
 flextool-read-matpower = "flextool.cli.cmd_read_matpower:main"
+# The read-only tools for AI assistants: ``--mcp`` serves them to an AI agent over
+# stdin/stdout, ``--call`` runs one.  A top-level stdlib module, so it can keep the
+# protocol's stdout clean before ``import flextool`` (never a gui-script: it needs stdio).
+flextool-assistant = "flextool_assistant_entry:main"
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
@@ -231,6 +264,19 @@ testpaths = ["tests"]
 timeout = 900
 timeout_method = "thread"
 
+[tool.setuptools]
+# Top-level modules outside the ``flextool`` package.  ``flextool_run_supervisor``
+# must load without ``import flextool`` (which imports polars), and
+# ``flextool_assistant_entry`` redirects stdout before it imports it; an editable
+# install learns a new top-level name only when it is reinstalled.
+py-modules = ["flextool_run_supervisor", "flextool_assistant_entry"]
+
+[tool.setuptools.cmdclass]
+# Copies the curated documentation Markdown (flextool/docs_build/scope.py) into
+# flextool/assistant/_docs/md/ of the build; build-time only, so the module
+# reaches the sdist through MANIFEST.in, not py-modules.
+build_py = "_flextool_build.BuildPy"
+
 [tool.setuptools.packages.find]
 # Auto-discover all flextool subpackages.  Excludes test/scratch dirs.
 where = ["."]
@@ -253,6 +299,10 @@ exclude = ["flextool*.__pycache__"]
 #   * process_inputs/*.json             — old-Excel/CSV import spec
 #                                         (import_old_excel_input.json), loaded by
 #                                         the flextool-read-tabular-input CLI.
+#   * assistant/_docs/md/**.md          — the curated documentation, copied in by
+#                                         the build step (_flextool_build.py) and
+#                                         indexed by the assistant on first use;
+#                                         not in the source tree (.gitignore).
 #
 # NOTE (intentionally NOT shipped): schemas/canonical_databases/_recipes.yaml is
 # a *maintainer/build-only* recipe consumed solely by
@@ -270,4 +320,7 @@ flextool = [
     "solver_config/*.opt.template",
     "export_to_tabular/*.yaml",
     "process_inputs/*.json",
+    "assistant/_docs/md/*.md",
+    "assistant/_docs/md/dev/*.md",
+    "assistant/_docs/md/solvers/*.md",
 ]

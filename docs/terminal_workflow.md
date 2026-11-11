@@ -30,22 +30,31 @@ The database already exists, so the input-preparation phase is skipped automatic
 
 ## Scripts overview
 
-Root-level scripts are backward-compatible wrappers that delegate to modules under `flextool/cli/`. Both invocation styles work:
+Root-level scripts are backward-compatible wrappers that delegate to modules under `flextool/cli/`. To run the
+model, use the `flextool-run` console script:
 
 ```bash
+# Console script (preferred for model runs)
+flextool-run ...
+
 # Root-level script (backward compat)
 python run_flextool.py ...
 
-# Module invocation (preferred)
+# Module invocation
 python -m flextool.cli.cmd_run_flextool ...
 ```
+
+`flextool-run` runs the engine (`flextool.cli.cmd_run_flextool`) as a child process and writes everything the
+engine prints into the run's log, `output_parquet/<scenario>/_run.log`, including the solver's own lines and a
+crash dump. It takes the same arguments and exits with the engine's exit code. The other two forms run the engine
+in the same process; their `_run.log` holds only FlexTool's own console output.
 
 ### Workflow and execution
 
 | Script | CLI module | Purpose |
 |---|---|---|
 | `execute_flextool_workflow.py` | `flextool.cli.cmd_execute_flextool_workflow` | Unified entry point &mdash; runs the full workflow |
-| `run_flextool.py` | `flextool.cli.cmd_run_flextool` | Runs the optimization model and writes outputs |
+| `run_flextool.py` | `flextool.cli.cmd_run_flextool` (run it with `flextool-run`) | Runs the optimization model and writes outputs |
 | `write_outputs.py` | `flextool.cli.cmd_write_outputs` | (Re-)generates plots, parquet, CSV, or Excel from results |
 | `scenario_results.py` | `flextool.cli.cmd_scenario_results` | Compares results across multiple scenarios |
 
@@ -142,8 +151,15 @@ Runs the FlexTool optimization model directly. This is called internally by `exe
 ### Usage
 
 ```
-python run_flextool.py INPUT_DB_URL [OUTPUT_DB_URL] [options]
+flextool-run INPUT_DB_URL [OUTPUT_DB_URL] [options]
 ```
+
+`python run_flextool.py` and `python -m flextool.cli.cmd_run_flextool` take the same arguments.
+
+Each run writes two files into its `output_parquet/<subdir>/` folder: `_run_status.json` (running, succeeded,
+failed, ...; each solve's outcome; whether the parquet files there belong to this run) and `_run.log` (the run's
+console output). Under `flextool-run`, the GUI, the workflow runner and the calibrator the log also holds the
+solver's native output and any crash dump.
 
 ### Positional arguments
 
@@ -171,6 +187,8 @@ python run_flextool.py INPUT_DB_URL [OUTPUT_DB_URL] [options]
 | `--flextool-location PATH` | Spine Toolbox shim: directs outputs to the FlexTool repo root rather than the work directory |
 | `--work-folder DIR` | Working directory for intermediate files (default: CWD). Enables parallel scenario execution by isolating each run |
 | `--only-first-file-per-plot` | Only produce the first file for each plot (quick overview mode) |
+| `--input-source-file PATH` | The file the input database was made from (e.g. an Excel file), recorded in `_run_status.json` |
+| `--run-launcher NAME` | Who started the run, recorded in `_run_status.json` (default `direct`; `flextool-run` adds `flextool-run` unless one is given) |
 
 **Debug and diagnostics:**
 
@@ -183,7 +201,7 @@ python run_flextool.py INPUT_DB_URL [OUTPUT_DB_URL] [options]
 
 Each of these flags has an environment-variable twin for runs without a command line (Spine Toolbox, a
 script); a given flag wins over the variable, and the variable over the solve's database value. See
-[Environment variables](env_vars.md).
+[Environment variables](env_vars.md). `flextool-run` passes them to the engine unchanged.
 
 | Flag | Description |
 |---|---|
@@ -217,7 +235,7 @@ the filter-only inspector:
 ### Example
 
 ```bash
-python run_flextool.py \
+flextool-run \
     sqlite:///templates/examples.sqlite \
     sqlite:///output_info.sqlite \
     --scenario-name base

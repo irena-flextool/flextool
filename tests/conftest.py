@@ -47,6 +47,21 @@ from pathlib import Path
 
 import pytest
 
+# No test touches the real user folders of FlexTool or the system keyring: this process (each xdist worker too)
+# keeps FlexTool's user files under its own temp folder, and so does every process a test starts (it inherits
+# the variables).  Set before any flextool import; ``tests/user_dirs_guard.py`` explains, and the session check
+# in ``pytest_sessionfinish`` fails a run that changed the real folders anyway.
+if str(Path(__file__).parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).parent))
+import user_dirs_guard  # noqa: E402
+
+_REAL_USER_DIRS = user_dirs_guard.real_user_dirs()
+_TEST_USER_HOME = user_dirs_guard.redirect()
+# The first process of the session keeps the keyring log; the xdist workers inherit its path.
+_KEYRING_LOG_DIR = user_dirs_guard.keyring_log_dir()
+user_dirs_guard.forbid_system_keyring(_KEYRING_LOG_DIR)
+user_dirs_guard.patch_subprocess_env()
+
 TEST_DIR = Path(__file__).parent
 FIXTURES_DIR = TEST_DIR / "fixtures"
 
@@ -107,6 +122,18 @@ def pytest_addoption(parser: pytest.Parser) -> None:
         ),
     )
     parser.addoption(
+        "--gui-only",
+        action="store_true",
+        default=False,
+        help=(
+            "Keep only the GUI display tests (the modules listed in "
+            "_GUI_DISPLAY_MODULES and the tests marked 'gui'); everything else "
+            "is deselected.  The 'gui-tests' CI job runs tests/gui with "
+            "--run-gui --gui-only, so the Tk-free tests/gui modules, which the "
+            "sharded job runs, are not run twice."
+        ),
+    )
+    parser.addoption(
         "--shard",
         metavar="K/N",
         default=None,
@@ -116,6 +143,46 @@ def pytest_addoption(parser: pytest.Parser) -> None:
             "tests/_ci_shard.py). The N shards partition the unsharded selection."
         ),
     )
+
+
+_REAL_USER_DIRS_KEY = pytest.StashKey[user_dirs_guard.Snapshot]()
+
+
+def _runs_the_session(config: pytest.Config) -> bool:
+    """This process is the one that runs the session (not an xdist worker)."""
+    return not hasattr(config, "workerinput")
+
+
+def pytest_sessionstart(session: pytest.Session) -> None:
+    if _runs_the_session(session.config):
+        session.config.stash[_REAL_USER_DIRS_KEY] = user_dirs_guard.snapshot(_REAL_USER_DIRS)
+
+
+def pytest_sessionfinish(session: pytest.Session, exitstatus: int) -> None:
+    """The guard of ``tests/user_dirs_guard.py``: a run that changed FlexTool's real user folders fails."""
+    before = session.config.stash.get(_REAL_USER_DIRS_KEY, None)
+    if before is None:
+        return
+    changed = user_dirs_guard.changes(before, user_dirs_guard.snapshot(_REAL_USER_DIRS))
+    if changed:
+        shown = "\n  ".join(changed[:40]) + ("\n  ..." if len(changed) > 40 else "")
+        sys.stderr.write(
+            "\nERROR: the tests changed FlexTool's real user folders (every test must keep its user files under "
+            f"FLEXTOOL_USER_HOME; a FlexTool window used during the run changes them too):\n  {shown}\n")
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+    touched = user_dirs_guard.keyring_violations()
+    if touched:
+        shown = "\n  ".join(touched[:40]) + ("\n  ..." if len(touched) > 40 else "")
+        sys.stderr.write(
+            "\nERROR: the tests reached the system keyring or wrote to the default keyring (a test that needs a "
+            f"keyring installs a fake one, tests/assistant/conftest.py fake_keyring):\n  {shown}\n")
+        session.exitstatus = pytest.ExitCode.TESTS_FAILED
+
+
+def pytest_unconfigure(config: pytest.Config) -> None:
+    user_dirs_guard.remove(_TEST_USER_HOME)
+    if _KEYRING_LOG_DIR is not None:
+        user_dirs_guard.remove(_KEYRING_LOG_DIR)
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -166,9 +233,11 @@ def pytest_configure(config: pytest.Config) -> None:
 
 # GUI test modules that open a real Tk window and therefore need an interactive
 # display. Opt-in only (see --run-gui): skipped by default both locally (they
-# steal focus / pop up windows) and in headless CI (no display). Test modules
-# can also opt in individually with `@pytest.mark.gui`. Add new display-driving
-# GUI test modules here.
+# steal focus / pop up windows) and in the sharded CI job (no display); the
+# 'gui-tests' CI job runs them under xvfb with a window manager (--run-gui
+# --gui-only). Test modules can also opt in with `pytestmark = pytest.mark.gui`
+# (the tests/gui/assistant modules do). Add new display-driving GUI test
+# modules here.
 _GUI_DISPLAY_MODULES = frozenset({
     "test_calibrate_dialog",
     "test_check_tree",
@@ -181,17 +250,28 @@ _GUI_DISPLAY_MODULES = frozenset({
 })
 
 
+def _is_gui_display_test(item: pytest.Item) -> bool:
+    stem = getattr(getattr(item, "path", None), "stem", "")
+    return stem in _GUI_DISPLAY_MODULES or item.get_closest_marker("gui") is not None
+
+
 def pytest_collection_modifyitems(
     config: pytest.Config, items: list[pytest.Item]
 ) -> None:
-    """Skip opt-in GUI display tests by default; honor --regenerate filtering."""
+    """Skip opt-in GUI display tests by default; keep only them with
+    --gui-only; honor --regenerate filtering."""
+    if config.getoption("--gui-only", default=False):
+        kept = [item for item in items if _is_gui_display_test(item)]
+        dropped = [item for item in items if not _is_gui_display_test(item)]
+        if dropped:
+            config.hook.pytest_deselected(items=dropped)
+        items[:] = kept
     if not config.getoption("--run-gui", default=False):
         skip_gui = pytest.mark.skip(
             reason="GUI display test — pass --run-gui (ideally under 'xvfb-run -a') to run"
         )
         for item in items:
-            stem = getattr(getattr(item, "path", None), "stem", "")
-            if stem in _GUI_DISPLAY_MODULES or item.get_closest_marker("gui"):
+            if _is_gui_display_test(item):
                 item.add_marker(skip_gui)
 
     regenerate = config.getoption("--regenerate", default=None)

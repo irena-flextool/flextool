@@ -1492,6 +1492,7 @@ def objective_terms(b: "_Build"):
     d = b.d
 
     # ─── OBJ. ─── reserve shortfall ──────────────────────────────────────────
+    # names: reserve_shortfall_penalty
     # ─────────────────────────────────────────────────────────────────────────
     # + Σ_{(r,ud,g,d,t)} vq_reserve[r,ud,g,d,t] · scale[r,ud,g,d,t] · penalty_reserve[r,ud,g] · w_op[d,t]
     # Prices the shortfall in MW (vq_reserve · scale, the multiplier of the

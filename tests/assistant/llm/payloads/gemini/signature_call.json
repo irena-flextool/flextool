@@ -1,0 +1,55 @@
+{
+ "description": "A tool call carrying a thought signature on its first chunk; finish says stop.",
+ "synthetic": true,
+ "chunks": [
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "role": "assistant",
+      "tool_calls": [
+       {
+        "index": 0,
+        "id": "function-call-synth1",
+        "type": "function",
+        "function": {
+         "name": "get_entity",
+         "arguments": "{\"name\":\"west\"}"
+        },
+        "extra_content": {
+         "google": {
+          "thought_signature": "R2VtaW5pLXN5bnRoZXRpYy1zaWduYXR1cmU="
+         }
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {},
+     "finish_reason": "stop"
+    }
+   ],
+   "usage": {
+    "prompt_tokens": 1200,
+    "completion_tokens": 25,
+    "total_tokens": 1225
+   }
+  }
+ ]
+}

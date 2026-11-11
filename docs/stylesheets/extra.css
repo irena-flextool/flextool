@@ -1,0 +1,14 @@
+/* Site-wide tweaks to the Material theme. */
+
+/* Table text at body size (the theme shrinks it to 0.64rem). */
+.md-typeset table:not([class]) {
+  font-size: inherit;
+}
+
+/* Long commands wrap on screen instead of scrolling sideways. The wrap is
+   visual only: the copy button and text selection still give the original
+   line, because no line breaks are added to the text. */
+.md-typeset pre > code {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

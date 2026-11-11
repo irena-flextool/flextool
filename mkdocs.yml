@@ -14,6 +14,9 @@ theme:
     - content.code.copy
     - navigation.expand
 
+extra_css:
+  - stylesheets/extra.css
+
 extra_javascript:
   - https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML
   - assets/mathjaxhelper.js
@@ -21,6 +24,10 @@ extra_javascript:
 plugins:
   - search
   - mermaid2
+
+# Adds the pages generated from the code (formulation, results catalogue); nothing is written to docs/.
+hooks:
+  - tools/mkdocs_hooks.py
 
 markdown_extensions:
   - extra
@@ -49,6 +56,8 @@ nav:
   - Concepts:
     - 'Model parameters': reference.md
     - 'Model outputs': results.md
+    - 'Results catalogue': results_catalogue.md
+    - 'Model formulation': formulation.md
     - 'How-to recipes': how_to.md
     - 'Advanced concepts': advanced_concepts.md
   - Interfaces:
@@ -57,6 +66,7 @@ nav:
     - 'Spine database editor': spine_database.md
     - 'Excel as input/output': excel_interface.md
     - 'Terminal / CLI': terminal_workflow.md
+    - 'AI assistant': ai_assistant.md
     - 'Environment variables': env_vars.md
   - Solvers:
     - 'Solver selection': solvers/index.md
@@ -73,6 +83,7 @@ nav:
     - 'Decomposition': dev/decomposition.md
     - 'Database schema and migration': dev/db_schema.md
     - 'Testing': dev/testing.md
+    - 'Evaluating the AI assistant': dev/assistant_evaluation.md
     - 'Environment variables (developer)': dev/env_vars.md
     - 'Injecting parameters between solves': dev/inject_between_solves.md
   - 'Changelog': release.md

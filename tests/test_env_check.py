@@ -33,7 +33,7 @@ def test_windows_native_faults(rc):
     assert env_check.is_native_fault(rc, plat="win32") is True
 
 
-@pytest.mark.parametrize("rc", [0, 1, 2, 3, 9009])
+@pytest.mark.parametrize("rc", [0, 1, 2, 3, 9009, 0xC000013A])  # incl. Ctrl-C (STATUS_CONTROL_C_EXIT)
 def test_windows_normal_exits_are_not_faults(rc):
     assert env_check.is_native_fault(rc, plat="win32") is False
 

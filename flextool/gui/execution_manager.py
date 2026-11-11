@@ -18,14 +18,149 @@ from typing import Callable
 
 import psutil
 
-from flextool.gui.cli_format import format_cmd_for_log
-from flextool.gui.data_models import GlobalSettings, ProjectSettings, ScenarioInfo
+from flextool.gui.cli_format import format_cmd_for_log, terminal_command
+from flextool.gui.data_models import TIMESTAMP_FORMAT, GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.scenario_key import choose_output_subdir_for_write
+from flextool.run_record import (
+    RUN_LOG_OWNER_ENV,
+    ExpectedRun,
+    RunLogOwner,
+    now_iso,
+    read_status_settled,
+    results_usable,
+    write_stop_request,
+)
 
 logger = logging.getLogger(__name__)
 
 
 _slice_probe_cache: dict[str, bool] = {}
+
+# Why the GUI stopped a job: the ``kill_reason`` of the job and the error message of its run record.
+KILL_REASON_WINDOW = "stopped from the FlexTool window"
+KILL_REASON_SOURCE_REMOVED = "its input source was removed"
+KILL_REASON_CLOSED = "FlexTool was closed"
+KILL_REASON_REPLACED = "replaced by a new run of the same action"
+KILL_REASON_PROJECT_DELETED = "the project was deleted"
+KILL_REASON_PROJECT_SWITCHED = "the project was switched"
+
+#: How long :meth:`ExecutionManager.cleanup` waits for the stopped jobs to finish their run records.
+CLEANUP_WAIT_S = 15.0
+#: How long the ``flextool-run`` supervisors of a stopped auxiliary job get to stop their engines and record the
+#: runs as killed, before what is left of the job's processes is killed.
+AUX_STOP_GRACE_S = 10.0
+
+
+def kill_process_tree(proc: subprocess.Popen) -> None:
+    """Kill *proc* and every process it started (a ``--save-memory`` solve child, a calibrator's engine run).
+
+    Killing only *proc* would leave such a child running and holding the output pipe, so the job's reader would
+    wait for it.  The children are listed before *proc* dies (afterwards they are no longer its children).
+    """
+    try:
+        children = psutil.Process(proc.pid).children(recursive=True)
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        children = []
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    for child in children:
+        try:
+            child.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+
+def _is_run_supervisor(process: psutil.Process) -> bool:
+    """Whether *process* is a ``flextool-run`` supervisor (``python -m flextool_run_supervisor``, the console
+    script ``flextool-run``)."""
+    try:
+        cmdline = process.cmdline()
+    except (psutil.Error, OSError):
+        return False
+    if not cmdline:
+        return False
+    if any("flextool_run_supervisor" in part for part in cmdline):
+        return True
+    return os.path.basename(cmdline[0]).lower() in ("flextool-run", "flextool-run.exe")
+
+
+def _kill_quietly(process: psutil.Process) -> None:
+    try:
+        process.kill()
+    except (psutil.Error, OSError):
+        pass
+
+
+def stop_aux_tree(
+    proc: subprocess.Popen, stop_file: Path, reason: str, *, grace_s: float = AUX_STOP_GRACE_S,
+) -> None:
+    """Stop an auxiliary job (a calibration, a representative-period iteration) so that each engine run under it
+    is recorded as ``killed`` with *reason*.
+
+    Its ``flextool-run`` supervisors own the engines' run records, so they are not killed with the rest: *reason*
+    goes into *stop_file* first (a supervisor started meanwhile then starts nothing), the job's process tree is
+    listed, the job's own process and everything that is neither a supervisor nor under one is killed (also the
+    processes an engine started, so its pipe closes at once), each supervisor gets *grace_s* to kill its engine
+    and finish the record, and then whatever is left is killed.  The folder of *stop_file* (the job's own,
+    from ``tempfile.mkdtemp``) is removed at the end.  Blocking: run it in its own thread.
+    """
+    try:
+        write_stop_request(stop_file, reason)
+    except OSError as exc:
+        logger.warning("Cannot write the stop file %s (%s); killing the job's processes.", stop_file, exc)
+        kill_process_tree(proc)
+        shutil.rmtree(stop_file.parent, ignore_errors=True)
+        return
+    try:
+        snapshot = psutil.Process(proc.pid).children(recursive=True)
+    except (psutil.Error, OSError):
+        snapshot = []
+    parents: dict[int, int] = {}
+    for process in snapshot:
+        try:
+            parents[process.pid] = process.ppid()
+        except (psutil.Error, OSError):
+            pass
+    supervisors = [process for process in snapshot if _is_run_supervisor(process)]
+    supervisor_pids = {process.pid for process in supervisors}
+
+    def under_supervisor(pid: int) -> int:
+        """How many levels below a supervisor *pid* is (0: not under one)."""
+        depth, current = 0, pid
+        while current in parents:
+            current = parents[current]
+            depth += 1
+            if current in supervisor_pids:
+                return depth
+        return 0
+
+    try:
+        proc.kill()
+    except OSError:
+        pass
+    for process in snapshot:
+        if process.pid in supervisor_pids:
+            continue
+        # Not under a supervisor, or below a supervisor's engine (the engine's own children): killed now.
+        if under_supervisor(process.pid) != 1:
+            _kill_quietly(process)
+    if supervisors:
+        _gone, alive = psutil.wait_procs(supervisors, timeout=grace_s)
+        if alive:
+            logger.warning("%d flextool-run supervisor(s) did not stop within %.0f s; their run records stay as "
+                           "they are.", len(alive), grace_s)
+    for process in snapshot:
+        _kill_quietly(process)
+    shutil.rmtree(stop_file.parent, ignore_errors=True)
+
+
+def _wait_done(wait: threading.Event | threading.Thread) -> bool:
+    """Whether a worker's ``worker_done`` event is set, or a stop thread has ended."""
+    if isinstance(wait, threading.Thread):
+        return not wait.is_alive()
+    return wait.is_set()
 
 
 def _slice_exists(name: str) -> bool:
@@ -316,12 +451,9 @@ class MemoryWatchdog:
             with self._manager._lock:
                 victim.killed_for_memory = True
                 victim.kill_reason = reason
-            try:
-                vproc = victim.process
-                if vproc is not None:
-                    vproc.kill()
-            except OSError:
-                pass
+            vproc = victim.process
+            if vproc is not None:
+                kill_process_tree(vproc)
 
 
 class JobStatus(Enum):
@@ -395,6 +527,16 @@ class ExecutionJob:
     # Set by ``flextool/gui/calibrate_jobs.py``. See MemoryWatchdog._loop.
     watchdog_exempt: bool = False
     native_fault: bool = False  # set on finalize when the process died from a native crash (segfault / illegal instruction)
+    # The run folder whose _run_status.json / _run.log this job's engine writes, set when the engine's marker
+    # arrives (its record says "running" from then on): the main window refreshes its executed list once then.
+    run_record_folder: Path | None = None
+    # Set by the job's worker thread as its very last step, after the run record is finished and the job's
+    # output folder is free again.  ``cleanup`` waits for it.
+    worker_done: threading.Event = field(default_factory=threading.Event)
+    # An auxiliary job whose process starts ``flextool-run`` supervisors: the file that asks them to stop
+    # (``FLEXTOOL_RUN_STOP_FILE``), and whether a stop through it has started (its stop thread then owns the file).
+    stop_file: Path | None = None
+    stop_started: bool = False
     # Opaque per-platform handle returned by `_wrap_for_memory_cap` post_spawn
     # (e.g. Windows Job Object). Must outlive the Popen, else the cap is
     # released when the last handle closes. None on platforms that don't need it.
@@ -411,6 +553,7 @@ class ExecutionManager:
         on_status_change: Callable[[ExecutionJob], None] | None = None,
         on_all_finished: Callable[[], None] | None = None,
         global_settings: GlobalSettings | None = None,
+        on_run_record_closed: Callable[[ExecutionJob], None] | None = None,
     ):
         """
         Args:
@@ -422,6 +565,12 @@ class ExecutionManager:
             on_all_finished: Callback when all jobs are done (for post-execution
                 hooks like comparison).
             global_settings: Optional global settings (for execution limits).
+            on_run_record_closed: Callback, from the job's worker thread, after
+                the GUI has finished a scenario job's run record (a kill, a
+                failure, a run that ended before its record started).  The
+                job's status notify came earlier, while the record still said
+                ``running``: this one is when the executed list can show the
+                final state.
         """
         self._lock = threading.Lock()
         # Separate lock for settings.yaml saves so worker threads don't
@@ -438,6 +587,12 @@ class ExecutionManager:
         else:
             self._max_workers = 1
         self._running_count = 0
+        # The output folders of scenario jobs from their pick until their worker has finished the run record
+        # (also of a job ``remove_jobs_for_source`` took off the list while its worker still runs).
+        self._subdirs_in_use: set[str] = set()
+        # What ``cleanup`` waits for: each scenario worker's ``worker_done`` and each running aux-job stop thread,
+        # whether or not the job is still on the list.
+        self._live_waits: set[threading.Event | threading.Thread] = set()
         self._wind_down = False
         self._stopped = False
         self._memory_limited: bool = False  # set by scheduler when admission blocked by RAM
@@ -453,6 +608,7 @@ class ExecutionManager:
         self._global_settings = global_settings
         self._on_status_change = on_status_change
         self._on_all_finished = on_all_finished
+        self._on_run_record_closed = on_run_record_closed
         self._scheduler_thread: threading.Thread | None = None
         self._comparison_scenarios: list[str] = []
         self._pending_select_job_id: int | None = None  # for auto-selecting new jobs in UI
@@ -749,11 +905,7 @@ class ExecutionManager:
             # Kill and remove old job with the same action_key
             for old in list(self._jobs):
                 if old.action_key and old.action_key == action_key:
-                    if old.status == JobStatus.RUNNING and old.process:
-                        try:
-                            old.process.kill()
-                        except OSError:
-                            pass
+                    self._stop_job_locked(old, KILL_REASON_REPLACED)
                     self._jobs.remove(old)
 
             job = ExecutionJob(
@@ -793,15 +945,17 @@ class ExecutionManager:
                 job.stdout_lines.append(line)
 
     def finish_job(self, job_id: int, success: bool) -> None:
-        """Mark an auxiliary job as finished (SUCCESS or FAILED)."""
+        """Mark an auxiliary job as finished (SUCCESS or FAILED); a job the GUI stopped stays KILLED."""
         with self._lock:
             job = self._get_job(job_id)
             if job is None:
                 return
+            job.process = None
+            if job.status is JobStatus.KILLED:
+                return
             now = datetime.now()
             job.end_time = now
-            job.finish_timestamp = now.strftime("%d.%m.%y %H:%M")
-            job.process = None
+            job.finish_timestamp = now.strftime(TIMESTAMP_FORMAT)
             job.status = JobStatus.SUCCESS if success else JobStatus.FAILED
         self._notify_status_change(job)
 
@@ -815,7 +969,8 @@ class ExecutionManager:
           matches ``old_convert:model.xlsm`` because the stem ``model``
           is the same).
 
-        Running or pending jobs are killed first.
+        Running or pending jobs are stopped first (recorded as killed: "its input source was removed").  A
+        removed job's worker still finishes its run record, and its output folder stays busy until then.
         """
         stem = Path(source_name).stem
         with self._lock:
@@ -833,11 +988,7 @@ class ExecutionManager:
                 ):
                     match = True
                 if match:
-                    if job.status == JobStatus.RUNNING and job.process:
-                        try:
-                            job.process.kill()
-                        except OSError:
-                            pass
+                    self._stop_job_locked(job, KILL_REASON_SOURCE_REMOVED)
                     to_remove.append(job)
             for job in to_remove:
                 self._jobs.remove(job)
@@ -942,8 +1093,20 @@ class ExecutionManager:
 
         candidate: ExecutionJob | None = None
         forced: ExecutionJob | None = None
+        # A job whose output folder belongs to a running job, or to a pending job ahead of it, waits: two runs
+        # in one folder would overwrite each other's results and run record, and the second would empty the
+        # first's work folder.  A job's folder stays busy until its worker has finished the run record, after
+        # the job has already ended (or been removed from the list).
+        busy = set(self._subdirs_in_use) | {
+            j.output_subdir for j in self._jobs
+            if j.job_type == JobType.SCENARIO and j.status == JobStatus.RUNNING and j.output_subdir
+        }
         for job in self._jobs:
             if job.job_type == JobType.SCENARIO and job.status == JobStatus.PENDING:
+                if job.output_subdir and job.output_subdir in busy:
+                    continue
+                if job.output_subdir:
+                    busy.add(job.output_subdir)
                 if candidate is None:
                     candidate = job
                 if forced is None and job.force_start:
@@ -975,6 +1138,8 @@ class ExecutionManager:
         # worker thread re-asserts this (idempotent) and sets start_time.
         chosen.status = JobStatus.RUNNING
         self._running_count += 1
+        if chosen.output_subdir:
+            self._subdirs_in_use.add(chosen.output_subdir)
         return chosen
 
     def _scheduler_loop(self) -> None:
@@ -993,8 +1158,10 @@ class ExecutionManager:
                 next_job = self._pick_next_pending()
 
                 # Check if all SCENARIO jobs are done (auxiliary jobs are
-                # managed externally and don't block the scheduler)
-                any_active = any(
+                # managed externally and don't block the scheduler).  A job
+                # whose worker is still finishing its run record counts: the
+                # post-execution step reads those records.
+                any_active = bool(self._subdirs_in_use) or any(
                     j.status in (JobStatus.PENDING, JobStatus.RUNNING)
                     for j in self._jobs
                     if j.job_type == JobType.SCENARIO
@@ -1030,150 +1197,245 @@ class ExecutionManager:
     # ------------------------------------------------------------------
 
     def _run_job(self, job: ExecutionJob) -> None:
-        """Run a single job in a worker thread."""
+        """Run a single job in a worker thread.
+
+        The GUI is the run's pipe owner: a :class:`RunLogOwner` (created before the engine starts, holding the
+        command line) writes the engine's output into the run's ``_run.log`` and, at the end, finishes a
+        ``_run_status.json`` the engine could not finish (a kill, a crash).  The order at the end is fixed: the
+        engine has ended, the record is finished (then ``on_run_record_closed``), and only then is the job's output
+        folder free for the next job and ``worker_done`` set.  That last step runs whatever failed before it.
+        """
+        with self._lock:
+            self._live_waits.add(job.worker_done)
+        owner: RunLogOwner | None = None
+        proc: subprocess.Popen | None = None
+        launch: tuple[str, list[str]] | None = None  # (launched_at, command) of the engine
         try:
-            # Mark as RUNNING
-            with self._lock:
-                job.status = JobStatus.RUNNING
-                job.start_time = datetime.now()
-            self._notify_status_change(job)
-
-            # xlsx conversion must be done before jobs are dispatched
-            if job.is_xlsx_source and job.source_name not in self._converted_xlsx:
-                raise RuntimeError(
-                    f"Bug: xlsx source '{job.source_name}' was not pre-converted"
-                )
-
-            # Step 2: Build and run the main FlexTool command
-            work_folder = self.project_path / "work" / job.output_subdir
-
-            # Clean work folder so re-executions start fresh
-            if work_folder.exists():
-                shutil.rmtree(work_folder, ignore_errors=True)
-            work_folder.mkdir(parents=True, exist_ok=True)
-
-            cmd = self._build_run_command(job, work_folder)
-
-            estimate_gb, _src = self._compute_memory_budget_for_job(job)
-            with self._lock:
-                job.memory_cap_gb = estimate_gb
-
-            wrapped_cmd, popen_extras, post_spawn = _wrap_for_memory_cap(
-                cmd, estimate_gb
-            )
-            cmd_str = format_cmd_for_log(wrapped_cmd)
-            logger.info("Running job %d (%s):\n%s", job.job_id, job.scenario_name, cmd_str)
-
-            # Log the CLI command as the first line in the progress output
-            with self._lock:
-                job.stdout_lines.append(cmd_str)
-                job.stdout_lines.append("")
-            self._notify_status_change(job)
-
-            # Run from flextool root so relative paths (templates/, etc.) work
-            flextool_root = Path.cwd()  # subprocess cwd — user workspace, formerly the repo root
-
-            env = {**os.environ, "PYTHONUNBUFFERED": "1"}
-            popen_kwargs = dict(
-                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                text=True, bufsize=1, cwd=str(flextool_root), env=env,
-            )
-            popen_kwargs.update(popen_extras)
-            proc = subprocess.Popen(wrapped_cmd, **popen_kwargs)
-            cap_handle = post_spawn(proc) if post_spawn is not None else None
-            killed = False
-            with self._lock:
-                # Check if killed while we were setting up
-                if job.status == JobStatus.KILLED:
-                    killed = True
-                else:
-                    job.process = proc
-                    job.memory_cap_handle = cap_handle
-
-            if killed:
-                proc.kill()
-                proc.wait()
-                return
-
-            # Read stdout line by line
-            assert proc.stdout is not None
-            for line in proc.stdout:
-                stripped = line.rstrip("\n")
+            try:
                 with self._lock:
-                    job.stdout_lines.append(stripped)
-                    # Fast-path warmed flip: the solver has loaded the matrix
-                    # and begun reserving memory, so this job's RSS is now a
-                    # reliable footprint. The watchdog's RSS-plateau backstop
-                    # covers quiet/suppressed logs where no marker appears.
-                    if not job.footprint_solid and _is_solver_warm_marker(stripped):
-                        job.footprint_solid = True
-                # Notify so the GUI can update the log view
+                    # Stopped between its pick and this thread's start (a kill, "delete source", closing
+                    # FlexTool): it never starts, and KILLED is never overwritten with RUNNING.
+                    if job.status is JobStatus.KILLED:
+                        return
+                    job.status = JobStatus.RUNNING
+                    job.start_time = datetime.now()
                 self._notify_status_change(job)
 
-            return_code = proc.wait()
-
-            # Finalise
-            now = datetime.now()
-            peak_to_record: tuple[ExecutionJob, float] | None = None
-            with self._lock:
-                if job.status == JobStatus.KILLED:
-                    return
-                job.end_time = now
-                job.finish_timestamp = now.strftime("%d.%m.%y %H:%M")
-                job.process = None
-                if return_code == 0:
-                    job.status = JobStatus.SUCCESS
-                    self.settings.scenarios_changed = True
-                    runtime_s = (
-                        (now - job.start_time).total_seconds()
-                        if job.start_time else 0.0
+                # xlsx conversion must be done before jobs are dispatched
+                if job.is_xlsx_source and job.source_name not in self._converted_xlsx:
+                    raise RuntimeError(
+                        f"Bug: xlsx source '{job.source_name}' was not pre-converted"
                     )
-                    # Capture under lock; persist below (outside lock) to
-                    # avoid blocking other workers on YAML I/O.
-                    peak_to_record = (job, runtime_s)
-                else:
-                    job.status = JobStatus.FAILED
-                    if job.killed_for_memory:
-                        job.stdout_lines.append(
-                            f"[execution_manager] Killed: {job.kill_reason or 'memory pressure'}"
-                        )
-                    from flextool import env_check
-                    if env_check.is_native_fault(return_code):
-                        job.native_fault = True
-                        job.stdout_lines.append(
-                            f"[execution_manager] Process crashed: "
-                            f"{env_check.describe_fault(return_code)} "
-                            f"(exit code {return_code})"
-                        )
-                        job.stdout_lines.append(
-                            "[execution_manager] This is a native library crash, "
-                            "not a model error. It may be an incompatible solver "
-                            "wheel (polars or HiGHS) that FlexTool can re-install — "
-                            "see the prompt at the next start, or run 'Update "
-                            "FlexTool'. If the solver check passes, the cause is "
-                            "usually the Python environment itself: a venv built on "
-                            "Anaconda/conda, or running from a network/mapped drive. "
-                            "Rebuild from a clean python.org Python on a local disk."
-                        )
-                    else:
-                        job.stdout_lines.append(
-                            f"[execution_manager] Process exited with code {return_code}"
-                        )
-                self._prune_old_jobs(job)
-            if peak_to_record is not None:
-                self._record_scenario_peak(*peak_to_record)
-            self._notify_status_change(job)
 
-        except Exception:
-            logger.exception("Unexpected error running job %d (%s)", job.job_id, job.scenario_name)
-            with self._lock:
-                job.status = JobStatus.FAILED
-                job.end_time = datetime.now()
-                job.finish_timestamp = job.end_time.strftime("%d.%m.%y %H:%M")
-            self._notify_status_change(job)
+                # Step 2: Build and run the main FlexTool command
+                work_folder = self.project_path / "work" / job.output_subdir
+
+                # Clean work folder so re-executions start fresh
+                if work_folder.exists():
+                    shutil.rmtree(work_folder, ignore_errors=True)
+                work_folder.mkdir(parents=True, exist_ok=True)
+
+                cmd = self._build_run_command(job, work_folder)
+
+                estimate_gb, _src = self._compute_memory_budget_for_job(job)
+                with self._lock:
+                    job.memory_cap_gb = estimate_gb
+
+                wrapped_cmd, popen_extras, post_spawn = _wrap_for_memory_cap(
+                    cmd, estimate_gb
+                )
+                logger.info("Running job %d (%s):\n%s", job.job_id, job.scenario_name, format_cmd_for_log(wrapped_cmd))
+                # The command as a terminal would run it (``flextool-run ...``): the first line of the progress
+                # output, for copying, and of the run's _run.log.
+                cmd_str = format_cmd_for_log(terminal_command(wrapped_cmd))
+                owner = RunLogOwner(launcher="gui", preamble=[cmd_str, ""])
+
+                # Log the CLI command as the first line in the progress output
+                with self._lock:
+                    job.stdout_lines.append(cmd_str)
+                    job.stdout_lines.append("")
+                self._notify_status_change(job)
+
+                # Run from flextool root so relative paths (templates/, etc.) work
+                flextool_root = Path.cwd()  # subprocess cwd — user workspace, formerly the repo root
+
+                # The pipe-owner variables (docs/dev/architecture.md, "Runtime options" item 4): the engine prints
+                # the run-record marker instead of copying its own output into _run.log, and writes UTF-8 unbuffered.
+                env = {
+                    **os.environ,
+                    "PYTHONUNBUFFERED": "1",
+                    "PYTHONIOENCODING": "utf-8",
+                    RUN_LOG_OWNER_ENV: "1",
+                }
+                popen_kwargs = dict(
+                    stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                    text=True, encoding="utf-8", errors="replace", bufsize=1,
+                    cwd=str(flextool_root), env=env,
+                )
+                popen_kwargs.update(popen_extras)
+                # Taken just before the start: a record in the folder that started at or after it is this
+                # run's own (or a later run's), never one to replace (``record_run_without_marker``).
+                launch = (now_iso(), list(cmd))
+                proc = subprocess.Popen(wrapped_cmd, **popen_kwargs)
+                cap_handle = post_spawn(proc) if post_spawn is not None else None
+                killed = False
+                with self._lock:
+                    # Check if killed while we were setting up
+                    if job.status == JobStatus.KILLED:
+                        killed = True
+                    else:
+                        job.process = proc
+                        job.memory_cap_handle = cap_handle
+
+                if killed:
+                    kill_process_tree(proc)
+                    proc.wait()
+                    return
+
+                # Read stdout line by line
+                assert proc.stdout is not None
+                for line in proc.stdout:
+                    stripped = line.rstrip("\n")
+                    if not owner.feed(stripped):
+                        # The engine's run-record marker: its record now says "running".
+                        with self._lock:
+                            job.run_record_folder = owner.folder
+                        self._notify_status_change(job)
+                        continue
+                    with self._lock:
+                        job.stdout_lines.append(stripped)
+                        # Fast-path warmed flip: the solver has loaded the matrix
+                        # and begun reserving memory, so this job's RSS is now a
+                        # reliable footprint. The watchdog's RSS-plateau backstop
+                        # covers quiet/suppressed logs where no marker appears.
+                        if not job.footprint_solid and _is_solver_warm_marker(stripped):
+                            job.footprint_solid = True
+                    # Notify so the GUI can update the log view
+                    self._notify_status_change(job)
+
+                return_code = proc.wait()
+
+                # Finalise
+                now = datetime.now()
+                peak_to_record: tuple[ExecutionJob, float] | None = None
+                with self._lock:
+                    if job.status == JobStatus.KILLED:
+                        return
+                    job.end_time = now
+                    job.finish_timestamp = now.strftime(TIMESTAMP_FORMAT)
+                    job.process = None
+                    if return_code == 0:
+                        job.status = JobStatus.SUCCESS
+                        self.settings.scenarios_changed = True
+                        runtime_s = (
+                            (now - job.start_time).total_seconds()
+                            if job.start_time else 0.0
+                        )
+                        # Capture under lock; persist below (outside lock) to
+                        # avoid blocking other workers on YAML I/O.
+                        peak_to_record = (job, runtime_s)
+                    else:
+                        job.status = JobStatus.FAILED
+                        if job.killed_for_memory:
+                            job.stdout_lines.append(
+                                f"[execution_manager] Killed: {job.kill_reason or 'memory pressure'}"
+                            )
+                        from flextool import env_check
+                        if env_check.is_native_fault(return_code):
+                            job.native_fault = True
+                            job.stdout_lines.append(
+                                f"[execution_manager] Process crashed: "
+                                f"{env_check.describe_fault(return_code)} "
+                                f"(exit code {return_code})"
+                            )
+                            job.stdout_lines.append(
+                                "[execution_manager] This is a native library crash, "
+                                "not a model error. It may be an incompatible solver "
+                                "wheel (polars or HiGHS) that FlexTool can re-install — "
+                                "see the prompt at the next start, or run 'Update "
+                                "FlexTool'. If the solver check passes, the cause is "
+                                "usually the Python environment itself: a venv built on "
+                                "Anaconda/conda, or running from a network/mapped drive. "
+                                "Rebuild from a clean python.org Python on a local disk."
+                            )
+                        else:
+                            job.stdout_lines.append(
+                                f"[execution_manager] Process exited with code {return_code}"
+                            )
+                    self._prune_old_jobs(job)
+                if peak_to_record is not None:
+                    self._record_scenario_peak(*peak_to_record)
+                self._notify_status_change(job)
+
+            except Exception:
+                logger.exception("Unexpected error running job %d (%s)", job.job_id, job.scenario_name)
+                with self._lock:
+                    if job.status is not JobStatus.KILLED:
+                        job.status = JobStatus.FAILED
+                        job.end_time = datetime.now()
+                        job.finish_timestamp = job.end_time.strftime(TIMESTAMP_FORMAT)
+                self._notify_status_change(job)
+            finally:
+                self._finish_run_record(job, proc, owner, launch)
         finally:
+            # Last: the folder is free for the next job only once its record is finished.
             with self._lock:
                 self._running_count -= 1
+                if job.output_subdir:
+                    self._subdirs_in_use.discard(job.output_subdir)
+                self._live_waits.discard(job.worker_done)
+            job.worker_done.set()
+
+    def _finish_run_record(
+        self,
+        job: ExecutionJob,
+        proc: subprocess.Popen | None,
+        owner: RunLogOwner | None,
+        launch: tuple[str, list[str]] | None = None,
+    ) -> None:
+        """Stop an engine still running, finish its run record and call ``on_run_record_closed``; never raises.
+
+        An engine that ended before it started its record (an early error, a kill in its first seconds) gets a
+        minimal ``failed`` / ``killed`` record in the job's folder (``record_run_without_marker``), so the
+        folder's earlier results are no longer offered as the latest run's.
+        """
+        try:
+            if proc is not None and proc.poll() is None:
+                # The job failed here while its engine still runs: stop it, so no second run starts in its
+                # folder and the run record below is finished.
+                kill_process_tree(proc)
+                proc.wait()
+        except Exception:
+            logger.exception("Could not stop the engine of job %d (%s)", job.job_id, job.scenario_name)
+        if owner is None:
+            return
+        try:
+            with self._lock:
+                killed = job.status is JobStatus.KILLED or job.killed_for_memory
+                kill_reason = job.kill_reason or KILL_REASON_WINDOW
+            expected = None
+            if proc is not None and launch is not None and job.output_subdir:
+                folder = self.project_path / "output_parquet" / job.output_subdir
+                expected = ExpectedRun(
+                    folder=folder, pid=proc.pid, launched_at=launch[0], argv=launch[1],
+                    input={"db_url": job.input_db_url, "scenario": job.scenario_name},
+                    output={"location": str(self.project_path), "subdir": job.output_subdir,
+                            "parquet_dir": str(folder)},
+                )
+            owner.close(
+                proc.returncode if proc is not None else None,
+                killed=killed,
+                kill_reason=kill_reason if killed else None,
+                expected=expected,
+            )
+        except Exception:
+            logger.exception("Could not finish the run record of job %d (%s)", job.job_id, job.scenario_name)
+            return
+        if owner.record_changed and self._on_run_record_closed is not None:
+            try:
+                self._on_run_record_closed(job)
+            except Exception:
+                logger.exception("on_run_record_closed callback failed for job %d", job.job_id)
 
     def _build_run_command(self, job: ExecutionJob, work_folder: Path) -> list[str]:
         """Build the ``cmd_run_flextool`` command line."""
@@ -1211,7 +1473,14 @@ class ExecutionManager:
             job.output_subdir,
             "--write-methods",
             *write_methods,
+            # Recorded in the run's _run_status.json.
+            "--run-launcher",
+            "gui",
         ]
+        if job.is_xlsx_source and job.xlsx_path is not None:
+            # The spreadsheet the input database is converted from (each batch): a reader of the run record
+            # compares its time, not the database's, to tell whether the results are older than their input.
+            cmd.extend(["--input-source-file", str(job.xlsx_path)])
 
         # Output config file
         single = settings.single_plot_settings
@@ -1304,13 +1573,28 @@ class ExecutionManager:
         # Gather on-disk subdirs from successful SCENARIO jobs only. Each
         # job records its chosen subdir (bare when uncontested, suffixed
         # on collision), so same-named scenarios from different sources
-        # stay distinct.
+        # stay distinct.  A folder counts by its latest finished job: when
+        # that one failed or was killed, the folder's results are not this
+        # run's (its run record says so), so it leaves the comparison, also
+        # when an earlier batch had put it there.
         with self._lock:
+            latest: dict[str, ExecutionJob] = {}
+            for j in self._jobs:
+                if j.job_type != JobType.SCENARIO or not j.output_subdir:
+                    continue
+                if j.status not in (JobStatus.SUCCESS, JobStatus.FAILED, JobStatus.KILLED):
+                    continue
+                prev = latest.get(j.output_subdir)
+                if prev is None or (j.end_time or datetime.min) >= (prev.end_time or datetime.min):
+                    latest[j.output_subdir] = j
+            failed = {sub for sub, j in latest.items() if j.status is not JobStatus.SUCCESS}
             successful = [
                 j.output_subdir
                 for j in self._jobs
                 if j.job_type == JobType.SCENARIO and j.status == JobStatus.SUCCESS
+                and j.output_subdir not in failed
             ]
+            self._comparison_scenarios = [s for s in self._comparison_scenarios if s not in failed]
             # Merge in any externally-specified comparison subdirs
             extra = [s for s in self._comparison_scenarios if s not in successful]
             all_scenarios = successful + extra
@@ -1322,8 +1606,26 @@ class ExecutionManager:
         if not do_comp_plots and not do_comp_excel:
             return
 
+        # A job that ended well can still leave a folder whose latest results are not usable (a run that
+        # succeeded without writing parquet keeps an earlier run's files): such folders are left out, as the
+        # output actions' comparison does; they stay in _comparison_scenarios, so a later batch checks them again.
+        # A folder without a run record (an older FlexTool) stays in.  Read outside the lock.
+        from flextool.gui.scenario_lists import describe_unusable  # lazy: scenario_lists loads tkinter
+
+        left_out: list[tuple[str, str]] = []
+        usable: list[str] = []
+        for subdir in all_scenarios:
+            status = read_status_settled(self.project_path / "output_parquet" / subdir)
+            if results_usable(status):
+                usable.append(subdir)
+            else:
+                left_out.append((subdir, describe_unusable(status) or "its results are not usable"))
+        all_scenarios = usable
+        for subdir, reason in left_out:
+            logger.info("Comparison leaves out %s: %s", subdir, reason)
+
         if len(all_scenarios) < 1:
-            logger.info("No successful scenarios; skipping comparison")
+            logger.info("No successful scenarios with usable results; skipping comparison")
             return
 
         cmd = [
@@ -1389,6 +1691,8 @@ class ExecutionManager:
             "output:auto_comparison",
         )
         cmd_str = format_cmd_for_log(cmd)
+        for subdir, reason in left_out:
+            self.append_stdout(job.job_id, f"Left out {subdir}: {reason}")
         self.append_stdout(job.job_id, cmd_str)
         self.append_stdout(job.job_id, "")
 
@@ -1464,52 +1768,108 @@ class ExecutionManager:
         with self._lock:
             return self._wind_down
 
-    def kill_all(self) -> None:
-        """Kill all running jobs and cancel pending ones."""
+    def _stop_job_locked(self, job: ExecutionJob, reason: str) -> threading.Thread | None:
+        """Stop *job* on purpose; the caller holds ``self._lock``.
+
+        A RUNNING job becomes KILLED with *reason* as its ``kill_reason`` (unless one is set already) before its
+        process is killed, so its worker records the run as ``killed`` with that reason, never as a crash or an
+        out-of-memory kill.  A job still being set up (no process yet) is KILLED too: its worker does not start
+        the engine.  A PENDING job becomes KILLED.  Returns the thread that stops an auxiliary job's process
+        tree when one was started (it waits, so it never runs under the lock).
+        """
+        if job.status is JobStatus.PENDING:
+            job.status = JobStatus.KILLED
+            return None
+        if job.status is not JobStatus.RUNNING:
+            return None
+        job.status = JobStatus.KILLED
+        job.kill_reason = job.kill_reason or reason
+        job.end_time = datetime.now()
+        job.finish_timestamp = job.end_time.strftime(TIMESTAMP_FORMAT)
+        if job.process is None:
+            return None
+        if job.stop_file is not None:
+            job.stop_started = True
+            thread = threading.Thread(
+                target=self._stop_aux_job, args=(job.process, job.stop_file, job.kill_reason),
+                name=f"flextool-stop-job-{job.job_id}", daemon=True,
+            )
+            self._live_waits.add(thread)
+            thread.start()
+            return thread
+        kill_process_tree(job.process)
+        return None
+
+    def _stop_aux_job(self, proc: subprocess.Popen, stop_file: Path, reason: str) -> None:
+        """The stop thread of an auxiliary job (see :func:`stop_aux_tree`)."""
+        try:
+            stop_aux_tree(proc, stop_file, reason)
+        except Exception:
+            logger.exception("Could not stop an auxiliary job's processes")
+            kill_process_tree(proc)
+        finally:
+            with self._lock:
+                self._live_waits.discard(threading.current_thread())
+
+    def kill_all(self, reason: str = KILL_REASON_WINDOW) -> None:
+        """Kill all running jobs and cancel pending ones; the run records give *reason*."""
         with self._lock:
             self._stopped = True
             for job in self._jobs:
-                if job.status == JobStatus.RUNNING and job.process:
-                    try:
-                        job.process.kill()
-                    except OSError:
-                        pass
-                    job.status = JobStatus.KILLED
-                elif job.status == JobStatus.PENDING:
-                    job.status = JobStatus.KILLED
+                self._stop_job_locked(job, reason)
 
-    def cleanup(self) -> None:
-        """Kill all running subprocesses. Called on exit.
+    def cleanup(self, progress: Callable[[], None] | None = None) -> None:
+        """Stop every job and wait (at most ``CLEANUP_WAIT_S``) for their run records. Called on exit.
 
         This method is registered with ``atexit`` so it runs when Python
         exits normally (``sys.exit``, end of script).  It is also safe to
         call explicitly from signal handlers or window-close callbacks --
-        the method is idempotent.
+        the method is idempotent.  Running jobs are recorded as killed ("FlexTool
+        was closed").  The worker threads are daemon threads, so without the
+        wait the process could end before they finish the records; jobs
+        already taken off the list are waited for as well.  The wait is done
+        without the lock (the workers need it to finish).  *progress*, when
+        given, is called about every 0.1 s while waiting (the window keeps
+        its event loop going with it).
         """
         if self._watchdog is not None:
             self._watchdog.stop()
         with self._lock:
             self._stopped = True
             for job in self._jobs:
-                if job.status == JobStatus.RUNNING and job.process:
-                    try:
-                        job.process.kill()
-                        job.process.wait(timeout=5)
-                    except Exception:
-                        pass
+                self._stop_job_locked(job, KILL_REASON_CLOSED)
+            waits = list(self._live_waits)
+        if not waits:
+            return
+        logger.info("Waiting up to %.0f s for %d job(s) to finish their run records.", CLEANUP_WAIT_S, len(waits))
+        deadline = time.monotonic() + CLEANUP_WAIT_S
+        pending = waits
+        while pending:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            step = min(0.1, remaining)
+            first = pending[0]
+            if isinstance(first, threading.Thread):
+                first.join(step)
+            else:
+                first.wait(step)
+            pending = [w for w in pending if not _wait_done(w)]
+            if pending and progress is not None:
+                try:
+                    progress()
+                except Exception:
+                    logger.debug("cleanup progress callback failed", exc_info=True)
+        if pending:
+            logger.warning("%d job(s) did not finish their run records within %.0f s of closing.", len(pending),
+                           CLEANUP_WAIT_S)
 
     def kill_job(self, job_id: int) -> None:
-        """Kill a specific running job."""
+        """Kill a specific running job (recorded as "stopped from the FlexTool window")."""
         with self._lock:
             job = self._get_job(job_id)
-            if job and job.status == JobStatus.RUNNING and job.process:
-                try:
-                    job.process.kill()
-                except OSError:
-                    pass
-                job.status = JobStatus.KILLED
-                job.end_time = datetime.now()
-                job.finish_timestamp = job.end_time.strftime("%d.%m.%y %H:%M")
+            if job is not None and job.status is JobStatus.RUNNING:
+                self._stop_job_locked(job, KILL_REASON_WINDOW)
         if job:
             self._notify_status_change(job)
 

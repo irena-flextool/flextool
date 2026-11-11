@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re as _re
+import sys
 import tkinter as tk
 import tkinter.font as tkfont
 
@@ -249,36 +250,214 @@ def current_monitor_bounds(window: tk.Misc) -> tuple[int, int, int, int] | None:
     if bounds is not None:
         return bounds
 
-    def _set_maximised(on: bool) -> bool:
-        # Windows / macOS use state('zoomed'); most Linux WMs honour the
-        # '-zoomed' attribute. Try both; report whether either took.
-        try:
-            window.tk.call("wm", "state", window._w, "zoomed" if on else "normal")
-            return True
-        except tk.TclError:
-            pass
-        try:
-            window.tk.call("wm", "attributes", window._w, "-zoomed", "1" if on else "0")
-            return True
-        except tk.TclError:
-            return False
+    return _maximise_probe(window)
 
+
+def _set_maximised(window: tk.Misc, on: bool) -> bool:
+    # Windows / macOS use state('zoomed'); most Linux WMs honour the
+    # '-zoomed' attribute. Try both; report whether either took.
+    try:
+        window.tk.call("wm", "state", window._w, "zoomed" if on else "normal")
+        return True
+    except tk.TclError:
+        pass
+    try:
+        window.tk.call("wm", "attributes", window._w, "-zoomed", "1" if on else "0")
+        return True
+    except tk.TclError:
+        return False
+
+
+def _maximise_probe(
+    window: tk.Misc, *, frame: bool = False
+) -> tuple[int, int, int, int] | None:
+    """Momentarily maximise *window* and read where the window manager put it.
+
+    The window manager snaps a maximised window to the current monitor's
+    usable area (taskbars excluded). Returns the client rectangle, or with
+    *frame* the frame rectangle (the title bar and borders measured while
+    maximised added back). ``None`` when the window cannot be maximised.
+    """
     try:
         window.update_idletasks()
-        if not _set_maximised(True):
+        if not _set_maximised(window, True):
             return None
         window.update_idletasks()
         x = window.winfo_x()
         y = window.winfo_y()
         w = window.winfo_width()
         h = window.winfo_height()
-        _set_maximised(False)
+        top = border = 0
+        if frame:
+            m = _GEOMETRY_RE.match(window.wm_geometry())
+            if m and m["x"] is not None and m["xs"] == "+" and m["ys"] == "+":
+                border = max(0, window.winfo_rootx() - int(m["x"]))
+                top = max(0, window.winfo_rooty() - int(m["y"]))
+                x, y = int(m["x"]), int(m["y"])
+        _set_maximised(window, False)
         window.update_idletasks()
         if w <= 1 or h <= 1:
             return None
-        return (x, y, w, h)
+        return (x, y, w + 2 * border, h + top + border)
     except tk.TclError:
         return None
+
+
+def _intersect(
+    a: tuple[int, int, int, int], b: tuple[int, int, int, int]
+) -> tuple[int, int, int, int] | None:
+    x1, y1 = max(a[0], b[0]), max(a[1], b[1])
+    x2 = min(a[0] + a[2], b[0] + b[2])
+    y2 = min(a[1] + a[3], b[1] + b[3])
+    if x2 - x1 <= 1 or y2 - y1 <= 1:
+        return None
+    return (x1, y1, x2 - x1, y2 - y1)
+
+
+def _work_area_windows(window: tk.Misc) -> tuple[int, int, int, int] | None:
+    """``rcWork`` of the monitor nearest to *window* (Win32 ``GetMonitorInfoW``)."""
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class _MonitorInfo(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wintypes.DWORD),
+                ("rcMonitor", wintypes.RECT),
+                ("rcWork", wintypes.RECT),
+                ("dwFlags", wintypes.DWORD),
+            ]
+
+        user32 = ctypes.windll.user32  # type: ignore[attr-defined]
+        user32.MonitorFromWindow.restype = wintypes.HMONITOR
+        user32.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+        user32.GetMonitorInfoW.argtypes = [wintypes.HMONITOR, ctypes.POINTER(_MonitorInfo)]
+        hwnd = int(window.winfo_toplevel().wm_frame(), 16)
+        monitor = user32.MonitorFromWindow(hwnd, 2)  # MONITOR_DEFAULTTONEAREST
+        info = _MonitorInfo()
+        info.cbSize = ctypes.sizeof(_MonitorInfo)
+        if not monitor or not user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
+            return None
+        r = info.rcWork
+        return (int(r.left), int(r.top), int(r.right - r.left), int(r.bottom - r.top))
+    except (AttributeError, OSError, ValueError, tk.TclError):
+        return None
+
+
+def _x11_cardinals(name: bytes) -> list[int] | None:
+    """The CARDINAL values of the root window property *name* (``_NET_WORKAREA``), read with ``libX11``."""
+    try:
+        import ctypes
+        import ctypes.util
+
+        library = ctypes.util.find_library("X11")
+        if not library:
+            return None
+        x11 = ctypes.CDLL(library)
+    except OSError:
+        return None
+    c_ulong, c_long, c_int = ctypes.c_ulong, ctypes.c_long, ctypes.c_int
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XDefaultRootWindow.restype = c_ulong
+    x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+    x11.XInternAtom.restype = c_ulong
+    x11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, c_int]
+    x11.XGetWindowProperty.restype = c_int
+    x11.XGetWindowProperty.argtypes = [
+        ctypes.c_void_p, c_ulong, c_ulong, c_long, c_long, c_int, c_ulong,
+        ctypes.POINTER(c_ulong), ctypes.POINTER(c_int), ctypes.POINTER(c_ulong),
+        ctypes.POINTER(c_ulong), ctypes.POINTER(ctypes.c_void_p),
+    ]
+    x11.XFree.argtypes = [ctypes.c_void_p]
+    x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+    display = x11.XOpenDisplay(None)
+    if not display:
+        return None
+    try:
+        atom = x11.XInternAtom(display, name, 1)
+        if not atom:
+            return None
+        actual_type = c_ulong()
+        actual_format = c_int()
+        count = c_ulong()
+        remaining = c_ulong()
+        data = ctypes.c_void_p()
+        status = x11.XGetWindowProperty(
+            display, x11.XDefaultRootWindow(display), atom, 0, 4096, 0, 6,  # XA_CARDINAL
+            ctypes.byref(actual_type), ctypes.byref(actual_format), ctypes.byref(count),
+            ctypes.byref(remaining), ctypes.byref(data),
+        )
+        if status != 0 or not data.value:
+            return None
+        try:
+            if actual_format.value != 32:
+                return None
+            # Format-32 properties come back as an array of C longs.
+            values = ctypes.cast(data, ctypes.POINTER(c_long))
+            return [int(values[i]) for i in range(count.value)]
+        finally:
+            x11.XFree(data)
+    finally:
+        x11.XCloseDisplay(display)
+
+
+def _work_area_x11(
+    monitor: tuple[int, int, int, int] | None,
+) -> tuple[int, int, int, int] | None:
+    """``_NET_WORKAREA`` of the current desktop, cut to *monitor* (the work area spans all monitors)."""
+    values = _x11_cardinals(b"_NET_WORKAREA")
+    if not values or len(values) < 4:
+        return None
+    desktop = (_x11_cardinals(b"_NET_CURRENT_DESKTOP") or [0])[0]
+    start = 4 * desktop if len(values) >= 4 * (desktop + 1) else 0
+    area = tuple(values[start:start + 4])
+    if area[2] <= 1 or area[3] <= 1:
+        return None
+    if monitor is None:
+        return area  # type: ignore[return-value]
+    return _intersect(area, monitor)  # type: ignore[arg-type]
+
+
+def monitor_work_area(window: tk.Misc) -> tuple[int, int, int, int] | None:
+    """The work area ``(x, y, w, h)`` of the monitor showing *window*: the
+    rectangle a window's *frame* may cover, taskbars, panels and docks
+    excluded.
+
+    Windows reads ``rcWork`` of the nearest monitor; X11 reads
+    ``_NET_WORKAREA`` from the root window (``libX11`` through ctypes, no
+    ``xprop``) and cuts it to the ``screeninfo`` monitor; elsewhere (macOS)
+    the maximise probe gives it, converted from the client to the frame
+    rectangle; the last resort is the ``screeninfo`` monitor with the
+    taskbar margin the Execution window uses (four lines) taken off the
+    bottom. ``None`` when nothing is known.
+    """
+    monitor = _monitor_bounds_screeninfo(window)
+    if sys.platform.startswith("win"):
+        area = _work_area_windows(window)
+        if area is not None:
+            return area
+    else:
+        try:
+            system = window.tk.call("tk", "windowingsystem")
+        except tk.TclError:
+            system = ""
+        if system == "x11":
+            area = _work_area_x11(monitor)
+            if area is not None:
+                return area
+        elif system == "aqua":
+            area = _maximise_probe(window, frame=True)
+            if area is not None:
+                return area
+    if monitor is not None:
+        x, y, w, h = monitor
+        try:
+            margin = get_metrics(window).lh * 4
+        except tk.TclError:
+            margin = 80
+        return (x, y, w, max(1, h - margin))
+    return None
 
 
 def resolve_saved_geometry(
@@ -307,6 +486,30 @@ def resolve_saved_geometry(
         return None
     geom = rescale_geometry(saved, saved_cw, current_cw)
     return clamp_geometry(geom, screen_w, screen_h, min_w=min_w, min_h=min_h)
+
+
+def blend_rgb(base16: tuple[int, int, int], target_hex: str, frac: float) -> str:
+    """Blend a 16-bit ``(r, g, b)`` base colour ``frac`` of the way toward
+    ``target_hex`` (``#rrggbb``) and return an ``#rrggbb`` string.
+
+    ``base16`` comes from ``winfo_rgb`` (each channel 0–65535), so the
+    result tracks the widget's *actual* theme background/foreground:
+    blending a near-black dark-mode base toward grey lightens it, while
+    blending a near-white light-mode base toward grey darkens it — the
+    same call gives the right "touch" of tint in either theme.
+    """
+    tr = int(target_hex[1:3], 16) * 257
+    tg = int(target_hex[3:5], 16) * 257
+    tb = int(target_hex[5:7], 16) * 257
+    r = int(base16[0] + (tr - base16[0]) * frac)
+    g = int(base16[1] + (tg - base16[1]) * frac)
+    b = int(base16[2] + (tb - base16[2]) * frac)
+    return f"#{r // 256:02x}{g // 256:02x}{b // 256:02x}"
+
+
+def rgb_hex(base16: tuple[int, int, int]) -> str:
+    """A 16-bit ``(r, g, b)`` from ``winfo_rgb`` as ``#rrggbb`` (the target of :func:`blend_rgb`)."""
+    return f"#{base16[0] // 256:02x}{base16[1] // 256:02x}{base16[2] // 256:02x}"
 
 
 @dataclass(frozen=True)
@@ -383,6 +586,14 @@ def monitor_dpi(widget: tk.Misc) -> float:
         return float(widget.tk.call("winfo", "fpixels", widget._w, "1i"))
     except (tk.TclError, AttributeError):
         return 96.0
+
+
+def scaled_px(widget: tk.Misc, px: int) -> int:
+    """*px*, a size in pixels chosen at 96 DPI, at the DPI Tk uses now
+    (:func:`monitor_dpi`): twice as many at 192 DPI.  Never below *px*
+    (macOS's logical 72 DPI and a lowered ``tk scaling`` keep the 96-DPI
+    size)."""
+    return max(px, round(px * monitor_dpi(widget) / 96.0))
 
 
 def get_metrics(root: tk.Misc | None = None) -> FontMetrics:

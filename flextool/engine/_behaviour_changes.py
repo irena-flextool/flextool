@@ -322,13 +322,26 @@ def version_phrase(change: BehaviourChange) -> str:
     return f"FlexTool {change.since} (published {change.published})"
 
 
-def notice_text(change_id: str, kind: str, names: Iterable[str], detail: str = "") -> str:
+def notice_parts(change_id: str, kind: str, names: Iterable[str], detail: str = "") -> list[str]:
+    """The notice of *change_id* in its separate items: what changed, the affected entities, the *detail* (when
+    given) and how to silence it.  :func:`notice_text` joins them into the printed line."""
     change = BEHAVIOUR_CHANGES[change_id]
-    text = (f"Behaviour changed in {version_phrase(change)}: {change.summary} "
-            f"Affected {kind}: {', '.join(names)}.")
+    parts = [f"Behaviour changed in {version_phrase(change)}: {change.summary}",
+             f"Affected {kind}: {', '.join(names)}."]
     if detail:
-        text += f" {detail}"
-    return f"{text} {change.silence}"
+        parts.append(detail)
+    parts.append(change.silence)
+    return parts
+
+
+def notice_text(change_id: str, kind: str, names: Iterable[str], detail: str = "") -> str:
+    return " ".join(notice_parts(change_id, kind, names, detail))
+
+
+def display_text(notices: Iterable[Iterable[str]]) -> str:
+    """Notices (each as :func:`notice_parts`) for a dialog: each notice its own paragraph with its items on
+    their own lines, a blank line between notices."""
+    return "\n\n".join("\n".join(parts) for parts in notices)
 
 
 def notice(change_id: str, kind: str, names: Iterable[str], detail: str = "") -> bool:

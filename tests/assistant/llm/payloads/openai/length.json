@@ -1,0 +1,60 @@
+{
+ "description": "The answer is cut off at the output limit in the middle of a tool call.",
+ "synthetic": true,
+ "chunks": [
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "role": "assistant",
+      "content": "Let me look. "
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "id": "call_synthC",
+        "type": "function",
+        "function": {
+         "name": "get_entity",
+         "arguments": "{\"name\": \"we"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {},
+     "finish_reason": "length"
+    }
+   ]
+  }
+ ]
+}

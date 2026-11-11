@@ -81,6 +81,10 @@ packages. Every CLI command also has an installed entry point in
 | `cmd_update_flextool` | `flextool-update` | `git pull` + project-side migration in one step. |
 | `cmd_gui` (via `flextool.gui.__main__`) | `flextool-gui` | Launch the Tkinter desktop application. |
 
+Two entry points are top-level modules outside `flextool/cli/` (`[tool.setuptools] py-modules`), because they
+must act before `import flextool`: `flextool_run_supervisor` (`flextool-run`, see "Run record") and
+`flextool_assistant_entry` (`flextool-assistant`, see "AI assistant tools").
+
 ### Runtime options
 
 `flextool/run_options.py` holds the one resolver for every operator option that has more than one form, and
@@ -105,7 +109,17 @@ The contract:
    solve with `RunOptions.with_db` (e.g. `scaling`).
 4. A child FlexTool process (GUI job, calibration iteration, workflow run) gets the parent's flag-given choices
    as flags (`RunOptions.to_argv()`) and inherits the parent's environment untouched. Benders region workers are
-   threads and read the same `RunOptions`.
+   threads and read the same `RunOptions`. The launcher label is a flag too (`--run-launcher`; the outermost one
+   is kept). **One exception:** a *pipe owner* — the GUI's `_run_job` and the `flextool-run` supervisor
+   (`flextool_run_supervisor.py`), which read the engine's output pipe and write `_run.log` — adds
+   `FLEXTOOL_RUN_LOG_OWNER=1`, `PYTHONIOENCODING=utf-8` and `PYTHONUNBUFFERED=1` to the `env=` copy of its
+   **direct** child. They describe the pipe, not a run choice. The engine reads and removes
+   `FLEXTOOL_RUN_LOG_OWNER`, so no process it starts inherits it; the owner's own `os.environ` is not changed.
+   The calibrator, the representative-period iteration and the workflow runner start the supervisor with
+   `env=None`. **A second exception:** `FLEXTOOL_RUN_STOP_FILE` is set only by the GUI, in the `env=` of an
+   auxiliary job's process (a calibration, a representative-period iteration), passed on by inheritance and read
+   only by the `flextool-run` supervisor, which drops it from the engine's `env=`. It is the job's stop channel
+   (see "Run record"), never a run choice.
 5. Process-level variables (`MALLOC_ARENA_MAX`, `_RJEM_MALLOC_CONF`, `POLARS_*`) keep `setdefault` semantics: a
    value already in the environment wins.  The exception is `POLARS_MAX_THREADS` while `flextool/__init__.py`
    imports polars: see "Thread budget" below.
@@ -159,9 +173,18 @@ flextool/                          The installed Python package
 ├── model_builder/                 Synthetic / mock-up scenario generator.
 ├── representative_periods/        Greedy convex-hull representative-period
 │                                    clustering.
+├── assistant/                     The AI assistant: read-only tools (registry,
+│                                    input / result / diagnostics tools, docs
+│                                    index), the connection server for agents,
+│                                    and the chat (service backends, session,
+│                                    store, terminal front end).
+├── docs_build/                    Generated docs pages (formulation, results
+│                                    catalogue) and the assistant's docs index.
 ├── gui/                           Tkinter desktop application (main_window,
 │                                    result_viewer, plot_canvas,
-│                                    network_graph, check_tree, dialogs/...).
+│                                    network_graph, check_tree, dialogs/...,
+│                                    assistant/ — the AI assistant's chat
+│                                    window).
 ├── helpers/                       Small standalone diagnostic utilities
 │                                    (file compare, LP coefficient inspector,
 │                                    schema converters).
@@ -175,6 +198,10 @@ flextool/                          The installed Python package
 │                                    migration snapshots.
 └── lean_parquet.py                Tiny parquet loader used by the GUI
                                      ResultViewer.
+
+Top-level modules that run before `import flextool` (py-modules):
+  flextool_run_supervisor.py (flextool-run), flextool_assistant_entry.py
+  (flextool-assistant); build-time only: _flextool_build.py.
 
 Root wrapper scripts (kept for Spine Toolbox workflow compatibility):
   run_flextool.py, write_outputs.py, scenario_results.py,
@@ -928,8 +955,12 @@ affinity) limits FlexTool's processing and the solver (`flextool/_thread_budget.
 `POLARS_MAX_THREADS` only at import, and `import flextool` imports it, so `flextool/__init__.py` runs, in this
 order: the thread budget (`apply_before_polars`: when the process is a FlexTool command that accepts
 `--threads` — `sys.orig_argv` holds `-m flextool.cli.cmd_run_flextool` / `cmd_solve_mps` /
-`cmd_execute_flextool_workflow` / `flextool.calibrate`, or `sys.argv[0]` is `flextool-run[.exe]` or the
-`cmd_run_flextool.py` file Spine Toolbox runs — the flag is read from the command line, full name only; then
+`cmd_execute_flextool_workflow` / `flextool.calibrate` (`-m flextool.cli.cmd_run_flextool` is also the engine
+that `flextool-run` supervises), or `sys.argv[0]` is a `flextool-run[.exe]` installed before the supervisor (which
+ran the engine in-process) or the `cmd_run_flextool.py` file Spine Toolbox runs — the flag is read from the
+command line, full name only; the assistant (`flextool-assistant`, `-m flextool_assistant_entry`) reads its
+`--threads` the same way, and without it its budget is 1 (`command_default_threads`: it reads files while a model
+may be running and must not compete with it; `FLEXTOOL_THREADS` does not raise it); then
 `POLARS_MAX_THREADS = min(B, the user's POLARS_MAX_THREADS, else 8)`), the allocator config, `import polars`,
 the rest of the package, and finally `restore_env`, which puts `POLARS_MAX_THREADS` back exactly as it was.
 The environment therefore never carries B: a child gets `--threads` on its command line (workflow, calibrator,
@@ -953,6 +984,240 @@ work_folder/
 
 Cross-solve state moves through `FlexDataProvider` keys; the `solve_data/`
 CSVs exist only as a debugging aid.
+
+## Run record
+
+Every engine run (`cmd_run_flextool.main`, once its scenario and output folder are known) writes two files into
+`output_parquet/<subdir>/` (`flextool/run_record/`):
+
+- **`_run_status.json`** (schema `flextool.run_status`) — written by the **engine**, the only process that knows
+  the verdicts: `RunRecorder` (`_status.py`) creates it as `running`, rewrites it atomically as solves start and
+  are classified, and finishes it in `main()`'s `finally` (`succeeded` / `failed` / `interrupted`). It records each
+  solve's model status and acceptance, the error, the input, the options and threads, and `outputs.parquet_state`:
+  a failed run keeps the earlier run's parquet, marked `previous_run`. `write_outputs` keeps both files when it
+  empties the folder.
+- **`_run.log`** — written by the **pipe owner**, the process that reads the engine's stdout + stderr pipe and so
+  also sees native solver output and crash dumps: the GUI job thread (`ExecutionManager._run_job`) or the
+  `flextool-run` supervisor (`flextool_run_supervisor.py`, also used by the workflow runner, the calibrator and the
+  representative-period iteration). The owner sets `FLEXTOOL_RUN_LOG_OWNER=1` in its child's `env=` (the first
+  exception in "Runtime options" item 4; `FLEXTOOL_RUN_STOP_FILE` below is the second); the engine then prints one marker line with the folder and `run_id`, and
+  the owner (`RunLogOwner`, `_owner.py`) writes the log from there, hiding the marker. Without an owner (Spine
+  Toolbox, `python -m flextool.cli.cmd_run_flextool`, a Python console) the engine copies its own Python streams
+  (`_tee.py`, `log_capture: "python"`). The log keeps its first 64 KiB and last `FLEXTOOL_RUN_LOG_MAX_BYTES`.
+- When the engine dies without finishing its status (a crash, a kill, a signal), the owner finishes it from the
+  exit code (`classify_exit`: `killed`, `interrupted`, `crashed`). Without an owner a reader derives `abandoned` from
+  a stale `running` (`effective_state`).
+- A run the GUI stops is `killed` with the reason (`ExecutionManager._stop_job_locked`: the job is KILLED with its
+  `kill_reason` before its process is killed). A calibration or representative-period job runs its engines under
+  `flextool-run` supervisors, which own those records, so the GUI does not kill them with the rest: it gives the
+  job's process `FLEXTOOL_RUN_STOP_FILE` (a file in a private temp folder, inherited by each supervisor), writes
+  the reason into that file, kills the job's process and everything not under a supervisor, gives the
+  supervisors 10 s to kill their engines and record `killed`, then kills what is left (`stop_aux_tree`).
+  The stop thread is the file's only owner and removes its folder at the end. A job's worker finishes the record
+  before the job's output folder is free for the next job, and closing FlexTool waits (at most 15 s) for those
+  records.
+- A GUI job whose engine ends before it starts its record (an early error, a kill in its first seconds) would leave
+  the folder's previous `succeeded` record, and its results would still be offered. The GUI then writes a minimal
+  `failed` / `killed` record (`record_run_without_marker`, `_owner.py`) whose `outputs` carry the previous ones
+  (`carried_outputs`, the same rule the engine uses), with the engine's early output in `_run.log`. It writes only
+  over an older finished record or a legacy folder with parquet; never into a missing folder, over a record that
+  cannot be read, over another run's `running` record, or over a run that started at or after the launch. The run
+  id on disk is read again just before the replace, and the log is written after the status, only while the status
+  is still the GUI's.
+
+The supervisor is a top-level module that never imports `flextool` (that imports polars): it loads `_owner.py` and
+`env_check.py` by path, so `_owner.py` stays stdlib-only with no relative imports.
+
+**Whether a folder's results may be offered** is one pure rule, `run_record.results_usable(status)` (with
+`unusable_reason`): no record (a folder from before run records) → usable; otherwise only `succeeded` with
+`parquet_state == "written"`. Every consumer calls it and none restates it:
+
+- the GUI executed list (`ExecutedScenarioManager.scan_executed` → `ExecutedScenarioInfo.status` /
+  `run_state` / `checkable`): a row that is not usable shows its state in the check column (✗ / … / –) with a
+  tooltip, cannot be checked, is unchecked on a rescan, and its ▶ opens `_run.log`. The timestamp is the run's
+  `finished_at` (else `started_at`), so sorting is unchanged. The list is refreshed once when a job's engine has
+  written its record;
+- the result viewer (`ResultViewer._scan_scenarios` drops such folders after the ordering merge) and the
+  comparison (`OutputActionManager._build_comparison_cmd`; after a batch `ExecutionManager._run_post_execution`
+  leaves out folders whose latest job failed). A new reader of run folders calls it too.
+
+`ExecutionManager` also starts at most one job per output folder at a time (`_pick_next_pending`).
+
+## AI assistant tools
+
+`flextool/assistant/` holds read-only tools that let an AI assistant answer questions about one project: input data
+by scenario, results, run logs and slack, and the documentation; the connection server that gives them to an AI
+agent; and FlexTool's own chat with an AI service ("AI assistant chat" below). User page:
+[The AI assistant](../ai_assistant.md).
+`flextool/assistant/__init__.py` imports nothing; every module imports what it needs when first used.
+
+- **Registry** (`registry.py`). Each tool module (`tools/orientation`, `discovery`, `inputs`, `results`,
+  `diagnostics`) lists its `Tool`s in `TOOLS` (name, title, description ending with the data-not-instructions
+  sentence, a closed JSON schema without ranges, handler, area, `small_tier`). `call_tool(ctx, name, args)` is the
+  only way to run one and never raises: it clamps the caps arguments (`caps.py`: `--result-cap` presets and hard
+  ceilings), validates against the schema with `jsonschema` (mcp does not validate on stdio), runs the handler and
+  fits the payload with `fit_json` (compact JSON, whole trailing rows dropped with a `truncated` note). A
+  `ToolError` carries a message key of `errors.MESSAGES`, the one table of user-facing texts; any other exception
+  becomes the fault message, with the traceback on stderr only. `tools_for_tier("small")` is the basic set.
+- **Redaction** (`redact.py`) runs once, in `fit_json`, on every string of every payload and every message: the
+  project folder → `<project>`, home → `~`, host and user names, other absolute paths → their last part.
+- **Inputs** (`inputs/_db.py`). One read-only, percent-encoded SQLite URI open per file (`mode=ro` counts only
+  with `uri=true`; a raw `#` or `%` makes SQLite create another file), `sqlite_timeout=5`; a fixed list of item
+  types is fetched and the mapping closed, so no file handle stays open. The scenario view (rank order,
+  `entity_alternative`, `is_enabled`) is computed in our code; spinedb-api's scenario filter is only the oracle of
+  its test. Input sources and their numbers come from `gui.input_sources` / `gui.settings_io` (Tk-free), read
+  only; a spreadsheet is read through its conversion `intermediate/<stem>.sqlite`.
+- **Results** (`results/`). A run folder is offered only when `run_record.results_usable` says so (see "Run
+  record"); the message comes from `unusable_code`. Tables are read and aggregated wide (`flextool/lean_parquet.py`
+  footer layout); only a reduced frame is unpivoted. `check_aggregation` refuses sums with no meaning (power over
+  time, annual values over periods, levels, ratios). Units are worded only by `unit_wording.py`, as the default
+  convention (units are not enforced by FlexTool). Comparison files are used while their `_metadata.json` members
+  match the current successful runs, else the member folders.
+- **Docs** (`docs_store.py`, `flextool/docs_build/`). The build step `_flextool_build.BuildPy` copies the curated
+  Markdown (`docs_build/scope.CURATED_DOCS`) into `flextool/assistant/_docs/md/`; an editable install reads the
+  clone's `docs/`. On first use the formulation page, the results catalogue and the BM25 index are generated by the
+  installed FlexTool into the user cache folder, keyed by FlexTool version + source hash. The web docs generate the
+  same two pages with the same generator (`tools/mkdocs_hooks.py`).
+
+**The connection server for agents** (`flextool-assistant --mcp`, `mcp_server.py`, mcp 2.x low-level `Server`,
+telemetry middleware removed). The protocol uses stdin and stdout, so `flextool_assistant_entry.py`, a
+standard-library-only top-level module, keeps private duplicates of fd 0 and fd 1 for the protocol, then points
+fd 1 and `sys.stdout` at stderr and fd 0 at the null device (on Windows also the Win32 standard handles, and
+binary mode on the duplicates) **before** `import flextool`, whose dependencies and start-up checks may print.
+The server's streams are explicit `anyio` wrappers over those duplicates (UTF-8, `\n`), so mcp's own stdio claim
+is skipped. Tool calls run in a worker thread that takes the context's lock, so `ping` and `tools/list` answer
+during a slow call. The server sends the instructions of `prompt.instructions` (data use, units convention,
+vocabulary), lists the tools with read-only annotations, serves the docs pages as `flextool-docs:///<page>`
+resources and the level texts (`prompt.ADDENDA`) as the prompts `basic`, `standard`, `advanced`. `--tier basic`
+lists and runs only the basic set and defaults to the small result cap.
+
+When `import flextool` stops with `CompatRuntimeRequired` (env_check: this processor needs the compatible polars
+build), the entry module loads `mcp_server.py` by path (it imports only the standard library at module level) and
+serves one tool, `flextool_setup_problem`, that returns the fix. The assistant options have no environment-variable
+twins.
+
+`--call TOOL [JSON | @file.json]` runs one tool through the same `call_tool` and prints its text (support and
+testing). Tests: `tests/assistant/` (`test_server_stdio.py` drives the installed command over real stdio and fails
+on any non-protocol byte on stdout); CI smoke: `.github/scripts/mcp_smoke.py` (wheel check in `publish.yml`, the
+Toolbox bundle, the old-CPU emulation's degraded server).
+
+### AI assistant chat
+
+`flextool-assistant` without `--mcp` / `--call` is the chat (`chat_cli.py`); the same layers serve the FlexTool
+window ("AI assistant in the FlexTool window" below). `--mcp` and `--call` import none of the service libraries (`anthropic`, `openai`, `keyring`)
+nor the chat (`tests/assistant/test_import_hygiene.py`).
+
+- **Neutral model** (`llm_adapter.py`): `Message`, `ToolCall`, `Request`, `Reply`, `Usage`, the events a front
+  end shows (`TextDelta`, `ToolDone`, `Waiting`, `RetryWait`, …) and the `Backend` protocol. Data only one provider
+  understands (Anthropic thinking blocks, Gemini thought signatures, OpenRouter reasoning details) travels in
+  `provider_extra`, stamped with its origin (preset, base URL, model), and is replayed only to that origin; on a
+  switch it is dropped and tool-call ids are re-mapped.
+- **Backends** (`backends/`): Anthropic Messages and OpenAI Chat Completions (also Mistral, OpenRouter, Gemini,
+  Ollama, LM Studio and any compatible endpoint). The provider libraries are imported only in `make_backend`.
+  `net.py` builds each library's HTTP client: headers rebuilt from an allow-list (the libraries' identification
+  headers and the variables they read add nothing), our own proxy decision (a local endpoint is never proxied), no
+  redirects, cancel by shutting the open sockets. Presets (`providers.py`) name no models; they say which request
+  fields a service accepts and which privacy fields are sent (`store: false`, OpenRouter
+  `provider.data_collection`).
+- **Errors and retries** (`llm_errors.py`, `llm_retry.py`): every library error becomes one `LLMError` subclass
+  with a plain-English message; our own retry loop (no library retries), never after the first streamed output.
+- **Probes** (`probes.py`): before the first question, the model's context and tool support (Ollama `/api/show`,
+  load, `/api/ps`; LM Studio; the OpenRouter model list; Anthropic limits), standard library only and proxy-less
+  for local servers. A model Ollama forwards to another host (its cloud) gives a remote route.
+- **Session** (`session.py`): the agent loop — rounds of tool calls per question capped by level, tool calls under
+  the process-wide tool lock, the history kept valid for every provider after a cut-off, refusal, stop or error;
+  compaction points (every `compaction_every` questions, a context overflow, a rejected signature, a resume with
+  changed instructions) drop all provider data. `TurnWorker` runs turns in a daemon thread; a stop returns at once.
+- **Prompt** (`prompt.py`): five byte-stable layers (core rules, orientation, documentation map, level text,
+  front-end note) and the context block (project, input source, scenario) at the start of a user message; the
+  agent connection's instructions reuse the same rules.
+- **Levels** (`tiers.py`, standard library only): `resolve_tier` places a model from `TIER_RULES` (data, first
+  match wins: small-model words, the reported or named size, family words, GPT major ≥ 5, a fallback guess by
+  route) and caps it by the context window (`WINDOW_LEVELS`; below `MIN_WINDOW` it raises `WindowTooSmall`). The
+  automatic level is the lower of the two; `allowed_levels` is it and below, or up to the window's level for an
+  unrecognised model (`ALLOW_HIGHER_WHEN_UNRECOGNISED`). There is no bypass in shipped code: a stored or `--tier`
+  level above the allowed ones is lowered with a notice (`-q` with `--tier` exits 2). Before a probe the front ends
+  use `probes.cached_facts` (user cache); the settings dialog never probes. The level changes only the prompt
+  (`prompt.ADDENDA`), the tool list (`registry.tools_for_tier`; basic = the `small_tier` tools, any other name
+  refused by the session before the registry) and the budget — never what a tool returns. Agents choose a level
+  with the connection prompts or `--mcp --tier` (not checked against their model).
+- **Budgets** (`budget.py`, standard library only): `LevelBudget` per level (`LEVEL_BUDGETS`, the free plan's
+  `FREE_TIER_BUDGETS`): rounds, tool calls per question and per round, the output limit (≤ window / 4 for a known
+  window), planned calls and the prefix budget the shipped layers and schemas must fit
+  (`tests/assistant/test_prompt_budget.py`). `resolve_budget` adds the window's class (`WINDOW_CLASSES`: result-cap
+  ceiling, `fit_caps` for windows under 32 768, and the compaction rhythm; settings `compaction_every` /
+  `keep_recent_turns` `null` = automatic). `approx_tokens` is a digit-aware estimate (`JSON_CHARS_PER_TOKEN`,
+  pinned by `tests/assistant/llm/test_token_estimate.py` against real tokenizer counts) corrected per session by the
+  reported prompt tokens (`TokenCorrection`); the session's pre-send fit compacts or, for origins with replay data,
+  asks for an answer without tools, and sends nothing when the estimate plus the answer limit stays above 95 % of
+  the window (a reported one, or the assumed local one). The free plan
+  (`free_tier_on`: the setting, else on only for an OpenRouter `:free` id) lowers rounds and calls, caps results at
+  medium and, in the FlexTool window, gives the chat's gated backend a limit of one request at a time; the first rate-limit reply on a route with it off
+  shows the hint once (`settings.free_tier_suggested`).
+- **Local files** (`_files.py`, `settings.py`, `store.py`, `usage.py`, `keys.py`, `endpoint.py`), in
+  `platformdirs.user_config_dir("flextool")/assistant/`: settings, conversations per project (lock file per open
+  conversation, purge by age at every start), the usage ledger, the key file (opt-in; the keyring first, the
+  preset's environment variable before both) and `acknowledgements.json`. Every read-modify-write runs under a
+  lock file; every time is UTC.
+- **Data notice** (`endpoint.py`): the route (loopback, local network, remote; the proxy; the forwarded host), the
+  indicator line, and the notice a remote route needs before the first question. An acceptance is kept per
+  preset, normalised address, proxy host, forwarded host and notice wording.
+- **Terminal** (`chat_cli.py`): the REPL (a terminal only) and `-q` (only the answer on stdout; exit codes 0 / 1 /
+  2 / 3 / 130). The question and the probe run in daemon threads, so Ctrl-C stops them at once. The banner gives the
+  level and why (`level_lines`); `/context` the window, the result cap and the compaction rhythm of the session's
+  budget; `--free-tier on|off|auto` overrides `settings.free_tier` for the session.
+
+### AI assistant in the FlexTool window
+
+`flextool/gui/assistant/` is the window's front end on the same session, store, settings, keys, notices and ledger
+(user page: [The AI assistant](../ai_assistant.md), "Chat in the FlexTool window"). Everything without Tk — the
+worker, the provider gate, the Markdown parser, the window geometry, the strings — is tested in the sharded job
+(`tests/assistant/gui_support/`); the Tk modules in the `gui-tests` job ([Testing](testing.md), "GUI tests").
+
+- **Entry and lifecycle** (`entry.py`, `AssistantEntry`, created by `MainWindow`): "AI assistant…" + ⚙ in side-menu
+  row 5. Building it only runs `importlib.util.find_spec`; the chat window, the dialogs, the SDKs, the keyring and
+  the store are imported on the first click. It closes the chat window on a project switch, rename or deletion
+  (one window per project) and waits for its workers (5 s; the Project dialog and the project combo refuse a
+  rename or deletion while one still runs a tool call, `before_project_change`); `project_utils.rename_project`
+  moves the saved chats (`store.rename_project`), `notify_assistant_project_deleted` deletes them
+  (`store.forget_project`). At FlexTool close (`MainWindow._on_close`, before the settings save) it withdraws the
+  windows, shuts the workers down, deletes the runtime file and purges, within 3 s; at start (after 3 s) it purges
+  and removes runtime files of gone processes.
+- **Threads**: one `AssistantWorker` daemon thread per chat tab owns its `Session`, conversation and lock; the Tk
+  thread never calls the network, keyring, probes, store or ledger (except reading the settings and the welcome
+  flag when a window opens). Worker → Tk only through queues drained by one `after(50)` poll. The process-wide
+  `ProviderGate` (`gate.py`) lets `parallel_requests` (1–4) model requests per provider run at once (a free-plan
+  chat's own `limit` is 1), gives slots in arrival order and shares a rate-limit cool-down between chats; tool
+  calls run outside it, under the process-wide tool lock. A shut-down worker saves a checkpoint in which a running
+  tool call is "Not run: FlexTool was closed…", so the file is always a resumable history. A project rename or
+  deletion moves or deletes its chats on one FIFO daemon thread (`project_utils`); every store user waits for the
+  queued hooks first (`wait_project_hooks`). The Tk thread's blocking waits (project change, close) pump
+  `dooneevent(FILE_EVENTS | DONT_WAIT)`, so a worker's Tcl call (a finalizer collected on its thread) finishes;
+  closed assistant dialogs retire their Tk variables on the Tk thread.
+- **Window** (`chat_window.py`, `chat_tab.py`, `transcript.py`, `notices.py`, `settings_dialog.py`): chats as
+  `ttk.Notebook` tabs with an overflow budget (the Chats menu shows the hidden ones), restored when the window
+  opens again (`store.open_chats`); one data notice at a time; the size per monitor configuration in
+  `GlobalSettings.assistant_window_geometry`; a key shield on every assistant Toplevel so the main window's
+  `bind_all` shortcuts never fire from it. The settings' level rows list "Automatic" and only
+  `TierChoice.allowed` (from cached facts; ttk cannot grey single entries) with `TierChoice.lines()`, and the free
+  plan as a three-entry list (automatic / on / off → `free_tier` null / true / false); the worker's setup
+  fingerprint includes `free_tier`, so a saved change applies from the next question.
+- **What the window shows** (`gui_state.py`): `snapshot_from_main` reads the main window's checks and highlights
+  and `ResultViewer.view_state()` on the Tk thread (each part on its own, about 2 ms); every Send takes its own
+  snapshot (`ContextSnapshot.gui`), which the prompt renders as the context block. While a project is open,
+  `ContextPublisher` polls it every second and hands a changed payload to the `RuntimeContextWriter`
+  (`flextool/assistant/runtime_context.py`): one file per process,
+  `<config>/assistant/runtime/<project key>.<pid>.json`, names and selections only, rewritten every 30 s while the
+  poll ticks (a hung Tk thread's file goes stale), deleted by the writer thread at close. An agent's
+  `get_gui_context` (`--mcp`, `--call`) reads the file of the window in use (`read_runtime_context`: process alive,
+  written within 120 s; the latest focus `active_at`, then `changed_at`, then `written_at`); a live process with
+  only a stale file reads as open but not answering (`responding: false`).
+
+Tests: `tests/assistant/llm/` — no network (a socket guard refuses anything but loopback), synthetic provider
+payloads through `httpx2.MockTransport`, a scripted `FakeBackend` for the session and the chat, loopback servers
+for the probes and the cancel. Real provider replies are recorded by hand with `tools/record_llm_replies.py` on
+the synthetic test project only, scrubbed, checked and replayed in CI ([Testing](testing.md), "Recorded provider
+replies").
 
 ## Solve-to-solve handoff
 
@@ -1062,8 +1327,8 @@ slack semantics.
      `_quantity_types.py`). Buckets matrix columns by quantity-type
      (energy, capacity, monetary, …) and applies a power-of-2 scaler
      per type to compress the median-of-type onto O(1). Has structural
-     limits: cannot compress within-type spread, and the Rivendell
-     guard prevents over-shrinking columns with mixed-magnitude
+     limits: cannot compress within-type spread, and a guard
+     prevents over-shrinking columns with mixed-magnitude
      coefficients on a single row. Like Layer 1, the magnitude-bucketing
      readout walks the spine in bounded row-batches via
      `bounded_coefficient_walk` (the log2-magnitude histogram reducer)

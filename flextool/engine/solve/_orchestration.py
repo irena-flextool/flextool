@@ -58,6 +58,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
+from flextool import run_record
 from flextool.engine.solve._acceptance import classify_acceptance
 from flextool.run_options import RunOptions
 from flextool._thread_budget import highs_thread_options
@@ -2817,6 +2818,7 @@ def _drive_cascade(
                     f"UB={entry['best_upper_bound']:.6g}  "
                     f"gap={entry['gap']:.4g}"
                 )
+                run_record.active().benders_progress(entry["iter"], entry["gap"])
 
             # Per-region sub-solve FINISH line — replaces the raw per-sub-solve
             # HiGHS banner with a useful "which region finished" log.  Fires
@@ -2828,6 +2830,8 @@ def _drive_cascade(
                     f"{entry['region']} done (obj={entry['obj']:.6g})"
                 )
 
+            # Benders master and region solves run on HiGHS (polar-high).
+            run_record.active().note_solver("highs")
             result = solve_benders(
                 data,
                 regions,
@@ -2848,6 +2852,19 @@ def _drive_cascade(
                 # ``--benders-workers`` / ``FLEXTOOL_BENDERS_WORKERS`` and
                 # ``FLEXTOOL_BENDERS_IN_OUT_WEIGHT``, resolved once for the run.
                 run_options=run_options,
+            )
+            # The run record: converged / not converged with a feasible
+            # incumbent (the run goes on) / no incumbent (the run fails).
+            run_record.active().solve_benders(
+                converged=bool(result.converged),
+                has_incumbent=(
+                    result.total_objective is not None
+                    and math.isfinite(result.total_objective)
+                ),
+                objective=result.total_objective,
+                gap=result.gap,
+                tol=result.tol,
+                iterations=result.iterations,
             )
 
             # Final summary — convergence + the valid LB/UB sandwich that
@@ -3229,6 +3246,7 @@ def _drive_cascade(
             _active_solver_cfg = state.solve.solver_configs.get(
                 complete_solve_name, _SolverConfig()
             )
+            run_record.active().note_solver(_active_solver_cfg.name)
             _warm_disabled_by_solver = (
                 warm and _active_solver_cfg.name != "highs"
             )
@@ -4120,6 +4138,20 @@ def _drive_cascade(
                 sol,
                 ranges_post=locals().get("_autoscale_ranges_post"),
                 solve_name=complete_solve_name,
+            )
+            run_record.active().solve_classified(
+                model_status=_acc.model_status,
+                acceptance=(
+                    "rejected" if not _acc.accepted
+                    else "near_optimal" if _acc.near_optimal
+                    else "optimal"
+                ),
+                message=_acc.message,
+                objective=(
+                    sol.obj / effective_obj_scale
+                    if sol.obj is not None else None
+                ),
+                warm_used=warm_used,
             )
             if not _acc.accepted:
                 self.state.logger.error(_acc.message)

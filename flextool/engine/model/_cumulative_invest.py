@@ -553,7 +553,8 @@ def _group_period_limit_online(b: _Build, name: str, axis: str, var, unitsize, m
 
 
 def _eq_group_invest_total(b: _Build) -> None:
-    """{max,min}InvestGroup_entity_total[_path]_{p,n}: capacity a group has invested over the chain."""
+    """maxInvestGroup_entity_total[_path]_{p,n} / minInvestGroup_entity_total_path_{p,n}: capacity a group has
+    invested over the chain."""
     d = b.d
     group_entity, g_set = d.group_entity, d.g_invest_total
     if not _has_rows(group_entity) or not _has_rows(g_set):
@@ -561,7 +562,7 @@ def _eq_group_invest_total(b: _Build) -> None:
     d_leaf = getattr(d, "d_leaf", None)
     prior = chain_prior(d, "invest")
 
-    # ─── EQ. ─── {max,min}InvestGroup_entity_total[_path]_{p,n} ─────────────
+    # ─── EQ. ─── maxInvestGroup_entity_total[_path]_{p,n} / minInvestGroup_entity_total_path_{p,n} ───
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{p:(g,p)∈group_entity} Σ_{d∈D(leaf)} v_invest_p[p,d]·unitsize[p]
     #   ≤ max(0, group_invest_max_total[g] − Σ_{p∈g} prior_inv[p])   (maxInvestGroup_entity_total[_path]_p)
@@ -614,7 +615,8 @@ def _eq_group_invest_total(b: _Build) -> None:
 
 
 def _eq_group_divest_total(b: _Build) -> None:
-    """{max,min}DivestGroup_entity_total[_path]_{p,n}: capacity a group retires over the chain."""
+    """maxDivestGroup_entity_total[_path]_{p,n} / minDivestGroup_entity_total_path_{p,n}: capacity a group
+    retires over the chain."""
     d = b.d
     group_entity, g_set = d.group_entity, d.g_divest_total
     if not _has_rows(group_entity) or not _has_rows(g_set):
@@ -622,7 +624,7 @@ def _eq_group_divest_total(b: _Build) -> None:
     d_leaf = getattr(d, "d_leaf", None)
     prior = chain_prior(d, "divest")
 
-    # ─── EQ. ─── {max,min}DivestGroup_entity_total[_path]_{p,n} ─────────────
+    # ─── EQ. ─── maxDivestGroup_entity_total[_path]_{p,n} / minDivestGroup_entity_total_path_{p,n} ───
     # ─────────────────────────────────────────────────────────────────────────
     # Σ_{p:(g,p)∈group_entity} Σ_{d∈D(leaf)} v_divest_p[p,d]·unitsize[p]
     #   ≤ max(0, group_retire_max_total[g] − Σ_{p∈g} prior_div[p])   (maxDivestGroup_entity_total[_path]_p)

@@ -6,6 +6,9 @@ from dataclasses import dataclass, field
 # sent with every run.  2: presolve and scaling are sent only when the user picks them; the GUI sends no MIP gap.
 SOLVER_SETTINGS_REVISION = 2
 
+#: How the GUI shows a date and time (finish times of runs, file times): DD.MM.YY hh:mm.
+TIMESTAMP_FORMAT = "%d.%m.%y %H:%M"
+
 
 @dataclass
 class PlotSettings:
@@ -277,6 +280,11 @@ class GlobalSettings:
     # at startup (so a fresh install or a swapped polars build is verified
     # exactly once).  See flextool.env_check.
     polars_check_fingerprint: str = ""
+    # Saved AI assistant chat-window placement, same per-configuration scheme
+    # as exec_jobs_geometry ({signature -> "WxH+X+Y"}), and the cw it was
+    # saved at (0 = unknown).  Written by the chat window when it closes.
+    assistant_window_geometry: dict[str, str] = field(default_factory=dict)
+    assistant_window_layout_cw: int = 0
 
 
 @dataclass
@@ -337,7 +345,13 @@ class ScenarioInfo:
 
 @dataclass
 class ExecutedScenarioInfo:
-    """Information about an executed scenario with results."""
+    """Information about an executed scenario with results.
+
+    ``status`` is the folder's ``_run_status.json`` (``None`` for a folder from before run records).
+    ``run_state`` is its ``state``, with a stale ``running`` replaced by ``abandoned`` / ``unknown``
+    (``run_record.effective_state``), for display.  ``checkable`` is ``run_record.results_usable(status)``:
+    only then may the row be checked for plots and comparison, and ``unusable_reason`` says why not.
+    """
     name: str
     source_number: int
     timestamp: str
@@ -346,3 +360,8 @@ class ExecutedScenarioInfo:
     has_csvs: bool = False
     has_comp_plots: bool = False
     has_comp_excel: bool = False
+    status: dict | None = None
+    run_state: str | None = None
+    parquet_state: str | None = None
+    checkable: bool = True
+    unusable_reason: str | None = None

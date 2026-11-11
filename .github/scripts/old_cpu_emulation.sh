@@ -14,11 +14,17 @@
 #      (otherwise the run would prove nothing);
 #   2. `python -m flextool.env_check` names the missing features and the fix;
 #   3. `import flextool` without a terminal stops with the pip command and
-#      installs nothing;
+#      installs nothing; so does `flextool-run --help` (the supervisor asks
+#      before it starts the engine, without importing polars); the
+#      connection for AI agents (`flextool-assistant --mcp`) still starts and
+#      its one tool, flextool_setup_problem, gives the pip command, with
+#      nothing but protocol messages on stdout (.github/scripts/mcp_smoke.py,
+#      run natively, drives it);
 #   4. `update_flextool.py --skip-git` (a copy of <flextool-source> in
 #      <work-dir>) installs polars-runtime-compat of the polars version;
 #   5. env_check passes and polars loads the compatible runtime;
-#   6. the `base` example solves;
+#   6. the `base` example solves through `flextool-run`, and its run record
+#      says it succeeded;
 #   7. natively, on an AVX2 host, `import flextool` selects the default
 #      runtime although the compatible one is installed.
 set -euo pipefail
@@ -81,6 +87,20 @@ run "$emu" -c "import flextool"
 [ "$rc" -ne 0 ] || fail "import flextool succeeded with the default runtime only"
 grep -q "CompatRuntimeRequired" <<<"$out" || fail "import flextool did not stop with CompatRuntimeRequired"
 has_compat && fail "the import installed the compatible runtime without a yes"
+# The supervisor (stdlib only) runs the same check before it starts the engine: it stops with the pip command
+# and exit 1, without starting the engine (whose usage text would follow) and without importing polars (whose
+# default runtime would crash it with a signal instead of exit 1).
+run "$emu" "$venv/bin/flextool-run" --help
+[ "$rc" -eq 1 ] || fail "flextool-run --help exited $rc, expected 1"
+grep -q 'polars\[rtcompat\]==' <<<"$out" || fail "flextool-run did not print the pip command"
+grep -q "usage:" <<<"$out" && fail "flextool-run started the engine on a processor that needs the compatible build"
+has_compat && fail "flextool-run installed the compatible runtime without a yes"
+mkdir -p "$work/assistant-project"
+run "$venv/bin/python" "$src/.github/scripts/mcp_smoke.py" --tools 1 --call flextool_setup_problem \
+    --expect 'polars[rtcompat]==' -- "$emu" "$venv/bin/flextool-assistant" --mcp \
+    --project-path "$work/assistant-project"
+[ "$rc" -eq 0 ] || fail "flextool-assistant --mcp did not answer with the fix on a processor that needs the compatible build"
+has_compat && fail "flextool-assistant installed the compatible runtime"
 
 step "4. update_flextool.py --skip-git installs the compatible runtime"
 rm -rf "$work/flextool"
@@ -97,15 +117,21 @@ run "$emu" -m flextool.env_check
 [ "$rc" -eq 0 ] || fail "env_check exited $rc after the fix"
 grep -q "loaded: rtcompat" <<<"$out" || fail "polars did not load the compatible runtime"
 
-step "6. the base example solves"
+step "6. the base example solves through flextool-run"
 (
     cd "$work/flextool"
     rm -rf output_parquet/base
-    "$emu" -m flextool.cli.cmd_run_flextool sqlite:///templates/examples.sqlite --scenario-name base \
+    "$emu" "$venv/bin/flextool-run" sqlite:///templates/examples.sqlite --scenario-name base \
         --write-methods parquet 2>&1 | grep -v "TCG doesn't support requested feature" | tail -20
     n=$(find output_parquet/base -name '*.parquet' | wc -l)
     echo "$n parquet files in output_parquet/base"
     [ "$n" -gt 0 ] || fail "no parquet output"
+    "$venv/bin/python" -c "
+import json
+s = json.load(open('output_parquet/base/_run_status.json', encoding='utf-8'))
+print('run record:', s['state'], s['launcher'], s['log_capture'])
+assert (s['state'], s['launcher'], s['log_capture']) == ('succeeded', 'flextool-run', 'parent'), s['state']" \
+        || fail "the run record does not say the run succeeded under flextool-run"
 )
 
 step "7. natively: the default runtime is selected on an AVX2 host"

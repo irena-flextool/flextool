@@ -1,5 +1,111 @@
 ## Unreleased
 
+- **Fixed: a chat in the AI assistant window changed model after the settings changed.** An open or reopened chat
+  took the model saved later for new chats at its next question (and that model's level). A chat now keeps the
+  service and model that answered in it, and its level unless you change the level of that same model; new chats
+  use the saved settings. The top of the window shows the selected chat's service, model and level and where its
+  data goes. The token line is now at the bottom of each chat, always in view, for the last question and the whole
+  chat in thousands ("26k"); the terminal rounds its token line the same way. One empty row now separates "Png
+  settings…" from "AI assistant…" in the side menu.
+- **New: assistant levels, safety caps and the free plan.** The AI assistant now places each model at a level
+  (basic, standard or advanced) from its name and its context size; the window's settings and `--tier` offer only
+  that level or a lower one, and say why (a model FlexTool does not recognise may go higher at your own risk).
+  Each level has safety caps on the steps and tool calls for one question, and the context size sets how much a
+  tool result may hold and how often earlier results are shortened; a request that would not fit the model's
+  context is shortened first and never sent over it. The new free plan setting ("Free plan" in the settings,
+  `--free-tier on|off|auto` in the terminal) makes each question use fewer steps, to stay within a free plan's
+  request limits; it is on by itself only for OpenRouter models whose name ends `:free`, and the chat suggests it
+  after a service first limits how fast questions can be sent. In the terminal, `-q` with a `--tier` above the
+  model's levels exits with code 2 and sends nothing; the start of the chat shows the level and why, and
+  `/context` the context size and the result size. `get_entity` and `list_entities` also return the entity's
+  description. See "Assistant levels" in "The AI assistant".
+- **New: the AI assistant in the FlexTool window.** "AI assistant…" in the side menu opens a chat window for the
+  open project; ⚙ beside it opens the assistant settings (service, address, key, model, level, privacy settings
+  sent with each request, how many chats may wait for the service at once, how long conversations are kept). The
+  first use explains how the assistant works; nothing is sent until you send a question, and before the first
+  question goes to a service on the internet (or an Ollama cloud model) the data notice asks you to accept. The
+  window says where the data goes. Each question also tells the assistant what is selected in the FlexTool window
+  and the result viewer. Chats are numbered tabs: several can answer at once, they can be renamed, closed,
+  reopened and deleted from the Chats menu, and the open ones come back when the window opens again. Closing
+  FlexTool stops the answers and keeps what was received. Renaming a project moves its saved chats, deleting it
+  deletes them. The window and the terminal chat share settings, keys, accepted notices and conversations. An
+  agent connected with `flextool-assistant --mcp` sees the window's selections through `get_gui_context` while the
+  project is open in the window. See "The AI assistant" in the documentation.
+- **New: chat with an AI model about a FlexTool project in the terminal.** `flextool-assistant --project-path
+  <project folder>` asks your questions to the AI service you choose — OpenAI, Anthropic, Mistral, OpenRouter,
+  Google Gemini, a model on this computer with Ollama or LM Studio, or any service with the OpenAI request format —
+  and gives the model the same read-only tools as the agent connection. The first start explains how it works and
+  sets up the service, key and model; keys come from the service's environment variable, the system keyring
+  (`--set-key`) or, by choice, a key file. Before the first question goes to a service on the internet (or to an
+  Ollama cloud model) the chat shows what is sent and that FlexTool cannot guarantee how it is used, and asks
+  you to accept; the acceptance is asked again when the service, its address or the proxy changes. A model on this
+  computer needs no acceptance. `-q "question"` answers one question for scripts (only the answer on stdout;
+  `--accept-data-notice` accepts the notice for good). Conversations are kept per project for 30 days
+  (`--continue`), the tokens used are counted as each service reports them (`--usage`), and Ctrl-C stops an
+  answer at once. New requirements: `anthropic`, `openai`, `keyring`; run "Update FlexTool" (or
+  `pip install -e .`). See "The AI assistant" in the documentation.
+- **New: connect an AI agent to a FlexTool project.** `flextool-assistant --mcp --project-path <project folder>`
+  starts read-only tools that an AI agent such as Claude Code uses to answer questions about the project: input
+  data by scenario, results (filtered, summed or averaged where that is meaningful, and compared between
+  scenarios), run logs and slack, and the FlexTool documentation with the model's equations. For Claude Code:
+  `claude mcp add flextool -- flextool-assistant --mcp --project-path /path/to/project`. The tools cannot change
+  anything, read results only from a scenario whose latest run succeeded, and run on one thread by default
+  (`--threads N`). Everything they return is sent to the AI service the agent uses; check its policies yourself.
+  Three prompts set the assistant level (basic, standard, advanced); `--tier basic` offers only the basic tools.
+  `flextool-assistant --call TOOL '{...}'` runs one tool in the terminal. See "The AI assistant" in the
+  documentation. New requirements: `mcp` (2.3 or later 2.x), `platformdirs`, `jsonschema`; run "Update
+  FlexTool" (or `pip install -e .`) to get them and the new command.
+- **Changed: every parameter description starts with its unit**, in the default convention (MW, MWh, CUR,
+  tCO2): `[MW]`, `[CUR/MWh]`, `[hours]`; `[-]` for a share or ratio, followed by an example (`[-] e.g. 0.9 means
+  90%`); words where the unit depends on the use (`[unit of the constraint per MW]`); `[choice]`, `[yes/no]`,
+  `[name]`, `[text]`, `[count]` for the other parameters. Units that were wrong or incomplete are corrected:
+  `penalty_inertia` is `[CUR/MWs per hour]` and `penalty_reserve` `[CUR/MW per hour]` (both are paid for each hour
+  of the shortfall); `fixed_cost` and `penalty_capacity_margin` are per year (`[CUR/kW/a]`, storage `[CUR/kWh/a]`)
+  and `annual_flow` is `[MWh/a]`. One spelling per unit (`[tCO2/MWh]`, `[CUR/tCO2]`, `[hours]`). `inflow`,
+  `peak_inflow` and `energy_margin_adder` say they are MWh per time step, when you must rescale them for another
+  step length and when FlexTool does it; `max_flow_for_unconstrained_variables` no longer mentions commodity tiers
+  (it does not bound them). Upgrading a database adds the units to its descriptions. Values and results are
+  unchanged.
+- **Fixed: result labels.** `node_inflow__dt`, `nodeGroup_flows_dt_g` and the "Timestep inflow" of
+  `nodeGroup_gdt_p` are MWh per time step (labelled MW before); `entity_annuity_d_p` is the discounted investment
+  cost per MW (labelled as a yearly annuity before); the capacity factor tables `unit_outputs_cf_d_ee`,
+  `unit_inputs_cf_d_ee` and `connection_cf_d_e` now carry their metadata (a ratio).
+- **New: every run records itself in its output folder.** `output_parquet/<run>/_run_status.json` says whether the
+  run is running, succeeded, failed, was interrupted, killed or crashed, with each solve's outcome (solver status,
+  accepted / rejected and why, objective), the error of a failed run, the input database and scenario, the
+  options and threads used, and whether the parquet files in the folder belong to this run or to an earlier one (a
+  failed run keeps the earlier run's files). `_run.log` next to it holds the run's console output; a long log keeps
+  its first 64 KiB and its last 4 MiB (`FLEXTOOL_RUN_LOG_MAX_BYTES`). Writing outputs again keeps both files. A run
+  started from Spine Toolbox or with `python -m flextool.cli.cmd_run_flextool` records the Python console output;
+  native solver lines and crash dumps are not in that log.
+- **New flags `--input-source-file PATH` and `--run-launcher NAME`** for `run_flextool`: the file the input
+  database was made from, and who started the run, both recorded in `_run_status.json`.
+- **Changed: `flextool-run` runs the engine as a child process and writes the run's `_run.log`**, so the log also
+  holds the solver's native output, a `--save-memory` solve's output and a crash dump. Arguments and exit code are
+  the engine's, and Ctrl-C stops the run as before (a second Ctrl-C kills it). The process that stays for the whole
+  run is small (about 20 MB, no polars). On a processor that needs the compatible polars build, `flextool-run`
+  asks before it starts the engine. The GUI, the workflow runner and the calibrator (also the representative-period
+  iteration) write the log the same way; a run that crashed or was killed is recorded as such. Output with
+  characters outside the Windows console code page no longer crashes these runs. Update FlexTool (`flextool-update`,
+  or `pip install -e .` in a source checkout) to get the new `flextool-run`; until then it runs the engine in the
+  same process as before. The documentation and the command the GUI shows for a run use `flextool-run`.
+- **Changed: the GUI lists failed and running runs with their state, and offers only results of a run that
+  succeeded.** A scenario whose latest run is running, failed, was interrupted, killed or crashed shows ✗ or … in
+  place of its checkbox (– when the run wrote no parquet), says why on hover, and cannot be checked for plots or
+  comparison, even when the folder still holds an earlier run's parquet; ▶ on it opens the run's log. The result
+  viewer and the comparison leave such folders out. The list updates when a run starts. Results from before this
+  version show as before.
+- **Fixed: two GUI runs of the same scenario could run at once into the same output folder**, the second deleting
+  the first one's work folder. A run now waits until the earlier run of its folder has finished.
+- **Fixed: stopping a GUI run left its `--save-memory` solver process running**; it now stops the run's whole
+  process tree.
+- **Fixed: `timings.csv` and the output-info database ignored an `output-location` from the settings database**
+  while the outputs went there. All three now use the same location, as an absolute path.
+- **Fixed: a run whose last check found a solve without an accepted solution exited 0 and wrote the output-info
+  database** (for example a Benders solve that found no feasible incumbent, or a run with no solve at all). It
+  wrote no outputs, yet Spine Toolbox and the comparison steps read its `finish_time` as a finished run. Such a run
+  now exits 1 and leaves the output-info database unchanged. A calibration no longer takes the outputs of an
+  earlier run for those of a Benders run without an incumbent.
 - **Rolling solves: unit size of a period-Map `existing`.** A unit, connection or storage node without
   `virtual_unitsize` whose `existing` is a Map by period got a unit size of 1000 MW in the rolls of a rolling solve
   (single solves were right), so a 17 MW unit counted as 0.017 units. With `startup_method = binary` such a unit
@@ -3403,7 +3509,7 @@ work.
 - **Report CO₂ for `co2_max_total` (total-cap) models**: the emissions output set
   wired only the period-cap and price flow sets; the multi-period total-cap port
   (`flow_from_co2_capped_total`, `group_co2_max_total`) was never added, so a
-  `co2_method=total` model (e.g. SouthAfrica) reported `CO2 [Mt] = 0` despite a
+  `co2_method=total` model reported `CO2 [Mt] = 0` despite a
   correct engine cap.
 - Read the **CO₂-accumulator unitsize on its actual entity axis** — the
   rolling-accumulator preferred the `e`-keyed `p_all_entity_unitsize` carrier but
@@ -3832,7 +3938,7 @@ frame with vectorized polars — a dense `(entity × dt)` or `(entity × period)
 a left-join for each parameter source, a priority `coalesce` across the cascade
 branches, and group-by-sum folds for stochastic / parent-period terms — once per
 roll over that roll's own window, replacing the per-cell Python loops. There is no
-cache and no full-domain frame. On the RETO-Africa **DES** scenario (9 rolling
+cache and no full-domain frame. On a large multi-country **DES** scenario (9 rolling
 solves) the run is ~25% faster end-to-end, with **every output byte-identical** to
 the previous release and the global peak working set unchanged (~18 GB). No model or
 input changes.
@@ -3871,7 +3977,7 @@ FlexTool's automatic scaling (Layers 1-3) and LP coefficient build no longer
 materialise wide coefficient products to read magnitude statistics. polar-high's
 new block-COO evaluation slices the pre-sorted `(period, timestep)` dense axis as
 contiguous numpy blocks, and the autoscale range / bucket readouts walk the
-constraint spine in bounded row-batches. On the large RETO-Africa **DES** scenario
+constraint spine in bounded row-batches. On a large multi-country **DES** scenario
 (9 rolling solves): autoscale peak working set dropped **~46 -> ~23 GB**, ~15%
 faster, with **every solve objective byte-identical** to the previous release. No
 model or input changes.
@@ -4805,7 +4911,7 @@ together.
   col-bound, row-bound) and apply a `user_bound_scale` recommendation
   via `setOptionValue` before `Highs.run()`.  The embedded heuristic
   is col-bound-only with a 6-decade gate and `[-10, 0]` clamp —
-  identical policy to flextool's Rivendell-bug-1+5+6 fix, deliberately
+  identical policy to flextool's customer-model bug 1+5+6 fix, deliberately
   ignoring row-bound spread to avoid crushing tight column bounds on
   energy-system LPs with wide cumulative-resource RHS magnitudes.
   Ranges are exposed on `Solution.streamed_lp_ranges` for callers
@@ -4857,7 +4963,7 @@ together.
     of rebuilding the LP via `Problem()` + `build_flextool()` +
     `pb.peek_lp_ranges()`.
   - New `tests/engine_polars/test_polar_high_recommend_user_bound_scale.py`
-    — Rivendell-bug-1+5+6 unit tests now live against polar-high's
+    — customer-model bug 1+5+6 unit tests now live against polar-high's
     helper.  Replaces the deleted
     `tests/engine_polars/scaling/test_user_bound_scale_recommendation.py`.
 
@@ -4883,7 +4989,7 @@ the migrated `test_invest_chain_regression.py` 6/6, the new
 
 Patch release on top of 3.43.1.  Five-commit fix for the cascade peak-RSS
 climb that surfaced on the multi-invest fixtures and was causing OOMs on
-1-year South Africa DES (storage → dispatch transition).  Implements
+a 1-year multi-region DES model (storage → dispatch transition).  Implements
 Design A from the per-level Provider memory investigation: one
 `FlexDataProvider` per distinct LP shape, reused across iterations
 within the same level; fresh Provider on level transition.
@@ -4921,7 +5027,7 @@ within the same level; fresh Provider on level transition.
   variable, sized to the LP).  The slim block at `_native_run_model`'s
   tail (`step.solution = None` for non-last steps) only runs AFTER
   `native_run_model` returns — so during the cascade every Solution
-  was fully retained.  On 1-year South Africa DES (two sub-solves at
+  was fully retained.  On a 1-year multi-region DES model (two sub-solves at
   very different shapes) this was tens of GB and the cause of the
   storage → dispatch OOM: the dispatch sub-solve tried to allocate
   its own ~30 GB LP on top of the storage sub-solve's still-parked
@@ -5438,7 +5544,7 @@ Ten cleanup commits — every one removes a file or symbol that the
 ## Release 3.41.1 (20.5.2026) — Toolbox/cascade bug-fix sweep
 
 Patch release on top of 3.41.0.  Clears four user-visible regressions that
-surface when running from Spine Toolbox or comparing many Rivendell scenarios.
+surface when running from Spine Toolbox or comparing many scenarios of a large customer model.
 
 **Bug fixes**
 
@@ -5738,7 +5844,7 @@ Wall-clock cost +4 s / +16 % on test_24h `input_derivation`
   `tests/engine_polars/conftest.py` clears it before/after each
   test.  Unblocked ~20 previously-flaky tests across
   `test_warm_chain_runner`, `test_orchestration_parity`,
-  `test_axis_rename_helpers`, Rivendell scaling, synthetic toys,
+  `test_axis_rename_helpers`, customer-model scaling, synthetic toys,
   loaders.
 - *pbt_node_inflow + dump_csvs_roundtrip + anchor-window (10
   tests).*  Cluster A (3): cascade uses `capture_frames` so disk
@@ -5771,7 +5877,7 @@ Wall-clock cost +4 s / +16 % on test_24h `input_derivation`
   fixes surfaced by post-Phase-4 enum activation, all following
   the established `cast_dim / align_join_dtypes` pattern.
   Cleared ~30 tests across `test_warm_chain_runner`,
-  `test_warm_param_autoupdate`, Rivendell, `test_scaling_bench`,
+  `test_warm_param_autoupdate`, customer-model tests, `test_scaling_bench`,
   toys, `test_orchestration_parity`, `test_native_cascade_parity`,
   `test_output_writer`, emission, capacity-margin, loaders.
 - *Phase-4 omnibus cleanup (15 tests).*  3 obsolete
@@ -5959,17 +6065,17 @@ test_24h fixture (the canonical large-fixture diagnostic).
 
 ---
 
-## Release 3.38.0 (18.5.2026) — Rivendell bug-fix suite
+## Release 3.38.0 (18.5.2026) — bug-fix suite (large customer model)
 
-Built on 3.37.0's in-memory cascade. Fixes a cluster of regressions that surfaced on the Rivendell customer database after the cascade rewrite, plus a final round of test ports.
+Built on 3.37.0's in-memory cascade. Fixes a cluster of regressions that surfaced on a large customer database after the cascade rewrite, plus a final round of test ports.
 
 **This release is the last known-stable point before the in-flight `enum dtype` refactor (Phase 0 → 4.8); pin to 3.38.0 until that lands green.**
 
 **Bug fixes**
-- Rivendell bug 1+5+6: `engine_polars/scaling.user_bound_scale` recommendation is now column-only (a previous row+col recommendation collapsed solver progress on S17/B0)
-- Rivendell bug 2 / BUG A2: `engine_polars` casts `user_constraints` coefficients to Float64 — previously left as int when authored as integer, breaking polars joins downstream
-- Rivendell bug 3: `co2_price` shape probing uses value-domain inspection instead of column count when the shape is ambiguous
-- Rivendell bug 4: regression test added for the `process_online_dt` UC column carry
+- Customer-model bug 1+5+6: `engine_polars/scaling.user_bound_scale` recommendation is now column-only (a previous row+col recommendation collapsed solver progress on two of its scenarios)
+- Customer-model bug 2 / BUG A2: `engine_polars` casts `user_constraints` coefficients to Float64 — previously left as int when authored as integer, breaking polars joins downstream
+- Customer-model bug 3: `co2_price` shape probing uses value-domain inspection instead of column count when the shape is ambiguous
+- Customer-model bug 4: regression test added for the `process_online_dt` UC column carry
 - BUG A1: `blocks` + output writer route input/block reads through the Provider so they observe in-memory writer output rather than a stale on-disk snapshot
 - BUG A3: `process_outputs.process_source_sink_varCost` keyed by `alwaysProcess` (previously dropped rows for processes that only exist in some subsolves)
 - BUG A4 / A2-followup: branch-weight Provider-routed read + 1000× cap-margin restored on the cascade scaling/state path; provider threaded into cascade scaling/state helpers
@@ -5994,7 +6100,7 @@ Two new packages factor the cascade I/O surface: `spinedb_backend` (Spine DB →
 **FlexData Accumulator (Phases C–H)**
 - Phase C: per-sub-solve `FlexDataAccumulator`
 - Phase D: `load_flextool(seed=FlexDataAccumulator)`
-- Phase E (a–j): cascade consumes accumulator via `seed=`; 8 batches of monolith-writer "lifts" so writers populate the accumulator rather than emit CSVs (`_writer_arc_unions`, `chain_params` + `co2_accumulators`, `_writer_pdt_params`, `_writer_period_params`, `dispatchers` + `calc_params`, the remaining 4 monolith writers, `_writer_solve_writers`, `period_calc` + `per_solve` + `reserve`); `--csv-dump` gating; cross-solve carriers lifted into `capture_frames`; seed-aware `csv.reader` + `path.exists()` audits in writer + loader modules; fixes for Rivendell `B0_base_hourly_rp` and `S08_co2cap_slice` regressions surfaced by the lift
+- Phase E (a–j): cascade consumes accumulator via `seed=`; 8 batches of monolith-writer "lifts" so writers populate the accumulator rather than emit CSVs (`_writer_arc_unions`, `chain_params` + `co2_accumulators`, `_writer_pdt_params`, `_writer_period_params`, `dispatchers` + `calc_params`, the remaining 4 monolith writers, `_writer_solve_writers`, `period_calc` + `per_solve` + `reserve`); `--csv-dump` gating; cross-solve carriers lifted into `capture_frames`; seed-aware `csv.reader` + `path.exists()` audits in writer + loader modules; fixes for customer-model regressions (an hourly representative-period base case and a CO2-cap slice) surfaced by the lift
 - Phase C.5: slimmed `OrchestrationStep` with `keep_solutions` opt-in
 - Phase F: parquet-bundle registry + `manifest.json` for hand-off between sub-solves
 - Phase G: `process_outputs` disk reads migrated to in-memory kwargs

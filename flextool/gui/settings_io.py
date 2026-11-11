@@ -67,10 +67,19 @@ def _upgrade_solver_settings(data: dict, settings: ProjectSettings) -> bool:
 
 
 def solver_defaults_notice(project_name: str) -> str:
-    """The one-time notice shown when :func:`load_project_settings` updated a project's old solver settings."""
+    """The one-time notice shown when :func:`load_project_settings` updated a project's old solver settings, as
+    the line printed to the terminal and the log."""
     from flextool.engine._behaviour_changes import notice_text
 
     return notice_text("gui_solver_defaults", "projects", [project_name])
+
+
+def solver_defaults_dialog_text(project_name: str) -> str:
+    """The same notice for the dialog: its items (what changed, the project, how to keep the old behaviour) on
+    their own lines (:func:`flextool.engine._behaviour_changes.display_text`)."""
+    from flextool.engine._behaviour_changes import display_text, notice_parts
+
+    return display_text([notice_parts("gui_solver_defaults", "projects", [project_name])])
 
 
 def load_project_settings(
@@ -384,6 +393,8 @@ def load_global_settings(projects_dir: Path) -> GlobalSettings:
         code_font_size_pt=data.get("code_font_size_pt", 0),
         check_updates_on_startup=data.get("check_updates_on_startup", True),
         polars_check_fingerprint=data.get("polars_check_fingerprint", ""),
+        assistant_window_geometry=_as_geometry_map(data.get("assistant_window_geometry")),
+        assistant_window_layout_cw=data.get("assistant_window_layout_cw", 0),
     )
 
 

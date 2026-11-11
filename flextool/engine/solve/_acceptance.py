@@ -201,6 +201,13 @@ class Acceptance:
                         (accepted only because the ceiling follows the
                         solve's tolerance); the caller prints the
                         behaviour-change notice for it.
+    ``model_status``  — the solve's own HiGHS model status name
+                        (``kOptimal``, ``kInfeasible``, ...) as the check saw
+                        it: from the solve's diagnostics (never the live
+                        handle, which reads ``kNotset`` after the autoscale
+                        unscale), else from a subprocess / commercial
+                        solver's parsed status; ``None`` when unknown.  For
+                        the run record.
     """
 
     accepted: bool
@@ -208,6 +215,18 @@ class Acceptance:
     message: str
     scaling_hint: str | None
     above_fixed_ceiling: bool = False
+    model_status: str | None = None
+
+
+#: The status a subprocess / commercial solve's parsed solution file reports
+#: (``Solution.shim_status``, set by ``_subprocess_solve``) as a HiGHS model
+#: status name.  ``OTHER`` (nothing more is known) maps to ``None``.
+_SHIM_MODEL_STATUS = {
+    "OPTIMAL": "kOptimal",
+    "INFEASIBLE": "kInfeasible",
+    "UNBOUNDED": "kUnbounded",
+    "TIME_LIMIT": "kTimeLimit",
+}
 
 
 def _scaling_hint_for_reject(
@@ -246,6 +265,7 @@ def classify_acceptance(
     if sol.optimal:
         return Acceptance(
             accepted=True, near_optimal=False, message="", scaling_hint=None,
+            model_status="kOptimal",
         )
 
     # ``solve_diagnostics`` landed in polar-high 3.7.0 (pyproject pins it).
@@ -276,6 +296,7 @@ def classify_acceptance(
                 "to assess the solution"
             ),
             scaling_hint=None,
+            model_status=_SHIM_MODEL_STATUS.get(getattr(sol, "shim_status", None)),
         )
 
     status = diag.model_status_name
@@ -287,6 +308,7 @@ def classify_acceptance(
             near_optimal=False,
             message=f"solve for {solve_name} {_FAILURE_MESSAGES[status]}",
             scaling_hint=_scaling_hint_for_reject(ranges_post),
+            model_status=status,
         )
 
     # Anything that is neither kOptimal (handled above) nor a known failure
@@ -301,6 +323,7 @@ def classify_acceptance(
                 "determined from the available solver diagnostics"
             ),
             scaling_hint=_scaling_hint_for_reject(ranges_post),
+            model_status=status,
         )
 
     # --- kUnknown: the crossover-off / post-solve-uncertified case ----------
@@ -315,6 +338,7 @@ def classify_acceptance(
                 "acceptance is disabled (FLEXTOOL_ACCEPT_NEAR_OPTIMAL=0)"
             ),
             scaling_hint=_scaling_hint_for_reject(ranges_post),
+            model_status=status,
         )
 
     primal_tol = float(sol.primal_feasibility_tolerance)
@@ -348,6 +372,7 @@ def classify_acceptance(
                 "solution cannot be used"
             ),
             scaling_hint=_scaling_hint_for_reject(ranges_post),
+            model_status=status,
         )
 
     # Second requirement: a bounded optimality gap.
@@ -363,6 +388,7 @@ def classify_acceptance(
                 "certified"
             ),
             scaling_hint=_scaling_hint_for_reject(ranges_post),
+            model_status=status,
         )
 
     # Accept as near-optimal: feasible primal, small gap.
@@ -387,7 +413,7 @@ def classify_acceptance(
     )
     return Acceptance(
         accepted=True, near_optimal=True, message=msg, scaling_hint=None,
-        above_fixed_ceiling=above_fixed,
+        above_fixed_ceiling=above_fixed, model_status=status,
     )
 
 

@@ -19,6 +19,8 @@ import sys
 import logging
 import math
 import shutil
+import signal
+import threading
 import traceback
 from pathlib import Path
 from datetime import datetime
@@ -37,7 +39,8 @@ except (AttributeError, ValueError, OSError):
     # stderr may be unavailable (e.g. detached / redirected to a closed fd).
     pass
 from flextool._mem_sampler import start_mem_sampler
-from flextool.process_outputs.write_outputs import write_outputs
+from flextool.process_outputs.write_outputs import resolve_output_settings, write_outputs
+from flextool import run_record
 from flextool.cli._console import run_tool
 from flextool.cli._timing import TimingRecorder
 from flextool.run_options import RunOptions
@@ -73,6 +76,107 @@ sys.stdout = FlushingStream(sys.stdout)
 #0 : Success
 #-1: Failure (Defined in the Toolbox)
 #1: Infeasible or unbounded problem (not implemented in the toolbox, functionally same as -1. For a possiblity of a graphical depiction)
+
+
+class RunTerminated(SystemExit):
+    """SIGTERM or SIGHUP ended the run: a ``SystemExit`` (code 128 + signal) so ``finally`` blocks still run."""
+
+
+def _install_termination_handlers():
+    """Turn SIGTERM / SIGHUP into :class:`RunTerminated` (POSIX, main thread); return the function that undoes it."""
+    if os.name != "posix" or threading.current_thread() is not threading.main_thread():
+        return lambda: None
+
+    def _terminate(signum, frame):
+        raise RunTerminated(128 + signum)
+
+    previous = {}
+    for sig in (signal.SIGTERM, signal.SIGHUP):
+        try:
+            previous[sig] = signal.signal(sig, _terminate)
+        except (ValueError, OSError):
+            continue
+
+    def restore():
+        for sig, handler in previous.items():
+            try:
+                signal.signal(sig, handler if handler is not None else signal.SIG_DFL)
+            except (ValueError, OSError):
+                pass
+
+    return restore
+
+
+def _start_run_record(*, args, run_options, scenario_name, output_location, output_subdir, write_methods,
+                      work_folder):
+    """Start this run's ``_run_status.json`` and its log capture; return the recorder and its cleanup function.
+
+    With ``FLEXTOOL_RUN_LOG_OWNER=1`` (read and removed, so no process this run starts sees it) the parent holds the
+    output pipe and writes ``_run.log``: the engine prints the marker that tells it where.  Otherwise the engine
+    copies its own Python console output into ``_run.log`` (``log_capture: "python"``).  A folder that cannot be
+    written gives one warning and a run without a record; the exit code never depends on the record.
+    """
+    owner = os.environ.pop(run_record.RUN_LOG_OWNER_ENV, None)
+    log_capture = "parent" if owner == "1" else "python"
+    parquet_dir = Path(output_location) / "output_parquet" / output_subdir
+    try:
+        rec = run_record.RunRecorder.start(
+            parquet_dir=parquet_dir,
+            input={"db_url": args.input_db_url, "scenario": scenario_name, "source_file": args.input_source_file},
+            output={
+                "location": output_location,
+                "subdir": output_subdir,
+                "work_folder": str(Path(work_folder).resolve()),
+                "write_methods": list(write_methods),
+            },
+            options=run_options.summary_lines(),
+            argv=list(sys.argv),
+            log_capture=log_capture,
+            launcher=args.run_launcher,
+            run_options=run_options,
+        )
+    except OSError as exc:
+        logging.warning("Cannot write the run record in %s (%s); the run continues without it.", parquet_dir, exc)
+        return run_record.NULL_RECORDER, lambda: None
+    run_record.set_active(rec)
+    handler = rec.warning_handler()
+    root = logging.getLogger()
+    root.addHandler(handler)
+    writer = None
+    restore_tee = None
+    if log_capture == "parent":
+        print(run_record.format_marker(parquet_dir, rec.run_id), flush=True)
+    else:
+        try:
+            writer = run_record.RunLogWriter(parquet_dir / run_record.RUN_LOG_FILE)
+            restore_tee = run_record.install_tee(writer)
+        except OSError as exc:
+            logging.warning("Cannot write the run log in %s (%s); the run continues without it.", parquet_dir, exc)
+            if writer is not None:
+                writer.close()
+                writer = None
+
+    def cleanup():
+        if restore_tee is not None:
+            restore_tee()
+        if writer is not None:
+            writer.close()
+        root.removeHandler(handler)
+        rec.close()
+        run_record.set_active(None)
+
+    return rec, cleanup
+
+
+def _scan_failure_error(last_step, scenario_name):
+    """The run record's ``error`` for a cascade the final optimality scan rejected."""
+    if last_step is None:
+        return {"type": "NoSolveSteps", "message": f"the run of scenario {scenario_name!r} produced no solve steps"}
+    name = getattr(last_step, "solve_name", None) or scenario_name
+    if getattr(last_step, "is_benders", False):
+        return {"type": "BendersNoIncumbent",
+                "message": f"decomposed solve {name!r} found no feasible solution"}
+    return {"type": "SolveNotAccepted", "message": f"solve {name!r} did not solve to optimality"}
 
 
 def _run_solve(args, scenario_name, work_folder, timing_recorder, run_options=None):
@@ -546,6 +650,14 @@ def build_parser() -> argparse.ArgumentParser:
                              'the CWD.  Lower precedence than '
                              '--output-location, higher than the '
                              'input_sources/ layout and --flextool-location.')
+    parser.add_argument('--input-source-file', metavar='PATH', default=None,
+                        help='The file the input database was made from (e.g. the Excel file the GUI converts). '
+                             'Recorded in the run record (_run_status.json) so a reader can tell whether the '
+                             'results are older than their source.')
+    parser.add_argument('--run-launcher', metavar='NAME', default='direct',
+                        help='Who started this run (gui, flextool-run, workflow, calibrator, netload; default '
+                             'direct), recorded in the run record (_run_status.json).  A launcher that starts '
+                             'another adds it only when the command line has none, so the outermost one is kept.')
     parser.add_argument('--work-folder', metavar='PATH', default=None,
                         help='Working directory for intermediate files (default: current directory). '
                              'Enables parallel scenario execution by isolating each run.')
@@ -867,6 +979,72 @@ def main():
         )
         sys.exit(1)
 
+    # Where the outputs land and which write methods run: explicit flags >
+    # settings DB > defaults, resolved once here (the same rule
+    # write_outputs applies) so the run record, write_outputs, timings.csv
+    # and the output-info DB all name the same folder.
+    output_subdir = args.output_subdir or scenario_name
+    output_location, write_methods = resolve_output_settings(
+        write_methods=args.write_methods,
+        output_location=args.output_location,
+        settings_db_url=settings_db_url,
+        fallback_output_location=str(output_path),
+    )
+
+    # The run record (_run_status.json, _run.log) starts here, before the
+    # header block, so the header and every later warning are in it.
+    rec, _cleanup_run_record = _start_run_record(
+        args=args, run_options=run_options, scenario_name=scenario_name,
+        output_location=output_location, output_subdir=output_subdir,
+        write_methods=write_methods, work_folder=work_folder,
+    )
+    _restore_signals = _install_termination_handlers()
+    state, exit_code, error = "succeeded", 0, None
+    try:
+        _run_scenario(
+            args=args, run_options=run_options, rec=rec, scenario_name=scenario_name,
+            work_folder=work_folder, output_path=output_path, output_location=output_location,
+            output_subdir=output_subdir, write_methods=write_methods, timing_recorder=timing_recorder,
+            t_total_start=t_total_start,
+        )
+    except RunTerminated as exc:
+        signum = int(exc.code) - 128
+        state, exit_code = "interrupted", exc.code
+        error = {"type": "RunTerminated", "message": f"stopped by {signal.Signals(signum).name}"}
+        raise
+    except KeyboardInterrupt:
+        # An unhandled KeyboardInterrupt ends the interpreter by SIGINT (Windows: STATUS_CONTROL_C_EXIT).
+        state, exit_code = "interrupted", (-signal.SIGINT if os.name == "posix" else run_record.WINDOWS_CTRL_C_EXIT_SIGNED)
+        error = {"type": "KeyboardInterrupt", "message": "interrupted by Ctrl-C"}
+        raise
+    except SystemExit as exc:
+        if exc.code in (None, 0):
+            state, exit_code = "succeeded", 0
+        else:
+            state = "failed"
+            exit_code = exc.code if isinstance(exc.code, int) else 1
+            error = {"type": "SystemExit", "message": f"exit code {exc.code}"}
+        raise
+    except BaseException as exc:
+        state, exit_code = "failed", 1
+        error = {"type": type(exc).__name__, "message": str(exc)}
+        raise
+    finally:
+        rec.finish(state, exit_code=exit_code, error=error)
+        _cleanup_run_record()
+        _restore_signals()
+
+
+def _run_scenario(*, args, run_options, rec, scenario_name, work_folder, output_path, output_location,
+                  output_subdir, write_methods, timing_recorder, t_total_start):
+    """The run of one scenario after its run record has started: header, cascade, outputs, output-info DB.
+
+    Exits 1 (``sys.exit``) when the cascade fails; the caller records the run's end state.
+    """
+    input_db_url = args.input_db_url
+    settings_db_url = args.settings_db_url
+    wf = work_folder
+
     # Header block — one aligned key/value pair per line, blank lines
     # before and after, so the user has a self-contained summary of
     # what's being run.
@@ -874,7 +1052,7 @@ def main():
         ("Work dir", str(work_folder)),
         ("DB URL", str(input_db_url)),
         ("Scenario", scenario_name),
-        ("Output", str(args.output_location or output_path)),
+        ("Output", str(output_location)),
         ("Options", ", ".join(run_options.summary_lines()) or "defaults"),
         ("Threads", header_text(run_options)),
     ]
@@ -895,27 +1073,33 @@ def main():
         )
     except Exception as e:
         # FlexToolUserError signals a user-visible configuration problem
-        # (unknown solver, missing license, model-level solver error).
-        # The message is already human-readable; logging the traceback
-        # on top is just noise.  Other exceptions get the full
-        # traceback because they're (probably) bugs in flextool.
+        # (unknown solver, missing license, model-level solver error), and
+        # FlexToolConfigError one in the input data (no scenario, an empty
+        # scenario, an old database version).  The message is already
+        # human-readable; logging the traceback on top is just noise.
+        # Other exceptions get the full traceback because they're
+        # (probably) bugs in flextool.
         try:
+            from flextool.engine.input._solve_state import FlexToolConfigError
             from flextool.engine.solve._solver_dispatch import (
                 FlexToolUserError,
             )
+            user_errors: tuple[type[BaseException], ...] = (FlexToolConfigError, FlexToolUserError)
         except Exception:  # noqa: BLE001
-            FlexToolUserError = ()  # type: ignore[assignment]
-        if isinstance(e, FlexToolUserError):
+            user_errors = ()
+        if isinstance(e, user_errors):
             logging.error(str(e))
         else:
             logging.error(
                 f"Native cascade failed: {str(e)}\n"
                 f"Traceback:\n{traceback.format_exc()}"
             )
+        # The record keeps the exception (for a rejected LP, ``finish``
+        # replaces its "Error: 1" by the acceptance message).
+        rec.finish("failed", exit_code=1, error={"type": type(e).__name__, "message": str(e)})
         sys.exit(1)
 
     # If successful and requested, write outputs
-    output_subdir = args.output_subdir or scenario_name
     if return_code == 0:
         t_write_outputs = time.perf_counter()
         # Δ.31 — pass the last step's flex_data + solution so
@@ -946,6 +1130,9 @@ def main():
                 wo_solve_name,
                 wo_solve_name,
             )
+            rec.outputs_skipped(
+                "the final solve ran under Benders decomposition, which does not produce outputs on its own"
+            )
         else:
             try:
                 # Multi-solve (rolling) note: the last step alone would
@@ -962,11 +1149,11 @@ def main():
                 wo_solution = last_step.solution if last_step else None
                 write_outputs(
                     scenario_name=scenario_name,
-                    output_location=args.output_location,
+                    output_location=output_location,
                     subdir=output_subdir,
                     output_config_path=args.output_config,
                     active_configs=args.active_configs,
-                    write_methods=args.write_methods,
+                    write_methods=write_methods,
                     plot_rows=(
                         tuple(args.plot_rows) if args.plot_rows else None
                     ),
@@ -983,6 +1170,8 @@ def main():
                     ),
                     results_db_url=args.results_db_url,
                 )
+                if 'parquet' not in write_methods:
+                    rec.outputs_not_requested()
             except FileNotFoundError as exc:
                 # The in-memory parameter / set path doesn't read
                 # ``solve_data/`` CSVs, but ``read_variables`` still
@@ -994,6 +1183,7 @@ def main():
                     "output_excel/, output_plots/ are skipped on this run.",
                     exc,
                 )
+                rec.outputs_skipped(f"writing the outputs failed: {exc}")
         timing_recorder.record('write_outputs', subphase='total',
                                seconds=time.perf_counter() - t_write_outputs,
                                t_start=t_write_outputs)
@@ -1013,19 +1203,28 @@ def main():
     timing_recorder.record('total', seconds=full_seconds, t_start=t_total_start)
 
     # Move timings.csv into the per-scenario output dir alongside
-    # summary_solve.csv.  Mirror write_outputs's resolution of the output
-    # location so the file lands in the same parent regardless of whether
-    # output_location was supplied via the CLI / env / settings DB.
+    # summary_solve.csv, under the resolved output location (the one
+    # write_outputs used).
     try:
-        _resolved_output_location = args.output_location or str(output_path) or ''
         _final_csv_dir = (
-            Path(_resolved_output_location) / 'output_csv' / output_subdir
+            Path(output_location) / 'output_csv' / output_subdir
             if output_subdir else
-            Path(_resolved_output_location) / 'output_csv'
+            Path(output_location) / 'output_csv'
         )
         timing_recorder.finalize(_final_csv_dir)
     except Exception as _exc:
         logging.warning("Failed to copy timings.csv to output dir: %s", _exc)
+
+    # A failed cascade (a solve the scan did not accept, or no solve at all)
+    # wrote no outputs of this run: exit 1 and leave the output-info database
+    # alone, so no reader takes this run's ``finish_time`` for finished results.
+    if return_code != 0:
+        logging.error(
+            "Run of scenario %r failed; no outputs were written and the "
+            "output-info database was not updated.", scenario_name,
+        )
+        rec.finish("failed", exit_code=1, error=_scan_failure_error(last_step, scenario_name))
+        sys.exit(1)
 
     # Write scenario information to output database if provided
     if args.output_db_url:
@@ -1049,10 +1248,11 @@ def main():
                 name=scenario_name
             )
 
-            output_db.add_or_update_alternative(name=scenario_name)        
+            output_db.add_or_update_alternative(name=scenario_name)
 
-            # Convert folder path to database representation
-            value, type_ = to_database(str(output_path))
+            # Convert folder path to database representation: the resolved
+            # output location, where this run's outputs actually are.
+            value, type_ = to_database(str(output_location))
 
             # Add/update folder infio
             output_db.add_or_update_parameter_value(

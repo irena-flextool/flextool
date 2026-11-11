@@ -1,0 +1,42 @@
+{
+ "description": "The model declines; the stop details name a category without an explanation.",
+ "synthetic": true,
+ "events": [
+  {
+   "type": "message_start",
+   "message": {
+    "id": "msg_synthetic01",
+    "type": "message",
+    "role": "assistant",
+    "model": "example-model",
+    "content": [],
+    "stop_reason": null,
+    "stop_sequence": null,
+    "usage": {
+     "input_tokens": 1200,
+     "cache_read_input_tokens": 1000,
+     "cache_creation_input_tokens": 0,
+     "output_tokens": 1
+    }
+   }
+  },
+  {
+   "type": "message_delta",
+   "delta": {
+    "stop_reason": "refusal",
+    "stop_sequence": null,
+    "stop_details": {
+     "type": "refusal",
+     "category": "cyber",
+     "explanation": null
+    }
+   },
+   "usage": {
+    "output_tokens": 0
+   }
+  },
+  {
+   "type": "message_stop"
+  }
+ ]
+}

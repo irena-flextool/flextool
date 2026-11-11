@@ -15,7 +15,14 @@ from flextool.scenario_comparison.config_builder import (
     discover_dispatch_entities,
 )
 from flextool.scenario_comparison.data_models import DispatchMappings
-from flextool.scenario_comparison.db_reader import get_scenario_results
+from flextool.scenario_comparison.db_reader import (
+    comparison_members,
+    get_scenario_results,
+    new_write_id,
+    read_scenario_folders,
+    settled_members,
+    write_comparison_metadata,
+)
 from flextool.scenario_comparison.dispatch_mappings import (
     combine_dispatch_mappings,
     data_scenario_tags,
@@ -92,6 +99,13 @@ def _seed_dispatch_colors_into_plot_settings(
         _logging.warning(
             "Auto-seeding plot_settings.yaml failed (non-fatal): %s", exc
         )
+
+
+def _member_dirs(scenario_folders: dict[str, str], parquet_subdir: str) -> dict[str, Path]:
+    """Each scenario's result folder: ``<folder>/<parquet_subdir>/<name>`` (``<folder>/<name>`` without a
+    subdir), as the timeline breaks are read."""
+    return {name: Path(folder, parquet_subdir, name) if parquet_subdir else Path(folder, name)
+            for name, folder in scenario_folders.items()}
 
 
 def derive_project_root(scenario_folders: dict[str, str] | None) -> Path | None:
@@ -220,6 +234,15 @@ def run(
     with open(output_config_path, 'r', encoding='utf-8') as f:
         settings = yaml.safe_load(f)
 
+    # The member folders first (from the database when not given), then the runs they hold before any of their
+    # files is read (see settled_members).
+    if scenario_folders is None:
+        if db_url is None:
+            raise ValueError("Either db_url or scenario_folders must be provided")
+        print(f"Reading scenario information from {db_url}...")
+        scenario_folders = read_scenario_folders(db_url)
+    members_before = (comparison_members(_member_dirs(scenario_folders, parquet_subdir))
+                      if comparison_parquet_dir else [])
     scenario_folders, results = get_scenario_results(
         db_url=db_url, parquet_subdir=parquet_subdir,
         scenario_folders=scenario_folders,
@@ -325,14 +348,17 @@ def run(
     # Write combined comparison parquets if output directory specified
     if comparison_parquet_dir:
         os.makedirs(comparison_parquet_dir, exist_ok=True)
+        from flextool.run_record import now_iso
+        written_at = now_iso()
+        write_id = new_write_id()
         for name, df in combined_dfs.items():
             if not df.empty:
-                write_lean_parquet(df, os.path.join(comparison_parquet_dir, f"{name}.parquet"))
-        # Also write a metadata file with the scenario list
-        import json
-        meta = {"scenarios": scenarios}
-        with open(os.path.join(comparison_parquet_dir, "_metadata.json"), "w") as f:
-            json.dump(meta, f)
+                write_lean_parquet(df, os.path.join(comparison_parquet_dir, f"{name}.parquet"), write_id=write_id)
+        # Also write a metadata file with the scenario list and the runs the folders held, checked again now that
+        # every member file has been read (parquets, dispatch mappings, timeline breaks)
+        write_comparison_metadata(
+            comparison_parquet_dir, scenarios,
+            settled_members(members_before, _member_dirs(scenario_folders, parquet_subdir)), written_at, write_id)
         # The union of the scenarios' break steps: a break of one scenario also cuts the others' lines,
         # since the scenarios share one time axis.
         write_timeline_breaks(comparison_parquet_dir, break_times)

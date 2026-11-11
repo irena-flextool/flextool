@@ -14,6 +14,7 @@ from tkinter import ttk, messagebox, simpledialog
 from types import SimpleNamespace
 from typing import Any
 
+from flextool import run_record
 from flextool._resources import package_data_path
 from flextool.gui.project_utils import (
     get_projects_dir,
@@ -27,17 +28,28 @@ from flextool.gui.settings_io import (
     load_project_settings,
     save_global_settings,
     save_project_settings,
+    solver_defaults_dialog_text,
     solver_defaults_notice,
 )
+from flextool.gui.assistant.entry import AssistantEntry
+from flextool.gui.assistant.strings import PROJECT_STILL_FINISHING as ASSISTANT_STILL_FINISHING
 from flextool.gui.check_tree import CheckTreeController
-from flextool.gui.data_models import GlobalSettings, ProjectSettings, ScenarioInfo
+from flextool.gui.data_models import ExecutedScenarioInfo, GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.input_sources import InputSourceManager
 from flextool.gui.scenario_lists import (
     AvailableScenarioManager,
     ExecutedScenarioManager,
     prune_dangling_scenario_state,
+    row_check_glyph,
+    row_state_tag,
 )
-from flextool.gui.execution_manager import ExecutionJob, ExecutionManager, JobStatus
+from flextool.gui.execution_manager import (
+    KILL_REASON_PROJECT_DELETED,
+    KILL_REASON_PROJECT_SWITCHED,
+    ExecutionJob,
+    ExecutionManager,
+    JobStatus,
+)
 from flextool.gui.execution_window import ExecutionWindow
 from flextool.gui.output_actions import OutputActionManager
 from flextool.gui.result_viewer import ResultViewer
@@ -135,6 +147,11 @@ _GEN_RING = "\u21bb"                  # recycle ring -- the clickable affordance
 _GEN_PENDING = f"{_GEN_RING} \u2013"  # not produced yet (ring + en-dash placeholder)
 _GEN_EXISTS = f"{_GEN_RING} \u2713"   # produced (ring + check)
 _GEN_FAILED = f"{_GEN_RING} \u2717"   # last run failed (ring + cross)
+
+#: When a row's run record could not be read, the executed list is scanned again after this many ms, at most
+#: ``UNREADABLE_RESCANS`` times in a row.
+UNREADABLE_RESCAN_MS = 1500
+UNREADABLE_RESCANS = 3
 
 
 class MainWindow(tk.Tk):
@@ -312,6 +329,8 @@ class MainWindow(tk.Tk):
         self._pending_execution_scenarios: list[ScenarioInfo] = []
         self._lock_check_timer_id: str | None = None
         self.db_editor_mgr = DbEditorManager()
+        # The AI assistant: side-menu entry, chat window and runtime context file (flextool/gui/assistant/entry.py).
+        self._assistant = AssistantEntry(self)
 
         # Pre-conversion state for xlsx→sqlite before execution
         self._xlsx_converting_sources: set[str] = set()
@@ -320,6 +339,15 @@ class MainWindow(tk.Tk):
 
         # Tooltip for input source status column
         self._input_status_tip: tk.Toplevel | None = None
+        # Executed-tree rows by item id (their run record decides whether they can be checked), the tooltip of a
+        # row that cannot, and the jobs whose start (run record written) already refreshed the executed list.
+        self._executed_row_info: dict[str, Any] = {}
+        self._executed_state_tip: tk.Toplevel | None = None
+        self._executed_refreshed_jobs: set[int] = set()
+        # A rescan of the executed list scheduled because a row's run record could not be read (see
+        # ``_rescan_unreadable_rows``), and how many more such rescans this episode may have.
+        self._unreadable_rescan_id: str | None = None
+        self._unreadable_rescans_left = UNREADABLE_RESCANS
 
         # Sort mode for each treeview: "alpha" (by name) or "number" (by # column)
         self._input_sort_mode: str = "alpha"
@@ -701,11 +729,11 @@ class MainWindow(tk.Tk):
         self.auto_comp_excel_var.trace_add("write", self._on_auto_gen_toggled)
 
         # --- Side menu column (col 2): two vertical groups -------------
-        # Top:    Debug · themes · Png settings
-        # Bottom: Execution jobs · Results viewer (anchored to the
-        #         bottom of the section, touching the divider)
-        # A weighted-1 spacer row in the middle absorbs the slack so the
-        # two groups separate cleanly.
+        # Top:    Save memory · Solver options · Debug · Png settings (rows 0-3)
+        # Bottom: AI assistant · Execution jobs · Results viewer (rows 5-7,
+        #         anchored to the bottom of the section, touching the divider)
+        # The weighted-1 spacer row 4 in the middle absorbs the slack so the
+        # two groups separate cleanly; it is never lower than one row.
         from flextool.gui.hover_tooltip import attach_tooltip as _attach_tip
         side_menu = ttk.Frame(outer)
         side_menu.grid(
@@ -799,8 +827,15 @@ class MainWindow(tk.Tk):
             command=self._on_plot_menu,
         )
         self.plot_menu_btn.grid(row=3, column=0, sticky="w", pady=(0, 2))
+        # The spacer is at least one row high, so the two groups never touch
+        # when the column has no slack (owner feedback 2026-11-08).
+        side_menu.rowconfigure(
+            4, weight=1, minsize=self.plot_menu_btn.winfo_reqheight() + 4,
+        )
 
-        # Row 5 is the stretch spacer; bottom group lives in rows 6-7.
+        # Row 4 is the stretch spacer; the bottom group lives in rows 5-7:
+        # the AI assistant entry (row 5, built below), Execution jobs and
+        # Results viewer.
         self.execution_menu_btn = ttk.Button(
             side_menu, text="Execution jobs…", width=22,
             command=self._on_execution_menu,
@@ -814,6 +849,10 @@ class MainWindow(tk.Tk):
             command=self._on_view_results,
         )
         self.view_results_btn.grid(row=7, column=0, sticky="sw", pady=(2, 0))
+
+        # "AI assistant…" with its settings button, as wide as the width-22
+        # buttons below it (the Debug row makes the column itself wider).
+        self._assistant.build(side_menu, row=5, align_with=self.execution_menu_btn)
 
         # ── Separator ────────────────────────────────────────────────
         sep = ttk.Separator(outer, orient="horizontal")
@@ -934,6 +973,11 @@ class MainWindow(tk.Tk):
         # any current input source (parent source was deleted). Greyed so
         # the user can see them and decide whether to delete the outputs.
         self.executed_tree.tag_configure("orphan", foreground="#888888")
+        # Rows whose latest run did not succeed (run record): not checkable, ▶ opens the run's log; the check
+        # column shows ✗ (failed, interrupted, killed, crashed, abandoned), … (running) or – (no parquet).
+        self.executed_tree.tag_configure("run_failed", foreground="#d9534f")
+        self.executed_tree.tag_configure("run_running", foreground="#4a90d9")
+        self.executed_tree.tag_configure("run_no_results", foreground="#888888")
 
         exec_scroll = ttk.Scrollbar(exec_frame, orient="vertical", command=self.executed_tree.yview)
         exec_scroll.grid(row=0, column=1, sticky="ns")
@@ -950,7 +994,10 @@ class MainWindow(tk.Tk):
             checked_glyph=CHECK_ON,
             unchecked_glyph=CHECK_OFF,
             on_toggle=self._on_executed_toggled,
+            can_check=self._executed_row_checkable,
         )
+        self.executed_tree.bind("<Motion>", self._on_executed_motion, add="+")
+        self.executed_tree.bind("<Leave>", lambda _e: self._hide_executed_state_tip(), add="+")
         self.executed_tree.bind("<<TreeviewSelect>>", self._on_executed_selection_changed)
         self.executed_tree.bind("<Button-3>", self._on_executed_right_click)
         self.executed_tree.bind("<Shift-Up>", self._on_shift_arrow_up)
@@ -1158,6 +1205,10 @@ class MainWindow(tk.Tk):
         # for this machine" install otherwise dies with an opaque 0xC0000005
         # mid-solve).
         self.after(2200, self._check_polars_async)
+
+        # Delete expired AI assistant conversations and the runtime context
+        # files of FlexTool windows that are gone (daemon thread).
+        self.after(3000, self._assistant.startup_purge)
 
     def _check_update_async(self) -> None:
         """Probe for a newer version off the UI thread, then update the button.
@@ -1387,6 +1438,13 @@ class MainWindow(tk.Tk):
             return
         new_name = new_name.strip()
 
+        # The AI assistant's chat window closes first and its workers get a
+        # moment to finish; one still running a tool call refuses the rename.
+        if not self._assistant.before_project_change(self.current_project):
+            messagebox.showinfo(
+                "Rename project", ASSISTANT_STILL_FINISHING, parent=self,
+            )
+            return
         try:
             rename_project(self.current_project, new_name)
         except FileExistsError:
@@ -1394,6 +1452,7 @@ class MainWindow(tk.Tk):
                 "Already exists",
                 f"A project named '{new_name}' already exists.",
             )
+            self._assistant.ensure_open(self.current_project)
             return
         except FileNotFoundError:
             messagebox.showerror(
@@ -1403,6 +1462,7 @@ class MainWindow(tk.Tk):
             return
         except OSError as exc:
             messagebox.showerror("Error", str(exc))
+            self._assistant.ensure_open(self.current_project)
             return
 
         # Update global settings if the renamed project was the recent one
@@ -1437,37 +1497,6 @@ class MainWindow(tk.Tk):
             font="TkDefaultFont",
             borderwidth=0,
         )
-
-    def _install_menu_hover_dismiss(
-        self,
-        top_menu: tk.Menu,
-        submenus: list[tk.Menu],
-        delay_ms: int = 400,
-    ) -> None:
-        """Unpost ``top_menu`` shortly after the mouse leaves all menus.
-
-        Native ``tk.Menu`` only closes on click; users expect popup
-        menus to also dismiss on mouse-leave.  The delay keeps the menu
-        open while the cursor briefly crosses the border into a cascade
-        submenu (cascades fire ``<Leave>`` on the parent).
-        """
-        self._menu_dismiss_id: str | None = None
-
-        def _cancel() -> None:
-            if self._menu_dismiss_id is not None:
-                try:
-                    self.after_cancel(self._menu_dismiss_id)
-                except tk.TclError:
-                    pass
-                self._menu_dismiss_id = None
-
-        def _schedule(_event: object) -> None:
-            _cancel()
-            self._menu_dismiss_id = self.after(delay_ms, top_menu.unpost)
-
-        for m in (top_menu, *submenus):
-            m.bind("<Leave>", _schedule, add="+")
-            m.bind("<Enter>", lambda _e: _cancel(), add="+")
 
     def _on_ui_settings_btn(self) -> None:
         """Show the UI-settings popup menu under the button.
@@ -1554,24 +1583,16 @@ class MainWindow(tk.Tk):
             command=self._on_reset_window_layout,
         )
 
-        # Auto-dismiss when the mouse leaves all menus.  The delay keeps
-        # the menu visible while the cursor briefly crosses the border
-        # to a cascade submenu.
-        submenus = [code_menu, theme_menu]
-        if size_menu is not None:
-            submenus.insert(0, size_menu)
-        self._install_menu_hover_dismiss(menu, submenus)
-
         # Post the menu just under the button, right-aligned so the
         # menu's right edge lines up with the button's right edge.
         btn = self.ui_settings_btn
         menu.update_idletasks()
         x = btn.winfo_rootx() + btn.winfo_width() - menu.winfo_reqwidth()
         y = btn.winfo_rooty() + btn.winfo_height()
-        try:
-            menu.tk_popup(x, y)
-        finally:
-            menu.grab_release()
+        # No grab_release after tk_popup: on X11 the menu's global grab is
+        # what closes it on a click elsewhere or Escape (a release there
+        # kept it open until an entry was chosen).
+        menu.tk_popup(x, y)
 
     def _resolve_code_pt(self, body_pt: int) -> int:
         """Effective monospace/code font size in points.
@@ -1680,27 +1701,45 @@ class MainWindow(tk.Tk):
         # Import here to avoid circular imports at module level
         from flextool.gui.dialogs.project_dialog import ProjectDialog
 
-        dlg = ProjectDialog(self, current_project=self.current_project)
+        dlg = ProjectDialog(
+            self, current_project=self.current_project,
+            before_project_change=self._assistant.before_project_change,
+        )
+
+        # The open project under the name the dialog left it with (it may
+        # have been renamed there).
+        current = dlg.renamed_current or self.current_project
 
         # Handle deletion of the currently-open project before any
         # potential switch — _switch_project below would otherwise
         # overwrite current_project and mask the deletion.
-        if self.current_project and self.current_project in dlg.deleted_names:
+        deleted = bool(current) and current in dlg.deleted_names
+        if deleted:
             self._reset_to_no_project()
 
         if dlg.result:
             self._switch_project(dlg.result)
+        elif dlg.renamed_current and not deleted:
+            # The open project was renamed: open it under its new name.
+            if self.global_settings.recent_project == self.current_project:
+                self.global_settings.recent_project = dlg.renamed_current
+            self._switch_project(dlg.renamed_current)
         else:
             # No project opened — refresh the combo so any deletions
             # are reflected even if the user cancelled afterwards.
             self._refresh_project_combo()
+            # A rename or deletion of the open project that was refused or
+            # failed left it open: keep its AI assistant runtime file.
+            if self.current_project and not deleted:
+                self._assistant.ensure_open(self.current_project)
 
     def _reset_to_no_project(self) -> None:
         """Tear down per-project state after the open project is deleted."""
         # Close child windows tied to the deleted project.
+        self._assistant.close_for_project()
         if self.execution_mgr is not None:
             try:
-                self.execution_mgr.kill_all()
+                self.execution_mgr.kill_all(KILL_REASON_PROJECT_DELETED)
             except Exception:
                 logger.warning(
                     "Failed to kill execution jobs after project deletion",
@@ -1746,21 +1785,26 @@ class MainWindow(tk.Tk):
           * ExecutionWindow exec_jobs_sash, exec_jobs_layout_cw and the saved
             per-configuration geometry.
           * The main window's saved per-configuration geometry.
+          * The AI assistant window's saved per-configuration geometry.
 
-        Any currently open ResultViewer / ExecutionWindow is closed; the
-        next time it opens it uses computed defaults. The main-window default
-        applies on next launch.
+        Any currently open ResultViewer / ExecutionWindow / AI assistant
+        window is closed; the next time it opens it uses computed defaults.
+        The main-window default applies on next launch.
         """
         confirm = messagebox.askyesno(
             "Reset window layout",
             "Discard saved window sizes and sash positions for the result "
-            "viewer and execution window?\n\nOpen result viewer and "
-            "execution window will be closed; their defaults will apply "
-            "the next time you open them.",
+            "viewer, execution window and AI assistant window?\n\nOpen "
+            "result viewer, execution window and AI assistant window will be "
+            "closed; their defaults will apply the next time you open them.",
             parent=self,
         )
         if not confirm:
             return
+
+        # The AI assistant window writes its size at close, so it closes
+        # before the saved sizes are cleared.
+        self._assistant.close_window()
 
         # Project-scoped settings (viewer) — only if a project is loaded
         if self.current_project:
@@ -1785,6 +1829,8 @@ class MainWindow(tk.Tk):
         self.global_settings.exec_jobs_geometry = {}
         self.global_settings.main_window_geometry = {}
         self.global_settings.main_window_layout_cw = 0
+        self.global_settings.assistant_window_geometry = {}
+        self.global_settings.assistant_window_layout_cw = 0
         try:
             save_global_settings(get_projects_dir(), self.global_settings)
         except Exception:
@@ -1805,7 +1851,7 @@ class MainWindow(tk.Tk):
         messagebox.showinfo(
             "Reset window layout",
             "Saved window layout cleared. Defaults will apply next time the "
-            "result viewer or execution window opens.",
+            "result viewer, execution window or AI assistant window opens.",
             parent=self,
         )
 
@@ -1834,8 +1880,10 @@ class MainWindow(tk.Tk):
                 # Reset the combo back – it already shows the new name
                 self.project_combo.set(self.current_project or "")
                 return
-            self.execution_mgr.kill_all()
+            self.execution_mgr.kill_all(KILL_REASON_PROJECT_SWITCHED)
 
+        # The AI assistant's chat window belongs to the previous project.
+        self._assistant.close_for_project()
         if self.execution_window is not None and self.execution_window.winfo_exists():
             self.execution_window.destroy()
         self.execution_window = None
@@ -1880,8 +1928,9 @@ class MainWindow(tk.Tk):
             logger.warning("%s", _notice)
             print(_notice, flush=True)
             save_project_settings(project_path, self.project_settings)
+            _dialog_text = solver_defaults_dialog_text(name)
             self.after_idle(
-                lambda: messagebox.showinfo("Solver settings updated", _notice, parent=self)
+                lambda: messagebox.showinfo("Solver settings updated", _dialog_text, parent=self)
             )
 
         # Create input source manager and scenario managers
@@ -1916,6 +1965,9 @@ class MainWindow(tk.Tk):
         # Start periodic lock file checking
         self._start_lock_check_timer()
 
+        # Keep the AI assistant's runtime context file of this project.
+        self._assistant.project_opened(name)
+
     def _clear_all_lists(self) -> None:
         """Clear all treeview widgets."""
         for item in self.input_sources_tree.get_children():
@@ -1926,6 +1978,47 @@ class MainWindow(tk.Tk):
             self.executed_tree.delete(item)
 
     # ── Window close ─────────────────────────────────────────────────
+
+    def _cleanup_execution_jobs(self) -> None:
+        """Stop every job and wait for their run records (``ExecutionManager.cleanup``) without a frozen window.
+
+        With jobs running, the main window is hidden and a small note says what is happening; ``cleanup`` calls
+        back about every 0.1 s and the note's ``update`` keeps the event loop going, so the system never marks the
+        window "Not responding".  The wait is bounded by ``CLEANUP_WAIT_S``.
+        """
+        mgr = self.execution_mgr
+        if mgr is None:
+            return
+        if not mgr.has_pending_or_running():
+            mgr.cleanup()
+            return
+        note: tk.Toplevel | None = None
+        try:
+            self.withdraw()
+            note = tk.Toplevel(self)
+            note.title("FlexTool")
+            note.protocol("WM_DELETE_WINDOW", lambda: None)  # closing is already under way
+            ttk.Label(note, text="Stopping the runs and finishing their run records\u2026",
+                      padding=16).pack()
+            note.update()
+        except tk.TclError:
+            note = None
+
+        def progress() -> None:
+            if note is not None:
+                try:
+                    note.update()
+                except tk.TclError:
+                    pass
+
+        try:
+            mgr.cleanup(progress=progress)
+        finally:
+            if note is not None:
+                try:
+                    note.destroy()
+                except tk.TclError:
+                    pass
 
     def _on_close(self) -> None:
         """Save state and close the application."""
@@ -1940,10 +2033,21 @@ class MainWindow(tk.Tk):
             if not result:
                 return
 
-        # Kill all running subprocesses (cleanup is idempotent)
+        # The AI assistant: windows withdrawn, answers stopped without asking
+        # (what was received is saved, a running tool call is recorded as not
+        # run), runtime file deleted, expired chats purged — within 3 s.  Before
+        # the settings are saved below: the chat window's size goes into them.
+        try:
+            self._assistant.on_flextool_close()
+        except Exception:
+            logger.exception("Error closing the AI assistant")
+
+        # Kill all running subprocesses (cleanup is idempotent).  It waits for
+        # the stopped jobs' run records (at most CLEANUP_WAIT_S): the window is
+        # hidden first and a small note keeps the event loop going meanwhile.
         try:
             if self.execution_mgr is not None:
-                self.execution_mgr.cleanup()
+                self._cleanup_execution_jobs()
         except Exception:
             logger.exception("Error killing execution jobs during close")
 
@@ -2296,12 +2400,95 @@ class MainWindow(tk.Tk):
             if item:
                 values = tree.item(item, "values")
                 if values and values[3]:
-                    scenario_name = values[2]
-                    try:
-                        src_num = int(values[1])
-                    except (ValueError, IndexError):
-                        src_num = None
-                    self._view_scenario_plots(scenario_name, src_num)
+                    self._open_executed_row(item)
+
+    def _executed_row_checkable(self, item: str) -> bool:
+        """Whether an executed-tree row may be checked (``run_record.results_usable`` of its folder's record)."""
+        info = self._executed_row_info.get(item)
+        return info is None or info.checkable
+
+    def _open_executed_row(self, item: str) -> None:
+        """The ▶ of an executed row: its results, or, when its latest run did not succeed, that run's log."""
+        values = self.executed_tree.item(item, "values")
+        if not values:
+            return
+        if not self._executed_row_checkable(item):
+            self._open_run_log(item)
+            return
+        try:
+            src_num = int(values[1])
+        except (ValueError, IndexError):
+            src_num = None
+        self._view_scenario_plots(values[2], src_num)
+
+    def _open_run_log(self, item: str) -> None:
+        """Show the ``_run.log`` of an executed row's folder in a log window."""
+        from flextool.gui.output_log_window import OutputLogWindow
+        from flextool.gui.scenario_key import resolve_subdir_for_read
+        from flextool.run_record import RUN_LOG_FILE, read_log_excerpt
+
+        if not self.current_project:
+            return
+        values = self.executed_tree.item(item, "values")
+        info = self._executed_row_info.get(item)
+        try:
+            src_num = int(values[1])
+        except (ValueError, IndexError):
+            return
+        subdir = resolve_subdir_for_read(self.project_settings.bare_output_owners, src_num, values[2])
+        log_path = get_projects_dir() / self.current_project / "output_parquet" / subdir / RUN_LOG_FILE
+        window = OutputLogWindow(self, f"Run log: {subdir}")
+        if info is not None and info.unusable_reason:
+            window.append_line(f"# {info.unusable_reason}")
+            window.append_line("")
+        try:
+            # Read and closed at once: the run may still be writing it (Windows keeps no lock then).  A long log
+            # is shown as its head and tail, with a line that says how much is left out and where the whole is.
+            text, _left_out = read_log_excerpt(log_path)
+        except OSError as exc:
+            window.append_line(f"No run log in {log_path.parent}: {exc}")
+        else:
+            for line in text.splitlines():
+                window.append_line(line)
+        window.mark_finished(False)
+
+    def _on_executed_motion(self, event: tk.Event) -> None:  # type: ignore[type-arg]
+        """Over a row that cannot be checked, say why and that ▶ opens its log."""
+        item = self.executed_tree.identify_row(event.y)
+        info = self._executed_row_info.get(item) if item else None
+        if info is None or info.checkable:
+            self._hide_executed_state_tip()
+            return
+        tip_text = (
+            f"{info.unusable_reason or 'latest run did not succeed'}.\n"
+            "Its results cannot be checked for plots or comparison; click \u25b6 to open its log."
+        )
+        tip = self._executed_state_tip
+        if tip is not None:
+            try:
+                tip.wm_geometry(f"+{event.x_root + 15}+{event.y_root + 10}")
+                tip.children["!label"].configure(text=tip_text)
+                return
+            except (tk.TclError, KeyError):
+                self._executed_state_tip = None
+        tw = tk.Toplevel(self)
+        tw.wm_overrideredirect(True)
+        tw.wm_attributes("-topmost", True)
+        tw.wm_geometry(f"+{event.x_root + 15}+{event.y_root + 10}")
+        tk.Label(
+            tw, text=tip_text, justify="left",
+            background="#333333", foreground="#ffffff",
+            relief="solid", borderwidth=1, padx=8, pady=4,
+        ).pack()
+        self._executed_state_tip = tw
+
+    def _hide_executed_state_tip(self) -> None:
+        if self._executed_state_tip is not None:
+            try:
+                self._executed_state_tip.destroy()
+            except tk.TclError:
+                pass
+            self._executed_state_tip = None
 
     # ── Right-click context menus ──────────────────────────────────
 
@@ -2538,14 +2725,9 @@ class MainWindow(tk.Tk):
         if item:
             values = tree.item(item, "values")
             if values and values[3]:  # has view text
-                scenario_name = values[2]
-                try:
-                    src_num = int(values[1])
-                except (ValueError, IndexError):
-                    src_num = None
                 menu.add_command(
-                    label="View results",
-                    command=lambda s=scenario_name, n=src_num: self._view_scenario_plots(s, n),
+                    label="View results" if self._executed_row_checkable(item) else "Open run log",
+                    command=lambda i=item: self._open_executed_row(i),
                 )
                 menu.add_separator()
         menu.add_command(
@@ -2979,12 +3161,18 @@ class MainWindow(tk.Tk):
     def _refresh_and_autocheck_scenario(
         self, scenario_name: str, finish_timestamp: str = "",
     ) -> None:
-        """Refresh executed scenarios and auto-check the newly completed one."""
+        """Refresh executed scenarios and auto-check the newly completed one.
+
+        A row that cannot be checked (its run record says the run did not succeed or wrote no parquet) is
+        left unchecked.
+        """
         self._refresh_executed_scenarios()
         # Find and check the newly completed scenario, updating timestamp
         for item in self.executed_tree.get_children():
             values = self.executed_tree.item(item, "values")
             if values and values[2] == scenario_name:
+                if not self._executed_row_checkable(item):
+                    break
                 self.executed_tree.set(item, "check", CHECK_ON)
                 if finish_timestamp:
                     self.executed_tree.set(item, "timestamp", finish_timestamp)
@@ -4701,17 +4889,28 @@ class MainWindow(tk.Tk):
         current_source_numbers = set(
             self.project_settings.input_source_numbers.values()
         )
+        self._executed_row_info = {}
+        dropped_check = False
         for info in executed:
             key = (info.source_number, info.name)
-            check_char = CHECK_ON if key in previously_checked else CHECK_OFF
+            check_char = row_check_glyph(info, key in previously_checked)
+            if key in previously_checked and not info.checkable:
+                # Its latest run stopped succeeding: unchecked, so no checked list holds it.
+                dropped_check = True
             view_text = "\u25b6"
             tags = ("orphan",) if info.source_number not in current_source_numbers else ()
-            self.executed_tree.insert(
+            state_tag = row_state_tag(info)
+            if state_tag is not None:
+                tags = (*tags, state_tag)
+            iid = self.executed_tree.insert(
                 "",
                 "end",
                 values=(check_char, info.source_number, info.name, view_text, info.timestamp),
                 tags=tags,
             )
+            self._executed_row_info[iid] = info
+        if dropped_check:
+            self._save_checked_executed_scenarios()
 
         # Apply current sort mode
         if self._executed_sort_mode == "alpha":
@@ -4724,6 +4923,27 @@ class MainWindow(tk.Tk):
             self._sort_tree_items(self.executed_tree, col_index=4, numeric=False)
 
         self._update_output_status()
+        self._rescan_unreadable_rows(executed)
+
+    def _rescan_unreadable_rows(self, executed: list[ExecutedScenarioInfo]) -> None:
+        """Scan the executed list again in 1.5 s when a row's run record could not be read (at most 3 times).
+
+        The list is refreshed when a job ends, the moment a record is most often being finished in place; nothing
+        else would refresh it, so its row would show "…" until another job ended.  The count starts again once
+        every record reads.
+        """
+        if not any(info.run_state == run_record.UNREADABLE_STATE for info in executed):
+            self._unreadable_rescans_left = UNREADABLE_RESCANS
+            return
+        if self._unreadable_rescan_id is not None or self._unreadable_rescans_left <= 0:
+            return
+        self._unreadable_rescans_left -= 1
+
+        def rescan() -> None:
+            self._unreadable_rescan_id = None
+            self._refresh_executed_scenarios()
+
+        self._unreadable_rescan_id = self.after(UNREADABLE_RESCAN_MS, rescan)
 
     def _on_executed_selection_changed(self, _event: tk.Event) -> None:  # type: ignore[type-arg]
         """Update output status indicators when executed_tree selection changes."""
@@ -5115,6 +5335,8 @@ class MainWindow(tk.Tk):
             on_status_change=self._on_job_status_change,
             on_all_finished=self._on_all_jobs_finished,
             global_settings=self.global_settings,
+            # The GUI finished a job's run record after the job's status notify (a kill, a failure): show it.
+            on_run_record_closed=lambda job: self.post_to_main(self._refresh_executed_scenarios),
         )
         # ExecutionManager seeds max_workers from ProjectSettings (with
         # the legacy GlobalSettings.max_workers as fallback) in its
@@ -5228,7 +5450,13 @@ class MainWindow(tk.Tk):
 
     def _apply_job_status_change(self, job: ExecutionJob) -> None:
         """Apply a job status change; runs on the main thread."""
-        if job.status == JobStatus.SUCCESS:
+        if job.status == JobStatus.RUNNING:
+            # Once per job, when its engine has written its run record ("running"): the executed list shows
+            # the run in progress (and stops offering the folder's earlier results).
+            if job.run_record_folder is not None and job.job_id not in self._executed_refreshed_jobs:
+                self._executed_refreshed_jobs.add(job.job_id)
+                self._refresh_executed_scenarios()
+        elif job.status == JobStatus.SUCCESS:
             self._refresh_and_autocheck_scenario(
                 job.scenario_name, job.finish_timestamp,
             )
@@ -6066,6 +6294,9 @@ class MainWindow(tk.Tk):
             target_item = item
             break
 
+        if target_item is not None and not self._executed_row_checkable(target_item):
+            self._open_run_log(target_item)
+            return
         was_already_checked = (
             target_item is not None
             and self.executed_tree.item(target_item, "values")[0] == CHECK_ON

@@ -1,0 +1,154 @@
+{
+ "description": "A thinking block with its signature, a text block and two tool calls with streamed arguments.",
+ "synthetic": true,
+ "events": [
+  {
+   "type": "message_start",
+   "message": {
+    "id": "msg_synthetic01",
+    "type": "message",
+    "role": "assistant",
+    "model": "example-model",
+    "content": [],
+    "stop_reason": null,
+    "stop_sequence": null,
+    "usage": {
+     "input_tokens": 1200,
+     "cache_read_input_tokens": 1000,
+     "cache_creation_input_tokens": 0,
+     "output_tokens": 1
+    }
+   }
+  },
+  {
+   "type": "content_block_start",
+   "index": 0,
+   "content_block": {
+    "type": "thinking",
+    "thinking": "",
+    "signature": ""
+   }
+  },
+  {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "thinking_delta",
+    "thinking": "Look up west, "
+   }
+  },
+  {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "thinking_delta",
+    "thinking": "then the docs."
+   }
+  },
+  {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "signature_delta",
+    "signature": "U3ludGhldGljU2lnbmF0dXJlMDE="
+   }
+  },
+  {
+   "type": "content_block_stop",
+   "index": 0
+  },
+  {
+   "type": "content_block_start",
+   "index": 1,
+   "content_block": {
+    "type": "text",
+    "text": ""
+   }
+  },
+  {
+   "type": "content_block_delta",
+   "index": 1,
+   "delta": {
+    "type": "text_delta",
+    "text": "Let me "
+   }
+  },
+  {
+   "type": "content_block_delta",
+   "index": 1,
+   "delta": {
+    "type": "text_delta",
+    "text": "look."
+   }
+  },
+  {
+   "type": "content_block_stop",
+   "index": 1
+  },
+  {
+   "type": "content_block_start",
+   "index": 2,
+   "content_block": {
+    "type": "tool_use",
+    "id": "toolu_synthetic01",
+    "name": "get_entity",
+    "input": {}
+   }
+  },
+  {
+   "type": "content_block_delta",
+   "index": 2,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": "{\"name\":"
+   }
+  },
+  {
+   "type": "content_block_delta",
+   "index": 2,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": " \"west\"}"
+   }
+  },
+  {
+   "type": "content_block_stop",
+   "index": 2
+  },
+  {
+   "type": "content_block_start",
+   "index": 3,
+   "content_block": {
+    "type": "tool_use",
+    "id": "toolu_synthetic02",
+    "name": "search_docs",
+    "input": {}
+   }
+  },
+  {
+   "type": "content_block_delta",
+   "index": 3,
+   "delta": {
+    "type": "input_json_delta",
+    "partial_json": "{\"query\": \"penalty\"}"
+   }
+  },
+  {
+   "type": "content_block_stop",
+   "index": 3
+  },
+  {
+   "type": "message_delta",
+   "delta": {
+    "stop_reason": "tool_use",
+    "stop_sequence": null
+   },
+   "usage": {
+    "output_tokens": 80
+   }
+  },
+  {
+   "type": "message_stop"
+  }
+ ]
+}

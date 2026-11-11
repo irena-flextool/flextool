@@ -151,21 +151,6 @@ module it lives in. Each row, objective term and variable carries an
 `EQ.` / `OBJ.` / `VAR.` header with its formula, so
 `grep -rn "EQ. ─── maxFlow" flextool/engine` finds an equation.
 
-**Capacity symbols used in the headers.** For a unit, connection or storage
-node `e` in period `d`:
-
-- `capacity[e,d] = existing[e,d] × virtual_unitsize[e]` when
-  `virtual_unitsize` is set, else `existing[e,d]` (MW, or MWh for storage).
-  With `virtual_unitsize`, `existing` is the number of units.
-- `unitsize[e] = virtual_unitsize[e]`, else `existing` (the largest period
-  value), else 1000.
-- `existing_count[e,d] = capacity[e,d] / unitsize[e]`: equal to `existing`
-  when `virtual_unitsize` is set; otherwise 1 (less in a period whose
-  `existing` is below the largest, 0 without existing capacity).
-- `invest_*`, `retire_*`, `cumulative_*`, `invest_forced` and the capacity a
-  construction lead time carries are MW (MWh) in every case. `v_invest` and
-  `v_divest` are continuous, in units of `unitsize`.
-
 **What lives where.** `model/core.py` holds the core model that every run
 uses: node balance, storage state, flows and capacity, conversion,
 investment maxima, CO2 caps, user constraints, profiles and the core
@@ -186,6 +171,71 @@ alternate optimum the solver returns, so moving a step in the table of
 contents (or a variable in `_declare_variables`) changes results on
 degenerate models. Check the effect with `tools/lp_snapshot.py`
 (see CONTRIBUTING.md "Running Tests").
+
+### Equation headers
+
+Every row family, variable and objective term carries a header comment
+directly above its `add_cstr` / `add_var` call (or the term it returns),
+and the generated [formulation page](../formulation.md) is built from these
+headers (`flextool/docs_build/formulation.py`, the one reader of this
+grammar; `tests/docs/test_header_grammar.py` checks it):
+
+```python
+        # ─── EQ. ─── maxOnline_{linear,integer} ──────────────────────────────
+        # ─────────────────────────────────────────────────────────────────────
+        # v_online[p,d,t] − Σ v_invest_p[p,d′] + Σ v_divest_p[p,d′]  ≤ existing_count[p,d]
+        #   ∀ (p,d,t) ∈ p_idx
+        # Units online cannot exceed the units built.
+```
+
+- **First line:** `# ─── KIND. ─── names ───`, `KIND` one of `EQ`, `VAR`,
+  `OBJ`. When the names do not fit, continuation lines follow: `#` and 13
+  spaces, then more names, until a line that ends in `─`.
+- **Names** are separated by ` / `, `, ` or `;`. A `(…)` part is a
+  qualifier and is dropped (`v_flow (coarse processes)` is `v_flow`); a
+  `label:` before a name is dropped (`<family>_coarse: maxFlow_coarse`).
+  `{a,b}` expands to each alternative, `[_x]` is optional
+  (`co2_max_total[_path]` is `co2_max_total` and `co2_max_total_path`).
+  `{sfx}` is the one declared placeholder (`_linear`, `_integer`);
+  `<family>` appears only in a label. Each expanded name is an identifier:
+  the row or column name the LP carries (OBJ: the term's name).
+- **Free-text header:** a header whose names are words
+  (`# ─── OBJ. ─── reserve shortfall ───`) carries the names on the next
+  line, `# names: a, b`.
+- **Body:** the comment lines that follow, up to the first line that is not
+  a comment or the next header; a line of `─` is a rule and is skipped. The
+  body starts with the **formula** (the row, `∀` its domain, then the
+  symbols it uses, indented) and continues with the **prose** from the
+  first unindented line that starts with a capitalised word (`Forces …`,
+  `Row rule …`). An indented line in the prose is a formula fragment.
+- **One header per family.** A generic row helper carries no header; its
+  callers do (`ROW_HELPERS` in the test: `_coarse_flows.add_cstr` /
+  `add_twin` / `add_row_rule_cstr`, `_lead_time.period_limit`,
+  `core._ramp_family`, `_cumulative_invest._group_period_limit_online`,
+  `_online._add_max_input_flow_online`).
+- **Ratchets** (`tests/docs/test_header_grammar.py`): every `add_cstr` /
+  `add_var` in `engine/model/` has a header earlier in its function or sits
+  in a row helper whose callers have one; every autoscale
+  `CONSTRAINT_FAMILIES` / `VARIABLE_FAMILIES` key is a header name, its
+  `_coarse` twin, or a key `lookup_cstr` reaches by suffix
+  (`PREFIX_REGISTERED`); every `_obj_*` step and `objective_terms` has an
+  `OBJ.` header.
+
+### Capacity symbols used in the headers
+
+For a unit, connection or storage node `e` in period `d`:
+
+- `capacity[e,d] = existing[e,d] × virtual_unitsize[e]` when
+  `virtual_unitsize` is set, else `existing[e,d]` (MW, or MWh for storage).
+  With `virtual_unitsize`, `existing` is the number of units.
+- `unitsize[e] = virtual_unitsize[e]`, else `existing` (the largest period
+  value), else 1000.
+- `existing_count[e,d] = capacity[e,d] / unitsize[e]`: equal to `existing`
+  when `virtual_unitsize` is set; otherwise 1 (less in a period whose
+  `existing` is below the largest, 0 without existing capacity).
+- `invest_*`, `retire_*`, `cumulative_*`, `invest_forced` and the capacity a
+  construction lead time carries are MW (MWh) in every case. `v_invest` and
+  `v_divest` are continuous, in units of `unitsize`.
 
 ### Required fields
 

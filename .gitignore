@@ -12,6 +12,8 @@ paramNotWritten.dat
 .spinetoolbox/items/exporttocsv/exported.json
 .spinetoolbox/items/
 results/
+# The assistant's result-side package is source code, not a results folder.
+!flextool/assistant/results/
 *.bak*
 *.log
 *.mps
@@ -28,6 +30,8 @@ dist/
 .idea/
 .claude/
 site/
+# Documentation generated at build time (flextool.docs_build); never committed.
+flextool/assistant/_docs/
 example_input.xlsx
 *.xls*
 *.ods
@@ -56,15 +60,17 @@ venv/
 specs/
 projects/
 tests/unitTests.txt
-# Local-only tests that read PROPRIETARY project datasets (H2/SouthAfrica/
-# Cyprus) from the gitignored `projects/` tree.  They run locally where the
+# Local-only tests that read PROPRIETARY project datasets from the
+# gitignored `projects/` tree.  They run locally where the
 # DB exists (skipif-guarded) and must never ship in the public repo or CI.
 tests/test_rp_force_include_h2_acceptance.py
 tests/engine/test_benders_stall_e2e.py
 tests/calibrate/test_sizing_h2trade_local.py
-rivendell/
 .aider*
 # Local audit / investigation handoffs — meant for personal note-taking,
 # not shipped with the repo.  This folder is local-only; never track it.
 _audit_reports/
 _diagrams/
+# Editor / IDE settings and local scratch notes — personal, never tracked.
+.vscode/
+namespace_structure.txt

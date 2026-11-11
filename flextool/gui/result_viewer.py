@@ -713,8 +713,17 @@ class ResultViewer(tk.Toplevel):
         followed by any newly-seen names in alphabetical order. The
         settings list is rewritten to match (drops missing names, appends
         new ones) and persisted via the debounced save path.
+
+        A folder whose latest run did not succeed (its run record says
+        running, failed, interrupted, killed or crashed, or that it wrote no
+        parquet) is left out of the result, also when an earlier run's
+        parquet is still there.  It is dropped after the ordering merge, so
+        it keeps its place in ``executed_scenario_order`` for when a run
+        succeeds again.  This matters with nothing checked, when every
+        folder on disk is listed.
         """
         from flextool.gui.scenario_key import resolve_source_number, format_key
+        from flextool.gui.scenario_lists import folder_results_usable
         parquet_dir = self._project_path / "output_parquet"
         if not parquet_dir.is_dir():
             return []
@@ -747,7 +756,7 @@ class ResultViewer(tk.Toplevel):
                     exc_info=True,
                 )
 
-        return resolved
+        return [s for s in resolved if folder_results_usable(parquet_dir / s)]
 
     def _populate_scenarios(self) -> None:
         """Populate the scenario listbox."""
@@ -2559,6 +2568,104 @@ class ResultViewer(tk.Toplevel):
                 return v
         # Fall back to first variant
         return entry.variants[0] if entry.variants else None
+
+    # ------------------------------------------------------------------
+    # What the viewer shows (read by the AI assistant, P2 §6.3)
+    # ------------------------------------------------------------------
+
+    _VIEW_READ_ERRORS = (tk.TclError, AttributeError, ValueError, LookupError, TypeError)
+
+    def view_state(self):
+        """What this viewer shows now, for the AI assistant's context: mode, scenarios, plot, variant, time range,
+        dispatch item, comparison checks.  ``None`` when the window is gone (or the assistant is not installed).
+
+        Read-only and defensive (it is polled every second): each field is read on its own, and one that cannot
+        be read now — the duration box while it is being edited, a tree being rebuilt — is ``None`` or empty.
+        ``time_start`` / ``time_steps`` are positions in the plotted series; ``time_start_label`` is the time step
+        at that position when the plotted series is at hand.
+        """
+        try:
+            from flextool.assistant.context import ViewerState
+        except ImportError:
+            return None
+        try:
+            if not self.winfo_exists():
+                return None
+        except tk.TclError:
+            return None
+
+        def read(fn, default=None):
+            try:
+                return fn()
+            except self._VIEW_READ_ERRORS:
+                return default
+
+        mode = read(lambda: str(self._mode.get()), "")
+        scenarios = read(lambda: tuple(str(s) for s in self._get_selected_scenarios()), ())
+        entry = read(self._view_entry)
+        variant = read(lambda: self._get_active_variant(entry)) if entry is not None else None
+        start = read(lambda: int(self._start_var.get()))
+        steps = read(lambda: int(self._duration_var.get()))
+        checked = read(lambda: tuple(str(s) for s in self._get_comparison_scenarios()), ())
+        return ViewerState(
+            mode=mode,
+            scenarios=scenarios,
+            plot_entry=entry.number if entry is not None else None,
+            plot_name=entry.full_name if entry is not None else None,
+            variant=variant.letter if variant is not None else None,
+            result_key=variant.result_key if variant is not None else None,
+            sub_config=variant.sub_config if variant is not None else None,
+            time_start=start,
+            time_steps=steps,
+            time_start_label=read(lambda: self._view_time_label(mode, variant, scenarios, checked, start)),
+            dispatch_item=read(self._view_dispatch_item) if mode == "dispatch" else None,
+            comparison_checked=checked,
+        )
+
+    def _view_entry(self) -> PlotEntry | None:
+        """The plot entry selected in the plot tree."""
+        for iid in self._plot_tree.selection():
+            if iid.startswith("entry_"):
+                return self._tree_entry_map.get(iid)
+        return None
+
+    def _view_dispatch_item(self) -> str | None:
+        """The node or node group whose dispatch is shown."""
+        iid = self._last_dispatch_iid
+        if not iid:
+            return None
+        if iid.startswith(_DISPATCH_NODE_PREFIX):
+            return self._dispatch_node_iids.get(iid)
+        if iid.startswith(_DISPATCH_GROUP_PREFIX):
+            return iid[len(_DISPATCH_GROUP_PREFIX):]
+        return None
+
+    def _view_time_label(
+        self, mode: str, variant: PlotVariant | None, scenarios: tuple[str, ...],
+        checked: tuple[str, ...], start: int | None,
+    ) -> str | None:
+        """The time step at position *start* of the plotted series, when the plan in memory is the one shown."""
+        plan = self._live_plan
+        if plan is None or variant is None or start is None:
+            return None
+        key = self._live_plan_key
+        if tuple(key[1:3]) != (variant.result_key, variant.sub_config):
+            return None
+        if mode == "single":
+            if not scenarios or key[0] != scenarios[0]:
+                return None
+        elif mode == "comparison":
+            if key[0] != "_comparison_merged" or tuple(key[3:4]) != (tuple(sorted(checked)),):
+                return None
+        else:
+            return None
+        times = plan.time_index_values
+        if not times or not 0 <= start < len(times):
+            return None
+        periods = plan.period_labels
+        if periods and start < len(periods):
+            return f"{periods[start]} {times[start]}"
+        return str(times[start])
 
     def _load_single_plot_config(
         self, result_key: str, sub_config: str,

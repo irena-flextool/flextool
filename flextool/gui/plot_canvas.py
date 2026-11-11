@@ -29,6 +29,31 @@ logger = logging.getLogger(__name__)
 _BG = "#f0f0f0"
 
 
+def _windowing_system(widget: tk.Misc) -> str:
+    try:
+        return str(widget.tk.call("tk", "windowingsystem"))
+    except tk.TclError:
+        return ""
+
+
+def wheel_units(num: int, delta: int, windowing_system: str) -> int:
+    """The units one wheel event scrolls (positive: down).
+
+    X11 sends Button-4 (up) / Button-5 (down); Windows ``<MouseWheel>`` with ``delta`` in multiples of 120 per
+    notch (touchpads send less); macOS (aqua) ``delta`` in small steps.  Every event scrolls at least one unit.
+    """
+    if num == 4:
+        return -3
+    if num == 5:
+        return 3
+    if not delta:
+        return 0
+    if windowing_system == "aqua":
+        return -delta
+    notches = abs(delta) // 120 or 1
+    return -notches if delta > 0 else notches
+
+
 class PlotCanvas(ttk.Frame):
     """Embeds a matplotlib FigureCanvasTkAgg with navigation toolbar.
 
@@ -211,23 +236,39 @@ class PlotCanvas(ttk.Frame):
         if fig.get_dpi() != target_dpi:
             fig.set_dpi(target_dpi)
 
+    def _pointer_inside(self, event: tk.Event) -> bool:
+        """Whether the wheel event happened over the plot: the ``bind_all``
+        handlers see every wheel event of the application while they are
+        installed (a missed ``<Leave>`` leaves them on), so a scroll in
+        another window (the AI chat's transcript) must not move the plot."""
+        try:
+            under = self.winfo_containing(event.x_root, event.y_root)
+        except (tk.TclError, KeyError):
+            return False
+        if under is None:
+            return False
+        own = str(self._scroll_canvas)
+        path = str(under)
+        return path == own or path.startswith(own + ".")
+
     def _on_mousewheel(self, event: tk.Event) -> None:
         # Linux uses Button-4/5, Windows/Mac uses MouseWheel.
         # Skip scrolling when the content already fits the viewport —
         # otherwise the figure visibly drifts under the wheel even
         # though no scrollbar is shown.
+        if not self._pointer_inside(event):
+            return
         try:
             top, bottom = self._scroll_canvas.yview()
         except tk.TclError:
             return
         if top <= 0.0 and bottom >= 1.0:
             return
-        if event.num == 4:
-            self._scroll_canvas.yview_scroll(-3, "units")
-        elif event.num == 5:
-            self._scroll_canvas.yview_scroll(3, "units")
-        elif event.delta:
-            self._scroll_canvas.yview_scroll(-event.delta // 120, "units")
+        num = event.num if isinstance(event.num, int) else 0
+        delta = event.delta if isinstance(event.delta, int) else 0
+        units = wheel_units(num, delta, _windowing_system(self))
+        if units:
+            self._scroll_canvas.yview_scroll(units, "units")
 
     # ------------------------------------------------------------------
     # Resize handling (replaces matplotlib's <Configure> handler)

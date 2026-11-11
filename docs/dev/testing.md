@@ -250,6 +250,7 @@ Defined in `pyproject.toml` and re-asserted in `tests/conftest.py`:
 | `perturbation`  | Tier 6 single-multiplier perturbation tests                   |
 | `emission`      | Tier 7 MPS row-count emission tests                           |
 | `csv_reload`    | CSV reload contract tests in `tests/csv_reload/` — opt-in     |
+| `gui`           | Opens a real Tk window — opt-in with `--run-gui` (see "GUI tests" below) |
 
 The `smoke` marker is attached automatically to scenarios in
 `scenarios.yaml` that set `smoke: true`.
@@ -272,6 +273,32 @@ Run them with `pytest -m csv_reload tests/csv_reload/`.
 - **full** — push to `master` and nightly cron; full Layer-1 plus
   Layer-2 MPS parity (30-minute timeout).
 - **slow** — nightly only; `-m slow`.
+- **gui-tests** — every push and PR, a required check: the Tk tests
+  under xvfb (see "GUI tests" below).
+
+### GUI tests
+
+The tests that open a real Tk window are the modules listed in
+`_GUI_DISPLAY_MODULES` (`tests/conftest.py`) and the tests marked `gui`
+(`pytestmark = pytest.mark.gui`, e.g. every module of `tests/gui/assistant/`).
+They are skipped unless `--run-gui` is given; `--gui-only` deselects
+everything else.  Never run them on your own display — they move windows
+and the keyboard focus. Run them under xvfb, with openbox as the window
+manager as the CI job does (mapping, focus, grabs and the work area then
+behave as on a desktop):
+
+```bash
+xvfb-run -a sh -c 'openbox & sleep 1; python -m pytest tests/gui --run-gui --gui-only -n 0'
+```
+
+The `gui-tests` job of `ci.yml` runs exactly this on Linux (Python 3.14,
+`--timeout 300`). It runs serially: the focus is one per display, so tests
+in parallel processes on one display take it from each other. A test that
+checks where the focus went asks the window (`focus_lastfor()`), not the
+display (`focus_get()`). A dialog is transient to its parent, and a window
+manager never maps a transient of a withdrawn window: open dialogs over a
+mapped window. The Tk-free modules of `tests/gui/` run in the sharded
+Tests workflow. Windows and macOS Tk are checked by hand.
 
 ### Test-suite environment variables
 
@@ -284,6 +311,7 @@ Opt-in switches read by the test suite only (registered with audience `test` in 
 |---|---|---|---|
 | `FLEXTOOL_NATIVE_PARITY_SWEEP` | unset (skipped) | `1` | Run the slow parity sweep of `tests/engine/test_orchestration.py` over every fixture (about 5 min per fixture). |
 | `FLEXTOOL_TEST_RSS_BUDGET_MB` | `1500` | MB | RSS budget of the input-derivation memory test `tests/spinedb_backend/test_memory_budget.py`, for machines with unrelated memory pressure. |
+| `FLEXTOOL_TEST_KEYRING_LOG` | set by the suite | file | Set by the root `conftest.py` in the first process of a session and inherited by the xdist workers: every process appends a call that reached a system keyring backend, or a store or removal on the default keyring, to this file, and the session fails when it is not empty (`tests/user_dirs_guard.py`). Not for use by hand. |
 
 ## Running the tests
 
@@ -329,6 +357,62 @@ test so scenarios that share solve names cannot cross-contaminate.
 - **Marker discipline.** Mark fast tests with `smoke` only if they
   belong in the per-commit gate; mark anything that builds and solves
   an LP with `solver`; mark anything over ~30 s with `slow`.
+
+## Recorded provider replies
+
+The AI assistant's backend tests run on synthetic payloads (`tests/assistant/llm/payloads/`). The real answers of
+each AI service are kept as recordings under `tests/assistant/llm/recorded/<preset>/<case>.json`, made by hand with
+`tools/record_llm_replies.py` and checked in CI by `tests/assistant/llm/test_recorded_replies.py` (skipped while
+there are none). A recording is made **only** against the synthetic test project that the tool builds itself
+(`tests/fixtures/tests.json` with the runs of the assistant tests), never against a user's project.
+
+To record one service:
+
+1. Make its key findable as the chat finds it: the preset's environment variable (`GEMINI_API_KEY`, …) or
+   `flextool-assistant --set-key --provider <preset>`. The key is never given on the command line. For a local
+   server, start it with the model loaded the way users run it (for Ollama, `OLLAMA_CONTEXT_LENGTH=16384`).
+2. Run, from the repository root:
+   ```bash
+   python tools/record_llm_replies.py --preset gemini --model <a model from flextool-assistant --list-models>
+   python tools/record_llm_replies.py --preset ollama --model <a pulled model that supports tools>
+   python tools/record_llm_replies.py --preset openai_compatible --base-url http://localhost:8000/v1 --model <name>
+   ```
+   The tool asks two fixed questions (one about input data, one about a result) through the real session, so the
+   service is billed for a few requests. It writes the file only when both questions were answered, the model made
+   at least two rounds of tool calls, the scrubbed recording passes the scrub check and it replays to the same
+   answers; otherwise it says why and writes nothing (exit 1).
+3. Look through the file before committing it, then run
+   `pytest tests/assistant/llm/test_recorded_replies.py`.
+
+What the scrub does before writing: no request header is recorded; message, call, response and request ids
+(`chatcmpl-…`, `msg_…`, `toolu_…`, `gen-…`, `call_…`, `req_…`) become placeholders of the same format, the same
+everywhere in the file; organisation and project ids, run ids, e-mail addresses and the key are replaced; the
+FlexTool redaction removes the project folder, the home folder, user and host names and other absolute paths; the
+address of a custom endpoint becomes `https://endpoint.example.test/v1`. Any other address than the preset's own
+or one on this computer keeps its scheme, port and route kind with a placeholder host (`192.0.2.1` or
+`[2001:db8::1]` on the local network, `endpoint.example.test` elsewhere) and the preset's path; a `remote_host`
+outside the known services becomes `forwarded.example.test`. In every text, the top-level fields included, an IP
+address outside loopback and the documentation ranges becomes a numbered documentation address (`192.0.2.N`,
+`2001:db8::N`, never the endpoint's), and a host name of the local network (`*.lan`, `*.local`, `*.home`,
+`*.internal`, `*.intranet`, `*.corp`, `*.localdomain`, `*.home.arpa`, or a one-label host after `://`) becomes
+`host-N.example.test`; a one-label endpoint host is replaced only as a host (`://gpu`, `gpu:11434`), never inside a
+word. Public host names in texts stay. Of the model server's own answers only the fields the probe reads are
+recorded (Ollama `/api/show`: capabilities, `remote_host`, parameter size, architecture and context length;
+`/api/ps`: the recorded model's name, context, size and graphics memory, no digest; LM Studio: the recorded model's
+context, load state and capabilities), and a model list keeps only the recorded model. Signatures and thinking text stay, because the replay needs them. Response headers are kept only from an
+allow-list (`content-type`, `retry-after`, `retry-after-ms`, `x-ratelimit-*`, `anthropic-ratelimit-*`).
+
+What the scrub check (in the tool and in CI) refuses: a key-like text (`sk-`, `sk-ant-`, `sk-or-`, `AIza…`), a run
+of 32 or more letters and digits outside a signature field, an absolute path, an e-mail address, a request header,
+`x-stainless-*`, `openai-organization` or `openai-project` anywhere, a project name other than the fixture's, an
+IP address outside loopback and the documentation ranges, a host name of the local network or a one-label host
+after `://`, a `base_url` or `remote_host` outside the known services, and (in the tool) the endpoint's own host
+left anywhere — a one-label one as a whole word. The check's patterns are its own and looser than the scrub's, and
+it also reads each streamed answer joined, so an address the scrub missed, or one split over two pieces, is
+refused rather than written.
+
+When a recording settles a point the design marked unverified (for example the shape of Ollama's `remote_host`
+or of LM Studio's model list), correct the code and its tests in the same change.
 
 ## Related pages
 

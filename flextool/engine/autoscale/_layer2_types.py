@@ -277,9 +277,6 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "maxOutputSum_negCap": CstrFamily(QuantityType.DIMENSIONLESS),
     "maxOutputSum_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
     "maxOutputSum_negCap_coarse": CstrFamily(QuantityType.DIMENSIONLESS),
-    # Legacy name for the DC-only back-flow cap; the cap is now emitted as
-    # ``maxFlow_back`` over the full arc set.  Retained for back-compat.
-    "maxToSink_back": CstrFamily(QuantityType.DIMENSIONLESS),
     # Ramp constraints, prefix-matched: ramp_<side>_<dir>_constraint.
     # flextool/engine/model/core.py _eq_ramp
     "ramp": CstrFamily(QuantityType.DIMENSIONLESS),
@@ -664,12 +661,12 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # them keeps the registry-coverage invariant complete (CLAUDE.md #1).
     # ``maxInvest``: C[conn] <= max_units — capacity bound, mirrors the
     # entity-scope ``maxInvest_var_bound`` (POWER RHS).
-    # flextool/engine/solve/_benders.py:520
+    # flextool/engine/solve/_benders.py _BendersMaster._build (EQ. maxInvest)
     "maxInvest": CstrFamily(QuantityType.POWER),
     # ``trade_capacity``: C[conn] - f[arc,d,t] >= 0 — the RHS is identically
     # zero (no per-row scaling), so CstrFamily(None) like the other zero-RHS
     # structural rows; the column scalers on C / f still propagate.
-    # flextool/engine/solve/_benders.py:504
+    # flextool/engine/solve/_benders.py _BendersMaster._build (EQ. trade_capacity)
     "trade_capacity": CstrFamily(None),
 }
 

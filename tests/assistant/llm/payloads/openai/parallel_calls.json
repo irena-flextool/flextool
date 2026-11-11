@@ -1,0 +1,152 @@
+{
+ "description": "Two tool calls in one answer, their arguments split over several chunks.",
+ "synthetic": true,
+ "chunks": [
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "role": "assistant",
+      "content": null,
+      "tool_calls": [
+       {
+        "index": 0,
+        "id": "call_synthA",
+        "type": "function",
+        "function": {
+         "name": "get_entity",
+         "arguments": ""
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "function": {
+         "arguments": "{\"na"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 0,
+        "function": {
+         "arguments": "me\": \"west\"}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 1,
+        "id": "call_synthB",
+        "type": "function",
+        "function": {
+         "name": "search_docs",
+         "arguments": "{\"query\""
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {
+      "tool_calls": [
+       {
+        "index": 1,
+        "function": {
+         "arguments": ": \"penalty\"}"
+        }
+       }
+      ]
+     },
+     "finish_reason": null
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [
+    {
+     "index": 0,
+     "delta": {},
+     "finish_reason": "tool_calls"
+    }
+   ]
+  },
+  {
+   "id": "chatcmpl-synthetic1",
+   "object": "chat.completion.chunk",
+   "created": 1767225600,
+   "model": "example-model",
+   "choices": [],
+   "usage": {
+    "prompt_tokens": 500,
+    "completion_tokens": 40,
+    "total_tokens": 540,
+    "prompt_tokens_details": {
+     "cached_tokens": 0
+    }
+   }
+  }
+ ]
+}

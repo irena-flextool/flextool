@@ -697,6 +697,7 @@ def objective_terms(b: _Build) -> Expr | None:
     d = b.d
 
     # ─── OBJ. ─── inertia / non-synchronous / capacity margin slack ──────────
+    # names: inertia_penalty, non_synchronous_penalty, capacity_margin_penalty
     # ─────────────────────────────────────────────────────────────────────────
     # + Σ_{(g,d,t)} vq_inertia[g,d,t] · inertia_limit[g,d] · penalty_inertia[g,d] · w_op[d,t]
     # + Σ_{(g,d,t)} vq_non_synchronous[g,d,t] · gcs[g,d] · penalty_non_synchronous[g,d] · w_op[d,t]

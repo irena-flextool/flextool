@@ -1,0 +1,47 @@
+{
+ "description": "Some text, then an overloaded error event inside the stream.",
+ "synthetic": true,
+ "events": [
+  {
+   "type": "message_start",
+   "message": {
+    "id": "msg_synthetic01",
+    "type": "message",
+    "role": "assistant",
+    "model": "example-model",
+    "content": [],
+    "stop_reason": null,
+    "stop_sequence": null,
+    "usage": {
+     "input_tokens": 900,
+     "cache_read_input_tokens": 800,
+     "cache_creation_input_tokens": 0,
+     "output_tokens": 1
+    }
+   }
+  },
+  {
+   "type": "content_block_start",
+   "index": 0,
+   "content_block": {
+    "type": "text",
+    "text": ""
+   }
+  },
+  {
+   "type": "content_block_delta",
+   "index": 0,
+   "delta": {
+    "type": "text_delta",
+    "text": "Partial "
+   }
+  },
+  {
+   "type": "error",
+   "error": {
+    "type": "overloaded_error",
+    "message": "Overloaded"
+   }
+  }
+ ]
+}
