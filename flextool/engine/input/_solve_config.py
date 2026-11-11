@@ -730,9 +730,14 @@ class SolveConfig:
         disabled = {name for name, value in params_to_dict(
             db=db, cl="constraint", par="is_enabled", mode=DictMode.DICT
         ).items() if value == "no"}
+        # Only a constraint with a sense has rows (flex_data builds cdt_* from the sense); one without would
+        # trigger a spurious rolling warning or the "no solve enforces" error.
+        with_sense = {name for name, value in params_to_dict(
+            db=db, cl="constraint", par="sense", mode=DictMode.DICT
+        ).items() if value in ("equal", "less_than", "greater_than")}
         obj.period_total_constraints = sorted(
             name for name, value in period_method.items()
-            if value == "period_total" and name not in disabled
+            if value == "period_total" and name not in disabled and name in with_sense
         )
         # Slice G — tri-state operational non-anticipativity window
         # (read AFTER the four period dicts so any duplicate_solve they

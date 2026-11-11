@@ -93,7 +93,7 @@ def _entities(*, csp: bool = True) -> list:
 
 def _values(*, method: str = "period_total", csp: bool = True, gas_existing: float = 100.0,
             terms: dict | None = None, constant: float = 0.0, extra: list | None = None,
-            durations: dict | None = None) -> list:
+            durations: dict | None = None, sense: str = "less_than") -> list:
     """The base model with constraint ``c``: ``terms`` maps (class, entity tuple, coefficient parameter) to the
     coefficient of ``c`` (default: the 15 % share ``gas − 0.15·csp``)."""
     if terms is None:
@@ -105,7 +105,7 @@ def _values(*, method: str = "period_total", csp: bool = True, gas_existing: flo
             ["node", "gas_n", "node_type", _s("commodity")], ["node", "oil_n", "node_type", _s("commodity")],
             ["commodity", "gasc", "price", _f(50.0)], ["commodity", "oilc", "price", _f(100.0)],
             ["unit", "gas", "existing", _f(gas_existing)], ["unit", "oil", "existing", _f(100.0)],
-            ["constraint", "c", "sense", _s("less_than")], ["constraint", "c", "constant", _f(constant)],
+            ["constraint", "c", "sense", _s(sense)], ["constraint", "c", "constant", _f(constant)],
             ["constraint", "c", "constraint_period_method", _s(method)]]
     if csp:
         vals += [["unit", "csp", "existing", _f(100.0)],
@@ -243,8 +243,10 @@ def test_capacity_only_row_without_a_variable(tmp_path_factory) -> None:
 
 
 def _invest(existing: float) -> list:
-    """gas investable at a fixed cost of 60 €/kW/yr (and a token 1 €/kW investment cost, without which an entity
-    is offered investment only through a capacity term), the capacity-factor row on gas, A's csp."""
+    """gas investable at a fixed cost of 60 €/kW/yr, the capacity-factor row on gas, A's csp.  The token 1 €/kW
+    investment cost is for the control case (test_investment_without_the_row): without it and without a capacity
+    term an entity is not offered investment (github_issues item 218); the annuity, ~0.09 €/kW/yr, does not move
+    the oracle."""
     return _values(gas_existing=existing, terms={GAS_FLOW: 1.0, GAS_CAP: -0.3}, extra=[
         ["unit", "gas", "invest_method", _s("invest_no_limit")],
         ["unit", "gas", "fixed_cost", _f(60.0)],
@@ -271,6 +273,76 @@ def test_investment_without_the_row(tmp_path_factory) -> None:
               and v[2] not in ("constraint_flow_coeff", "constraint_capacity_coeff")]
     step = _step(tmp_path_factory, "pt_binv_none", values)
     assert _invested(step, "gas") == pytest.approx(100.0, abs=1e-4)
+
+
+# ─── online and coarse terms ────────────────────────────────────────────
+
+
+GAS_ONLINE = ("unit", ("gas",), "constraint_online_coeff")
+
+
+@pytest.mark.parametrize("startup", ["binary", "linear"])
+def test_online_unit_hours(tmp_path_factory, startup: str) -> None:
+    """online(gas) ≥ 6570 unit-hours per year, gas with min_load 0.5 (one unit of 100 MW): each step's units
+    online count w = 2190 h, so Σ_t online ≥ 3.  Without the row gas is online only in steps 3 and 4 (residual 50
+    and 100); the third unit-step falls in steps 1–2, where gas must run ≥ 50 MW per unit online and csp is
+    curtailed for it: gas 50 + 50 + 100 = 200 MWh, oil 0.  (Raw unit-steps, w ignored, would be infeasible.)"""
+    extra = [["unit", "gas", "startup_method", _s(startup)], ["unit", "gas", "min_load", _f(0.5)],
+             ["solve", SOLVE, "solver_mip_gap", _f(0.0)]]
+    step = _step(tmp_path_factory, f"pt_online_{startup}",
+                 _values(terms={GAS_ONLINE: 1.0}, constant=3 * W, sense="greater_than", extra=extra))
+    var = "v_online_integer" if startup == "binary" else "v_online_linear"
+    online = utf8(step.solution.value(var)).filter(pl.col("p") == "gas").sort("t")
+    assert float(online["value"].sum()) == pytest.approx(3.0, abs=TOL)
+    assert online.filter(pl.col("t").is_in(["t0003", "t0004"]))["value"].to_list() == pytest.approx([1.0, 1.0],
+                                                                                                    abs=TOL)
+    assert _energy(step, "gas") == pytest.approx(200.0, abs=TOL)
+    assert _energy(step, "oil") == pytest.approx(0.0, abs=TOL)
+    pb = build(step.flex_data)
+    (row, terms), = row_terms(pb, "process_constraint_greater_than_period_total", "c,").items()
+    assert row == "process_constraint_greater_than_period_total[c,p2020]"
+    assert sorted(v for k, v in terms.items() if k.startswith(var)) == pytest.approx([W] * 4, rel=1e-12)
+    (lower, _upper), = row_bounds(pb, "process_constraint_greater_than_period_total", "c,").values()
+    assert lower == pytest.approx(3 * W, rel=1e-12)
+
+
+def test_share_with_a_coarse_member(tmp_path_factory) -> None:
+    """A's share with a coarse member: heat node ``h`` (10 MW demand) in group ``hgrp`` with new_stepduration 2 h,
+    served by ``boiler`` (gas_n -> h, 50 €/MWh) and ``oboil`` (oil_n -> h, 100 €/MWh), both coarse (every balance
+    node coarse); c is boiler − 0.15·csp ≤ 0.  The boiler's one flow per 2-h step counts on both of its fine steps
+    (coefficient 2·w per column), so Σboiler ≤ 0.15·250 = 37.5 MWh and oboil makes the other 2.5 of the 40 MWh
+    (with one fine step per coarse column the limit would be 75 and oboil 0); elec as without c: gas 150, oil 0."""
+    ents = _entities() + [["node", "h", None], ["group", "hgrp", None], ["group__node", ["hgrp", "h"], None],
+                          ["unit", "boiler", None], ["unit", "oboil", None],
+                          ["unit__inputNode", ["boiler", "gas_n"], None], ["unit__outputNode", ["boiler", "h"], None],
+                          ["unit__inputNode", ["oboil", "oil_n"], None], ["unit__outputNode", ["oboil", "h"], None]]
+    extra = [["group", "hgrp", "new_stepduration", _f(2.0)],
+             ["node", "h", "node_type", _s("balance")], ["node", "h", "inflow", _f(-10.0)],
+             ["unit", "boiler", "existing", _f(100.0)], ["unit", "oboil", "existing", _f(100.0)],
+             ["unit", "boiler", "efficiency", _f(1.0)], ["unit", "oboil", "efficiency", _f(1.0)]]
+    terms = {("unit__outputNode", ("boiler", "h"), "constraint_flow_coeff"): 1.0,
+             ("unit__outputNode", ("csp", "elec"), "constraint_flow_coeff"): -0.15}
+    steps, _wf, _scen = _RUNS.get(tmp_path_factory, alt="pt_coarse", values=_values(terms=terms, extra=extra),
+                                  base_chain=["init"], entities=ents)
+    step, = steps.values()
+    fd = step.flex_data
+    assert set(utf8(fd.processCoarse)["p"].to_list()) == {"boiler", "oboil"}
+    assert _coarse_energy(step, "boiler") == pytest.approx(37.5, abs=TOL)
+    assert _coarse_energy(step, "oboil") == pytest.approx(2.5, abs=TOL)
+    assert _energy(step, "gas") == pytest.approx(150.0, abs=TOL)
+    assert _energy(step, "oil") == pytest.approx(0.0, abs=TOL)
+    (_row, row), = row_terms(build(fd), PT, "c,").items()
+    us = float(utf8(fd.p_unitsize.frame).filter(pl.col("p") == "boiler")["value"][0])
+    assert sorted(v for k, v in row.items() if "boiler" in k) == pytest.approx([2 * W * us] * 2, rel=1e-12)
+
+
+def _coarse_energy(step, unit: str) -> float:
+    """The output in MWh of a unit on the 2-h coarse steps: one flow (a rate) per coarse step, at its first fine
+    step (t0001, t0003), × 2 h."""
+    flows = utf8(step.solution.value("v_flow")).filter(pl.col("p") == unit)
+    assert sorted(flows["t"].to_list()) == ["t0001", "t0003"]
+    us = utf8(step.flex_data.p_unitsize.frame).filter(pl.col("p") == unit)["value"][0]
+    return float(flows["value"].sum()) * float(us) * 2.0
 
 
 # ─── D: the state-term error ────────────────────────────────────────────
@@ -358,6 +430,22 @@ def test_rolling_split_period_without_another_solve_is_an_error(tmp_path_factory
     with pytest.raises(FlexToolConfigError, match=r"'c' have constraint_period_method period_total, but no solve "
                                                    r"of the run enforces them: the rolls of 'b7_roll'"):
         run_chain_from_db(url, scen, work_folder=tmp_path_factory.mktemp("pt_roll_only_w"))
+
+
+def test_period_total_without_a_sense_is_not_checked(tmp_path_factory) -> None:
+    """A period_total constraint without a ``sense`` has no rows anywhere: the split rolls neither warn nor stop
+    the run."""
+    values = [v for v in _values(extra=_rolling(2.0, 4.0)) if not (v[0] == "constraint" and v[2] == "sense")]
+    steps = _roll_steps_values(tmp_path_factory, "pt_roll_nosense", values)
+    assert list(steps) == [f"{ROLL}_roll_0", f"{ROLL}_roll_1"]
+    for step in steps.values():
+        assert not step.flex_data.user_constraint_period_total_off
+
+
+def _roll_steps_values(tmp_path_factory, alt: str, values: list) -> dict:
+    steps, _wf, _scen = _RUNS.get(tmp_path_factory, alt=alt, values=values, base_chain=["init"],
+                                  entities=_entities() + [["solve", ROLL, None]])
+    return steps
 
 
 # ─── E: stochastic branches ─────────────────────────────────────────────

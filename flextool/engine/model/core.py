@@ -3867,6 +3867,11 @@ def _eq_user_constraints_period_total(b: _Build, pt_cns: list[str], capacity_ter
     whole = None
     if d.p_window_fraction is not None:
         frac = _collected(d.p_window_fraction.frame)
+        over = frac.filter(pl.col("value").cast(pl.Float64) > 1.0 + 1e-9)
+        if over.height > 0:
+            raise ValueError(f"{feature}: window_fraction above 1 for period(s) "
+                             f"{sorted(over.get_column('d').cast(pl.Utf8).unique().to_list())}: the solve's "
+                             "period_share and its step durations disagree (the row would be over-annualised)")
         whole = (frac.filter(pl.col("value").cast(pl.Float64) >= 1.0 - 1e-9)
                  .get_column("d").cast(pl.Utf8).to_list())
 

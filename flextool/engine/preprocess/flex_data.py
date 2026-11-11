@@ -1220,7 +1220,7 @@ class FlexData:
     # Constraints with constraint_period_method period_total (one annualised row per period); None = all per_timestep.
     constraint_period_total: pl.DataFrame | None = None  # set: (cn,)
     # A rolling solve whose rolls do not each realize whole periods leaves the period_total rows out
-    # (solve_data/user_constraint_period_total, written per sub-solve by _run_model).
+    # (solve_data/user_constraint_period_total_off, written per sub-solve by _run_model).
     user_constraint_period_total_off: bool = False
     p_node_constraint_invested_capacity_coeff: Param | None = None  # (n, cn)
     p_process_constraint_invested_capacity_coeff: Param | None = None  # (p, cn)
