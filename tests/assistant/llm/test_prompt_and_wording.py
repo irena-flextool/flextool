@@ -129,7 +129,7 @@ NO_LINKS_RULE = "Do not give web links; name FlexTool documents by file name."
 def test_grounding_rules_verbatim_and_first():
     core = prompt.core_layers()[0]
     assert "Rules:\n" + OWNER_RULES in core
-    assert core.index("Rules:") < core.index("Say which tool result")
+    assert core.index("Rules:") < core.index("Say where each number comes from")
 
 
 @pytest.mark.parametrize("rule", [DATA_USE_RULE, NO_LINKS_RULE, "Successful run first:",
