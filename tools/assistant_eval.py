@@ -1235,15 +1235,17 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     sending = {"pace": args.pace, "stream": not args.no_stream}
     _log_run(out, sending)
 
-    key, source = _key_or_refuse(preset, base_url, args.model, endpoint.route_for(preset, base_url, model=args.model))
+    api_key, key_source = _key_or_refuse(preset, base_url, args.model,
+                                         endpoint.route_for(preset, base_url, model=args.model))
     knobs = dict(DEFAULT_KNOBS)
     if args.relax_data_collection:
         knobs["openrouter.data_collection"] = "allow"
     knobs_sent = providers.request_fields(preset, knobs)
 
-    def conn_for(model: str, route: Any) -> Connection:
-        return Connection(base_url=base_url, model=model, api_key=key, key_source=source, knobs=knobs, route=route,
-                          stream=not args.no_stream)
+    # The resolved key is bound as defaults, once: a name rebound later in this function cannot reach a connection.
+    def conn_for(model: str, route: Any, *, api_key: str = api_key, key_source: str = key_source) -> Connection:
+        return Connection(base_url=base_url, model=model, api_key=api_key, key_source=key_source, knobs=knobs,
+                          route=route, stream=not args.no_stream)
 
     daily = daily_budget(preset.id, args.model, args.max_requests_per_day)
     ledger = CalibrationLedger(Ledger())
@@ -1326,16 +1328,18 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 if budget_used():
                     say(done)
                     return 0
-                key = setting_key(setting)
+                setting_id = setting_key(setting)
 
-                def checkpoint_for(previous: dict | None, cid: str = cid, key: dict = key) -> CellCheckpoint:
-                    return CellCheckpoint(out, cid, identity=identity, key=key, git=git, say=say, previous=previous,
+                def checkpoint_for(previous: dict | None, cid: str = cid, setting_id: dict = setting_id) \
+                        -> CellCheckpoint:
+                    return CellCheckpoint(out, cid, identity=identity, key=setting_id, git=git, say=say,
+                                          previous=previous,
                                           over_budget=lambda days, cid=cid: daily is not None
                                           and today_count(days, without=cid) >= daily)
 
                 cp = checkpoint_for(None)
                 if has_partial:
-                    problem = partial_problem(partial, identity, key)
+                    problem = partial_problem(partial, identity, setting_id)
                     if problem is None and partial.get("session") is None:
                         problem = "a checkpoint of another format"
                     if problem is not None:
