@@ -279,5 +279,8 @@ def startup_energy_unit(input_amount: str, capacity_rate: str) -> str:
     """The unit of ``unit__inputNode.startup_energy`` (``[MWh per MW started]``): the start-up input node's
     amount per the unit's capacity rate (its capacity side, :func:`capacity_units` with ``{R}``), e.g.
     ``m3 per MW started`` for a water-fuelled unit with an electricity output.  The start-up energy results
-    (``unit_startup_energy_*``) are amounts of the input node (``m3``, ``m3/a``)."""
+    (``unit_startup_energy_*``) are amounts of the input node (``m3``, ``m3/a``).  A shared capacity rate is
+    parenthesised (``m3 per (MW + MW_th) started``)."""
+    if " + " in capacity_rate and not (capacity_rate.startswith("(") and capacity_rate.endswith(")")):
+        capacity_rate = f"({capacity_rate})"
     return f"{input_amount} per {capacity_rate} started"

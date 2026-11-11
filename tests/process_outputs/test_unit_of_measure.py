@@ -185,6 +185,8 @@ def test_startup_energy_unit() -> None:
     """Critique M8: startup_energy is the input node's amount per the unit's capacity rate."""
     assert uom.startup_energy_unit("m3", uom.capacity_units("{R}", ["elec"], CTX.node_units, shared=False)) == \
         "m3 per MW started"
+    # A shared capacity is one rate (WP2 review NIT).
+    assert uom.startup_energy_unit("m3", "MW + MW_th") == "m3 per (MW + MW_th) started"
 
 
 # ─── one solve with water in m3 and heat in MWh_th ───────────────────────

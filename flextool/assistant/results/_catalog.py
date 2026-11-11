@@ -7,9 +7,9 @@ they are (``OUTPUT_TRANSFORM``: a rate at the time step, an annualized total, a 
 a table is the ``results.md`` section that names it (``docs_build.catalogue.records``, the same records the
 results catalogue page shows).
 
-:func:`measures` gives the unit and kind of every data column of a table as it was written: from the declared
-transform (for a table of several units, by the column's label), else from the column metadata in the file's own
-footer, else unknown.  :func:`search` ranks the tables for a question (BM25 over name, description, topic,
+:func:`measures` gives the unit and kind of every data column of a table as it was written: from the column metadata
+in the file's own footer (the units the writer resolved, also for nodes with a ``unit_of_measure``), else from the
+declared transform (for a table of several units, by the column's label), else unknown.  :func:`search` ranks the tables for a question (BM25 over name, description, topic,
 columns and units).
 """
 from __future__ import annotations
@@ -37,6 +37,9 @@ class Measure:
 
     unit: str
     semantics: str          # a ``Semantics`` value, or "unknown"
+    #: A quantity of the carrier of its node (its transform's unit is a template of the node's unit of measure:
+    #: flows, energies, storage, prices): such values do not add up over nodes, whose units may differ.
+    carrier: bool = False
 
 
 UNKNOWN = Measure("", "unknown")
@@ -100,8 +103,8 @@ def declared_measures(stem: str) -> dict[str, Measure] | None:
     if isinstance(spec, Transform):
         if spec.semantics is Semantics.DIMENSION:
             return {}
-        return {"*": Measure(spec.unit, spec.semantics.value)}
-    return {label: Measure(t.unit, t.semantics.value) for label, t in spec.items()
+        return {"*": Measure(spec.unit, spec.semantics.value, bool(spec.template))}
+    return {label: Measure(t.unit, t.semantics.value, bool(t.template)) for label, t in spec.items()
             if t.semantics is not Semantics.DIMENSION}
 
 
@@ -114,26 +117,60 @@ def _footer_key(key: tuple[str, ...], layout: LeanLayout) -> str:
     return str(rest)
 
 
+def _written(footer: dict[str, Any], key: tuple[str, ...], layout: LeanLayout) -> dict | None:
+    """The footer metadata of a data column (a scenario's file keys it without the ``scenario`` level, a
+    comparison file with it), ``None`` when the footer has none or calls it a dimension."""
+    for k in (_footer_key(key, layout), str(tuple(key)) if len(key) > 1 else None):
+        meta = footer.get(k) if k is not None else None
+        if isinstance(meta, dict) and meta.get("semantics") and meta.get("semantics") != "dimension":
+            return meta
+    return None
+
+
 def measures(stem: str, layout: LeanLayout) -> list[Measure]:
-    """The :class:`Measure` of every data column of a table (in the order of ``layout.physical``)."""
+    """The :class:`Measure` of every data column of a table (in the order of ``layout.physical``).  A column whose
+    unit follows its nodes' ``unit_of_measure`` takes the unit the writer put in the footer (review S8: one source
+    of those units); every other column the declared transform's (by the column's label for a table of several
+    units), and an undeclared one the footer's."""
     declared = declared_measures(stem)
-    if declared is not None and set(declared) == {"*"}:     # a uniform table
-        return [declared["*"]] * len(layout.physical)
     footer: dict[str, Any] = layout.column_meta or {}
+    uniform = declared["*"] if declared is not None and set(declared) == {"*"} else None
+    if uniform is not None and not footer:
+        return [uniform] * len(layout.physical)
     # A mixed-unit table: the unit of each column from the same resolver as the result files (its label level).
     resolved = (resolve_columns(stem, list(layout.columns), level_names=list(layout.col))
-                if declared and layout.columns else None)
+                if declared and uniform is None and layout.columns else None)
     out: list[Measure] = []
     for i, key in enumerate(layout.columns):
         if resolved is not None and resolved[i].semantics is not Semantics.DIMENSION:
-            out.append(Measure(resolved[i].unit, resolved[i].semantics.value))
-            continue
-        meta = footer.get(_footer_key(key, layout))
-        if isinstance(meta, dict) and meta.get("semantics") and meta.get("semantics") != "dimension":
-            out.append(Measure(str(meta.get("unit") or ""), str(meta["semantics"])))
+            base = Measure(resolved[i].unit, resolved[i].semantics.value,
+                           bool(_column_template(stem, key, layout)))
+        elif uniform is not None:
+            base = uniform
         else:
-            out.append(UNKNOWN)
+            base = None
+        # The footer gives the unit of a column that follows its nodes (and of an undeclared one); the others keep
+        # this FlexTool's declared unit, so a unit fixed since an older run wrote its footer shows fixed.
+        meta = _written(footer, key, layout) if base is None or base.carrier else None
+        if meta is not None:
+            out.append(Measure(str(meta.get("unit") or ""), base.semantics if base is not None
+                               else str(meta["semantics"]), base.carrier if base is not None else False))
+        else:
+            out.append(base if base is not None else UNKNOWN)
     return out
+
+
+def _column_template(stem: str, key: tuple[str, ...], layout: LeanLayout) -> str:
+    """The unit template of a column of a table of several units (``""`` without one)."""
+    spec = OUTPUT_TRANSFORM.get(stem)
+    if not isinstance(spec, dict):
+        return getattr(spec, "template", "") or ""
+    for label in reversed(key):
+        tf = spec.get(str(label))
+        if tf is not None:
+            return tf.template
+    tf = spec.get("*")
+    return tf.template if tf is not None else ""
 
 
 def membership_set(stem: str, layout: LeanLayout) -> bool:

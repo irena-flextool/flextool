@@ -22,7 +22,7 @@ from flextool.assistant.errors import (
 from flextool.assistant.inputs import _db, _values
 from flextool.assistant.inputs._notes import notes_for
 from flextool.assistant.inputs._schema import ranks_in_words, shipped_schema
-from flextool.assistant.inputs._units import parameter_unit
+from flextool.assistant.inputs._units import NodeTopology, node_topology, parameter_unit_info
 from flextool.assistant.registry import Fit, make_tool
 from flextool.assistant.unit_wording import (
     STORED_VALUES,
@@ -133,15 +133,28 @@ def _group_members(view: _db.ScenarioView, group: str) -> set[str]:
     return out
 
 
+def _node_topology(view: _db.ScenarioView) -> NodeTopology:
+    """The scenario's node units and topology (:func:`node_topology`), built once per view."""
+    topology = getattr(view, "_node_topology", None)
+    if topology is None:
+        topology = node_topology(view)
+        view._node_topology = topology
+    return topology
+
+
 def _unit(view: _db.ScenarioView | None, entity_class: str, parameter: str,
           byname: tuple[str, ...] | None) -> tuple[str | None, str | None]:
+    """``(unit as shown, reason)`` of a parameter; for an entity of a scenario, the units of the nodes it is about
+    (a node's ``unit_of_measure``), shown without " (default convention)" when a node set them."""
     if view is None or byname is None:
-        unit, reason = parameter_unit(entity_class, parameter)
+        info = parameter_unit_info(entity_class, parameter)
     else:
         members = _group_members(view, byname[0]) if entity_class == "group" else None
-        unit, reason = parameter_unit(entity_class, parameter, value_of=_value_of(view, entity_class, byname),
-                                      members=members)
-    return shown_unit(unit), reason
+        info = parameter_unit_info(entity_class, parameter, value_of=_value_of(view, entity_class, byname),
+                                   members=members, nodes=_node_topology(view), byname=byname)
+    if info.node_set:
+        return info.unit, info.reason
+    return shown_unit(info.unit), info.reason
 
 
 def _session_notes(ctx: AssistantContext, payload: dict, *, units: bool, stored: bool) -> dict:

@@ -1,9 +1,10 @@
 """How the tools word units (O2, O14): the one place a tool result gets a unit text.
 
 FlexTool does not check units.  MW, MWh, CUR (the model currency) and tonnes of CO2 are the documented default
-convention, and a model may use others consistently (kg/h and kg for a hydrogen node).  So a unit made of
-convention units is shown as ``"MW (default convention)"``; units that are fixed by FlexTool (hours, years,
-fractions, counts) are shown plain.
+convention.  A node can set ``unit_of_measure`` (m3, t, MWh_th): its flows, storage, prices and the inputs about it
+are then labelled in that unit, and the tools show those labels plain.  A model may also use other units
+consistently without setting it.  So a unit made of convention units is shown as ``"MW (default convention)"``;
+units that are fixed by FlexTool (hours, years, fractions, counts) and units a node set are shown plain.
 
 The longer notes (:data:`UNITS_NOTE`, :data:`STORED_VALUES_NOTE`) are sent in full in a result until a request
 that carried the full note was answered, and after that by their key only (:func:`add_session_notes`).  A note
@@ -31,8 +32,8 @@ UNITS_CONVENTION = "units_convention"
 STORED_VALUES = "stored_values"
 
 UNITS_NOTE = ("FlexTool does not check units. The units shown are its default convention (MW, MWh, CUR for the "
-              "model currency, tonnes of CO2); this model may use others consistently, for example kg/h and kg "
-              "for a hydrogen node. Time steps are in hours and lifetimes in years.")
+              "model currency, tonnes of CO2). A node can set unit_of_measure; its flows are then in that unit per "
+              "hour and the tools show it. Time steps are in hours and lifetimes in years.")
 STORED_VALUES_NOTE = ("These are the values stored in the input data. When FlexTool runs it may add defaults, "
                       "derive other values or rescale some (for example inflow with an inflow_method); the "
                       "results show what the model used.")
@@ -50,8 +51,8 @@ def is_convention_unit(unit: str) -> bool:
 
 def is_energy_unit(unit: str | None) -> bool:
     """Whether *unit* is power or energy (``MW``, ``MWh/a``, ``MW·s``; not ``M CUR``, ``t/a`` or ``units``): such
-    values are of the carrier of their node, and a model may hold several (electricity, heat, hydrogen in kg/h
-    under the same default unit), so they do not add up across nodes."""
+    values are of the carrier of their node, and a model may hold several (electricity, heat, water with its own
+    unit_of_measure, or hydrogen under the same default unit), so they do not add up across nodes."""
     return bool(unit) and any(_ENERGY_PART.fullmatch(part) for part in _SPLIT.split(unit) if part)
 
 

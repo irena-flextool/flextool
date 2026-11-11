@@ -42,6 +42,13 @@ def _unit_payload(units: dict[str, str]) -> Any:
     return {label: _shown(u) for label, u in units.items()}
 
 
+def _row_shown(units: Any) -> Any:
+    """A row's unit (or ``{column: unit}``) as the tools word it."""
+    if isinstance(units, dict):
+        return {k: _shown(v) for k, v in units.items()}
+    return _shown(units)
+
+
 def _semantics_payload(semantics: set[str]) -> Any:
     return next(iter(semantics)) if len(semantics) == 1 else sorted(semantics)
 
@@ -194,6 +201,9 @@ def describe_result_table(ctx: AssistantContext, args: dict) -> dict:
         "counterpart": _catalog.counterpart(table.stem),
         "run_notes": rr.run_notes,
     }
+    row_units = _query.row_units_payload(table, list(layout.physical)) if layout.physical else None
+    if row_units:
+        payload["unit_by_row"] = {table.row_level: {k: _row_shown(v) for k, v in row_units.items()}}
     if table.membership:
         payload["note"] = "This table is a set of names with no values."
     return _with_units_note(ctx, _verified(payload, rr))
@@ -225,6 +235,11 @@ def query_result(ctx: AssistantContext, args: dict) -> Fit:
         "notes": _result_notes(result),
         "run_notes": rr.run_notes,
     }
+    if table.row_units and table.row_level in frame.columns:
+        entities = [str(v) for v in frame[table.row_level].unique(maintain_order=True).to_list()]
+        row_units = _query.row_units_payload(table, _query._selected_columns(table, q, None), entities)
+        if row_units:
+            payload["unit_by_row"] = {table.row_level: {k: _row_shown(v) for k, v in row_units.items()}}
     _verified(payload, rr)
     if result.units:
         _with_units_note(ctx, payload)
@@ -295,7 +310,8 @@ def _overview(table: _query.Table, q: Query) -> tuple[Query, list[str]]:
     keep = _query._selected_columns(table, q, None)
     measure_of = table.measure_of()
     semantics = {measure_of[p].semantics for p in keep}
-    energy = any(is_energy_unit(measure_of[p].unit) for p in keep)
+    # A carrier quantity (its unit follows the node's unit_of_measure: m3/h, MWh_th) or power and energy by name.
+    energy = any(measure_of[p].carrier or is_energy_unit(measure_of[p].unit) for p in keep)
     kinds = {level: _query.level_kind(stem, level) for level in table.levels}
     anchored = any(level in NODE_LEVELS or kind == "overlapping" for level, kind in kinds.items())
     kept: list[str] = []
