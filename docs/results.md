@@ -340,7 +340,7 @@ A step whose solve left reserves out has empty cells in these tables. A reserve 
 
 ## Ramps
 
-- `unit__node` entity `ramp_t` parameter — [MW] ramp of the unit input or output flow at each timestep: the change from the previous step (one table per direction: `unit_ramp__inputNode__dt`, `unit_ramp__outputNode__dt`). The ramp at a step with no previous step in the solve (the first step, the first step after a gap in the timeline, the first step of a representative period) is empty; at the first step of a rolling window it is measured from the previous window's last step.
+- `unit__node` entity `ramp_t` parameter — [MW] ramp of the unit input or output flow at each timestep: the change from the previous step (one table per direction: `unit_ramp__inputNode__dt`, `unit_ramp__outputNode__dt`). The ramp at a step with no previous step in the solve (the first step, the first step after a gap in the timeline, the first step of a representative period) is empty; at the first step of a rolling window it is measured from the previous window's last step. `ramp_t` is in MW per time step, while the limits `ramp_speed_up` / `ramp_speed_down` are a share of capacity per minute: a change may be at most `ramp_speed_up` × 60 × (average duration of the two steps in hours) × capacity (see [Units](reference/units.md)), so on hourly steps a `ramp_t` of 30 MW on a 100 MW unit is a speed of 30 / 100 / 60 = 0.005.
 
 The "ramp room" envelope on the `node` entity (additional headroom for upward / downward ramps from non-VRE units, VRE units, and connections) is currently not emitted by the new pipeline — it is on the roadmap for re-exposure once the corresponding post-processing is ported.
 
