@@ -34,12 +34,16 @@ if TYPE_CHECKING:
 WRITE_ID_KEY = b"flextool_write_id"
 #: Footer key of the ``{period: solve}`` labels of a table whose frame does not carry them (#210).
 SOLVE_LABELS_KEY = b"flextool_solve_labels"
+#: Footer key of the ``{row entity: {column: unit}}`` units of a row-keyed table whose unit varies by row (written
+#: only when some node of the run is not MWh).
+ROW_UNITS_KEY = b"flextool_row_units"
 
 
 def write_lean_parquet(
     df: pd.DataFrame, path: str | Path, *, index: bool = True,
     column_metadata: "dict | None" = None, write_id: str | None = None,
     solve_labels: "dict[str, str] | None" = None,
+    row_units: "dict[str, dict[str, str]] | None" = None,
 ) -> None:
     """Write *df* to parquet with minimal metadata.
 
@@ -67,6 +71,10 @@ def write_lean_parquet(
         investment tables: the solve that realized the period's investments, #210), stored as
         ``flextool_solve_labels`` so a parquet replay labels the table as the native writers did.  Read it back
         with :func:`read_lean_parquet_solve_labels`.
+    row_units : dict, optional
+        ``{row entity: {column: unit}}`` of a table whose unit varies by row
+        (``process_outputs._output_meta.row_units``), stored as ``flextool_row_units``; absent in a run whose
+        nodes are all MWh.  Read it back with :func:`read_lean_parquet_row_units`.
     """
     # Don't preserve RangeIndex as a physical column — it carries no data
     # and would create a stray ``__index_level_0__`` column without the
@@ -102,6 +110,8 @@ def write_lean_parquet(
         meta[WRITE_ID_KEY] = write_id.encode()
     if solve_labels:
         meta[SOLVE_LABELS_KEY] = json.dumps(solve_labels).encode()
+    if row_units:
+        meta[ROW_UNITS_KEY] = json.dumps(row_units).encode()
     table = table.replace_schema_metadata(meta)
 
     pq.write_table(table, str(path))
@@ -115,6 +125,14 @@ def read_lean_parquet_column_meta(path: str | Path) -> dict | None:
     """
     file_meta = pq.ParquetFile(str(path)).schema_arrow.metadata or {}
     blob = file_meta.get(b"flextool_columns")
+    return json.loads(blob) if blob else None
+
+
+def read_lean_parquet_row_units(path: str | Path) -> "dict[str, dict[str, str]] | None":
+    """The ``{row entity: {column: unit}}`` :func:`write_lean_parquet` stored in the file at *path* (``None``
+    without them).  Reads only the footer."""
+    file_meta = pq.ParquetFile(str(path)).schema_arrow.metadata or {}
+    blob = file_meta.get(ROW_UNITS_KEY)
     return json.loads(blob) if blob else None
 
 

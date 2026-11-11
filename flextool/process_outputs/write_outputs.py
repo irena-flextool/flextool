@@ -22,7 +22,11 @@ from flextool.process_outputs.solve_order import INVESTMENT_PERIOD_TABLES, perio
 from flextool.process_outputs._output_meta import (
     datapackage_resource,
     derive_column_meta,
+    load_unit_context,
+    row_units,
+    write_unit_context,
 )
+from flextool.process_outputs._unit_context import unit_context_from
 from flextool.process_outputs._csv_sidecars import (
     reserved_csv_names,
     summary_solve_row,
@@ -1012,6 +1016,8 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                     results[key] = results[key].squeeze()
                 else:
                     results[key] = results[key].droplevel('scenario', axis=1)
+        # The node units of the run that wrote the parquets (None: every node is MWh).
+        unit_ctx = load_unit_context(parquet_dir)
         start = log_time("Read parquet files", start, timing_recorder)
 
     # Read original raw outputs from FlexTool
@@ -1025,6 +1031,9 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             flex_data_provider=flex_data_provider,
         )
         start = log_time("Read flextool outputs", start, timing_recorder)
+        # The node units and the nodes each result column carries; empty when every node is MWh.  Every
+        # renderer of this call gets it in memory; only replays read it from _unit_context.json.
+        unit_ctx = unit_context_from(s, par, flex_data_provider)
 
         # The steps and periods of solves that left a feature out (reduce_*_detail_method), from the solve-keyed
         # sets before post-processing drops the solve level: their cells of that feature stay empty.
@@ -1102,6 +1111,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
         for name, df in results.items():
             col_meta = None
+            table_row_units = None
             if isinstance(df, (pd.MultiIndex, pd.Index)):
                 df = df.to_frame(index=False)
                 df.insert(0, 'scenario', scenario_name)
@@ -1112,15 +1122,17 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 # the logical column names, not arrow's flattened tuples.
                 # Series-valued outputs have no columns — skip them for now.
                 if isinstance(df, pd.DataFrame):
-                    derived = derive_column_meta(name, df.columns)
+                    derived = derive_column_meta(name, df.columns, ctx=unit_ctx, rows=df.index)
                     if derived:
                         col_meta = {k: v.as_dict() for k, v in derived.items()}
+                    table_row_units = row_units(name, df.index, df.columns, unit_ctx)
                 df = pd.concat({scenario_name: df}, axis=1, names=['scenario'])
             # An investment table's solve label is not in its frame: keep it in the footer for a replay (#210).
             invest_labels = (period_solve_labels(None, getattr(s, 'solve_invest_period', None), table=name)
                              if name in INVESTMENT_PERIOD_TABLES else None)
             write_lean_parquet(df, f'{parquet_dir}/{name}.parquet',
-                               column_metadata=col_meta, solve_labels=invest_labels)
+                               column_metadata=col_meta, solve_labels=invest_labels,
+                               row_units=table_row_units)
 
         # The plot break steps, written also when empty so a parquet replay knows there are none.
         from flextool.plot_outputs.format_helpers import write_timeline_breaks
@@ -1129,6 +1141,12 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         start = log_time("Wrote to parquet", start, timing_recorder)
         if not single_result:
             _note_parquet_written(parquet_dir)
+
+    # The node units beside the parquets: written when some node is not MWh, deleted otherwise, on every
+    # non-replay call (also a single-result one, and without parquet output when the folder exists), so a
+    # replay never reads the units of an earlier run.
+    if not read_parquet_dir and ('parquet' in write_methods or os.path.isdir(parquet_dir)):
+        write_unit_context(parquet_dir, unit_ctx)
 
     # Raw horizon dump (``model.output_horizon``): stream the per-roll parts
     # from ``output_raw/horizon/`` into ``<parquet_dir>/horizon/``.  An
@@ -1257,10 +1275,11 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         def _describe_csv(table_name, csv_filename, frame, written):
             index_names, measure_cols = _frame_axes(frame)
             header = list(written.columns)
+            rows = frame.index if isinstance(frame, pd.DataFrame) else None
             dp_resources.append(datapackage_resource(
-                table_name, csv_filename, index_names, measure_cols, header=header))
+                table_name, csv_filename, index_names, measure_cols, header=header, ctx=unit_ctx, rows=rows))
             unit_rows.extend(units_rows(
-                table_name, csv_filename, header, len(index_names), measure_cols))
+                table_name, csv_filename, header, len(index_names), measure_cols, ctx=unit_ctx, rows=rows))
 
         # Different CSV writing logic depending on data source
         if read_parquet_dir:
@@ -1370,7 +1389,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 sheets.append((sheet_name, name, df))
         sheets.sort(key=lambda x: x[0].lower())
 
-        write_excel_with_metadata(excel_path, sheets)
+        write_excel_with_metadata(excel_path, sheets, ctx=unit_ctx)
 
         start = log_time('Wrote to Excel', start, timing_recorder)
 
@@ -1398,10 +1417,11 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             )
             write_spinedb(
                 results, s_shim, db_url, scenario_name,
-                replay_solve_name, par=None,
+                replay_solve_name, par=None, unit_ctx=unit_ctx,
             )
         else:
-            write_spinedb(results, s, db_url, scenario_name, solve_name or scenario_name, par=par)
+            write_spinedb(results, s, db_url, scenario_name, solve_name or scenario_name, par=par,
+                          unit_ctx=unit_ctx)
         start = log_time('Wrote to SpineDB', start, timing_recorder)
 
     # Phase F — write manifest.json describing the output bundle.

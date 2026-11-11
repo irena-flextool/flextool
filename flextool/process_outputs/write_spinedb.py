@@ -636,8 +636,30 @@ def _import_schema(db_url: str) -> None:
         db.close()
 
 
+#: The results-database parameter that names a node's unit of measure.  Its definition is added to a results
+#: database only by a run with a node that is not MWh, so a default run leaves the database as before.
+NODE_UNIT_PARAMETER = "unit_of_measure"
+NODE_UNIT_DESCRIPTION = (
+    "[text] The node's unit_of_measure from the input data, written only when it is not MWh. The node's results "
+    "are in this unit instead of MW and MWh: flows and capacities per hour (m3 -> m3/h), storage and inflow in "
+    "the unit (m3), annual results per year (m3/a), prices in CUR per the unit (CUR/m3). The units in the other "
+    "descriptions are those of an MWh node.")
+
+
+def _node_unit_payload(unit_ctx, alternative_name: str) -> tuple[list, list[tuple]]:
+    """``(parameter_definitions, parameter_values)`` of the ``node.unit_of_measure`` values of a run whose
+    :class:`~flextool.process_outputs._output_meta.UnitContext` has nodes that are not MWh (both empty
+    otherwise)."""
+    if unit_ctx is None or unit_ctx.is_default:
+        return [], []
+    definitions = [("node", NODE_UNIT_PARAMETER, None, None, NODE_UNIT_DESCRIPTION)]
+    values = [("node", (node,), NODE_UNIT_PARAMETER, unit, alternative_name)
+              for node, unit in sorted(unit_ctx.node_units.items())]
+    return definitions, values
+
+
 def write_spinedb(results, s, db_url, scenario_name, solve_name,
-                  *, purge_alternative=True, par=None) -> int:
+                  *, purge_alternative=True, par=None, unit_ctx=None) -> int:
     """Write the processed ``results`` into the SpineDB at ``db_url``.
 
     Parameters
@@ -661,6 +683,9 @@ def write_spinedb(results, s, db_url, scenario_name, solve_name,
     par : object, keyword-only, default None
         The engine ``par`` (parameters) namespace.  Required only for the
         two discount-factor params (#33/#34); when None those are skipped.
+    unit_ctx : UnitContext, keyword-only, default None
+        The run's node units.  When some node is not MWh, ``node.unit_of_measure`` is defined (if missing) and
+        written for those nodes; otherwise the database gets nothing new.
 
     Returns
     -------
@@ -676,7 +701,15 @@ def write_spinedb(results, s, db_url, scenario_name, solve_name,
     entities, parameter_values, entity_alternatives = collect_spinedb_payload(
         results, s, alternative_name, solve_name, par=par,
     )
+    unit_definitions, unit_values = _node_unit_payload(unit_ctx, alternative_name)
+    if unit_values:
+        parameter_values = parameter_values + unit_values
+        known = set(entities)
+        new = sorted({(ec, byname) for ec, byname, *_rest in unit_values} - known)
+        entities = sorted(entities + new, key=lambda x: (x[0], x[1]))
+        entity_alternatives = [(ec, byname, alternative_name, True) for ec, byname in entities]
 
+    extra = {"parameter_definitions": unit_definitions} if unit_definitions else {}
     with open_database_mapping(db_url) as db:
         count, errors = import_data(
             db,
@@ -684,6 +717,7 @@ def write_spinedb(results, s, db_url, scenario_name, solve_name,
             entities=entities,
             parameter_values=parameter_values,
             entity_alternatives=entity_alternatives,
+            **extra,
         )
         if errors:
             raise RuntimeError(

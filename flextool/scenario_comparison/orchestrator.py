@@ -198,6 +198,50 @@ def _derive_comparison_settings(plots_flat: dict) -> dict:
     return out
 
 
+def comparison_unit_context(scenario_folders, parquet_dirs) -> "dict | None":
+    """``{scenario folder name: UnitContext}`` of the compared scenarios (from each folder's
+    ``_unit_context.json``), or ``None`` when every node of every scenario is MWh."""
+    from flextool.process_outputs._output_meta import UnitContext, load_unit_context
+
+    contexts = {name: load_unit_context(d) for name, d in zip(scenario_folders, parquet_dirs)}
+    if all(c is None or c.is_default for c in contexts.values()):
+        return None
+    return {name: c if c is not None else UnitContext() for name, c in contexts.items()}
+
+
+def unit_differences(sheets, unit_ctx) -> list[str]:
+    """One note per comparison table whose same column has different units in different scenarios (the units are
+    shown per scenario, never summed): ``[]`` without node units."""
+    if not unit_ctx:
+        return []
+    from flextool.process_outputs._output_meta import SCENARIO_LEVEL, resolve_columns, row_units
+
+    notes = []
+    for _sheet, raw_key, df in sheets:
+        if not isinstance(df, pd.DataFrame) or SCENARIO_LEVEL not in (df.columns.names or []):
+            continue
+        resolved = resolve_columns(raw_key, df.columns, ctx=unit_ctx) or []
+        by_row = row_units(raw_key, df.index, df.columns, unit_ctx) or {}
+        pos = list(df.columns.names).index(SCENARIO_LEVEL)
+        seen: dict[tuple, set[str]] = {}
+        for col, meta in zip(df.columns, resolved):
+            if not meta.unit:
+                continue
+            rest = tuple(col[:pos]) + tuple(col[pos + 1:])
+            if by_row:
+                for entity, units in by_row.items():
+                    seen.setdefault(rest + (entity,), set()).add(units.get(meta.name, ""))
+            else:
+                seen.setdefault(rest, set()).add(meta.unit)
+        differing = sorted(k for k, us in seen.items() if len(us - {""}) > 1)
+        if differing:
+            shown = ", ".join("/".join(str(x) for x in k) for k in differing[:3])
+            more = f" and {len(differing) - 3} more" if len(differing) > 3 else ""
+            notes.append(f"Note: {raw_key}: the scenarios have different units of measure for {shown}{more} "
+                         f"(each scenario's column has its own unit; they are not summed).")
+    return notes
+
+
 def run(
     db_url: str | None,
     parquet_subdir: str,
@@ -354,6 +398,9 @@ def run(
     scenario_break_times = {
         name: load_timeline_breaks(d) for name, d in zip(scenario_folders, break_dirs)
     }
+    # The node units of each scenario folder (keyed like the data's ``scenario`` level: the folder name); None
+    # when every node of every scenario is MWh, so a default comparison is written as before.
+    unit_ctx = comparison_unit_context(scenario_folders, break_dirs)
 
     # Write combined comparison parquets if output directory specified
     if comparison_parquet_dir:
@@ -479,7 +526,9 @@ def run(
                 sheets.append((sheet_name, name, df))
         sheets.sort(key=lambda x: x[0].lower())
 
-        write_excel_with_metadata(excel_path, sheets)
+        write_excel_with_metadata(excel_path, sheets, ctx=unit_ctx)
+        for note in unit_differences(sheets, unit_ctx):
+            print(note)
         print(f'\nWrote comparison of {len(scenario_folders)} scenarios to xlsx file: {excel_path}')
 
     print('\nDone!')

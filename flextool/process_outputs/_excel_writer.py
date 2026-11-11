@@ -10,7 +10,11 @@
 * The first sheet ``Units`` lists every data sheet with its table, units, semantics and description (the sheet
   names link to the sheets); ``_output_metadata`` follows with one row per value column.
 
-The units come from :func:`flextool.process_outputs._output_meta.resolve_columns`.
+The units come from :func:`flextool.process_outputs._output_meta.resolve_columns`.  When some node of the run
+is not MWh (a :class:`~flextool.process_outputs._output_meta.UnitContext` is given), the units follow the nodes,
+and a table whose unit varies by row (its node, unit, connection or group is a row level) gets one more column,
+:data:`UNIT_LEVEL`, with each row's units (one per scenario in a comparison).  Without node units the workbook is
+unchanged.
 """
 from __future__ import annotations
 
@@ -20,12 +24,16 @@ import pandas as pd
 
 from flextool.process_outputs._output_meta import (
     OUTPUT_DESCRIPTION,
+    SCENARIO_LEVEL,
+    UNIT_SOURCE,
     ColumnMeta,
     _scenario_level,
     Semantics,
     display_unit,
     output_metadata_rows,
     resolve_columns,
+    row_unit_label,
+    row_units,
     summarise_units,
 )
 
@@ -61,10 +69,10 @@ def _as_frame(df) -> pd.DataFrame:
     return df
 
 
-def _measures(raw_key: str, df: pd.DataFrame) -> list[ColumnMeta | None]:
+def _measures(raw_key: str, df: pd.DataFrame, ctx=None) -> list[ColumnMeta | None]:
     """The :class:`ColumnMeta` of every column of *df*, ``None`` for a dimension column or an undeclared
     table."""
-    resolved = resolve_columns(raw_key, df.columns)
+    resolved = resolve_columns(raw_key, df.columns, ctx=ctx, rows=df.index)
     if resolved is None:
         return [None] * df.shape[1]
     return [m if m.semantics is not Semantics.DIMENSION else None for m in resolved]
@@ -118,6 +126,47 @@ def _flat_table(df: pd.DataFrame) -> pd.DataFrame:
     return flat
 
 
+def _row_unit_columns(raw_key: str, df: pd.DataFrame, ctx) -> list[tuple[tuple, list[str]]]:
+    """``(label, values)`` of the :data:`UNIT_LEVEL` column(s) of a table whose unit varies by row: each row's
+    units (:func:`row_unit_label`), one column per comparison scenario.  ``[]`` when the units do not vary by
+    row (always so when every node is MWh)."""
+    by_row = row_units(raw_key, df.index, df.columns, ctx)
+    if not by_row:
+        return []
+    entities = [str(v) for v in df.index.get_level_values(UNIT_SOURCE[raw_key].level)]
+    nlevels = df.columns.nlevels
+    names = list(df.columns.names)
+    scen_pos = names.index(SCENARIO_LEVEL) if SCENARIO_LEVEL in names else None
+    groups: dict = {}
+    for col in df.columns:
+        key = col[scen_pos] if scen_pos is not None else None
+        groups.setdefault(key, []).append(str(col))
+    out = []
+    for scenario, cols in groups.items():
+        if nlevels == 1:
+            label: tuple = (UNIT_LEVEL,)
+        else:
+            parts = [""] * nlevels
+            first = 0 if scen_pos is None else (1 if scen_pos == 0 else 0)
+            if scen_pos is not None:
+                parts[scen_pos] = scenario
+            parts[first] = UNIT_LEVEL
+            label = tuple(parts)
+        values = [row_unit_label({c: by_row.get(e, {}).get(c, "") for c in cols}) for e in entities]
+        out.append((label, values))
+    return out
+
+
+def _with_row_units(df: pd.DataFrame, extra: list[tuple[tuple, list[str]]]) -> pd.DataFrame:
+    """*df* with the :data:`UNIT_LEVEL` column(s) *extra* appended (*df* itself when there are none)."""
+    if not extra:
+        return df
+    df = df.copy(deep=False)
+    for label, values in extra:
+        df[label if df.columns.nlevels > 1 else label[0]] = values
+    return df
+
+
 def _unit_block_rows(df: pd.DataFrame, measures: list[ColumnMeta | None]) -> list[tuple[str, str, str]]:
     """``(column, unit, semantics)`` lines of a Table sheet's unit block: one ``all value columns`` line when
     every value column has the same unit and semantics, else one line per value column."""
@@ -130,8 +179,13 @@ def _unit_block_rows(df: pd.DataFrame, measures: list[ColumnMeta | None]) -> lis
     return lines
 
 
-def _write_wide_sheet(writer, sheet_name: str, df: pd.DataFrame, measures: list[ColumnMeta | None]) -> None:
-    """A sheet with two or more column levels, with :data:`UNIT_LEVEL` appended as the last header row."""
+def _write_wide_sheet(writer, sheet_name: str, df: pd.DataFrame, measures: list[ColumnMeta | None],
+                      extra=()) -> None:
+    """A sheet with two or more column levels, with :data:`UNIT_LEVEL` appended as the last header row (and the
+    :data:`UNIT_LEVEL` column(s) *extra* last when the units vary by row)."""
+    extra = list(extra)
+    df = _with_row_units(df, extra)
+    measures = list(measures) + [None] * len(extra)
     units = [display_unit(m) if m is not None else "" for m in measures]
     if any(units):
         df = df.copy(deep=False)
@@ -142,9 +196,10 @@ def _write_wide_sheet(writer, sheet_name: str, df: pd.DataFrame, measures: list[
 
 
 def _write_table_sheet(writer, sheet_name: str, df: pd.DataFrame,
-                       measures: list[ColumnMeta | None], tables: set[str]) -> None:
-    """A sheet with one column level: an Excel Table at ``A1`` and the unit block beside it."""
-    flat = _flat_table(df)
+                       measures: list[ColumnMeta | None], tables: set[str], extra=()) -> None:
+    """A sheet with one column level: an Excel Table at ``A1`` (with the :data:`UNIT_LEVEL` column *extra* last
+    when the units vary by row) and the unit block beside it."""
+    flat = _flat_table(_with_row_units(df, list(extra)))
     flat.to_excel(writer, sheet_name=sheet_name, index=False, merge_cells=False)
     worksheet = writer.sheets[sheet_name]
     n_rows, n_cols = flat.shape
@@ -177,10 +232,11 @@ def units_sheet_row(sheet_name: str, raw_key: str, df: pd.DataFrame,
             "description": OUTPUT_DESCRIPTION.get(raw_key, "")}
 
 
-def _metadata_rows(sheet_name: str, raw_key: str, df: pd.DataFrame) -> list[dict]:
+def _metadata_rows(sheet_name: str, raw_key: str, df: pd.DataFrame, ctx=None) -> list[dict]:
     """The ``_output_metadata`` rows of one data sheet.  In a scenario comparison the scenario of a column is
     given in its own ``scenario`` cell and ``column`` holds the column's own label."""
-    rows = output_metadata_rows(raw_key, list(df.columns))
+    rows = output_metadata_rows(raw_key, df.columns if ctx is not None else list(df.columns), ctx=ctx,
+                                rows=df.index if ctx is not None else None)
     scen_pos = _scenario_level(raw_key, df.columns.nlevels, list(df.columns.names)
                                if any(n is not None for n in df.columns.names) else None)
     if scen_pos is None or df.columns.nlevels < 2:
@@ -202,24 +258,27 @@ def _format_list_sheet(worksheet, columns: list[str], widths: dict[str, int]) ->
     worksheet.freeze_panes(1, 0)
 
 
-def write_excel_with_metadata(excel_path, sheets) -> None:
+def write_excel_with_metadata(excel_path, sheets, ctx=None) -> None:
     """Write ``sheets``, a list of ``(sheet_name, raw_output_key, df)``, to the workbook ``excel_path``.
 
     The workbook opens on the ``Units`` sheet, then ``_output_metadata`` (one row per value column with its
     unit, semantics, tooltip and formula), then the data sheets in the given order.  The sheet names must not
     clash with :data:`RESERVED_SHEET_NAMES` (start the ``used`` set of :func:`excel_sheet_name` from
-    :func:`reserved_sheet_names`).  See the module docstring for the layout of a data sheet.
+    :func:`reserved_sheet_names`).  See the module docstring for the layout of a data sheet.  *ctx* is the
+    run's :class:`~flextool.process_outputs._output_meta.UnitContext`, or one per scenario of a comparison (keyed
+    by the ``scenario`` level's values); ``None`` when every node is MWh.
     """
-    prepared: list[tuple[str, str, pd.DataFrame, list[ColumnMeta | None]]] = []
+    prepared: list[tuple[str, str, pd.DataFrame, list[ColumnMeta | None], list]] = []
     meta_rows: list[dict] = []
     units_rows: list[dict] = []
     for sheet_name, raw_key, df in sheets:
         if sheet_name.lower() in RESERVED_SHEET_NAMES:
             raise ValueError(f"The sheet name '{sheet_name}' is used by the workbook itself.")
         df = _as_frame(df)
-        measures = _measures(raw_key, df)
-        prepared.append((sheet_name, raw_key, df, measures))
-        meta_rows.extend(_metadata_rows(sheet_name, raw_key, df))
+        measures = _measures(raw_key, df, ctx)
+        extra = _row_unit_columns(raw_key, df, ctx) if ctx is not None else []
+        prepared.append((sheet_name, raw_key, df, measures, extra))
+        meta_rows.extend(_metadata_rows(sheet_name, raw_key, df, ctx))
         units_rows.append(units_sheet_row(sheet_name, raw_key, df, measures))
 
     with pd.ExcelWriter(excel_path, engine="xlsxwriter") as writer:
@@ -233,11 +292,11 @@ def write_excel_with_metadata(excel_path, sheets) -> None:
                 writer, sheet_name=METADATA_SHEET, index=False)
             _format_list_sheet(writer.sheets[METADATA_SHEET], columns, _METADATA_WIDTHS)
         tables: set[str] = set()
-        for sheet_name, raw_key, df, measures in prepared:
+        for sheet_name, raw_key, df, measures, extra in prepared:
             if df.columns.nlevels >= 2:
-                _write_wide_sheet(writer, sheet_name, df, measures)
+                _write_wide_sheet(writer, sheet_name, df, measures, extra)
             else:
-                _write_table_sheet(writer, sheet_name, df, measures, tables)
+                _write_table_sheet(writer, sheet_name, df, measures, tables, extra)
         units_ws = writer.sheets[UNITS_SHEET]
         link = writer.book.add_format({"font_color": "blue", "underline": 1})
         for i, (sheet_name, *_rest) in enumerate(prepared, start=1):
