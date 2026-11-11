@@ -1,3 +1,24 @@
+## Unreleased
+
+- **Rolling solves: unit size of a period-Map `existing`.** A unit, connection or storage node without
+  `virtual_unitsize` whose `existing` is a Map by period got a unit size of 1000 MW in the rolls of a rolling solve
+  (single solves were right), so a 17 MW unit counted as 0.017 units. With `startup_method = binary` such a unit
+  could never be online, and a `min_instant_flow` floor that needed it made roll 1 infeasible. The unit size is now
+  the largest `existing` over the periods in every solve, as for a constant `existing`. Rolling results of such
+  models can change.
+- **Warning for a fractional unit count with binary start-ups.** A unit or connection with integer online variables
+  whose existing capacity is not a whole number of units in a period (for example `existing` dropping from 17 to
+  8.5 MW without `virtual_unitsize`: 0.5 units) now gets a warning naming it, the count and the unit size.
+- **Gurobi options are applied.** `gurobi_cl` takes parameters only as `Name=value` arguments; it ignored the
+  `ReadParams=<file>` argument FlexTool passed ("Unknown parameter: 'ReadParams' (ignored)") and solved at its
+  defaults. Each parameter of the merged options (`solver_config/gurobi.opt`, `solver_mip_gap`,
+  `--solver-time-limit`, `solver_arguments`) is now passed as its own `Name=value` argument, so Gurobi results can
+  change (for example a MIP now stops at the requested `solver_mip_gap` instead of Gurobi's 1e-4).
+- **Licence message only for licence errors.** A commercial solver that returned no solution was reported as a
+  licensing problem whenever its output mentioned a licence, which every Gurobi run does (`Using license file ...`),
+  so an infeasible model got a misleading message. The message now needs an actual licence failure in the output
+  (no licence found, expired or not valid, failed to obtain a licence, size-limited licence, token server errors).
+
 ## Release 4.2.2 (8.11.2026) — time steps other than 1 h: new_stepduration and inflow scaling fixes
 
 These bugs affect models whose time steps are not 1 h, solves with `new_stepduration`, nested solves where a solve

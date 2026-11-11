@@ -339,7 +339,9 @@ def test_solver_options_passthrough(
     3. honours the translated convenience knobs from
        :func:`build_solver_options` (raw entries still win), and
     4. feeds the merged opt file to the CLI via the per-solver
-       mechanism (Gurobi: ``ReadParams=<file>`` argv slot).
+       mechanism (Gurobi: one ``Name=value`` argv token per parameter,
+       before ``ResultFile=`` and the model file; ``gurobi_cl`` has no
+       parameter-file argument and ignores ``ReadParams=<file>``).
 
     The subprocess itself is mocked — we synthesise a minimal Gurobi
     ``.sol`` as a side effect so the parser + downstream
@@ -379,16 +381,6 @@ def test_solver_options_passthrough(
         # Persist argv + the opt-file contents for assertions below.
         captured["argv"] = list(argv)
         captured["kwargs"] = kwargs
-        # ``gurobi_cl`` accepts ``ReadParams=<file>`` as one of its
-        # positional-style argv tokens.  Find it and slurp the file.
-        opt_arg = next(
-            (a for a in argv if isinstance(a, str)
-             and a.startswith("ReadParams=")),
-            None,
-        )
-        if opt_arg is not None:
-            opt_file = Path(opt_arg.split("=", 1)[1])
-            captured["opt_contents"] = opt_file.read_text()
         # Locate the ResultFile=<path> argv token and write a minimal
         # Gurobi-style .sol so the parser returns OPTIMAL.  The single
         # primal value (for column "x[a]") matches _make_minimal_problem.
@@ -424,26 +416,20 @@ def test_solver_options_passthrough(
 
     argv = captured["argv"]
     assert argv[0] == str(binary), f"argv[0] should be the binary path; got {argv!r}"
-    read_params_tokens = [
-        a for a in argv if isinstance(a, str) and a.startswith("ReadParams=")
-    ]
-    assert len(read_params_tokens) == 1, (
-        f"expected exactly one ReadParams=<file> argv token; got argv={argv!r}"
+    assert not any(a.startswith("ReadParams=") for a in argv), (
+        f"gurobi_cl ignores ReadParams=; got argv={argv!r}"
     )
+    # ``gurobi_cl [Name=value ...] ResultFile=<sol> <model>``: the model
+    # file is last, ResultFile= just before it, the parameters between.
+    assert argv[-2].startswith("ResultFile="), argv
+    assert argv[-1].endswith(".mps"), argv
+    param_tokens = argv[1:-2]
+    assert all("=" in a for a in param_tokens), argv
 
-    opt_contents = captured.get("opt_contents", "")
-    assert opt_contents, "opt file referenced by argv should be non-empty"
-
-    # Parse the merged file Gurobi would have seen.  Both baseline-only
-    # and scenario-overridden values must be present with the right
-    # values.
-    merged: dict[str, str] = {}
-    for line in opt_contents.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        name, value = line.rsplit(maxsplit=1)
-        merged[name.strip()] = value.strip()
+    # The parameters Gurobi would have seen.  Both baseline-only and
+    # scenario-overridden values must be present with the right values.
+    merged = dict(a.split("=", 1) for a in param_tokens)
+    assert len(merged) == len(param_tokens), f"duplicate parameter: {argv!r}"
 
     # Baseline-only key → must survive into the merged file.
     assert merged.get("LogToConsole") == "1", (

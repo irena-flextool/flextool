@@ -135,7 +135,7 @@ via the per-solver mechanism:
 | Solver  | How FlexTool feeds the merged file to the CLI                                                  |
 |---------|------------------------------------------------------------------------------------------------|
 | HiGHS   | `--options=<file>` argv flag on the `flextool.cli.cmd_solve_mps` subprocess                    |
-| Gurobi  | `gurobi_cl ReadParams=<file> ResultFile=<sol> <mps>` (Gurobi's native parameter-file slot)     |
+| Gurobi  | `gurobi_cl <Name>=<value> ... ResultFile=<sol> <mps>`: one `Name=value` argument per line of the file |
 | CPLEX   | Each line emitted as `set <name> <value>` on the interactive optimizer's stdin before `read`   |
 | Xpress  | Each line emitted as `setControl <NAME> <value>` on the optimizer console's stdin before `readprob` |
 | COPT    | Each line emitted as `set <ParamName> <value>` on `copt_cmd`'s stdin before `read`             |

@@ -665,14 +665,20 @@ def _find_solver_binary(solver_name: str) -> Path | None:
 def _gurobi_script(
     binary: Path, mps_path: Path, sol_path: Path, opt_path: Path | None,
 ) -> tuple[list[str], str | None]:
-    """``gurobi_cl [ReadParams=<opt>] ResultFile=<sol> <mps>``.
+    """``gurobi_cl [<Name>=<value> ...] ResultFile=<sol> <mps>``.
 
-    When *opt_path* is given, Gurobi's native ``ReadParams=<file>`` slot
-    loads our merged baseline+overlay parameters before the solve.
+    When *opt_path* is given, each parameter of our merged baseline+overlay
+    file becomes one ``<Name>=<value>`` argument before the model file —
+    the only way ``gurobi_cl`` takes parameters on its command line.  (It
+    has no parameter-file argument: ``ReadParams=<file>`` is reported as
+    ``Unknown parameter: 'ReadParams' (ignored)`` and the solve then runs
+    at Gurobi's defaults.)  The merged file stays next to the MPS as the
+    record of what was passed.
     """
     argv: list[str] = [str(binary)]
     if opt_path is not None:
-        argv.append(f"ReadParams={opt_path}")
+        for name, value in _parse_native_opt_file(opt_path).items():
+            argv.append(f"{name}={value}")
     argv.append(f"ResultFile={sol_path}")
     argv.append(str(mps_path))
     return argv, None
@@ -781,9 +787,9 @@ _SCRIPTS = {
 # ``build_solver_options`` in ``_solver_dispatch.py``) is then overlaid
 # on top, taking precedence per key.  The merged dict is materialised
 # to a temp file next to the MPS in the per-solver native format and
-# fed to the CLI via the per-solver mechanism (Gurobi: ReadParams=
-# argv slot; CPLEX/Xpress/COPT: inline set/setControl commands piped
-# on stdin).  Format helpers below.
+# fed to the CLI via the per-solver mechanism (Gurobi: one
+# ``Name=value`` argv token per parameter; CPLEX/Xpress/COPT: inline
+# set/setControl commands piped on stdin).  Format helpers below.
 
 
 def _resolve_solver_config_dir(config_dir: Path | None = None) -> Path:
@@ -916,7 +922,7 @@ def _build_commercial_opt_file(
     Returns the path to the merged file when it has at least one entry,
     or ``None`` when both the baseline file is missing and the scenario
     *options* dict is empty (caller skips the per-solver opt-file slot
-    entirely so the CLI doesn't get a ``ReadParams=`` to a no-op file).
+    entirely, so the CLI gets no parameter arguments).
     """
     config_dir = _resolve_solver_config_dir(config_dir)
     baseline_path = config_dir / f"{solver_name}.opt"
@@ -1116,18 +1122,42 @@ _PARSERS = {
 }
 
 
-_LICENSE_HINTS = (
-    "license",
-    "licence",
-    "no token",
-    "token server",
-    "wls",
-)
+# Phrases of a licence *failure* in the solvers' output.  A bare mention of
+# "license" is not one: every Gurobi run prints a banner such as ``Using
+# license file /opt/gurobi/gurobi.lic`` or ``Restricted license - for
+# non-production use only - expires 2027-11-24``, so an infeasible or
+# otherwise failed solve would be misreported as a licensing problem.
+# ``licen[cs]e`` accepts both spellings; matched case-insensitively.
+_LICENSE_ERROR_PATTERNS = tuple(re.compile(p, re.IGNORECASE) for p in (
+    # Gurobi "No Gurobi license found", CPLEX "no license found", Xpress/COPT "No license found"
+    r"\bno\s+(?:valid\s+)?(?:\w+\s+)?licen[cs]e\s+(?:file\s+)?(?:was\s+)?found",
+    # "license expired", "license has expired", "licence is expired" (not the banner's "expires <date>")
+    r"\blicen[cs]e\s+(?:has\s+|is\s+)?expired",
+    # Gurobi "License not valid", "Request denied: license not valid", "license is not valid for this host"
+    r"\blicen[cs]e\b[^\n]{0,60}?\bnot\s+valid",
+    r"\binvalid\s+licen[cs]e",
+    # "Failed to obtain license", "Unable to check out license", "Failed to set up a license", "Fail to ..."
+    r"\b(?:failed|fail|unable|cannot|could\s+not)\s+(?:to\s+)?(?:obtain|get|set\s+up|find|locate|open|read|"
+    r"check\s*out|validate|verify|initiali[sz]e)\s+(?:a\s+|the\s+|any\s+)?(?:\w+\s+)?licen[cs]e",
+    # "license error", "licensing error", "license check failed", "license not found", "licence unavailable"
+    r"\blicen[cs](?:e|ing)\s+(?:error|failure|failed|check\s+failed|not\s+found|unavailable|denied|problem)",
+    # Gurobi size-limited (pip) licence / CPLEX Community Edition limits
+    r"\bsize-limited\s+licen[cs]e",
+    r"\bpromotional\s+version",
+    # Gurobi "HostID mismatch"
+    r"\bhostid\s+mismatch",
+    # Gurobi token server / Web License Service
+    r"\bno\s+tokens?\s+(?:available|left)",
+    r"\b(?:connect|contact)\w*\s+(?:to\s+)?(?:the\s+)?token\s+server",
+    r"\btoken\s+server\b[^\n]{0,60}?\b(?:error|unavailable|refused|failed|not\s+respond)",
+    r"\bweb\s+licen[cs]e\s+service\b[^\n]{0,60}?\b(?:error|failed|unavailable|denied|invalid|expired)",
+))
 
 
 def _looks_like_license_error(*texts: str) -> bool:
-    blob = "\n".join(t for t in texts if t).lower()
-    return any(h in blob for h in _LICENSE_HINTS)
+    """Whether the solver output reports a licence failure (not merely mentions a licence)."""
+    blob = "\n".join(t for t in texts if t)
+    return any(p.search(blob) for p in _LICENSE_ERROR_PATTERNS)
 
 
 # ---------------------------------------------------------------------------
@@ -1662,7 +1692,7 @@ def _solve_commercial_subprocess(
     win on key collision — same semantics as
     :func:`build_solver_options`).  Each per-solver script builder then
     references the merged file in the cleanest native form
-    (Gurobi: ``gurobi_cl ReadParams=<file> ...``; CPLEX/Xpress/COPT:
+    (Gurobi: ``gurobi_cl <Name>=<value> ... ResultFile=<sol> <mps>``; CPLEX/Xpress/COPT:
     inline ``set``/``setControl`` lines piped on stdin before the
     ``read``/``optimize`` pair).  ``time_limit`` is *also* honoured as
     the subprocess timeout when present in *options*.
@@ -1783,7 +1813,7 @@ def _solve_commercial_subprocess(
             if _looks_like_license_error(stdout, stderr):
                 raise RuntimeError(
                     f"{solver_name!r} CLI for solve {solve_name!r} returned "
-                    f"no usable solution and its output mentions licensing.\n"
+                    f"no usable solution and its output reports a licence error.\n"
                     f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
                 )
             raise RuntimeError(
