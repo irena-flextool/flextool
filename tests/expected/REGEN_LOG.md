@@ -1430,8 +1430,9 @@ a 0 → 0.0 number format; those three files were restored to their previous con
 (`cumulative_flow`) were sums over the sampled time steps; the plot "total" multiplied them by the years
 represented, which is neither a total nor comparable with the other per-period energies.  They are now annualised
 like the flows (`× step_duration × timestep_weight`, Σ over the period, ÷ `complete_period_share_of_year`).  With a
-2-day period (share 48/8760) every value is the old one × 8760/48 = 182.5; `average_flow` is unchanged
-(cumulative / 8760 h = the old cumulative / 48 h).
+2-day period (share 48/8760) every value is the old one × 8760/48 = 182.5; `average_flow` is unchanged with these
+uniform weights (cumulative / 8760 h = the old cumulative / 48 h).  With timeset weights it is now the weighted mean
+(a fix: before, the flow group ignored the weights; the unit test's value goes 35 → 32.5 MW).
 
 - `csp_existing`, `csp_fixed_design`, `csp_gas_backup` `unit_curtailment__outputNode__d`: 500 → 91 250 MWh/a.
 - `csp_existing/unit_outputNode_VRE_potential__d`: 8 400 → 1 533 000 MWh/a.

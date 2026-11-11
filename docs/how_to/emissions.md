@@ -103,7 +103,7 @@ If you want summary metrics per flow in the results, create a separate `flowGrou
 
 - `flow_aggregator`: standalone_aggregator_only
 
-This emits the flow-group's own outputs (per-period `cumulative_flow` MWh and `average_flow` MW, plus a signed net-flow timewise series) for the members. It is summary output — for per-timestep decomposition of a node's flows, use `print_dispatch` on a `group__node` group instead (see "How to create aggregate outputs").
+This emits the flow-group's own outputs (per-period `cumulative_flow` MWh/a, scaled to a full year, and `average_flow` MW, plus a signed net-flow timewise series) for the members. It is summary output — for per-timestep decomposition of a node's flows, use `print_dispatch` on a `group__node` group instead (see "How to create aggregate outputs").
 
 Here we have *coal_flow* `flowGroup` with `flowGroup__unit__node` relation coal_flow|coal_plant|nodeA
 and *wind_flow* `flowGroup` with `flowGroup__unit__node` relation wind_flow|wind_plant|nodeA.

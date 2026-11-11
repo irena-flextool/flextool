@@ -56,7 +56,7 @@ Then, to collapse a collection of flows inside that dispatch view:
 - set the flowGroup's parameter **flow_aggregator** to *dispatch_plots_only*
 - add the flows via `flowGroup__unit__node` or `flowGroup__connection__node` (e.g. *all_VRE__wind1__west*)
 
-(Contrast with `flow_aggregator: standalone_aggregator_only`, which produces the flowGroup's own outputs — per-period `cumulative_flow` / `average_flow` plus a signed net-flow timewise series — and does not interact with the dispatch table.)
+(Contrast with `flow_aggregator: standalone_aggregator_only`, which produces the flowGroup's own outputs — per-period `cumulative_flow` (MWh/a, scaled to a full year) / `average_flow` (MW) plus a signed net-flow timewise series — and does not interact with the dispatch table.)
 
 "How to database" (**aggregate_output.sqlite**) aggregates results for the *nodeA* and *nodeB*. Both of the nodes have a wind power plant and nodeA has a coal power plant. The demand is divided to the electricity, heat and irrigation needs. This means that, besides an internal demand (**inflow**), both nodes output to the heat node while *nodeA* also outputs to the irrigation node. Additionally the nodes are connected to each other and the *node_country_y1*. The *nodeA* is connected to the *node_country_x1* and *nodeB* is connected to the *node_country_x2*. 
 

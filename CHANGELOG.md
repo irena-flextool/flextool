@@ -4,7 +4,8 @@
   a full year.** `unit_curtailment__outputNode__d`, `unit_outputNode_VRE_potential__d` and the `cumulative_flow` of
   `group_flow__d` were sums over the sampled time steps (the flow group's also without the timestep weights); they
   are now MWh per year, weighted and annualised like the flows, so with a 2-day period they are 182.5 times larger.
-  The curtailment share and `average_flow` are unchanged. The "total" plots multiply each period by its years
+  The curtailment share is unchanged; `average_flow` is unchanged with uniform timestep weights and is now the
+  weighted mean with timeset weights (before, it ignored them). The "total" plots multiply each period by its years
   represented. New tables `group_node__horizon` and `group_node_VRE_share__horizon`: the node-group indicators and
   the VRE share over the whole horizon as ratios of the total energies (each period scaled to a year and times its
   years represented), not averages of the period shares; the "total" plots use them. Plot labels say what the

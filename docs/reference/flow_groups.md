@@ -16,7 +16,7 @@ When authoring `min_instant_flow` / `max_instant_flow` as a Map, set the Map's `
 - `flow_aggregator` — choice of flow-aggregation method for this flowGroup (default `none`). Values:
     - `none` (default) — no aggregated output; the flowGroup exists only for flow limits / investment.
     - `dispatch_plots_only` — member flows are shown as aggregated bands inside a node group's dispatch table (the table produced by `print_dispatch` on a `group`). Produces no output file of its own.
-    - `standalone_aggregator_only` — emits the flowGroup's own outputs: the per-period `cumulative_flow` and `average_flow` totals, plus a signed net-flow timewise series (see [Results](../results.md)). Does not feed any node-group dispatch table.
+    - `standalone_aggregator_only` — emits the flowGroup's own outputs: the per-period `cumulative_flow` (MWh/a, scaled to a full year) and `average_flow` (MW), plus a signed net-flow timewise series (see [Results](../results.md)). Does not feed any node-group dispatch table.
     - `both` — both of the above.
 
 **Double-counting guard.** If a flow arc belongs to two flowGroups that are *both* dispatch-bound (`dispatch_plots_only` or `both`), the arc is double-counted in the node-group dispatch balance; the model emits a loud validation warning in this case. For overlapping thematic aggregates, use `standalone_aggregator_only` — overlap is harmless there.

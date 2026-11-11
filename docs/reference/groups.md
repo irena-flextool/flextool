@@ -141,7 +141,7 @@ Two `group`-level flags drive the extra outputs computed from a node `group`, an
 | Summary metrics (loss of load, VRE share, curtailment, excess load, annualised inflow) for a collection of nodes | `print_indicators: yes` on `group` | `group__node` rows |
 | A per-timestep in/out decomposition (`group_flow_t`) of a node collection, one column per contributing process/connection | `print_dispatch: yes` on `group` | `group__node` rows |
 | Member flows shown as aggregated bands inside a node group's dispatch table | `flow_aggregator: dispatch_plots_only` on `flowGroup` | `flowGroup__unit__node` or `flowGroup__connection__node` rows |
-| The flowGroup's own aggregated outputs (per-period `cumulative_flow`/`average_flow` plus a signed net-flow timewise series) | `flow_aggregator: standalone_aggregator_only` on `flowGroup` | `flowGroup__unit__node` or `flowGroup__connection__node` rows |
+| The flowGroup's own aggregated outputs (per-period `cumulative_flow` in MWh/a and `average_flow` in MW, plus a signed net-flow timewise series) | `flow_aggregator: standalone_aggregator_only` on `flowGroup` | `flowGroup__unit__node` or `flowGroup__connection__node` rows |
 | Both of the above | `flow_aggregator: both` on `flowGroup` | `flowGroup__unit__node` or `flowGroup__connection__node` rows |
 
 - `print_indicators` (on `group`) — emits aggregate indicator metrics (loss-of-load share, VRE share, curtailment share, excess-load share and annualised inflow) over the node members. Acts as a *summary* of the node group. Requires `group__node` members.

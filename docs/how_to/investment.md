@@ -262,13 +262,13 @@ In the examples.sqlite, the solve entities can carry solver options in the `solv
 
 ### Plant summary from the outputs
 
-**One plant, three entities.** FlexTool reports the field, the tank and the turbine separately. The plant's figures come from the outputs as below; the values are those of *csp_existing* (the costs of *csp_fixed_design*). Mind the units: `unit__outputNode__d` is scaled to a full year (× 8760 / 48 here), while the potential and the curtailment `__d` tables are sums over the 48 hours.
+**One plant, three entities.** FlexTool reports the field, the tank and the turbine separately. The plant's figures come from the outputs as below; the values are those of *csp_existing* (the costs of *csp_fixed_design*). Mind the units: the `__d` tables are scaled to a full year (× 8760 / 48 here, one 48-hour period); divide by 182.5 for the sums over the 48 hours.
 
 | Figure | Output | Value |
 |---|---|---|
-| Field potential | `unit_outputNode_VRE_potential__d` (*csp_field*, *csp_heat*) | 8400 MWh_th in the 48 h |
-| Field curtailed | `unit_curtailment__outputNode__d` (*csp_field*, *csp_heat*) | 500 MWh_th in the 48 h |
-| Curtailment share | `unit_outputNode_VRE_curtailment_share__d` | 500 / 8400 = 5.95 % |
+| Field potential | `unit_outputNode_VRE_potential__d` (*csp_field*, *csp_heat*) | 1 533 000 MWh_th/a (8400 × 182.5) |
+| Field curtailed | `unit_curtailment__outputNode__d` (*csp_field*, *csp_heat*) | 91 250 MWh_th/a (500 × 182.5) |
+| Curtailment share | `unit_outputNode_VRE_curtailment_share__d` | 91 250 / 1 533 000 = 5.95 % |
 | Field used | `unit__outputNode__d` (*csp_field*, *csp_heat*) | 1 441 750 MWh_th/a (7900 × 182.5) |
 | Turbine output | `unit__outputNode__d` (*csp_turbine*, *west*) | 576 700 MWh_e/a (3160 × 182.5) |
 | Capacity factor | `unit_cf__outputNode__d` (*csp_turbine*, *west*) | 3160 / (100 × 48) = 65.8 % |
