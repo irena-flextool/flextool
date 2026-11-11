@@ -602,6 +602,11 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   alternative: set its `index_name` to *period* or *time*. A profile period map (with or without `index_name`)
   that leaves out periods of the solves the scenario runs gets one warning per run naming the profile and those
   periods; the profile is 0 there.
+- **A two-level (period + time) `profile` map without `index_name` gave 0.** It was taken for a stochastic
+  map, which has three levels, so the profile was 0 in every time step without a word. Such a map whose outer keys
+  are periods now reads as the same map with `index_name` *period* and *time* (item 223). Outer keys that are time
+  steps, both periods and time steps, or no period stop the run with an error naming the profile and the
+  alternative; a period missing from the map gets the warning above. Three-level (stochastic) maps are unchanged.
 
 #### User constraints
 

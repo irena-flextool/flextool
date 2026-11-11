@@ -151,8 +151,9 @@ def _classify_profile_rows(source: "InputSource",
       its keys (:func:`_silent_map_tier`, item 73): ``period`` when they hit
       the solve's periods and none of its time steps, else ``time``.
     * 3-deep Map → tier ``stochastic`` (``pbt_profile.csv``).
-    * 2-D Map → ``period_time`` when the outer level is ``period``, else
-      ``stochastic``.
+    * 2-D Map → ``period_time`` when the outer level is ``period``, or has no
+      index name and its keys are periods by the silent-map rule (item 223),
+      else ``stochastic``.
 
     *dt* is the solve's ``(d, t)`` frame: the period / time-step vocabulary of
     the silent-map rule (:func:`~flextool.engine.input._param_shapes._period_time_vocab`,
@@ -167,7 +168,9 @@ def _classify_profile_rows(source: "InputSource",
     columns for sources that don't expose raw parameter values
     (``InMemoryReader``).  The column fallback reads a frame with ONE index
     column that is neither ``period`` nor ``t`` / ``time`` (a silent ``x``)
-    by the same key rule, never as ``stochastic``.
+    by the same key rule, never as ``stochastic``; a frame with the columns
+    ``x`` and ``x_2`` (or ``x`` and ``t``) is a 2-D map with an unnamed outer
+    level, ``period_time`` when the ``x`` keys are periods.
     """
     from flextool.engine.input._param_shapes import _period_time_vocab
     periods, timesteps = _period_time_vocab(dt)
@@ -195,6 +198,8 @@ def _classify_profile_rows(source: "InputSource",
     index_cols = cols - {"name", "value"}
     silent_col = next(iter(index_cols)) if (
         len(index_cols) == 1 and not index_cols & {"period", "t", "time"}) else None
+    # A 2-D map with an unnamed outer level: the reader's ``x`` and ``x_2`` (or ``t``) columns (item 223).
+    silent_outer = "x" if (index_cols in ({"x", "x_2"}, {"x", "t"})) else None
     out: dict[str, str] = {}
     for name in df["name"].unique().to_list():
         if cols == {"name", "value"}:
@@ -211,6 +216,10 @@ def _classify_profile_rows(source: "InputSource",
             # A 1-D map under a silent index column: the same key rule as a raw value.
             keys = df.filter(pl.col("name") == name).get_column(silent_col).cast(pl.Utf8).to_list()
             out[name] = _silent_map_tier(keys, periods, timesteps)
+        elif silent_outer is not None:
+            # The outer level of an unnamed 2-D map: period x time when its keys are periods (item 223).
+            keys = df.filter(pl.col("name") == name).get_column(silent_outer).cast(pl.Utf8).to_list()
+            out[name] = "period_time" if _silent_map_tier(keys, periods, timesteps) == "period" else "stochastic"
         else:
             # Generic / stochastic 3d_map — defer to the per-solve pbt_profile frame.
             out[name] = "stochastic"
@@ -277,8 +286,12 @@ def _tier_for_value(v: object, periods: "set[str] | None" = None,
         if depth == 2:
             if outer_idx == "period":
                 return "period_time"
-            # 2d_map without "period" as the outer key — treat as
-            # stochastic (defer to the per-solve pbt_profile frame) for safety.
+            if (_normalise_label(v.index_name) is None
+                    and _silent_map_tier(v.indexes, periods, timesteps) == "period"):
+                # Unnamed outer level keyed by periods (item 223, item 73's rule): period x time.
+                return "period_time"
+            # Any other 2d_map: stochastic (the per-solve pbt_profile frame, which only a
+            # 3-level map fills; validate_period_keys stops the run on such a 2-D profile).
             return "stochastic"
         # Deeper than 2 → 3d_map (branch × time_start × t).
         return "stochastic"
@@ -417,18 +430,20 @@ def _profile_period_time_lf(source: "InputSource",
             "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     cols = raw.columns
-    if "period" not in cols:
+    # The outer (period) key: ``period``, or ``x`` of a map whose outer level has no index name (item 223).
+    # The inner (time) key: ``t`` (or ``i``) of a labelled inner level, ``x_2`` of an unnamed inner level
+    # under an unnamed outer one.  A frame holding several shapes has the other columns null on each row.
+    period_cols = [c for c in ("period", "x") if c in cols]
+    t_cols = [c for c in ("t", "i", "x_2") if c in cols]
+    if not period_cols or not t_cols:
         return pl.LazyFrame(schema={
             "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
-    if "t" in cols:
-        t_col = "t"
-    elif "i" in cols:
-        t_col = "i"
-    else:
-        return pl.LazyFrame(schema={
-            "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
-        })
+    t_col = "t"
+    raw = raw.select("name",
+                     pl.coalesce([pl.col(c).cast(pl.Utf8) for c in period_cols]).alias("period"),
+                     pl.coalesce([pl.col(c).cast(pl.Utf8) for c in t_cols]).alias(t_col),
+                     "value")
     # Branch periods get their anchor period's curve (this reader bypasses _param_shapes).
     raw = inherit_active_branch_periods(raw.filter(pl.col("name").is_in(pt_profiles)),
                                         group_keys=("name",), period_col="period")

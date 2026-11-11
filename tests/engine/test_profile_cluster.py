@@ -450,3 +450,59 @@ def test_column_fallback_silent_x_other_solve_periods_read_as_zero() -> None:
     dt = _make_dt(["d1"], ["t01"])
     out = p_profile_value_lf(src, dt).collect()
     assert out["value"].to_list() == [0.0]
+
+
+# ---------------------------------------------------------------------------
+# Item 223: a 2-D map whose outer level has no index name (the reader's ``x`` and ``x_2`` / ``t`` columns) is a
+# period x time map when its outer keys are periods (item 73's rule); before it was taken for a stochastic map
+# and the profile was 0.
+# ---------------------------------------------------------------------------
+
+
+def _silent_2d_source(inner: str) -> InMemoryReader:
+    """{d1: {t01: 0.2, t02: 0.4}, d2: {t01: 0.6, t02: 0.8}} under ``x`` and ``inner``."""
+    return InMemoryReader(
+        entities={"profile": pl.DataFrame({"name": ["wind"]})},
+        parameters={("profile", "profile"): pl.DataFrame(
+            {"name": ["wind"] * 4, "x": ["d1", "d1", "d2", "d2"], inner: ["t01", "t02", "t01", "t02"],
+             "value": [0.2, 0.4, 0.6, 0.8]})},
+    )
+
+
+@pytest.mark.parametrize("inner", ["x_2", "t"])
+def test_column_fallback_silent_2d_period_keys_read_as_period_time(inner: str) -> None:
+    src = _silent_2d_source(inner)
+    dt = _make_dt(["d1", "d2"], ["t01", "t02"])
+    assert _classify_profile_rows(src, dt) == {"wind": "period_time"}
+    out = p_profile_value_lf(src, dt).collect()
+    expected = pl.DataFrame({"f": ["wind"] * 4, "d": ["d1", "d1", "d2", "d2"], "t": ["t01", "t02"] * 2,
+                             "value": [0.2, 0.4, 0.6, 0.8]})
+    eq, diff = _frames_equal(out, expected, ("f", "d", "t"))
+    assert eq, diff
+
+
+def test_column_fallback_silent_2d_time_outer_keys_stay_stochastic() -> None:
+    """Outer keys that are time steps are no period x time map (the input check stops such a run)."""
+    src = InMemoryReader(
+        entities={"profile": pl.DataFrame({"name": ["wind"]})},
+        parameters={("profile", "profile"): pl.DataFrame(
+            {"name": ["wind"] * 2, "x": ["t01", "t02"], "x_2": ["t01", "t02"], "value": [0.2, 0.4]})},
+    )
+    assert _classify_profile_rows(src, _make_dt(["d1"], ["t01", "t02"])) == {"wind": "stochastic"}
+
+
+def test_raw_silent_2d_map_tiers() -> None:
+    """The raw-value classification (SpineDbReader path): unnamed outer level keyed by periods -> period_time;
+    by time steps -> stochastic; a 3-level map stays stochastic."""
+    from spinedb_api import Map
+
+    from flextool.engine.preprocess.params._profiles import _tier_for_value
+
+    periods, steps = {"p2020"}, {"t0001", "t0002"}
+    pt = Map(["p2020"], [Map(["t0001", "t0002"], [0.2, 0.4])])
+    assert _tier_for_value(pt, periods, steps) == "period_time"
+    assert _tier_for_value(pt) == "stochastic"  # no vocabulary: the pre-item-73 reading
+    tt = Map(["t0001"], [Map(["t0001", "t0002"], [0.2, 0.4])])
+    assert _tier_for_value(tt, periods, steps) == "stochastic"
+    deep = Map(["p2020"], [Map(["t0001"], [Map(["t0001"], [0.2])])])
+    assert _tier_for_value(deep, periods, steps) == "stochastic"

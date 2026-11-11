@@ -2794,20 +2794,33 @@ def _period_key_finding(raw: bytes, takes_time: bool, universe: set[str],
     return unknown()
 
 
+# A nested level in a Map's database JSON (a map or time series value inside the outer map's data).
+_RAW_NESTED = re.compile(rb'"type"\s*:\s*"(?:map|time_series)"')
+
+
 def _profile_period_finding(raw: bytes, universe: set[str], universe_b: tuple[bytes, ...],
                             timesteps: frozenset[str] | set[str], solve_periods: set[str]):
-    """``("both", keys)``, ``("missing", periods)`` or None for one Map value of ``profile.profile`` (item 73).
+    """``(code, keys)`` or None for one Map value of ``profile.profile`` (items 73, 223).
 
-    A 1-D profile map without an index name (Spine's ``x``) is read as a period map when its keys are periods and
-    as a time series when they are time steps (``_profiles._silent_map_tier``).  ``both``: its keys match periods
-    and time steps of the model (or one key is both, a period named like a time step) — there is no right reading.
-    ``missing``: a period map (labelled ``period``, the outer level of a period x time map labelled ``period``, or
-    a silent 1-D map read as periods) without a value for some of ``solve_periods``; the profile is 0 in those
-    periods.  A value naming no period of ``universe`` (``universe_b``: their quoted JSON forms) is a time series or
-    a map of keys that are no period (:func:`_period_key_finding` reports those) and is not parsed."""
+    A profile map without an index name (Spine's ``x``) on its outer level is read by its keys
+    (``_profiles._silent_map_tier``): a 1-D map is a period map when its keys are periods and a time series when
+    they are time steps; a 2-D map is a period x time map when its outer keys are periods (else it would be read
+    as a stochastic map, which has three levels, and give 0).  Codes:
+
+    * ``both``: the (outer) keys match periods and time steps of the model (or one key is both, a period named
+      like a time step) — there is no right reading;
+    * ``time``: the outer keys of a 2-D map are time steps (none a period);
+    * ``unknown``: the outer keys of a 2-D map are neither periods nor time steps (the keys are returned);
+    * ``missing``: a period map (labelled ``period``, the outer level of a period x time map labelled ``period``
+      or without a label, or a silent 1-D map read as periods) without a value for some of ``solve_periods``;
+      the profile is 0 in those periods.
+
+    A value naming no period of ``universe`` (``universe_b``: their quoted JSON forms) and without a nested level
+    is a time series or a 1-D map of keys that are no period (:func:`_period_key_finding` reports those) and is
+    not parsed.  Rank 3 and deeper (stochastic maps) are not checked."""
     from flextool.engine.input._param_shapes import _normalise_label
 
-    if not any(name in raw for name in universe_b):
+    if not any(name in raw for name in universe_b) and _RAW_NESTED.search(raw) is None:
         return None
     value = json.loads(raw)
     if not isinstance(value, dict) or value.get("index_type") == "float":
@@ -2819,11 +2832,14 @@ def _profile_period_finding(raw: bytes, universe: set[str], universe_b: tuple[by
     keys = set(levels[0][1])
     if not keys:
         return None
-    if label is None and len(levels) == 1:
+    if label is None:
         hits_periods = not keys.isdisjoint(universe)
         hits_steps = not keys.isdisjoint(timesteps)
         if hits_periods and hits_steps:
             return ("both", sorted(keys & universe) + sorted((keys & set(timesteps)) - universe))
+        if len(levels) == 2 and not hits_periods:
+            return ("time", sorted(keys & set(timesteps))) if hits_steps else ("unknown", list(dict.fromkeys(
+                levels[0][1])))
         if not hits_periods:
             return None
     elif label != "period":
@@ -2865,10 +2881,11 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
       time-series parameter) — ``{p2050: ...}`` is a period map with a key that is no period;
     * a ``time`` / ``t`` level or a time series on a parameter that cannot vary over time → error;
     * numeric keys (2020) → error (periods are names; such a value crashed the read);
-    * ``profile.profile`` (:func:`_profile_period_finding`, item 73): an unnamed 1-D map is read as a period map
-      when its keys are periods, so keys that match both periods and time steps of the model (or a key that is
-      both) → error; a period map (unnamed, or labelled ``period``) without a value for some periods of the
-      solves that run (:func:`_used_solve_periods`; a solve no model runs does not count) → one warning per map (the profile is 0 there; the parameter resolver would drop such an
+    * ``profile.profile`` (:func:`_profile_period_finding`, items 73 / 223): an unnamed 1-D map, and the outer
+      level of an unnamed 2-D map, is read as periods when its keys are periods, so keys that match both periods
+      and time steps of the model (or a key that is both) → error; a 2-D map whose unnamed outer keys are time
+      steps → error, or neither periods nor time steps → error (keys that are no period); a period map (unnamed,
+      or labelled ``period``) without a value for some periods of the solves that run (:func:`_used_solve_periods`; a solve no model runs does not count) → one warning per map (the profile is 0 there; the parameter resolver would drop such an
       entity without a word, ``_param_shapes._silent_entity_axes``).
 
     Each error names the entity, the parameter, the alternative and up to 3 keys, with the closest period
@@ -2931,6 +2948,17 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
                         shape_errors.append(
                             f"{where}: the map keys match both periods and time steps of the model; set the "
                             f"map's index name to 'period' or 'time' (keys {_shown(names)}).")
+                    elif code == "time":
+                        shape_errors.append(
+                            f"{where}: the outer keys of the two-level map are time steps ({_shown(names)}). A "
+                            "two-level profile map is period x time: key the outer level by period (index name "
+                            "'period') and the inner level by time step, or use a one-level time map.")
+                    elif code == "unknown":
+                        one = len(names) == 1
+                        errors.append(
+                            f"{where}: outer map key{'' if one else 's'} {_shown(names)} "
+                            f"{'is not a period' if one else 'are not periods'} (a two-level profile map is "
+                            f"period x time).{_did_you_mean(names[:3], names, scenario_periods, suggestable, branch)}")
                     else:
                         warnings.append(
                             f"{where} has no value for period(s) {', '.join(names)}: the profile is 0 in those "

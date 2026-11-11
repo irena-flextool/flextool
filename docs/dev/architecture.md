@@ -650,10 +650,14 @@ turning `existing_count = capacity / unitsize` into a spurious fraction
   `validate_period_keys` warns once per run about a profile period map
   that misses periods of the scenario's solves and stops on keys that
   are periods and time steps of the model. `_profile_time_lf`'s raw
-  fallback also reads `x`. Residual: `_profile_period_time_lf` still
-  gates on a literal `"period"` outer level (a silent outer level is
-  tiered `stochastic`), and the CSV `pdtProfile` seed has no period
-  tier at all (item 222).
+  fallback also reads `x`. A 2-D Map whose outer level has no index name
+  is `period_time` by the same rule on its outer keys (item 223;
+  `_profile_period_time_lf` reads `x` as the period and `x_2` / `t` as the
+  time step, the column fallback likewise); other unnamed 2-D Maps stay
+  `stochastic` (only 3-level Maps fill `pbt_profile`), and
+  `validate_period_keys` stops the run on them (outer keys that are time
+  steps, both kinds, or no period). Residual: the CSV `pdtProfile` seed
+  has no period tier at all (item 222).
 - *Guarded by schema* — `invest_max_total` and `virtual_unitsize` are
   declared `float`-only in `parameter_types` (no `map` row), so the
   `keep="last"` collapse in `_e_explicit_param` and in the

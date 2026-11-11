@@ -387,3 +387,110 @@ def test_profile_period_map_warns_for_a_solve_that_runs(tmp_path_factory) -> Non
 def test_profile_time_map_is_silent(tmp_path_factory) -> None:
     _silent(tmp_path_factory, "c73_time", [
         ["profile", "wind_profile", "profile", _map([["t0001", 0.5], ["t0002", 0.3]])]])
+
+
+# ---------------------------------------------------------------------------
+# Item 223: a 2-D profile map whose outer level has no index name is a period x time map when its outer keys are
+# periods (item 73's rule).  Outer keys that are time steps, both periods and time steps, or neither stop the run;
+# a period x time map that misses a period of the solves that run gets the item-73 warning.
+
+
+def _map2(outer: dict[str, dict[str, float]], index_name: str | None = None, inner_name: str | None = None) -> list:
+    """A 2-D map ``{outer: {inner: v}}``; ``None`` names: Spine's silent ``x``."""
+    def inner(values: dict[str, float]) -> dict:
+        m = {"type": "map", "index_type": "str", "data": [[k, v] for k, v in values.items()]}
+        if inner_name is not None:
+            m["index_name"] = inner_name
+        return m
+    value = {"index_type": "str", "data": [[k, inner(v)] for k, v in outer.items()]}
+    if index_name is not None:
+        value["index_name"] = index_name
+    return b64(value, "map")
+
+
+CURVE_2D = {"t0001": 0.2, "t0002": 0.4, "t0003": 0.6}
+
+
+def test_2d_profile_with_time_step_outer_keys_is_an_error(tmp_path_factory) -> None:
+    msg = _error(tmp_path_factory, "c223_time",
+                 [["profile", "wind_profile", "profile", _map2({"t0001": CURVE_2D})]])
+    assert msg == SHAPE + (
+        "profile 'wind_profile', parameter 'profile' (alternative 'c223_time'): the outer keys of the two-level map "
+        "are time steps ('t0001'). A two-level profile map is period x time: key the outer level by period (index "
+        "name 'period') and the inner level by time step, or use a one-level time map.")
+
+
+def test_2d_profile_with_period_and_time_step_outer_keys_is_an_error(tmp_path_factory) -> None:
+    msg = _error(tmp_path_factory, "c223_both",
+                 [["profile", "wind_profile", "profile", _map2({"p2020": CURVE_2D, "t0001": CURVE_2D})]])
+    assert msg == SHAPE + (
+        "profile 'wind_profile', parameter 'profile' (alternative 'c223_both'): the map keys match both periods and "
+        "time steps of the model; set the map's index name to 'period' or 'time' (keys 'p2020', 't0001').")
+
+
+def test_2d_profile_with_outer_keys_that_are_no_period_is_an_error(tmp_path_factory) -> None:
+    msg = _error(tmp_path_factory, "c223_foo",
+                 [["profile", "wind_profile", "profile", _map2({"foo": CURVE_2D})]])
+    assert msg == PREFIX + (
+        "profile 'wind_profile', parameter 'profile' (alternative 'c223_foo'): outer map key 'foo' is not a period "
+        "(a two-level profile map is period x time).") + ESCAPE
+
+
+def test_2d_profile_covering_the_scenario_period_is_silent(tmp_path_factory) -> None:
+    _silent(tmp_path_factory, "c223_ok", [["profile", "wind_profile", "profile", _map2({"p2020": CURVE_2D})]])
+
+
+def test_2d_profile_missing_a_period_of_a_solve_that_runs_warns(tmp_path_factory) -> None:
+    """model.solves runs y2020_2day_dispatch (p2020) and s_extra (p2025); the map has p2020 only."""
+    alt = "c223_miss"
+    url, scen = make_db(tmp_path_factory, alt=alt, base_chain=PLANT_CHAIN, entities=EXTRA_SOLVE, values=[
+        *EXTRA_SOLVE_VALUES[:2],
+        ["profile", "wind_profile", "profile", _map2({"p2020": CURVE_2D})],
+        ["model", "flexTool", "solves",
+         b64({"value_type": "str", "data": ["y2020_2day_dispatch", "s_extra"]}, "array")]])
+    assert _check(url, scen) == (
+        f"Warning: profile 'wind_profile', parameter 'profile' (alternative '{alt}') has no value for period(s) "
+        "p2025: the profile is 0 in those periods. Add the periods to the map, or give the profile a constant "
+        "value.\n")
+
+
+# The solve: wind_plant (chain init, west, coal, wind) with existing 100 MW and a *fixed* profile.  The profile
+# {p2020: {t0001: 0.2, t0002: 0.4, t0003: 0.6}} gives the flows 20 / 40 / 60 MW (100 x the profile) in t0001..t0003
+# and 0 at the steps the map does not name; the unnamed map and the map labelled period / time build the same LP.
+
+WIND_CHAIN = [*PLANT_CHAIN, "wind"]
+
+
+def _wind_run(tmp_path_factory, alt: str, profile: list):
+    url, scen = make_db(tmp_path_factory, alt=alt, base_chain=WIND_CHAIN, values=[
+        ["unit", "wind_plant", "existing", b64(100.0, "float")],
+        ["unit__node__profile", ["wind_plant", "west", "wind_profile"], "profile_method", b64("fixed", "str")],
+        ["profile", "wind_profile", "profile", profile]])
+    return list(run(tmp_path_factory, url, scen).values())[-1]
+
+
+@pytest.fixture(scope="module")
+def wind_2d(tmp_path_factory):
+    return {name: _wind_run(tmp_path_factory, f"c223_run_{name}", value) for name, value in (
+        ("unnamed", _map2({"p2020": CURVE_2D})),
+        ("labelled", _map2({"p2020": CURVE_2D}, "period", "time")))}
+
+
+def test_unnamed_2d_profile_fixes_the_flows(wind_2d) -> None:
+    from tests.engine._unit_db import flow
+
+    flows = flow(wind_2d["unnamed"], "wind_plant", "wind_plant", "west").to_list()
+    assert flows[:3] == pytest.approx([20.0, 40.0, 60.0], abs=1e-6)
+    assert max(abs(f) for f in flows[3:]) == pytest.approx(0.0, abs=1e-6)
+
+
+def test_unnamed_2d_profile_equals_the_labelled_map(wind_2d) -> None:
+    unnamed, labelled = wind_2d["unnamed"], wind_2d["labelled"]
+    for field in ("p_profile_value", "p_flow_upper", "p_flow_lower"):
+        a, b = getattr(unnamed.flex_data, field, None), getattr(labelled.flex_data, field, None)
+        if a is None and b is None:
+            continue
+        assert utf8(a.frame).sort(a.frame.columns[:-1]).equals(utf8(b.frame).sort(b.frame.columns[:-1])), field
+    assert float(unnamed.solution.obj) == pytest.approx(float(labelled.solution.obj), rel=1e-12)
+    a, b = utf8(unnamed.solution.value("v_flow")), utf8(labelled.solution.value("v_flow"))
+    assert a.sort(a.columns[:-1]).equals(b.sort(b.columns[:-1]))
