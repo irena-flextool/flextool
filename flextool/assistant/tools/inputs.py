@@ -145,7 +145,7 @@ def _node_topology(view: _db.ScenarioView) -> NodeTopology:
 def _unit(view: _db.ScenarioView | None, entity_class: str, parameter: str,
           byname: tuple[str, ...] | None) -> tuple[str | None, str | None]:
     """``(unit as shown, reason)`` of a parameter; for an entity of a scenario, the units of the nodes it is about
-    (a node's ``unit_of_measure``), shown without " (default convention)" when a node set them."""
+    (a node's ``unit_of_measure``), shown plain (not as a convention unit) when a node set them."""
     if view is None or byname is None:
         info = parameter_unit_info(entity_class, parameter)
     else:

@@ -40,7 +40,7 @@ def _number(value: Any) -> float | None:
 @dataclass(frozen=True)
 class UnitInfo:
     """The unit of a parameter: its text, the reason in words (or ``None``), and whether a node's
-    ``unit_of_measure`` set it (then the tools show it without " (default convention)")."""
+    ``unit_of_measure`` set it (then the tools show it plain, not as a convention unit)."""
 
     unit: str | None
     reason: str | None
