@@ -17111,6 +17111,26 @@
       null
     ],
     [
+      "wind_weighted",
+      "init",
+      "west"
+    ],
+    [
+      "wind_weighted",
+      "west",
+      "wind"
+    ],
+    [
+      "wind_weighted",
+      "wind",
+      "weighted_2day"
+    ],
+    [
+      "wind_weighted",
+      "weighted_2day",
+      null
+    ],
+    [
       "y2020_2029_1x10y",
       "init",
       "west"
@@ -17596,6 +17616,11 @@
       "wind_battery_invest_lifetime_renew_inflation_2pct",
       false,
       null
+    ],
+    [
+      "wind_weighted",
+      false,
+      ""
     ],
     [
       "y2020_2029_1x10y",

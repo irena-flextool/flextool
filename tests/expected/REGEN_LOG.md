@@ -1441,3 +1441,23 @@ like the flows (`× step_duration × timestep_weight`, Σ over the period, ÷ `c
 Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the four.  The regeneration also
 rewrote `summary_solve.csv` (time stamp) of the csp scenarios and `costs__dt.csv` of the aggregate scenario
 (`0` → `0.0` number format); those files were put back to their previous content.
+
+## 2026-11-11 — new golden `wind_weighted` (item 198 follow-up)
+
+**Context.** New scenario `wind_weighted` (`tests/fixtures/_augment_wind_weighted.py`): the `wind` system
+(`init → west → wind`) with the timeset weights of `base_weighted` (`weighted_2day`: 0.5 / 1 / 1.5 / 2 per 12 steps
+of t0001-t0048, normalised to mean 1, ×0.8).  `wind_plant` is the only unit and there is no storage, so each
+step's flow is min(1000·profile, demand) whatever the weights; the period shares are ratios of weighted sums.
+
+Hand values (from `tests.json`, exact arithmetic; re-derived by an independent oracle, which also reproduces the
+unweighted `wind` golden 0.0902 / 0.9325 / 0.0925 / 0.0675):
+
+- Σw·potential 39 580, Σw·curtailed 2 900, Σw·flow 36 680, Σw·inflow 38 763, Σw·loss of load 2 083 (raw w, MWh).
+- Curtailed VRE of potential VRE 2900/39580 = 0.073269 → **0.0733**; VRE share of demand 36680/38763 = 0.946263 →
+  **0.9463** (also `group_node_VRE_share__d`); curtailed VRE of demand **0.0748**; loss of load share **0.0537**;
+  excess load **0.0**; annualized inflow 38763·0.8·8760/48 = **5 659 398.0** (as `base_weighted`).
+- `unit_curtailment__outputNode__d` = Σw_norm·curtailed·8760/48 = 2320·182.5 = **423 400** MWh/a.
+- Objective 900·2083·0.8·8760/48/1e6 = **273.7062** M CUR (`expected_objective`, tolerance 1e-5).
+
+The generated CSVs carry exactly these 4-dp values.  Generated with
+`pytest tests/test_scenarios.py --regenerate wind_weighted`.

@@ -215,6 +215,22 @@
     - group_node_VRE_share__d.csv
   time_budget_seconds: 10.0
 
+- scenario: wind_weighted
+  csvs:
+    - unit__outputNode__dt.csv
+    - unit_curtailment__outputNode__d.csv
+    - group_node__d.csv
+    - group_node_VRE_share__d.csv
+    - summary_solve.csv
+  # The wind system with the weights of base_weighted (0.5/1/1.5/2 per 12 steps, normalised ×0.8).  Each step's
+  # optimum is flow = min(potential, demand); hand values (REGEN_LOG, independent oracle): curtailed VRE of
+  # potential 2900/39580 = 0.0733, VRE share 36680/38763 = 0.9463, loss of load 0.0537, curtailed of demand
+  # 0.0748, annualized inflow 5 659 398.0, curtailment 2320 × 8760/48 = 423 400 MWh/a.
+  #   objective (M CUR) = 900 × 2083 × 0.8 × 8760/48 / 1e6 = 273.7062
+  expected_objective: 273.7062
+  expected_objective_tolerance: 1.0e-5
+  time_budget_seconds: 10.0
+
 - scenario: wind_battery
   csvs:
     - unit__outputNode__dt.csv
