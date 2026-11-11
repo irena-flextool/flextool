@@ -27,9 +27,13 @@ The child process has a clean address space — none of FlexTool's
 ~7-11 GB of polars frames, no glibc fragmentation from upstream
 preprocessing.  When it finishes, the parent reads the solution back:
 
-* HiGHS path parses the subprocess-written .sol directly
-  (:func:`_parse_highs_sol`) — the file already carries names + primal
-  + duals.
+* HiGHS path writes the MPS with GENERIC ``C…``/``R…`` names too and
+  parses the subprocess-written .sol directly (:func:`_parse_highs_sol`):
+  each primal / dual value goes to the col_id / row id its generic name
+  encodes, every name and count is checked against the LP (a mismatch
+  raises :class:`SubprocessSolutionMismatch`), and the real names come
+  from the Problem (row names taken before the release, column names
+  from the surviving ``_vars``).
 * Commercial path writes the MPS with GENERIC ``C…``/``R…`` names
   (``emit_names=False``) so real entity names — which routinely contain
   spaces, illegal in whitespace-delimited free-format MPS — never
@@ -206,62 +210,11 @@ def _read_objective_from_sol(sol_path: Path) -> float:
 # that ``readModel`` accounts for the +33 GB RSS spike at the per-solve
 # ``Solver`` checkpoint — and immediately gets thrown away after the
 # writers finish.  We sidestep it: parse the HiGHS style=0 .sol file
-# directly (it already carries column / row names + primal + dual values)
-# and wrap the arrays in a duck-typed shim that exposes exactly the API
-# surface the writers use.  No 33 GB sidecar Highs instance.
-
-def _parse_mps_row_names(mps_path: Path) -> list[str]:
-    """Return constraint row names (in MPS ROWS order, objective excluded).
-
-    HiGHS' ``writeSolution`` periodically rewrites row names to
-    ``r0, r1, ...`` (warning: ``Row names are not present, or contain
-    duplicates: using names with prefix "r"``) when the LP's row name
-    array survives ``readModel`` in a degraded state — observed with
-    free-format MPS row names that contain bracket / comma characters
-    (``nodeBalance_eq[battery,p2020,t0001]``).  The MPS file itself
-    carries the canonical names; this helper recovers them so the
-    downstream output writers' name-based row lookups (``row_dual``
-    for ``nodeBalance_eq`` / ``reserveBalance_*_eq`` / ``co2_max_*``)
-    keep working through the subprocess-MPS path.
-
-    The objective row (``N  cost`` in the polar-high MPS) is excluded
-    so the returned list aligns with HiGHS' ``row_dual`` array, which
-    only covers constraint rows (objective dual is meaningless).
-
-    Parser: a tiny state machine over the ROWS section.  Lines look
-    like ``" E  nodeBalance_eq[...]"`` — leading whitespace + 1-char
-    sense + whitespace + name.  Anything else terminates the section.
-    """
-    names: list[str] = []
-    try:
-        with open(mps_path) as fh:
-            in_rows = False
-            for raw in fh:
-                line = raw.rstrip("\n")
-                if not in_rows:
-                    if line.strip().upper() == "ROWS":
-                        in_rows = True
-                    continue
-                # Detect end of ROWS section (next header line: COLUMNS,
-                # RHS, RANGES, BOUNDS, ENDATA, ...).  Header lines are
-                # left-flush; data lines start with whitespace.
-                if line and not line[0].isspace():
-                    break
-                parts = line.split()
-                if len(parts) < 2:
-                    continue
-                sense = parts[0].upper()
-                name = parts[1]
-                # Skip the objective row — ``row_dual`` covers
-                # constraints only.
-                if sense == "N":
-                    continue
-                if sense in ("E", "L", "G"):
-                    names.append(name)
-    except OSError:
-        pass
-    return names
-
+# directly (it carries primal + dual values under the generic ``C…`` /
+# ``R…`` names of the MPS), place them by generic-name index into dense
+# arrays, take the real names from the Problem, and wrap the arrays in a
+# duck-typed shim that exposes exactly the API surface the writers use.
+# No 33 GB sidecar Highs instance.
 
 def _col_names_from_vars(problem: "Problem") -> list[str]:
     """Rebuild the dense, ``col_id``-indexed column-name list from a
@@ -387,26 +340,49 @@ def _generic_row_id(name: str) -> int | None:
 _DUAL_CAPABLE_SOLVERS = frozenset({"cplex"})
 
 
+class SubprocessSolutionMismatch(RuntimeError):
+    """The solver's ``.sol`` does not line up with the LP that was written.
+
+    Raised when a HiGHS ``.sol`` read back on the subprocess path names a
+    column or row that is not the generic name expected at that position,
+    or has a different number of columns / rows than the LP.  Mapping such
+    a file by position would put solution values on the wrong variables,
+    so the solve stops instead.
+    """
+
+
 def _parse_highs_sol(
     sol_path: Path,
-) -> tuple[
-    list[str], list[str],
-    np.ndarray, np.ndarray, np.ndarray,
-]:
-    """Parse a HiGHS style=0 ``.sol`` file into the writer-facing arrays.
+    n_cols: int,
+    n_rows: int,
+    *,
+    require_primal: bool,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Parse a HiGHS style=0 ``.sol`` of a generic-name MPS into dense arrays.
 
-    Returns ``(col_names, row_names, col_value, col_dual, row_dual)``.
-    All five live in-process at numpy / list scale — typically a few
-    hundred MB even on the DES-scale LP, vs the +33 GB the equivalent
-    ``Highs.readModel(mps)`` parent re-read used to cost.
+    The MPS was written by ``Problem.write_mps(emit_names=False)``, so
+    column ``col_id=j`` is ``C{j+1:07d}`` and constraint row ``i`` is
+    ``R{i+2:07d}``.  Returns ``(col_value, col_dual, row_dual)`` indexed by
+    ``col_id`` / constraint row id — the same dense layout an in-process
+    solve gives.  The real names are not in the file; the caller takes them
+    from the Problem.
 
-    The HiGHS style=0 file format (see ``Highs::writeSolution``):
+    Every name in the file is checked against the generic name expected at
+    its position, and each section must hold exactly *n_cols* columns /
+    *n_rows* rows.  Any difference raises :class:`SubprocessSolutionMismatch`
+    (a column the reader dropped or moved would otherwise shift every later
+    value onto the wrong variable).  A section HiGHS writes as ``None`` (no
+    primal / dual solution, e.g. an infeasible or interrupted solve) leaves
+    zeros; with *require_primal* (the child reported an optimal solve) a
+    missing primal section raises instead.
+
+    The HiGHS style=0 file format (see ``Highs::writeSolution``)::
 
         Model status
         <status>
 
         # Primal solution values
-        Feasible | Infeasible
+        Feasible | Infeasible | None
         Objective <value>
         # Columns <N>
         <name> <value>
@@ -416,7 +392,7 @@ def _parse_highs_sol(
         ...
 
         # Dual solution values
-        Feasible | Infeasible
+        Feasible | Infeasible | None
         # Columns <N>
         <name> <dual>
         ...
@@ -424,87 +400,111 @@ def _parse_highs_sol(
         <name> <dual>
         ...
 
-        # Basis ...   (ignored — basis statuses are not needed by the
-                       parent-side output writers)
-
-    Each ``<name> <value>`` line splits on whitespace; names with
-    embedded spaces are not produced by HiGHS so the simple split is
-    safe.
+        # Basis ...   (ignored)
     """
-    col_names: list[str] = []
-    row_names: list[str] = []
-    col_value_list: list[float] = []
-    col_dual_list: list[float] = []
-    row_value_list: list[float] = []   # not actually exposed; parse but discard
-    row_dual_list: list[float] = []
+    col_value = np.zeros(n_cols, dtype=np.float64)
+    col_dual = np.zeros(n_cols, dtype=np.float64)
+    row_dual = np.zeros(n_rows, dtype=np.float64)
+    row_value = np.zeros(n_rows, dtype=np.float64)  # parsed, checked, discarded
+    targets = {
+        ("primal", "col"): col_value,
+        ("primal", "row"): row_value,
+        ("dual", "col"): col_dual,
+        ("dual", "row"): row_dual,
+    }
 
-    # Three-state parser:
-    #   section   ∈ {"primal", "dual", None}
-    #   bucket    ∈ {"col", "row", None}
+    def _mismatch(detail: str) -> SubprocessSolutionMismatch:
+        return SubprocessSolutionMismatch(
+            f"HiGHS solution file {sol_path} does not match the LP written "
+            f"for it ({n_cols} columns, {n_rows} rows): {detail}. The values "
+            "cannot be mapped back to the model's variables safely, so the "
+            "solve is stopped."
+        )
+
     section: str | None = None
     bucket: str | None = None
+    arr: np.ndarray | None = None
+    pos = 0
+    counts: dict[tuple[str, str], int] = {}
+
+    def _close_bucket() -> None:
+        if section is not None and bucket is not None:
+            want = n_cols if bucket == "col" else n_rows
+            if pos != want:
+                raise _mismatch(
+                    f"the {section} {bucket} section has {pos} entries, "
+                    f"expected {want}"
+                )
+            counts[(section, bucket)] = pos
 
     with open(sol_path) as fh:
         for raw in fh:
-            line = raw.rstrip("\n")
-            if not line.strip():
-                continue
-            if line.startswith("# Primal solution"):
-                section, bucket = "primal", None
-                continue
-            if line.startswith("# Dual solution"):
-                section, bucket = "dual", None
-                continue
-            if line.startswith("# Basis"):
-                # Basis section ends the data we care about.
-                break
-            if line.startswith("# Columns"):
-                bucket = "col"
-                continue
-            if line.startswith("# Rows"):
-                bucket = "row"
+            line = raw.strip()
+            if not line:
                 continue
             if line.startswith("#"):
-                # Unrecognised comment header — keep current state.
+                if line.startswith(("# Primal solution", "# Dual solution", "# Basis")):
+                    _close_bucket()
+                    bucket, arr = None, None
+                    if line.startswith("# Basis"):
+                        section = None
+                        break
+                    section = "primal" if line.startswith("# Primal") else "dual"
+                    continue
+                if line.startswith(("# Columns", "# Rows")) and section is not None:
+                    _close_bucket()
+                    bucket = "col" if line.startswith("# Columns") else "row"
+                    pos = 0
+                    arr = targets[(section, bucket)]
+                    want = n_cols if bucket == "col" else n_rows
+                    try:
+                        declared = int(line.split()[2])
+                    except (IndexError, ValueError):
+                        declared = None
+                    if declared != want:
+                        raise _mismatch(
+                            f"the {section} {bucket} section declares "
+                            f"{line.split(None, 2)[-1]!r} entries, expected {want}"
+                        )
+                    continue
                 continue
-            if (
-                line.startswith("Model status")
-                or line.startswith("Objective ")
-                or line in ("Feasible", "Infeasible", "Unknown")
-                or line.startswith("HiGHS_basis_file")
-                or line in ("Valid", "None")
-            ):
+            if arr is None:
+                # Status / ``Objective`` / ``Feasible`` / ``None`` lines.
                 continue
-            # Data row: "<name> <value>"
-            sp = line.rsplit(None, 1)
+            sp = line.split()
             if len(sp) != 2:
-                continue
+                raise _mismatch(f"unreadable line {line!r}")
             name, val_s = sp
+            if bucket == "col":
+                expected = f"C{pos + 1:07d}"
+            else:
+                expected = f"R{pos + 2:07d}"
+            if name != expected:
+                raise _mismatch(
+                    f"{section} {bucket} entry {pos} is named {name!r}, "
+                    f"expected {expected!r}"
+                )
+            if pos >= arr.shape[0]:
+                raise _mismatch(f"more {section} {bucket} entries than expected")
             try:
-                val = float(val_s)
-            except ValueError:
-                continue
-            if section == "primal" and bucket == "col":
-                col_names.append(name)
-                col_value_list.append(val)
-            elif section == "primal" and bucket == "row":
-                row_names.append(name)
-                row_value_list.append(val)
-            elif section == "dual" and bucket == "col":
-                col_dual_list.append(val)
-            elif section == "dual" and bucket == "row":
-                row_dual_list.append(val)
-
-    col_value = np.asarray(col_value_list, dtype=np.float64)
-    col_dual = (
-        np.asarray(col_dual_list, dtype=np.float64)
-        if col_dual_list else np.zeros(len(col_value), dtype=np.float64)
-    )
-    row_dual = (
-        np.asarray(row_dual_list, dtype=np.float64)
-        if row_dual_list else np.zeros(len(row_names), dtype=np.float64)
-    )
-    return col_names, row_names, col_value, col_dual, row_dual
+                arr[pos] = float(val_s)
+            except ValueError as exc:
+                raise _mismatch(f"unreadable value in line {line!r}") from exc
+            pos += 1
+    _close_bucket()
+    # HiGHS writes a section's column and row values together; one without
+    # the other means a truncated file.
+    for sec in ("primal", "dual"):
+        has_col = (sec, "col") in counts
+        has_row = (sec, "row") in counts
+        if has_col != has_row:
+            raise _mismatch(
+                f"the {sec} section has only its "
+                f"{'column' if has_col else 'row'} values"
+            )
+    if require_primal and ("primal", "col") not in counts:
+        raise _mismatch("the solve reported optimal but the file has no primal values")
+    return col_value, col_dual, row_dual
 
 
 class _SolHighsShim:
@@ -1274,9 +1274,18 @@ def _solve_highs_subprocess(
 ) -> "Solution":
     """HiGHS-specific subprocess path (unchanged contract).
 
-    Writes MPS via :meth:`Problem.write_mps`, spawns
-    :mod:`flextool.cli.cmd_solve_mps`, parses the .sol back via
-    :func:`_parse_highs_sol` + :class:`_SolHighsShim` — no parent-side
+    Writes MPS via :meth:`Problem.write_mps` with GENERIC names
+    (``emit_names=False``: column ``col_id=j`` is ``C{j+1:07d}``, constraint
+    row ``i`` is ``R{i+2:07d}``), spawns :mod:`flextool.cli.cmd_solve_mps`,
+    and parses the .sol back via :func:`_parse_highs_sol`, which places
+    every value by its generic-name index into dense ``col_id`` / row-id
+    arrays and raises :class:`SubprocessSolutionMismatch` when a name or a
+    count does not line up.  The real constraint-row names come from the
+    Problem's canonical matrix, taken before the release; the column names
+    from the ``_vars`` that survive it (:func:`_col_names_from_vars`).  Real names never
+    go through the whitespace-delimited MPS / .sol, so an entity name with
+    a space (``Battery Farm``) cannot split into a different column.  The
+    arrays are wrapped in :class:`_SolHighsShim` — no parent-side
     ``highspy.Highs.readModel`` (which used to dominate cold-path RSS).
 
     **Warm-start arm** (opt-in, active only when the save-memory
@@ -1357,7 +1366,22 @@ def _solve_highs_subprocess(
                 solve_name, mps_path,
             )
 
-        problem.write_mps(str(mps_path), release=True)
+        # The LP's column count and real constraint-row names, in the exact
+        # order write_mps writes them (``canonicalise`` is cached, so
+        # write_mps reuses this matrix).  The row names must be taken now:
+        # the release drops ``_cstrs`` and the matrix.  They wait out the
+        # child solve as one compact Arrow string column rather than a
+        # Python list.  Column names survive the release in ``_vars`` and
+        # are rebuilt after the solve.
+        import polars as pl
+
+        canonical = problem.canonicalise()
+        n_lp_cols = int(canonical.n_cols)
+        real_row_names = pl.Series("row_names", canonical.row_names, dtype=pl.String)
+        del canonical
+        # Generic, whitespace-safe names in the file (see the docstring);
+        # the solution is mapped back by generic-name index below.
+        problem.write_mps(str(mps_path), release=True, emit_names=False)
 
         cmd = [
             sys.executable, "-m", "flextool.cli.cmd_solve_mps",
@@ -1372,6 +1396,13 @@ def _solve_highs_subprocess(
         # --- Warm-start arm (opt-in) ------------------------------------
         # Keyed by the MPS structural fingerprint.  Everything here is
         # defensive: on any hiccup we drop the warm slots and solve cold.
+        # The fingerprint is polar-high's hash of the REAL name-set (also
+        # with ``emit_names=False``, polar-high >= 3.12.4).  The cached
+        # ``.bas`` carries the MPS's generic names, which HiGHS' readBasis
+        # matches by name, i.e. by col_id / row position: a hit needs the
+        # same name-set built in the same order, which the deterministic
+        # model build gives.  A basis saved by an older FlexTool (real
+        # names, ``phbasis-v1`` key) misses once and is replaced.
         if run_options.value("warm_start"):
             try:
                 fp = getattr(problem, "_last_mps_fingerprint", None)
@@ -1566,40 +1597,21 @@ def _solve_highs_subprocess(
         # Parse the .sol directly — no parent-side ``Highs.readModel``.
         # On large LPs the old path's ``readModel(mps)`` spiked +33 GB
         # of RSS purely to satisfy ``allVariableNames()`` / ``getSolution()``
-        # on downstream writers; the .sol file already carries names +
-        # primal + duals, and the writers see the same shape via the
-        # ``_SolHighsShim`` wrapper.
-        col_names, row_names, col_value, col_dual, row_dual = (
-            _parse_highs_sol(sol_path)
+        # on downstream writers.  The .sol carries the primal + duals under
+        # the generic names; each value goes to the col_id / row id its
+        # name encodes, and any name or count that does not line up with
+        # the LP raises (never a silent shift onto other variables).
+        col_names = _col_names_from_vars(problem)
+        if len(col_names) != n_lp_cols:
+            raise SubprocessSolutionMismatch(
+                f"solve {solve_name!r}: the variables name {len(col_names)} "
+                f"columns but the LP written to {mps_path} has {n_lp_cols}"
+            )
+        row_names = real_row_names.to_list()
+        del real_row_names
+        col_value, col_dual, row_dual = _parse_highs_sol(
+            sol_path, len(col_names), len(row_names), require_primal=optimal,
         )
-        n_cols = len(col_value)
-        if col_dual.size == 0:
-            col_dual = np.zeros(n_cols, dtype=np.float64)
-
-        # HiGHS' ``writeSolution`` may emit synthesized row names
-        # (``r0, r1, ...``) when the LP carried duplicate or otherwise
-        # un-preservable names through ``readModel`` — the warning
-        # "Row names are not present, or contain duplicates: using
-        # names with prefix 'r'" flags this on the subprocess stderr.
-        # The MPS file written by polar-high carries the canonical
-        # constraint names (e.g. ``nodeBalance_eq[n, d, t]``); recover
-        # them so the row-dual output writers' name-based lookups keep
-        # working.  Detect by checking whether every name matches the
-        # ``r<int>`` pattern AND the count equals the MPS' constraint
-        # row count.
-        if row_names and all(
-            n.startswith("r") and n[1:].isdigit() for n in row_names
-        ):
-            mps_row_names = _parse_mps_row_names(mps_path)
-            if len(mps_row_names) == len(row_names):
-                row_names = mps_row_names
-                if logger is not None:
-                    logger.debug(
-                        "save_memory: recovered %d row names from MPS "
-                        "(HiGHS writeSolution emitted synthesized 'r*' "
-                        "names for solve %r)",
-                        len(row_names), solve_name,
-                    )
         obj = _read_objective_from_sol(sol_path)
         h = _SolHighsShim(
             col_names=col_names,

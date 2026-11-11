@@ -78,7 +78,10 @@ dependencies = [
     # an older one sets it to 1 at import, and child processes inherit that value.
     # 3.12.3 runs its join chains in written order on polars 2.x — required with
     # polars 2: an older one lets polars reorder them, about 3x the peak RAM.
-    "polar-high>=3.12.3",
+    # 3.12.4 writes every column into the MPS file and gives the basis-cache key
+    # with generic names — required: on the MPS solve path an older one shifts
+    # the solution values after a variable used nowhere.
+    "polar-high>=3.12.4",
     # Autoscale Layer 3 drives HiGHS' power-of-two objective conditioning
     # through the ``user_objective_scale`` option.  HiGHS renamed the older
     # ``user_cost_scale`` to ``user_objective_scale`` after 1.10.0, so older

@@ -463,6 +463,18 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   period's realized steps, and the steps of a solve that left reserves out (`reduce_system_detail_method`) no
   longer count as 0 MW. Models without time-step weights are unchanged.
 
+#### Solving
+
+- **The memory-saving solve could put solution values on the wrong variables.** With `--save-memory`, or with
+  warm start off, HiGHS solves the model from an MPS file in a separate process. When the model had a variable
+  that no constraint and no cost used, the values read back after it were shifted onto the next variables, so
+  results could be wrong without any message: one test model reported its capacity-margin shortfall (122.45 MW)
+  as a 1224.5 MW reserve shortfall. An entity name with a space (`Battery Farm`) could also be misread in the
+  file, which could change the model, for example force a unit to 0. Both are fixed: the file now uses generic
+  names, every value is read back to its own variable, and a solution that does not match the model stops the run
+  with an error. Needs polar-high 3.12.4. The first `--save-memory` run after the upgrade does not reuse a
+  warm-start basis saved by an earlier version.
+
 #### Input checks
 
 - **A `co2_max_period` or `co2_max_total` on a group whose `co2_method` has no such cap is reported.** The

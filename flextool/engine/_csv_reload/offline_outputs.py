@@ -10,8 +10,9 @@ recomputed as ``Σ col_cost · col_value + offset``).
 
 Valid input.  The outputs are only right when all of these hold; none of them can be checked from the files:
 
-* The MPS has row and column names (``Problem.write_mps(emit_names=True)``).  The subprocess solve path writes
-  generic names (``c0``, ``r0``, ...) and gives no outputs.
+* The MPS has row and column names (``Problem.write_mps(emit_names=True)``).  The subprocess solve paths (HiGHS
+  ``--save-memory`` / warm start off, and the commercial solvers) write generic names (``C0000001``,
+  ``R0000002``, ...), so their ``solve_data/subprocess/*.mps`` gives no outputs here.
 * The MPS was built without autoscale Layer 2.  A Layer-2 MPS is in scaled variables
   (``flextool/engine/autoscale/_layer2.py``), and its solution gives silently wrong values.
 * Its objective was scaled by the solve's ``scale_the_objective`` (``build_flextool(..., scale_the_objective=)``;
