@@ -640,6 +640,15 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
+<a class="md-nav__link" href="#unreleased">
+<span class="md-ellipsis">
+      
+        Unreleased
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#release-422-8112026-time-steps-other-than-1-h-new_stepduration-and-inflow-scaling-fixes">
 <span class="md-ellipsis">
       
@@ -2445,6 +2454,15 @@
     </label>
 <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix="">
 <li class="md-nav__item">
+<a class="md-nav__link" href="#unreleased">
+<span class="md-ellipsis">
+      
+        Unreleased
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#release-422-8112026-time-steps-other-than-1-h-new_stepduration-and-inflow-scaling-fixes">
 <span class="md-ellipsis">
       
@@ -4190,6 +4208,27 @@
 <div class="md-content" data-md-component="content">
 <article class="md-content__inner md-typeset">
 <h1 id="release-notes">Release notes</h1>
+<h2 id="unreleased">Unreleased</h2>
+<ul>
+<li><strong>Rolling solves: unit size of a period-Map <code>existing</code>.</strong> A unit, connection or storage node without
+  <code>virtual_unitsize</code> whose <code>existing</code> is a Map by period got a unit size of 1000 MW in the rolls of a rolling solve
+  (single solves were right), so a 17 MW unit counted as 0.017 units. With <code>startup_method = binary</code> such a unit
+  could never be online, and a <code>min_instant_flow</code> floor that needed it made roll 1 infeasible. The unit size is now
+  the largest <code>existing</code> over the periods in every solve, as for a constant <code>existing</code>. Rolling results of such
+  models can change.</li>
+<li><strong>Warning for a fractional unit count with binary start-ups.</strong> A unit or connection with integer online variables
+  whose existing capacity is not a whole number of units in a period (for example <code>existing</code> dropping from 17 to
+  8.5 MW without <code>virtual_unitsize</code>: 0.5 units) now gets a warning naming it, the count and the unit size.</li>
+<li><strong>Gurobi options are applied.</strong> <code>gurobi_cl</code> takes parameters only as <code>Name=value</code> arguments; it ignored the
+  <code>ReadParams=&lt;file&gt;</code> argument FlexTool passed ("Unknown parameter: 'ReadParams' (ignored)") and solved at its
+  defaults. Each parameter of the merged options (<code>solver_config/gurobi.opt</code>, <code>solver_mip_gap</code>,
+  <code>--solver-time-limit</code>, <code>solver_arguments</code>) is now passed as its own <code>Name=value</code> argument, so Gurobi results can
+  change (for example a MIP now stops at the requested <code>solver_mip_gap</code> instead of Gurobi's 1e-4).</li>
+<li><strong>Licence message only for licence errors.</strong> A commercial solver that returned no solution was reported as a
+  licensing problem whenever its output mentioned a licence, which every Gurobi run does (<code>Using license file ...</code>),
+  so an infeasible model got a misleading message. The message now needs an actual licence failure in the output
+  (no licence found, expired or not valid, failed to obtain a licence, size-limited licence, token server errors).</li>
+</ul>
 <h2 id="release-422-8112026-time-steps-other-than-1-h-new_stepduration-and-inflow-scaling-fixes">Release 4.2.2 (8.11.2026) — time steps other than 1 h: new_stepduration and inflow scaling fixes</h2>
 <p>These bugs affect models whose time steps are not 1 h, solves with <code>new_stepduration</code>, nested solves where a solve
 with <code>new_stepduration</code> runs before one without it, and <code>scale_to_annual_and_peak_flow</code>. Other models give the same
