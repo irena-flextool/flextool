@@ -630,28 +630,28 @@ def write_summary_csv(par, s, v, r, csv_dir):
         f.write('creating inertia, adding synchronous generation, decreasing capacity margin, creating reserve)"\n')
 
         # Node state slack - upward (creating energy)
-        for node in r.upward_node_slack_d_not_annualized.columns:
+        for node in r.upward_node_slack_d_sample.columns:
             for period in d_realized_period:
-                if period in r.upward_node_slack_d_not_annualized.index and r.upward_node_slack_d_not_annualized.loc[period, node] > 0:
-                    f.write(f'Created, {node}, {period}, {r.upward_node_slack_d_not_annualized.loc[period, node]:.5g}\n')
+                if period in r.upward_node_slack_d_sample.index and r.upward_node_slack_d_sample.loc[period, node] > 0:
+                    f.write(f'Created, {node}, {period}, {r.upward_node_slack_d_sample.loc[period, node]:.5g}\n')
 
         # Node state slack - downward (removing energy)
-        for node in r.downward_node_slack_d_not_annualized.columns:
+        for node in r.downward_node_slack_d_sample.columns:
             for period in d_realized_period:
-                if period in r.downward_node_slack_d_not_annualized.index and r.downward_node_slack_d_not_annualized.loc[period, node] > 0:
-                    f.write(f'Removed, {node}, {period}, {r.downward_node_slack_d_not_annualized.loc[period, node]:.5g}\n')
+                if period in r.downward_node_slack_d_sample.index and r.downward_node_slack_d_sample.loc[period, node] > 0:
+                    f.write(f'Removed, {node}, {period}, {r.downward_node_slack_d_sample.loc[period, node]:.5g}\n')
 
         # Inertia slack
-        for group in r.q_inertia_d_not_annualized.columns:
+        for group in r.q_inertia_d_sample.columns:
             for period in d_realized_period:
-                if period in r.q_inertia_d_not_annualized.index and r.q_inertia_d_not_annualized.loc[period, group] > 0:
-                    f.write(f'Inertia, {group}, {period}, {r.q_inertia_d_not_annualized.loc[period, group]:.5g}\n')
+                if period in r.q_inertia_d_sample.index and r.q_inertia_d_sample.loc[period, group] > 0:
+                    f.write(f'Inertia, {group}, {period}, {r.q_inertia_d_sample.loc[period, group]:.5g}\n')
 
         # Non-synchronous slack
-        for group in r.q_non_synchronous_d_not_annualized.columns:
+        for group in r.q_non_synchronous_d_sample.columns:
             for period in d_realized_period:
-                if period in r.q_non_synchronous_d_not_annualized.index and r.q_non_synchronous_d_not_annualized.loc[period, group] > 0:
-                    f.write(f'NonSync, {group}, {period}, {r.q_non_synchronous_d_not_annualized.loc[period, group]:.5g}\n')
+                if period in r.q_non_synchronous_d_sample.index and r.q_non_synchronous_d_sample.loc[period, group] > 0:
+                    f.write(f'NonSync, {group}, {period}, {r.q_non_synchronous_d_sample.loc[period, group]:.5g}\n')
 
         # Capacity margin slack — iterate realized periods rather than
         # d_realize_invest.  The capacity-margin constraint is defined
@@ -665,10 +665,10 @@ def write_summary_csv(par, s, v, r, csv_dir):
                     f.write(f'CapMargin, {group}, {period}, {r.q_capacity_margin_d_not_annualized.loc[period, group]:.5g}\n')
 
         # Reserve slack
-        for group in r.q_reserves_d_not_annualized.columns:
+        for group in r.q_reserves_d_sample.columns:
             for period in d_realized_period:
-                if period in r.q_reserves_d_not_annualized.index and r.q_reserves_d_not_annualized.loc[period, group] > 0:
-                    f.write(f'Reserve, {group}, {period}, {r.q_reserves_d_not_annualized.loc[period, group]:.5g}\n')
+                if period in r.q_reserves_d_sample.index and r.q_reserves_d_sample.loc[period, group] > 0:
+                    f.write(f'Reserve, {group}, {period}, {r.q_reserves_d_sample.loc[period, group]:.5g}\n')
 
 
 # List of all output functions

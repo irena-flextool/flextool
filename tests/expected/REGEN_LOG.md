@@ -1487,3 +1487,21 @@ decision is offered), and its LP is equivalent to the one before.
 
 Generated with `pytest tests/test_scenarios.py --regenerate network_coal_wind_battery_invest_cumulative`; the
 regeneration also rewrote `costs__dt.csv` (`0` → `0.0` number format), which was put back to its previous content.
+
+## 2026-11-11 — `wind_weighted` / `base_weighted` `summary_solve.csv` slack lines (item 219)
+
+**Context.** The Created / Removed / Inertia / NonSync / Reserve lines of `summary_solve.csv` are now
+Σ_t w·Δt·slack (timestep weight w, as the objective's penalty), not the unweighted Σ_t Δt·slack.
+
+Hand values (from `tests/fixtures/tests.json`, `weighted_2day` weights 0.5 / 1 / 1.5 / 2 per 12 steps of
+t0001-t0048, normalised to mean 1: 0.4 / 0.8 / 1.2 / 1.6; re-derived by an independent oracle):
+
+- `wind_weighted`: Created, west, p2020 **1964 → 1666.4** (Σ w_raw·slack = 2083, / 1.25); check: objective
+  900 · 1666.4 · 8760/48 / 1e6 = 273.7062 M CUR, the golden objective.
+- `base_weighted`: Created, west, p2020 **29103 → 31010** (31 010.4 printed with 5 significant digits); check:
+  900 · 31 010.4 = 27 909 360 CUR, the sum of the `upward slack penalty` column of the golden `costs__dt.csv`.
+
+The goldens with uniform weights are unchanged.  Generated with `pytest tests/test_scenarios.py --regenerate
+<scenario>`; the regeneration also rewrote the time stamp of `summary_solve.csv` and `base_weighted/costs__dt.csv`
+(`0` → `0.0` number format), which were put back to their previous content.  The section header ("Slack variables
+multiplied by timestep duration ...") is unchanged, so the other 17 goldens that print it stay as they are.

@@ -27,6 +27,12 @@
   years represented), not averages of the period shares; the "total" plots use them. Plot labels say what the
   numbers are: "(annualized)", "(horizon total)", costs in "M CUR/a (annualized)", "M CUR (horizon total,
   undiscounted)" and "M CUR (discounted)", CO2 in "Mt CO2 (horizon total)".
+- **Fixed (outputs): the slack lines of `summary_solve.csv` are weighted like the objective.** The Created /
+  Removed / Inertia / NonSync / Reserve lines summed the slack over the time steps × duration without the timestep
+  weights, so with `timeset_weights` or representative periods they did not match the penalty the objective
+  charges. They are now Σ w·Δt·slack per period (not annualised, as before). Uniform weights give the same numbers;
+  in a representative-period solve the line is now on the scale of the represented sample. The CapMargin line (per
+  period) is unchanged.
 - **Behaviour change (LP): an `invest_method` offers investment and retirement also without `invest_cost` /
   `salvage_value`.** A unit, connection or node whose `invest_method` allows investing now has its investment
   variable in every investment period of the solve, also where `invest_cost` is missing or 0; one that allows

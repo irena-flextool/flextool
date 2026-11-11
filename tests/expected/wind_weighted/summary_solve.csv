@@ -22,4 +22,4 @@ Emissions
 "CO2 [Mt]",0,"System-wide annualized CO2 emissions for realized periods"
 
 "Slack variables multiplied by timestep duration (creating or removing energy/matter, creating inertia, adding synchronous generation, decreasing capacity margin, creating reserve)"
-Created, west, p2020, 1964
+Created, west, p2020, 1666.4

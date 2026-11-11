@@ -94,13 +94,17 @@ def compute_slacks(par, s, v, r) -> None:
     # The annualised ``_d`` reporting series weights each (d, t) by
     # par.timestep_weight (=1.0 with no/uniform timeset_weights →
     # byte-identical) before the period sum, matching the cost-weighted
-    # objective.  The ``_not_annualized`` diagnostic sums (used for the raw
-    # Created/Removed slack-event reports) stay unweighted.
+    # objective.  The ``_d_sample`` sums (the Created / Removed / Inertia /
+    # NonSync / Reserve lines of summary_solve.csv) are weighted the same way,
+    # Σ_t w·Δt·slack, but not annualised (no / period_share, no inflation): the
+    # slack over the represented sample, on the scale of "Time in use".  Before,
+    # they were unweighted sums, which disagree with the penalty the objective
+    # charges whenever the timestep weights are not uniform.
     r.upward_node_slack_dt = v.q_state_up.mul(par.node_capacity_for_scaling[v.q_state_up.columns]).mul(par.step_duration, axis=0)
-    r.upward_node_slack_d_not_annualized = r.upward_node_slack_dt.groupby('period').sum()
+    r.upward_node_slack_d_sample = r.upward_node_slack_dt.mul(par.timestep_weight, axis=0).groupby('period').sum()
     r.upward_node_slack_d = annualize_dt_to_d(r.upward_node_slack_dt, par.timestep_weight, par.complete_period_share_of_year)
     r.downward_node_slack_dt = v.q_state_down.mul(par.node_capacity_for_scaling[v.q_state_down.columns]).mul(par.step_duration, axis=0)
-    r.downward_node_slack_d_not_annualized = r.downward_node_slack_dt.groupby('period').sum()
+    r.downward_node_slack_d_sample = r.downward_node_slack_dt.mul(par.timestep_weight, axis=0).groupby('period').sum()
     r.downward_node_slack_d = annualize_dt_to_d(r.downward_node_slack_dt, par.timestep_weight, par.complete_period_share_of_year)
     # Node-state slack penalty: apply timestep_weight (step_duration already in _slack_dt).
     upward_node_penalty = r.upward_node_slack_dt.mul(par.node_penalty_up[v.q_state_up.columns]) \
@@ -114,14 +118,13 @@ def compute_slacks(par, s, v, r) -> None:
     # Inertia penalty: mod uses × step_duration × timestep_weight (objective line ~2380).
     # Per-step cost = q × inertia_limit × penalty × step_duration × timestep_weight.
     r.q_inertia_dt = v.q_inertia.mul(inertia_limit_on_slack_cells(par.group_inertia_limit, v.q_inertia))
-    r.q_inertia_d_not_annualized = r.q_inertia_dt.mul(par.step_duration, axis=0).groupby('period').sum()
+    r.q_inertia_d_sample = r.q_inertia_dt.mul(step_x_rp, axis=0).groupby('period').sum()
     r.q_inertia_d = annualize_dt_to_d(r.q_inertia_dt, par.timestep_weight, par.complete_period_share_of_year, par.step_duration)
     r.costPenalty_inertia_dt = r.q_inertia_dt.mul(par.group_penalty_inertia).mul(step_x_rp, axis=0)
 
     # Non-synchronous penalty: mod uses × step_duration × timestep_weight (objective line ~2382).
     r.q_non_synchronous_dt = v.q_non_synchronous.mul(par.group_capacity_for_scaling[s.groupNonSync])
-    r.q_non_synchronous_d_not_annualized = r.q_non_synchronous_dt.mul(par.step_duration, axis=0) \
-        .groupby('period').sum()
+    r.q_non_synchronous_d_sample = r.q_non_synchronous_dt.mul(step_x_rp, axis=0).groupby('period').sum()
     r.q_non_synchronous_d = annualize_dt_to_d(
         r.q_non_synchronous_dt, par.timestep_weight,
         par.complete_period_share_of_year, par.step_duration)
@@ -148,7 +151,7 @@ def compute_slacks(par, s, v, r) -> None:
     # cells become NaN, and ``reduced_cells`` empties them anyway.
     r.q_reserves_dt = v.q_reserve.mul(
         par.reserve_upDown_group_shortfall_scale.reindex(columns=v.q_reserve.columns), axis=1)
-    r.q_reserves_d_not_annualized = r.q_reserves_dt.mul(par.step_duration, axis=0).groupby(level='period').sum()
+    r.q_reserves_d_sample = r.q_reserves_dt.mul(step_x_rp, axis=0).groupby(level='period').sum()
     r.q_reserves_d = annualize_dt_to_d(r.q_reserves_dt, par.timestep_weight, par.complete_period_share_of_year, par.step_duration)
     # Reserve slack penalty: step_duration is already here (line below);
     # add timestep_weight to match mod line ~2388.  ``shortfall_scale`` is the same multiplier the LP uses (it
