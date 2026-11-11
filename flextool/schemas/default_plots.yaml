@@ -34,6 +34,10 @@
 # - time_average_duration: Duration of time blocks that are averaged (in time steps)
 # - xlabel: Label for x axis (string or list of strings for per-subplot labels)
 # - ylabel: Label for y axis (string or list of strings for per-subplot labels)
+#     A label may hold the unit tokens of the nodes' unit_of_measure (quote it: '{A}/h'): {A} the amount unit
+#     (MWh, m3), {R} the rate (MW, m3/h), {kR} / {kA} the per-kW / per-kWh forms (kW, (0.001 m3/h)). For MWh
+#     nodes they read MWh, MW, kW, kWh; with other units each subplot gets the unit of its nodes, and a sum or
+#     stack over nodes of different units reads "Mixed units of measure!". A label without tokens is shown as written.
 # - axis_bounds: Fix value-axis limits. Options:
 #     'shared' — compute global min/max across all subplots and apply to all (for visual comparability)
 #     'independent' — each subplot auto-scales independently (default)

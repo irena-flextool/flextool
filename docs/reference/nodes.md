@@ -21,8 +21,34 @@ These parameters will define how the node will behave and use the data it is giv
     - *scale_to_annual_flow* - will scale the time series to match the `annual_flow` so that the sum of inflow is multiplied by 8760/`hours_in_solve`
     - *scale_in_proprotion* - calculates a scaling factor by dividing `annual_flow` with the sum of time series inflow (after it has been annualized using `timeline_duration_in_years`)
 	- *scale_to_annual_and_peak_flow* - scales the time series to match the 'annual_flow' target while transforming the time series to match the highest load with the 'peak_inflow'
+- `unit_of_measure` - [text] The unit of the node's amounts, for example *m3*, *t* or *MWh_th* (default *MWh*). A label only: FlexTool converts nothing. The node's results and the inputs about it are labelled in it: flows and the capacity of a unit on its side per hour (m3 → m3/h), storage and `inflow` per time step in the unit (m3), annual results per year (m3/a), prices and penalties per the unit (CUR/m3). See [Unit of measure](#unit-of-measure).
 
 ![image.png](../img/concept/nodes.png)
+
+## Unit of measure
+
+`unit_of_measure` names what the node holds: *MWh* (the default) for electricity, *m3* for water, *t* for
+hydrogen, *MWh_th* to tell heat from electricity. FlexTool uses it only for the labels of the results, the plots
+and the AI assistant; it changes no number. The node's rate is its unit per hour: m3 gives m3/h for its flows and
+for the capacity of a unit that delivers to it, MWh_th gives MW_th. The full rule and the table of labels are in
+[Units of measure](entities_and_time.md#units-of-measure).
+
+The inputs about the node are then in its units too:
+
+- `inflow`, `existing`, `invest_max_total` and the other capacities: in the node's unit (m3, or m3/h for a unit's
+  capacity on the node), entered as they are.
+- `penalty_up`, `penalty_down`, the `price` of a commodity on the node, `other_operational_cost` of a flow into
+  or out of it: per the node's unit (CUR/m3). Size the penalties for the unit: the default 10 000 is per MWh.
+- `invest_cost`, `fixed_cost`, `salvage_value`: per kW or kWh in an MWh model, so per 0.001 of the rate or the
+  amount here. A water tank that costs 20 CUR per m3 of storage has `invest_cost` 0.02 (20 × 0.001); a
+  desalination unit that costs 500 CUR per m3/h of capacity has `invest_cost` 0.5. Its annuity in the results is
+  per m3 for the tank (a storage capacity is an amount) and per m3/h for the unit (a capacity is a rate).
+- `efficiency` of a unit between nodes of different units: output units per input unit (12 m3/MWh).
+
+FlexTool warns when a connection, a commodity, a nodeGroup or flowGroup, or a group capacity limit spans nodes of
+different units (their sums are labelled *Mixed units of measure!*), when a reserve, inertia, non-synchronous or
+capacity-margin group has a member node that is not MWh, and when the value looks like a rate (*m3/h* instead of
+*m3*).
 
 ## Data for nodes
 

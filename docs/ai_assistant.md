@@ -601,11 +601,13 @@ wait.
 ## Units
 
 FlexTool does not check units. Its documented default units are MW for power, MWh for energy and CUR for the model's
-currency (see [Units of measure](reference/entities_and_time.md#units-of-measure)), and the result labels always use them. A model may
-use other units consistently, for example kg/h and kg for a hydrogen node. The tools therefore word every unit as the
-default convention ("MW (default convention)"), and the agent is told to ask, or to say that values are in the
-model's own units, when the description of a node, carrier or parameter suggests other units. Describing such
-entities (their `description` in the input data) helps the agent.
+currency (see [Units of measure](reference/entities_and_time.md#units-of-measure)). A node can set
+`unit_of_measure` (m3 for water): the tools then show the units of its inputs and results in it (`inflow` in m3,
+`penalty_up` in CUR/m3, a flow in m3/h), say which node set them, and refuse to add up values of nodes of different
+units. A model may also use other units without setting it. The tools word the other units as the default
+convention ("MW (default convention)"), and the agent is told to ask, or to say that values are in the model's own
+units, when the description of a node, carrier or parameter suggests other units. Describing such entities (their
+`description` in the input data) helps the agent.
 
 ## Try a tool from the terminal
 

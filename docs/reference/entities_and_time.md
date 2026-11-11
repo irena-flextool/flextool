@@ -301,8 +301,8 @@ The tool includes some assumptions about the time structure, in case something p
 
 
 ## Units of measure
-FlexTool does not check units. It combines the numbers you enter as they are, so any set of units works as
-long as it is consistent. The parameter descriptions, the defaults and the result labels use a default
+FlexTool does not check or convert units. It combines the numbers you enter as they are, so any set of units works
+as long as it is consistent. The parameter descriptions, the defaults and the result labels use a default
 convention because it reads well for most energy models:
 
 - power and flows: MW; energy and storage: MWh
@@ -310,18 +310,56 @@ convention because it reads well for most energy models:
 - emissions: tonnes of CO2
 - time: hours for time steps, years for lifetimes and years represented — these are fixed, not a convention.
 
-You can use other units for some nodes, for example kg/h for hydrogen flows and kg for its storage. Then
-every value connected to those nodes has to use them: prices in CUR/kg, efficiencies and conversion factors
-between the units (MWh of electricity per kg), capacities in kg/h, and the results of those nodes are in kg/h
-and kg even where the label says MW or MWh.
+**A node in another unit.** A node can hold something else than electricity: water in m3, hydrogen in t, heat
+that you want to label MWh_th. Set the node's `unit_of_measure` to the unit of its *amounts* (default MWh), and the
+result labels of that node follow it. Time steps are hours, so the node's *rate* is the amount per hour:
+
+| What | MWh node (default) | `unit_of_measure` m3 | `unit_of_measure` MWh_th |
+|---|---|---|---|
+| flows into and out of the node, unit and connection capacities on its side | MW | m3/h | MW_th |
+| storage state and capacity, `inflow` per time step | MWh | m3 | MWh_th |
+| flows summed over a period (annualized) | MWh/a | m3/a | MWh_th/a |
+| prices, `penalty_up` / `penalty_down`, commodity `price` | CUR/MWh | CUR/m3 | CUR/MWh_th |
+| `invest_cost`, `fixed_cost`, `salvage_value` of a unit whose capacity is on the node | CUR/kW | CUR per 0.001 m3/h | CUR/kW_th |
+| the same of a storage node | CUR/kWh | CUR per 0.001 m3 | CUR/kWh_th |
+
+The rule: a unit ending in `Wh` drops the `h` for the rate (MWh → MW, MWh_th → MW_th, kWh → kW), any other unit
+gets `/h` (m3 → m3/h, t → t/h). The value is case-sensitive (`mwh` gives `mwh/h`). It is a label only: FlexTool
+changes no number. Set the amount unit, not the rate: `m3`, not `m3/h` (FlexTool warns about a value that looks
+like a rate).
+
+**Costs per kW and kWh.** `invest_cost`, `fixed_cost` and `salvage_value` (and the group
+`penalty_capacity_margin`) are entered per kW or kWh, and FlexTool multiplies them by 1000. For a node in another
+unit they are per 0.001 of the rate or the amount. A desalination unit that costs 500 CUR per m3/h of capacity has
+`invest_cost` 0.5 (500 × 0.001); a water tank that costs 20 CUR per m3 has `invest_cost` 0.02. The capacities
+themselves are entered unchanged (2000 m3/h is 2000).
+
+**Efficiencies** are output units per input unit: a desalination unit that makes 12 m3 of water per MWh of heat has
+`efficiency` 12 [m3/MWh].
+
+**Penalties** (`penalty_up` 10 000 CUR/MWh by default) are sized for MWh. Set them yourself for a node in another
+unit, above the cost of the dearest real way to serve it.
+
+**Which node a result follows.** A result of a node, or of a flow into or out of it, takes that node's unit. A
+unit's capacity follows its output nodes (its input nodes when it has no output). When the outputs are in
+different units, the label shows how the capacity is used: `MW + MW_th` when the outputs share the capacity (a unit
+with several outputs or inputs, which FlexTool models with a sum of its outputs), `MW; MW_th` when each output is
+only capped on its own. A connection's flow to each of its nodes takes that node's unit (`connection__leftward` /
+`__rightward`). A storage node's annuity and investment cost are per its amount unit (CUR/MWh, CUR/m3): its
+capacity is an amount, how much it holds. A unit's or connection's are per its rate unit (CUR/MW, CUR/(m3/h)): its
+capacity is a rate.
+
+**Mixed units of measure!** One quantity summed over nodes whose units differ has no unit, and its label is
+`Mixed units of measure!`: a nodeGroup's flows over an electricity and a water node, a connection's net flow and
+losses between them, a plot that stacks or sums such columns. FlexTool warns about such sets when it reads the
+input data (a connection, a commodity, a nodeGroup or flowGroup, and a group capacity limit over different units).
+Reserves, inertia, the non-synchronous share and the capacity margin are power features: they stay in MW, and
+FlexTool warns about a member node of such a group that is not MWh (or MWh with a suffix, such as MWh_el).
+
+You can also use other units without setting `unit_of_measure`. Then every value connected to those nodes has to
+use them (prices in CUR/kg, capacities in kg/h, efficiencies between the units), and the results of those nodes
+are in your units even where the label says MW or MWh.
 
 The units written with the results (the `Units` sheet and `unit of measure` header row of the Excel workbook,
-`units.csv` of the CSV output, the results-database descriptions, the plot labels) follow the default convention.
-
-Two places need care:
-
-- Values entered per kW or kWh — `invest_cost`, `fixed_cost` and `salvage_value` of units, connections and
-  storage nodes, and the group `penalty_capacity_margin` — are multiplied by 1000 by FlexTool. With other
-  units this means "currency per thousandth of the flow unit" (CUR per g/h when flows are in kg/h).
-- Penalty defaults (for example `penalty_up` 10 000 CUR/MWh) are sized for MWh. Set them yourself when a node
-  uses other units.
+`units.csv` of the CSV output, the parquet metadata, the plot labels) follow these rules; see
+[Units in the files](../results.md#units-in-the-files).

@@ -59,6 +59,35 @@ The unit of measure of every value column is written with the results; it follow
 - **Excel, the first sheet `Units`**: one row per result sheet with the sheet name (a link to the sheet), the table name, the unit(s) (a table whose units differ by column lists them with `(by column)`), the semantics (instantaneous, annualized, discounted, …) and a description. `_output_metadata` follows with one row per value column (unit, semantics, tooltip, formula; in a scenario comparison the scenario of the column in its own `scenario` column). The header cells carry no comments: LibreOffice cannot save a workbook with them.
 - **CSV**: the CSV files are written as before; `units.csv` next to them has one row per value column: `file`, `position` (the 0-based column of the file), `header_1`, `header_2`, … (the labels of the column in the file's header rows, empty below the file's last header row), `unit` and `semantics`. `summary_solve.csv` has one row (`M CUR`) for its costs. `datapackage.json` is a Frictionless descriptor of every CSV file: the field names are the labels of a column joined with `|` as a Frictionless reader joins them (`coal|east`; a label equal to the one above it is a merged cell and is not repeated, so the index column `period` of a file with three header rows is `period|`), a file with several header rows says so in its `dialect` (`headerRows`, `headerJoin`; header rows that are blank in every column, as in a wide file without value columns, are `commentRows`), and each value field has its `unit`. `frictionless validate datapackage.json` passes. The names `units.csv` and `datapackage.json` cannot be given to a result in the `rename` section of the output settings.
 
+**Nodes with their own unit of measure.** When a node sets `unit_of_measure` (see
+[Units of measure](reference/entities_and_time.md#units-of-measure)), the units of its results follow it in every
+file: a flow into a water node in m3 is `m3/h`, its storage `m3`, its annual flow `m3/a`, its price `CUR/m3`. A
+sum over nodes of different units (a nodeGroup's flows over an electricity and a water node, a connection's net flow
+and losses between them) is labelled `Mixed units of measure!`. Reserves, inertia, the non-synchronous share and
+the capacity margin stay in MW. A table whose rows are of different units (`unit_capacity__d`,
+`connection_capacity__d`, `node_capacity__d`, the nodeGroup and flowGroup tables) gets the units of each row: the
+Excel Table ends in a column `unit of measure` with the row's units (for the nodeGroup tables, whose columns differ,
+the units of the row's columns joined, for example `m3; m3/a`), `units.csv` gets a `row` column and one row per
+column and row entity, and the parquet footer holds them (`flextool_row_units`). With every node in MWh, none of
+these is written and the files are as before. The scenario's parquet folder then also holds `_unit_context.json`
+(the node units and which nodes each result follows), which the plots, the GUI and the scenario comparison read; a
+run whose nodes are all MWh, or a run that writes no parquets, deletes it. A replay (`flextool-write-outputs`) takes
+the units from the parquet footers. In a scenario comparison each scenario's columns keep that scenario's units,
+and the combined comparison parquets carry them in their footer; a column whose unit differs between the scenarios
+gets a note.
+
+In the results database, a run with such a node defines the parameter `node` `unit_of_measure` (default `MWh`) and
+writes its value for the nodes that are not MWh; the descriptions of the other parameters give the units of an
+MWh node. A results database without this definition comes from runs whose nodes were all MWh.
+
+The plot labels follow the nodes too. The labels of `default_plots.yaml` are unit templates: `{A}` is the node's
+amount unit, `{R}` its rate, `{kR}` and `{kA}` the per-kW and per-kWh forms (`{A}/h`, `{A} (annualized)`,
+`Currency/{A}`, `CUR/{kR}`). For MWh nodes they read as before (`MWh/h`, `MWh (annualized)`, `CUR/kW`). With a node
+in another unit each subplot gets the unit of its nodes; a plot that sums, stacks or averages nodes of different
+units says `Mixed units of measure!`, and lines of several units list them (`MWh/h; m3/h`). The dispatch plots'
+y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens in your own `plot_settings.yaml`
+(or in a copy of the old default settings) is shown as written and does not follow the nodes.
+
 ## Costs
 
 - `model` entity `cost_annualized` parameter — M[CUR] (millions of user-chosen currency); annualized total cost broken down by category:

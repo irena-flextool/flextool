@@ -1,5 +1,27 @@
 ## Unreleased
 
+- **New: `node` `unit_of_measure` (data version 79).** A node can name the unit of its amounts (`m3` for water,
+  `t` for hydrogen, `MWh_th` for heat; default `MWh`). It is a label only: FlexTool converts nothing and no number
+  changes. The results of the node follow it in the parquet footer, the Excel workbook (unit row, unit block,
+  `Units` and `_output_metadata` sheets), `units.csv`, `datapackage.json`, the results database and the plots: flows
+  and the capacity of a unit on its side per hour (`m3/h`, `MW_th`), storage and inflow in the unit (`m3`), annual
+  results per year (`m3/a`), prices per the unit (`CUR/m3`). A unit whose outputs are in different units shows how
+  its capacity is used (`MW + MW_th` shared, `MW; MW_th` per output). One quantity summed over nodes of different
+  units, such as a nodeGroup's flows or a connection's net flow between an electricity and a water node, is
+  labelled `Mixed units of measure!`; reserves, inertia, the non-synchronous share and the capacity margin stay in
+  MW. Tables whose rows have different units get a per-row `unit of measure` column in Excel, a `row` column in
+  `units.csv` and row units in the parquet footer, written only when some node is not MWh, so outputs of models
+  whose nodes are all MWh are unchanged (except the annuity label below). The plot labels of `default_plots.yaml`
+  are unit templates (`{A}/h`, `{R}`, `CUR/{kR}`) that read as before for MWh nodes; a label in your own
+  `plot_settings.yaml` without tokens is shown as written. The dispatch plots' y-axis and the GUI hover follow the
+  node, and the AI assistant shows the units of the inputs and results of such a node (`inflow` in m3, `penalty_up`
+  in CUR/m3, `startup_energy` in m3 per MW started) and does not add up values of nodes of different units.
+  Warnings when the input data is read: a connection, commodity, nodeGroup, flowGroup or group capacity limit over
+  nodes of different units, a reserve / inertia / non-synchronous / capacity-margin group with a member that is not
+  MWh, and a value that looks like a rate (`m3/h`). Costs entered per kW or kWh (`invest_cost`, `fixed_cost`,
+  `salvage_value`) are per 0.001 of the node's rate or amount: 500 CUR per m3/h of capacity is `invest_cost` 0.5.
+  See [Units of measure](reference/entities_and_time.md#units-of-measure) and
+  [Unit of measure](reference/nodes.md#unit-of-measure).
 - **Fixed (labels only): the unit of a storage node's annuity.** `entity_annuity_d_p` holds units, connections and
   storage nodes in one table. A storage node's capacity is an amount (how much it holds), so its annuity is per
   amount unit: `CUR/MWh` (was `CUR/MW`), or `CUR/m3` for a node whose `unit_of_measure` is m3. A unit's or
@@ -29,7 +51,7 @@
   `reserve__upDown__group__d` (and of any mixed-unit table with several column levels) were missing from the parquet
   metadata, the `_output_metadata` sheet and `datapackage.json`, and the result tools of the AI assistant gave the
   capacity-margin `penalty_cost` and `capacity_price` columns the unit MW. A single-result write updates only its
-  own entries in `units.csv` and `datapackage.json`. See [Units in the files](docs/results.md#units-in-the-files).
+  own entries in `units.csv` and `datapackage.json`. See [Units in the files](results.md#units-in-the-files).
 - **Behaviour change (outputs): VRE curtailment, VRE potential and flow-group energies per period are scaled to
   a full year.** `unit_curtailment__outputNode__d`, `unit_outputNode_VRE_potential__d` and the `cumulative_flow` of
   `group_flow__d` were sums over the sampled time steps (the flow group's also without the timestep weights); they
