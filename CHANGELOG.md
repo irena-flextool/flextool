@@ -1,5 +1,13 @@
 ## Release 4.3.0 (11.11.2026) — AI assistant
 
+### Behaviour changes — read before upgrading
+
+- **Rolling solves of a unit, connection or storage node whose `existing` is a Map by period** (without
+  `virtual_unitsize`) now use the right unit size, so their rolling results can change; see "Solvers and rolling
+  solves".
+- **Gurobi now gets FlexTool's solver options** (it solved at its own defaults before), so Gurobi results can
+  change, for example a MIP stops at `solver_mip_gap`; see "Solvers and rolling solves".
+
 ### AI assistant
 
 - **Fixed: a chat in the AI assistant window changed model after the settings changed.** An open or reopened chat
