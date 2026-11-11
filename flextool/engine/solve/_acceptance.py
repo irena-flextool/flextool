@@ -20,6 +20,8 @@ non-``kOptimal`` solve is safe to accept:
 
 * ``kOptimal``                → accept (unchanged).
 * a genuine failure status    → reject, naming the precise cause.
+* ``kModelEmpty`` of an LP with rows but no variables (HiGHS ignores the
+  rows of such an LP) → reject, as infeasible when a row excludes 0.
 * ``kUnknown`` that is primal-feasible with a small primal--dual objective
   gap → accept as *near-optimal* (use the primal solution), else reject.
 
@@ -49,6 +51,8 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
+
+import numpy as np
 
 from flextool.engine.autoscale._report import (
     format_nonoptimal_hint as _format_nonoptimal_hint,
@@ -178,6 +182,8 @@ _FAILURE_MESSAGES: dict[str, str] = {
         "usable"
     ),
     "kModelEmpty": "has no variables or constraints",
+    # (A model with no variables but with rows is judged by its rows: see
+    # :func:`_classify_variable_free_model`.)
     "kNotset": "returned no model status",
     "kLoadError": "could not be loaded by the solver",
     "kModelError": "was rejected as malformed by the solver",
@@ -248,6 +254,62 @@ def _scaling_hint_for_reject(
     return hint or None
 
 
+#: How many failing rows a variable-free model's message names.
+_VARIABLE_FREE_ROWS_SHOWN = 5
+
+
+def _classify_variable_free_model(sol: "Solution", solve_name: str) -> Acceptance | None:
+    """The verdict on a ``kModelEmpty`` solve whose LP has rows but no columns, else ``None``.
+
+    Every row of such an LP reads ``row_lower <= 0 <= row_upper``.  A row that excludes 0 cannot hold, so the
+    model is infeasible (``kInfeasible``, the failing rows named).  When all hold, there is still nothing to
+    solve: rejected as ``kModelEmpty``, with a message that says the constraints are there.  ``None`` when the
+    live LP cannot be read or has no rows (the plain ``kModelEmpty`` message applies).
+    """
+    get_lp = getattr(getattr(sol, "highs", None), "getLp", None)
+    if not callable(get_lp):
+        return None
+    lp = get_lp()
+    if int(lp.num_col_) != 0 or int(lp.num_row_) == 0:
+        return None
+    lower = np.asarray(lp.row_lower_, dtype=np.float64)
+    upper = np.asarray(lp.row_upper_, dtype=np.float64)
+    tol = float(sol.primal_feasibility_tolerance) or 1e-7
+    failing = np.flatnonzero((lower > tol) | (upper < -tol))
+    n_rows = int(lp.num_row_)
+    if failing.size == 0:
+        return Acceptance(
+            accepted=False,
+            near_optimal=False,
+            message=(
+                f"solve for {solve_name} has no variables: its {n_rows} "
+                "constraints hold with nothing in them, so there is nothing "
+                "to solve"
+            ),
+            scaling_hint=None,
+            model_status="kModelEmpty",
+        )
+    names = list(getattr(sol, "row_names", None) or ())
+    shown = [
+        (names[i] if i < len(names) and names[i] else f"row {i}")
+        + f" (0 not in [{lower[i]:g}, {upper[i]:g}])"
+        for i in failing[:_VARIABLE_FREE_ROWS_SHOWN].tolist()
+    ]
+    more = failing.size - len(shown)
+    return Acceptance(
+        accepted=False,
+        near_optimal=False,
+        message=(
+            f"solve for {solve_name} is infeasible: the model has no "
+            f"variables, and {failing.size} of its {n_rows} "
+            f"constraints cannot hold with nothing in them: {', '.join(shown)}"
+            + (f" and {more} more" if more else "")
+        ),
+        scaling_hint=None,
+        model_status="kInfeasible",
+    )
+
+
 def classify_acceptance(
     sol: "Solution",
     *,
@@ -300,6 +362,14 @@ def classify_acceptance(
         )
 
     status = diag.model_status_name
+
+    # HiGHS reports any LP without columns as ``kModelEmpty`` and ignores its
+    # rows, so a variable-free row that cannot hold (a hard ``0 = demand``)
+    # would read as "no constraints".  Judge such rows here.
+    if status == "kModelEmpty":
+        variable_free = _classify_variable_free_model(sol, solve_name)
+        if variable_free is not None:
+            return variable_free
 
     # A named failure status is never acceptable — report the precise cause.
     if status in _FAILURE_MESSAGES:

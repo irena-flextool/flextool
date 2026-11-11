@@ -452,6 +452,11 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   *no_reserve* switched the reserve constraints on. These are no longer built: results are unchanged, except that
   the reserve shortfall tables (`slack__reserve__upDown__group__d` / `__dt`) no longer have an empty column for
   such groups, and in a model whose only reserve groups are *no_reserve* the reserve-provision tables are empty.
+- **A model without any variable is reported as infeasible when one of its constraints cannot hold.** HiGHS
+  reports a model with constraints but no variables as empty and does not look at the constraints, so FlexTool
+  said the solve "has no variables or constraints". Now it checks them: a constraint that cannot hold with
+  nothing in it (e.g. a node balance with demand and `penalty_method` *off*, but no unit or connection) makes the
+  solve infeasible, and the message names the first such constraints.
 - **The reserve shortfall penalty in the cost tables could be doubled.** In a model with several reserve groups
   (for example an up and a down reserve), the *upward / downward reserve slack penalty* of `costs__dt` and the cost
   summaries multiplied each group's shortfall by the scale of every group of the same reserve when the groups were

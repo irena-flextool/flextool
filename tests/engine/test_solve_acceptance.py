@@ -426,3 +426,81 @@ def test_malformed_primal_rel_knob_falls_back_to_the_derived_ceiling(monkeypatch
     for raw in ("abc", "0", "-1e-3"):
         monkeypatch.setenv("FLEXTOOL_ACCEPT_PRIMAL_REL", raw)
         assert primal_rel_ceiling(1e-3) == pytest.approx(1e-2, rel=1e-12)
+
+
+# --- an LP with rows but no variables (HiGHS: kModelEmpty) -------------------
+
+
+def _variable_free_highs(row_lower: list[float], row_upper: list[float]):
+    """A real HiGHS run of an LP with these rows and no column: HiGHS reports ``kModelEmpty`` and ignores the
+    rows."""
+    import highspy
+    import numpy as np
+
+    h = highspy.Highs()
+    h.setOptionValue("output_flag", False)
+    lp = highspy.HighsLp()
+    lp.num_col_ = 0
+    lp.num_row_ = len(row_lower)
+    lp.row_lower_ = np.array(row_lower, dtype=np.float64)
+    lp.row_upper_ = np.array(row_upper, dtype=np.float64)
+    lp.a_matrix_.start_ = np.array([0])
+    h.passModel(lp)
+    h.run()
+    assert h.getModelStatus().name == "kModelEmpty"
+    return h
+
+
+def _variable_free_solution(row_lower, row_upper, row_names):
+    sol = _StubSolution(optimal=False, diagnostics=_diag(status_name="kModelEmpty", primal_feasible=False))
+    sol.highs = _variable_free_highs(row_lower, row_upper)
+    sol.row_names = row_names
+    return sol
+
+
+def test_variable_free_row_that_cannot_hold_is_infeasible() -> None:
+    """A hard balance ``0 = 589`` with nothing in it: infeasible, not "no variables or constraints"."""
+    acc = classify_acceptance(
+        _variable_free_solution([0.0, 589.0, -1.0], [0.0, 589.0, 2.0], ["holds", "balance[west,t1]", "range"]),
+        ranges_post=None,
+        solve_name="s",
+    )
+    assert not acc.accepted
+    assert acc.model_status == "kInfeasible"
+    assert acc.message == (
+        "solve for s is infeasible: the model has no variables, and 1 of its 3 constraints cannot hold with "
+        "nothing in them: balance[west,t1] (0 not in [589, 589])")
+
+
+def test_variable_free_failing_rows_are_capped_in_the_message() -> None:
+    n = 7
+    acc = classify_acceptance(
+        _variable_free_solution([-math.inf] * n, [-1.0] * n, [f"r{i}" for i in range(n)]),
+        ranges_post=None,
+        solve_name="s",
+    )
+    assert acc.model_status == "kInfeasible"
+    assert acc.message.endswith("r4 (0 not in [-inf, -1]) and 2 more")
+    assert "r5" not in acc.message
+
+
+def test_variable_free_rows_that_hold_say_there_is_nothing_to_solve() -> None:
+    acc = classify_acceptance(
+        _variable_free_solution([0.0, -math.inf], [0.0, 3.0], ["a", "b"]),
+        ranges_post=None,
+        solve_name="s",
+    )
+    assert not acc.accepted
+    assert acc.model_status == "kModelEmpty"
+    assert acc.message == (
+        "solve for s has no variables: its 2 constraints hold with nothing in them, so there is nothing to solve")
+
+
+def test_model_empty_without_a_readable_lp_keeps_the_plain_message() -> None:
+    acc = classify_acceptance(
+        _StubSolution(optimal=False, diagnostics=_diag(status_name="kModelEmpty", primal_feasible=False)),
+        ranges_post=None,
+        solve_name="s",
+    )
+    assert acc.model_status == "kModelEmpty"
+    assert acc.message == "solve for s has no variables or constraints"
