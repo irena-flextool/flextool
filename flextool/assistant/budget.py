@@ -196,7 +196,7 @@ class LevelBudget:
 
 #: Starting values that the calibration informs (P3 §4.1, §7.6).  The prefix budgets are above the estimate of
 #: the shipped instructions and tool schemas at the worst front end (the GUI; ``tests/assistant/test_prompt_budget``
-#: pins each level × front end).  P3 §4.1 drafted 3 500 / 7 500 / 8 500 before the schemas were final; basic rose
+#: checks each level × front end fits).  P3 §4.1 drafted 3 500 / 7 500 / 8 500 before the schemas were final; basic rose
 #: to 4 700 with list_sources, to 4 850 with get_parameter's lists, standard to 8 700; Cycle 2: basic
 #: 4 920 (C2-D1: a 16 384-token window fits a part's three 2 000-character float-heavy results, 4 088 tokens, up to
 #: a prefix of 4 923; C2-OD2's 4 950 assumed 1.5 characters a token, which such results undercut),
