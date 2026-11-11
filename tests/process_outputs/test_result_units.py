@@ -16,9 +16,11 @@ import pytest
 
 from flextool.process_outputs._excel_writer import (
     UNIT_LEVEL,
+    _measures,
     reserved_sheet_names,
     table_headers,
     table_name,
+    units_sheet_row,
     write_excel_with_metadata,
 )
 from flextool.process_outputs._output_meta import (
@@ -105,6 +107,17 @@ def test_summarise_units_is_the_reducer_of_the_summaries():
     assert summarise_units(["MW", "MWh/a", "MW"]) == "MW; MWh/a"
     assert summarise_units([]) == ""
     assert result_key_summary("flowGroup_gd_p")[0] == "MW; MWh/a"
+    # A mixed table with unitless columns: the same text in the database / GUI / plot summary and on the
+    # workbook's Units sheet (which adds only its "(by column)" note).
+    assert result_key_summary("nodeGroup_gd_p")[0] == "MWh/a; per unit"
+    for key, spec in OUTPUT_TRANSFORM.items():
+        if not isinstance(spec, dict) or "*" in spec or len(OUTPUT_DIMS[key].columns) != 1:
+            continue
+        df = pd.DataFrame([[0.0] * len(spec)], columns=pd.Index(list(spec), name=OUTPUT_DIMS[key].columns[0]))
+        row = units_sheet_row("s", key, df, _measures(key, df))
+        summary = result_key_summary(key)
+        expected = "per unit" if summary is None or summary[0] == "ratio" else summary[0]
+        assert row[UNIT_LEVEL].removesuffix(" (by column)") == expected, key
 
 
 def test_every_mixed_table_declares_its_label_level():
@@ -194,7 +207,9 @@ def test_workbook_layout(tmp_path: Path):
     assert ws.tables["tbl_annualized_costs__d"].ref == "A1:D4"
     assert _side_block(ws, 6) == [("column", UNIT_LEVEL, "semantics"),
                                   ("all value columns", "M CUR/a", "annualized")]
-    assert "M CUR/a" in ws.cell(row=1, column=3).comment.text
+    # No header comments: they break a LibreOffice save; the Units sheet and the unit block carry the units.
+    assert ws.cell(row=1, column=3).comment is None
+    assert wb["Units"].freeze_panes == "A2" and wb["Units"].column_dimensions["A"].width > 20
 
     # A mixed table lists its units per column; the sheet name ``CO2`` gives a Table name that is not a cell.
     ws = wb["CO2"]
@@ -217,6 +232,12 @@ def test_comparison_workbook_adds_the_unit_level_below_the_scenario_level(tmp_pa
     back = pd.read_excel(xlsx, sheet_name="flowGroup__gd", header=[0, 1, 2], index_col=[0, 1])
     assert list(back.columns.names) == ["scenario", "parameter", UNIT_LEVEL]
     assert [c[2] for c in back.columns] == ["MWh/a", "MW", "MWh/a", "MW"]
+    # _output_metadata gives the scenario of a column in its own cell.
+    meta = pd.read_excel(xlsx, sheet_name="_output_metadata")
+    assert list(meta.columns[:4]) == ["sheet", "output", "scenario", "column"]
+    assert list(zip(meta["scenario"], meta["column"], meta["unit"])) == [
+        ("base", "cumulative_flow", "MWh/a"), ("base", "average_flow", "MW"),
+        ("high", "cumulative_flow", "MWh/a"), ("high", "average_flow", "MW")]
 
 
 def test_reserved_and_invalid_names():

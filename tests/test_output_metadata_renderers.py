@@ -14,14 +14,13 @@ import pytest
 
 from flextool.plot_outputs.config import default_ylabel_for
 from flextool.process_outputs import write_spinedb
+from flextool.process_outputs._excel_writer import write_excel_with_metadata
 from flextool.process_outputs._output_meta import (
     datapackage_resource,
     output_metadata_rows,
     result_key_summary,
     result_variant_summary,
 )
-from flextool.process_outputs.write_outputs import write_excel_with_metadata
-
 
 # ── CSV sidecar: datapackage_resource ───────────────────────────────────────
 
@@ -79,7 +78,7 @@ def test_output_metadata_rows_undeclared_empty():
     assert output_metadata_rows("nope", ["a", "b"]) == []
 
 
-def test_excel_writer_embeds_metadata_sheet_and_comments(tmp_path):
+def test_excel_writer_embeds_metadata_sheet(tmp_path):
     openpyxl = pytest.importorskip("openpyxl")
     df = pd.DataFrame(
         {"commodity_cost": [1.0, 2.0]},
@@ -99,11 +98,9 @@ def test_excel_writer_embeds_metadata_sheet_and_comments(tmp_path):
     body = [c.value for c in next(meta.iter_rows(min_row=2, max_row=2))]
     assert body[2] == "commodity_cost" and body[3] == "M CUR/a"
 
-    # Header-cell comment on the measure column (index has 2 levels -> col 2).
+    # No header-cell comments (a LibreOffice save fails on them); the units are on the Units sheet.
     ws = wb["annualized costs"]
-    comment = ws.cell(row=1, column=3).comment
-    assert comment is not None
-    assert "M CUR/a" in comment.text and "annualized" in comment.text
+    assert ws.cell(row=1, column=3).comment is None
 
 
 # ── Spine: merge units at DB-create (prose kept, units from _output_meta) ────

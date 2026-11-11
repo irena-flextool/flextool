@@ -21,6 +21,7 @@ import pandas as pd
 from flextool.process_outputs._output_meta import (
     OUTPUT_DESCRIPTION,
     ColumnMeta,
+    _scenario_level,
     Semantics,
     display_unit,
     output_metadata_rows,
@@ -37,6 +38,13 @@ METADATA_SHEET = "_output_metadata"
 RESERVED_SHEET_NAMES: frozenset[str] = frozenset({UNITS_SHEET.lower(), METADATA_SHEET.lower()})
 UNITS_SHEET_COLUMNS = ["sheet", "table", UNIT_LEVEL, "semantics", "description"]
 METADATA_COLUMNS = ["sheet", "output", "column", "unit", "semantics", "tooltip", "long", "formula"]
+#: ``_output_metadata`` of a scenario comparison: the scenario of a column in its own column.
+COMPARISON_METADATA_COLUMNS = ["sheet", "output", "scenario", "column", "unit", "semantics", "tooltip", "long",
+                               "formula"]
+#: Column widths (characters) of the ``Units`` and ``_output_metadata`` sheets.
+_UNITS_WIDTHS = {"sheet": 32, "table": 32, UNIT_LEVEL: 24, "semantics": 16, "description": 80}
+_METADATA_WIDTHS = {"sheet": 32, "output": 32, "scenario": 20, "column": 32, "unit": 14, "semantics": 14,
+                    "tooltip": 60, "long": 60, "formula": 40}
 _TABLE_STYLE = "Table Style Light 1"
 _MAX_TABLE_HEADER = 255
 
@@ -122,21 +130,6 @@ def _unit_block_rows(df: pd.DataFrame, measures: list[ColumnMeta | None]) -> lis
     return lines
 
 
-def _write_comments(worksheet, rows: list[dict], columns, first_col: int) -> None:
-    """Hover notes on the header cells of the value columns (row 0, from column *first_col* on)."""
-    by_col = {r["column"]: r for r in rows}
-    for j, col in enumerate(columns):
-        r = by_col.get(str(col))
-        if r is None:
-            continue
-        note = [f"unit: {r['unit'] or '—'}", f"semantics: {r['semantics']}"]
-        if r["tooltip"]:
-            note.append(r["tooltip"])
-        if r["formula"]:
-            note.append(f"formula: {r['formula']}")
-        worksheet.write_comment(0, first_col + j, "\n".join(note))
-
-
 def _write_wide_sheet(writer, sheet_name: str, df: pd.DataFrame, measures: list[ColumnMeta | None]) -> None:
     """A sheet with two or more column levels, with :data:`UNIT_LEVEL` appended as the last header row."""
     units = [display_unit(m) if m is not None else "" for m in measures]
@@ -148,22 +141,18 @@ def _write_wide_sheet(writer, sheet_name: str, df: pd.DataFrame, measures: list[
     df.to_excel(writer, sheet_name=sheet_name)
 
 
-def _write_table_sheet(writer, sheet_name: str, raw_key: str, df: pd.DataFrame,
+def _write_table_sheet(writer, sheet_name: str, df: pd.DataFrame,
                        measures: list[ColumnMeta | None], tables: set[str]) -> None:
-    """A sheet with one column level: an Excel Table at ``A1``, header comments and the unit block."""
+    """A sheet with one column level: an Excel Table at ``A1`` and the unit block beside it."""
     flat = _flat_table(df)
     flat.to_excel(writer, sheet_name=sheet_name, index=False, merge_cells=False)
     worksheet = writer.sheets[sheet_name]
     n_rows, n_cols = flat.shape
-    n_index = n_cols - df.shape[1]
     worksheet.add_table(0, 0, n_rows, n_cols - 1, {
         "name": table_name(sheet_name, tables),
         "columns": [{"header": h} for h in flat.columns],
         "style": _TABLE_STYLE,
     })
-    rows = output_metadata_rows(raw_key, list(df.columns))
-    if rows:
-        _write_comments(worksheet, rows, df.columns, n_index)
     block = _unit_block_rows(df, measures)
     if block:
         start = n_cols + 1
@@ -188,6 +177,31 @@ def units_sheet_row(sheet_name: str, raw_key: str, df: pd.DataFrame,
             "description": OUTPUT_DESCRIPTION.get(raw_key, "")}
 
 
+def _metadata_rows(sheet_name: str, raw_key: str, df: pd.DataFrame) -> list[dict]:
+    """The ``_output_metadata`` rows of one data sheet.  In a scenario comparison the scenario of a column is
+    given in its own ``scenario`` cell and ``column`` holds the column's own label."""
+    rows = output_metadata_rows(raw_key, list(df.columns))
+    scen_pos = _scenario_level(raw_key, df.columns.nlevels, list(df.columns.names)
+                               if any(n is not None for n in df.columns.names) else None)
+    if scen_pos is None or df.columns.nlevels < 2:
+        return [{"sheet": sheet_name, **r} for r in rows]
+    by_name = {str(col): col for col in df.columns}
+    out = []
+    for r in rows:
+        col = by_name[r["column"]]
+        rest = col[:scen_pos] + col[scen_pos + 1:]
+        out.append({"sheet": sheet_name, **r, "scenario": str(col[scen_pos]),
+                    "column": str(rest[0]) if len(rest) == 1 else str(rest)})
+    return out
+
+
+def _format_list_sheet(worksheet, columns: list[str], widths: dict[str, int]) -> None:
+    """Readable column widths and a frozen header row on a list sheet (``Units``, ``_output_metadata``)."""
+    for j, name in enumerate(columns):
+        worksheet.set_column(j, j, widths.get(name, 16))
+    worksheet.freeze_panes(1, 0)
+
+
 def write_excel_with_metadata(excel_path, sheets) -> None:
     """Write ``sheets``, a list of ``(sheet_name, raw_output_key, df)``, to the workbook ``excel_path``.
 
@@ -205,21 +219,25 @@ def write_excel_with_metadata(excel_path, sheets) -> None:
         df = _as_frame(df)
         measures = _measures(raw_key, df)
         prepared.append((sheet_name, raw_key, df, measures))
-        meta_rows.extend({"sheet": sheet_name, **r} for r in output_metadata_rows(raw_key, list(df.columns)))
+        meta_rows.extend(_metadata_rows(sheet_name, raw_key, df))
         units_rows.append(units_sheet_row(sheet_name, raw_key, df, measures))
 
     with pd.ExcelWriter(excel_path, engine="xlsxwriter") as writer:
         pd.DataFrame(units_rows, columns=UNITS_SHEET_COLUMNS).to_excel(
             writer, sheet_name=UNITS_SHEET, index=False)
+        _format_list_sheet(writer.sheets[UNITS_SHEET], UNITS_SHEET_COLUMNS, _UNITS_WIDTHS)
         if meta_rows:
-            pd.DataFrame(meta_rows, columns=METADATA_COLUMNS).to_excel(
+            columns = (COMPARISON_METADATA_COLUMNS if any("scenario" in r for r in meta_rows)
+                       else METADATA_COLUMNS)
+            pd.DataFrame(meta_rows, columns=columns).to_excel(
                 writer, sheet_name=METADATA_SHEET, index=False)
+            _format_list_sheet(writer.sheets[METADATA_SHEET], columns, _METADATA_WIDTHS)
         tables: set[str] = set()
         for sheet_name, raw_key, df, measures in prepared:
             if df.columns.nlevels >= 2:
                 _write_wide_sheet(writer, sheet_name, df, measures)
             else:
-                _write_table_sheet(writer, sheet_name, raw_key, df, measures, tables)
+                _write_table_sheet(writer, sheet_name, df, measures, tables)
         units_ws = writer.sheets[UNITS_SHEET]
         link = writer.book.add_format({"font_color": "blue", "underline": 1})
         for i, (sheet_name, *_rest) in enumerate(prepared, start=1):

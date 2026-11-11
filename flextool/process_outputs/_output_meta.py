@@ -1010,11 +1010,14 @@ def result_key_summary(result_key: str) -> "tuple[str, str, str] | None":
     if spec is None:
         return None
     if isinstance(spec, dict):
-        units = summarise_units([t.unit for t in spec.values()])
-        sems = sorted({t.semantics.value for t in spec.values()
-                       if t.semantics is not Semantics.DIMENSION})
+        measures = [t for t in spec.values() if t.semantics is not Semantics.DIMENSION]
+        sems = sorted({t.semantics.value for t in measures})
         if not sems:
             return None
+        # A unitless column counts as ``per unit``, as on the workbook's ``Units`` sheet; a table of only
+        # unitless columns gets the ``ratio`` sentinel of a uniform unitless output.
+        units = (summarise_units([t.unit or UNITLESS for t in measures])
+                 if any(t.unit for t in measures) else "")
         return (units or "ratio",
                 "mixed" if len(sems) > 1 else sems[0],
                 "Mixed-unit table — units vary by column.")
@@ -1081,13 +1084,24 @@ def output_metadata_rows(output_key: str, columns) -> list[dict[str, str]]:
         rows.append({
             "output": output_key,
             "column": cm.name,
-            "unit": cm.unit,
+            "unit": display_unit(cm),
             "semantics": cm.semantics.value,
             "tooltip": cm.tooltip,
             "long": cm.long,
             "formula": cm.formula,
         })
     return rows
+
+
+def _joined_label(texts: list[str]) -> str:
+    """The field name a Frictionless reader derives from the header-row cells *texts* of one column: the
+    cells joined with ``|``, where a cell equal to the one above it is skipped (Frictionless's reading of a
+    merged header cell, so ``solve, "", "", ""`` gives ``solve|``)."""
+    parts = texts[:1]
+    for text in texts[1:]:
+        if text != parts[-1]:
+            parts.append(text)
+    return "|".join(parts)
 
 
 def datapackage_resource(
@@ -1106,9 +1120,10 @@ def datapackage_resource(
     ``header`` is the list of column labels as written to the CSV (index
     columns first, a tuple per column when the file has several header rows).
     When given, the field names are the written header: the labels of a
-    column joined with ``|`` (with ``flextool:header`` = the label list) and a
+    column joined with ``|`` the way Frictionless joins them (see :func:`_joined_label`; with ``flextool:header`` = the label list) and a
     ``dialect`` with ``headerRows`` / ``headerJoin`` for a multi-row header,
-    so a Frictionless reader derives the same field names from the file.
+    so a Frictionless reader derives the same field names from the file.  Header rows that are blank in
+    every column (a wide table with no value columns) are ``commentRows`` and left out of the names.
     """
     resolved = resolve_columns(output_key, measure_columns) or []
     meta = {i: m for i, m in enumerate(resolved)}
@@ -1136,19 +1151,28 @@ def datapackage_resource(
             spec["flextool:docs"] = cm.docs
         return spec
 
-    n_header_rows = 1
+    header_rows: list[int] = [1]
+    blank_rows: list[int] = []
     if header is not None:
         labels = [c if isinstance(c, tuple) else (c,) for c in header]
         n_header_rows = max((len(t) for t in labels), default=1)
-        for pos, label in enumerate(labels):
-            texts = ["" if v is None else str(v) for v in label]
-            name = "|".join(texts)
+        all_texts = [["" if v is None else str(v) for v in label] + [""] * (n_header_rows - len(label))
+                     for label in labels]
+        # A header row that is blank in every column (a wide table written without value columns) is not
+        # a header row to a reader: Frictionless would skip it as a blank row and take the next data row
+        # as the header.  It is described as a comment row, and the field names leave it out.
+        kept = [i for i in range(n_header_rows) if i == 0 or any(t[i] for t in all_texts)]
+        header_rows = [i + 1 for i in kept]
+        blank_rows = [i + 1 for i in range(n_header_rows) if i not in kept]
+        for pos, full in enumerate(all_texts):
+            texts = [full[i] for i in kept]
+            name = _joined_label(texts)
             cm = meta.get(pos - n_index) if pos >= n_index else None
             if cm is None or cm.semantics is Semantics.DIMENSION:
                 spec = _dimension_field(name)
             else:
                 spec = _measure_field(name, cm)
-            if n_header_rows > 1:
+            if len(header_rows) > 1:
                 spec["flextool:header"] = texts
             fields.append(spec)
     else:
@@ -1178,8 +1202,10 @@ def datapackage_resource(
         "profile": "tabular-data-resource",
         "schema": {"fields": fields},
     }
-    if n_header_rows > 1:
-        resource["dialect"] = {"headerRows": list(range(1, n_header_rows + 1)), "headerJoin": "|"}
+    if len(header_rows) > 1:
+        resource["dialect"] = {"headerRows": header_rows, "headerJoin": "|"}
+    if blank_rows:
+        resource.setdefault("dialect", {})["commentRows"] = blank_rows
     return resource
 
 

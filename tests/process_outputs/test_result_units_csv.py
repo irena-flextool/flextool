@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from flextool.process_outputs._csv_sidecars import (
@@ -52,10 +53,78 @@ def test_sidecar_names_are_reserved():
         _csv_filename("node_units", {"node_units": ["units", True]}, used)
 
 
-def _header_rows(path: Path, n: int) -> list[tuple[str, ...]]:
+def _header_rows(path: Path, dialect: dict) -> list[tuple[str, ...]]:
+    """The labels of every column in the file's header rows (``dialect.headerRows``, default ``[1]``); the
+    ``commentRows`` among the first lines must be blank."""
+    header_rows = dialect.get("headerRows", [1])
+    comment_rows = dialect.get("commentRows", [])
+    n = max([*header_rows, *comment_rows])
     with open(path, newline="", encoding="utf-8") as fh:
         rows = [next(csv.reader([line])) for line, _ in zip(fh, range(n))]
-    return list(zip(*rows))
+    for r in comment_rows:
+        assert not any(rows[r - 1]), (path.name, r)
+    assert sorted([*header_rows, *comment_rows]) == list(range(1, n + 1)), path.name
+    return list(zip(*(rows[r - 1] for r in header_rows)))
+
+
+def _frictionless_name(labels: tuple[str, ...]) -> str:
+    """A column's name as Frictionless reads a multi-row header: the labels joined with '|', a label equal to
+    the one above it left out (a merged cell)."""
+    parts: list[str] = []
+    for label in labels:
+        if not parts or label != parts[-1]:
+            parts.append(label)
+    return "|".join(parts)
+
+
+def _check_resource(csv_dir: Path, res: dict) -> list[tuple[str, ...]]:
+    """The resource's field names are the file's header as Frictionless joins it."""
+    header = _header_rows(csv_dir / res["path"], res.get("dialect", {}))
+    assert [f["name"] for f in res["schema"]["fields"]] == [_frictionless_name(h) for h in header], res["path"]
+    return header
+
+
+def _write_like_the_writer(df: pd.DataFrame, path: Path) -> list:
+    """Write *df* as the CSV writer does and return the written header."""
+    out = df.reset_index()
+    out.columns.names = [None] * out.columns.nlevels
+    out.to_csv(path, index=False, float_format="%.8g")
+    return list(out.columns)
+
+
+@pytest.mark.parametrize("n_levels", [2, 3])
+@pytest.mark.parametrize("with_values", [False, True])
+def test_wide_csv_resource_validates(tmp_path: Path, with_values: bool, n_levels: int):
+    """A wide table validates with and without value columns: with none, the CSV's lower header rows are
+    blank and are described as comment rows; with values, an index column's blank cells below its name
+    read as one merged cell (``period|``)."""
+    from flextool.process_outputs._output_meta import datapackage_resource
+    index = pd.MultiIndex.from_tuples([("p1", "t1"), ("p1", "t2")], names=["period", "time"])
+    label = ("u1", "n1", "c1")[:n_levels]
+    cols = pd.MultiIndex.from_tuples([label] if with_values else [], names=["unit", "node", "x"][:n_levels])
+    df = pd.DataFrame([[1.0], [2.5]] if with_values else [[], []], index=index, columns=cols)
+    header = _write_like_the_writer(df, tmp_path / "t.csv")
+    res = datapackage_resource("unit_outputNode_dt_ee", "t.csv", list(index.names), list(df.columns),
+                               header=header)
+    dialect = res.get("dialect", {})
+    assert dialect.get("commentRows", []) == ([] if with_values else list(range(2, n_levels + 1)))
+    assert dialect.get("headerRows", [1]) == (list(range(1, n_levels + 1)) if with_values else [1])
+    names = [f["name"] for f in res["schema"]["fields"]]
+    assert names[:2] == (["period|", "time|"] if with_values else ["period", "time"])
+    _check_resource(tmp_path, res)
+    _validate(tmp_path, [res])
+
+
+def _validate(csv_dir: Path, resources: list[dict]) -> None:
+    """Frictionless validation of the whole package when Frictionless is installed (the in-test checks of
+    :func:`_check_resource` run either way)."""
+    try:
+        import frictionless
+    except ImportError:
+        return
+    write_datapackage(str(csv_dir), resources)
+    report = frictionless.Package(str(csv_dir / "datapackage.json")).validate()
+    assert report.valid, report.flatten(["type", "note"])[:5]
 
 
 @pytest.mark.solver
@@ -82,28 +151,23 @@ def test_scenario_csv_sidecars(test_db_url: str, test_solver_config_dir: Path, t
     assert {r["path"] for r in dp["resources"]} == written
     assert any(r["file"] == "summary_solve.csv" and r["unit"] == "M CUR" for r in units)
 
-    wide = None
     n_measures = 0
+    n_wide = 0
     for res in dp["resources"]:
-        fields = res["schema"]["fields"]
-        n_rows = len(res.get("dialect", {}).get("headerRows", [1]))
-        header = _header_rows(csv_dir / res["path"], n_rows)
-        # The field names are the file's header, the labels of a column joined with '|'.
-        assert [f["name"] for f in fields] == ["|".join(h) for h in header], res["path"]
-        for pos, field in enumerate(fields):
+        header = _check_resource(csv_dir, res)
+        n_wide += len(res.get("dialect", {}).get("headerRows", [1])) > 1
+        for pos, field in enumerate(res["schema"]["fields"]):
             if field["flextool:semantics"] == "dimension":
                 assert (res["path"], pos) not in by_pos
                 continue
             n_measures += 1
             row = by_pos[(res["path"], pos)]
             assert row["unit"] == (field.get("unit") or "per unit"), (res["path"], pos)
-            assert tuple(row[f"header_{i + 1}"] for i in range(n_rows)) == header[pos]
-        if n_rows > 1 and wide is None:
-            wide = res
+            assert tuple(row[f"header_{i + 1}"] for i in range(len(header[pos]))) == header[pos]
     assert n_measures == len(by_pos)
-    assert wide is not None
+    assert n_wide > 0
 
-    # A Frictionless reader joins the header rows into the same field names and finds the file valid.
+    # A Frictionless reader finds every file valid against its resource (the whole package).
     frictionless = pytest.importorskip("frictionless")
-    report = frictionless.Resource(dict(wide), basepath=str(csv_dir)).validate()
+    report = frictionless.Package(str(csv_dir / "datapackage.json")).validate()
     assert report.valid, report.flatten(["type", "note"])[:5]

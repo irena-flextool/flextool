@@ -17,7 +17,7 @@ from flextool import run_record
 
 from flextool.lean_parquet import read_lean_parquet, read_lean_parquet_solve_labels, write_lean_parquet
 from flextool.process_outputs._sheet_names import excel_sheet_name
-from flextool.process_outputs._excel_writer import reserved_sheet_names, write_excel_with_metadata  # noqa: F401
+from flextool.process_outputs._excel_writer import reserved_sheet_names, write_excel_with_metadata
 from flextool.process_outputs.solve_order import INVESTMENT_PERIOD_TABLES, period_solve_labels
 from flextool.process_outputs._output_meta import (
     datapackage_resource,
