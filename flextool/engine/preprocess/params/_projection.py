@@ -58,6 +58,7 @@ from flextool.engine.input._param_shapes import (
     facet_long_frame,
     resolve_facet_groups,
 )
+from flextool.engine.preprocess._co2_methods import CO2_MAX_PERIOD_METHODS
 from flextool.engine.preprocess._reserve_methods import RESERVE_METHODS_BY_PARTITION
 
 
@@ -858,14 +859,21 @@ def flow_to_commodity(source: "InputSource",
 # ---------------------------------------------------------------------------
 
 def group_co2_max_period(source: "InputSource") -> pl.DataFrame:
-    """Distinct groups with a non-empty ``co2_max_period`` Map.
+    """Groups whose ``co2_method`` caps the emissions per period (``period``, ``price_period``,
+    ``period_total``, ``price_period_total``).
+
+    The same set as the period-cap rows of the LP (the method-gated ``solve_data/group_co2_max_period``,
+    ``emit/_leaf_sets.derive_group_co2``).  A group with ``co2_max_period`` but another method has no cap
+    (an input warning); a capping method without the value is an input error
+    (``params/_direct.require_co2_cap_values``).
 
     Schema: ``[g]``.
     """
-    df = _try_param(source, "group", "co2_max_period")
+    df = _try_param(source, "group", "co2_method")
     if df is None:
         return _empty({"g": pl.Utf8})
     return (df.lazy()
+              .filter(pl.col("value").cast(pl.Utf8).is_in(list(CO2_MAX_PERIOD_METHODS)))
               .select(alias_to_axis("name", "g"))
               .unique()
               .sort("g")
@@ -1450,9 +1458,12 @@ def process_sink_nonSync(source: "InputSource") -> pl.DataFrame:
 # ---------------------------------------------------------------------------
 
 def reserve_upDown_group(source: "InputSource") -> pl.DataFrame:
-    """Distinct ``(r, ud, g)`` tuples for reserves with a populated
-    ``reserve_method`` (the active reserve subset; entities without a
-    method are silently dropped, mirroring flextool's preprocessing).
+    """Distinct ``(r, ud, g)`` tuples for reserves with a ``reserve_method``
+    other than ``no_reserve`` (the active reserve subset; entities without a
+    method are silently dropped, mirroring flextool's preprocessing; the
+    same set as ``emit/_leaf_sets.derive_reserve_upDown_group``).  A
+    ``no_reserve`` group has no requirement, so it gets no shortfall
+    variable or reserve rows.
 
     Schema: ``[r, ud, g]``.
     """
@@ -1460,6 +1471,7 @@ def reserve_upDown_group(source: "InputSource") -> pl.DataFrame:
     if df is None:
         return _empty({"r": pl.Utf8, "ud": pl.Utf8, "g": pl.Utf8})
     return (df.lazy()
+              .filter(pl.col("value").cast(pl.Utf8) != "no_reserve")
               .pipe(rename_to_axis, {"reserve": "r", "upDown": "ud", "group": "g"})
               .select("r", "ud", "g")
               .unique()
@@ -2008,6 +2020,12 @@ _AUTHORITATIVE_SETS: tuple[str, ...] = (
     "g_invest_total", "g_divest_total", "g_invest_cumulative",
     # Gated by ramp_cost > 0 (ramp_cost_arc_frame): "no priced arc" must not fall back to a seed.
     "process_source_sink_ramp_cost",
+    # Method-gated (co2_method / reserve_method), complete reads: with no period cap / only no_reserve
+    # groups the seed is empty too, so a stale seed must not come back.
+    "group_co2_max_period", "reserve_upDown_group",
+    # Non-zero inertia_constant arcs: the seed (_group_slack._read_inertia_constants) drops the zero
+    # constants too, so an empty projection always meets an empty seed.
+    "process_sink_inertia", "process_source_inertia",
 )
 
 

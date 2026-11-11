@@ -437,6 +437,12 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   could only be met by shortfall, at the reserve penalty. Such a reserve is now left out, with a warning naming
   the group (none for a group with `reserve_method` *no_reserve*). Models where every reserve group has nodes are
   unchanged.
+- **A reserve group with `reserve_method` *no_reserve* no longer gets reserve variables.** Such a group (also a
+  `reserve__upDown__group` without a method, as *no_reserve* is the default) has no requirement, but every solve
+  built an unused reserve shortfall variable for it at each time step, and a model whose only reserve groups were
+  *no_reserve* switched the reserve constraints on. These are no longer built: results are unchanged, except that
+  the reserve shortfall tables (`slack__reserve__upDown__group__d` / `__dt`) no longer have an empty column for
+  such groups.
 - **The period average of the reserve a unit or connection holds ignored the time-step weights.**
   `process__reserve__upDown__node__d_average` (`reservation_average`) was the plain mean of the steps, too high
   or too low on representative periods with unequal weights. It is now the time-step-weighted average over the
@@ -445,6 +451,10 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
 
 #### Input checks
 
+- **A `co2_max_period` or `co2_max_total` on a group whose `co2_method` has no such cap is reported.** The
+  value is ignored (for example `co2_max_period` with `co2_method` *price*); the run now warns, naming the group
+  and its method. Before, such a group with `co2_max_period` was also listed as CO2-limited in the group CO2
+  results although no limit applied; the results now list only the groups whose method caps their emissions.
 - **A limit given as a period map no longer drops the periods it leaves out without a word.** A period
   the solve uses (look-ahead periods included) but a period map does not cover is now an error naming the entity,
   the parameter and the missing periods. Before, such a period got a CO2 cap of 0 (`co2_max_period`), no

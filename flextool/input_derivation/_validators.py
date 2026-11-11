@@ -37,6 +37,7 @@ import numpy as np
 import spinedb_api as api
 
 from flextool.engine.input._solve_state import FlexToolConfigError
+from flextool.engine.preprocess._co2_methods import CO2_MAX_PERIOD_METHODS, CO2_MAX_TOTAL_METHODS
 from flextool.engine.preprocess.params._existing import DIVEST_NOT_ALLOWED, INVEST_NOT_ALLOWED
 from flextool import units_of_measure as uom
 from flextool.input_derivation._method_constants import METHOD_2WAY_1VAR, METHOD_LP, METHOD_MIP
@@ -861,6 +862,9 @@ def validate_group_limit_flags(db, logger: logging.Logger) -> None:
     * a non-zero limit on a group without its method / flag: the limit is ignored;
     * the method / flag on a group with no limit value at all: the model reads the limit as 0.  An
       explicit 0 is a deliberate input and is not reported.
+    * ``co2_max_period`` / ``co2_max_total`` (any value, 0 included: a cap of 0 is a limit) on a group whose
+      ``co2_method`` has no period / total cap: the limit is ignored.  The reverse (a capping method without
+      the value) is an error of the parameter read (``params/_direct.require_co2_cap_values``).
     """
     for limit, flag, on in _GROUP_LIMIT_FLAGS:
         flagged = _entities_with_value(db, "group", flag, on)
@@ -872,6 +876,18 @@ def validate_group_limit_flags(db, logger: logging.Logger) -> None:
         for g in sorted(flagged - set(values)):
             logger.warning(
                 "Group '%s' has %s = %s but no %s: %s.", g, flag, on, limit, _GROUP_LIMIT_ABSENT[limit])
+    default = _definition_default(db, "group", "co2_method")
+    methods = {pv["entity_byname"][0]: str(pv["parsed_value"])
+               for pv in db.find_parameter_values(entity_class_name="group", parameter_definition_name="co2_method")
+               if pv["type"] is not None}
+    for limit, capping, kind in (("co2_max_period", CO2_MAX_PERIOD_METHODS, "period"),
+                                 ("co2_max_total", CO2_MAX_TOTAL_METHODS, "total")):
+        for g in sorted(_explicit_values(db, "group", limit)):
+            method = methods.get(g, "none" if default is None else str(default))
+            if method not in capping:
+                logger.warning(
+                    "Group '%s' has %s but its co2_method '%s' has no %s cap: the limit is ignored. Use a "
+                    "co2_method with '%s' in it to apply the limit.", g, limit, method, kind, kind)
 
 
 def validate_non_sync_one_variable_connections(db, provider, logger: logging.Logger) -> None:
