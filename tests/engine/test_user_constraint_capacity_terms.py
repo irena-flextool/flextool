@@ -232,13 +232,13 @@ def test_capacity_only_rows_per_period_same_objective(tmp_path_factory) -> None:
     assert inv["value"].sum() > 0
 
 
-@pytest.mark.parametrize(("kind", "invest", "divest"), [
-    ("constraint_cumulative_pre_built_capacity_coeff", True, True),
-    ("constraint_capacity_coeff", True, True),
-    ("constraint_retired_capacity_coeff", False, True),
-])
-def test_coefficient_gives_zero_cost_entity_its_variables(tmp_path_factory, kind, invest, divest) -> None:
-    """A zero-cost entity (no annuity, no salvage) gets investment / retirement pairs only from a link."""
+@pytest.mark.parametrize("kind", ["constraint_cumulative_pre_built_capacity_coeff", "constraint_capacity_coeff",
+                                  "constraint_retired_capacity_coeff"])
+def test_coefficient_gives_zero_cost_entity_its_variables(tmp_path_factory, kind) -> None:
+    """A zero-cost entity (no annuity, no salvage) with a capacity coefficient gets investment and retirement
+    pairs from its ``invest_method`` (item 218: a zero or missing cost no longer blocks investment), whichever
+    coefficient names it.  Before, the pairs came only from a coefficient, and a retired-capacity coefficient
+    gave retirement alone."""
     values = (_constraint("c_link", constant=None)
               + [["unit", "wind_plant", "invest_method", b64("invest_retire_no_limit", "str")],
                  ["unit", "wind_plant", "invest_cost", b64(0.0, "float")],
@@ -254,8 +254,8 @@ def test_coefficient_gives_zero_cost_entity_its_variables(tmp_path_factory, kind
     def has(frame) -> bool:
         return frame is not None and utf8(frame).filter(pl.col("e") == "wind_plant").height > 0
 
-    assert has(fd.ed_invest_set) is invest
-    assert has(fd.ed_divest_set) is divest
+    assert has(fd.ed_invest_set)
+    assert has(fd.ed_divest_set)
 
 
 @pytest.mark.parametrize("chain", [SINGLE, CHAIN], ids=["single_solve", "chain_of_solves"])
