@@ -543,6 +543,12 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   the unit size and multiplied `existing` (200 units of −5 MW: an anti-energy unit of −1000 MW). Now it is ignored
   as the warning says: `existing` is the capacity itself and the entity is one unit of it. Results of valid data do
   not change.
+- **A node with nothing to balance it ran without a word (#276).** A node without any unit or connection in the
+  scenario (because none was linked, or because they are not active in it) now gets a warning: with an `inflow`,
+  only the penalty slack can meet it; without one, the node does nothing. A *balance* node without an `inflow` whose
+  units and connections only take energy out of it (a fuel node that should be a *commodity* node) or only bring
+  energy into it gets a warning too. Commodity nodes are not checked, storage nodes only for being empty. The run
+  continues and the model is unchanged.
 - **A mistyped period key was dropped without a word.** A period map keyed *y2020* in a
   model whose period is *p2020* gave `existing` 0, an extra key such as *p2030x* was ignored, and `startup_cost`
   keyed by time steps or by 2020 vanished or crashed. Now a map key of a period parameter that is not a period of
@@ -772,6 +778,17 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   the steps in use. In the FlexTool window, a converted FlexTool 2 model is written outside `input_sources` and
   moved in only after the conversion, and the new source and its scenarios are ticked again.
   The CLI now prints its log, and a failed import leaves no database file behind.
+
+#### Examples
+
+- **The demand how-to example (demand.sqlite) served its demand only from the penalty slack.** Its coal plant
+  was not active in any scenario and had no capacity, and the *scale_to_peak_and_annual* scenario asked for peaks
+  of 500 / 600 / 700 MW that cannot reach the annual flows (the scaled demand went above the peak). The coal plant
+  now has 3500 MW and is active in the *coal* alternative, and the peaks are 1500 / 2200 / 3000 MW. The example's
+  results change.
+- **The battery of the non-synchronous how-to example was a node without anything connected in the *wind*
+  scenario.** The battery node is now active only in the *battery* alternative, like its connection. The *wind*
+  scenario no longer has the idle node; its results do not change otherwise.
 
 #### AI assistant
 

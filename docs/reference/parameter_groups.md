@@ -133,6 +133,13 @@ rerun fixes them all. A warning is printed once per scenario read in the run log
   `conversion_flow_coeff`. A unit with an input whose outputs all have
   coefficient 0 gets one warning (it uses no input). `capacity_max_coeff` / `capacity_min_coeff` on such an output
   has no effect.
+- A node (not *commodity*) without any unit (`unit__inputNode`, `unit__outputNode`) or connection
+  (`connection__node__node`) in the scenario: with an `inflow` only the penalty slack (`penalty_up` /
+  `penalty_down`) can meet it; without one the node does nothing. Also a *balance* or *balance_within_period* node
+  without an `inflow` whose units and connections only bring energy in, or only take energy out: those flows can
+  only be balanced by the penalty slack. A connection with `transfer_method` *unidirectional* only takes from its
+  first node and brings to its second; other connections count both ways. *storage* nodes are not checked for
+  this (the storage state takes the rest). An `inflow` of 0 and `inflow_method` *no_inflow* count as no inflow.
 
 Other checks (time series keys, timesets, input shares, minimum-load curves, ladders, group limits) are described
 with their parameters.

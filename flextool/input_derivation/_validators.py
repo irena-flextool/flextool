@@ -52,6 +52,7 @@ __all__ = [
     "validate_ladder_methods",
     "validate_group_output_memberships",
     "validate_connection_node_memberships",
+    "warn_node_connections",
     "validate_node_invest_without_storage",
     "validate_units_of_measure",
     "validate_connection_delay",
@@ -1207,6 +1208,85 @@ def validate_connection_node_memberships(db, logger: logging.Logger) -> None:
                 "nodes or its connection__node__node — '%s' not included. Check your data!",
                 name, name,
             )
+
+
+def _node_flow_sides(db) -> tuple[set[str], set[str]]:
+    """``(supplied, drained)``: the nodes a unit / connection of the scenario can bring energy into, and take
+    energy out of (``db`` scenario-filtered).  A ``unit__outputNode`` supplies its node and a ``unit__inputNode``
+    drains it; a ``connection__node__node`` (connection, source, sink) with ``transfer_method`` ``unidirectional``
+    drains its source and supplies its sink, any other connection flows both ways and counts as both sides at
+    both nodes."""
+    supplied: set[str] = set()
+    drained: set[str] = set()
+    for cls, side in (("unit__outputNode", supplied), ("unit__inputNode", drained)):
+        for ent in db.find_entities(entity_class_name=cls):
+            byname = ent["entity_byname"]
+            if byname and len(byname) >= 2:
+                side.add(byname[1])
+    default_transfer = str(_definition_default(db, "connection", "transfer_method") or "regular")
+    transfer = {k[0]: v for k, v in _str_values(db, "connection", "transfer_method").items()}
+    for ent in db.find_entities(entity_class_name="connection__node__node"):
+        byname = ent["entity_byname"]
+        if not byname or len(byname) < 3:
+            continue
+        conn, source, sink = byname[0], byname[1], byname[2]
+        if transfer.get(conn, default_transfer) == "unidirectional":
+            drained.add(source)
+            supplied.add(sink)
+        else:
+            supplied.update((source, sink))
+            drained.update((source, sink))
+    return supplied, drained
+
+
+def warn_node_connections(db) -> None:
+    """Warn about a node whose balance has nothing to work with (#276).  ``db`` is scenario-filtered; called once
+    per run from ``input_derivation.run``; the warnings are printed (:func:`_warn`).  ``commodity`` nodes have no
+    balance and are skipped.
+
+    * A node without any unit (``unit__inputNode`` / ``unit__outputNode``) or connection
+      (``connection__node__node``): with a non-zero ``inflow`` (and ``inflow_method`` other than ``no_inflow``)
+      only the penalty slack can meet the inflow; without one the node does nothing.
+    * A ``balance`` / ``balance_within_period`` node without a non-zero ``inflow`` whose units and connections
+      only bring energy in, or only take energy out (:func:`_node_flow_sides`): its flows can only be balanced by
+      the penalty slack.  ``storage`` nodes are exempt (the storage state is the other side).
+    """
+    default_type = str(_definition_default(db, "node", "node_type") or "balance")
+    node_types = {k[0]: v for k, v in _str_values(db, "node", "node_type").items()}
+    default_method = str(_definition_default(db, "node", "inflow_method") or "use_original")
+    methods = {k[0]: v for k, v in _str_values(db, "node", "inflow_method").items()}
+    inflow_alt: dict[str, str] = {}
+    for pv in _pv_rows(db, "node", "inflow"):
+        if pv["type"] is None:
+            continue
+        name = pv["entity_byname"][0]
+        if methods.get(name, default_method) == "no_inflow":
+            continue
+        if _bad_hit(pv, lambda v: v != 0.0) is not None:
+            inflow_alt[name] = pv["alternative_name"]
+    supplied, drained = _node_flow_sides(db)
+    for node in sorted(_entity_names(db, "node")):
+        node_type = node_types.get(node, default_type)
+        if node_type == "commodity":
+            continue
+        if node not in supplied and node not in drained:
+            if node in inflow_alt:
+                _warn(f"node '{node}' (alternative '{inflow_alt[node]}') has no units or connections; its inflow "
+                      "can only be met by the penalty slack (penalty_up / penalty_down).")
+            else:
+                _warn(f"node '{node}' has no units or connections and no inflow; it does nothing in this scenario.")
+            continue
+        if node_type not in ("balance", "balance_within_period") or node in inflow_alt:
+            continue
+        if node not in supplied:
+            _warn(f"node '{node}' (node_type {node_type}) has no inflow and its units / connections only take "
+                  "energy out of it; nothing brings energy in, so those flows can only be met by the penalty slack "
+                  "(penalty_up). Add a unit or connection that supplies it, give it an inflow, or make it a "
+                  "commodity node.")
+        elif node not in drained:
+            _warn(f"node '{node}' (node_type {node_type}) has no inflow and its units / connections only bring "
+                  "energy into it; nothing takes energy out, so those flows stay at 0 or only the penalty slack "
+                  "(penalty_down) absorbs them. Add a unit or connection that takes from it, or give it an inflow.")
 
 
 def validate_node_invest_without_storage(db, logger: logging.Logger) -> None:

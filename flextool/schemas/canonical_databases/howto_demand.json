@@ -107,6 +107,14 @@
       ],
       "start",
       true
+    ],
+    [
+      "unit",
+      [
+        "coal_plant"
+      ],
+      "coal",
+      true
     ]
   ],
   "entity_classes": [
@@ -6539,7 +6547,7 @@
       "nodeA",
       "peak_inflow",
       [
-        "{\"index_type\": \"str\", \"data\": [[\"p1\", -500.0], [\"p2\", -600.0], [\"p3\", -700.0]]}",
+        "{\"index_type\": \"str\", \"data\": [[\"p1\", -1500.0], [\"p2\", -2200.0], [\"p3\", -3000.0]]}",
         "map"
       ],
       "scale_to_peak_and_annual"
@@ -6633,6 +6641,16 @@
         "map"
       ],
       "start"
+    ],
+    [
+      "unit",
+      "coal_plant",
+      "existing",
+      [
+        "3500",
+        "float"
+      ],
+      "coal"
     ]
   ],
   "scenario_alternatives": [
