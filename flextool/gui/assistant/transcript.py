@@ -8,13 +8,17 @@ insert per batch.  The view follows the end only while it is at the end.
 
 The widget takes no typing: keys that change text are dropped (copy, select all and moving around stay), Tab and
 Shift+Tab move the focus on, Escape stops the answer, Enter or space on a tool line opens or closes it, and a click
-on a tool line does the same.  It draws no insertion cursor (only the input box has one): while it has the focus,
+on a tool line does the same.  A question sent has two small buttons after it (item 220): ↻ asks it again and ✎
+puts it in the input box to change (the window's ``on_question(action, n)`` with ``"again"`` or ``"edit"`` and
+the question's number); R and E on a question line and its right-click menu do the same.  The buttons are not Tab
+stops and not part of copied text; a question merged into the next one has them on the last line only.  It draws no insertion cursor (only the input box has one): while it has the focus,
 the tool or context line the keyboard is on is shaded instead, so Enter and space still show what they open.  Its
 tags take their colours from the widget's own theme colours.  On macOS Command+C copies and Command+A selects all.
 
 A long chat stays cheap to lay out (review G19, C7-m10): every tool and context line shares a few tags (``tool`` or
 ``context`` with the click bindings once, ``tooldetail``, and one elided ``detail_closed`` on each closed detail), and
-each line is found by one mark at its start (``tool_{n}``, ``context_{n}``; a question ``user_{n}``).
+each line is found by one mark at its start (``tool_{n}``, ``context_{n}``; a question ``user_{n}``).  The
+question buttons are embedded windows after ``user_{n}_end``, destroyed by :meth:`Transcript.clear`.
 
 Fonts (owner decisions 2026-11-08, :mod:`flextool.gui.assistant.fonts`): the text is in the chat's base font
 (FlexTool's body text font one point larger; a ``tk.Text`` would otherwise use the fixed-width font, and bold text
@@ -35,7 +39,7 @@ from flextool.gui.assistant import strings
 from flextool.gui.assistant.fonts import CHAT_FONT, sync_fonts
 from flextool.gui.assistant.markdown_stream import Line, MarkdownStream
 from flextool.gui.assistant.markdown_stream import render as render_markdown
-from flextool.gui.assistant.notices import is_aqua
+from flextool.gui.assistant.notices import is_aqua, question_symbols
 
 if TYPE_CHECKING:
     from flextool.assistant.llm_adapter import Message
@@ -49,6 +53,10 @@ KEYBOARD_LINE = "keyboard_line"
 DETAIL_CLOSED = "detail_closed"
 #: The prefixes of the marks at the start of a tool or context line (the keys of :meth:`Transcript.toggle`).
 LINE_PREFIXES = ("tool_", "context_")
+#: The style of a question's ↻ and ✎ buttons: a Toolbutton on the transcript's own background.
+QUESTION_BUTTON_STYLE = "AssistantQuestion.Toolbutton"
+#: What a question's buttons, keys and menu ask the window for.
+AGAIN, EDIT = "again", "edit"
 TOOL_OPEN = "▾"
 TOOL_CLOSED = "▸"
 DETAIL_INDENT = "    "
@@ -56,10 +64,12 @@ DETAIL_INDENT = "    "
 
 class Transcript(ttk.Frame):
     """The transcript widget.  *on_escape* stops the answer; *bind_commands(widget)* adds the window's tab
-    commands to the text widget's own bindings."""
+    commands to the text widget's own bindings; *on_question(action, n)* asks question *n* again (``"again"``) or
+    puts it in the input box (``"edit"``) — without it a question gets no buttons."""
 
     def __init__(self, parent: tk.Misc, *, on_escape: Callable[[], None] | None = None,
-                 bind_commands: Callable[[tk.Misc], None] | None = None) -> None:
+                 bind_commands: Callable[[tk.Misc], None] | None = None,
+                 on_question: Callable[[str, int], None] | None = None) -> None:
         super().__init__(parent)
         # No insertion cursor: zero width, and no blink timer (insertofftime 0).  The insert mark still moves
         # with the arrow keys, for selecting with Shift and for Enter / space on a tool line.
@@ -73,6 +83,10 @@ class Transcript(ttk.Frame):
         self.rowconfigure(0, weight=1)
         self.columnconfigure(0, weight=1)
         self._on_escape = on_escape
+        self._on_question = on_question
+        self._turns: dict[int, int] = {}                    # a question line's id → the question's number
+        self._buttons: dict[int, list[ttk.Button]] = {}     # the lines that have the ↻ ✎ buttons
+        self._question_menu: tk.Menu | None = None
         self._md = MarkdownStream()
         self._answer_open = False
         self._in_turn = False
@@ -125,6 +139,10 @@ class Transcript(ttk.Frame):
         txt.tag_configure(KEYBOARD_LINE, background=blend_rgb(bg, "#4aa3ff", 0.16))
         txt.tag_configure(DETAIL_CLOSED, elide=True)
         txt.tag_raise("sel")
+        try:
+            ttk.Style(txt).configure(QUESTION_BUTTON_STYLE, background=rgb_hex(bg), padding=(2, 0))
+        except tk.TclError:
+            pass
 
     # --- keys -----------------------------------------------------------------------------------------------
     def _bind_keys(self, bind_commands: Callable[[tk.Misc], None] | None) -> None:
@@ -151,6 +169,8 @@ class Transcript(ttk.Frame):
             txt.bind(virtual, lambda _e: "break")
         if not self._aqua:
             txt.bind("<Button-2>", lambda _e: "break")          # middle click pastes on X11 and Windows
+        for sequence in ("<Button-2>", "<Control-Button-1>") if self._aqua else ("<Button-3>",):
+            txt.bind(sequence, self._post_question_menu)
         if bind_commands is not None:
             bind_commands(txt)
 
@@ -161,6 +181,10 @@ class Transcript(ttk.Frame):
             return None
         if event.keysym in NAV_KEYSYMS:
             return None
+        if event.keysym in ("r", "R", "e", "E") and not event.state & (0x4 | 0x8):
+            line = self.question_line_at("insert")
+            if line is not None:
+                self._question_action(AGAIN if event.keysym in ("r", "R") else EDIT, line)
         return "break"
 
     def _focus(self, *, next_: bool) -> str:
@@ -214,14 +238,118 @@ class Transcript(ttk.Frame):
             self.toggle(key)
 
     def mark_keyboard_line(self) -> None:
-        """Shade the tool or context line holding the insert mark while the transcript has the focus."""
+        """Shade the tool, context or question line holding the insert mark while the transcript has the focus (on a
+        question line R and E work)."""
         txt = self.text
         try:
             txt.tag_remove(KEYBOARD_LINE, "1.0", "end")
-            if txt.focus_get() is txt and self._line_tag_at_insert() is not None:
+            if txt.focus_get() is not txt:
+                return
+            if self._line_tag_at_insert() is not None:
                 txt.tag_add(KEYBOARD_LINE, "insert linestart", "insert lineend")
+                return
+            line = self.question_line_at("insert")
+            if line is not None:
+                txt.tag_add(KEYBOARD_LINE, f"user_{line}", f"user_{line}_end lineend")
         except (tk.TclError, KeyError):
             pass
+
+    # --- the question buttons, keys and menu (item 220) ------------------------------------------------------------
+    def set_turn(self, line: int, turn: int) -> None:
+        """Question line *line* is question number *turn*: it gets the ↻ ✎ buttons, which an earlier line of the same
+        question loses (a question that got no answer goes on with the next one under its number)."""
+        if turn < 1 or not self._has_mark(f"user_{line}"):
+            return
+        self._turns[line] = turn
+        for other, number in list(self._turns.items()):
+            if other != line and number == turn:
+                self._remove_buttons(other)
+        if self._on_question is not None and line not in self._buttons:
+            self._add_buttons(line)
+
+    def turn_of(self, line: int) -> int | None:
+        return self._turns.get(line)
+
+    def line_of(self, turn: int) -> int | None:
+        """The line of question *turn* that has its buttons (its last one), or None."""
+        return next((line for line in self._buttons if self._turns.get(line) == turn), None)
+
+    def has_buttons(self, line: int) -> bool:
+        return line in self._buttons
+
+    def question_buttons(self, line: int) -> list[ttk.Button]:
+        """The ↻ and ✎ buttons of *line* (none when it has none)."""
+        return list(self._buttons.get(line, []))
+
+    def turn_text(self, turn: int) -> str:
+        """Question *turn* as shown: the text of its lines (two when a question that got no answer went on with the
+        next one), joined as the chat keeps them; "" when the transcript has no line of it."""
+        lines = sorted(line for line, number in self._turns.items() if number == turn)
+        return "\n\n".join(text for text in (self.user_text(line).strip() for line in lines) if text)
+
+    def later_turns(self, turn: int) -> int:
+        """How many questions after question *turn* the transcript shows as sent."""
+        return len({number for number in self._turns.values() if number > turn})
+
+    def question_line_at(self, index: str) -> int | None:
+        """The question line (one with buttons) holding *index*, or None."""
+        txt = self.text
+        try:
+            where = txt.index(index)
+            for line in self._buttons:
+                if (txt.compare(f"user_{line}", "<=", where)
+                        and txt.compare(where, "<=", f"user_{line}_end lineend")):
+                    return line
+        except tk.TclError:
+            pass
+        return None
+
+    def _question_action(self, action: str, line: int) -> None:
+        turn = self._turns.get(line)
+        if turn is not None and self._on_question is not None:
+            self._on_question(action, turn)
+
+    def _add_buttons(self, line: int) -> None:
+        from flextool.gui.hover_tooltip import attach_tooltip
+
+        again, edit = question_symbols(self.text)
+        made = []
+        for offset, (label, action, tip) in enumerate(((again, AGAIN, strings.ASK_AGAIN_TOOLTIP),
+                                                       (edit, EDIT, strings.EDIT_TOOLTIP))):
+            button = ttk.Button(self.text, text=label, style=QUESTION_BUTTON_STYLE, takefocus=0, cursor="hand2",
+                                command=lambda a=action, n=line: self._question_action(a, n))
+            self.text.window_create(f"user_{line}_end + {offset} chars", window=button, padx=2)
+            attach_tooltip(button, tip)
+            made.append(button)
+        self._buttons[line] = made
+
+    def _remove_buttons(self, line: int) -> None:
+        for button in self._buttons.pop(line, []):
+            try:
+                self.text.delete(self.text.index(button))
+            except tk.TclError:
+                pass
+            try:
+                button.destroy()
+            except tk.TclError:
+                pass
+
+    def _post_question_menu(self, event: tk.Event) -> str | None:  # type: ignore[type-arg]
+        line = self.question_line_at(f"@{event.x},{event.y}")
+        if line is None:
+            return None
+        menu = self._question_menu
+        if menu is None:
+            from flextool.gui.assistant.chat_window import styled_menu
+
+            menu = self._question_menu = styled_menu(self)
+        menu.delete(0, "end")
+        menu.add_command(label=strings.ASK_AGAIN, accelerator=strings.ASK_AGAIN_KEY,
+                         command=lambda: self._question_action(AGAIN, line))
+        menu.add_command(label=strings.EDIT_QUESTION, accelerator=strings.EDIT_KEY,
+                         command=lambda: self._question_action(EDIT, line))
+        menu.tk_popup(event.x_root, event.y_root)
+        return "break"
 
     # --- writing --------------------------------------------------------------------------------------------
     def _at_end(self) -> bool:
@@ -242,6 +370,13 @@ class Transcript(ttk.Frame):
             self._insert("\n")
 
     def clear(self) -> None:
+        for buttons in self._buttons.values():
+            for button in buttons:
+                button.destroy()
+        self._buttons.clear()
+        self._turns.clear()
+        for child in list(self.text.children.values()):
+            child.destroy()                 # an error's buttons (Tk destroys them with their text, Python not)
         self.text.delete("1.0", "end")
         stale = [m for m in self.text.mark_names() if str(m).startswith(LINE_PREFIXES + ("user_",))]
         if stale:
@@ -483,11 +618,14 @@ class Transcript(ttk.Frame):
             if m.role == "user":
                 if m.kind == "limit":
                     continue                # the session's own instruction (review G11, C5-1)
-                question = prompt.strip_context_block(m.text)
-                block = m.text.lstrip()[:len(m.text.lstrip()) - len(question)].strip() if question != m.text else ""
+                # The leading block is the question's context line; a block inside the text (a question that got no
+                # answer went on with the next one) is left out of the question shown.
+                rest = prompt.strip_context_block(m.text)
+                block = m.text.lstrip()[:len(m.text.lstrip()) - len(rest)].strip() if rest != m.text else ""
                 if block:
                     self._context_line(block)
-                self.append_user(question, pending=False)
+                line = self.append_user(prompt.remove_context_blocks(m.text), pending=False)
+                self.set_turn(line, m.turn)
             elif m.role == "assistant":
                 if m.text.strip():
                     self._ensure_newline()

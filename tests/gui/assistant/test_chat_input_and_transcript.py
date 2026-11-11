@@ -18,6 +18,7 @@ import pytest
 from flextool.assistant.llm_errors import AuthFailed, ErrorContext, make_error
 from flextool.assistant.probes import ModelFacts
 from flextool.gui.assistant.notices import ConsentDialog
+from flextool.gui.assistant.transcript import QUESTION_BUTTON_STYLE
 from tests.assistant.gui_support.worker_rig import LOCAL, REMOTE, Tools, save_provider, say, tool_call
 from tests.assistant.llm.fake_backend import Block
 from tests.gui.assistant.tk_helpers import key, pump, widgets
@@ -325,7 +326,8 @@ def test_a_conversation_still_too_long_offers_a_new_chat_with_a_summary(windows,
     wait_idle(window, tab)
     assert ("The conversation is still too long for fake-model. Start a new chat; “New chat with summary” keeps a "
             "short summary of this one.") in tab.transcript.contents()
-    buttons = {str(w.cget("text")): w for w in widgets(tab.transcript.text)}
+    buttons = {str(w.cget("text")): w for w in widgets(tab.transcript.text)
+               if str(w.cget("style")) != QUESTION_BUTTON_STYLE}        # not the questions' ↻ ✎
     assert set(buttons) == {"New chat", "New chat with summary"}
     buttons["New chat with summary"].invoke()
     new = window.current_tab()
@@ -605,5 +607,155 @@ def test_tool_lines_share_their_tags_and_still_open_one_by_one(host):
         transcript.clear()
         assert not [m for m in text.mark_names() if m.startswith(("tool_", "context_", "user_"))]
         assert transcript.line_range("tool_1") is None and not transcript.is_open("tool_1")
+    finally:
+        transcript.destroy()
+
+
+# --- asking a question again: the buttons, keys and menu of a question (item 220) ----------------------------------
+def _question_transcript(host, actions: list):
+    from flextool.gui.assistant.transcript import Transcript
+
+    transcript = Transcript(host, on_question=lambda action, n: actions.append((action, n)))
+    transcript.pack(fill="both", expand=True)
+    host.update()
+    return transcript
+
+
+def test_a_question_has_its_buttons_once_sent_and_only_on_the_last_line_of_its_number(host):
+    """↻ ✎ come with the worker's word that the question was sent, never on a "Not sent." line; a question that got
+    no answer and the next one share a number, and only the last line keeps the buttons; they are no Tab stops, never
+    part of copied text, and no embedded widget is left after clear()."""
+    actions: list = []
+    transcript = _question_transcript(host, actions)
+    try:
+        text = transcript.text
+        first = transcript.append_user("first question", pending=True)
+        assert not transcript.has_buttons(first)
+        transcript.mark_user(first, "sent")
+        transcript.set_turn(first, 1)
+        again, edit = transcript.question_buttons(first)
+        assert (str(again.cget("text")), str(edit.cget("text"))) == ("↻", "✎")
+        assert {str(b.cget("style")) for b in (again, edit)} == {QUESTION_BUTTON_STYLE}
+        assert {str(b.cget("takefocus")) for b in (again, edit)} == {"0"}
+        refused = transcript.append_user("a question not sent", pending=True)
+        transcript.mark_user(refused, "not_sent")
+        assert not transcript.has_buttons(refused)
+        stopped = transcript.append_user("stopped question", pending=True)
+        transcript.mark_user(stopped, "sent")
+        transcript.set_turn(stopped, 2)
+        assert transcript.has_buttons(stopped)
+        merged = transcript.append_user("the next question", pending=True)
+        transcript.mark_user(merged, "sent")
+        transcript.set_turn(merged, 2)
+        assert not transcript.has_buttons(stopped) and transcript.has_buttons(merged)
+        assert transcript.line_of(2) == merged
+        assert transcript.turn_text(2) == "stopped question\n\nthe next question"
+        assert (transcript.later_turns(1), transcript.later_turns(2)) == (1, 0)
+        again.invoke()
+        transcript.question_buttons(merged)[1].invoke()
+        assert actions == [("again", 1), ("edit", 2)]
+        assert transcript.user_text(first) == "first question"
+        # Copied text has no buttons in it.
+        text.tag_add("sel", "1.0", "end-1c")
+        host.clipboard_clear()
+        key(text, "<Control-c>")
+        assert host.clipboard_get() == transcript.contents()
+        assert "You  first question\n" in host.clipboard_get() and "↻" not in host.clipboard_get()
+        # Tab goes past the buttons.
+        key(text, "<Tab>")
+        assert host.focus_get() not in [*transcript.question_buttons(first), *transcript.question_buttons(merged)]
+        transcript.clear()
+        assert text.winfo_children() == [] and not text.children
+        assert transcript.line_of(1) is None and transcript.turn_text(1) == ""
+    finally:
+        transcript.destroy()
+
+
+def test_r_and_e_on_a_question_line_and_its_right_click_menu(host, monkeypatch):
+    import tkinter as tk
+
+    actions: list = []
+    transcript = _question_transcript(host, actions)
+    try:
+        text = transcript.text
+        transcript.notice("A notice line.")
+        line = transcript.append_user("Which units invest?", pending=False)
+        transcript.set_turn(line, 3)
+        before = transcript.contents()
+        text.mark_set("insert", f"user_{line} + 7 chars")
+        key(text, "<Key-r>")
+        key(text, "<Key-E>")
+        text.mark_set("insert", "1.2")
+        key(text, "<Key-r>")                                # a notice line: nothing
+        assert actions == [("again", 3), ("edit", 3)]
+        assert transcript.contents() == before              # no key typed into the transcript
+        text.mark_set("insert", f"user_{line} + 7 chars")
+        key(text, "<KeyRelease-Right>")
+        shaded = text.tag_ranges("keyboard_line")
+        assert shaded and text.compare(shaded[0], "==", f"user_{line}")
+        posted: list[tk.Menu] = []
+        monkeypatch.setattr(tk.Menu, "tk_popup", lambda self, *_a, **_k: posted.append(self))
+        text.see(f"user_{line}")
+        host.update()
+        x, y, _w, _h = text.bbox(f"user_{line} + 7 chars")
+        text.event_generate("<Button-3>", x=x + 1, y=y + 1)
+        (menu,) = posted
+        assert [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)] == ["Ask again", "Edit"]
+        menu.invoke(0)
+        menu.invoke(1)
+        assert actions[2:] == [("again", 3), ("edit", 3)]
+        x, y, _w, _h = text.bbox("1.2")
+        text.event_generate("<Button-3>", x=x + 1, y=y + 1)
+        assert len(posted) == 1                             # not a question line: no menu
+        assert text.winfo_children() == transcript.question_buttons(line)    # the menu is not the text's
+    finally:
+        transcript.destroy()
+
+
+def test_a_reopened_chat_shows_each_question_without_its_context_blocks(host):
+    """The leading block is the question's context line; a block inside a question (one that got no answer went on
+    with the next) is not shown; every question has its buttons, and drawing the chat again leaks no widget."""
+    from flextool.assistant import prompt
+    from flextool.assistant.context import ContextSnapshot
+    from flextool.assistant.llm_adapter import Message
+    from flextool.gui.assistant import strings
+
+    block = prompt.context_block(ContextSnapshot("Project"))
+    later = prompt.context_block(ContextSnapshot("Project", scenario="wet"))
+    messages = [Message("user", f"{block}\n\nfirst question\n\n{later}\n\nsecond try", turn=1),
+                Message("assistant", "One.", turn=1), Message("user", "next one", turn=2),
+                Message("assistant", "Two.", turn=2)]
+    actions: list = []
+    transcript = _question_transcript(host, actions)
+    try:
+        transcript.render_history(messages, "Custom endpoint")
+        contents = transcript.contents()
+        assert contents.count(strings.CONTEXT_SENT) == 1 and "wet" not in contents
+        assert "You  first question\n\nsecond try\n" in contents
+        assert transcript.turn_text(1) == "first question\n\nsecond try" and transcript.turn_text(2) == "next one"
+        assert transcript.line_of(1) is not None and transcript.line_of(2) is not None
+        transcript.render_history(messages, "Custom endpoint")
+        assert len(transcript.text.winfo_children()) == 4 and len(transcript.text.children) == 4
+        transcript.clear()
+        assert transcript.text.winfo_children() == []
+    finally:
+        transcript.destroy()
+
+
+def test_the_buttons_say_ask_again_and_edit_without_the_symbol_font(host, monkeypatch):
+    from flextool.gui.assistant import notices
+
+    monkeypatch.setattr(notices.sys, "platform", "win32")
+    families = ["Arial"]
+    monkeypatch.setattr(notices.tkfont, "families", lambda *_a, **_k: tuple(families))
+    transcript = _question_transcript(host, [])
+    try:
+        line = transcript.append_user("a question", pending=False)
+        transcript.set_turn(line, 1)
+        assert [str(b.cget("text")) for b in transcript.question_buttons(line)] == ["Ask again", "Edit"]
+        families.append("Segoe UI Symbol")
+        other = transcript.append_user("another", pending=False)
+        transcript.set_turn(other, 2)
+        assert [str(b.cget("text")) for b in transcript.question_buttons(other)] == ["↻", "✎"]
     finally:
         transcript.destroy()

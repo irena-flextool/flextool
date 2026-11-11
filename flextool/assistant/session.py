@@ -757,6 +757,12 @@ class Session:
 
     # --- the history ----------------------------------------------------------------------------------------------
     @property
+    def checkpoint_waiting(self) -> bool:
+        """A restored checkpoint waits for :meth:`resume_turn` (no question can be asked again until then: a front
+        end checks this before it shows a question as sent)."""
+        return self._resumed is not None
+
+    @property
     def messages(self) -> list[Message]:
         return self.conversation.messages
 

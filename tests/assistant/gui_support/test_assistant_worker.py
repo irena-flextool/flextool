@@ -531,3 +531,90 @@ def test_a_paid_chat_does_not_lift_the_free_plans_one_request(project, tools, ri
     block.release.set()
     a2.wait_for(TurnFinished)
     assert len(a2.requests()) == 1
+
+
+# --- asking a question again (item 220) ---------------------------------------------------------------------------
+def _of(rig: Rig, kind: type, job_id: int) -> list:
+    rig.read()
+    return [ev for jid, ev in rig.events if jid == job_id and isinstance(ev, kind)]
+
+
+def test_a_question_asked_again_keeps_the_earlier_ones_and_gets_its_number(project, tools, rigs):
+    from flextool.gui.assistant.worker import Rewound
+
+    _settings(LOCAL)
+    rig = Rig(project, [FakeBackend([say("One."), say("Two."), say("Two again.")])])
+    rigs.append(rig)
+    rig.job("first")
+    rig.wait_for(Idle)
+    rig.job("second")
+    rig.wait_for(Idle, count=2)
+    kept = list(rig.worker.session.messages[:2])
+    again = rig.job("second, changed", rewind=2)
+    rig.wait_for(Idle, count=3)
+    assert [ev.turn for _jid, ev in rig.events if isinstance(ev, TurnStarted)] == [1, 2, 2]
+    (rewound,) = _of(rig, Rewound, again.job_id)
+    assert list(rewound.messages) == kept               # what the chat keeps, before the question is sent
+    order = [type(ev).__name__ for jid, ev in rig.events if jid in (again.job_id, None)]
+    tail = order[order.index("Rewound"):]
+    assert tail.index("Rewound") < tail.index("TurnStarted") < tail.index("TurnFinished") < tail.index("RouteShown")
+    messages = rig.worker.session.messages
+    assert messages[:2] == kept and [m.turn for m in messages] == [1, 1, 2, 2]
+    assert messages[2].text == "second, changed" and messages[3].text == "Two again."
+    third = rig.requests()[2]
+    assert [m.text for m in third.messages if m.role == "assistant"] == ["One."]
+    assert len(rig.made) == 1
+    for req in rig.requests():
+        history_check.validate(req)
+
+
+def test_a_question_that_cannot_be_asked_again_changes_nothing(project, tools, rigs, monkeypatch):
+    from flextool.assistant.session import Session
+    from flextool.gui.assistant import strings
+    from flextool.gui.assistant.worker import Rewound
+
+    _settings(LOCAL)
+    rig = Rig(project, [FakeBackend([say("One.")])])
+    rigs.append(rig)
+    rig.job("first")
+    rig.wait_for(Idle)
+    before = list(rig.worker.session.messages)
+    gone = rig.job("third", rewind=3)
+    rig.wait_for(Idle, count=2)
+    assert [ev.reason for ev in _of(rig, TurnRefused, gone.job_id)] == [strings.CANNOT_ASK_AGAIN_GONE]
+    assert [list(ev.messages) for ev in _of(rig, Rewound, gone.job_id)] == [before]     # the whole history again
+    assert _of(rig, TurnStarted, gone.job_id) == []
+    monkeypatch.setattr(Session, "checkpoint_waiting", property(lambda _self: True))
+    waiting = rig.job("first again", rewind=1)
+    rig.wait_for(Idle, count=3)
+    assert [ev.reason for ev in _of(rig, TurnRefused, waiting.job_id)] == [strings.CANNOT_ASK_AGAIN_WAITING]
+    assert _of(rig, TurnStarted, waiting.job_id) == []
+    assert rig.worker.session.messages == before and len(rig.requests()) == 1
+    assert [m["text"] for m in _messages_on_disk(project, rig.worker.conversation_id)] == [m.text for m in before]
+
+
+def test_asked_again_from_the_first_question_the_chat_takes_the_saved_model(project, tools, rigs):
+    """Without question 1 no answer is left: the chat is bound to no model, as a new one (store.bound_origin); a
+    question asked again from question 2 still goes with the chat's own model."""
+    _settings(LOCAL)
+    rig = Rig(project, [FakeBackend([say("One."), say("Two."), say("Two again.")]), FakeBackend([say("Other.")])])
+    rigs.append(rig)
+    rig.job("first")
+    rig.wait_for(Idle)
+    rig.job("second")
+    rig.wait_for(Idle, count=2)
+    other = ProviderSettings(preset="openai_compatible", base_url="http://127.0.0.1:9/v1", model="other-model")
+    _settings(other)
+    rig.worker.submit(SettingsChanged())
+    rig.job("second again", rewind=2)
+    rig.wait_for(Idle, count=3)
+    assert [b.origin[2] for b in rig.made] == ["fake-model"]
+    first = rig.job("first again", rewind=1)
+    rig.wait_for(Idle, count=4)
+    assert [b.origin[2] for b in rig.made] == ["fake-model", "other-model"]
+    assert [m.text for m in rig.worker.session.messages if m.role == "assistant"] == ["Other."]
+    shown = [ev.prepared for jid, ev in rig.events if isinstance(ev, RouteShown) and ev.prepared is not None]
+    assert shown[-1].model == "other-model"
+    assert _of(rig, TurnStarted, first.job_id)[0].turn == 1
+    data = json.loads(_conversation_file(project, rig.worker.conversation_id).read_text(encoding="utf-8"))
+    assert data["origin"][2] == "other-model"
