@@ -221,6 +221,25 @@ def comparison_column_units(name: str, df, unit_ctx) -> "tuple[dict | None, dict
     return meta, row_units(name, df.index, df.columns, unit_ctx)
 
 
+def dispatch_unit_context(unit_ctx, tags) -> dict:
+    """``{dispatch scenario tag: UnitContext}``: the dispatch data is tagged with the scenario name, which a
+    folder with the run-index suffix (``S2_Dry_1``) does not equal; such a tag takes its folder's context (the
+    folders of one tag merged, see :func:`~flextool.plot_outputs.unit_labels.merged_context`)."""
+    import re
+
+    from flextool.plot_outputs.unit_labels import merged_context
+
+    out = {}
+    for tag in tags:
+        if tag in unit_ctx:
+            out[tag] = unit_ctx[tag]
+            continue
+        folders = {f: c for f, c in unit_ctx.items() if re.fullmatch(re.escape(str(tag)) + r"_\d+", str(f))}
+        if folders:
+            out[tag] = merged_context(folders)
+    return out
+
+
 def unit_differences(sheets, unit_ctx) -> list[str]:
     """One note per comparison table whose same column has different units in different scenarios (the units are
     shown per scenario, never summed): ``[]`` without node units."""
@@ -466,6 +485,7 @@ def run(
                 break_times=break_times,
                 strip_scenario_level=False,
                 color_path=color_path,
+                unit_ctx=unit_ctx,
             )
             print("Computed plot plans for viewer")
         except Exception as exc:
@@ -483,6 +503,7 @@ def run(
         break_times=break_times,
         color_path=color_path,
         write_plot_data=write_plot_data,
+        unit_ctx=unit_ctx,
     )
     print(f'\nPlotted comparison of {len(scenario_folders)} scenarios to folder: {plot_dir}')
 
@@ -500,6 +521,7 @@ def run(
                 debug=debug,
                 settings_path=color_path,
                 write_plot_data=write_plot_data,
+                unit_ctx=dispatch_unit_context(unit_ctx, dispatch_scenarios),
             )
         else:
             print("Warning: Cannot generate dispatch plots - missing dispatch mappings")

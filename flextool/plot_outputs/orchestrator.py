@@ -29,7 +29,8 @@ from flextool.plot_outputs.format_helpers import (
     insert_timeline_breaks,
     write_plot_data_csv,
 )
-from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config, default_ylabel_for, flatten_new_format
+from flextool.plot_outputs.config import PlotConfig, PLOT_FIELD_NAMES, _is_single_config, default_axis_label_for, flatten_new_format
+from flextool.plot_outputs.unit_labels import AxisLabeler, fill_default
 from flextool.plot_outputs.axis_helpers import _normalize_axis_bounds
 from flextool.plot_outputs.plot_bars import build_bar_figures
 from flextool.plot_outputs.plot_lines import build_line_figures, build_stack_figures
@@ -660,6 +661,8 @@ def prepare_plot_data(
     period_weights=None,
     color_path: Path | None = None,
     keep_plot_data: bool = False,
+    result_key: str | None = None,
+    unit_ctx=None,
 ) -> tuple[list[tuple[str, plt.Figure]], int]:
     """Process one result DataFrame through dimension rules and build Figures.
 
@@ -670,11 +673,19 @@ def prepare_plot_data(
     Figures are NOT saved or closed; the caller is responsible for that.
     With *keep_plot_data*, each Figure carries the data drawn into it as
     ``flextool_plot_batch`` (see :func:`format_helpers.write_plot_data_csv`).
+    The unit tokens of the axis labels are filled for MWh, or per subplot from
+    the nodes of *result_key*'s data when *unit_ctx* (a
+    :class:`~flextool.process_outputs._output_meta.UnitContext`, or one per
+    compared scenario) has a node in another unit
+    (:mod:`flextool.plot_outputs.unit_labels`).
     """
     if df.empty:
         return [], 0
 
     cfg = plot_config
+    labeler = AxisLabeler.build(result_key, unit_ctx, df, cfg)
+    xlabel_cfg = cfg.xlabel if labeler is not None else fill_default(cfg.xlabel)
+    ylabel_cfg = cfg.ylabel if labeler is not None else fill_default(cfg.ylabel)
     result_name = plot_name or cfg.plot_name or 'plot'
     axis_bounds = _normalize_axis_bounds(cfg.axis_bounds)
 
@@ -741,6 +752,9 @@ def prepare_plot_data(
         (df_fm, effective_plot_name, member_str,
          fm_grouped_bar_levels, fm_stack_levels, fm_expand_axis_levels,
          fm_subplot_levels, fm_line_levels) = fm_result
+        fm_labeler = (labeler.for_file_member(
+            file_member, [df_processed.columns.names[i] for i in file_levels])
+            if labeler is not None else None)
 
         # Simple bar colored by the file-split entity: restore the file
         # member's value so the whole file gets that group's color.
@@ -778,7 +792,7 @@ def prepare_plot_data(
                 fm_subplot_levels, fm_grouped_bar_levels,
                 legend_position=cfg.legend,
                 subplots_per_row=cfg.subplots_per_row,
-                xlabel=cfg.xlabel, ylabel=cfg.ylabel,
+                xlabel=xlabel_cfg, ylabel=ylabel_cfg,
                 bar_orientation=cfg.bar_orientation,
                 base_bar_length=cfg.base_length,
                 value_label=cfg.value_label,
@@ -794,6 +808,7 @@ def prepare_plot_data(
                 category=color_category,
                 entity_class=color_entity_class,
                 keep_plot_data=keep_plot_data,
+                axis_units=fm_labeler,
             )
             total_file_count += count
             figures.extend(figs)
@@ -805,7 +820,7 @@ def prepare_plot_data(
                     fm_stack_levels, fm_subplot_levels,
                     rows=plot_rows, subplots_per_row=cfg.subplots_per_row,
                     legend_position=cfg.legend,
-                    xlabel=cfg.xlabel, ylabel=cfg.ylabel,
+                    xlabel=xlabel_cfg, ylabel=ylabel_cfg,
                     base_width_per_col=6, subplot_height=cfg.base_length,
                     axis_bounds=axis_bounds,
                     axis_tick_format=cfg.axis_tick_format,
@@ -817,6 +832,7 @@ def prepare_plot_data(
                     category=color_category,
                     entity_class=color_entity_class,
                     keep_plot_data=keep_plot_data,
+                    axis_units=fm_labeler,
                 )
             else:
                 figs, count = build_line_figures(
@@ -824,7 +840,7 @@ def prepare_plot_data(
                     fm_subplot_levels, fm_line_levels,
                     rows=plot_rows, subplots_per_row=cfg.subplots_per_row,
                     legend_position=cfg.legend,
-                    xlabel=cfg.xlabel, ylabel=cfg.ylabel,
+                    xlabel=xlabel_cfg, ylabel=ylabel_cfg,
                     base_width_per_col=6, subplot_height=cfg.base_length,
                     axis_bounds=axis_bounds,
                     axis_tick_format=cfg.axis_tick_format,
@@ -837,6 +853,7 @@ def prepare_plot_data(
                     category=color_category,
                     entity_class=color_entity_class,
                     keep_plot_data=keep_plot_data,
+                    axis_units=fm_labeler,
                 )
             total_file_count += count
             figures.extend(figs)
@@ -892,7 +909,7 @@ def prepare_plot_data(
                         df_chunk, effective_plot_name, '',
                         fm_stack_levels, fm_subplot_levels,
                         rows=plot_rows, legend_position=cfg.legend,
-                        xlabel=cfg.xlabel, ylabel=cfg.ylabel,
+                        xlabel=xlabel_cfg, ylabel=ylabel_cfg,
                         base_width_per_col=6, subplot_height=cfg.base_length,
                         axis_bounds=axis_bounds,
                         axis_tick_format=cfg.axis_tick_format,
@@ -901,13 +918,14 @@ def prepare_plot_data(
                         category=color_category,
                         entity_class=color_entity_class,
                         keep_plot_data=keep_plot_data,
+                        axis_units=fm_labeler,
                     )
                 else:
                     chunk_figs, _count = build_line_figures(
                         df_chunk, effective_plot_name, '',
                         fm_subplot_levels, fm_line_levels,
                         rows=plot_rows, legend_position=cfg.legend,
-                        xlabel=cfg.xlabel, ylabel=cfg.ylabel,
+                        xlabel=xlabel_cfg, ylabel=ylabel_cfg,
                         base_width_per_col=6, subplot_height=cfg.base_length,
                         axis_bounds=axis_bounds,
                         axis_tick_format=cfg.axis_tick_format,
@@ -916,6 +934,7 @@ def prepare_plot_data(
                         category=color_category,
                         entity_class=color_entity_class,
                         keep_plot_data=keep_plot_data,
+                        axis_units=fm_labeler,
                     )
                 figures.extend(chunk_figs)
 
@@ -934,7 +953,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         plot_file_format='png', only_first_file=False,
         break_times: pd.MultiIndex | None = None,
         color_path: Path | None = None,
-        write_plot_data: bool = False):
+        write_plot_data: bool = False,
+        unit_ctx=None):
     """
     Plot dataframes from a dictionary according to key suffixes.
 
@@ -947,6 +967,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
         delete_existing_plots: If True, delete all existing plots in plot_dir (default True)
         write_plot_data: Also write the data drawn in each plot file as a CSV with the same stem.  Also on when
             the plot settings file at *color_path* has a top-level ``write_plot_data: true``.
+        unit_ctx: The run's UnitContext (or one per compared scenario): the axis labels' unit tokens follow the
+            nodes' unit_of_measure (see plot_outputs.unit_labels); None fills them for MWh.
     """
     write_plot_data = plot_data_wanted(write_plot_data, color_path)
 
@@ -1020,7 +1042,7 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
             # Default the y-axis label to the output's unit (single source:
             # the metadata catalog) when the user has not set one explicitly.
             if cfg.ylabel is None:
-                cfg.ylabel = default_ylabel_for(key, variant_letter)
+                cfg.ylabel = default_axis_label_for(key, variant_letter)
 
             # Plot title: explicit plot_name > entry name > result key
             plot_name = cfg.plot_name or entry_name or key
@@ -1041,6 +1063,8 @@ def plot_dict_of_dataframes(results_dict, plot_dir, plot_settings,
                 period_weights=period_weights,
                 color_path=color_path,
                 keep_plot_data=write_plot_data,
+                result_key=key,
+                unit_ctx=unit_ctx,
             )
 
             if only_first_file and len(figures) > 1:
@@ -1074,8 +1098,12 @@ def compute_all_plot_plans(
     break_times=None,
     strip_scenario_level: bool = True,
     color_path: Path | None = None,
+    unit_ctx=None,
 ) -> None:
     """Compute and save PlotPlans for all results.
+
+    *unit_ctx* (the run's UnitContext, or one per compared scenario) fills
+    the axis labels' unit tokens from the nodes' unit_of_measure.
 
     Called after scenario runs / comparison builds so that the viewer
     can load pre-computed plans instead of re-running dimension rules.
@@ -1153,6 +1181,7 @@ def compute_all_plot_plans(
                 manifest_accumulator=manifest_accumulator,
                 manifest_scenario_name=manifest_scenario_name,
                 color_path=color_path,
+                unit_ctx=unit_ctx,
             )
             available.extend([k, s] for k, s in pairs)
         except Exception as exc:

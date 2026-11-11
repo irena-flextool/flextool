@@ -1211,6 +1211,7 @@ def build_bar_figures(
     category: str | None = None,
     entity_class: str | None = None,
     keep_plot_data: bool = False,
+    axis_units=None,
 ) -> tuple[list[tuple[str, 'plt.Figure']], int]:
     """Build bar-chart Figures and return them without saving or closing.
 
@@ -1302,13 +1303,19 @@ def build_bar_figures(
     # keep_plot_data: the frame before ``fillna(0)`` of each drawn frame, by id.
     unfilled: dict[int, pd.DataFrame] = {}
     df_sub_unfilled = None
+    # axis_units: the subplot value each drawn frame was extracted from, by id.
+    sub_of: dict[int, object] = {}
+    current_sub = None
 
     def _add(title, frame):
         effective_plots.append((title, frame))
         if keep_plot_data:
             unfilled[id(frame)] = df_sub_unfilled
+        if axis_units is not None:
+            sub_of[id(frame)] = current_sub
 
     for sub in subs:
+        current_sub = sub
         df_sub = _extract_subplot_data(df, sub, sub_levels)
         if reattach_sub_names and sub is not None:
             df_sub = _reattach_constant_levels(
@@ -1506,6 +1513,13 @@ def build_bar_figures(
         if only_file_index is not None and (batch_idx - 1) != only_file_index:
             continue
         batch_title = f"{key_name} ({batch_idx}/{n_total_batches})" if n_total_batches > 1 else key_name
+        batch_x, batch_y = xlabel, ylabel
+        if axis_units is not None:
+            from flextool.plot_outputs.unit_labels import _sub_dict
+            sub_names = ([df.columns.names[i] for i in sub_levels]
+                         if isinstance(df.columns, pd.MultiIndex) else [])
+            plots = [(d, _sub_dict(sub_of.get(id(d)), sub_names)) for _t, d in batch]
+            batch_x, batch_y = axis_units.batch_label(xlabel, plots), axis_units.batch_label(ylabel, plots)
         fig = _build_bar_figure(
             batch, df, batch_title, plot_dir,
             stack_levels, stack_level_names,
@@ -1513,7 +1527,7 @@ def build_bar_figures(
             sub_levels,
             grouped_bar_levels, grouped_bar_level_names,
             legend_position, subplots_per_row,
-            xlabel, ylabel, bar_orientation, base_bar_length,
+            batch_x, batch_y, bar_orientation, base_bar_length,
             value_fmt, axis_bounds, axis_tick_format,
             always_include_zero_in_axis,
             layout, shared_color_map, skip_data_with_only_zeroes,

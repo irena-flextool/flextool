@@ -76,3 +76,53 @@ def test_tooltip_h_and_w_share_key_weekly_keeps_unit():
     assert "MW" in h_line and "instantaneous" in h_line
     # weekly keeps the base unit, only the semantics label changes
     assert "MW" in w_line and "weekly" in w_line
+
+
+class _Mode:
+    def __init__(self, value: str) -> None:
+        self.value = value
+
+    def get(self) -> str:
+        return self.value
+
+
+def test_tooltip_and_dispatch_follow_the_node_units(tmp_path):
+    """unit_of_measure: with a _unit_context.json in the selected scenario's folder the hover shows the units the
+    run wrote into the parquet footer (m3/h for a water node), and the dispatch y-axis takes the node's unit; a
+    folder without it keeps the static MW."""
+    import pandas as pd
+
+    from flextool.lean_parquet import write_lean_parquet
+    from flextool.plot_outputs.unit_labels import dispatch_ylabel
+    from flextool.process_outputs._output_meta import UnitContext, derive_column_meta, write_unit_context
+
+    folder = tmp_path / "output_parquet" / "S"
+    folder.mkdir(parents=True)
+    ctx = UnitContext(node_units={"water": "m3"}, group_nodes={"both": ("elec", "water")})
+    cols = pd.MultiIndex.from_tuples([("desal", "water")], names=["unit", "node"])
+    df = pd.DataFrame([[1.0]], columns=cols,
+                      index=pd.MultiIndex.from_tuples([("p1", "t1")], names=["period", "time"]))
+    meta = {k: v.as_dict() for k, v in derive_column_meta("unit_outputNode_dt_ee", df.columns, ctx=ctx).items()}
+    write_lean_parquet(pd.concat({"S": df}, axis=1, names=["scenario"]), folder / "unit_outputNode_dt_ee.parquet",
+                       column_metadata=meta)
+    write_unit_context(str(folder), ctx)
+
+    rv = ResultViewer.__new__(ResultViewer)
+    rv._project_path = tmp_path
+    rv._mode = _Mode("single")
+    rv._get_selected_scenarios = lambda: ["S"]
+    rv._unit_ctx_cache = {}
+    entry = _Entry(number="2.0", full_name="Unit output", variants=[_Variant("h", "unit_outputNode_dt_ee")])
+    h_line = next(line for line in ResultViewer._entry_tooltip_text(rv, entry).splitlines()
+                  if line.startswith("   [h]"))
+    assert "m3/h" in h_line and "instantaneous" in h_line
+    rv._mode = _Mode("comparison")
+    assert "m3/h" not in ResultViewer._entry_tooltip_text(rv, entry)
+
+    from flextool.gui.result_viewer import _scenario_unit_context
+
+    loaded = _scenario_unit_context(rv, "S")
+    assert loaded.node_units == {"water": "m3"}
+    assert dispatch_ylabel(loaded, node="water") == "m3/h"
+    assert dispatch_ylabel(loaded, group="both") == "Mixed units of measure!"
+    assert dispatch_ylabel(_scenario_unit_context(rv, "missing"), group="both") == "MWh/h"

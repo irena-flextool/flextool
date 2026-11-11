@@ -1173,6 +1173,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 active_settings=active_configs, plot_rows=plot_rows,
                 break_times=break_index,
                 color_path=resolve_plot_settings_path(Path(output_location)),
+                unit_ctx=unit_ctx,
             )
             start = log_time("Computed plot plans", start, timing_recorder)
         except Exception as exc:
@@ -1250,7 +1251,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         delete_plots = not bool(single_result)
         results = {k: v.to_frame() if isinstance(v, pd.Series) else v for k, v in results.items()}
         # Load timeline breaks for visual gaps in time-series plots
-        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file, break_times=break_index, color_path=resolve_plot_settings_path(Path(output_location)), write_plot_data=write_plot_data)
+        plot_dict_of_dataframes(results, plot_dir, settings['plots'], active_settings=active_configs, plot_rows=plot_rows, delete_existing_plots=delete_plots, plot_file_format=plot_file_format, only_first_file=only_first_file, break_times=break_index, color_path=resolve_plot_settings_path(Path(output_location)), write_plot_data=write_plot_data, unit_ctx=unit_ctx)
 
         start = log_time('Plotted figures', start, timing_recorder)
 

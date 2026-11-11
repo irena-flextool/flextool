@@ -17,6 +17,7 @@ from flextool.scenario_comparison.dispatch_data import (
 )
 from flextool.plot_outputs.format_helpers import unique_series_names
 from flextool.plot_outputs.plot_lines import draw_stacked_area
+from flextool.plot_outputs.unit_labels import dispatch_ylabel
 from flextool.process_outputs._sheet_names import excel_sheet_name
 
 logger = logging.getLogger(__name__)
@@ -524,8 +525,12 @@ def create_dispatch_plots(
     debug: bool = False,
     settings_path: str | Path | None = None,
     write_plot_data: bool = False,
+    unit_ctx: dict | None = None,
 ) -> None:
     """Create dispatch plots for all nodeGroups (and, in debug, all nodes).
+
+    *unit_ctx* (``{scenario: UnitContext}``) gives each plot's y-axis the unit of its node or the nodeGroup's
+    members (:func:`~flextool.plot_outputs.unit_labels.dispatch_ylabel`; ``MWh/h`` for MWh nodes).
 
     nodeGroup dispatch plots are always generated.  Per-node dispatch plots
     are generated for ALL nodes that have dispatch data (discovered from the
@@ -722,6 +727,7 @@ def create_dispatch_plots(
                 plot_dispatch_area(
                     df_dispatch, inflow, output_path,
                     title=f"{ng} - {scenario}",
+                    ylabel=dispatch_ylabel((unit_ctx or {}).get(scenario), group=ng),
                     colors=colors,
                     timeline=timeline,
                     show_plot=show_plot,
@@ -770,6 +776,7 @@ def create_dispatch_plots(
                 plot_dispatch_area(
                     df_node, inflow_node, output_path,
                     title=f"{node} - {scenario}",
+                    ylabel=dispatch_ylabel((unit_ctx or {}).get(scenario), node=node),
                     colors=node_colors,
                     timeline=timeline,
                     show_plot=show_plot,

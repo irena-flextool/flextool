@@ -1090,6 +1090,30 @@ def result_variant_summary(
     return base
 
 
+def written_variant_summary(parquet_dir, result_key: str, variant_letter: str) -> "tuple[str, str, str] | None":
+    """:func:`result_variant_summary` with the units the run wrote into the footer of *result_key*'s parquet in
+    the scenario folder *parquet_dir* (columns and row units joined, :func:`summarise_units`), when the folder has
+    a :data:`UNIT_CONTEXT_FILE` (some node is not MWh); ``None`` otherwise, so the caller shows the static
+    summary.  For the ``a`` variant each unit drops its ``/a``.  The GUI hover of a result whose units follow
+    the nodes."""
+    import os
+
+    base = result_variant_summary(result_key, variant_letter)
+    if base is None or not os.path.exists(os.path.join(str(parquet_dir), UNIT_CONTEXT_FILE)):
+        return None
+    written = FooterUnits(parquet_dir).table(result_key)
+    if written is None:
+        return None
+    columns, rows = written
+    units = [u for u in columns.values() if u]
+    if rows:
+        units.extend(u for per_row in rows.values() for u in per_row.values() if u)
+    if variant_letter == 'a':
+        units = [u[:-2] if u.endswith('/a') else u for u in units]
+    text = summarise_units(units)
+    return (text, base[1], base[2]) if text else None
+
+
 def output_metadata_rows(output_key: str, columns, *, ctx=None, rows=None) -> list[dict[str, str]]:
     """Flat ``[{output, column, unit, semantics, tooltip, formula}, …]`` rows
     for the *measure* columns of one output (dimension columns dropped).

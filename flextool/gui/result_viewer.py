@@ -42,12 +42,33 @@ from flextool.scenario_comparison.dispatch_mappings import (
     resolve_data_scenario_tag,
 )
 from flextool.scenario_comparison.dispatch_plots import _build_dispatch_figure
+from flextool.plot_outputs.unit_labels import dispatch_ylabel
 
 if TYPE_CHECKING:
     from flextool.gui.data_models import PlotSettings
     from flextool.plot_outputs.plan import PlotPlan
 
 logger = logging.getLogger(__name__)
+
+
+def _scenario_unit_context(viewer, scenario: str):
+    """The UnitContext of the viewer's scenario folder *scenario* (its ``_unit_context.json``), cached on the
+    viewer; ``None`` when every node is MWh.  Fills the plot labels' unit tokens and the dispatch plots' y-axis
+    unit."""
+    cache = getattr(viewer, "_unit_ctx_cache", None)
+    if cache is None:
+        cache = {}
+        try:
+            viewer._unit_ctx_cache = cache
+        except AttributeError:
+            pass
+    if scenario not in cache:
+        from flextool.process_outputs._output_meta import load_unit_context
+
+        project = getattr(viewer, "_project_path", None)
+        cache[scenario] = (load_unit_context(Path(project) / "output_parquet" / scenario)
+                           if project is not None else None)
+    return cache[scenario]
 
 # Dispatch tree iid prefixes.  ``dispatch_`` parents are nodeGroups (aggregate
 # dispatch); ``dispatchnode_`` children are individual nodes.  The two prefixes
@@ -154,6 +175,8 @@ class ResultViewer(tk.Toplevel):
         # cache lookups never alias.
         self._yaml_cache: dict[Path, dict] = {}
         self._break_times_cache: "dict[str, pd.MultiIndex | None]" = {}
+        # Per scenario folder: its UnitContext (node.unit_of_measure), None when every node is MWh.
+        self._unit_ctx_cache: dict = {}
         self._parquet_cache_key: tuple = ("", "")
         self._parquet_cache_df: pd.DataFrame | None = None
 
@@ -1250,8 +1273,11 @@ class ResultViewer(tk.Toplevel):
         rate-vs-annualized distinction (e.g. ``[t] MW · instantaneous`` vs
         ``[d] MWh/a · annualized``) visible on hover without opening the file.
         """
-        from flextool.process_outputs._output_meta import result_variant_summary
+        from flextool.process_outputs._output_meta import result_variant_summary, written_variant_summary
 
+        # With node units (some node not MWh), the units the selected scenario's run wrote.
+        finder = getattr(self, "_tooltip_scenario_folder", None)
+        folder = finder() if finder is not None else None
         lines = [f"{entry.number} {entry.full_name}"]
         seen: set[tuple[str, str]] = set()
         for variant in entry.variants:
@@ -1259,12 +1285,29 @@ class ResultViewer(tk.Toplevel):
             if key in seen:
                 continue
             seen.add(key)
-            summary = result_variant_summary(variant.result_key, variant.letter)
+            summary = (written_variant_summary(folder, variant.result_key, variant.letter)
+                       if folder is not None else None)
+            if summary is None:
+                summary = result_variant_summary(variant.result_key, variant.letter)
             if summary is None:
                 continue
             unit, semantics, _desc = summary
             lines.append(f"   [{variant.letter}] {unit or 'ratio'} · {semantics}")
         return "\n".join(lines)
+
+    def _tooltip_scenario_folder(self):
+        """The parquet folder of the scenario the hover describes (the first selected one in single mode),
+        ``None`` in comparison mode, without a selection, or on a viewer without its scenario widgets."""
+        mode = getattr(self, "_mode", None)
+        if mode is None or getattr(self, "_project_path", None) is None:
+            return None
+        try:
+            if mode.get() == "comparison":
+                return None
+            scenarios = self._get_selected_scenarios()
+        except (AttributeError, tk.TclError):
+            return None
+        return self._project_path / "output_parquet" / scenarios[0] if scenarios else None
 
     def _hide_tooltip(self, _event: tk.Event | None = None) -> None:
         """Destroy the tooltip if it exists."""
@@ -2207,7 +2250,7 @@ class ResultViewer(tk.Toplevel):
         )
 
     def _reapply_template_to_plan(
-        self, plan, df, config, plot_name, break_times,
+        self, plan, df, config, plot_name, break_times, result_key=None, unit_ctx=None,
     ):
         """Re-apply the current ``plot_settings.yaml`` to a loaded disk plan.
 
@@ -2244,6 +2287,7 @@ class ResultViewer(tk.Toplevel):
             try:
                 return compute_live_plan(
                     df, config, plot_name, break_times, color_path=color_path,
+                    result_key=result_key, unit_ctx=unit_ctx,
                 )
             except Exception:  # noqa: BLE001
                 logger.warning(
@@ -2485,6 +2529,7 @@ class ResultViewer(tk.Toplevel):
         # rebuild-and-no-rebuild paths benefit from a fresh slate.
         self._yaml_cache.clear()
         self._break_times_cache.clear()
+        self._unit_ctx_cache.clear()
         self._current_availability = set()
         self._clear_figure_cache()
         self._dispatch_scenario = ""
@@ -3079,11 +3124,15 @@ class ResultViewer(tk.Toplevel):
                         # when navigating back), not just the edited one.
                         plan = self._reapply_template_to_plan(
                             plan, df, config, plot_name, break_times,
+                            result_key=variant.result_key,
+                            unit_ctx=_scenario_unit_context(self, scenario),
                         )
                 if plan is None:
                     plan = compute_live_plan(
                         df, config, plot_name, break_times,
                         color_path=resolve_plot_settings_path(self._project_path),
+                        result_key=variant.result_key,
+                        unit_ctx=_scenario_unit_context(self, scenario),
                     )
                 self._live_plan = plan
                 self._live_plan_key = plan_key
@@ -3124,6 +3173,7 @@ class ResultViewer(tk.Toplevel):
         self._update_time_range(len(df))
         start = self._start_var.get()
         duration = self._duration_var.get()
+        plot_rows = (start, start + duration)
 
         # 2. Check prefetch cache for instant display
         cache_key = self._make_figure_cache_key(
@@ -3199,6 +3249,8 @@ class ResultViewer(tk.Toplevel):
                 df, config, plot_name, plot_rows, break_times,
                 only_file_index=file_index,
                 color_path=resolve_plot_settings_path(self._project_path),
+                result_key=variant.result_key,
+                unit_ctx=_scenario_unit_context(self, scenario),
             )
         except Exception as exc:
             self.after(0, self._on_figure_error, generation, str(exc), variant.result_key)
@@ -3311,6 +3363,8 @@ class ResultViewer(tk.Toplevel):
             figures, _ = prepare_plot_data(
                 df, config, plot_name, plot_rows, break_times,
                 only_file_index=file_index,
+                result_key=result_key,
+                unit_ctx=_scenario_unit_context(self, cache_key[0]),
             )
             if figures:
                 with self._figure_cache_lock:
@@ -3450,6 +3504,8 @@ class ResultViewer(tk.Toplevel):
             plan = compute_live_plan(
                 df, cmp_cfg, plot_name, break_times,
                 color_path=resolve_plot_settings_path(self._project_path),
+                result_key=variant.result_key,
+                unit_ctx={s: _scenario_unit_context(self, s) for s in viewer_scenarios},
             )
             self._live_plan = plan
             self._live_plan_key = plan_key
@@ -3779,6 +3835,7 @@ class ResultViewer(tk.Toplevel):
         self._comp_needs_regen = False
         self._scheduled_viewer_scenarios = None
         self._break_times_cache.clear()
+        self._unit_ctx_cache.clear()
         self._clear_figure_cache()
         self._current_availability = set()
         # Phase E: drop the unioned plan-parquet cache; the viewer
@@ -4192,6 +4249,7 @@ class ResultViewer(tk.Toplevel):
         fig = _build_dispatch_figure(
             df_node, inflow,
             title=f"{node} — {scenario}",
+            ylabel=dispatch_ylabel(_scenario_unit_context(self, scenario), node=node),
             colors=colors,
             timeline=timeline,
             ylim=ylim,
@@ -4307,6 +4365,7 @@ class ResultViewer(tk.Toplevel):
         fig = _build_dispatch_figure(
             df_dispatch, inflow,
             title=f"{node_group} \u2014 {scenario}",
+            ylabel=dispatch_ylabel(_scenario_unit_context(self, scenario), group=node_group),
             colors=colors,
             timeline=timeline,
             ylim=ylim,

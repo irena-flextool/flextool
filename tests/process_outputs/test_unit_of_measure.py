@@ -407,3 +407,21 @@ def test_comparison_parquets_carry_units(tmp_path) -> None:
     written = read_lean_parquet_column_meta(path)
     assert written[str(("A_1", "water"))]["unit"] == "m3"
     assert written[str(("B", "water"))]["unit"] == "MWh"
+
+
+def test_plot_plans_follow_the_nodes(case) -> None:
+    """The solve's plot plans fill the label tokens per subplot: the water node's flows in m3/h, the
+    electricity node's in MWh/h, the nodeGroup over electricity and water "Mixed units of measure!"."""
+    from flextool.plot_outputs.plan import load_plot_plan
+
+    def labels(plan) -> set[str]:
+        out: set[str] = set()
+        for label in [plan.ylabel, plan.xlabel, *(plan.batch_ylabels or []), *(plan.batch_xlabels or [])]:
+            out.update(label if isinstance(label, list) else [label])
+        return out - {None}
+
+    plans = case["parquet"] / "plot_plans"
+    flows = load_plot_plan(plans, "unit_outputNode_dt_ee", "default")
+    assert {"m3/h", "MWh/h", "MWh_th/h"} <= labels(flows)
+    assert MIXED in labels(load_plot_plan(plans, "nodeGroup_flows_dt_g", "default"))
+    assert "m3" in labels(load_plot_plan(plans, "node_state_dt_e", "default"))

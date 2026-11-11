@@ -104,17 +104,21 @@ def _group_items_by_magnitude(
 
 
 def _build_effective_plots(df_plot, sub_levels, item_level_names,
-                           max_items_per_plot, subplots_by_magnitudes=False):
+                           max_items_per_plot, subplots_by_magnitudes=False,
+                           subs_out: list | None = None):
     """Pre-expand subplots into effective_plots with item splitting.
 
     When *subplots_by_magnitudes* is True the columns are first grouped
     by order-of-magnitude of their max absolute value (within each 'u'
     subplot group) and each magnitude bucket becomes its own subplot.
+    When *subs_out* is a list, the subplot value each effective plot was
+    extracted from is appended to it (one entry per effective plot).
     """
     from flextool.plot_outputs.subplot_helpers import _sort_subs
     subs = _sort_subs(_get_unique_levels(df_plot.columns, sub_levels))
     effective_plots = []
     for sub in subs:
+        n_before = len(effective_plots)
         df_sub = _extract_subplot_data(df_plot, sub, sub_levels)
         base_title = (
             ' | '.join(str(v) for v in sub) if isinstance(sub, tuple)
@@ -156,7 +160,21 @@ def _build_effective_plots(df_plot, sub_levels, item_level_names,
                     effective_plots.append((f"{base_title}_{chunk_idx}", df_chunk))
             else:
                 effective_plots.append((base_title, df_sub))
+        if subs_out is not None:
+            subs_out.extend([sub] * (len(effective_plots) - n_before))
     return effective_plots
+
+
+def _batch_axis_labels(axis_units, xlabel, ylabel, batch, effective_plots, plot_subs, df_plot, sub_levels):
+    """``(xlabel, ylabel)`` of one figure: as given without *axis_units*, else filled per subplot by the
+    :class:`~flextool.plot_outputs.unit_labels.AxisLabeler` from each subplot's data and subplot value."""
+    if axis_units is None:
+        return xlabel, ylabel
+    from flextool.plot_outputs.unit_labels import _sub_dict
+    names = [df_plot.columns.names[i] for i in sub_levels] if isinstance(df_plot.columns, pd.MultiIndex) else []
+    sub_of = {id(d): s for (_t, d), s in zip(effective_plots, plot_subs)}
+    plots = [(d, _sub_dict(sub_of.get(id(d)), names)) for _t, d in batch]
+    return axis_units.batch_label(xlabel, plots), axis_units.batch_label(ylabel, plots)
 
 
 def _make_file_batches(effective_plots, max_subplots_per_file, output_filepath, plot_dir, plot_name):
@@ -543,6 +561,7 @@ def build_line_figures(
     category: str | None = None,
     entity_class: str | None = None,
     keep_plot_data: bool = False,
+    axis_units=None,
 ) -> tuple[list[tuple[str, 'plt.Figure']], int]:
     """Build line-plot Figures and return them without saving or closing.
 
@@ -571,9 +590,10 @@ def build_line_figures(
         time_index = df_plot.index.astype(str)
 
     # Build effective_plots with item splitting (and optional magnitude splitting)
+    plot_subs: list = []
     effective_plots = _build_effective_plots(
         df_plot, sub_levels, line_level_names, max_items_per_plot,
-        subplots_by_magnitudes=subplots_by_magnitudes,
+        subplots_by_magnitudes=subplots_by_magnitudes, subs_out=plot_subs,
     )
     if not effective_plots:
         return [], 0
@@ -619,10 +639,12 @@ def build_line_figures(
         if only_file_index is not None and (batch_idx - 1) != only_file_index:
             continue
         batch_title = f"{plot_name} ({batch_idx}/{n_total})" if n_total > 1 else plot_name
+        batch_x, batch_y = _batch_axis_labels(
+            axis_units, xlabel, ylabel, batch, effective_plots, plot_subs, df_plot, sub_levels)
         fig = _build_lines_figure(
             batch, batch_title, sub_levels, line_level_names, time_index,
             subplots_per_row, legend_position,
-            xlabel, ylabel,
+            batch_x, batch_y,
             axis_bounds, axis_tick_format, always_include_zero_in_axis,
             layout, shared_color_map,
             period_labels=period_labels,
@@ -956,6 +978,7 @@ def build_stack_figures(
     category: str | None = None,
     entity_class: str | None = None,
     keep_plot_data: bool = False,
+    axis_units=None,
 ) -> tuple[list[tuple[str, 'plt.Figure']], int]:
     """Build stacked-area Figures and return them without saving or closing.
 
@@ -983,8 +1006,10 @@ def build_stack_figures(
         time_index = df_plot.index.astype(str)
 
     # Build effective_plots with item splitting
+    plot_subs: list = []
     effective_plots = _build_effective_plots(
-        df_plot, sub_levels, stack_level_names, max_items_per_plot
+        df_plot, sub_levels, stack_level_names, max_items_per_plot,
+        subs_out=plot_subs,
     )
     if not effective_plots:
         return [], 0
@@ -1028,10 +1053,12 @@ def build_stack_figures(
         if only_file_index is not None and (batch_idx - 1) != only_file_index:
             continue
         batch_title = f"{plot_name} ({batch_idx}/{n_total})" if n_total > 1 else plot_name
+        batch_x, batch_y = _batch_axis_labels(
+            axis_units, xlabel, ylabel, batch, effective_plots, plot_subs, df_plot, sub_levels)
         fig = _build_stack_figure(
             batch, batch_title, sub_levels, stack_level_names, time_index,
             subplots_per_row, legend_position,
-            xlabel, ylabel,
+            batch_x, batch_y,
             axis_bounds, axis_tick_format, always_include_zero_in_axis,
             layout, shared_color_map,
             period_labels=period_labels,
