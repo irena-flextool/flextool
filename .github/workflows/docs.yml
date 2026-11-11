@@ -7,10 +7,17 @@ name: Docs
 # checkout) and makes `main` the single, explicit docs build source. GitHub
 # Pages stays configured as-is: legacy build, source = `gh-pages` branch — this
 # workflow just pushes the freshly built site there on every docs change.
+#
+# A release (a pushed `v*` tag) also redeploys, so every release is guaranteed
+# to ship with the current docs even if its merge touched no docs path. The
+# site always tracks `main`: a tag run builds `main`, not the tagged commit,
+# so tagging an older commit cannot roll the site back.
 
 on:
   push:
     branches: [main]
+    # Releases. GitHub does not apply `paths` to tag pushes, so every tag runs.
+    tags: ["v*"]
     paths:
       - "docs/**"
       - "mkdocs.yml"
@@ -25,6 +32,12 @@ on:
       - "tools/mkdocs_hooks.py"
   workflow_dispatch:
 
+# A release merge and its tag push arrive together; deploy one at a time so
+# the two gh-deploy pushes to gh-pages do not race.
+concurrency:
+  group: docs-deploy
+  cancel-in-progress: false
+
 permissions:
   contents: write        # push the built site to the gh-pages branch
 
@@ -35,6 +48,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: main             # the site tracks main, also on a tag run
           fetch-depth: 0        # gh-deploy needs history to update gh-pages
 
       - uses: actions/setup-python@v5
