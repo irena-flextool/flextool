@@ -201,7 +201,7 @@ DIVEST_N: tuple[str, ...] = ("p_entity_max_units", "ndd_divest_active", "nd_dive
                               "p_state_unitsize")
 
 
-def _check_covers_dt(d, field: str, feature: str, *, positive: bool = False) -> None:
+def _check_covers_dt(d, field: str, feature: str, *, positive: bool = False, message: str | None = None) -> None:
     """Raise if the (d,)-keyed Param ``field`` lacks a period of ``dt`` (or, with ``positive``, has a
     value that is not finite and above 0).
 
@@ -211,11 +211,17 @@ def _check_covers_dt(d, field: str, feature: str, *, positive: bool = False) -> 
     directly (#38, Q22 replaced that with the cumulative ``p_co2_f_d_k`` carry, see
     ``_co2_period_cap_with_carry``) — the check is cheap dt-completeness insurance kept for whatever
     else may still read it. A zero fraction would set a window-fraction-driven cap to 0.  The loader
-    builds both Params over the dt periods, so a gap is a loader bug."""
+    builds both Params over the dt periods, so a gap is a loader bug.
+
+    ``message``: for a gap the user can cause (an edited or partial ``solve_data`` CSV, a hand-built
+    FlexData), the plain-English text of a ``FlexToolConfigError`` instead of the loader-bug
+    ``ValueError``; ``{periods}`` in it is replaced by the missing periods ('p2025', 'p2030')."""
     frame = getattr(d, field).frame
     have = set(frame["d"].cast(pl.Utf8).to_list())
     missing = [p for p in d.dt["d"].cast(pl.Utf8).unique(maintain_order=True).to_list() if p not in have]
     if missing:
+        if message is not None:
+            raise FlexToolConfigError(message.format(periods=", ".join(f"'{p}'" for p in missing)))
         raise ValueError(
             f"build_flextool: {field} lacks periods {missing} of dt, so {feature} would drop them; this is "
             f"a loader bug (the Param must cover every dt period).")
@@ -227,6 +233,42 @@ def _check_covers_dt(d, field: str, feature: str, *, positive: bool = False) -> 
                 f"build_flextool: {field} must be finite and above 0 for every period, got "
                 f"{dict(zip(bad['d'].cast(pl.Utf8).to_list(), bad['value'].to_list()))}; {feature} would "
                 f"get a wrong cap.  This is a loader bug.")
+
+
+def _check_covers_dt_steps(d, field: str, message: str) -> None:
+    """Raise ``FlexToolConfigError(message)`` if the (d, t)-keyed Param ``field`` lacks a (period, time step)
+    of ``dt``: every product with it (the cost weights ``op_factor`` / ``ev_factor``, the balance terms) is an
+    inner join, so the missing steps would drop out of the LP without a word.  ``{steps}`` in ``message`` is
+    replaced by the first missing pairs ((p2025, t0001), ...)."""
+    frame = getattr(d, field).frame
+    keys = d.dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+    missing = keys.join(frame.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).unique(),
+                        on=["d", "t"], how="anti", maintain_order="left")
+    if missing.height:
+        shown = ", ".join(f"({p}, {t})" for p, t in missing.head(5).iter_rows())
+        if missing.height > 5:
+            shown += f" and {missing.height - 5} more"
+        raise FlexToolConfigError(message.format(steps=shown))
+
+
+# Plain-English errors of the always-on coverage checks of ``_prepare`` (a partial ``solve_data`` CSV of a
+# reloaded run or a hand-built FlexData; the database path builds every Param over the solve's periods and steps).
+_INFLATION_OP_GAP = (
+    "The inflation factor of operating costs (p_inflation_factor_operations_yearly) has no value for period(s) "
+    "{periods}; the operating costs of those periods would be left out. Add the period(s) to "
+    "solve_data/p_inflation_factor_operations_yearly.csv, or re-run from the database.")
+_STEP_DURATION_GAP = (
+    "The time step duration (p_step_duration) has no value for (period, time step) {steps}; those time steps "
+    "would be left out of the costs and the balances. Add them to solve_data/steps_in_use.csv, or re-run from "
+    "the database.")
+_TIMESTEP_WEIGHT_GAP = (
+    "The time step weight (p_timestep_weight) has no value for (period, time step) {steps}; the operating costs "
+    "of those time steps would be left out. Add them to solve_data/timestep_weight.csv, or re-run from the "
+    "database.")
+_PERIOD_SHARE_GAP = (
+    "The share of the year of a period (complete_period_share_of_year) has no value for period(s) {periods}; the "
+    "operating costs of those periods would be left out. Add the period(s) to "
+    "solve_data/complete_period_share_of_year_calc.csv, or re-run from the database.")
 
 
 def _check(d, fields: tuple[str, ...], feature: str) -> None:
@@ -493,6 +535,12 @@ def _prepare(b: _Build) -> None:
     m.obj_coef_zero_rel_threshold = OBJ_COEF_ZERO_REL_THRESHOLD
 
     _check(d, ALWAYS, "always")
+    # The operating-cost weight (op_factor, _shared_expressions) is an inner join of these four: a period or
+    # time step one of them lacks would drop out of the objective without a word.
+    _check_covers_dt(d, "p_inflation_op", "operating costs", message=_INFLATION_OP_GAP)
+    _check_covers_dt(d, "p_period_share", "operating costs", message=_PERIOD_SHARE_GAP)
+    _check_covers_dt_steps(d, "p_step_duration", _STEP_DURATION_GAP)
+    _check_covers_dt_steps(d, "p_timestep_weight", _TIMESTEP_WEIGHT_GAP)
 
     # ── feature flags ──
     b.has_proc = _has_rows(d.process_source_sink)

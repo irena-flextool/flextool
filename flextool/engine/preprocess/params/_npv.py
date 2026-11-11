@@ -1286,6 +1286,10 @@ def p_inflation_op_from_source(source: "InputSource",
               .with_columns(alias_to_axis("d", "d"))
               .join(factors_lf, on="d", how="left")
               .with_columns(
+                  # Unreachable on the solve path: ``_inflation_factors_lf`` gives every period of
+                  # ``period_universe`` a factor (1.0 where years_represented has none), and the periods in use
+                  # are periods of that universe.  The fill only keeps a caller's universe that misses a period
+                  # in use from leaving it a null factor (build_flextool checks the factor covers dt).
                   value=pl.col(factor).fill_null(1.0),
               )
               .select("d", "value")

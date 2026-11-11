@@ -62,6 +62,53 @@ def _provider_key(filename: str) -> str:
     return f"{p.parent.name}/{p.stem}" if p.parent.name else p.stem
 
 
+def _timestep_keyed_drops() -> dict[str, tuple[list[str], str, frozenset[str]]]:
+    """``{spec filename: (key columns, parameter column, parameter names)}`` of the period specs whose
+    timestep-keyed rows :func:`_drop_timestep_keyed_rows` drops."""
+    from flextool.input_derivation._specs import (
+        PD_NODE_DROP_TIMESTEP_KEYS,
+        PD_PROCESS_DROP_TIMESTEP_KEYS,
+        PD_SOURCE_SINK_DROP_TIMESTEP_KEYS,
+    )
+    return {
+        "input/pd_process.csv": (["process", "processParam", "period"], "processParam",
+                                 PD_PROCESS_DROP_TIMESTEP_KEYS),
+        "input/pd_node.csv": (["node", "nodeParam", "period"], "nodeParam", PD_NODE_DROP_TIMESTEP_KEYS),
+        "input/pd_process_sink.csv": (["process", "sink", "sourceSinkPeriodParam", "period"],
+                                      "sourceSinkPeriodParam", PD_SOURCE_SINK_DROP_TIMESTEP_KEYS),
+        "input/pd_process_source.csv": (["process", "source", "sourceSinkPeriodParam", "period"],
+                                        "sourceSinkPeriodParam", PD_SOURCE_SINK_DROP_TIMESTEP_KEYS),
+    }
+
+
+def _drop_timestep_keyed_rows(backend, kwargs: dict, frame: pl.DataFrame, *, key_cols: list[str],
+                              param_col: str, drop_keys: frozenset[str], timesteps: list[str]) -> pl.DataFrame:
+    """``frame`` (a period spec read with ``kwargs``) without its rows whose ``period`` is a time step and whose
+    ``param_col`` is in ``drop_keys``.
+
+    The period twins of time-series parameters (``pd_process`` / ``pd_node`` / ``pd_process_sink`` /
+    ``pd_process_source`` next to their ``pt_*`` specs) also catch silent-``x`` time maps.  A timestep is never a
+    period, so those rows would only pollute ``periodAll`` and be copied into the per-roll period lookups.  An
+    explicitly period-labelled row (``index_name: "period"``) is never a silent-``x`` leak even when its key
+    happens to also be a timestep name (#76): the spec is re-read filtered to that index and any row it names is
+    kept."""
+    drop = pl.col(param_col).is_in(list(drop_keys)) & pl.col("period").is_in(timesteps)
+    if not frame.select(drop.any()).item():
+        return frame
+    explicit_period = backend.parameter_values(**{**kwargs, "filter_in_index": "period"})
+    is_explicit = (
+        frame.join(
+            explicit_period.select(key_cols).unique().with_columns(pl.lit(True).alias("__explicit")),
+            on=key_cols, how="left",
+        )["__explicit"].fill_null(False)
+    )
+    return (
+        frame.with_columns(is_explicit.alias("__explicit"))
+        .filter(~drop | pl.col("__explicit"))
+        .drop("__explicit")
+    )
+
+
 def run(
     backend_or_db_url,
     provider: "FlexDataProvider",
@@ -115,7 +162,6 @@ def run(
         _ENTITY_SPECS,
         _PARAMETER_SPECS,
         _DEFAULT_VALUES_SPECS,
-        PD_PROCESS_DROP_TIMESTEP_KEYS,
     )
     from flextool.input_derivation._validators import (
         validate_timeline_timestep_duration,
@@ -220,39 +266,19 @@ def run(
         if input_errors:
             raise FlexToolConfigError("\n\n".join(input_errors))
 
-        timesteps: list[str] | None = None
+        # Every time step of the scenario's timelines (``_scenario_time_vocab``, the steps ``input/timeline.csv``
+        # holds); read before the parameter specs because ``pd_node`` precedes ``timeline.csv`` among them.
+        timesteps = sorted(set().union(*time_vocab[1].values()))
+        timestep_keyed_drops = _timestep_keyed_drops()
         for spec in _PARAMETER_SPECS:
             kwargs = {k: v for k, v in spec.items() if k != "filename"}
             frame = backend.parameter_values(**kwargs)
-            if spec["filename"] == "input/timeline.csv":
-                timesteps = frame["timestep"].unique().to_list()
-            elif spec["filename"] == "input/pd_process.csv":
-                if timesteps is None:
-                    raise RuntimeError("_PARAMETER_SPECS: input/timeline.csv must precede input/pd_process.csv")
-                # The period twins of the ``pt_process`` parameters (and ``startup_cost``) also catch silent-``x``
-                # time maps; drop their timestep-keyed rows (a timestep is never a period) so they neither pollute
-                # ``periodAll`` nor get copied into the per-roll ``pd_process`` lookups. An explicitly
-                # period-labelled row (``index_name: "period"``) is never a silent-``x`` leak even when its key
-                # happens to also be a timestep name (#76) — re-read the spec filtered to that index and keep any
-                # row it names.
-                key_cols = ["process", "processParam", "period"]
-                explicit_period = backend.parameter_values(**{**kwargs, "filter_in_index": "period"})
-                is_explicit = (
-                    frame.join(
-                        explicit_period.select(key_cols).unique().with_columns(
-                            pl.lit(True).alias("__explicit")),
-                        on=key_cols, how="left",
-                    )["__explicit"].fill_null(False)
-                )
-                drop = (
-                    pl.col("processParam").is_in(list(PD_PROCESS_DROP_TIMESTEP_KEYS))
-                    & pl.col("period").is_in(timesteps)
-                )
-                frame = (
-                    frame.with_columns(is_explicit.alias("__explicit"))
-                    .filter(~drop | pl.col("__explicit"))
-                    .drop("__explicit")
-                )
+            drop = timestep_keyed_drops.get(spec["filename"])
+            if drop is not None:
+                key_cols, param_col, drop_keys = drop
+                frame = _drop_timestep_keyed_rows(
+                    backend, kwargs, frame, key_cols=key_cols, param_col=param_col, drop_keys=drop_keys,
+                    timesteps=timesteps)
             provider.put(_provider_key(spec["filename"]), frame)
         warn_profiles_as_percent(backend, provider)
         _mem("spine_db_read_end", "Spine DB loaded")

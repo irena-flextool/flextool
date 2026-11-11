@@ -16,8 +16,9 @@ Before the fix:
 The criterion: inside one solve mode, a period map gives the same parameters and objective as the equivalent
 scalar (or time curve), and a roll's parameters equal the matching slice of the single solve.
 
-A silent-``x`` **time** map of one of these parameters must not leak its timestep names into ``pd_process`` or
-the period universe (``periodAll``).
+A silent-``x`` **time** map of one of these parameters, or of a node penalty / availability / self-discharge /
+storage reference value or an other_operational_cost, must not leak its timestep names into the period specs
+(``pd_process``, ``pd_node``, ``pd_process_sink``, ``pd_process_source``) or the period universe (``periodAll``).
 
 Vehicles (databases built from JSON, never a checked-in ``.sqlite``):
 - ``1_week_rolling_wind`` of ``tests/fixtures/stochastics.json`` with its stochastic data removed: one period
@@ -25,11 +26,12 @@ Vehicles (databases built from JSON, never a checked-in ``.sqlite``):
 - ``invest_5weeks`` of ``tests/fixtures/tests.json`` with nested ``invest_periods``: the synthetic sub-solves
   ``invest_5weeks_<p>``.
 - ``network_coal_wind_battery_co2_fullYear_availability`` of ``tests/fixtures/tests.json`` (x-labelled time
-  maps of unit / connection ``availability``).
+  maps of unit / connection ``availability``; one 72-step period p2020).
 """
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 import polars as pl
@@ -448,6 +450,165 @@ def test_silent_x_time_maps_stay_out_of_period_universe(availability_db, tmp_pat
     run(tmp_path_factory, availability_db, AVAILABILITY_SCENARIO)
     assert seen and all(v == ["p2020"] for v in seen), seen
 
+
+# ---------------------------------------------------------------------------
+# Silent-``x`` time maps of the node and source / sink period twins (item 72)
+#
+# ``pd_node`` (penalty_up, penalty_down, availability, self_discharge_loss, storage_state_reference_value),
+# ``pd_process`` (connection other_operational_cost), ``pd_process_sink`` and ``pd_process_source``
+# (other_operational_cost) are the period twins of ``pt_*`` specs, so a silent-``x`` time map passes both filters.
+# Its timestep rows must not reach the period specs (a timestep is never a period): the timesteps must not join
+# ``periodAll`` and the value must equal the same map labelled ``index_name: time``.  Values (oracle):
+#     west penalty_up                              {t000i: 100 + i}        (t0001 -> 101, t0072 -> 172)
+#     west_east / (coal_plant, west) / (coal_plant, coal_market) other_operational_cost {t000i: 0.5 + 0.01 i}
+
+SILENT_PENALTY = {t: 100.0 + i for i, t in enumerate(TIMESTEPS_72, start=1)}
+SILENT_VARCOST = {t: round(0.5 + 0.01 * i, 2) for i, t in enumerate(TIMESTEPS_72, start=1)}
+AVAILABILITY_CHAIN = ["init", "west", "coal", "wind", "battery", "network", "co2_price", "fullYear", "availability"]
+
+
+def _silent_time_values(index_name: str | None) -> list:
+    return [
+        ["node", "west", "penalty_up", pmap(SILENT_PENALTY, index_name)],
+        ["connection", "west_east", "other_operational_cost", pmap(SILENT_VARCOST, index_name)],
+        ["unit__outputNode", ["coal_plant", "west"], "other_operational_cost", pmap(SILENT_VARCOST, index_name)],
+        ["unit__inputNode", ["coal_plant", "coal_market"], "other_operational_cost",
+         pmap(SILENT_VARCOST, index_name)],
+    ]
+
+
+def _periods_seen(monkeypatch) -> list[list[str]]:
+    """Every ``solve_data/periodAll_set.csv`` the per-solve emit writes from now on."""
+    from flextool.engine.preprocess.emit import _per_solve
+
+    seen: list[list[str]] = []
+    orig = _per_solve._emit_singles
+
+    def spy(provider, key, header, values):
+        if key == "solve_data/periodAll_set.csv":
+            seen.append(list(values))
+        return orig(provider, key, header, values)
+
+    monkeypatch.setattr(_per_solve, "_emit_singles", spy)
+    return seen
+
+
+_SILENT_RUNS: dict = {}
+
+
+def _silent_time_run(tmp_path_factory, index_name: str | None) -> dict:
+    """``{"steps", "periods", "inputs"}`` of the availability vehicle with ``_silent_time_values(index_name)``:
+    the run, the ``periodAll`` of every emit, and the ``input_derivation`` frames of the four period specs."""
+    if index_name not in _SILENT_RUNS:
+        from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+        from flextool.input_derivation import run as input_derivation_run
+
+        alt = f"c72_{index_name or 'x'}"
+        url, scen = make_db(tmp_path_factory, alt=alt, values=_silent_time_values(index_name),
+                            base_chain=AVAILABILITY_CHAIN, fixture_json=TESTS_JSON)
+        provider = FlexDataProvider()
+        input_derivation_run(url, provider, scenario_name=scen, work_folder=tmp_path_factory.mktemp(f"{alt}_in"))
+        inputs = {k: utf8(provider.get(f"input/{k}"))
+                  for k in ("pd_node", "pd_process", "pd_process_sink", "pd_process_source")}
+        with pytest.MonkeyPatch.context() as mp:
+            periods = _periods_seen(mp)
+            steps = run(tmp_path_factory, url, scen)
+        _SILENT_RUNS[index_name] = {"steps": steps, "periods": periods, "inputs": inputs}
+    return _SILENT_RUNS[index_name]
+
+
+def _cells(field, dt, keys: list[str]) -> pl.DataFrame:
+    """``field`` broadcast over ``dt``: sorted ``(*keys, d, t, value)``, values rounded to 9 decimals."""
+    f = _frame(field)
+    grid = _frame(dt).select("d", "t").unique()
+    if {"d", "t"} <= set(f.columns):
+        f = f.join(grid, on=["d", "t"], how="semi")
+    elif "t" in f.columns:
+        f = f.join(grid, on="t", how="inner")
+    elif "d" in f.columns:
+        f = f.join(grid, on="d", how="inner")
+    else:
+        f = f.join(grid, how="cross")
+    return f.select(*keys, "d", "t", pl.col("value").cast(pl.Float64).round(9)).sort(*keys, "d", "t")
+
+
+def _only_step(case: dict):
+    (step,) = case["steps"].values()
+    assert _frame(step.flex_data.dt)["d"].unique().to_list() == ["p2020"]
+    return step
+
+
+@pytest.mark.parametrize("spec", ["pd_node", "pd_process", "pd_process_sink", "pd_process_source"])
+def test_silent_x_time_maps_stay_out_of_node_and_source_sink_period_specs(tmp_path_factory, spec) -> None:
+    """No row of the period spec has a timestep in its ``period`` column."""
+    inputs = _silent_time_run(tmp_path_factory, None)["inputs"]
+    leaked = inputs[spec].filter(pl.col("period").is_in(TIMESTEPS_72))
+    assert leaked.height == 0, leaked
+
+
+def test_silent_x_node_and_source_sink_time_maps_stay_out_of_period_universe(tmp_path_factory) -> None:
+    seen = _silent_time_run(tmp_path_factory, None)["periods"]
+    assert seen and all(v == ["p2020"] for v in seen), seen
+
+
+def test_silent_x_node_penalty_time_map_reads_as_time(tmp_path_factory) -> None:
+    """p_penalty_up[west, p2020, t000i] = 100 + i; the other nodes keep their scalars (east 500, north 1000,
+    battery 3000); equal to the ``index_name: time`` twin."""
+    step = _only_step(_silent_time_run(tmp_path_factory, None))
+    twin = _only_step(_silent_time_run(tmp_path_factory, "time"))
+    cells = _cells(step.flex_data.p_penalty_up, step.flex_data.dt, ["n"])
+    west = cells.filter(pl.col("n") == "west")
+    assert dict(zip(west["t"], west["value"])) == SILENT_PENALTY
+    assert set(west["d"]) == {"p2020"}
+    for node, v in (("east", 500.0), ("north", 1000.0), ("battery", 3000.0)):
+        assert set(cells.filter(pl.col("n") == node)["value"]) == {v}, node
+    assert cells.equals(_cells(twin.flex_data.p_penalty_up, twin.flex_data.dt, ["n"]))
+
+
+@pytest.mark.parametrize(("field", "keys", "entity"), [
+    ("p_pdt_varCost_process", ["p"], ("west_east",)),
+    ("p_pdt_varCost_sink", ["p", "sink"], ("coal_plant", "west")),
+    ("p_pdt_varCost_source", ["p", "source"], ("coal_plant", "coal_market")),
+], ids=["connection", "unit_sink", "unit_source"])
+def test_silent_x_other_operational_cost_time_map_reads_as_time(tmp_path_factory, field, keys, entity) -> None:
+    """The other_operational_cost of the entity at (p2020, t000i) = 0.5 + 0.01 i; equal to the twin."""
+    step = _only_step(_silent_time_run(tmp_path_factory, None))
+    twin = _only_step(_silent_time_run(tmp_path_factory, "time"))
+    cells = _cells(getattr(step.flex_data, field), step.flex_data.dt, keys)
+    mine = cells.filter(pl.all_horizontal([pl.col(k) == v for k, v in zip(keys, entity)]))
+    assert set(mine["d"]) == {"p2020"}
+    assert dict(zip(mine["t"], mine["value"])) == SILENT_VARCOST
+    assert cells.equals(_cells(getattr(twin.flex_data, field), twin.flex_data.dt, keys))
+
+
+def test_silent_x_time_maps_objective_equals_time_labelled_twin(tmp_path_factory) -> None:
+    obj = _only_step(_silent_time_run(tmp_path_factory, None)).solution.obj
+    twin = _only_step(_silent_time_run(tmp_path_factory, "time")).solution.obj
+    assert math.isfinite(obj)
+    assert obj == pytest.approx(twin, rel=1e-9)
+
+
+def test_explicit_period_row_named_like_a_timestep_is_kept_in_pd_node(tmp_path_factory, monkeypatch) -> None:
+    """#76: with t0001 in model.periods_available, west penalty_up = ``index_name: period`` map {p2020: 777,
+    t0001: 333} keeps both pd_node rows; the solve's only period is p2020, where penalty_up is 777."""
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+    from flextool.input_derivation import run as input_derivation_run
+
+    values = [["model", "flexTool", "periods_available", b64({"value_type": "str", "data": ["t0001"]}, "array")],
+              ["node", "west", "penalty_up", pmap({"p2020": 777.0, "t0001": 333.0}, "period")]]
+    url, scen = make_db(tmp_path_factory, alt="c72_p76", values=values, base_chain=AVAILABILITY_CHAIN,
+                        fixture_json=TESTS_JSON)
+    provider = FlexDataProvider()
+    input_derivation_run(url, provider, scenario_name=scen, work_folder=tmp_path_factory.mktemp("c72_p76_in"))
+    rows = utf8(provider.get("input/pd_node")).filter((pl.col("node") == "west")
+                                                      & (pl.col("nodeParam") == "penalty_up"))
+    assert {(p, float(v)) for p, v in rows.select("period", "pd_node").iter_rows()} == {("p2020", 777.0),
+                                                                                         ("t0001", 333.0)}
+    seen = _periods_seen(monkeypatch)
+    step = _only_step({"steps": run(tmp_path_factory, url, scen)})
+    assert seen and all("p2020" in v for v in seen), seen
+    west = _cells(step.flex_data.p_penalty_up, step.flex_data.dt, ["n"]).filter(pl.col("n") == "west")
+    assert west.height == 72 and set(west["value"]) == {777.0}
 
 # ---------------------------------------------------------------------------
 # Node availability, penalty_up / penalty_down and self_discharge_loss given as a period x time (2-D) map.

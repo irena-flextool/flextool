@@ -530,6 +530,12 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   later with an internal error). A timeset whose `timeline` is not a timeline of the scenario is an error. Only
   the timesets used by the solves of the model are checked. A block length that is not a whole number gets a
   warning. No change to the model otherwise.
+- **A time map without `index_name` of a node `penalty_up` / `penalty_down` / `availability` /
+  `self_discharge_loss` / `storage_state_reference_value` or of an `other_operational_cost` added its time steps to
+  the model's periods.** It now reads only as a time series, as the same map with `index_name` *time* does.
+- **A run reloaded from edited `solve_data` files left out the operating costs of a period or time step without
+  a word** when the inflation factor, the share of the year, the time step duration or the time step weight had no
+  value for it; it now stops with an error that names the file and the missing periods or time steps.
 
 #### User constraints
 

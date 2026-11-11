@@ -59,11 +59,24 @@ _ENTITY_SPECS: list[EntitySpec] = [
 
 # ``processParam`` values whose timestep-keyed ``pd_process`` rows ``input_derivation.run`` drops (a timestep is
 # never a period): the period twins of the ``pt_process`` parameters ``efficiency``, ``efficiency_at_min_load``,
-# ``min_load`` and ``availability`` (a silent-``x`` time map of one passes both the ``pt`` and the ``pd`` filter)
-# and ``startup_cost``, which has no ``pt_process`` twin but entered ``pd_process`` with them, so an off-schema
-# silent-``x`` time map of it cannot add timestep names to the period universe either.
+# ``min_load`` and ``availability`` and of the connection ``other_operational_cost`` (a silent-``x`` time map of
+# one passes both the ``pt`` and the ``pd`` filter) and ``startup_cost``, which has no ``pt_process`` twin but
+# entered ``pd_process`` with them, so an off-schema silent-``x`` time map of it cannot add timestep names to the
+# period universe either.
 PD_PROCESS_DROP_TIMESTEP_KEYS: frozenset[str] = frozenset(
-    {"efficiency", "efficiency_at_min_load", "min_load", "availability", "startup_cost"})
+    {"efficiency", "efficiency_at_min_load", "min_load", "availability", "startup_cost",
+     "other_operational_cost"})
+
+# ``nodeParam`` values whose timestep-keyed ``pd_node`` rows ``input_derivation.run`` drops: the period twins of
+# the ``pt_node`` parameters (a silent-``x`` time map of one passes both the ``pt_node`` and the ``pd_node``
+# filter, and its timestep keys would otherwise become periods of ``periodAll``).
+PD_NODE_DROP_TIMESTEP_KEYS: frozenset[str] = frozenset(
+    {"availability", "penalty_up", "penalty_down", "self_discharge_loss", "storage_state_reference_value"})
+
+# ``sourceSinkPeriodParam`` values whose timestep-keyed ``pd_process_sink`` / ``pd_process_source`` rows
+# ``input_derivation.run`` drops: the period twin of the ``pt_process_sink`` / ``pt_process_source``
+# ``other_operational_cost``.
+PD_SOURCE_SINK_DROP_TIMESTEP_KEYS: frozenset[str] = frozenset({"other_operational_cost"})
 
 
 _PARAMETER_SPECS: list[dict] = [
@@ -936,7 +949,9 @@ _PARAMETER_SPECS: list[dict] = [
     # period-labelled maps (``filter_out_index: "period"``), so without the twin a 1-D period map of efficiency /
     # min_load / availability never reached the emit ``pdtProcess`` cascade that rolling and nested sub-solves read
     # (same pairing as ``pd_node`` / ``pt_node``).  Timestep-keyed rows of the twins (silent-``x`` time maps) are
-    # dropped in ``input_derivation.run`` (``PD_PROCESS_DROP_TIMESTEP_KEYS``).
+    # dropped in ``input_derivation.run`` (``PD_PROCESS_DROP_TIMESTEP_KEYS``; ``pd_node`` likewise with
+    # ``PD_NODE_DROP_TIMESTEP_KEYS``, ``pd_process_sink`` / ``pd_process_source`` with
+    # ``PD_SOURCE_SINK_DROP_TIMESTEP_KEYS``).
     {
         "cl_pars": [("unit", "invest_forced"),
                     ("unit", "invest_max_period"),
