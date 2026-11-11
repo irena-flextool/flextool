@@ -237,7 +237,18 @@ def test_flextool_requires_a_highspy_with_its_own_cpp_runtime():
     spec = _flextool_highspy_spec()
     floor = next(part[2:] for part in spec.split(",") if part.startswith(">="))
     assert env_check._release(floor) >= env_check.HIGHSPY_OWN_CPP_RUNTIME
-    assert env_check._HIGHSPY_SPEC_FALLBACK == spec
+    # The source-checkout fallback must track the pyproject requirement.  The
+    # weekly canary lifts the upper caps in pyproject.toml before running the
+    # suite (.github/scripts/dependency_caps.py lift), so the lower bounds are
+    # compared always and the full spec only while pyproject is still capped.
+    fallback = env_check._HIGHSPY_SPEC_FALLBACK
+    assert _lower_bounds(fallback) == _lower_bounds(spec)
+    if any(part.startswith(("<", "==", "~=")) for part in spec.split(",")):
+        assert fallback == spec
+
+
+def _lower_bounds(spec: str) -> list[str]:
+    return sorted(part for part in spec.split(",") if part.startswith(">"))
 
 
 def test_default_python_is_current_interpreter(monkeypatch):
