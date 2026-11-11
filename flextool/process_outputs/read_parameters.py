@@ -1482,6 +1482,13 @@ def read_parameters(
         entity_dim="p", col_name="process", flex_data=flex_data,
     )
 
+    # process_node_startup_energy — (solve, period) × (process, node): MWh per MW started that a unit's start-up
+    # takes from its start-up input node (unit__inputNode.startup_input_method / startup_energy).
+    p.process_node_startup_energy = _pdX_multi_col(
+        getattr(flex_data, "p_startup_energy", None), solve_name=solve_name,
+        col_dims=("p", "n"), col_names=("process", "node"),
+    )
+
     # process_ramp_cost — (solve, period) × (process, source, sink): the ramp cost of each arc (CUR/MW of
     # change, p_ramp_cost_arc), constant over the periods.
     p.process_ramp_cost = _pdX_multi_col(

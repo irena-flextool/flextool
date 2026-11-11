@@ -51,8 +51,11 @@ def balance_flow_terms(b: "_Build", *, at_branch: bool = False, nodes: "pl.DataF
     source_noEff[n,d,t]       = − Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t] · unitsize[p] · Δt[d,t]
     back_at_sink / back_at_source: the v_flow_back terms of twoway1var_arcs
                                     (_dc_power_flow.nodeBalance_back_flow_terms)
+    startup_su_{lin,int}[n,d,t] = − Σ_{(p,n) ∈ startup_to_balance} v_startup[p,d,t] · startup_energy[p,n,d]
+                                    · unitsize[p]   (an event: no Δt; core._startup_draw)
     A unit with an efficiency draws flow · slope from its source node; a min_load_efficiency unit also draws its
-    section input per online unit.  v_flow_back adds to the source node and takes from the sink node.
+    section input per online unit; a unit with a start-up input node draws startup_energy per MW started from it.
+    v_flow_back adds to the source node and takes from the sink node.
 
     ``at_branch`` indexes every variable and every (d,t) parameter at the forecast branch ``b`` instead of ``d``
     (the b side of non_anticipativity_storage_use).  ``nodes`` (a frame with ``n``) keeps only the arcs at those
@@ -62,6 +65,8 @@ def balance_flow_terms(b: "_Build", *, at_branch: bool = False, nodes: "pl.DataF
       node of g only for g (a back-flow term at an arc's other node outside g is left out);
     * ``exclude_arcs`` (p, source, sink[, g]): those arcs (for that g) are left out of every term;
     * ``per_step``: the terms are power (MW), without the Δt factor.
+
+    The start-up draw is energy per event, not capacity: it is left out with ``per_step`` or ``group_nodes``.
     """
     d = b.d
     terms: dict = {}
@@ -115,6 +120,11 @@ def balance_flow_terms(b: "_Build", *, at_branch: bool = False, nodes: "pl.DataF
         terms["source_noEff"] = -Sum(
             energy(Where(v_flow * d.p_unitsize, from_noEff)),
             over=("p", "source", "sink"))
+    if b.has_startup_draw and not per_step and group_nodes is None:
+        from flextool.engine.model.core import _startup_draw
+        startup_pn = _at_nodes(getattr(d, "startup_to_balance", None), names)
+        for key, term in _startup_draw(b, startup_pn, at_branch=at_branch):
+            terms[f"startup_{key}"] = -Sum(term, over=("p",))
     if b.v_flow_back is not None and b.twoway1var_arcs is not None:
         back_arcs = b.twoway1var_arcs
         if names is not None:
@@ -142,6 +152,8 @@ def balance_flow_values(d, sol, *, group_nodes: pl.DataFrame,
         sink_flow = v_flow · unitsize;  source_eff = − v_flow · unitsize · slope;
         source_section = − v_online · section · unitsize;  source_noEff = − v_flow · unitsize;
         back_at_sink = − v_flow_back · unitsize;  back_at_source = + v_flow_back · unitsize
+
+    The start-up draw (energy per event, not capacity) is not a term of these rows and is not here.
 
     The variables of coarse processes are read on every fine step (``engine.output._coarse_flows.var_values``),
     as the fine rows of the LP read them.  The capacity margin's output breakdown

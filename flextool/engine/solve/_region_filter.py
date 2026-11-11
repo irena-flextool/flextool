@@ -49,6 +49,7 @@ import polars as pl
 from polar_high import Param
 
 from flextool.engine.preprocess.flex_data import FlexData
+from flextool.engine.preprocess._reduce_detail import STARTUP_FIELDS
 from flextool.engine.input._axis_enums import (
     cast_dim,
     get_global_axis_enums,
@@ -485,6 +486,9 @@ def _validate_no_straddling_units(
     straddling arc, and severing any unit arc silently loses conversion
     terms.  Never a silent degrade (the fix_start precedent is the
     anti-pattern this guards against).
+
+    A unit's start-up input nodes (``process_startup_node``: the start-up draw is a term on its units started,
+    which live in the region subproblem) count as its endpoints too.
     """
     if data.process_source_sink is None:
         return
@@ -501,6 +505,11 @@ def _validate_no_straddling_units(
         if r["p"] in units:
             endpoints_by_unit.setdefault(r["p"], set()).update(
                 (r["source"], r["sink"]))
+    startup_pn = getattr(data, "process_startup_node", None)
+    if startup_pn is not None and startup_pn.height > 0:
+        for p, n in startup_pn.select(pl.col("p").cast(pl.Utf8), pl.col("n").cast(pl.Utf8)).iter_rows():
+            if p in units:
+                endpoints_by_unit.setdefault(p, set()).add(n)
     for unit in sorted(endpoints_by_unit):
         eps = endpoints_by_unit[unit]
         region_touch = eps & all_region_nodes
@@ -518,6 +527,26 @@ def _validate_no_straddling_units(
                 f"connection, and keep the unit's arcs wholly on one "
                 f"side."
             )
+
+
+def _validate_startup_nodes(data: FlexData, region_nodes: dict[str, set[str]],
+                            region_procs: dict[str, set[str]]) -> None:
+    """Hard-error on a unit that takes start-up energy (``process_startup_node``, startup_input_method) from a node
+    of a region the unit is not in: the draw is a term on the unit's units started, which live in the unit's own
+    region subproblem, so it cannot enter the other region's balance."""
+    pn = getattr(data, "process_startup_node", None)
+    if pn is None or pn.height == 0:
+        return
+    bad: list[str] = []
+    for p, n in pn.select(pl.col("p").cast(pl.Utf8), pl.col("n").cast(pl.Utf8)).iter_rows():
+        for r, nodes in region_nodes.items():
+            if n in nodes and p not in region_procs.get(r, set()):
+                bad.append(f"unit {p!r} takes start-up energy from node {n!r} of region {r!r}")
+    if bad:
+        raise RuntimeError(
+            "split: " + "; ".join(sorted(bad)) + ".  A start-up draw is a term on the unit's start-ups, which are "
+            "in the unit's own region subproblem.  Take the start-up input from a node of the unit's region or a "
+            "node of no region (a commodity node), or bring the node into the unit's region.")
 
 
 def _user_constraint_sides(
@@ -1095,6 +1124,18 @@ def _build_region_data(
         )
     new.process_unit = _filter_frame(src.process_unit, "p", keep_procs)
     new.process_exact = _filter_frame(getattr(src, "process_exact", None), "p", keep_procs)
+    # Start-up input draws (startup_input_method): the region's units.  Their start-up nodes are in the region or in
+    # no region (a shared commodity node, replicated and priced in each region): a node of another region is refused
+    # by split (_validate_startup_nodes), a master-hosted one is a straddling unit (_validate_no_straddling_units).
+    for _f in STARTUP_FIELDS:
+        _obj = getattr(src, _f, None)
+        if isinstance(_obj, Param):
+            _obj = _filter_param(_obj, "p", keep_procs)
+        elif _obj is not None:
+            _obj = _filter_frame(_obj, "p", keep_procs)
+        if _obj is not None and (_obj.frame if isinstance(_obj, Param) else _obj).height == 0:
+            _obj = None
+        setattr(new, _f, _obj)
 
     # ---- Master-hosted mode: scrub master entities from the frames the
     # splitter otherwise carries through whole (invest/annuity/cost,
@@ -2098,6 +2139,21 @@ def master_network_data(
                         _keep_proc_param(obj) if isinstance(obj, Param)
                         else _keep_proc(obj))
 
+    # Start-up input draws (startup_input_method): none in the network-only master; in master-hosted mode the
+    # units of the kept arcs at master-hosted nodes (a region unit's draw is in its region subproblem).
+    for fld in STARTUP_FIELDS:
+        obj = getattr(data, fld, None)
+        if master_mode and obj is not None:
+            if isinstance(obj, Param):
+                obj = _filter_param(_filter_param(obj, "p", cross_procs), "n", set(master_hosted_nodes))
+            else:
+                obj = _filter_frame(_filter_frame(obj, "p", cross_procs), "n", set(master_hosted_nodes))
+            if (obj.frame if isinstance(obj, Param) else obj).height == 0:
+                obj = None
+        else:
+            obj = None
+        setattr(new, fld, obj)
+
     # ``build_flextool``'s ALWAYS feature requires these four fields to be
     # PRESENT (not None) even when empty (model/core.py ``ALWAYS``).  Emptying
     # them (head(0)) — rather than nulling — OMITS every terminal node from
@@ -2332,6 +2388,7 @@ def split(
 
     shared_nodes = all_nodes - all_region_nodes
     shared_procs = all_procs - all_region_procs
+    _validate_startup_nodes(data, region_nodes, region_procs)
 
     if master_hosted_nodes:
         overlap = set(master_hosted_nodes) & all_region_nodes

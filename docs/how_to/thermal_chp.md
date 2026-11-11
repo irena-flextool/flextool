@@ -217,6 +217,24 @@ The first time step of a solve, the first step after a gap in the timeline and t
 
 ![Add min_load](../img/tutorial/coal_min_load.png)
 
+## How to give a unit a start-up fuel or start-up heat
+
+A start-up can use energy that the running unit does not: a coal unit is started on oil, a gas turbine burns gas to warm up, a CSP turbine takes steam from its tank before it delivers power. The input arc of the unit (`unit__inputNode`) says what it supplies, with `startup_input_method`:
+
+- *just_input* (default) - the normal input flow;
+- *startup_and_input* - the normal input flow, and each start-up also takes `startup_energy` × MW started from the node;
+- *startup_only* - only the start-up energy: the arc has no flow, and it takes no part in the unit's conversion, capacity, input shares or ramps.
+
+`startup_energy` is in MWh per MW started (constant or period). The unit needs online variables: `startup_method` *linear* or *binary* (or a `minimum_time_method`). With *linear* start-ups a start-up of 0.6 units of a 100 MW unit is 60 MW started; the model stays an LP.
+
+**Coal started on oil.** A coal unit *coal_plant* with its fuel input (*coal_plant*, *coal_market*) gets a second input arc (*coal_plant*, *oil_market*) with `startup_input_method` *startup_only* and `startup_energy` 2. A start-up of 60 MW then takes 120 MWh of oil from *oil_market* in the step it starts in, priced as the oil commodity and with the oil's `co2_content`. The oil arc is not a flow, so the unit stays a one-input, one-output unit (no extra flow variable, no conversion row), and the oil cannot be used to run the unit.
+
+**CSP turbine started on tank heat.** A turbine whose start-up heat comes from the tank uses its normal input: on (*csp_turbine*, *csp_heat*) set `startup_input_method` *startup_and_input* and `startup_energy` (for example 0.5 MWh_th per MW_e started). A start-up of 20 MW takes 10 MWh_th from the tank on top of the heat the turbine converts.
+
+**Results.** `unit_startup_energy__dt` [MWh in the step] and `unit_startup_energy__d` [MWh/a] show the start-up input per unit and node. The unit's input from the node (`unit__inputNode__dt` / `__d`), the commodity costs, the CO2 emissions and costs and the node balance include it.
+
+**Caveats.** The start-up input is not part of user constraints (`constraint_flow_coeff`), flow groups or the capacity margin. A solve whose `reduce_unit_detail_method` leaves out the online variables (*online*, *online_ramps*) also leaves out the start-up input, as it leaves out the start-up cost: an investment solve at that level under-counts both. See the `startup_input_method` / `startup_energy` entries in [Units](../reference/units.md#properties-of-unit-inputnode-and-unit-outputnode-entities).
+
 ## How to add minimum uptime and downtime
 
 Some power plants cannot be started and stopped freely due to thermal stress, safety requirements, or operational constraints. Minimum uptime forces a unit to stay online for a specified duration after starting up. Minimum downtime forces a unit to stay offline for a specified duration after shutting down.

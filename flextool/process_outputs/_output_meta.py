@@ -491,6 +491,8 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     # Start-ups
     "unit_startup_d_e": COUNT_ANNUAL,
     "connection_startup_d_e": COUNT_ANNUAL,
+    "unit_startup_energy_dt_ee": ENERGY_PERSTEP,
+    "unit_startup_energy_d_ee": PREENERGY_ANNUAL,
     # Prices / duals
     "node_prices_dt_e": PRICE_ENERGY,
     "reserve_prices_dt_ppg": PRICE_RESERVE,
@@ -757,6 +759,11 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
     "unit_online_average_d_e": "Average number of units online of each unit with online variables over the "
                                "period, weighted by step duration.",
     "unit_startup_d_e": "Startups of each unit with online variables in the period, scaled to a full year.",
+    "unit_startup_energy_dt_ee": "Energy that the start-ups of each unit take from each of its start-up input "
+                                 "nodes (startup_input_method) in each time step: startup_energy times the MW "
+                                 "started.  Also in the unit's input from the node, the commodity cost and CO2.",
+    "unit_startup_energy_d_ee": "Energy that the start-ups of each unit take from each of its start-up input "
+                                "nodes, summed over the period and scaled to a full year.",
     "connection_online_dt_e": "Number of units online of each connection with a startup method, in each time "
                               "step.",
     "connection_online_average_d_e": "Average number of units online of each connection with a startup method "
@@ -915,6 +922,8 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "unit_online_dt_e": OutputDims(_DT, ("process",), "unit_online_average_d_e"),
     "unit_online_average_d_e": OutputDims(_D, ("process",), "unit_online_dt_e"),
     "unit_startup_d_e": OutputDims(_D, ("process",)),
+    "unit_startup_energy_dt_ee": OutputDims(_DT, ("unit", "node"), "unit_startup_energy_d_ee"),
+    "unit_startup_energy_d_ee": OutputDims(_D, ("unit", "node"), "unit_startup_energy_dt_ee"),
     "connection_online_dt_e": OutputDims(_DT, ("process",), "connection_online_average_d_e"),
     "connection_online_average_d_e": OutputDims(_D, ("process",), "connection_online_dt_e"),
     "connection_startup_d_e": OutputDims(_D, ("process",)),

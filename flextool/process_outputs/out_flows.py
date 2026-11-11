@@ -143,6 +143,17 @@ def unit_inputNode(par, s, v, r, debug):
         u, source, sink = col
         result_multi_dt[(u, source)] = -r.flow_dt[col]
 
+    # The start-up input (startup_input_method): added to the flow of a startup_and_input arc, its own column for a
+    # startup_only arc (which has no flow).  MW-average over the step, as the flows.
+    draw = getattr(r, 'startup_draw_dt', None)
+    if draw is not None and len(draw.columns):
+        for u, n in draw.columns:
+            if u not in s.process_unit:
+                continue
+            taken = -draw[(u, n)].reindex(result_multi_dt.index)
+            result_multi_dt[(u, n)] = (result_multi_dt[(u, n)].add(taken, fill_value=0.0)
+                                       if (u, n) in result_multi_dt.columns else taken)
+
     # Reorder columns to match v3.32.0's direct-then-indirect / alphabetical
     # ordering (see ``unit_outputNode`` for rationale).
     indirect = _indirect_units(s)
@@ -166,6 +177,26 @@ def unit_inputNode(par, s, v, r, debug):
     # Return period results
     results.append((result_multi_d, 'unit_inputNode_d_ee'))
 
+    return results
+
+
+def unit_startup_energy(par, s, v, r, debug):
+    """Start-up input energy of each unit from each start-up input node (unit__inputNode.startup_input_method
+    startup_and_input / startup_only): MWh taken in each step, and the period sum scaled to a full year."""
+    results = []
+    draw = getattr(r, 'startup_draw_dt', None)
+    if draw is None or len(draw.columns) == 0:
+        return results
+    cols = draw.columns[draw.columns.get_level_values('process').isin(s.process_unit)]
+    if len(cols) == 0:
+        return results
+    energy_dt = draw[cols].mul(par.step_duration.reindex(draw.index), axis=0)
+    energy_dt.columns = pd.MultiIndex.from_tuples(list(cols), names=['unit', 'node'])
+    energy_dt = _clip_flow_residuals(energy_dt)
+    results.append((energy_dt, 'unit_startup_energy_dt_ee'))
+    energy_d = _clip_flow_residuals(annualize_dt_to_d(
+        energy_dt, par.timestep_weight, par.complete_period_share_of_year))
+    results.append((energy_d, 'unit_startup_energy_d_ee'))
     return results
 
 

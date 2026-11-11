@@ -283,6 +283,15 @@ def drop_levels(par: SimpleNamespace, s: SimpleNamespace, v: SimpleNamespace):
         obj = obj.droplevel('solve')
         setattr(par, attr, obj[~obj.index.duplicated(keep='first')])
 
+    # process_node_startup_energy is the same in every solve that has it; a solve whose reduce_unit_detail_method
+    # left out the start-ups has no value (NaN): the first value per period and (process, node).
+    se = getattr(par, 'process_node_startup_energy', None)
+    if se is not None and 'solve' in (se.index.names or ()):
+        se = se.droplevel('solve')
+        if not se.empty:
+            se = se.groupby(level='period', sort=False).first()
+        par.process_node_startup_energy = se
+
     # complete_period_share_of_year — order-independent max-per-period
     # reduction (deterministic across multi-solve union order).  See
     # _reduce_share_per_period for the full rationale.

@@ -246,6 +246,22 @@ def _physical_co2_emission_pieces(
     return pieces
 
 
+def _startup_co2_emission_pieces(flex_data: "FlexData") -> list[pl.DataFrame]:
+    """``(process, commodity, node)`` rows of the start-up input draws (``startup_from_commodity``: a unit's
+    start-up input node of a commodity, unit__inputNode.startup_input_method) of the commodities with a
+    ``co2_content``: the draw emits as a flow from that node does (calc_costs adds the draws to the flows,
+    ``calc_capacity_flows.flows_with_startup``)."""
+    co2_c = _co2_content_commodities(flex_data)
+    fr = getattr(flex_data, "startup_from_commodity", None)
+    if not co2_c or fr is None or fr.height == 0:
+        return []
+    sub = fr.filter(pl.col("c").cast(pl.Utf8).is_in(co2_c))
+    if sub.height == 0:
+        return []
+    return [sub.select(pl.col("p").cast(pl.Utf8).alias("process"), pl.col("c").cast(pl.Utf8).alias("commodity"),
+                       pl.col("n").cast(pl.Utf8).alias("node"))]
+
+
 def _process_commodity_node_from_flex(
     flex_data: "FlexData",
     *,
@@ -1036,6 +1052,8 @@ def read_sets(
             ("flow_from_commodity_eff", "source"),
             ("flow_from_commodity_noEff", "source"),
             ("flow_to_commodity", "sink"),
+            # The start-up input nodes of a commodity (unit__inputNode.startup_input_method).
+            ("startup_from_commodity", "n"),
         ),
     )
     # Commodities priced on a ladder (price_ladder_annual / price_ladder_cumulative) — calc_costs excludes
@@ -1047,7 +1065,7 @@ def read_sets(
     # rows for every co2_content commodity consumed, even when no group
     # prices or caps it — ``_CO2_EMISSION_FLOW_ATTRS`` alone is empty in
     # that case and under-reports emissions as 0 (#see read_sets diagnosis).
-    _co2_phys_pc_n = _physical_co2_emission_pieces(flex_data)
+    _co2_phys_pc_n = _physical_co2_emission_pieces(flex_data) + _startup_co2_emission_pieces(flex_data)
     _co2_phys_c_n = [
         fr.select("commodity", "node") for fr in _co2_phys_pc_n
     ]

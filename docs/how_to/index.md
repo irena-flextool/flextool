@@ -25,6 +25,7 @@ Each example will either include an example database file that is located in the
 - [How to model cogeneration with desalination](thermal_chp.md#how-to-model-cogeneration-with-desalination)
 - [How to add a reserve](thermal_chp.md#how-to-add-a-reserve)
 - [How to add a minimum load, start-up and ramp](thermal_chp.md#how-to-add-a-minimum-load-start-up-and-ramp)
+- [How to give a unit a start-up fuel or start-up heat](thermal_chp.md#how-to-give-a-unit-a-start-up-fuel-or-start-up-heat)
 - [How to add minimum uptime and downtime](thermal_chp.md#how-to-add-minimum-uptime-and-downtime)
 - [How to make a unit run all the time (must-run)](thermal_chp.md#how-to-make-a-unit-run-all-the-time-must-run)
 

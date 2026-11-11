@@ -72,6 +72,8 @@ class TimeSeriesResults:
     unit_online_dt_e: pd.DataFrame | None = None
     unit_online_average_d_e: pd.DataFrame | None = None
     unit_startup_d_e: pd.DataFrame | None = None
+    unit_startup_energy_dt_ee: pd.DataFrame | None = None
+    unit_startup_energy_d_ee: pd.DataFrame | None = None
     unit_capacity_ed_p: pd.DataFrame | None = None
 
     # --- Connection outputs ---

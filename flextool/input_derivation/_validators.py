@@ -1327,6 +1327,151 @@ def _process_methods(provider) -> dict[str, str]:
                     df.get_column("method").to_list()))
 
 
+#: unit__inputNode.startup_input_method values that give the arc a start-up role.
+STARTUP_ROLES: tuple[str, ...] = ("startup_and_input", "startup_only")
+#: unit__inputNode parameters that only act on an arc's flow: no effect on a startup_only arc (W2).
+_FLOW_ONLY_ARC_PARAMETERS: tuple[str, ...] = (
+    "conversion_flow_coeff", "input_share_min", "input_share_max", "ramp_method", "ramp_speed_up",
+    "ramp_speed_down", "ramp_cost", "other_operational_cost", "inertia_constant", "is_non_synchronous",
+)
+
+
+def startup_input_methods(db) -> dict[tuple[str, str], str]:
+    """``{(unit, node): startup_input_method}`` of every ``unit__inputNode`` arc of the scenario (the explicit value,
+    else the definition's default ``just_input``)."""
+    default = _definition_default(db, "unit__inputNode", "startup_input_method") or "just_input"
+    explicit = {(k[0], k[1]): v for k, v in _str_values(db, "unit__inputNode", "startup_input_method").items()}
+    return {(u, n): explicit.get((u, n), str(default))
+            for u, nodes in _arcs(db, "unit__inputNode").items() for n in nodes}
+
+
+def startup_only_arcs(db) -> set[tuple[str, str]]:
+    """The ``unit__inputNode`` arcs with ``startup_input_method`` ``startup_only``: not arcs of the model (the
+    engine readers hide them), so the arc checks skip them."""
+    return {arc for arc, method in startup_input_methods(db).items() if method == "startup_only"}
+
+
+def validate_startup_inputs(db, provider, logger: logging.Logger) -> None:
+    """Check ``unit__inputNode.startup_input_method`` / ``startup_energy`` (once per scenario, after
+    ``derive_process_method``: the online classification comes from ``input/process_method``).
+
+    Errors (one :class:`FlexToolConfigError`):
+
+    * E1 ``startup_energy`` on a ``just_input`` arc (it would be ignored);
+    * E2 a start-up role on a unit without online variables (``startup_method`` no_startup and no
+      ``minimum_time_method`` promotion): the draw is a term on the units started;
+    * E3 ``constraint_flow_coeff`` on a ``startup_only`` arc (the arc has no flow);
+    * E4 a negative ``startup_energy``;
+    * E5 a ``unit__node__profile``, ``flowGroup__unit__node`` or (enabled) ``reserve__upDown__unit__node`` entity
+      on a ``startup_only`` arc (it names a flow the model does not have; an output arc to the same node is
+      still an arc).
+
+    Warnings: W1 a start-up role without ``startup_energy`` (or with only zeros): no draw; W2 arc parameters
+    without effect on a ``startup_only`` arc (one line per arc); W3 a start-up node of type ``commodity`` that is
+    not a node of a commodity (the draw has no price and no balance: it goes nowhere); W4 a unit whose every
+    input is ``startup_only`` and that has no profile (its output costs only the start-up energy); W5 a
+    ``startup_and_input`` arc with a ``constraint_flow_coeff`` or in a flow group: the start-up input is not in
+    them (v1); W6 a ``min_load_efficiency`` unit whose every input is ``startup_only`` (its part-load section
+    has no input to draw from).
+    """
+    methods = startup_input_methods(db)
+    roles = {arc: m for arc, m in methods.items() if m in STARTUP_ROLES}
+    energy_rows = {(pv["entity_byname"][0], pv["entity_byname"][1]): _numeric_values(pv["parsed_value"])
+                   for pv in db.find_parameter_values(entity_class_name="unit__inputNode",
+                                                      parameter_definition_name="startup_energy")
+                   if pv["type"] is not None}
+    if not roles and not energy_rows:
+        return
+    errors: list[str] = []
+    just = sorted(arc for arc in energy_rows if methods.get(arc, "just_input") == "just_input")
+    if just:
+        errors.append("startup_energy is set on arc(s) with startup_input_method just_input, where it has no "
+                      f"effect: {', '.join(f'({u}, {n})' for u, n in just)}. Set startup_input_method "
+                      "startup_and_input or startup_only, or remove startup_energy.")
+    negative = sorted(arc for arc, vals in energy_rows.items() if any(v < 0.0 for v in vals))
+    if negative:
+        errors.append(f"startup_energy must be 0 or above: {', '.join(f'({u}, {n})' for u, n in negative)}.")
+    online_methods = {"method_1way_1var_LP", "method_1way_nvar_LP", "method_1way_1var_MIP", "method_1way_nvar_MIP"}
+    process_methods = _process_methods(provider)
+    offline = sorted({u for u, _n in roles if process_methods.get(u) not in online_methods})
+    if offline:
+        errors.append(f"startup_input_method needs online variables, but these units have none: "
+                      f"{', '.join(offline)}. Set startup_method linear or binary (or a minimum_time_method), or "
+                      "set startup_input_method just_input.")
+    only = {arc for arc, m in roles.items() if m == "startup_only"}
+    outputs = {(u, n) for u, nodes in _arcs(db, "unit__outputNode").items() for n in nodes}
+    coeff = {arc for arc, vals in _arc_values(db, "unit__inputNode", "constraint_flow_coeff").items()}
+    flow_coeff_only = sorted(only & coeff)
+    if flow_coeff_only:
+        errors.append("constraint_flow_coeff is set on startup_only arc(s), which have no flow: "
+                      f"{', '.join(f'({u}, {n})' for u, n in flow_coeff_only)}. Remove it, or use "
+                      "startup_input_method startup_and_input.")
+    disabled = {tuple(k) for k, v in _str_values(db, "reserve__upDown__unit__node", "is_enabled").items()
+                if v == "no"}
+    named: list[str] = []
+    for cls, unit_at, node_at in (("unit__node__profile", 0, 1), ("flowGroup__unit__node", 1, 2),
+                                  ("reserve__upDown__unit__node", 2, 3)):
+        for ent in db.find_entities(entity_class_name=cls):
+            byname = tuple(ent["entity_byname"])
+            arc = (byname[unit_at], byname[node_at])
+            if arc in only and arc not in outputs and byname not in disabled:
+                named.append(f"{cls} ({', '.join(byname)})")
+    if named:
+        errors.append("these entities name a startup_only arc, which has no flow: "
+                      f"{', '.join(sorted(named))}. Remove them, or use startup_input_method startup_and_input.")
+    if errors:
+        raise FlexToolConfigError("Invalid start-up inputs:\n  " + "\n  ".join(errors))
+
+    for arc in sorted(roles):
+        if not any(v != 0.0 for v in energy_rows.get(arc, [])):
+            logger.warning("unit__inputNode (%s, %s): startup_input_method %s without a startup_energy (or with "
+                           "only 0): the start-ups take nothing from the node.", arc[0], arc[1], roles[arc])
+    flow_params: dict[tuple[str, str], list[str]] = {}
+    for param in _FLOW_ONLY_ARC_PARAMETERS:
+        for pv in db.find_parameter_values(entity_class_name="unit__inputNode", parameter_definition_name=param):
+            arc = (pv["entity_byname"][0], pv["entity_byname"][1])
+            if pv["type"] is not None and arc in only:
+                flow_params.setdefault(arc, []).append(param)
+    for (u, n), params in sorted(flow_params.items()):
+        logger.warning("unit__inputNode (%s, %s): %s has no effect on a startup_only arc (it has no flow).",
+                       u, n, ", ".join(params))
+    node_types = {k[0]: v for k, v in _str_values(db, "node", "node_type").items()}
+    default_type = str(_definition_default(db, "node", "node_type") or "balance")
+    commodity_nodes = {ent["entity_byname"][1] for ent in db.find_entities(entity_class_name="commodity__node")}
+    for u, n in sorted(roles):
+        if node_types.get(n, default_type) == "commodity" and n not in commodity_nodes:
+            logger.warning("unit__inputNode (%s, %s): the start-up node '%s' has no energy balance and no "
+                           "commodity: the start-up energy is taken from nowhere and costs nothing.", u, n, n)
+    inputs = _arcs(db, "unit__inputNode")
+    with_profile = {ent["entity_byname"][0] for ent in db.find_entities(entity_class_name="unit__node__profile")}
+    min_load_eff = {k[0] for k, v in _str_values(db, "unit", "conversion_method").items()
+                    if v == "min_load_efficiency"}
+    for u in sorted(inputs):
+        if not all((u, n) in only for n in inputs[u]):
+            continue
+        if u not in with_profile:
+            logger.warning("unit '%s': every input is startup_only and the unit has no profile, so its output "
+                           "costs only the start-up energy.", u)
+        if u in min_load_eff:
+            logger.warning("unit '%s': min_load_efficiency with only startup_only inputs: its part-load section "
+                           "has no input to draw from.", u)
+    groups_of: dict[tuple[str, str], list[str]] = {}
+    for ent in db.find_entities(entity_class_name="flowGroup__unit__node"):
+        g, u, n = ent["entity_byname"][:3]
+        groups_of.setdefault((u, n), []).append(g)
+    cn_of = {}
+    for pv in db.find_parameter_values(entity_class_name="unit__inputNode",
+                                       parameter_definition_name="constraint_flow_coeff"):
+        if pv["type"] is not None and hasattr(pv["parsed_value"], "indexes"):
+            cn_of[(pv["entity_byname"][0], pv["entity_byname"][1])] = [str(i) for i in pv["parsed_value"].indexes]
+    for arc in sorted(a for a, m in roles.items() if m == "startup_and_input"):
+        where = ([f"constraint {cn}" for cn in cn_of.get(arc, [])]
+                 + [f"flowGroup {g}" for g in sorted(groups_of.get(arc, []))])
+        if where:
+            logger.warning("unit__inputNode (%s, %s): the start-up input is not in %s (only the flow of the arc "
+                           "is).", arc[0], arc[1], ", ".join(where))
+
+
 def validate_unit_input_shares(db, provider, logger: logging.Logger) -> None:
     """Check ``unit__inputNode.input_share_min`` / ``input_share_max``.
 
@@ -1349,9 +1494,11 @@ def validate_unit_input_shares(db, provider, logger: logging.Logger) -> None:
     Warnings: ``input_share_max`` above 1 (same effect as 1);
     ``input_share_min`` on an input with ``conversion_flow_coeff = 0`` or
     on a unit with fewer than two inputs with ``conversion_flow_coeff ≠ 0``
-    (no effect).
+    (no effect).  A ``startup_only`` input arc (``startup_input_method``) has no flow and is not an input here.
     """
-    inputs = _arcs(db, "unit__inputNode")
+    only = startup_only_arcs(db)
+    inputs = {u: [n for n in nodes if (u, n) not in only] for u, nodes in _arcs(db, "unit__inputNode").items()}
+    inputs = {u: nodes for u, nodes in inputs.items() if nodes}
     if not inputs:
         return
     conv = _arc_values(db, "unit__inputNode", "conversion_flow_coeff")
@@ -1643,13 +1790,19 @@ def validate_zero_conversion_coeff(db) -> None:
       and those outputs are free (reported once per unit, not again by W2);
     * W2: any other untied arc with coefficient 0;
     * W3: ``capacity_max_coeff`` / ``capacity_min_coeff`` on an output with coefficient 0: no effect.
+
+    A ``startup_only`` input arc (``startup_input_method``) has no flow: it is skipped.
     """
-    inputs = _arcs(db, "unit__inputNode")
+    # A startup_only arc is not an arc of the model (it has no flow): it is not an input here.
+    only = startup_only_arcs(db)
+    inputs = {u: [n for n in nodes if (u, n) not in only] for u, nodes in _arcs(db, "unit__inputNode").items()}
+    inputs = {u: nodes for u, nodes in inputs.items() if nodes}
     outputs = _arcs(db, "unit__outputNode")
     zero: dict[str, set[tuple[str, str]]] = {}
     for cls in ("unit__inputNode", "unit__outputNode"):
         zero[cls] = {arc for arc, vals in _arc_values(db, cls, "conversion_flow_coeff").items()
                      if vals and all(v == 0.0 for v in vals)}
+    zero["unit__inputNode"] -= only
     if not zero["unit__inputNode"] and not zero["unit__outputNode"]:
         return
     tied: set[tuple[str, str]] = set()

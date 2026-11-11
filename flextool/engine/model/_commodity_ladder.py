@@ -332,13 +332,15 @@ def _eq_ladder_balance(b: _Build) -> None:
     #       (v_flow[p,n,k,d,t] · unitsize[p] · slope[p,d,t] + v_online[p,d,t] · section[p,d,t] · unitsize[p]) · w[d,t]
     #   + Σ_{(p,n,k,c) ∈ flow_from_commodity_noEff, t} v_flow[p,n,k,d,t] · unitsize[p] · w[d,t]
     #   − Σ_{(p,s,n,c) ∈ flow_to_commodity, t}         v_flow[p,s,n,d,t] · unitsize[p] · w[d,t]
+    #   + Σ_{(p,n,c) ∈ startup_from_commodity, t} v_startup[p,d,t] · startup_energy[p,n,d] · unitsize[p]
+    #       · timestep_weight[d,t]   (start-up energy, MWh per event: no step_duration; core._startup_draw)
     #   ∀ (c,n,d) ∈ cnd_ladder;   w = step_duration · timestep_weight
     # The period's net purchase of commodity c at node n (buy − sell, MWh) is split into price tiers.
     # The efficiency-arc term uses the shared fuel measure _eff_fuel_input (core.py), so min_load_efficiency
     # units' part-load section fuel counts toward the tiers too, same as commodity_cost_eff / co2_price_eff
     # / the CO2 caps (#56) — before this fix a ladder commodity bought by such a unit was under-counted by
     # the part-load fuel.  A term is absent when its flow set is empty or there are no processes.
-    from flextool.engine.model.core import _eff_fuel_input
+    from flextool.engine.model.core import _eff_fuel_input, _startup_draw
 
     rhs: dict = {}
     weight = d.p_step_duration * d.p_timestep_weight
@@ -354,6 +356,10 @@ def _eq_ladder_balance(b: _Build) -> None:
     if v_flow is not None and _has_rows(d.flow_to_commodity):
         idx = d.flow_to_commodity.with_columns(n=pl.col("sink")).select("p", "source", "sink", "c", "n")
         rhs["sell"] = -Sum(Where(v_flow * d.p_unitsize, idx) * weight, over=("p", "source", "sink", "t"))
+    if b.has_startup_draw and _has_rows(getattr(d, "startup_from_commodity", None)):
+        ladder_su = d.startup_from_commodity.filter(pl.col("c").is_in(d.commodity_with_ladder["c"].implode()))
+        for key, term in _startup_draw(b, ladder_su):
+            rhs[f"buy_startup_{key}"] = Sum(term * d.p_timestep_weight, over=("p", "t"))
     b.m.add_cstr(
         "commodity_ladder_balance",
         over      = d.cnd_ladder,

@@ -573,6 +573,10 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     # [CUR/MW] Cost of starting up one MW of capacity. Constant or period.
     ('startup_cost', 'unit'): QuantityType.PRICE_PER_CAPACITY,
     # [CUR/MW] Cost of starting up one MW of capacity. Constant or period.
+    ('startup_energy', 'unit__inputNode'): QuantityType.DURATION,
+    # [MWh per MW started] Energy taken from the input node per MW started (MWh/MW = h). Constant or period.
+    ('startup_input_method', 'unit__inputNode'): QuantityType.DIMENSIONLESS,
+    # [choice] just_input / startup_and_input / startup_only: the arc also, or only, supplies the start-up energy.
     ('startup_method', 'connection'): QuantityType.DIMENSIONLESS,
     # Gives the connection online capacity in both directions. Flows and reserves are limited by the online capacity, and startup_cost is paid per...
     ('startup_method', 'unit'): QuantityType.DIMENSIONLESS,
@@ -703,6 +707,8 @@ UNIT_OVERRIDES: dict[tuple[str, str], str] = {
     ("timeline_hole_multiplier", "solve"): "[-]",
     # Compared with every LP coefficient and right-hand side in its own unit.
     ("small_number_threshold", "model"): "[unit of each LP coefficient]",
+    # An energy per capacity started (MWh/MW = h, typed DURATION): the unit says what it is per.
+    ("startup_energy", "unit__inputNode"): "[MWh per MW started]",
 }
 
 

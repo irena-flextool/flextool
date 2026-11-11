@@ -189,6 +189,7 @@ NOT_TIME_SERIES: frozenset[tuple[str, str]] = frozenset({
     ("unit", "salvage_value"),
     ("unit", "startup_cost"),
     ("unit__inputNode", "constraint_flow_coeff"),
+    ("unit__inputNode", "startup_energy"),
     ("unit__outputNode", "constraint_flow_coeff"),
 })
 

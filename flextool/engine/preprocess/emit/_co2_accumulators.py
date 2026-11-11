@@ -15,6 +15,10 @@ accumulator carried in the Provider under ``K.HANDOFF_CUMULATIVE_CO2``
 ``_eff_fuel_input``) is included on the source-side branch when ``flex_data.p_section`` is available;
 otherwise it is omitted and a warning logged (under-reports, LP cap binds slightly tighter than the
 carried figure says).
+
+The start-up input draw (``startup_input_method``: v_startup × startup_energy × unitsize, mirroring core.py's
+``_startup_draw``) adds ``content × v_startup × startup_energy × us × rpw`` at its start-up node: an event, so
+no step duration (:func:`_startup_contribution`).
 """
 from __future__ import annotations
 
@@ -265,6 +269,8 @@ def compute_co2_rolling_accumulator(
             sorted(pmle["p"].cast(pl.Utf8).to_list())[:10],
         )
 
+    startup = _startup_contribution(flex_data, sol, realized_dt, cn_co2, co2_content, unitsize, p_rp_weight)
+
     # Filter v_flow: realized timesteps × incident to a CO2 node × non-zero.
     nodes_with_co2 = list(cn_co2["n"].cast(pl.Utf8).unique().to_list())
     vf = (v_flow
@@ -272,7 +278,7 @@ def compute_co2_rolling_accumulator(
                 | (pl.col("sink").is_in(nodes_with_co2)))
         .filter(pl.col("value").abs() > 0.0)
         .join(realized_dt, on=["d", "t"], how="inner"))
-    if vf.height == 0:
+    if vf.height == 0 and startup.height == 0:
         return _passthrough_prior(prior_cumulative_co2, co2_groups)
 
     # Annotate every row (left joins with default fills).
@@ -385,7 +391,9 @@ def compute_co2_rolling_accumulator(
                     if online.height > 0:
                         minload = online
 
-    contrib = pl.concat([emis, rem, minload], how="vertical")
+    if startup.height > 0:
+        startup = startup.cast({"attr_node": emis.schema["attr_node"], "period": emis.schema["period"]})
+    contrib = pl.concat([emis, rem, minload, startup], how="vertical")
     if contrib.height == 0:
         return _passthrough_prior(prior_cumulative_co2, co2_groups)
 
@@ -408,6 +416,54 @@ def compute_co2_rolling_accumulator(
 
     attributed = _with_represented(attributed, flex_data)
     return _combine_with_prior(attributed, prior_cumulative_co2)
+
+
+def _startup_contribution(flex_data, sol, realized_dt: pl.DataFrame, cn_co2: pl.DataFrame,
+                          co2_content: pl.DataFrame, unitsize: pl.DataFrame, p_rp_weight: pl.DataFrame
+                          ) -> pl.DataFrame:
+    """``[attr_node, period, contribution]``: the CO2 of the start-up input draws of the realized steps,
+    ``co2_content[c] · v_startup[p,d,t] · startup_energy[p,n,d] · unitsize[p] · timestep_weight[d,t]`` at the
+    start-up node n of a CO2-bearing commodity c (the core._startup_draw term of the CO2 caps: an event, no step
+    duration).  A coarse process's start-up stays at the first fine step of its coarse step (``var_values``
+    mode ``first``).  Empty without start-up draws."""
+    from flextool.engine.input._axis_enums import cast_dim
+    from flextool.engine.output._coarse_flows import var_values
+
+    empty = pl.DataFrame(schema={"attr_node": schema_dtype(None, "e"), "period": schema_dtype(None, "d"),
+                                 "contribution": pl.Float64})
+    pn = getattr(flex_data, "process_startup_node", None)
+    se = getattr(flex_data, "p_startup_energy", None)
+    if pn is None or pn.height == 0 or se is None:
+        return empty
+    starts = [vd.select(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8),
+                        pl.col("value").cast(pl.Float64))
+              for name in ("v_startup_linear", "v_startup_integer")
+              if (vd := var_values(sol, flex_data, name)) is not None and vd.height > 0]
+    if not starts:
+        return empty
+    utf8_dt = realized_dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8))
+    cn = cn_co2.select(pl.col("c").cast(pl.Utf8), pl.col("n").cast(pl.Utf8))
+    content = co2_content.select(pl.col("c").cast(pl.Utf8), pl.col("content").cast(pl.Float64))
+    rpw = p_rp_weight.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8), pl.col("rpw").cast(pl.Float64))
+    us = unitsize.select(pl.col("p_us").cast(pl.Utf8).alias("p"), pl.col("us").cast(pl.Float64))
+    se_f = se.frame.collect() if isinstance(se.frame, pl.LazyFrame) else se.frame
+    se_f = se_f.select(pl.col("p").cast(pl.Utf8), pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                       pl.col("value").cast(pl.Float64).alias("se"))
+    out = (pl.concat(starts).join(utf8_dt, on=["d", "t"], how="inner")
+           .join(pn.select(pl.col("p").cast(pl.Utf8), pl.col("n").cast(pl.Utf8)), on="p", how="inner")
+           .join(se_f, on=["p", "n", "d"], how="inner")
+           .join(cn, on="n", how="inner")
+           .join(content, on="c", how="inner")
+           .join(us, on="p", how="left")
+           .join(rpw, on=["d", "t"], how="left")
+           .with_columns(pl.col("us").fill_null(1.0), pl.col("rpw").fill_null(1.0))
+           .filter((pl.col("content") != 0.0) & (pl.col("value").abs() > 0.0)))
+    if out.height == 0:
+        return empty
+    return out.select(
+        cast_dim(pl.col("n"), None, "e").alias("attr_node"),
+        pl.col("d").cast(empty.schema["period"]).alias("period"),
+        (pl.col("content") * pl.col("value") * pl.col("se") * pl.col("us") * pl.col("rpw")).alias("contribution"))
 
 
 def _with_represented(attributed: pl.DataFrame, flex_data) -> pl.DataFrame:

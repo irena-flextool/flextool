@@ -170,6 +170,7 @@ def add_dispatch_constraints(b: "_Build") -> None:
     #              − Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t] · unitsize[p] · Δt[d,t]
     #              − Σ_{(p,s,n) ∈ twoway1var_arcs} v_flow_back[p,s,n,d,t] · unitsize[p] · Δt[d,t]
     #              + Σ_{(p,n,k) ∈ twoway1var_arcs} v_flow_back[p,n,k,d,t] · unitsize[p] · Δt[d,t]
+    #              − Σ_{(p,n) ∈ startup_to_balance} v_startup[p,d,t] · startup_energy[p,n,d] · unitsize[p]
     #   ∀ n ∈ nodes of groupStochastic ∩ nodeBalance, (d,b) ∈ forecast star, (d,t) ∈ tied steps
     #   section only for p ∈ process_min_load_eff (v_online = v_online_linear or v_online_integer)
     # The net flow into a stochastic node is the same in every forecast over the tied steps: exactly the flow

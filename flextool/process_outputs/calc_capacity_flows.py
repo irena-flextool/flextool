@@ -1,4 +1,63 @@
+import numpy as np
 import pandas as pd
+
+#: Sink label of the start-up draws when they join the flows of a node (calc_costs): a draw is not an arc.
+STARTUP_SINK = "__startup__"
+
+
+def startup_draw_dt(par, s, v, index: pd.Index) -> pd.DataFrame:
+    """The start-up input energy of the units (``unit__inputNode.startup_input_method`` startup_and_input /
+    startup_only), per step and (process, node), as the step's average power [MW]: × step_duration gives the MWh
+    the step's start-ups take from the node.
+
+        draw[p,n,d,t] = v_startup[p,d,t] · startup_energy[p,n,d] · unitsize[p] / step_duration[d,t]
+
+    The same measure as the model's term (core._startup_draw), an event at the first fine step of a coarse step.
+    It is not a flow: ``r.flow_dt`` (ramps, capacity factors, flow groups, variable costs) leaves it out; the
+    consumers that report the energy taken from a node add it (commodity cost, CO2, node balance, unit inputs).
+    A step of a solve whose reduce_unit_detail_method left out the online variables has no start-up (NaN): 0
+    there, as the section term of ``flow_dt``.  No columns without start-up inputs."""
+    se = getattr(par, 'process_node_startup_energy', None)
+    empty = pd.DataFrame(index=index, columns=pd.MultiIndex.from_tuples([], names=['process', 'node']), dtype=float)
+    if se is None or se.empty or len(se.columns) == 0:
+        return empty
+    starts = v.startup_linear.add(v.startup_integer, fill_value=0)
+    cols = se.columns[se.columns.get_level_values('process').isin(starts.columns)]
+    if len(cols) == 0:
+        return empty
+    procs = cols.get_level_values('process')
+    su = starts.reindex(index=index, columns=procs)
+    left_out = getattr(s, 'reduced_cells', None)
+    if left_out:
+        su = su.mask(pd.DataFrame(np.repeat(left_out.step_mask('online', index)[:, None], len(procs), axis=1),
+                                  index=index, columns=su.columns) & su.isna(), 0.0)
+    energy = se[cols].reindex(index.get_level_values('period')).to_numpy()
+    unitsize = par.entity_unitsize.reindex(procs).to_numpy()
+    duration = par.step_duration.reindex(index).to_numpy()[:, None]
+    out = pd.DataFrame(su.to_numpy() * energy * unitsize / duration, index=index, columns=cols, dtype=float)
+    out.columns.names = ['process', 'node']
+    return out
+
+
+def startup_draw_by_node(r) -> pd.DataFrame:
+    """``r.startup_draw_dt`` summed per node [MW]: the start-up input taken from each node."""
+    draw = getattr(r, 'startup_draw_dt', None)
+    if draw is None or draw.empty or len(draw.columns) == 0:
+        return pd.DataFrame(index=getattr(draw, 'index', None))
+    return draw.T.groupby(level='node').sum().T
+
+
+def flows_with_startup(r) -> pd.DataFrame:
+    """``r.flow_dt`` with the start-up draws as extra (process, node, ``STARTUP_SINK``) columns: everything a
+    process takes from a node (the commodity cost and the CO2 of the inputs).  ``r.flow_dt`` itself without
+    start-up draws."""
+    draw = getattr(r, 'startup_draw_dt', None)
+    if draw is None or draw.empty or len(draw.columns) == 0:
+        return r.flow_dt
+    extra = draw.reindex(r.flow_dt.index).copy()
+    extra.columns = pd.MultiIndex.from_tuples([(p, n, STARTUP_SINK) for p, n in draw.columns],
+                                              names=r.flow_dt.columns.names)
+    return pd.concat([r.flow_dt, extra], axis=1)
 
 
 def compute_capacity_and_flows(par, s, v, r) -> None:
@@ -83,6 +142,8 @@ def compute_capacity_and_flows(par, s, v, r) -> None:
                     online_p = online_p.mask(left_out.step_mask('online', online_p.index) & online_p.isna(), 0.0)
                 flow_val = flow_val.add(online_p * section[p] * unitsize[p], axis=0)
         r.flow_dt[p, always_source, always_sink] = flow_val
+
+    r.startup_draw_dt = startup_draw_dt(par, s, v, r.flow_dt.index)
 
     # ramp_dt: flow change from the step each step's ramp is measured from (s.ramp_link: the adjacent
     # predecessor, or the previous roll's last realized step at a roll boundary) — on the realized flows, so

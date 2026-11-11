@@ -292,6 +292,68 @@ class SpineDbReader:
                 for did in disabled_ids:
                     self._entity_by_id.pop(did, None)
 
+            self._hide_startup_only_arcs()
+
+    #: The unit__inputNode parameters a hidden ``startup_only`` arc keeps (read through :meth:`startup_arcs` and
+    #: ``params._direct.p_startup_energy_from_source``).
+    STARTUP_ARC_PARAMETERS: tuple[str, ...] = ("startup_input_method", "startup_energy")
+
+    def _hide_startup_only_arcs(self) -> None:
+        """Hide the ``unit__inputNode`` arcs whose ``startup_input_method`` is ``startup_only``.
+
+        Such an arc is not an arc of the model: the unit only takes start-up energy from the node, through the
+        units started.  Like an ``is_enabled = no`` entity, it is dropped from the entity list and from every
+        parameter value of the class, so no arc consumer (process topology, method fork, conversion, capacity,
+        input shares, ramps, profiles, user constraints, reserves) sees it.  Its ``startup_input_method`` /
+        ``startup_energy`` values stay (:data:`STARTUP_ARC_PARAMETERS`), with the arc's (unit, node) kept in
+        ``_hidden_elements`` so their frames name the unit and the node (:meth:`_entity_dim_values`).
+        :meth:`startup_arcs` lists every arc with a start-up role (``startup_and_input`` arcs stay ordinary arcs).
+        """
+        self._hidden_elements: dict[tuple[int, str], list[str]] = {}
+        self._hidden_by_id: dict[int, list[str]] = {}
+        self._startup_arcs: list[tuple[str, str, str]] = []
+        cls_id = self._class_name_to_id.get("unit__inputNode")
+        if cls_id is None:
+            return
+        pdef = self._pdef_by_class_name.get((cls_id, "startup_input_method"))
+        if pdef is None:
+            return
+        default = pdef["default_value"]
+        explicit = {eid: v for eid, v in self._param_rows.get((cls_id, pdef["id"]), [])}
+        hidden: set[int] = set()
+        for eid, name, elements in self._entities_by_class.get(cls_id, []):
+            method = explicit.get(eid, default)
+            if method not in ("startup_and_input", "startup_only") or not elements or len(elements) != 2:
+                continue
+            self._startup_arcs.append((elements[0], elements[1], str(method)))
+            if method == "startup_only":
+                hidden.add(eid)
+                self._hidden_elements[(cls_id, name)] = list(elements)
+                self._hidden_by_id[eid] = list(elements)
+        self._startup_arcs.sort()
+        if not hidden:
+            return
+        self._entities_by_class[cls_id] = [row for row in self._entities_by_class[cls_id] if row[0] not in hidden]
+        keep = {self._pdef_by_class_name[(cls_id, n)]["id"] for n in self.STARTUP_ARC_PARAMETERS
+                if (cls_id, n) in self._pdef_by_class_name}
+        for (cls_id_key, pdef_id_key), rows in list(self._param_rows.items()):
+            if cls_id_key != cls_id or pdef_id_key in keep:
+                continue
+            filtered = [r for r in rows if r[0] not in hidden]
+            if filtered:
+                self._param_rows[(cls_id_key, pdef_id_key)] = filtered
+            else:
+                del self._param_rows[(cls_id_key, pdef_id_key)]
+
+    def startup_arcs(self) -> pl.DataFrame:
+        """``(unit, node, method)`` (Utf8) of the ``unit__inputNode`` arcs whose ``startup_input_method`` is
+        ``startup_and_input`` or ``startup_only``, sorted; the ``startup_only`` arcs are hidden from
+        :meth:`entities` and :meth:`parameter` (:meth:`_hide_startup_only_arcs`)."""
+        rows = getattr(self, "_startup_arcs", [])
+        return pl.DataFrame({"unit": [r[0] for r in rows], "node": [r[1] for r in rows],
+                             "method": [r[2] for r in rows]},
+                            schema={"unit": pl.Utf8, "node": pl.Utf8, "method": pl.Utf8})
+
     # ------------------------------------------------------------------
     # Public diagnostics
 
@@ -642,14 +704,23 @@ class SpineDbReader:
         the raw labels only, so it never raises on a label the period / time classifier rejects; it tells the
         resolver which entities author a stochastic-time (depth 3) value."""
         cls_id, pdef = self._class_and_pdef(entity_class, parameter_name)
-        dims_of = {eid: tuple(elements) if elements else (name,)
-                   for eid, name, elements in self._entities_by_class.get(cls_id, [])}
+        dims_of = self._dims_by_entity_id(cls_id)
         out: dict[tuple[str, ...], tuple[str | None, ...]] = {}
         for eid, v in self._param_rows.get((cls_id, pdef["id"]), []):
             if v is None or eid not in dims_of:
                 continue
             out[dims_of[eid]] = tuple(self._index_name_path(v))
         return out
+
+    def _dims_by_entity_id(self, cls_id: int) -> dict[int, tuple[str, ...]]:
+        """Entity id -> its class-dim value tuple (``(name,)`` for a 0-dim class), the hidden ``startup_only`` arcs
+        included (their start-up values are kept, :meth:`_hide_startup_only_arcs`)."""
+        dims_of = {eid: tuple(elements) if elements else (name,)
+                   for eid, name, elements in self._entities_by_class.get(cls_id, [])}
+        for eid, elements in getattr(self, "_hidden_by_id", {}).items():
+            if self._entity_by_id[eid][0] == cls_id:
+                dims_of[eid] = tuple(elements)
+        return dims_of
 
     def without_entities(self, entity_class: str, parameter_name: str,
                          entities: "Iterable[tuple[str, ...]]") -> "SpineDbReader":
@@ -662,8 +733,7 @@ class SpineDbReader:
         """
         cls_id, pdef = self._class_and_pdef(entity_class, parameter_name)
         drop = {tuple(e) for e in entities}
-        dims_of = {eid: tuple(elements) if elements else (name,)
-                   for eid, name, elements in self._entities_by_class.get(cls_id, [])}
+        dims_of = self._dims_by_entity_id(cls_id)
         key = (cls_id, pdef["id"])
         view = copy.copy(self)
         view._param_rows = defaultdict(list, self._param_rows)
@@ -1338,6 +1408,9 @@ class SpineDbReader:
                 if elements is None:
                     return [ent_name]
                 return elements
+        hidden = getattr(self, "_hidden_elements", {}).get((class_id, ent_name))
+        if hidden is not None:
+            return hidden
         return [ent_name]
 
     def _discover_index_cols(self, v: Any, parameter_name: str) -> list[str]:

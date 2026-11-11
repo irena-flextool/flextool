@@ -1856,6 +1856,20 @@ def p_startup_cost_from_source(source: "InputSource",
     return Param(("p", "d"), pl.concat(frames).select("p", "d", "value"))
 
 
+def p_startup_energy_from_source(source: "InputSource",
+                                  period_filter: pl.DataFrame | None = None,
+                                  ) -> Param | None:
+    """``unit__inputNode.startup_energy`` [MWh per MW started] → ``Param(("p", "n", "d"))``.
+
+    Uses :func:`._param_shapes.resolve_param_shape`; allowed shapes scalar / 1d_map[period] (as
+    ``startup_cost``).  The readers hide the ``startup_only`` arcs from the arc sets but keep their start-up
+    values, so this frame has every start-up arc.  Zero rows are kept: the caller (``flex_data.
+    _load_startup_inputs``) drops the arcs without a non-zero value.
+    """
+    resolved = resolve_param_shape(source, "unit__inputNode", "startup_energy", period_filter=period_filter)
+    return broadcast_to_period(resolved, {"unit": "p", "node": "n"}, period_filter)
+
+
 # ---------------------------------------------------------------------------
 # §1.11 — Storage: Map(period→time) parameters
 

@@ -22,6 +22,20 @@
   notice for them. The FlexTool 2 importer now writes an `interest` of 0 as `discount_rate` 0 (before it was left
   out, so it became 5 %); a `lifetime` of 0 is still left out, so such an investing unit now needs a lifetime.
   Schema: part of data version 79 (descriptions of `discount_rate` and `lifetime`).
+- **New: start-up fuel and start-up heat (`unit__inputNode.startup_input_method`, `startup_energy`).** An input
+  arc can also (*startup_and_input*) or only (*startup_only*) supply the energy a unit's start-ups take:
+  `startup_energy` [MWh per MW started, constant or period] × MW started, taken from the node in the step the unit
+  starts in (an event, like `startup_cost`). The start-up input can be fuel (a coal unit started on oil), heat (a CSP
+  turbine warmed up from its tank) or electricity. It is priced as the node's commodity (also on a price ladder),
+  counts in the CO2 price and caps (also when it is a group's only emitter) and in their rolling carry, and needs
+  online variables (linear start-ups keep the model an LP). A *startup_only* arc has no flow: it takes no part in
+  the conversion, capacity, input shares or ramps, so a coal unit with an oil start-up arc stays a one-input unit.
+  Not part of `constraint_flow_coeff`, flow groups or the capacity margin; left out with the start-ups under
+  `reduce_unit_detail_method` *online* / *online_ramps*, and a use of the online variables under *integers*. New
+  outputs `unit_startup_energy__dt` / `__d` (results database `unit__node` `startup_energy_t` /
+  `startup_energy_annualized`); the unit's input from the node, the commodity cost, the CO2 and the node balance
+  include it. Input checks for the combinations that have no effect or no meaning. Default *just_input*: the model
+  is unchanged. Schema: part of data version 79.
 - **New: user constraints summed over a period (`constraint.constraint_period_method`).** *per_timestep*
   (default) keeps the rows of before. *period_total* writes one row per period over the period's total: each step's
   flow and online terms are multiplied by its duration and timestep weight and divided by the period's share of a

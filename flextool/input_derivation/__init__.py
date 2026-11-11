@@ -136,6 +136,7 @@ def run(
         validate_group_increase_reserve_ratio,
         warn_existing_not_whole_units,
         validate_unit_input_shares,
+        validate_startup_inputs,
         validate_output_min_coeff,
         validate_profile_links,
         validate_zero_conversion_coeff,
@@ -263,6 +264,7 @@ def run(
         # Once per scenario: input shares and output floors (need the
         # process method for the online / indirect classification).
         validate_unit_input_shares(db, provider, logger)
+        validate_startup_inputs(db, provider, logger)
         validate_min_load_efficiency_inputs(db, logger)
         validate_output_min_coeff(db, provider, logger)
         validate_ladder_methods(db, logger)

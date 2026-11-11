@@ -2,6 +2,7 @@ import numpy as np
 import pandas as pd
 
 from flextool.process_outputs._annualize import annualize_dt_to_d
+from flextool.process_outputs.calc_capacity_flows import flows_with_startup
 
 
 def _agg_period_or_empty(df: pd.DataFrame, realized_periods, period_level: str = 'period') -> pd.DataFrame:
@@ -182,7 +183,10 @@ def compute_costs(par, s, v, r) -> None:
     commodity_node = s.commodity_node[
         s.commodity_node.get_level_values('commodity').isin(available_commodities)
     ]
-    flow_from_commodity_node = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values(level=1).isin(commodity_node.get_level_values(level=1))]]
+    # The energy taken from a commodity node: the flows and the start-up input draws (startup_input_method), as
+    # the LP's commodity_cost_* terms; a draw is MWh per start-up, its MW-average × step_duration (as a flow).
+    taken = flows_with_startup(r)
+    flow_from_commodity_node = taken[taken.columns[taken.columns.get_level_values(level=1).isin(commodity_node.get_level_values(level=1))]]
     flow_to_commodity_node = r.flow_dt[r.flow_dt.columns[r.flow_dt.columns.get_level_values(level=2).isin(commodity_node.get_level_values(level=1))]]
 
     # Per-step scaling factor: step_duration × timestep_weight.  Used by all
@@ -267,7 +271,9 @@ def compute_costs(par, s, v, r) -> None:
     r.sales_commodity_process_dt = _per_process_commodity_cost(flow_to_commodity_node)
 
     # --- CO2 emissions ---
-    flow_outof_cols = r.flow_dt.columns.copy()
+    # Emissions of the energy taken from a CO2 node: the flows and the start-up input draws (co2_price_startup,
+    # the start-up terms of the CO2 caps).
+    flow_outof_cols = taken.columns.copy()
     flow_outof_cols.names = ['process', 'node', 'sink']
     flow_outof_cols = s.process__commodity__node_co2.join(flow_outof_cols)
     flow_outof_cols = flow_outof_cols[~flow_outof_cols.get_level_values('sink').isna()]
@@ -292,7 +298,7 @@ def compute_costs(par, s, v, r) -> None:
     flow_into_cols = flow_into_cols[~flow_into_cols.get_level_values('source').isna()]
     flow_into_cols = flow_into_cols.reorder_levels(order=['process', 'commodity', 'source', 'node'])
 
-    flow_outof_node = r.flow_dt[flow_outof_cols.droplevel('commodity')]
+    flow_outof_node = taken[flow_outof_cols.droplevel('commodity')]
     flow_outof_node.columns.names = ['process', 'node', 'sink']
     flow_outof_node.columns = flow_outof_node.columns.join(flow_outof_cols)
 

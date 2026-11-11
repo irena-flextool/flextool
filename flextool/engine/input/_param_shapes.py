@@ -316,6 +316,9 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("unit", "startup_cost"): {Shape.SCALAR, Shape.MAP_PERIOD},
     # Connection startup cost (connections with a startup_method): same shapes as the unit's.
     ("connection", "startup_cost"): {Shape.SCALAR, Shape.MAP_PERIOD},
+    # Start-up input energy [MWh per MW started] of a unit__inputNode arc with a startup_input_method other than
+    # just_input: constant or period, as startup_cost (read by params/_direct.p_startup_energy_from_source).
+    ("unit__inputNode", "startup_energy"): {Shape.SCALAR, Shape.MAP_PERIOD},
     # Tier-2 silent-default migration (ed_* multi-class union 1d_map(period)).
     # These six parameters are declared on each of unit/node/connection and
     # are unioned in :func:`_e_period_param_union` into a single

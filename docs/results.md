@@ -199,6 +199,8 @@ These are period-level tables only — there are no per-timestep per-entity cost
 - `unit` entity `online_t` parameter — [count] number of units online at each timestep
 - `unit` entity `online_average` parameter — [count] average online status over the period (weighted by step duration)
 - `unit` entity `startup_cumulative` parameter — [count] startups during the period scaled to a full year (weighted by `rp_cost_weight` to handle representative periods correctly)
+- `unit__node` entity `startup_energy_t` parameter — [MWh] energy that the unit's start-ups take from the node in each timestep (`unit__inputNode` `startup_input_method` *startup_and_input* or *startup_only*: `startup_energy` × MW started)
+- `unit__node` entity `startup_energy_annualized` parameter — [MWh] the same summed over the period and scaled to a full year. The start-up input is also in the unit's input flow from the node (`flow_t`, `flow_annualized`), the commodity cost, the CO2 emissions and the node balance; a *startup_only* arc has no other flow
 
 ## Connection online and startup
 

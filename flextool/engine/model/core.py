@@ -289,6 +289,7 @@ class _Build:
     has_minload_eff: bool = False
     has_startup_cost_lin: bool = False
     has_startup_cost_int: bool = False
+    has_startup_draw: bool = False       # process_startup_node: start-up energy drawn from input nodes
     has_ramp: bool = False
     has_ramp_cost: bool = False          # process_source_sink_ramp_cost: arcs whose flow change is priced
     has_invest_p: bool = False
@@ -377,6 +378,7 @@ class _Build:
     invest_in_dispatch_p: Any = None        # Σ v_invest_p alive in d, (p, d)
     divest_in_dispatch_p: Any = None        # Σ v_divest_p active in d, (p, d)
     op_factor: Any = None                   # weight of operational cost terms, (d, t)
+    ev_factor: Any = None                   # weight of event cost terms (start-ups, ramp changes), (d, t)
     self_discharge: Any = None              # _self_discharge.LossCoefficients, None without a loss
 
 
@@ -498,15 +500,26 @@ def _prepare(b: _Build) -> None:
     # (#19) A group can be priced purely for its removal credit (no emitting
     # flow at all) — widen the flag so that case still activates the price
     # term; _obj_co2_price guards each side independently.
+    # A start-up draw (process_startup_node) is a fuel draw that is not a flow: a group whose only emitter is a
+    # start-up draw still has its CO2 price term and caps.
+    b.has_online_lin = _has_rows(d.process_online_linear)
+    b.has_online_int = _has_rows(d.process_online_integer)
+    b.has_online = b.has_online_lin or b.has_online_int
+    b.has_startup_draw = (b.has_online and _has_rows(getattr(d, "process_startup_node", None))
+                          and getattr(d, "p_startup_energy", None) is not None)
     b.has_co2_price = (_has_rows(d.flow_from_co2_priced)
-                        or _has_rows(getattr(d, "flow_to_co2_priced", None)))
+                        or _has_rows(getattr(d, "flow_to_co2_priced", None))
+                        or (b.has_startup_draw and _has_rows(getattr(d, "startup_from_co2_priced", None))))
     b.has_co2_cap_eff = _has_rows(d.flow_from_co2_capped)
     b.has_co2_cap_noEff = _has_rows(getattr(d, "flow_from_co2_capped_noEff", None))
-    b.has_co2_cap = b.has_co2_cap_eff or b.has_co2_cap_noEff
+    b.has_co2_cap = (b.has_co2_cap_eff or b.has_co2_cap_noEff
+                     or (b.has_startup_draw and _has_rows(getattr(d, "startup_from_co2_capped", None))))
     b.has_co2_cap_total_eff = _has_rows(getattr(d, "flow_from_co2_capped_total", None))
     b.has_co2_cap_total_noEff = _has_rows(
         getattr(d, "flow_from_co2_capped_total_noEff", None))
-    b.has_co2_cap_total = b.has_co2_cap_total_eff or b.has_co2_cap_total_noEff
+    b.has_co2_cap_total = (b.has_co2_cap_total_eff or b.has_co2_cap_total_noEff
+                           or (b.has_startup_draw
+                               and _has_rows(getattr(d, "startup_from_co2_capped_total", None))))
     b.has_user_cstr = any(_has_rows(x) for x in (d.cdt_eq, d.cdt_le, d.cdt_ge))
     b.has_profile = any(_has_rows(x) for x in (d.process_profile_upper,
                                                d.process_profile_lower,
@@ -515,9 +528,6 @@ def _prepare(b: _Build) -> None:
     b.has_rp = _has_rows(d.nodeState_rp)
     b.has_nsb = _has_rows(d.nodeStateBlock)
     b.has_coarse = _has_rows(getattr(d, "nodeCoarse", None)) and _has_rows(getattr(d, "node_coarse_step", None))
-    b.has_online_lin = _has_rows(d.process_online_linear)
-    b.has_online_int = _has_rows(d.process_online_integer)
-    b.has_online = b.has_online_lin or b.has_online_int
     b.has_minload_eff = _has_rows(d.process_min_load_eff)
     b.has_startup_cost_lin = _has_rows(d.pdt_online_linear)
     b.has_startup_cost_int = _has_rows(d.pdt_online_integer)
@@ -591,6 +601,8 @@ def _prepare(b: _Build) -> None:
         _check(d, STARTUP_COST_LINEAR, "startup_cost_linear")
     if b.has_startup_cost_int:
         _check(d, STARTUP_COST_INTEGER, "startup_cost_integer")
+    if _has_rows(getattr(d, "process_startup_node", None)):
+        _validate_startup_inputs(d)
     if _has_rows(getattr(d, "groupCapacityMargin", None)):
         _check(d, CAPACITY_MARGIN, "capacity_margin")
 
@@ -995,6 +1007,11 @@ def _shared_expressions(b: _Build) -> None:
                    * d.p_inflation_op / d.p_period_share)
     if d.pdt_branch_weight is not None:
         b.op_factor = b.op_factor * d.pdt_branch_weight
+    # Weight of event cost terms (start-ups, ramp changes, start-up energy): timestep_weight · inflation_op /
+    # period_share, times the branch weight; no step_duration (an event is not a rate).
+    b.ev_factor = d.p_timestep_weight * d.p_inflation_op / d.p_period_share
+    if d.pdt_branch_weight is not None:
+        b.ev_factor = b.ev_factor * d.pdt_branch_weight
 
 
 def _reserve_coupling(b: _Build) -> None:
@@ -1347,6 +1364,7 @@ def _eq_node_balance(b: _Build) -> None:
     #       (v_flow[p,n,k,d,t]·unitsize[p]·slope[p,d,t]
     #        + v_online[p,d,t]·section[p,d,t]·unitsize[p])·Δt
     #   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t]·unitsize[p]·Δt
+    #   − Σ_{(p,n) ∈ startup_to_balance} v_startup[p,d,t]·startup_energy[p,n,d]·unitsize[p]   (no Δt: an event)
     #   + back-flow terms of two-way one-variable arcs
     #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
     #   + (v_state[n,d,t⁻] − v_state[n,d,t])·state_unitsize[n]
@@ -1369,8 +1387,12 @@ def _eq_node_balance(b: _Build) -> None:
     # the state change; the previous step t⁻ depends on storage_binding_method.
     # nodeStateBlock nodes are balanced per timeset block (nodeBalanceBlock_eq),
     # nodeCoarse nodes per coarse step (nodeBalanceCoarse_eq).
-    # The section term exists for min_load_efficiency units only.  The flow
-    # and slack terms are b.node_balance_flow_terms.  Self-discharge: the
+    # The section term exists for min_load_efficiency units only.  The start-up
+    # term (core._startup_draw) is the start-up energy of the units with a
+    # start-up input node n (startup_input_method startup_and_input /
+    # startup_only), MWh per start-up event; a coarse process starts at the
+    # first fine step of its coarse step.  The flow, start-up and slack terms
+    # are b.node_balance_flow_terms.  Self-discharge: the
     # content decays continuously at ln(1 + loss) per hour; flows within a
     # step are spread evenly over the step.  Exact for any step length while
     # the loss is constant within the step; a coarse step / block with a
@@ -1433,6 +1455,7 @@ def _eq_node_balance_coarse(b: _Build) -> None:
     #   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_eff}
     #       (v_flow[p,n,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])·Δt
     #   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t]·unitsize[p]·Δt
+    #   − Σ_{(p,n) ∈ startup_to_balance} v_startup[p,d,t]·startup_energy[p,n,d]·unitsize[p]
     #   + back-flow terms of two-way one-variable and DC arcs
     #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
     #   + (v_state[n,d,t⁻] − v_state[n,d,t])·state_unitsize[n] − (α[n,d,t]·v_state[n,d,t] + β[n,d,t]·S⁻[n,d,t])·su[n]
@@ -1676,7 +1699,7 @@ def _eq_node_balance_period(b: _Build) -> None:
 
     # ─── EQ. ─── nodeBalancePeriod_eq ────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
-    # Σ_t w[d,t] · (flow and slack terms of nodeBalance_eq)[n,d,t]  =  −Σ_t w[d,t] · inflow[n,d,t]
+    # Σ_t w[d,t] · (flow, start-up and slack terms of nodeBalance_eq)[n,d,t]  =  −Σ_t w[d,t] · inflow[n,d,t]
     #   ∀ n ∈ nodeBalancePeriod, n ∉ nodeState, d ∈ periods of dt;   w = timestep_weight
     # Energy balance over a whole period instead of every step, in MWh.  The
     # terms are b.node_balance_flow_terms (Δt already applied); period nodes
@@ -1937,6 +1960,7 @@ def _eq_block_coupling(b: _Build) -> None:
     #   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_eff}
     #       (v_flow[p,n,k,d,t]·unitsize[p]·slope[p,d,t] + v_online[p,d,t]·section[p,d,t]·unitsize[p])·Δt
     #   − Σ_{(p,n,k) ∈ flow_from_nodeBalance_noEff} v_flow[p,n,k,d,t]·unitsize[p]·Δt
+    #   − Σ_{(p,n) ∈ startup_to_balance} v_startup[p,d,t]·startup_energy[p,n,d]·unitsize[p]
     #   + back-flow terms of two-way one-variable and DC arcs
     #   + (vq_state_up[n,d,t] − vq_state_down[n,d,t])·Δt
     #   + (v_state[n,d′,t⁻] − v_state[n,d,t])·state_unitsize[n]   ((d′,t⁻) of (d,t) in dtttdt_block_lag; for a
@@ -3265,6 +3289,58 @@ def _eff_fuel_input(b: _Build, arcs: pl.DataFrame) -> list[tuple[str, Expr]]:
     return terms
 
 
+def _startup_draw(b: _Build, pn: "pl.DataFrame | None", *, at_branch: bool = False) -> list[tuple[str, Expr]]:
+    """The start-up energy that units draw from their start-up input nodes, restricted to ``pn`` (p, n, ...).
+
+    ``[("su_lin" | "su_int", v_startup · startup_energy · unitsize)]`` in MWh per (p, n, d, t) and the other
+    columns of ``pn``, unweighted: an event, so no Δt.  ``at_branch`` indexes the variable and the period of
+    startup_energy at the forecast branch ``b`` instead of ``d`` (the b side of non_anticipativity_storage_use).
+    Empty without start-up variables, without a start-up node in ``pn`` or without ``p_startup_energy``.  Shared by
+    the node balances, the commodity cost, the CO2 price, both CO2 caps and the commodity ladder balance, so their
+    start-up measure cannot drift apart.
+    """
+    # A shared term, not a row: its formula is in the headers of the rows and objective terms that use it
+    # (nodeBalance_eq and its coarse / block / period variants, non_anticipativity_storage_use, co2_max_period,
+    # co2_max_total, commodity_ladder_balance; OBJ. commodity_cost_startup, co2_price_startup):
+    #   draw[p,n,d,t] = v_startup_{linear,integer}[p,d,t] · startup_energy[p,n,d] · unitsize[p]   [MWh, an event]
+    #     ∀ (p,d,t) ∈ online_rows(kind) (a coarse process: the first fine step of each coarse step), (p,n) ∈ pn
+    # A start-up takes startup_energy (MWh per MW started) from the start-up input node n (startup_input_method
+    # startup_and_input or startup_only).  Not a flow: it is not in v_flow, the conversion, capacities, input
+    # shares, ramps, reserves, constraint_flow_coeff, flow groups or the capacity margin.  Linear and integer
+    # start-ups alike (v_startup_integer is continuous): a linear unit stays an LP.
+    d = b.d
+    se = getattr(d, "p_startup_energy", None)
+    if se is None or not _has_rows(pn):
+        return []
+    if at_branch:
+        se = Param(tuple("b" if x == "d" else x for x in se.dims), se.frame.rename({"d": "b"}))
+    terms: list[tuple[str, Expr]] = []
+    for key, v in (("su_lin", b.v_startup_linear), ("su_int", b.v_startup_integer)):
+        if v is None:
+            continue
+        if at_branch:
+            v = _var_view(v, "__nab", {"d": "b"})
+        terms.append((key, Where(v * se * d.p_unitsize, pn)))
+    return terms
+
+
+def _validate_startup_inputs(d) -> None:
+    """Raise when a unit of the solve has a start-up input node (process_startup_node) but no online variables.
+
+    The start-up draw is a term on the units started (v_startup), so without online variables it would be left
+    out without a word.  The input derivation checks the database (validate_startup_inputs); this check covers
+    hand-built data."""
+    pn = d.process_startup_node
+    online = {str(x) for f in (d.process_online_linear, d.process_online_integer) if _has_rows(f)
+              for x in f.get_column("p").to_list()}
+    missing = sorted({str(p) for p in pn.get_column("p").to_list()} - online)
+    if missing:
+        raise FlexToolConfigError(
+            f"startup_input_method needs online variables, but these units have a start-up input and none: "
+            f"{', '.join(missing)}. Set startup_method linear or binary (or a minimum_time_method), or set "
+            "startup_input_method just_input.")
+
+
 def _co2_period_cap_with_carry(d) -> Param:
     """co2_max_period's remaining budget (Q22): allocated up to the end of this roll's horizon minus
     what earlier rolls already realized -- the commodity ladder's realized-based carried-budget pattern
@@ -3326,6 +3402,8 @@ def _eq_co2_max_period(b: _Build) -> None:
     #     · co2_content[c]·w[d,t]
     #   + Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_noEff, t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w[d,t]
     #   − Σ_{(p,s,k,c,g) ∈ flow_to_co2_capped, t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w[d,t]
+    #   + Σ_{(p,n,c,g) ∈ startup_from_co2_capped, t} v_startup[p,d,t]·startup_energy[p,n,d]·unitsize[p]
+    #       · co2_content[c]·w[d,t]/step_duration[d,t]   (start-up energy: an event, no step_duration)
     #   ≤ co2_max_period[g,d] · f_d_k[d]  −  co2_cum_realized_tonnes[g,α(d)] / period_share[d]
     #   ∀ (g,d) ∈ group_d_co2_capped;   w = step_duration · timestep_weight / period_share
     #   f_d_k[d] = (realized hours of α(d) from earlier solves + this solve's hours of d) / complete hours of α(d)
@@ -3368,6 +3446,12 @@ def _eq_co2_max_period(b: _Build) -> None:
             * d.p_step_duration * d.p_timestep_weight / d.p_period_share,
             over=("p", "source", "sink", "c", "t"),
         )
+    if b.has_startup_draw:
+        for key, term in _startup_draw(b, getattr(d, "startup_from_co2_capped", None)):
+            lhs[f"emissions_startup_{key}"] = Sum(
+                term * d.p_co2_content * d.p_timestep_weight / d.p_period_share,
+                over=("p", "n", "c", "t"),
+            )
     m.add_cstr(
         "co2_max_period",
         over      = d.group_d_co2_capped,
@@ -3460,6 +3544,8 @@ def _eq_co2_max_total(b: _Build) -> None:
     #   + Σ_{(p,s,k,c,g) ∈ flow_from_co2_capped_total_noEff, d∈D(leaf),t}
     #     v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w_y[d,t]
     #   − Σ_{(p,s,k,c,g) ∈ flow_to_co2_capped_total, d∈D(leaf),t} v_flow[p,s,k,d,t]·unitsize[p]·co2_content[c]·w_y[d,t]
+    #   + Σ_{(p,n,c,g) ∈ startup_from_co2_capped_total, d∈D(leaf),t}
+    #     v_startup[p,d,t]·startup_energy[p,n,d]·unitsize[p]·co2_content[c]·w_y[d,t]/step_duration[d,t]
     #   ≤ co2_max_total[g] · horizon_fraction_reached  −  Σ_d R_rep[g,d]
     #   ∀ g ∈ group_co2_max_total (, leaf);   w_y = step_duration · timestep_weight / period_share · years_represented[d]
     #   R_rep[g,d] = realized tonnes of d from earlier rolls / solves · years_represented[d] / period_share[d],
@@ -3510,6 +3596,12 @@ def _eq_co2_max_total(b: _Build) -> None:
             * d.p_years_represented_d,
             over=("p", "source", "sink", "c", "d", "t"),
         )
+    if b.has_startup_draw:
+        for key, term in _startup_draw(b, _leafify(getattr(d, "startup_from_co2_capped_total", None))):
+            lhs[f"emissions_startup_{key}"] = Sum(
+                term * d.p_co2_content * d.p_timestep_weight / d.p_period_share * d.p_years_represented_d,
+                over=("p", "n", "c", "d", "t"),
+            )
     cap_scalar = _co2_total_cap_with_carry(d)
     if is_path:
         name = "co2_max_total_path"
@@ -4588,6 +4680,18 @@ def _obj_commodity(b: _Build) -> Expr | None:
             Where(v_flow * d.p_unitsize, buy_noEff)
             * d.p_commodity_price * op_factor))
 
+    # ─── OBJ. ─── commodity_cost_startup ─────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(p,n,c) ∈ startup_from_commodity, (d,t)}
+    #     v_startup[p,d,t]·startup_energy[p,n,d]·unitsize[p] · commodity_price[c,d,t] · w_ev[d,t]
+    #   w_ev = timestep_weight · inflation_op / period_share · branch_weight   (as startup_cost)
+    # Cost of the start-up energy that units draw from the commodity node n of commodity c (startup_input_method
+    # startup_and_input / startup_only; core._startup_draw).  The draw is MWh per start-up event, so the weight
+    # has no step_duration.  Commodities with a price ladder are priced by _commodity_ladder.
+    if b.has_startup_draw:
+        buy_su = _single_price(getattr(d, "startup_from_commodity", None))
+        terms += [Sum(term * d.p_commodity_price * b.ev_factor) for _key, term in _startup_draw(b, buy_su)]
+
     # ─── OBJ. ─── commodity_sales ────────────────────────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
     # − Σ_{(p,s,k,c) ∈ flow_to_commodity, (d,t)} v_flow[p,s,k,d,t]·unitsize[p] · commodity_price[c,d,t] · w_op[d,t]
@@ -4631,6 +4735,16 @@ def _obj_co2_price(b: _Build) -> Expr | None:
         terms.append(-Sum(
             Where(b.v_flow * d.p_unitsize, d.flow_to_co2_priced)
             * d.p_co2_content * d.p_co2_price * b.op_factor))
+
+    # ─── OBJ. ─── co2_price_startup ──────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # Σ_{(p,n,c,g) ∈ startup_from_co2_priced, (d,t)}
+    #     v_startup[p,d,t]·startup_energy[p,n,d]·unitsize[p] · co2_content[c] · co2_price[g,d,t] · w_ev[d,t]
+    # Cost of the CO2 of the start-up energy drawn from a node of a CO2-priced group g that carries the
+    # CO2-bearing commodity c (core._startup_draw); an event, so the weight w_ev has no step_duration.
+    if b.has_startup_draw and _has_rows(getattr(d, "startup_from_co2_priced", None)):
+        terms.extend(Sum(term * d.p_co2_content * d.p_co2_price * b.ev_factor)
+                     for _key, term in _startup_draw(b, d.startup_from_co2_priced))
     return _sum_terms(terms)
 
 
@@ -4749,10 +4863,7 @@ def _obj_startup_cost(b: _Build) -> Expr | None:
     #   w_ev = timestep_weight · inflation_op / period_share · branch_weight
     # Cost of starting up units, startup_cost in currency/MW started.  A startup is an event, so the
     # weight has no step_duration.
-    startup_factor = (d.p_timestep_weight * d.p_inflation_op
-                      / d.p_period_share)
-    if d.pdt_branch_weight is not None:
-        startup_factor = startup_factor * d.pdt_branch_weight
+    startup_factor = b.ev_factor
     if b.has_startup_cost_lin:
         terms.append(Sum(
             Where(b.v_startup_linear, d.pdt_online_linear)
@@ -4779,9 +4890,7 @@ def _obj_ramp_cost(b: _Build) -> Expr | None:
     # Cost of changing a flow, ramp_cost in currency per MW of change of the step-average flow, up and down
     # alike.  A change is an event, as a start-up, so the weight has no step_duration: ramping 0 → X → 0 costs
     # 2·rc·X whatever the step lengths.  A start-up from 0 pays both its startup cost and this cost.
-    factor = d.p_timestep_weight * d.p_inflation_op / d.p_period_share
-    if d.pdt_branch_weight is not None:
-        factor = factor * d.pdt_branch_weight
+    factor = b.ev_factor
     return _sum_terms([Sum(v * d.p_ramp_cost_arc * d.p_unitsize * factor)
                        for v in (b.v_ramp_up, b.v_ramp_down)])
 

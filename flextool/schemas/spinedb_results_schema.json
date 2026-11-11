@@ -612,6 +612,22 @@
       null
     ],
     [
+      "unit__node",
+      "startup_energy_annualized",
+      null,
+      null,
+      "energy that the start-ups of the unit take from the node (startup_input_method), summed over the period and annualized.",
+      null
+    ],
+    [
+      "unit__node",
+      "startup_energy_t",
+      null,
+      null,
+      "energy that the start-ups of the unit take from the node (startup_input_method) in each time step.",
+      null
+    ],
+    [
       "unit__reserve__upDown__node",
       "reservation_average",
       null,

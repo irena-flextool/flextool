@@ -298,7 +298,8 @@ _ONLINE_NAMES = {
 #: checks), ``non_anticipativity`` (the ties of the units online across branches).
 _NOT_A_USE = {"online_model", "validation", "non_anticipativity"}
 CONSUMERS: dict[str, set[str]] = {
-    "_balance_terms:balance_flow_terms": {"min_load_efficiency"},
+    # The section and, through core._startup_draw, the start-up input draw (process_startup_node).
+    "_balance_terms:balance_flow_terms": {"min_load_efficiency", "startup_energy"},
     # The same terms evaluated at the solution (the capacity-margin breakdown); the capacityMargin row reads the
     # units online only through balance_flow_terms (test_the_capacity_margin_reads_online_only_by_the_section).
     "_balance_terms:balance_flow_values": {"min_load_efficiency"},
@@ -325,6 +326,9 @@ CONSUMERS: dict[str, set[str]] = {
     "core:_online_ramp_rhs": {"ramp_limits"},
     "core:_eq_conversion": {"min_load_efficiency"},
     "core:_eff_fuel_input": {"min_load_efficiency"},
+    # The start-up input draw (startup_input_method): commodity cost, CO2 price and caps, ladder, balances.
+    "core:_startup_draw": {"startup_energy"},
+    "core:_validate_startup_inputs": {"validation"},
     "core:_eq_user_constraints": {"user_constraint"},
     "core:_obj_variable_cost": {"min_load_efficiency"},
     "core:_obj_startup_cost": {"startup_cost"},

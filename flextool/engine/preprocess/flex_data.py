@@ -63,6 +63,8 @@ from flextool.engine.preprocess.params._branch import (
     solve_branch_anchor_pairs,
 )
 from flextool.engine.preprocess._provider_io import _provider_key
+# The FlexData fields of the start-up input (cleared together by reduce_unit_detail_method online).
+from flextool.engine.preprocess._reduce_detail import STARTUP_FIELDS
 from flextool.engine.preprocess.emit._base_steps import NEW_STEP_BASE_STEPS
 
 
@@ -1372,6 +1374,16 @@ class FlexData:
     p_process_sink_min_capacity_coef: Param | None = None    # (p, sink) — capacity_min_coeff: optional per-output floor (minFlow_output_floor), default 0
     p_startup_cost: Param | None = None                      # (p, d)
     p_section: Param | None = None                           # (p, d, t)
+    # Start-up input (unit__inputNode.startup_input_method startup_and_input / startup_only, startup_energy):
+    # each start-up draws startup_energy · MW started from node n (core._startup_draw).  A startup_only arc is
+    # not an arc: the readers hide it, so it is in none of the arc sets.  All None without start-up roles.
+    process_startup_node: pl.DataFrame | None = None         # (p, n): units of the solve, startup_energy ≠ 0
+    p_startup_energy: Param | None = None                    # (p, n, d) MWh per MW started
+    startup_to_balance: pl.DataFrame | None = None           # (p, n): n has an energy balance
+    startup_from_commodity: pl.DataFrame | None = None       # (p, n, c): n is a node of commodity c
+    startup_from_co2_priced: pl.DataFrame | None = None      # (p, n, c, g): n in a CO2-priced group, c with CO2
+    startup_from_co2_capped: pl.DataFrame | None = None      # (p, n, c, g): co2_max_period groups
+    startup_from_co2_capped_total: pl.DataFrame | None = None  # (p, n, c, g): co2_max_total groups
     pdt_uptime_set: pl.DataFrame | None = None               # (p, d, t) — minimum_uptime constraint domain
     pdt_downtime_set: pl.DataFrame | None = None             # (p, d, t) — minimum_downtime constraint domain
     uptime_lookback: pl.DataFrame | None = None              # (p, d, t, d_back, t_back) — startup lookback window
@@ -2129,13 +2141,123 @@ def _load_process_topology(inp: Path, sd: Path, dt: pl.DataFrame,
 
 
 # ---------------------------------------------------------------------------
+# Start-up input nodes (unit__inputNode.startup_input_method / startup_energy)
+
+
+
+def _load_startup_inputs(inp: Path, sd: Path, dt: pl.DataFrame, pss: "pl.DataFrame | None",
+                         nb: "pl.DataFrame | None", nbp: "pl.DataFrame | None", *,
+                         source: "InputSource | None" = None,
+                         provider: "object | None" = None) -> dict:
+    """The start-up input nodes of the solve's units (Utf8 frames; the end-of-load sweep casts them).
+
+    ``process_startup_node`` (p, n): the arcs with ``startup_input_method`` ``startup_and_input`` or
+    ``startup_only`` (``source.startup_arcs()``: the readers hide the startup_only arcs from every arc set, so
+    their start-up values are read through it) of the units in the solve, with a ``startup_energy`` other than
+    0 in a period of the solve.  ``p_startup_energy`` (p, n, d) [MWh per MW started] via
+    :func:`params._direct.p_startup_energy_from_source` (constant or period).  ``startup_to_balance``: the pairs
+    whose node has an energy balance (nodeBalance or nodeBalancePeriod); ``startup_from_commodity`` (p, n, c):
+    the pairs at a commodity node.  The CO2 sets come from :func:`_startup_co2_sets`.  Every field is None
+    without a start-up input.  A reader-less reload (``flextool.engine._csv_reload``) reads the dumped
+    ``p_startup_energy`` (``solve_data/process_node_startup_energy``, ``output._dump_csvs``) instead."""
+    blank = {f: None for f in STARTUP_FIELDS}
+    if pss is None or pss.height == 0:
+        return blank
+    in_solve = pss.select(pl.col("p").cast(pl.Utf8)).unique()
+    arcs_fn = getattr(source, "startup_arcs", None)
+    if arcs_fn is not None:
+        arcs = arcs_fn()
+        if arcs is None or arcs.height == 0:
+            return blank
+        from flextool.engine.preprocess.params._direct import p_startup_energy_from_source
+        se = p_startup_energy_from_source(source, period_filter=dt)
+        if se is None:
+            return blank
+        pn = (arcs.select(pl.col("unit").cast(pl.Utf8).alias("p"), pl.col("node").cast(pl.Utf8).alias("n"))
+              .join(in_solve, on="p", how="semi").unique().sort("p", "n"))
+        se_frame = se.frame.collect() if isinstance(se.frame, pl.LazyFrame) else se.frame
+        se_frame = se_frame.select(pl.col("p").cast(pl.Utf8), pl.col("n").cast(pl.Utf8), pl.col("d").cast(pl.Utf8),
+                                   pl.col("value").cast(pl.Float64))
+    elif source is None and _provider_has(provider, "solve_data/process_node_startup_energy",
+                                          sd / "process_node_startup_energy.csv"):
+        # A reader-less reload of a dump: the dumped p_startup_energy (output._dump_csvs).
+        se_frame = _provider_read(provider, "solve_data/process_node_startup_energy",
+                                  sd / "process_node_startup_energy.csv")
+        se_frame = se_frame.select(pl.col("process").cast(pl.Utf8).alias("p"),
+                                   pl.col("node").cast(pl.Utf8).alias("n"),
+                                   pl.col("period").cast(pl.Utf8).alias("d"), pl.col("value").cast(pl.Float64))
+        pn = se_frame.select("p", "n").join(in_solve, on="p", how="semi").unique().sort("p", "n")
+    else:
+        return blank
+    se_frame = (se_frame.join(pn, on=["p", "n"], how="semi")
+                .join(dt.select(pl.col("d").cast(pl.Utf8)).unique(), on="d", how="semi"))
+    pn = pn.join(se_frame.filter(pl.col("value") != 0.0).select("p", "n").unique(), on=["p", "n"], how="semi")
+    if pn.height == 0:
+        return blank
+    out = dict(blank)
+    out["process_startup_node"] = pn
+    out["p_startup_energy"] = Param(("p", "n", "d"),
+                                    se_frame.join(pn, on=["p", "n"], how="semi").sort("p", "n", "d"))
+    balance = [f.select(pl.col("n").cast(pl.Utf8)) for f in (nb, nbp) if f is not None and f.height > 0]
+    if balance:
+        to_balance = pn.join(pl.concat(balance).unique(), on="n", how="semi")
+        out["startup_to_balance"] = to_balance if to_balance.height > 0 else None
+    if _provider_has(provider, "input/commodity__node", inp / "commodity__node.csv"):
+        cn = _provider_read(provider, "input/commodity__node", inp / "commodity__node.csv")
+        cn = cn.select(pl.col("commodity").cast(pl.Utf8).alias("c"), pl.col("node").cast(pl.Utf8).alias("n"))
+        from_c = pn.join(cn, on="n", how="inner").select("p", "n", "c").sort("p", "n", "c")
+        out["startup_from_commodity"] = from_c if from_c.height > 0 else None
+    return out
+
+
+def _startup_co2_sets(inp: Path, sd: Path, startup_pn: "pl.DataFrame | None", *,
+                      provider: "object | None" = None) -> dict:
+    """``startup_from_co2_priced`` / ``_capped`` / ``_capped_total`` (p, n, c, g), Utf8: the start-up input nodes
+    ``startup_pn`` (p, n) at a node of a CO2-priced / co2_max_period / co2_max_total group that carries a
+    CO2-bearing commodity c (the gcn sets of :func:`_load_co2_price` / :func:`_load_co2_cap` /
+    :func:`_load_co2_cap_total`).  Built apart from those loaders' arc gates, so a group whose only emitter is a
+    start-up draw is still priced and capped.  The total-cap set is filtered to the groups with a cap value by
+    the caller."""
+    out = {"startup_from_co2_priced": None, "startup_from_co2_capped": None,
+           "startup_from_co2_capped_total": None}
+    if startup_pn is None or startup_pn.height == 0:
+        return out
+    if not (_provider_has(provider, "solve_data/commodity_node_co2", sd / "commodity_node_co2.csv")
+            and _provider_has(provider, "input/group__node", inp / "group__node.csv")):
+        return out
+    cn_co2 = _provider_read(provider, "solve_data/commodity_node_co2", sd / "commodity_node_co2.csv")
+    cn_co2 = cn_co2.select(pl.col("commodity").cast(pl.Utf8).alias("c"), pl.col("node").cast(pl.Utf8).alias("n"))
+    g_node = _provider_read(provider, "input/group__node", inp / "group__node.csv")
+    g_node = g_node.select(pl.col("group").cast(pl.Utf8).alias("g"), pl.col("node").cast(pl.Utf8).alias("n"))
+    pn = startup_pn.select(pl.col("p").cast(pl.Utf8), pl.col("n").cast(pl.Utf8))
+    for field, key in (("startup_from_co2_priced", "group_co2_price"),
+                       ("startup_from_co2_capped", "group_co2_max_period"),
+                       ("startup_from_co2_capped_total", "group_co2_max_total")):
+        if not _provider_has(provider, f"solve_data/{key}", sd / f"{key}.csv"):
+            continue
+        groups = _provider_read(provider, f"solve_data/{key}", sd / f"{key}.csv")
+        if groups.height == 0:
+            continue
+        groups = groups.select(pl.col("group").cast(pl.Utf8).alias("g")).unique()
+        rows = (pn.join(g_node.join(groups, on="g", how="semi"), on="n", how="inner")
+                .join(cn_co2, on="n", how="inner")
+                .select("p", "n", "c", "g").unique().sort("p", "n", "c", "g"))
+        out[field] = rows if rows.height > 0 else None
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Optional features (CO2 price, CO2 cap, indirect, user-defined, profiles)
 
-def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
+def _load_co2_price(
+inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                      pss_noEff: pl.DataFrame | None = None,
                      *,
                      pss: pl.DataFrame | None = None,
-                     provider: "object | None" = None):
+                     provider: "object | None" = None,
+                     startup_emitters: bool = False):
+    """``startup_emitters``: a start-up draw emits in a priced group (:func:`_startup_co2_sets`), so the price
+    term stays on without an emitting arc."""
     if pss_eff is None:
         return (None, None, None, None, None)
     files = ["group_co2_price.csv", "commodity_node_co2.csv", "pdtGroup.csv"]
@@ -2184,7 +2306,7 @@ def _load_co2_price(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     # A pure-removal group (no emitting flow at all, only a removal credit)
     # still needs the price term active — don't drop it here.
     if (flow_from_co2_priced.height == 0 and flow_from_co2_priced_noEff is None
-            and flow_to_co2_priced is None):
+            and flow_to_co2_priced is None and not startup_emitters):
         return (None, None, None, None, None)
     # ``p_co2_content`` is written by ``apply_direct_params_a`` on every DB path (a reader-less reload seeds it in
     # ``_csv_reload._field_seeds``), so this slot is None.
@@ -2204,7 +2326,10 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                    pss_noEff: pl.DataFrame | None = None,
                    *,
                    pss: pl.DataFrame | None = None,
-                   provider: "object | None" = None):
+                   provider: "object | None" = None,
+                   startup_emitters: bool = False):
+    """``startup_emitters``: a start-up draw emits in a capped group (:func:`_startup_co2_sets`), so the cap
+    rows stay on without an emitting arc."""
     if pss_eff is None and pss_noEff is None:
         return (None, None, None, None, None, None)
     p = sd / "group_co2_max_period.csv"
@@ -2263,7 +2388,7 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     # against a positive cap — so there's no need to keep the constraint
     # active for a removal-only group; the original emitting-flow gate is
     # kept as-is.
-    if flow_from_co2_capped_eff is None and flow_from_co2_capped_noEff is None:
+    if flow_from_co2_capped_eff is None and flow_from_co2_capped_noEff is None and not startup_emitters:
         return (None, None, None, None, None, None)
     # Δ.17c Gap C: ``p_co2_max_period`` produced authoritatively by
     # ``apply_direct_params`` via ``p_co2_max_period_from_source`` (uses
@@ -2279,7 +2404,8 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                           pss_noEff: pl.DataFrame | None = None,
                           *,
                           pss: pl.DataFrame | None = None,
-                          provider: "object | None" = None):
+                          provider: "object | None" = None,
+                          startup_emitters: bool = False):
     """Sibling of :func:`_load_co2_cap` for the multi-period total cap.
 
     Mirrors the period-cap topology (``group_co2_max_period.csv`` → eff /
@@ -2296,6 +2422,8 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     Returns a 5-tuple (g_max_total, flow_eff, flow_noEff, p_co2_max_total,
     flow_to_co2_capped_total) — the last is the (#19) removal credit:
     sink-side flow into the same capped group's node(s), unsplit (no slope).
+    ``startup_emitters``: a start-up draw emits in a total-capped group (:func:`_startup_co2_sets`), so the cap
+    row stays on without an emitting arc.
     """
     if pss_eff is None and pss_noEff is None:
         return (None, None, None, None, None)
@@ -2339,7 +2467,7 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             .select("p", "source", "sink", "c", "g"))
         if rem.height > 0:
             flow_to_co2_capped_total = rem
-    if flow_eff is None and flow_noEff is None:
+    if flow_eff is None and flow_noEff is None and not startup_emitters:
         return (None, None, None, None, None)
     # Read the cap value from pdGroup.csv (param='co2_max_total').  Legacy
     # preprocessing writes one row per (group, period) by broadcasting the
@@ -2382,7 +2510,7 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             cap_groups, on="g", how="inner")
         if flow_to_co2_capped_total.height == 0:
             flow_to_co2_capped_total = None
-    if flow_eff is None and flow_noEff is None:
+    if flow_eff is None and flow_noEff is None and not startup_emitters:
         return (None, None, None, None, None)
     return (g_max, flow_eff, flow_noEff, p_cap, flow_to_co2_capped_total)
 
@@ -5002,17 +5130,28 @@ def load_flextool(source: "Path | str | FlexInputSource",
                            .join(proc["pss"], on="p", how="inner")
                            .select("p", "source", "sink", "d", "value"))
 
+        # Start-up input nodes and their CO2 groups: before the CO2 loaders, whose arc gates they widen.
+        startup = _load_startup_inputs(inp, sd, dt, proc["pss"], nb, nbp, source=db_reader, provider=provider)
+        startup.update(_startup_co2_sets(inp, sd, startup["process_startup_node"], provider=provider))
         flow_co2_p, flow_co2_p_noEff, co2c, co2pr, flow_co2_p_rem = _load_co2_price(
             inp, sd, proc["pss_eff"], proc.get("pss_noEff"),
-            pss=proc.get("pss"), provider=provider)
+            pss=proc.get("pss"), provider=provider,
+            startup_emitters=startup["startup_from_co2_priced"] is not None)
         (g_co2_max, flow_co2_cap, flow_co2_cap_noEff, co2_max_p, g_d_capped,
          flow_co2_cap_rem) = _load_co2_cap(
             inp, sd, proc["pss_eff"], dt, pss_noEff=proc.get("pss_noEff"),
-            pss=proc.get("pss"), provider=provider)
+            pss=proc.get("pss"), provider=provider,
+            startup_emitters=startup["startup_from_co2_capped"] is not None)
         (g_co2_max_total, flow_co2_cap_total, flow_co2_cap_total_noEff,
          co2_max_total_p, flow_co2_cap_total_rem) = _load_co2_cap_total(
             inp, sd, proc["pss_eff"], pss_noEff=proc.get("pss_noEff"),
-            pss=proc.get("pss"), provider=provider)
+            pss=proc.get("pss"), provider=provider,
+            startup_emitters=startup["startup_from_co2_capped_total"] is not None)
+        # The total cap counts only the groups with a cap value (the loader's gate).
+        if startup["startup_from_co2_capped_total"] is not None:
+            kept = (None if g_co2_max_total is None else startup["startup_from_co2_capped_total"].join(
+                g_co2_max_total.select(pl.col("g").cast(pl.Utf8)).unique(), on="g", how="semi"))
+            startup["startup_from_co2_capped_total"] = kept if kept is not None and kept.height > 0 else None
         co2_f_d_k, co2_cum_realized, co2_cum_realized_rep, co2_horizon_fraction = _load_co2_rolling_carry(
             sd, provider=provider)
 
@@ -5229,6 +5368,7 @@ def load_flextool(source: "Path | str | FlexInputSource",
             p_process_availability = avail,
 
             p_fix_reserve = _load_fix_reserve(provider),
+            **startup,
             **online,
             **ramp,
             **invest,

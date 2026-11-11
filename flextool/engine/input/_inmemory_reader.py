@@ -34,6 +34,11 @@ class InMemoryReader:
     defaults : Mapping[tuple[str, str], Any] | None
         Optional ``{(entity_class, parameter_name): default_value}``.
         Absent keys imply ``None`` default (§4.5 None-skip branch).
+    startup_arcs : pl.DataFrame | None
+        Optional ``(unit, node, method)`` frame returned by :meth:`startup_arcs`.  Without it the arcs come
+        from the ``("unit__inputNode", "startup_input_method")`` frame, if given.  No arc is hidden: the
+        caller leaves the ``startup_only`` arcs out of the entity and parameter frames, as the database
+        readers would.
 
     Lookups raise :class:`KeyError` on unknown classes / parameters.
     """
@@ -43,6 +48,7 @@ class InMemoryReader:
         entities: Mapping[str, pl.DataFrame],
         parameters: Mapping[tuple[str, str], pl.DataFrame],
         defaults: Mapping[tuple[str, str], Any] | None = None,
+        startup_arcs: pl.DataFrame | None = None,
     ):
         # Defensive copy: the caller may mutate their inputs after
         # constructing us.  Polars frames are cheap to wrap.
@@ -51,6 +57,7 @@ class InMemoryReader:
         self._defaults: dict[tuple[str, str], Any] = (
             dict(defaults) if defaults is not None else {}
         )
+        self._startup_arcs = startup_arcs
 
     # ------------------------------------------------------------------
     # InputSource Protocol
@@ -75,6 +82,21 @@ class InMemoryReader:
 
     def parameter_default(self, entity_class: str, parameter_name: str) -> Any:
         return self._defaults.get((entity_class, parameter_name))
+
+    def startup_arcs(self) -> pl.DataFrame:
+        """``(unit, node, method)`` (Utf8) of the arcs with ``startup_input_method`` ``startup_and_input`` or
+        ``startup_only``: the frame given to the constructor, else the rows of the
+        ``("unit__inputNode", "startup_input_method")`` frame with one of those values."""
+        schema = {"unit": pl.Utf8, "node": pl.Utf8, "method": pl.Utf8}
+        if self._startup_arcs is not None:
+            return self._startup_arcs.select(*(pl.col(c).cast(pl.Utf8) for c in schema))
+        frame = self._parameters.get(("unit__inputNode", "startup_input_method"))
+        if frame is None or frame.height == 0:
+            return pl.DataFrame(schema=schema)
+        return (frame.filter(pl.col("value").is_in(["startup_and_input", "startup_only"]))
+                .select(pl.col("unit").cast(pl.Utf8), pl.col("node").cast(pl.Utf8),
+                        pl.col("value").cast(pl.Utf8).alias("method"))
+                .sort("unit", "node"))
 
     def parameter_explicit(self, entity_class: str,
                             parameter_name: str) -> pl.DataFrame:
@@ -167,7 +189,7 @@ class InMemoryReader:
                  if c not in ent_cols and c != "value" and kept.get_column(c).null_count() == kept.height]
         params = dict(self._parameters)
         params[(entity_class, parameter_name)] = kept.drop(empty)
-        return InMemoryReader(self._entities, params, self._defaults)
+        return InMemoryReader(self._entities, params, self._defaults, startup_arcs=self._startup_arcs)
 
     def parameter_shape_variants(self, entity_class: str,
                                   parameter_name: str,

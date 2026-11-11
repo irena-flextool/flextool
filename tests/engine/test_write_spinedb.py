@@ -127,7 +127,7 @@ def test_ensure_results_db_creates_schema(tmp_path):
     ensure_results_db(url)
     with DatabaseMapping(url) as db:
         assert len(db.get_entity_class_items()) == 12
-        assert len(db.get_parameter_definition_items()) == 65
+        assert len(db.get_parameter_definition_items()) == 67
         assert [a["name"] for a in db.get_alternative_items()] == ["Base"]
     # idempotent: second call is a no-op and does not raise
     ensure_results_db(url)
@@ -455,7 +455,7 @@ def test_concurrent_cold_start_creates_one_valid_db(tmp_path):
     assert not leftovers, f"leftover temp DBs: {leftovers}"
     with DatabaseMapping(url) as db:
         assert len(db.get_entity_class_items()) == 12
-        assert len(db.get_parameter_definition_items()) == 65
+        assert len(db.get_parameter_definition_items()) == 67
 
     # The DB stays usable for an append after the concurrent create.
     write_spinedb({"unit_outputNode_dt_ee": _flow_df()}, StubS(), url,
@@ -605,7 +605,7 @@ def test_top_up_restores_missing_param_def(tmp_path):
         assert it["description"].startswith(expected_unit), (
             f"restored description missing derived unit {expected_unit!r}: "
             f"{it['description']!r}")
-        assert len(db.get_parameter_definition_items()) == 65
+        assert len(db.get_parameter_definition_items()) == 67
 
     # End-to-end: the previously-crashing write now round-trips.
     s = StubS()
@@ -662,7 +662,7 @@ def test_top_up_restores_missing_entity_class(tmp_path):
         assert any(p["entity_class_name"] == "group"
                    for p in db.get_parameter_definition_items())
         assert len(db.get_entity_class_items()) == 12
-        assert len(db.get_parameter_definition_items()) == 65
+        assert len(db.get_parameter_definition_items()) == 67
 
 
 def test_top_up_excludes_alternatives(tmp_path):
@@ -695,7 +695,7 @@ def test_concurrent_top_up_on_stale_shared_db(tmp_path):
     ensure_results_db(url)
     _remove_param_def(url, "node", "cost_annualized")
     with DatabaseMapping(url) as db:
-        assert len(db.get_parameter_definition_items()) == 64
+        assert len(db.get_parameter_definition_items()) == 66
 
     ctx = mp.get_context("spawn")
     n = 6
@@ -707,7 +707,7 @@ def test_concurrent_top_up_on_stale_shared_db(tmp_path):
         defs = db.get_parameter_definition_items(
             entity_class_name="node", name="cost_annualized")
         assert len(defs) == 1, f"expected exactly one def, got {len(defs)}"
-        assert len(db.get_parameter_definition_items()) == 65
+        assert len(db.get_parameter_definition_items()) == 67
         assert len(db.get_entity_class_items()) == 12
 
     # No leftover temp DBs; the sidecar lock (if present) is not held.

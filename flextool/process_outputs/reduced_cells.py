@@ -29,7 +29,8 @@ MARKER = "reduced_detail"
 #: The output tables each left-out feature empties.  Costs stay (a left-out feature costs nothing in the objective
 #: of the solve), and so do the flows, ramps and the VRE share (the dispatch has them whatever the detail).
 FEATURE_TABLES: dict[str, tuple[str, ...]] = {
-    "online": ("unit_online_dt_e", "unit_online_average_d_e", "unit_startup_d_e",
+    "online": ("unit_online_dt_e", "unit_online_average_d_e", "unit_startup_d_e", "unit_startup_energy_dt_ee",
+               "unit_startup_energy_d_ee",
                "connection_online_dt_e", "connection_online_average_d_e", "connection_startup_d_e"),
     "reserves": ("process_reserve_upDown_node_dt_eppe", "process_reserve_average_d_eppe",
                  "nodeGroup_slack_reserve_dt_eeg", "nodeGroup_slack_reserve_d_eeg", "reserve_prices_dt_ppg",

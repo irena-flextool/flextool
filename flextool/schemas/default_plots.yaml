@@ -2153,6 +2153,28 @@ plots:
         color_entity_class: connection
         max_items_per_plot: 40
         xlabel: starts (horizon total)
+  'Unit startup energy':
+    group: 8
+    order: 10
+    unit_startup_energy_d_ee:
+      default:
+        variant: p
+        map_dimensions_for_plots: [d_ee, b_eu]
+        color_entity_class: unit
+        ylabel: Node
+        xlabel: MWh (annualized)
+        max_items_per_plot: 40
+        skip_data_with_only_zeroes: true
+    unit_startup_energy_dt_ee:
+      default:
+        variant: h
+        legend: all
+        map_dimensions_for_plots: [dt_ee, tt_su]
+        color_entity_class: unit
+        max_items_per_plot: 30
+        max_subplots_per_file: 6
+        skip_data_with_only_zeroes: true
+        ylabel: MWh
   'Reserve from process to node':
     group: 9
     order: 0
@@ -2381,6 +2403,8 @@ rename:
   unit_ramp_inputs_dt_ee: [unit_ramp__inputNode__dt, true]
   unit_ramp_outputs_dt_ee: [unit_ramp__outputNode__dt, true]
   unit_startup_d_e: [unit_startup__d, true]
+  unit_startup_energy_d_ee: [unit_startup_energy__d, true]
+  unit_startup_energy_dt_ee: [unit_startup_energy__dt, true]
   unit_VRE_potential_outputNode_dt_ee: [unit_outputNode_VRE_potential__dt, true]
   unit_curtailment_share_outputNode_dt_ee: [unit_outputNode_VRE_curtailment_share__dt, true]
   unit_VRE_potential_outputNode_d_ee: [unit_outputNode_VRE_potential__d, true]

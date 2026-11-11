@@ -41,7 +41,7 @@ from flextool.process_outputs.out_flows import (
     unit_outputNode, unit_inputNode,
     unit_cf_outputNode, unit_cf_inputNode,
     unit_VRE_curtailment_and_potential, unit_ramps,
-    unit_online_and_startup, connection_online_and_startup,
+    unit_online_and_startup, connection_online_and_startup, unit_startup_energy,
 )
 from flextool.process_outputs.out_group import (
     nodeGroup_indicators, nodeGroup_VRE_share,
@@ -724,6 +724,7 @@ ALL_OUTPUTS = [
     reserves,
     unit_online_and_startup,
     connection_online_and_startup,
+    unit_startup_energy,
     node_summary,
     node_additional_results,
     investment_duals,

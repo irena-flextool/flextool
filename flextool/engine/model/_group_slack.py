@@ -694,7 +694,10 @@ def _eq_capacity_margin(b: _Build) -> None:
     #   B¬FV[g,n,d,t] = the flow terms of nodeBalance_eq at n (balance_flow_terms, power: no Δt) without the arcs
     #   of F(g) ∪ V(g) and without the arcs left out (capacity_margin_left_out_arcs: the connections with both ends
     #   in N(g), the lossy converters inside g); the other units' output and input (slope, section), connections at
-    #   N(g) (v_flow, v_flow_back), Benders half-flows; only at the (g, n) pairs of N(g)
+    #   N(g) (v_flow, v_flow_back), Benders half-flows; only at the (g, n) pairs of N(g).  The start-up input
+    #   draw (startup_input_method, core._startup_draw: energy per start-up event, not capacity) is not a term, so
+    #   with a draw at a node of N(g) (a unit started on grid electricity) the substituted balance below differs
+    #   from the row by that draw
     #   S(g) = the storage nodes with an upward balance slack that feed N(g) through a storage-backed unit or a
     #   connection (capacity_margin_storage_slack_nodes);  v_capacity_margin_slack_energy = Σ_t vq_state_up · Δt
     #   (capacityMargin_slack_energy)

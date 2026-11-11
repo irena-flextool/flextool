@@ -343,6 +343,8 @@ for _key, _producer, _note in (
     ("unit_online_dt_e",           "out_flows.unit_online_and_startup", "Per-(period,time) unit online state; only with online tracking."),
     ("unit_online_average_d_e",    "out_flows.unit_online_and_startup", "Per-period unit online average; only with online tracking."),
     ("unit_startup_d_e",           "out_flows.unit_online_and_startup", "Per-period unit startup count; only with online tracking."),
+    ("unit_startup_energy_dt_ee",  "out_flows.unit_startup_energy",    "Per-(period,time) start-up input energy (MWh) per unit and start-up node."),
+    ("unit_startup_energy_d_ee",   "out_flows.unit_startup_energy",    "Per-period start-up input energy (MWh/a) per unit and start-up node."),
     ("connection_online_dt_e",     "out_flows.connection_online_and_startup", "Connection online state; only with online connections."),
     ("connection_online_average_d_e", "out_flows.connection_online_and_startup", "Connection online average; only with online connections."),
     ("connection_startup_d_e",     "out_flows.connection_online_and_startup", "Connection startup count; only with online connections."),

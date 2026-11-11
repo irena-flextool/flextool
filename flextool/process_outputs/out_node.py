@@ -1,6 +1,7 @@
 import pandas as pd
 
 from flextool.process_outputs._annualize import annualize_dt_to_d
+from flextool.process_outputs.calc_capacity_flows import startup_draw_by_node
 
 # Storage node is surfaced in the node balance/price outputs only if it is
 # wired to more than this many distinct processes.  A battery (one inverter,
@@ -81,6 +82,11 @@ def node_summary(par, s, v, r, debug):
 
     # To units (negative)
     to_units = -r.flow_dt[s.process_unit.join(r.flow_dt.columns).join(nodes_source, how='inner')].T.groupby('source').sum().T
+    # The start-up input that units take from the node (startup_input_method), as in nodeBalance_eq.
+    draw = startup_draw_by_node(r)
+    draw = draw[draw.columns.intersection(nodes)] if len(draw.columns) else draw
+    if len(draw.columns):
+        to_units = to_units.sub(draw.reindex(to_units.index), fill_value=0.0)
     to_units_cols = node_dt.columns[
                         node_dt.columns.get_level_values('node').isin(to_units.columns)
                         & node_dt.columns.get_level_values('category').isin(['To units'])]

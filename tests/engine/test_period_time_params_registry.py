@@ -28,8 +28,8 @@ def test_derivation_rule_matches_registry():
     assert set(PERIOD_TIME_PARAMS) == expected
 
 
-def test_count_is_64_split_22_dual_1_time_only_41_period_only():
-    assert len(PERIOD_TIME_PARAMS) == 64
+def test_count_is_65_split_22_dual_1_time_only_42_period_only():
+    assert len(PERIOD_TIME_PARAMS) == 65
     # 22 dual-axis: 21 with the full 2-D shape (incl. node.energy_margin_adder, which has no time-only map) +
     # commodity.price (two 1-D).
     dual_2d = {k for k, v in PARAM_ALLOWED_SHAPES.items()
@@ -44,12 +44,13 @@ def test_count_is_64_split_22_dual_1_time_only_41_period_only():
     # 1 time-only: the per-timestep weight map of a timeset.
     time_only = {k for k, v in PARAM_ALLOWED_SHAPES.items() if set(v) == {Shape.MAP_TIME}}
     assert time_only == {("timeset", "timeset_weights")}
-    # 41 period-only (incl. group cumulative_{max,min}_capacity, capacity_margin_share and the user-constraint
-    # constant): exactly {SCALAR, MAP_PERIOD}.
+    # 42 period-only (incl. group cumulative_{max,min}_capacity, capacity_margin_share, the user-constraint
+    # constant and unit__inputNode.startup_energy): exactly {SCALAR, MAP_PERIOD}.
     period_only = {k for k, v in PARAM_ALLOWED_SHAPES.items()
                    if set(v) == {Shape.SCALAR, Shape.MAP_PERIOD}}
-    assert len(period_only) == 41
+    assert len(period_only) == 42
     assert ("group", "capacity_margin_share") in period_only
+    assert ("unit__inputNode", "startup_energy") in period_only
     assert set(PERIOD_TIME_PARAMS) == dual_2d | commodity_price | time_only | period_only
 
 

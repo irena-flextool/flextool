@@ -19,8 +19,9 @@ Unit detail (``reduce_unit_detail_method``; the parts each value takes are in :d
   up / down times use them as step predecessor.
 * ``min_limits`` — minimum load (``process_minload``, ``p_min_load``), the ``capacity_min_coeff`` floors
   (``p_process_sink_min_capacity_coef``) and the minimum up / down times with their roll carry.
-* ``online`` — the online variables (every online set, start-up cost sets, the online carry and pin) and with them
-  ``min_limits``; ``min_load_efficiency`` units of the online set run at their full-load efficiency
+* ``online`` — the online variables (every online set, start-up cost sets, the start-up input draws of
+  ``startup_input_method`` with their sets (:data:`STARTUP_FIELDS`; an investment solve then under-counts the start-up
+  input, as the start-up cost), the online carry and pin) and with them ``min_limits``; ``min_load_efficiency`` units of the online set run at their full-load efficiency
   (``p_slope ← p_slope + p_section``, ``p_section ← 0``, ``process_min_load_eff`` cleared); user constraints with a
   ``constraint_online_coeff`` term are left out whole (dropping only the term could tighten the row).
 
@@ -95,10 +96,15 @@ MIN_TIME_FIELDS: tuple[str, ...] = (
     "pdt_uptime_set", "pdt_downtime_set", "uptime_lookback", "downtime_lookback",
     "uptime_carry", "downtime_carry", "online_startup_history", "online_min_time",
 )
+#: The start-up input draws (unit__inputNode.startup_input_method / startup_energy): terms on the units started.
+STARTUP_FIELDS: tuple[str, ...] = (
+    "process_startup_node", "p_startup_energy", "startup_to_balance", "startup_from_commodity",
+    "startup_from_co2_priced", "startup_from_co2_capped", "startup_from_co2_capped_total",
+)
 ONLINE_FIELDS: tuple[str, ...] = (
     "process_online", "process_online_linear", "process_online_integer", "p_online_dt",
     "pdt_online_linear", "pdt_online_integer", "p_roll_continue_online", "dt_online_carry", "p_fix_online",
-)
+) + STARTUP_FIELDS
 
 #: The uses of a unit's or connection's online variables (``v_online_*``) in the model, by what keeps them under the
 #: ``integers*`` levels (:func:`online_uses`).  Each is a model term that reads the units online and would change
@@ -118,6 +124,7 @@ ONLINE_USES: dict[str, str] = {
     "inertia": "inertia counted from the units online (an inertia arc at a node of an inertia group)",
     "ramp_limits": "ramp limits: the start-up and shut-down allowance reads the units started and stopped",
     "parent_commitment": "the pin to the parent solve's commitment (p_fix_online)",
+    "startup_energy": "a start-up draw (process_startup_node with startup_energy not 0)",
 }
 #: The fields :func:`_prune_online` filters to the processes that keep their online variables (``p`` column).
 PRUNE_FIELDS: tuple[str, ...] = tuple(f for f in ONLINE_FIELDS + MIN_TIME_FIELDS if f != "dt_online_carry") + (
@@ -159,7 +166,8 @@ class ReduceReport:
     ``removed``: feature -> sorted names of the entities (processes, or user constraints for
     ``user_constraints``) it was left out for; only features with something left out appear.  Keys: ``integer_online``
     (binary units / connections now continuous), ``exact`` (exact connections now regular), ``ramp_limits``,
-    ``ramp_costs``, ``min_load``, ``capacity_min_coeff``, ``min_up_down``, ``online``, ``online_unused`` (online
+    ``ramp_costs``, ``min_load``, ``capacity_min_coeff``, ``min_up_down``, ``online``, ``startup_energy`` (units whose
+    start-up input draw went with the online variables), ``online_unused`` (online
     variables without a use left out under ``integers*``), ``min_load_efficiency``
     (folded to full-load efficiency), ``user_constraints`` (left out whole); system keys ``reserves`` (the reserve
     groups with a requirement as ``reserve__upDown__group``, or every reserve group when none has one),
@@ -350,6 +358,7 @@ def online_uses(d: "FlexData", sparts: frozenset[str] = frozenset()) -> dict[str
         "ramp_limits": set().union(*(_names(getattr(d, f"process_source_sink_ramp_limit_{k}"))
                                      for k in ("sink_up", "sink_down", "source_up", "source_down"))),
         "parent_commitment": _names(d.p_fix_online),
+        "startup_energy": _names(d.process_startup_node),
     }
     coef = _frame(d.p_process_constraint_online_coeff)
     cns = set(_online_constraints(d))
@@ -431,6 +440,9 @@ def _reduce_unit(d: "FlexData", parts: frozenset[str], report: ReduceReport,
     if "online" in parts:
         if online:
             removed["online"] = sorted(online)
+        startup_energy = _names(d.process_startup_node)
+        if startup_energy:
+            removed["startup_energy"] = sorted(startup_energy)
         clear(ONLINE_FIELDS)
         min_load_eff = _names(d.process_min_load_eff)
         not_online = sorted(min_load_eff - online)
