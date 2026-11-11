@@ -132,6 +132,7 @@ def run(
         validate_min_load_efficiency_inputs,
         validate_connection_node_memberships,
         validate_node_invest_without_storage,
+        validate_units_of_measure,
         validate_connection_delay,
         validate_connection_startup,
         validate_group_increase_reserve_ratio,
@@ -337,6 +338,7 @@ def run(
         validate_group_output_memberships(db, logger)
         validate_connection_node_memberships(db, logger)
         validate_node_invest_without_storage(db, logger)
+        validate_units_of_measure(db, logger)
 
     # Accept either a backend, a DatabaseMapping or a URL string.
     if isinstance(backend_or_db_url, str):

@@ -38,6 +38,7 @@ import spinedb_api as api
 
 from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess.params._existing import DIVEST_NOT_ALLOWED, INVEST_NOT_ALLOWED
+from flextool import units_of_measure as uom
 from flextool.input_derivation._method_constants import METHOD_2WAY_1VAR, METHOD_LP, METHOD_MIP
 
 
@@ -51,6 +52,7 @@ __all__ = [
     "validate_group_output_memberships",
     "validate_connection_node_memberships",
     "validate_node_invest_without_storage",
+    "validate_units_of_measure",
     "validate_connection_delay",
     "validate_unit_input_shares",
     "validate_output_min_coeff",
@@ -1177,6 +1179,158 @@ def validate_node_invest_without_storage(db, logger: logging.Logger) -> None:
             "so '%s' gets no investment. Remove its invest_method or make it a storage node.",
             name, method, node_type, name,
         )
+
+
+
+#: Group parameters that limit the capacity of the group's members as one sum (invest, retire, cumulative).
+_GROUP_CAPACITY_LIMITS: tuple[str, ...] = (
+    "invest_max_period", "invest_max_total", "invest_min_period", "invest_min_total",
+    "retire_max_period", "retire_max_total", "retire_min_period", "retire_min_total",
+    "cumulative_max_capacity", "cumulative_min_capacity",
+)
+
+
+def node_units_of_measure(db) -> dict[str, str]:
+    """``{node: amount unit}`` of the nodes with a non-default ``unit_of_measure`` (``db`` scenario-filtered).
+    Empty on a database without the definition (every node is MWh)."""
+    return uom.node_units_from_rows((k[0], v) for k, v in _str_values(db, "node", "unit_of_measure").items())
+
+
+def _named_units(nodes, node_units: dict[str, str]) -> str:
+    """``a (MWh), b (m3), c (t) and 2 more``: the nodes with their units, at most three named."""
+    named = [f"{n} ({uom.node_unit(n, node_units)})" for n in nodes[:3]]
+    more = f" and {len(nodes) - 3} more" if len(nodes) > 3 else ""
+    return ", ".join(named) + more
+
+
+def _unit_capacity_nodes(db) -> dict[str, list[str]]:
+    """``{unit: [capacity-side nodes]}``: the output nodes whose ``conversion_flow_coeff`` is not 0 everywhere
+    (a 0 output is not in the capacity constraints), else the input nodes."""
+    outputs = _arcs(db, "unit__outputNode")
+    inputs = _arcs(db, "unit__inputNode")
+    coeffs = _arc_values(db, "unit__outputNode", "conversion_flow_coeff")
+    out: dict[str, list[str]] = {}
+    for unit in sorted(set(outputs) | set(inputs)):
+        capped = [n for n in outputs.get(unit, []) if any(v != 0.0 for v in coeffs.get((unit, n), [1.0]))]
+        out[unit] = capped or outputs.get(unit, []) or inputs.get(unit, [])
+    return out
+
+
+def validate_units_of_measure(db, logger: logging.Logger) -> None:
+    """Warn about ``node.unit_of_measure`` values that make a result label (or a model feature) mixed.
+
+    ``unit_of_measure`` is a label only (FlexTool converts nothing), so these are warnings, one per entity (the
+    nodes named, at most three):
+
+    1. a connection whose two nodes have different units: its flow, losses and capacity are labelled
+       ``Mixed units of measure!``;
+    2. a commodity whose ``commodity__node`` nodes have different units (its price and ``co2_content`` are per
+       the node's unit);
+    3. a nodeGroup whose member nodes, or a flowGroup whose arc nodes, have different units: its sums are labelled
+       ``Mixed units of measure!``;
+    4. a reserve, inertia, non-synchronous or capacity-margin group with a member node whose unit is not MWh (or
+       ``MWh_<suffix>``): these features are in MW and assume power nodes;
+    5. a group with a capacity limit (``invest_*``, ``retire_*``, ``cumulative_*``) over members whose capacities
+       are in different units: the limit sums them;
+    6. a value that names a rate (``m3/h``, ``MW``): ``unit_of_measure`` is the amount unit.
+
+    A unit whose outputs have different units gets no warning: its capacity label shows how the capacity is used
+    (``MW + MW_th`` or ``MW; MW_th``).  ``db`` is scenario-filtered; a database without the definition gives no
+    warning (every node is MWh).
+    """
+    node_units = node_units_of_measure(db)
+    for (node, *_rest), value in sorted(_str_values(db, "node", "unit_of_measure").items()):
+        if uom.looks_like_rate(value):
+            logger.warning(
+                "Node '%s' has unit_of_measure '%s', which looks like a rate: unit_of_measure is the amount unit "
+                "(m3, MWh), not the rate. Flows are then shown in this unit per hour (m3 -> m3/h).", node, value)
+    if not node_units:
+        return
+
+    def mixed(nodes) -> bool:
+        return uom.units_of(nodes, node_units) == uom.MIXED_UOM
+
+    for ent in sorted(db.find_entities(entity_class_name="connection__node__node"),
+                      key=lambda e: tuple(e["entity_byname"])):
+        conn, *ends = ent["entity_byname"]
+        if mixed(ends):
+            logger.warning(
+                "Connection '%s' joins nodes with different units of measure: %s. Its flow, losses and capacity "
+                "are labelled '%s'; a connection moves one quantity, so check that this is intended.",
+                conn, _named_units(ends, node_units), uom.MIXED_UOM)
+
+    commodity_nodes: dict[str, list[str]] = {}
+    for ent in db.find_entities(entity_class_name="commodity__node"):
+        commodity_nodes.setdefault(ent["entity_byname"][0], []).append(ent["entity_byname"][1])
+    for commodity, nodes in sorted(commodity_nodes.items()):
+        if mixed(nodes):
+            logger.warning(
+                "Commodity '%s' is used by nodes with different units of measure: %s. Its price and co2_content "
+                "are per the unit of each node, so one value cannot fit them all.",
+                commodity, _named_units(sorted(nodes), node_units))
+
+    group_nodes: dict[str, list[str]] = {}
+    for ent in db.find_entities(entity_class_name="group__node"):
+        group_nodes.setdefault(ent["entity_byname"][0], []).append(ent["entity_byname"][1])
+    power_groups: dict[str, list[str]] = {}
+    for ent in db.find_entities(entity_class_name="reserve__upDown__group"):
+        power_groups.setdefault(ent["entity_byname"][2], []).append("reserves")
+    for flag, on, feature in (("has_inertia", {"yes"}, "inertia"),
+                              ("has_non_synchronous", {"yes"}, "the non-synchronous limit"),
+                              ("capacity_margin_method", {"manual", "share_of_peak"}, "the capacity margin")):
+        for value in sorted(on):
+            for name in _entities_with_value(db, "group", flag, value):
+                power_groups.setdefault(name, []).append(feature)
+    unit_capacity = _unit_capacity_nodes(db)
+    member_capacity: dict[str, list[tuple[str, str]]] = {}
+    for cls in ("group__unit", "group__connection"):
+        for ent in db.find_entities(entity_class_name=cls):
+            member_capacity.setdefault(ent["entity_byname"][0], []).append((cls[7:], ent["entity_byname"][1]))
+    connection_ends = {ent["entity_byname"][0]: list(ent["entity_byname"][1:])
+                       for ent in db.find_entities(entity_class_name="connection__node__node")}
+    default_node_type = str(_definition_default(db, "node", "node_type") or "balance")
+    node_types = {k[0]: v for k, v in _str_values(db, "node", "node_type").items()}
+    limited = {pv["entity_byname"][0] for limit in _GROUP_CAPACITY_LIMITS
+               for pv in db.find_parameter_values(entity_class_name="group", parameter_definition_name=limit)
+               if pv["type"] is not None}
+    for g in sorted(set(group_nodes) | set(power_groups) | limited):
+        nodes = sorted(group_nodes.get(g, []))
+        reasons: list[str] = []
+        if mixed(nodes):
+            reasons.append(f"its member nodes have different units of measure ({_named_units(nodes, node_units)}), "
+                           f"so its sums are labelled '{uom.MIXED_UOM}'")
+        features = sorted(set(power_groups.get(g, [])))
+        not_power = [n for n in nodes if not re.fullmatch(r"MWh(_.*)?", uom.node_unit(n, node_units))]
+        if features and not_power:
+            reasons.append(f"it has {' and '.join(features)}, which are in MW and assume power nodes, but "
+                           f"{_named_units(not_power, node_units)} {'is' if len(not_power) == 1 else 'are'} not "
+                           f"in MWh")
+        if g in limited:
+            capacity_units: dict[str, list[str]] = {}
+            for n in nodes:
+                if node_types.get(n, default_node_type) == "storage":  # only storage nodes have capacity
+                    capacity_units.setdefault(uom.node_unit(n, node_units), []).append(n)
+            for cls, member in sorted(member_capacity.get(g, [])):
+                side = unit_capacity.get(member, []) if cls == "unit" else connection_ends.get(member, [])
+                capacity_units.setdefault(uom.units_of(side, node_units), []).append(member)
+            if len(capacity_units) > 1:
+                parts = ", ".join(f"{', '.join(members[:3])}{' ...' if len(members) > 3 else ''} ({unit})"
+                                  for unit, members in capacity_units.items())
+                reasons.append(f"its capacity limits sum the capacities of members in different units ({parts})")
+        if reasons:
+            logger.warning("Group '%s': %s.", g, "; ".join(reasons))
+
+    flow_group_nodes: dict[str, list[str]] = {}
+    for cls in ("flowGroup__unit__node", "flowGroup__connection__node"):
+        for ent in db.find_entities(entity_class_name=cls):
+            nodes = flow_group_nodes.setdefault(ent["entity_byname"][0], [])
+            if ent["entity_byname"][2] not in nodes:
+                nodes.append(ent["entity_byname"][2])
+    for g, nodes in sorted(flow_group_nodes.items()):
+        if mixed(nodes):
+            logger.warning(
+                "flowGroup '%s': its flows are at nodes with different units of measure (%s), so its sums are "
+                "labelled '%s'.", g, _named_units(sorted(nodes), node_units), uom.MIXED_UOM)
 
 
 def validate_connection_delay(db, logger: logging.Logger) -> None:

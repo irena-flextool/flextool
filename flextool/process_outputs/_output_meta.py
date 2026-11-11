@@ -27,6 +27,8 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 
+from flextool.units_of_measure import UnitSource, UnitSourceKind
+
 
 class Semantics(str, Enum):
     """The kind of quantity a column holds — the field that disambiguates
@@ -1224,11 +1226,99 @@ UNITLESS = "per unit"
 class UnitContext:
     """What the units of one scenario's result columns can depend on beyond the table itself.
 
-    ``node_units`` maps a node to its unit of measure.  It is empty today (every node has the default units);
-    the node ``unit_of_measure`` feature fills it, and :func:`resolve_columns` then gives a column the unit of
-    its node.  An empty context gives exactly the default units."""
+    ``node_units`` maps a node to its amount unit (``node.unit_of_measure``; only the nodes that are not MWh, see
+    :func:`flextool.units_of_measure.read_node_units`).  ``capacity_nodes`` maps a unit or connection to its
+    capacity-side nodes (a unit: its output nodes with a non-zero ``conversion_flow_coeff``, in arc order, else its
+    input nodes; a connection: its two ends), ``shared_capacity`` names the units whose outputs share the
+    capacity (:func:`flextool.units_of_measure.shares_capacity`), and ``group_nodes`` maps a nodeGroup or
+    flowGroup to its nodes.  :data:`UNIT_SOURCE` says which of them a table's unit comes from.  The maps are
+    empty today (the resolver does not read them yet), and an empty context gives exactly the default units."""
 
     node_units: Mapping[str, str] = field(default_factory=dict)
+    capacity_nodes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+    shared_capacity: frozenset[str] = frozenset()
+    group_nodes: Mapping[str, tuple[str, ...]] = field(default_factory=dict)
+
+
+_U = UnitSourceKind
+
+#: Where the unit of a result table that follows its nodes' ``unit_of_measure`` comes from: the level that
+#: carries the node(s) and how (:class:`flextool.units_of_measure.UnitSource`).  A ``node`` level beats the
+#: "connection -> both ends" rule (``connection_leftward_*`` take the unit of their node).  Every table with a
+#: power or energy unit is here or in :data:`DEFAULT_UNITS_ONLY` (pinned by a registry test).  Not read by the
+#: resolver yet.
+UNIT_SOURCE: dict[str, UnitSource] = {
+    "entity_annuity_d_p": UnitSource("entity", _U.ENTITY_BY_CLASS),
+    "unit_outputNode_dt_ee": UnitSource("node", _U.NODE),
+    "unit_outputNode_d_ee": UnitSource("node", _U.NODE),
+    "unit_inputNode_dt_ee": UnitSource("node", _U.NODE),
+    "unit_inputNode_d_ee": UnitSource("node", _U.NODE),
+    "connection_dt_eee": UnitSource("process", _U.CONNECTION_ENDS),
+    "connection_d_eee": UnitSource("process", _U.CONNECTION_ENDS),
+    "connection_leftward_dt_eee": UnitSource("node", _U.NODE),
+    "connection_leftward_d_eee": UnitSource("node", _U.NODE),
+    "connection_rightward_dt_eee": UnitSource("node", _U.NODE),
+    "connection_rightward_d_eee": UnitSource("node", _U.NODE),
+    "connection_losses_dt_eee": UnitSource("process", _U.CONNECTION_ENDS),
+    "connection_losses_d_eee": UnitSource("process", _U.CONNECTION_ENDS),
+    "node_dt_ep": UnitSource("node", _U.NODE),
+    "node_d_ep": UnitSource("node", _U.NODE),
+    "node_state_dt_e": UnitSource("node", _U.NODE),
+    "node_inflow__dt": UnitSource("node", _U.NODE),
+    "node_prices_dt_e": UnitSource("node", _U.NODE),
+    "node_slack_up_dt_e": UnitSource("node", _U.NODE),
+    "node_slack_down_dt_e": UnitSource("node", _U.NODE),
+    "node_slack_up_d_e": UnitSource("node", _U.NODE),
+    "node_slack_down_d_e": UnitSource("node", _U.NODE),
+    "nodeGroup_flows_dt_g": UnitSource("group", _U.GROUP_MEMBERS),
+    "nodeGroup_flows_d_g": UnitSource("group", _U.GROUP_MEMBERS),
+    "nodeGroup_flows_dt_gpe": UnitSource("group", _U.GROUP_MEMBERS),
+    "nodeGroup_flows_d_gpe": UnitSource("group", _U.GROUP_MEMBERS),
+    "nodeGroup_gdt_p": UnitSource("group", _U.GROUP_MEMBERS, row=True),
+    "nodeGroup_gd_p": UnitSource("group", _U.GROUP_MEMBERS, row=True),
+    "nodeGroup_g_p": UnitSource("group", _U.GROUP_MEMBERS, row=True),
+    "unit_VRE_potential_outputNode_dt_ee": UnitSource("sink", _U.NODE),
+    "unit_VRE_potential_outputNode_d_ee": UnitSource("sink", _U.NODE),
+    "unit_curtailment_outputNode_dt_ee": UnitSource("sink", _U.NODE),
+    "unit_curtailment_outputNode_d_ee": UnitSource("sink", _U.NODE),
+    "unit_ramp_inputs_dt_ee": UnitSource("source", _U.NODE),
+    "unit_ramp_outputs_dt_ee": UnitSource("sink", _U.NODE),
+    "unit_startup_energy_dt_ee": UnitSource("node", _U.NODE),
+    "unit_startup_energy_d_ee": UnitSource("node", _U.NODE),
+    "unit_capacity_ed_p": UnitSource("unit", _U.CAPACITY_SIDE, row=True),
+    "connection_capacity_ed_p": UnitSource("connection", _U.CONNECTION_ENDS, row=True),
+    "node_capacity_ed_p": UnitSource("node", _U.NODE, row=True),
+    "dual_invest_effective_unit_d_e": UnitSource("entity", _U.CAPACITY_SIDE),
+    "dual_invest_effective_connection_d_e": UnitSource("entity", _U.CONNECTION_ENDS),
+    "dual_invest_effective_node_d_e": UnitSource("entity", _U.NODE),
+    "flowGroup_gd_p": UnitSource("group", _U.FLOWGROUP_ARCS, row=True),
+    "flowGroup_gd_t": UnitSource("group", _U.FLOWGROUP_ARCS, row=True),
+}
+
+#: Tables with a power or energy unit that stay in MW / MWh whatever their nodes' ``unit_of_measure``: reserves,
+#: inertia, non-synchronous share and the capacity margin are power features (the input validators warn about a
+#: member node that is not MWh).  The resolver must consult this set before it fills a template from a node or
+#: group level (critique M1: several of them use templated transforms such as RATE).
+DEFAULT_UNITS_ONLY: frozenset[str] = frozenset({
+    "reserve_prices_dt_ppg",
+    "process_reserve_upDown_node_dt_eppe",
+    "process_reserve_average_d_eppe",
+    "nodeGroup_inertia_dt_g",
+    "nodeGroup_unit_node_inertia_dt_gee",
+    "nodeGroup_inertia_largest_flow_dt_g",
+    "nodeGroup_slack_capacity_margin_d_g",
+    "nodeGroup_capacity_margin_d_g",
+    "nodeGroup_capacity_margin_entity_d_g",
+    "nodeGroup_slack_inertia_dt_g",
+    "nodeGroup_slack_inertia_d_g",
+    "nodeGroup_slack_nonsync_dt_g",
+    "nodeGroup_slack_nonsync_d_g",
+    "nodeGroup_slack_reserve_dt_eeg",
+    "nodeGroup_slack_reserve_d_eeg",
+    "nodeGroup_reserve_dt_eegp",
+    "nodeGroup_reserve_d_eegp",
+    "nodeGroup_reserve_provider_dt_eegee",
+})
 
 
 def _column_labels(columns) -> tuple[list[tuple], list | None]:
