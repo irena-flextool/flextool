@@ -5,6 +5,10 @@
   defaults. Each parameter of the merged options (`solver_config/gurobi.opt`, `solver_mip_gap`,
   `--solver-time-limit`, `solver_arguments`) is now passed as its own `Name=value` argument, so Gurobi results can
   change (for example a MIP now stops at the requested `solver_mip_gap` instead of Gurobi's 1e-4).
+- **Licence message only for licence errors.** A commercial solver that returned no solution was reported as a
+  licensing problem whenever its output mentioned a licence, which every Gurobi run does (`Using license file ...`),
+  so an infeasible model got a misleading message. The message now needs an actual licence failure in the output
+  (no licence found, expired or not valid, failed to obtain a licence, size-limited licence, token server errors).
 
 ## Release 4.2.2 (8.11.2026) — time steps other than 1 h: new_stepduration and inflow scaling fixes
 

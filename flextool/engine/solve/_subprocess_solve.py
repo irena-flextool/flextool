@@ -1122,18 +1122,42 @@ _PARSERS = {
 }
 
 
-_LICENSE_HINTS = (
-    "license",
-    "licence",
-    "no token",
-    "token server",
-    "wls",
-)
+# Phrases of a licence *failure* in the solvers' output.  A bare mention of
+# "license" is not one: every Gurobi run prints a banner such as ``Using
+# license file /opt/gurobi/gurobi.lic`` or ``Restricted license - for
+# non-production use only - expires 2027-11-24``, so an infeasible or
+# otherwise failed solve would be misreported as a licensing problem.
+# ``licen[cs]e`` accepts both spellings; matched case-insensitively.
+_LICENSE_ERROR_PATTERNS = tuple(re.compile(p, re.IGNORECASE) for p in (
+    # Gurobi "No Gurobi license found", CPLEX "no license found", Xpress/COPT "No license found"
+    r"\bno\s+(?:valid\s+)?(?:\w+\s+)?licen[cs]e\s+(?:file\s+)?(?:was\s+)?found",
+    # "license expired", "license has expired", "licence is expired" (not the banner's "expires <date>")
+    r"\blicen[cs]e\s+(?:has\s+|is\s+)?expired",
+    # Gurobi "License not valid", "Request denied: license not valid", "license is not valid for this host"
+    r"\blicen[cs]e\b[^\n]{0,60}?\bnot\s+valid",
+    r"\binvalid\s+licen[cs]e",
+    # "Failed to obtain license", "Unable to check out license", "Failed to set up a license", "Fail to ..."
+    r"\b(?:failed|fail|unable|cannot|could\s+not)\s+(?:to\s+)?(?:obtain|get|set\s+up|find|locate|open|read|"
+    r"check\s*out|validate|verify|initiali[sz]e)\s+(?:a\s+|the\s+|any\s+)?(?:\w+\s+)?licen[cs]e",
+    # "license error", "licensing error", "license check failed", "license not found", "licence unavailable"
+    r"\blicen[cs](?:e|ing)\s+(?:error|failure|failed|check\s+failed|not\s+found|unavailable|denied|problem)",
+    # Gurobi size-limited (pip) licence / CPLEX Community Edition limits
+    r"\bsize-limited\s+licen[cs]e",
+    r"\bpromotional\s+version",
+    # Gurobi "HostID mismatch"
+    r"\bhostid\s+mismatch",
+    # Gurobi token server / Web License Service
+    r"\bno\s+tokens?\s+(?:available|left)",
+    r"\b(?:connect|contact)\w*\s+(?:to\s+)?(?:the\s+)?token\s+server",
+    r"\btoken\s+server\b[^\n]{0,60}?\b(?:error|unavailable|refused|failed|not\s+respond)",
+    r"\bweb\s+licen[cs]e\s+service\b[^\n]{0,60}?\b(?:error|failed|unavailable|denied|invalid|expired)",
+))
 
 
 def _looks_like_license_error(*texts: str) -> bool:
-    blob = "\n".join(t for t in texts if t).lower()
-    return any(h in blob for h in _LICENSE_HINTS)
+    """Whether the solver output reports a licence failure (not merely mentions a licence)."""
+    blob = "\n".join(t for t in texts if t)
+    return any(p.search(blob) for p in _LICENSE_ERROR_PATTERNS)
 
 
 # ---------------------------------------------------------------------------
@@ -1789,7 +1813,7 @@ def _solve_commercial_subprocess(
             if _looks_like_license_error(stdout, stderr):
                 raise RuntimeError(
                     f"{solver_name!r} CLI for solve {solve_name!r} returned "
-                    f"no usable solution and its output mentions licensing.\n"
+                    f"no usable solution and its output reports a licence error.\n"
                     f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
                 )
             raise RuntimeError(
