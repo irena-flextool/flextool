@@ -361,7 +361,10 @@ TOOLS = [
                      "entity (existing, invested, total), slacks. detail full (also named folders, up to 5 runs): "
                      "verdict, times, version, error. Filters: source, scenario, state, results_usable, folders "
                      "(names, * patterns). offset pages."),
-        properties={"source": {"type": "string"}, "scenario": {"type": "string"}, "state": {"type": "string"},
+        # state: the run states as an enum (gpt-oss on Ollama invented "success", "*" and "", 2026-11-11).  A state
+        # only a newer FlexTool writes is listed by the call without the filter, but cannot be filtered by.
+        properties={"source": {"type": "string"}, "scenario": {"type": "string"},
+                    "state": {"type": "string", "enum": list(_runs.RUN_STATES)},
                     "results_usable": {"type": "boolean"},
                     "folders": {"type": "array", "items": {"type": "string"}},
                     "detail": {"type": "string", "enum": ["scan", "overview", "full"]},

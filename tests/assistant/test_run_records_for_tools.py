@@ -965,7 +965,11 @@ def _with_state(project: Path, folder: str, state: str) -> None:
 def test_list_runs_answers_for_every_run_record_state(tmp_path: Path, tests_db: Path, state: str) -> None:
     """B1: a run stopped in the window (``killed``), by Ctrl-C (``interrupted``), by a native fault (``crashed``),
     or in a state a newer FlexTool writes, no longer makes every list_runs call fail.  The states come from
-    ``run_record.RUN_STATES``.  Before: ValueError (a fault) for any state not in list_runs' own list."""
+    ``run_record.RUN_STATES``.  Before: ValueError (a fault) for any state not in list_runs' own list.
+
+    The ``state`` argument is an enum of these states (2026-11-11: models invented "success"): an unknown state is
+    refused by the schema, naming the states; a state only a newer FlexTool writes is listed without the filter and
+    still filtered by the runs' own selection, but the tool's filter cannot name it."""
     project = _project_with(tmp_path, tests_db, ("coal_1", succeed))
     write_parquet(project / "output_parquet" / "base_1")          # no run record: state no_record
     _with_state(project, "coal_1", state)
@@ -974,9 +978,19 @@ def test_list_runs_answers_for_every_run_record_state(tmp_path: Path, tests_db: 
     shown = _listed(ctx)["coal_1"]["state"]
     assert out["total"] == 2 and sum(out["counts"].values()) == 2 and shown in out["counts"]
     assert _call(ctx, "list_runs", folders=["coal_1"])["total"] == 1
-    assert [r["folder"] for r in _call(ctx, "list_runs", state=shown)["runs"]] == ["coal_1"]
+    assert [r.folder.name for r in _runs.select_runs(ctx, state=shown)] == ["coal_1"]
+    filtered = call_tool(ctx, "list_runs", {"state": shown})
+    if shown in _runs.RUN_STATES:
+        assert [r["folder"] for r in json.loads(filtered.text)["runs"]] == ["coal_1"]
+    else:
+        assert not filtered.ok and filtered.message.startswith(
+            f'The arguments of "list_runs" are not valid: state: {shown!r} is not one of [')
     refused = call_tool(ctx, "list_runs", {"state": "no_such_state"})
-    assert not refused.ok and refused.message.startswith("There is no run state")
+    assert not refused.ok and refused.message.startswith(
+        "The arguments of \"list_runs\" are not valid: state: 'no_such_state' is not one of ['succeeded', ")
+    with pytest.raises(ToolError) as info:
+        _runs.select_runs(ctx, state="no_such_state")
+    assert info.value.key == "unknown_run_state" and str(info.value).startswith("There is no run state")
     assert _runs.RUN_STATES == (*run_record.RUN_STATES, "no_record")
 
 

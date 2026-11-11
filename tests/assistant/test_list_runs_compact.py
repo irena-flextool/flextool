@@ -124,9 +124,15 @@ def test_list_runs_filters(mctx) -> None:
     # Many runs named exactly: still full.
     many = _call(mctx, "list_runs", folders=_folders()[:8])
     assert "columns" not in many and len(many["runs"]) == 8
+    # The state is an enum of the run states (gpt-oss invented "success", 2026-11-11): the schema refuses another.
     refused = call_tool(mctx, "list_runs", {"state": "finished"})
-    assert not refused.ok and refused.message == ('There is no run state "finished". The states of this project\'s '
-                                                  'runs are: "succeeded", "failed", "no_record".')
+    assert not refused.ok and refused.message == (
+        "The arguments of \"list_runs\" are not valid: state: 'finished' is not one of ['succeeded', 'failed', "
+        "'killed', 'interrupted', 'crashed', 'running', 'abandoned', 'unknown', 'unreadable', 'malformed', "
+        "'no_record'].")
+    assert all_tools()["list_runs"].input_schema["properties"]["state"] == {
+        "type": "string", "enum": ["succeeded", "failed", "killed", "interrupted", "crashed", "running", "abandoned",
+                                   "unknown", "unreadable", "malformed", "no_record"]}
     unknown = call_tool(mctx, "list_runs", {"folders": ["base_2"]})
     assert not unknown.ok and unknown.message.startswith('There is no result folder "base_2".')
     assert all_tools()["list_runs"].input_schema["properties"]["detail"] == {

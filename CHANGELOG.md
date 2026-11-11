@@ -707,6 +707,17 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   moved in only after the conversion, and the new source and its scenarios are ticked again.
   The CLI now prints its log, and a failed import leaves no database file behind.
 
+#### AI assistant
+
+- **A tool call the AI service could not read is asked again at once, not waited for.** With gpt-oss on Ollama,
+  Ollama sometimes answered "error parsing tool call": the model had written its reasoning into the tool call. The
+  assistant took that for a busy server, waited up to five minutes and said a model was likely being loaded. It
+  now asks the model again at once, at most twice, and then says that the service could not read a tool call in
+  the model's answer: ask again, or try another model or level. The assistant also sends the model's own
+  reasoning back to Ollama between the tool calls of a question, as gpt-oss expects, which keeps the reasoning out
+  of its tool calls; the reasoning is never shown and is kept with the saved conversation. When the model lists
+  the runs of one state, it now picks from FlexTool's run states (it guessed names such as "success" before).
+
 ### Docs
 
 - **Planning-practitioner pages.** New pages *Reading results* (where to look first, units) and *Model
