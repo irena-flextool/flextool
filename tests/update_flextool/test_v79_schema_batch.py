@@ -25,7 +25,10 @@ Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
   ``constraint.constraint_period_method`` (``str``, default ``per_timestep``, group ``constraint``);
 * rewrites the ``discount_rate`` / ``lifetime`` descriptions of unit / connection / node (0 is the
   straight-line annuity; lifetime required) and writes the marker ``discount_rate_zero_is_zero`` only on a
-  database where an investing entity has an explicit ``discount_rate`` ≤ 0.
+  database where an investing entity has an explicit ``discount_rate`` ≤ 0;
+* adds the value list ``startup_input_methods`` (``just_input``, ``startup_and_input``, ``startup_only``),
+  ``unit__inputNode.startup_input_method`` (``str``, default ``just_input``) and ``unit__inputNode.startup_energy``
+  (float / 1d_map, no default), both in group ``tech_advanced``.
 
 It changes no other definition and no value, and a rerun commits nothing.
 """
@@ -65,10 +68,11 @@ SHARE_NEW = ("group", "capacity_margin_share")
 MARGIN_CHANGED = {("group", "capacity_margin_method"), ("group", "capacity_margin")}
 PERIOD_METHOD_NEW = ("constraint", "constraint_period_method")
 DISCOUNT_CHANGED = {(cls, name) for cls in ("unit", "connection", "node") for name in ("discount_rate", "lifetime")}
+STARTUP_NEW = {("unit__inputNode", "startup_input_method"), ("unit__inputNode", "startup_energy")}
 #: Every definition the step adds or changes.
 ALL_CHANGED = (set(ONLINE_NEW) | set(RAMP_CHANGED) | set(REDUCE_NEW) | set(GROUP_LIMITS_CHANGED)
                | {ADDER, DURATION} | EFFICIENCY_CHANGED | COEFF_CHANGED | {SHARE_NEW} | MARGIN_CHANGED
-               | {PERIOD_METHOD_NEW} | DISCOUNT_CHANGED)
+               | {PERIOD_METHOD_NEW} | DISCOUNT_CHANGED | STARTUP_NEW)
 
 
 def _defs(db) -> dict:
@@ -350,6 +354,26 @@ def test_discount_rate_marker_only_for_an_explicit_zero(tmp_path_factory, plain,
         _rerun_changes_nothing(db, m._v79_discount_rate_zero, monkeypatch)
 
 
+# ─── startup_input_method / startup_energy ───────────────────────────────
+
+
+def test_adds_the_startup_input_definitions(plain) -> None:
+    shipped = _shipped()
+    assert not STARTUP_NEW & set(plain["before"])
+    assert "startup_input_methods" not in plain["lists_before"]
+    assert plain["lists_after"]["startup_input_methods"] == ["just_input", "startup_and_input", "startup_only"]
+    types, group, description, _default, value_list, default = plain["after"][("unit__inputNode",
+                                                                              "startup_input_method")]
+    assert types == ("str",) and group == "tech_advanced" and value_list == "startup_input_methods"
+    assert default == "just_input"
+    assert description == shipped[("unit__inputNode", "startup_input_method")] and description.startswith("[choice]")
+    assert "heat" in description
+    types, group, description, _default, value_list, default = plain["after"][("unit__inputNode", "startup_energy")]
+    assert types == ("float", "1d_map") and group == "tech_advanced" and value_list is None and default is None
+    assert description == shipped[("unit__inputNode", "startup_energy")]
+    assert description.startswith("[MWh per MW started]")
+
+
 # ─── the step as a whole ─────────────────────────────────────────────────
 
 
@@ -358,7 +382,7 @@ def test_changes_nothing_else(plain) -> None:
     assert ({k: v for k, v in plain["after"].items() if k not in skip}
             == {k: v for k, v in plain["before"].items() if k not in skip})
     lists_after = {k: v for k, v in plain["lists_after"].items()
-                   if k not in {*REDUCE_NEW.values(), "constraint_period_methods"}}
+                   if k not in {*REDUCE_NEW.values(), "constraint_period_methods", "startup_input_methods"}}
     lists_before = dict(plain["lists_before"])
     lists_before["capacity_margin_methods"] = [*lists_before["capacity_margin_methods"], "share_of_peak"]
     assert lists_after == lists_before
@@ -367,7 +391,7 @@ def test_changes_nothing_else(plain) -> None:
 @pytest.mark.parametrize("part", [
     "_v79_constraint_online_coeff", "_v79_ramp_cost_descriptions", "_v79_reduce_detail_methods",
     "_v79_group_limits_by_time", "_v79_solve_step_series", "_v79_capacity_margin", "_v79_constraint_period_method",
-    "_v79_discount_rate_zero", "_migrate_v79_schema_batch"])
+    "_v79_discount_rate_zero", "_v79_startup_input", "_migrate_v79_schema_batch"])
 def test_rerun_is_idempotent(plain, part: str, monkeypatch) -> None:
     with DatabaseMapping(plain["url"]) as db:
         _rerun_changes_nothing(db, getattr(m, part), monkeypatch)

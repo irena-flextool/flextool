@@ -6324,6 +6324,65 @@ def _v79_discount_rate_zero(db) -> None:
         _v77_set_marker(db, "discount_rate_zero_is_zero", json.dumps({"since": 79, "entities": sorted(entities)}))
 
 
+#: v79: ``unit__inputNode.startup_input_method`` -- the input arc also, or only, supplies the energy a start-up uses.
+STARTUP_INPUT_METHODS: tuple[str, ...] = ("just_input", "startup_and_input", "startup_only")
+_V79_STARTUP_INPUT_DESCRIPTIONS: dict[str, str] = {
+    "startup_input_method": (
+        "[choice] What the input arc supplies. just_input (default): the normal input flow. startup_and_input: "
+        "the normal input flow, and each start-up of the unit also takes startup_energy x MW started from this "
+        "node. startup_only: only the start-up energy; the arc has no flow and takes no part in the conversion, "
+        "the capacity, input shares or ramps. The start-up input can be fuel (oil to start a coal unit), heat "
+        "(from the tank of a CSP plant) or electricity. Needs online variables (startup_method linear or binary, "
+        "or a minimum_time_method). The start-up input is priced as the node's commodity, counts in CO2 prices "
+        "and caps and is dropped with the start-ups by reduce_unit_detail_method online. It is not part of "
+        "constraint_flow_coeff, flow groups or the capacity margin."),
+    "startup_energy": (
+        "[MWh per MW started] Energy taken from this input node per MW of capacity started up (start-ups x "
+        "unit size). Used with startup_input_method startup_and_input or startup_only. Constant or period."),
+}
+
+
+def _v79_startup_input(db) -> None:
+    """``unit__inputNode.startup_input_method`` and ``startup_energy`` (part of v79).
+
+    ``startup_input_method``: a scalar choice (type ``str``) with the value list ``startup_input_methods``
+    (``just_input``, ``startup_and_input``, ``startup_only``), default ``just_input`` (the arc of before).
+    ``startup_energy``: float or ``1d_map`` (period), no default.  Both in group ``tech_advanced``.  No data is
+    rewritten.  Idempotent: an existing definition is updated to the v79 fields, and value-list entries already
+    present are not added again.
+    """
+    if not db.get_item("entity_class", name="unit__inputNode"):
+        return
+    list_name = "startup_input_methods"
+    if not db.get_item("parameter_value_list", name=list_name):
+        db.add_parameter_value_list(name=list_name)
+    items = db.get_items("list_value", parameter_value_list_name=list_name)
+    present = {x["parsed_value"] for x in items}
+    index = max((x["index"] for x in items), default=-1) + 1
+    for value in STARTUP_INPUT_METHODS:
+        if value in present:
+            continue
+        val, typ = to_database(value)
+        db.add_list_value(parameter_value_list_name=list_name, value=val, type=typ, index=index)
+        index += 1
+    _ensure_parameter_group(db, "tech_advanced", "d9925c", 35)
+    default_val, default_type = to_database("just_input")
+    specs = (
+        ("startup_input_method", ("str",), {"default_value": default_val, "default_type": default_type,
+                                            "parameter_value_list_name": list_name}),
+        ("startup_energy", ("float", "1d_map"), {}),
+    )
+    for name, types, extra in specs:
+        fields = {**extra, "parameter_group_name": "tech_advanced",
+                  "description": _V79_STARTUP_INPUT_DESCRIPTIONS[name]}
+        pdef = _pdef_or_none(db, "unit__inputNode", name)
+        if pdef is None:
+            db.add_parameter_definition(entity_class_name="unit__inputNode", name=name, parameter_type_list=types,
+                                        **fields)
+        elif any(pdef[k] != v for k, v in fields.items()) or tuple(pdef["parameter_type_list"] or ()) != types:
+            db.update_parameter_definition(id=pdef["id"], parameter_type_list=types, **fields)
+
+
 def _migrate_v79_schema_batch(db) -> None:
     """All schema changes of database version 79 (v78 -> v79), in one step.
 
@@ -6341,6 +6400,8 @@ def _migrate_v79_schema_batch(db) -> None:
        (:func:`_v79_constraint_period_method`).
     8. ``discount_rate`` 0 is 0 % (straight-line annuity), no longer 5 %: the ``discount_rate`` / ``lifetime``
        descriptions and the behaviour-change marker ``discount_rate_zero_is_zero`` (:func:`_v79_discount_rate_zero`).
+    9. ``unit__inputNode.startup_input_method`` (``just_input`` / ``startup_and_input`` / ``startup_only``) and
+       ``startup_energy`` [MWh per MW started] (:func:`_v79_startup_input`).
 
     No value is rewritten.  Each part is idempotent, so a rerun of the step changes nothing.
     """
@@ -6352,9 +6413,11 @@ def _migrate_v79_schema_batch(db) -> None:
     _v79_capacity_margin(db)
     _v79_constraint_period_method(db)
     _v79_discount_rate_zero(db)
+    _v79_startup_input(db)
     _commit_step(db, "v79: constraint_online_coeff, ramp_cost, reduce_*_detail_method, time-varying group "
                      "limits, time series combined over a solve's new_stepduration step, capacity margin by "
-                     "entity class and share_of_peak, constraint_period_method, discount_rate 0 is 0 %")
+                     "entity class and share_of_peak, constraint_period_method, discount_rate 0 is 0 %, "
+                     "startup_input_method and startup_energy")
 
 
 def _v79_adder_has_value(value) -> bool:

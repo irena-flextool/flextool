@@ -1370,6 +1370,27 @@
       ]
     ],
     [
+      "startup_input_methods",
+      [
+        "Imp1c3RfaW5wdXQi",
+        "str"
+      ]
+    ],
+    [
+      "startup_input_methods",
+      [
+        "InN0YXJ0dXBfYW5kX2lucHV0Ig==",
+        "str"
+      ]
+    ],
+    [
+      "startup_input_methods",
+      [
+        "InN0YXJ0dXBfb25seSI=",
+        "str"
+      ]
+    ],
+    [
       "startup_methods",
       [
         "Im5vX3N0YXJ0dXAi",
@@ -4432,6 +4453,28 @@
       "tech_advanced"
     ],
     [
+      "unit__inputNode",
+      "startup_energy",
+      [
+        null,
+        null
+      ],
+      null,
+      "[MWh per MW started] Energy taken from this input node per MW of capacity started up (start-ups x unit size). Used with startup_input_method startup_and_input or startup_only. Constant or period.",
+      "tech_advanced"
+    ],
+    [
+      "unit__inputNode",
+      "startup_input_method",
+      [
+        "Imp1c3RfaW5wdXQi",
+        "str"
+      ],
+      "startup_input_methods",
+      "[choice] What the input arc supplies. just_input (default): the normal input flow. startup_and_input: the normal input flow, and each start-up of the unit also takes startup_energy x MW started from this node. startup_only: only the start-up energy; the arc has no flow and takes no part in the conversion, the capacity, input shares or ramps. The start-up input can be fuel (oil to start a coal unit), heat (from the tank of a CSP plant) or electricity. Needs online variables (startup_method linear or binary, or a minimum_time_method). The start-up input is priced as the node's commodity, counts in CO2 prices and caps and is dropped with the start-ups by reduce_unit_detail_method online. It is not part of constraint_flow_coeff, flow groups or the capacity margin.",
+      "tech_advanced"
+    ],
+    [
       "unit__node__profile",
       "profile_method",
       [
@@ -6777,6 +6820,24 @@
       "unit__inputNode",
       "ramp_speed_up",
       "float",
+      0
+    ],
+    [
+      "unit__inputNode",
+      "startup_energy",
+      "float",
+      0
+    ],
+    [
+      "unit__inputNode",
+      "startup_energy",
+      "map",
+      1
+    ],
+    [
+      "unit__inputNode",
+      "startup_input_method",
+      "str",
       0
     ],
     [
