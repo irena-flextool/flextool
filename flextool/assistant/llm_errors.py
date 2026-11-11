@@ -45,6 +45,12 @@ MESSAGES: dict[str, str] = {
     "ended_early_retry": ("{provider} ended the answer before any of it came. Trying again in {seconds} seconds "
                           "(attempt {n} of {max})."),
     "ended_early": "{provider} ended the answer before any of it came, several times. Ask again in a moment.",
+    "tool_call_unreadable": ("{provider} could not read a tool call in the model's answer. Ask again, or try another "
+                             "model or level."),
+    "tool_call_unreadable_retry": ("{provider} could not read a tool call in the model's answer. Asking again "
+                                   "(attempt {n} of {max})."),
+    "tool_call_unreadable_final": ("{provider} could not read a tool call in the model's answer, {count} times in a "
+                                   "row. Ask again, or try another model (/model) or a lower level (--tier)."),
     "quota": ("Your {provider} quota is used up for now. It resets on the provider's schedule, which FlexTool "
               "cannot see. You can switch to another provider or model."),
     "quota_daily": "{provider}: the daily quota of this model is used up; try tomorrow or another model.",
@@ -113,6 +119,8 @@ GUI_MESSAGES: dict[str, str] = {
                 "keeps a short summary of this one."),
     "internal": ("The assistant stopped because of an internal fault ({type}). Please report it; the details are "
                  "in the FlexTool log."),
+    "tool_call_unreadable_final": ("{provider} could not read a tool call in the model's answer, {count} times in a "
+                                   "row. Ask again, or pick another model or level in the assistant settings."),
 }
 
 #: Refusal categories in plain English; any other category is "the provider's usage rules".
@@ -305,6 +313,14 @@ class ServerBusy(LLMError):
     code = "busy"
 
 
+class UnreadableToolCall(LLMError):
+    """The service could not read a tool call in the model's answer (Ollama: ``500 error parsing tool call``, the
+    model wrote its analysis into the call).  Not an overload: asked again at once, a few times, by its own counter
+    (:mod:`flextool.assistant.llm_retry`); the request-limit gate and the overload backoff leave it alone."""
+
+    code = "tool_call_unreadable"
+
+
 class QuotaExhausted(LLMError):
     code = "quota"
 
@@ -383,8 +399,8 @@ class InternalFault(LLMError):
 
 
 ERROR_CLASSES: tuple[type[LLMError], ...] = (
-    RateLimited, InputTokensPerMinute, AccessInactive, ServerBusy, QuotaExhausted, NoCredit, AuthFailed, NotPermitted,
-    ContextTooLong, HistoryRejected,
+    RateLimited, InputTokensPerMinute, AccessInactive, ServerBusy, UnreadableToolCall, QuotaExhausted, NoCredit,
+    AuthFailed, NotPermitted, ContextTooLong, HistoryRejected,
     NoMatchingEndpoint, ToolsUnsupported, ModelNotFound, Unreachable, TimedOut, ContextTooSmall, Refused, Truncated,
     NoKey, Cancelled, ProviderError, InternalFault)
 
@@ -574,6 +590,9 @@ _BUSY_STATUS = frozenset({500, 502, 503, 504, 529})
 _CONTEXT_PHRASES = ("context_length_exceeded", "prompt is too long", "maximum context length", "context window",
                     "too many tokens", "input token count", "maximum number of tokens")
 _TOOL_PHRASES = ("does not support tools", "tool choice requires")
+#: A tool call the service could not read in the model's answer (Ollama's 500 "error parsing tool call: raw='…'",
+#: also inside a stream as an ``api_error``): the model's fault in this one answer, not an overload.
+_UNREADABLE_CALL_PHRASES = ("error parsing tool call",)
 #: OpenAI's 429 for one request above the per-minute token limit ("Request too large for … on tokens per min
 #: (TPM): Limit …, Requested …. The input or output tokens must be reduced …"): a retry cannot succeed.
 _TOO_LARGE_PHRASES = ("request too large", "must be reduced")
@@ -779,6 +798,8 @@ def _classify_status(status: int | None, body: object, headers: Any, ctx: ErrorC
                    retry_after=retry_after_from(headers, info, now=now))
         err.rate_headers = rate_headers(headers) if headers is not None else None
         return err
+    if effective in (500, None) and any(p in text for p in _UNREADABLE_CALL_PHRASES):
+        return make(UnreadableToolCall, "tool_call_unreadable")
     if "overloaded_error" in types or (effective in _BUSY_STATUS):
         streamed = bool(kwargs.get("streamed"))
         return make(ServerBusy, "busy_streamed" if streamed else "busy_local" if ctx.local else "busy",

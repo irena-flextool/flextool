@@ -259,3 +259,67 @@ def test_cancel_during_a_long_wait_for_a_busy_local_server():
     assert isinstance(err, E.Cancelled) and err.user_message == "Stopped."
     assert len(calls) == 5 and len(clock.sleeps) == 45
     assert events[-1].attempt == 5
+
+
+# --- a tool call the service could not read (Ollama gpt-oss, 2026-11-11) -----------------------------------------
+def unreadable(**kw):
+    return make_error(E.UnreadableToolCall, "tool_call_unreadable", CTX, **kw)
+
+
+def test_an_unreadable_tool_call_is_asked_again_at_once_twice():
+    """Two retries after half a second each: one countdown second per wait, "attempt n of 2"."""
+    fn, calls = scripted(unreadable(), unreadable(), OK)
+    rejected: list = []
+    result, clock, events = run(fn, on_rejected=rejected.append)
+    assert result is OK and len(calls) == 3
+    assert clock.sleeps == [0.5, 0.5]
+    waits = [e for e in events if isinstance(e, RetryWait)]
+    assert [(e.seconds_left, e.attempt, e.of) for e in waits] == [(1, 1, 2), (1, 2, 2)]
+    assert waits[0].reason == ("Example AI could not read a tool call in the model's answer. Asking again "
+                               "(attempt 1 of 2).")
+    assert rejected == []                   # the service did not refuse the request: no rejected request counted
+
+
+def test_unreadable_tool_calls_three_times_say_so():
+    fn, calls = scripted(unreadable(), unreadable(), unreadable(), OK)
+    failed: list = []
+    err, _, _ = run_raises(fn, on_failed=failed.append)
+    assert len(calls) == 3 and len(failed) == 3 and isinstance(err, E.UnreadableToolCall)
+    assert err.message_key == "tool_call_unreadable_final"
+    assert err.user_message == str(err) == (
+        "Example AI could not read a tool call in the model's answer, 3 times in a row. Ask again, or try another "
+        "model (/model) or a lower level (--tier).")
+    assert E.message_for(err, "gui") == (
+        "Example AI could not read a tool call in the model's answer, 3 times in a row. Ask again, or pick another "
+        "model or level in the assistant settings.")
+    assert "loading" not in err.user_message
+
+
+def test_unreadable_retries_have_their_own_count():
+    """Three overloads use the whole overload budget (waits 2, 4 and 8 s); the unreadable calls between them are
+    still retried, and they take nothing from the overload budget."""
+    fn, calls = scripted(busy(), unreadable(), unreadable(), busy(), busy(), OK)
+    rejected: list = []
+    result, clock, _ = run(fn, on_rejected=rejected.append)
+    assert result is OK and len(calls) == 6
+    assert clock.sleeps == [1.0] * 2 + [0.5, 0.5] + [1.0] * (4 + 8)      # one-second countdown steps
+    assert sum(clock.sleeps) == pytest.approx(2 + 0.5 + 0.5 + 4 + 8)
+    assert len(rejected) == 3
+    fn, calls = scripted(busy(), busy(), busy(), unreadable(), unreadable(), OK)
+    result, _, _ = run(fn)
+    assert result is OK and len(calls) == 6
+
+
+def test_an_unreadable_tool_call_after_visible_output_is_not_retried():
+    fn, calls = scripted(unreadable(streamed=True, partial_text="Let me "), OK)
+    err, clock, _ = run_raises(fn)
+    assert len(calls) == 1 and clock.sleeps == [] and err.streamed
+    assert err.message_key == "tool_call_unreadable"
+    assert err.user_message == ("Example AI could not read a tool call in the model's answer. Ask again, or try "
+                                "another model or level.")
+
+
+def test_no_unreadable_retries_keeps_the_first_message():
+    fn, calls = scripted(unreadable(), OK)
+    err, _, _ = run_raises(fn, RetryPolicy(jitter=0.0, unreadable_retries=0))
+    assert len(calls) == 1 and err.message_key == "tool_call_unreadable"

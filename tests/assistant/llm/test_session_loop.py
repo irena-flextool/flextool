@@ -725,3 +725,41 @@ def test_ollama_reasoning_is_saved_and_leaves_the_turn_editable(tmp_path, tools,
     session.messages[1] = dataclasses.replace(answer, provider_extra={**reasoning, "other_data": [1]})
     assert session._replays_data(1) is True
     store.close(conv)
+
+
+def test_an_unreadable_tool_call_is_asked_again_on_the_session_path(tmp_path, tools, fake_backends):
+    """Ollama's 500 "error parsing tool call" in the middle of a tool round: asked again half a second later, the
+    next answer's call runs and the question is answered; the countdown never speaks of an overload or of loading a
+    model."""
+    from flextool.assistant.llm_adapter import RetryWait
+    from flextool.assistant.llm_errors import classify_status
+    from flextool.assistant.store import Conversation, new_id
+
+    local = ErrorContext(preset_id="ollama", provider="Ollama", model="gpt-oss:20b", host="localhost", port=11434,
+                         local=True, server_name="Ollama")
+    unreadable = classify_status(500, {"error": {"message": "error parsing tool call: raw='We need x'",
+                                                 "type": "api_error"}}, {}, local)
+    backend = FakeBackend([calls(call(text="a")), unreadable, calls(call(text="b")), say("Both echoed.")],
+                          origin=("ollama", "http://localhost:11434/v1", "gpt-oss:20b"))
+    fake_backends.append(backend)
+    ctx = make_context(tmp_path / "project", input_source="base.sqlite", front_end="terminal")
+    conv = Conversation(id=new_id(), project_key="t", project_name=ctx.project_name, project_path=ctx.project_path,
+                        created="2026-11-11T00:00:00Z", updated="2026-11-11T00:00:00Z", origin=backend.origin,
+                        level="medium")
+    now = [0.0]
+
+    def sleep(seconds: float) -> bool:
+        now[0] += seconds
+        return False
+
+    session = Session(ctx, backend, PRESETS["ollama"], conversation=conv, caps=TurnCaps(), tier="medium",
+                      store=None, ledger=None, facts=None, sleep=sleep, clock=lambda: now[0])
+    events: list = []
+    result = session.run_turn("question", events.append, threading.Event())
+    assert result.ok and result.text == "Both echoed." and result.rounds == 3
+    assert [args["text"] for _, args in tools.ran] == ["a", "b"]
+    assert len(backend.requests) == 4 and now[0] == pytest.approx(0.5)
+    # The retried request is the same request.
+    assert backend.requests[2].messages == backend.requests[1].messages
+    waits = [e.reason for e in events if isinstance(e, RetryWait)]
+    assert waits == ["Ollama could not read a tool call in the model's answer. Asking again (attempt 1 of 2)."]

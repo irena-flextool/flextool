@@ -82,6 +82,11 @@ def _gemini_429(quota_id: str, delay: str) -> list:
 NOW = 1_800_000_000.0
 HTTP_DATE = email.utils.formatdate(NOW + 30, usegmt=True)
 
+#: Ollama's OpenAI-compatible error body for a tool call it could not parse (its shape: message, type api_error).
+UNREADABLE_TEXT = ("error parsing tool call: raw='We need the latest run. {\"state\": \"done\"}', err=invalid "
+                   "character 'W' looking for beginning of value")
+OLLAMA_UNREADABLE = {"error": {"message": UNREADABLE_TEXT, "type": "api_error", "param": None, "code": None}}
+
 # (case, library, preset, status, headers, body, class, retry_after)
 CASES = [
     # Updated (review G9, C4-m8): no credit or the monthly spend cap, which does not reset by itself.
@@ -155,6 +160,8 @@ CASES = [
      {"error": {"message": "The model does not exist.", "type": "invalid_request_error",
                 "code": "model_not_found"}}, E.ModelNotFound, None),
     ("500", "openai", "mistral", 500, {}, {"message": "Internal error"}, E.ServerBusy, None),
+    # Ollama, gpt-oss writing its analysis into a tool call (eval cell G04, 2026-11-11): not an overload.
+    ("ollama error parsing tool call", "openai", "ollama", 500, {}, OLLAMA_UNREADABLE, E.UnreadableToolCall, None),
     ("503 with retry-after", "openai", "gemini", 503, {"retry-after": "3"},
      [{"error": {"code": 503, "message": "The model is overloaded.", "status": "UNAVAILABLE"}}],
      E.ServerBusy, 3.0),
@@ -223,6 +230,7 @@ SAID = {
     "403": (403, "permission_error", "Not allowed."),
     "404 model": (404, "model_not_found", "The model does not exist."),
     "500": (500, "", "Internal error"),
+    "ollama error parsing tool call": (500, "api_error", UNREADABLE_TEXT),
     "503 with retry-after": (503, "UNAVAILABLE", "The model is overloaded."),
     "307 redirect": (307, "", "moved"),
     "422 other": (422, "invalid_request_error", "Extra inputs are not permitted (key <key>)"),
@@ -615,3 +623,42 @@ def test_links_are_left_out_of_the_provider_text():
     only_link = classify_openai(openai_exception(_handler(422, {"message": "https://example.test/x"})),
                                 _ctx("mistral"))
     assert "example.test" not in only_link.provider_said.text()
+
+
+# --- a tool call the service could not read (Ollama gpt-oss, 2026-11-11) -----------------------------------------
+UNREADABLE_MESSAGE = ("Ollama could not read a tool call in the model's answer. Ask again, or try another model or "
+                      "level.")
+
+
+def _ollama_ctx() -> ErrorContext:
+    return _ctx("ollama", provider="Ollama", host="localhost", port=11434, local=True, server_name="Ollama")
+
+
+def test_an_unreadable_tool_call_is_no_overload():
+    """Ollama's 500 "error parsing tool call" is its own error, with a message that names no overload and no model
+    loading; the provider's words are kept.  Any other 500 of the same server stays an overload."""
+    err = classify_openai(openai_exception(_handler(500, OLLAMA_UNREADABLE)), _ollama_ctx())
+    assert type(err) is E.UnreadableToolCall and not isinstance(err, E.ServerBusy)
+    assert err.code == "tool_call_unreadable" and err.status == 500 and err.retry_after is None
+    assert err.user_message == UNREADABLE_MESSAGE and err.message_key == "tool_call_unreadable"
+    assert "loading" not in err.user_message and "overloaded" not in err.user_message
+    assert err.provider_said == E.ProviderSaid(500, "api_error", UNREADABLE_TEXT)
+    capital = {"error": {"message": "Error parsing tool call: raw='x'", "type": "api_error"}}
+    assert type(classify_openai(openai_exception(_handler(500, capital)), _ollama_ctx())) is E.UnreadableToolCall
+    plain = classify_openai(openai_exception(_handler(500, {"error": {"message": "model runner has unexpectedly "
+                                                                               "stopped", "type": "api_error"}})),
+                            _ollama_ctx())
+    assert type(plain) is E.ServerBusy and plain.message_key == "busy_local"
+    # The phrase at another status is not this error (a 400 is a refused request, a 503 an overload).
+    assert type(E.classify_status(400, OLLAMA_UNREADABLE, {}, _ollama_ctx())) is E.ProviderError
+    assert type(E.classify_status(503, OLLAMA_UNREADABLE, {}, _ollama_ctx())) is E.ServerBusy
+
+
+def test_an_unreadable_tool_call_inside_the_stream():
+    """Inside a stream there is no status: the body's ``api_error`` stands for 500, and a body without a type is
+    read from its words alone."""
+    sse = f"data: {json.dumps(OLLAMA_UNREADABLE)}\n\n"
+    err = classify_openai(openai_exception(_handler(200, sse=sse)), _ollama_ctx())
+    assert type(err) is E.UnreadableToolCall and err.status == 500 and err.user_message == UNREADABLE_MESSAGE
+    untyped = E.classify_status(None, {"error": {"message": UNREADABLE_TEXT}}, None, _ollama_ctx())
+    assert type(untyped) is E.UnreadableToolCall and untyped.status is None

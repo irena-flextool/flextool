@@ -213,6 +213,52 @@ def test_the_recorder_refuses_fewer_than_two_tool_rounds(assistant_project, tmp_
         server.close()
 
 
+# --- Ollama's "error parsing tool call" (gpt-oss, 2026-11-11) ----------------------------------------------------
+def _ollama_unreadable_planted() -> dict:
+    """An Ollama recording in the shape of gpt-oss's: the first answer is the 500 Ollama gives when it cannot read
+    the tool call (the model wrote its analysis into it), the second a good list_runs call with its reasoning, the
+    third the final answer.  Written for this test, not a recording."""
+    def chunk(delta: dict, finish: str | None = None, n: int = 1) -> str:
+        return "data: " + json.dumps({"id": f"chatcmpl-00{n}", "object": "chat.completion.chunk",
+                                      "created": 1794226502, "model": "gpt-oss:20b", "system_fingerprint": "fp_ollama",
+                                      "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]})
+
+    call = {"index": 0, "id": "call_0001", "type": "function", "function": {"name": "list_runs", "arguments": "{}"}}
+    request = {"method": "POST", "path": "/v1/chat/completions", "body": {}}
+    error = {"error": {"message": "error parsing tool call: raw='We need the runs. Probably list_runs {}', err=invalid "
+                                  "character 'W' looking for beginning of value", "type": "api_error", "param": None}}
+    return {
+        "format": 1, "preset": "ollama", "model": "gpt-oss:20b", "base_url": "http://localhost:11434/v1",
+        "tier": "small", "knobs": {}, "facts": {"context_window": 131072, "loaded_context": 16384, "tools": True,
+                                               "remote_host": None},
+        "questions": [{"question": "Which runs does this project have?", "final_text": "The project has runs.",
+                       "ok": True, "rounds": 2, "tools": ["list_runs"]}],
+        "probes": [],
+        "exchanges": [
+            {"phase": "chat", "request": request, "status": 500, "headers": {"content-type": "application/json"},
+             "body": error},
+            {"phase": "chat", "request": request, "status": 200, "headers": {"content-type": "text/event-stream"},
+             "sse_lines": [chunk({"role": "assistant", "content": "", "reasoning": "We need the runs."}, n=2), "",
+                           chunk({"content": "", "tool_calls": [call]}, n=2), "", chunk({}, "tool_calls", n=2), "",
+                           "data: [DONE]", ""]},
+            {"phase": "chat", "request": request, "status": 200, "headers": {"content-type": "text/event-stream"},
+             "sse_lines": [chunk({"role": "assistant", "content": "", "reasoning": "list_runs answered."}, n=3), "",
+                           chunk({"content": "The project has runs."}, n=3), "", chunk({}, "stop", n=3), "",
+                           "data: [DONE]", ""]},
+        ],
+    }
+
+
+def test_an_unreadable_tool_call_is_asked_again_and_the_question_answered(assistant_project, tmp_path) -> None:
+    """Ollama's 500 "error parsing tool call", then a good call: the replay through the real session and backend
+    asks again, runs list_runs and gives the final answer; the three recorded answers are all used."""
+    record = _ollama_unreadable_planted()
+    assert recordings.problems(record, project_name=PROJECT_DIR_NAME) == []
+    texts, transport = recordings.replay(record, assistant_project, tmp_path / "replay_config")
+    assert texts == ["The project has runs."]
+    assert transport.served == 3
+
+
 # --- private hosts and addresses (C6-M3) --------------------------------------------------------------------------
 def _local_planted(base_url: str = "http://gpu-box.lan:11434/v1", host: str = "gpu-box.lan") -> dict:
     """An Ollama recording made against a model server on the local network; written for this test."""
