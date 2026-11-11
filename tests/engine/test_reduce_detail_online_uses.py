@@ -312,6 +312,10 @@ CONSUMERS: dict[str, set[str]] = {
     "_reserve:_drawn_terms": {"min_load_efficiency"},
     "_reserve:_add_connection_reserve_constraints": {"reserves"},
     "_reserve:_with_section": {"min_load_efficiency"},
+    # The reserve report (outputs only): the drawn terms of _drawn_terms evaluated at the solution.  It reads the
+    # units online only through process_min_load_eff, the use that keeps them, so a pruned unit has no online term
+    # there either; it adds no use of its own.
+    "_reserve:_flows_at_nodes": {"min_load_efficiency"},
     "_unit_floors:add_constraints": {"min_load"},
     "core:_prepare": {"online_model"},
     "core:_validate_no_online_dc_lines": {"validation"},
