@@ -124,12 +124,17 @@ def test_list_runs_filters(mctx) -> None:
     # Many runs named exactly: still full.
     many = _call(mctx, "list_runs", folders=_folders()[:8])
     assert "columns" not in many and len(many["runs"]) == 8
-    # The state is an enum of the run states (gpt-oss invented "success", 2026-11-11): the schema refuses another.
+    # The state is an enum of the run states (gpt-oss invented "success", 2026-11-11); another is refused in plain
+    # English with the states of this project's runs, as before the enum.
     refused = call_tool(mctx, "list_runs", {"state": "finished"})
-    assert not refused.ok and refused.message == (
-        "The arguments of \"list_runs\" are not valid: state: 'finished' is not one of ['succeeded', 'failed', "
-        "'killed', 'interrupted', 'crashed', 'running', 'abandoned', 'unknown', 'unreadable', 'malformed', "
-        "'no_record'].")
+    assert not refused.ok and refused.message == ('There is no run state "finished". The states of this project\'s '
+                                                  'runs are: "succeeded", "failed", "no_record".')
+    empty = call_tool(mctx, "list_runs", {"state": ""})
+    assert not empty.ok and empty.message.startswith('There is no run state "". The states of this project')
+    # Any other enum is refused in plain English by the schema check, its values quoted as names.
+    detail = call_tool(mctx, "list_runs", {"detail": "summary"})
+    assert not detail.ok and detail.message == ('The arguments of "list_runs" are not valid: detail: "summary" is '
+                                                'not one of its values, which are "scan", "overview", "full".')
     assert all_tools()["list_runs"].input_schema["properties"]["state"] == {
         "type": "string", "enum": ["succeeded", "failed", "killed", "interrupted", "crashed", "running", "abandoned",
                                    "unknown", "unreadable", "malformed", "no_record"]}

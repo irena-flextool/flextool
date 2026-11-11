@@ -379,6 +379,16 @@ def runs(ctx: AssistantContext) -> list[Run]:
     return [_run(ctx, folder, settings, sources, installed) for folder in run_folders(ctx)]
 
 
+def check_state(state: str, all_runs: list[Run]) -> None:
+    """Refuse a *state* that is neither a known state nor one a run of *all_runs* has, naming the states the runs
+    have (all the known states when there is no run)."""
+    if state in RUN_STATES:
+        return
+    present = sorted({r.entry["state"] for r in all_runs}, key=lambda s: (state_order(s), s))
+    if state not in present:
+        raise ToolError("unknown_run_state", value=state, values=present or list(RUN_STATES))
+
+
 def select_runs(ctx: AssistantContext, *, source: str | None = None, scenario: str | None = None,
                 state: str | None = None, results_usable: bool | None = None,
                 folders: list[str] | None = None) -> list[Run]:
@@ -396,9 +406,7 @@ def select_runs(ctx: AssistantContext, *, source: str | None = None, scenario: s
     if scenario is not None:
         selected = [r for r in selected if r.entry["db_scenario"] == scenario]
     if state is not None:
-        present = sorted({r.entry["state"] for r in all_runs}, key=lambda s: (state_order(s), s))
-        if state not in RUN_STATES and state not in present:
-            raise ToolError("unknown_run_state", value=state, values=present or list(RUN_STATES))
+        check_state(state, all_runs)
         selected = [r for r in selected if r.entry["state"] == state]
     if results_usable is not None:
         selected = [r for r in selected if r.entry["results_usable"] is results_usable]

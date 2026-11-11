@@ -338,6 +338,14 @@ def _prepare_runs(args: dict) -> dict:
     return args
 
 
+def _check_runs(ctx: AssistantContext, args: dict) -> None:
+    """A state that is no run state is refused in plain English with the states of the project's runs (the
+    schema's enum refusal would list every state FlexTool knows)."""
+    state = args.get("state")
+    if isinstance(state, str) and state not in _runs.RUN_STATES:
+        _runs.check_state(state, _runs.runs(ctx))
+
+
 TOOLS = [
     make_tool(
         name="list_sources", title="Input sources of the project",
@@ -362,14 +370,15 @@ TOOLS = [
                      "verdict, times, version, error. Filters: source, scenario, state, results_usable, folders "
                      "(names, * patterns). offset pages."),
         # state: the run states as an enum (gpt-oss on Ollama invented "success", "*" and "", 2026-11-11).  A state
-        # only a newer FlexTool writes is listed by the call without the filter, but cannot be filtered by.
+        # only a newer FlexTool writes is listed by the call without the filter, but cannot be filtered by.  Another
+        # value is refused by _check_runs, naming the states of the project's runs, before the schema refuses it.
         properties={"source": {"type": "string"}, "scenario": {"type": "string"},
                     "state": {"type": "string", "enum": list(_runs.RUN_STATES)},
                     "results_usable": {"type": "boolean"},
                     "folders": {"type": "array", "items": {"type": "string"}},
                     "detail": {"type": "string", "enum": ["scan", "overview", "full"]},
                     "all": {"type": "boolean"}, "offset": {"type": "integer"}},
-        handler=list_runs, area="discovery", small_tier=True, prepare=_prepare_runs,
+        handler=list_runs, area="discovery", small_tier=True, prepare=_prepare_runs, check=_check_runs,
         basic=BasicForm(
             description=("Result folders (scenario + source number, as S2_Dry_1), newest first: the latest runs, "
                          "with counts of the older ones; all true: every run. folder, state, finished, "

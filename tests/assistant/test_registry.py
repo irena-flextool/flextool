@@ -34,6 +34,18 @@ def test_bad_arguments_and_unknown_tools_are_messages(ctx, monkeypatch) -> None:
     assert not out.ok and out.message.startswith('The arguments of "t" are not valid: n: ')
     out = call_tool(ctx, "t", {"other": 1})
     assert not out.ok and "other" in out.message
+
+
+def test_an_enum_refusal_is_plain_english(ctx, monkeypatch) -> None:
+    """A value outside an enum is refused naming the values as names in quotes, not as a Python list (gpt-oss
+    invented list_runs states, 2026-11-11: the refusal is what the model reads to correct itself)."""
+    tool = make_tool(name="t", title="T", description="Test.", handler=lambda c, a: {}, area="discovery",
+                     small_tier=True, properties={"kind": {"type": "string", "enum": ["one", "two"]}})
+    _with(monkeypatch, tool)
+    out = call_tool(ctx, "t", {"kind": "three"})
+    assert not out.ok and out.message == ('The arguments of "t" are not valid: kind: "three" is not one of its '
+                                          'values, which are "one", "two".')
+    assert call_tool(ctx, "t", {"kind": "two"}).ok
     out = call_tool(ctx, "nope", {})
     assert not out.ok and out.message.startswith('There is no tool named "nope".')
 

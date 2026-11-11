@@ -968,8 +968,9 @@ def test_list_runs_answers_for_every_run_record_state(tmp_path: Path, tests_db: 
     ``run_record.RUN_STATES``.  Before: ValueError (a fault) for any state not in list_runs' own list.
 
     The ``state`` argument is an enum of these states (2026-11-11: models invented "success"): an unknown state is
-    refused by the schema, naming the states; a state only a newer FlexTool writes is listed without the filter and
-    still filtered by the runs' own selection, but the tool's filter cannot name it."""
+    refused in plain English, naming the states the project's runs have; a state only a newer FlexTool writes is
+    listed without the filter and still filtered by the runs' own selection, but the tool's filter cannot name it
+    (the schema refuses it, its values quoted)."""
     project = _project_with(tmp_path, tests_db, ("coal_1", succeed))
     write_parquet(project / "output_parquet" / "base_1")          # no run record: state no_record
     _with_state(project, "coal_1", state)
@@ -984,10 +985,12 @@ def test_list_runs_answers_for_every_run_record_state(tmp_path: Path, tests_db: 
         assert [r["folder"] for r in json.loads(filtered.text)["runs"]] == ["coal_1"]
     else:
         assert not filtered.ok and filtered.message.startswith(
-            f'The arguments of "list_runs" are not valid: state: {shown!r} is not one of [')
+            f'The arguments of "list_runs" are not valid: state: "{shown}" is not one of its values, which are '
+            '"succeeded", "failed", ')
+    present = ", ".join(f'"{s}"' for s in sorted({shown, "no_record"}, key=lambda s: (_runs.state_order(s), s)))
     refused = call_tool(ctx, "list_runs", {"state": "no_such_state"})
-    assert not refused.ok and refused.message.startswith(
-        "The arguments of \"list_runs\" are not valid: state: 'no_such_state' is not one of ['succeeded', ")
+    assert not refused.ok and refused.message == (
+        f'There is no run state "no_such_state". The states of this project\'s runs are: {present}.')
     with pytest.raises(ToolError) as info:
         _runs.select_runs(ctx, state="no_such_state")
     assert info.value.key == "unknown_run_state" and str(info.value).startswith("There is no run state")
