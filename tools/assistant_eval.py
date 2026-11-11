@@ -2393,7 +2393,7 @@ def _reveal(grading: Grading, cell: GradingCell, first: Mapping[str, Any], ask: 
 
 
 # --- review through markdown files: the owner fills a form in an editor -----------------------------------------
-MD_MARK = re.compile(r"^<!-- flextool-review (first|final) (#\d+) ([0-9a-f]{16}) -->$", re.MULTILINE)
+MD_MARK = re.compile(r"^<!-- flextool-review (first|final|helpful) (#\d+) ([0-9a-f]{16}) -->$", re.MULTILINE)
 MD_LINE = re.compile(r"^- `([^`]+)`.*\[([^\]\n]*)\]:[ \t]*(.*?)[ \t]*$")
 #: The form line of the first file format (before the item texts moved next to the letters).
 MD_LINE_V1 = re.compile(r"^- `([^`]+)`([^:\n]*):[ \t]*(.*?)[ \t]*$")
@@ -2652,7 +2652,7 @@ def _md_answer(word: str, allowed: Mapping[str, Any]) -> tuple[bool, Any]:
 def _md_blocks(text: str) -> list[tuple[str, str, str, list[tuple[str, str]]]]:
     """``(kind, token, request hash prefix, [(id, written)])`` of each cell of a review file: the form lines that
     follow its mark (until the next mark)."""
-    marks = list(MD_MARK.finditer(text))
+    marks = [m for m in MD_MARK.finditer(text) if m.group(1) != "helpful"]
     out = []
     for n, m in enumerate(marks):
         body = text[m.end():marks[n + 1].start() if n + 1 < len(marks) else len(text)]
@@ -2764,6 +2764,191 @@ def _import_md(grading: Grading, path: Path, say: Callable[[str], None]) -> int:
     return 1 if problems else 0
 
 
+# --- the owner's helpfulness review: Opus's factual grades are final ---------------------------------------------
+#: The cells rated for helpfulness per level setting (owner 2026-11-11: a small sample of each level).
+HELPFUL_PER_LEVEL = 8
+HELPFUL_SCALE = {1: 1, 2: 2, 3: 3}
+#: The order a level's sample takes its cells in: the classes where the shape of the answer matters most first.
+HELPFUL_CLASSES = ("diagnose", "interpret", "lookup")
+HELPFUL_DROP = (*MD_DROP, "Found right by the automatic checks")
+HELPFUL_TEXT = ("How helpful is the answer for the FlexTool user who asked: does it answer the question, at the "
+                "right length, and could the user act on it? 1 = helpful: the user gets what they need; 2 = "
+                "partly: the answer is there but too long, unfocused or missing something useful (such as what "
+                "to change); 3 = not helpful.")
+MD_HELPFUL_HEAD = """<!-- flextool-review file: helpfulness. -->
+# Review: how helpful the answers are
+
+Opus's factual grading is final; here you rate how helpful each answer is. {text}
+
+Each cell ends with **Your rating**: write `1`, `2` or `3` after the colon, and anything you want to say about
+the answer below **Your note** (any length; it stays in the grading folder, never in results.jsonl). The cells are
+blind: the model and the level are not shown; `summary --dir GRADING` reports the ratings and notes by level
+and model. Import the file whenever you like (`review --dir GRADING --helpfulness --import-md FILE`); a rating
+imported again replaces the earlier one.
+"""
+HELPFUL_NOTE = "#### Your note"
+
+
+def helpful_sample(grading: Grading, per_level: int) -> list[str]:
+    """The cells rated for helpfulness: *per_level* of each level setting, drawn with the grading's seed from the
+    cells with an answer and a readable grading of Opus's.  A level's cells are taken by class in turn
+    (:data:`HELPFUL_CLASSES`); each pick is of the class's cells of the model picked least often at that level so
+    far (ties in a drawn order), so the models share the sample as evenly as their answered cells allow."""
+    out = []
+    for level in scoring.LEVELS:
+        rng = random.Random(f"{grading.state['seed']}:helpfulness:{level}")
+        pool = {cls: [c for c in grading.cells if not c.empty and c.ai is not None and c.question.cls == cls
+                      and c.record["cell"]["level_setting"] == level] for cls in HELPFUL_CLASSES}
+        for cells in pool.values():
+            rng.shuffle(cells)
+        used: dict[str, int] = {}
+        picked: list[str] = []
+        while len(picked) < per_level and any(pool.values()):
+            for cls in HELPFUL_CLASSES:
+                if not pool[cls] or len(picked) >= per_level:
+                    continue
+                cell = min(pool[cls], key=lambda c: used.get(str(c.key[0]), 0))   # the first of the fewest
+                pool[cls].remove(cell)
+                used[str(cell.key[0])] = used.get(str(cell.key[0]), 0) + 1
+                picked.append(cell.token)
+        out += picked
+    return sorted(out, key=lambda t: int(t.lstrip("#")))
+
+
+def helpful_state(grading: Grading, review: dict[str, Any], per_level: int | None) -> dict[str, Any]:
+    """``review.json``'s ``helpfulness`` (its sample, drawn once) and ``opus_final`` (set with it: Opus's factual
+    grades are final, the factual queue no longer waits)."""
+    if review.get("helpfulness") is None:
+        n = per_level or HELPFUL_PER_LEVEL
+        review["helpfulness"] = {"per_level": n, "sample": helpful_sample(grading, n), "drawn": iso(utc_now())}
+        review["opus_final"] = True
+        write_json(grading.folder / REVIEW_FILE, review)
+    elif per_level is not None and per_level != review["helpfulness"]["per_level"]:
+        raise Refused(f"The helpfulness sample was drawn with {review['helpfulness']['per_level']} cells per level; "
+                      "it is never drawn again.")
+    return review["helpfulness"]
+
+
+def _opus_line(cell: GradingCell) -> str:
+    """Opus's factual grading of a cell in one line: its outcome and the items it found missing or wrong."""
+    verdicts = {k: v["verdict"] for k, v in cell.ai["items"].items()}
+    counts = scoring.verdict_counts(cell.items, verdicts)
+    detail = [f"{name}: {', '.join(f'`{i}`' for i in counts[name])}" for name in ("missing", "wrong") if counts[name]]
+    return (f"Opus's factual grading: **{scoring.outcome(cell.items, verdicts)}**"
+            + (f" ({'; '.join(detail)})" if detail else "") + ".")
+
+
+def _helpful_cell(grading: Grading, cell: GradingCell) -> str:
+    tag = scoring.data_tag(grading.state["seed"], cell.token)
+    given = cell.state.get("helpfulness") or {}
+    return "\n".join([
+        f"# Cell {cell.token}", f"<!-- flextool-review helpful {cell.token} {cell.request_sha256[:16]} -->", "",
+        scoring.owner_markdown(cell.material, tag, HELPFUL_DROP), "", "### Opus's grading", "", _opus_line(cell),
+        "", "### Your rating", "",
+        f"- `helpfulness` [1 / 2 / 3]: {given.get('rating') or ''}".rstrip(), "", HELPFUL_NOTE, "",
+        *([given["note"], ""] if given.get("note") else [])]).rstrip("\n")
+
+
+def _export_helpful(grading: Grading, sample: Sequence[str], path: Path, say: Callable[[str], None]) -> int:
+    by_token = {c.token: c for c in grading.cells}
+    cells = [by_token[t] for t in sample]
+    blocks = []
+    for cell in cells:
+        found = _scan(grading, cell, scoring.owner_markdown(
+            cell.material, scoring.data_tag(grading.state["seed"], cell.token), HELPFUL_DROP))
+        if found:
+            raise Refused(f"Cell {cell.token}: the review file would reveal {', '.join(found)}; nothing is written.")
+        blocks.append(_helpful_cell(grading, cell))
+    if path.is_file():
+        changed = []
+        for t, rating, note in _helpful_blocks(path.read_text(encoding="utf-8")):
+            h = ((by_token[t].state or {}).get("helpfulness") or {}) if t in by_token else None
+            if h is not None and (rating == -1 or (rating is not None and rating != h.get("rating"))
+                                  or note != (h.get("note") or "")):
+                changed.append(t)
+        if changed:
+            raise Refused(f"{path} has ratings or notes that are not imported yet ({', '.join(changed[:5])}): import "
+                          f"it first (review --dir {grading.folder} --helpfulness --import-md {path}), or move it "
+                          "away.")
+    path.write_text(MD_HELPFUL_HEAD.format(text=HELPFUL_TEXT) + "".join(f"\n\n{b}" for b in blocks) + "\n",
+                    encoding="utf-8")
+    rated = sum(1 for c in cells if (c.state.get("helpfulness") or {}).get("rating"))
+    say(f"{len(cells)} cell(s) to rate for helpfulness ({rated} rated already): {path}")
+    return 0
+
+
+def _helpful_blocks(text: str) -> list[tuple[str, int | None, str]]:
+    """``(token, rating, note)`` of each cell of a helpfulness file; a rating that is no 1–3 is ``-1``."""
+    marks = [m for m in MD_MARK.finditer(text) if m.group(1) == "helpful"]
+    out = []
+    for n, m in enumerate(marks):
+        body = text[m.end():marks[n + 1].start() if n + 1 < len(marks) else len(text)]
+        body = re.sub(r"\n# Cell #\d+\s*$", "\n", body)
+        line = re.search(r"^- `helpfulness` \[1 / 2 / 3\]:[ \t]*(.*?)[ \t]*$", body, re.MULTILINE)
+        word = line.group(1).strip().strip("*_`") if line else ""
+        rating = None if not word else int(word) if word in ("1", "2", "3") else -1
+        note = body.split(f"\n{HELPFUL_NOTE}\n", 1)[1].strip() if f"\n{HELPFUL_NOTE}\n" in body else ""
+        out.append((m.group(2), rating, note))
+    return out
+
+
+def _import_helpful(grading: Grading, sample: Sequence[str], path: Path, say: Callable[[str], None]) -> int:
+    if not path.is_file():
+        raise Refused(f"No review file {path}.")
+    blocks = _helpful_blocks(path.read_text(encoding="utf-8"))
+    if not blocks:
+        raise Refused(f"{path} holds no cell of a helpfulness file (written by review --helpfulness --export-md).")
+    by_token = {c.token: c for c in grading.cells}
+    problems, saved = [], 0
+    for token, rating, note in blocks:
+        cell = by_token.get(token)
+        if cell is None or token not in sample:
+            problems.append(f"{token}: not in the helpfulness sample")
+            continue
+        if rating == -1:
+            problems.append(f"{token}: the rating is not 1, 2 or 3")
+            continue
+        if rating is None and not note:
+            continue
+        old = cell.state.get("helpfulness") or {}
+        new = {"rating": rating, "note": note}
+        if {"rating": old.get("rating"), "note": old.get("note") or ""} != new:
+            cell.state["helpfulness"] = {**new, "at": iso(utc_now())}
+            write_json(cell.path, cell.state)
+            saved += 1
+    for p in problems:
+        say(f"  {p}")
+    rated = sum(1 for t in sample if ((by_token[t].state or {}).get("helpfulness") or {}).get("rating"))
+    say(f"Imported {path.name}: {saved} cell(s) saved, {len(problems)} problem(s). {rated} of {len(sample)} cells "
+        "rated.")
+    return 1 if problems else 0
+
+
+def helpful_report(grading: Grading, sample: Sequence[str]) -> list[str]:
+    """The owner's helpfulness ratings by level setting (and by model within it), then the notes by level."""
+    by_token = {c.token: c for c in grading.cells}
+    out = ["== Helpfulness (the owner's ratings of the sample; 1 helpful, 2 partly, 3 not) =="]
+    notes = []
+    for level in scoring.LEVELS:
+        cells = [by_token[t] for t in sample if by_token[t].record["cell"]["level_setting"] == level]
+        rated = [(c, c.state["helpfulness"]) for c in cells if (c.state.get("helpfulness") or {}).get("rating")]
+        dist = [sum(1 for _c, h in rated if h["rating"] == r) for r in (1, 2, 3)]
+        out.append(f"  {level:<7} rated {len(rated)} of {len(cells)}  1/2/3 {dist[0]}/{dist[1]}/{dist[2]}")
+        models: dict[str, list[int]] = {}
+        for c, h in rated:
+            models.setdefault(f"{c.run.get('provider')} {c.run.get('model')}", []).append(h["rating"])
+        for model, ratings in sorted(models.items()):
+            out.append(f"    {model}: {' '.join(map(str, ratings))}")
+        for c in cells:
+            note = (c.state.get("helpfulness") or {}).get("note")
+            if note:
+                notes.append(f"  {c.token} ({level}, {c.question.id} {c.question.cls}, {c.run.get('model')}): "
+                             + " ".join(note.split()))
+    if notes:
+        out += ["Notes:", *notes]
+    return out
+
+
 def cmd_review(args: argparse.Namespace, *, ask: Callable[[str], str | None] | None = None,
                say: Callable[[str], None] = print) -> int:
     def default_ask(text: str) -> str | None:
@@ -2790,6 +2975,15 @@ def _review(args: argparse.Namespace, ask: Callable[[str], str | None], say: Cal
         review["all"] = True
         write_json(grading.folder / REVIEW_FILE, review)
         review = review_state(grading)
+    if args.helpfulness:
+        if not (args.export_md or args.import_md):
+            raise Refused("--helpfulness goes with --export-md FILE or --import-md FILE.")
+        sample = helpful_state(grading, review, args.per_level)["sample"]
+        if args.export_md:
+            return _export_helpful(grading, sample, args.export_md, say)
+        return _import_helpful(grading, sample, args.import_md, say)
+    if args.per_level is not None:
+        raise Refused("--per-level goes with --helpfulness.")
     if args.export_md or args.import_md:
         if args.regrade is not None:
             raise Refused("--regrade works in the terminal only.")
@@ -2853,7 +3047,8 @@ def _review(args: argparse.Namespace, ask: Callable[[str], str | None], say: Cal
 # --- summary: the final grades, the agreement and results.jsonl -------------------------------------------------
 def final_grade(cell: GradingCell, review: Mapping[str, Any] | None) -> dict[str, Any] | None:
     """The cell's grade: the owner's (the latest re-grade wins) when reviewed, else Opus's when the cell is not
-    queued; ``None`` while it waits (not graded, or queued and not reviewed)."""
+    queued or Opus's grades are final (``opus_final``, the helpfulness review); ``None`` while it waits (not graded,
+    or queued and not reviewed)."""
     import assistant_eval_analysis as analysis
 
     state = cell.state or {}
@@ -2863,7 +3058,7 @@ def final_grade(cell: GradingCell, review: Mapping[str, Any] | None) -> dict[str
         owner = (state.get("regrades") or [{}])[-1].get("owner") or state["owner"]
         return {"grader": "owner", "outcome": scoring.outcome(cell.items, owner["items"]),
                 "verdicts": owner["items"], "understandability": owner["understandability"]}
-    if review is None or cell.token in review["queue"] or cell.ai is None:
+    if review is None or (cell.token in review["queue"] and not review.get("opus_final")) or cell.ai is None:
         return None
     ai = cell.ai
     verdicts = {k: v["verdict"] for k, v in ai["items"].items()}
@@ -2888,6 +3083,7 @@ def summary_line(record: Mapping[str, Any], run: Mapping[str, Any], *, key_versi
     graded: dict[str, Any] = {"grader": "none", "reviewed": False, "review_reasons": [], "outcome": "not_applicable",
                               "missing": [], "wrong": [], "critical_missing": [], "form_missing": [],
                               "invented_numbers": 0, "no_answer": False, "cut_off": False, "understandability": None,
+                              "helpfulness": None,
                               "ai_outcome": None, "ai_understandability": None, "ai_confidence": None,
                               "ai_route": None, "items_overridden": [], "diagnostics": {}}
     if cell is not None and grade is not None:
@@ -2898,6 +3094,7 @@ def summary_line(record: Mapping[str, Any], run: Mapping[str, Any], *, key_versi
                       outcome=grade["outcome"], **scoring.verdict_counts(cell.items, grade["verdicts"]),
                       no_answer=cell.empty, cut_off=scoring.cut_off(_turn_views(record)),
                       understandability=grade["understandability"],
+                      helpfulness=((cell.state or {}).get("helpfulness") or {}).get("rating"),
                       ai_outcome=scoring.outcome(cell.items, ai_verdicts) if ai else None,
                       ai_understandability=ai["understandability"] if ai else None,
                       ai_confidence=ai["confidence"] if ai else None, ai_route=cell.route if ai else None,
@@ -3063,6 +3260,9 @@ def _summary(args: argparse.Namespace, say: Callable[[str], None]) -> int:
                                          seed=int(grading.state["seed"]))
         (grading.folder / AGREEMENT_FILE).write_text(text + "\n", encoding="utf-8")
         say(text)
+    if review is not None and review.get("helpfulness"):
+        for line in helpful_report(grading, review["helpfulness"]["sample"]):
+            say(line)
     routes: dict[str, int] = {}
     for c in grading.cells:
         if c.route is not None:
@@ -3080,6 +3280,8 @@ def _summary(args: argparse.Namespace, say: Callable[[str], None]) -> int:
     lines = []
     for c in grading.cells:
         tag = f"{len(c.state.get('history') or [])}:{len(c.state.get('regrades') or [])}:{grades[c.token]['grader']}"
+        if (c.state.get("helpfulness") or {}).get("rating"):
+            tag += f":h{c.state['helpfulness']['rating']}"    # a rating given or changed later is a new line
         if tag in (c.state.get("recorded") or []):
             continue
         lines.append((c, tag, summary_line(c.record, c.run, key_version=grading.key.key_version, cell=c,
@@ -3190,6 +3392,11 @@ def build_parser() -> argparse.ArgumentParser:
                     help="write the queued cells to a markdown file to fill in an editor (every cell, no sitting)")
     md.add_argument("--import-md", metavar="FILE", type=_abs_path,
                     help="record the verdicts written in a review file; disagreements go to FILE.final.md")
+    p.add_argument("--helpfulness", action="store_true",
+                   help="rate how helpful the answers of a small sample per level are (with --export-md or "
+                        "--import-md); Opus's factual grades become final")
+    p.add_argument("--per-level", type=int, metavar="N",
+                   help=f"cells per level setting in the helpfulness sample (default {HELPFUL_PER_LEVEL}; drawn once)")
     p.add_argument("--key", default=str(scoring.KEY_PATH), help=argparse.SUPPRESS)
     p.add_argument("--set", default=str(scoring.SET_PATH), help=argparse.SUPPRESS)
 

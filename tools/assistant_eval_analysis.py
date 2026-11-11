@@ -276,9 +276,11 @@ def setting_stats(lines: Sequence[Mapping[str, Any]], level: str) -> dict[str, A
     ratios_tool = [x["prompt_ratio"]["tool_results"] for x in rows
                    if (x.get("prompt_ratio") or {}).get("tool_results") is not None]
     ratings = [int(x["understandability"]) for x in rows if x.get("understandability") is not None]
+    helpful = [int(x["helpfulness"]) for x in rows if x.get("helpfulness") is not None]
     return {"cells": len(rows), "answered": len(answered), "calls": spread("calls"), "rounds": spread("rounds"),
             "understandability": {u: ratings.count(u) for u in scoring.UNDERSTANDABILITY},
             "understandability_median": statistics.median(ratings) if ratings else None,
+            "helpfulness": {u: helpful.count(u) for u in (1, 2, 3)},
             "tokens_out": spread("tokens_out"),
             **{name: sum(int(x.get(name) or 0) for x in rows)
                for name in ("cap_hits", "length_stops", "fit_compactions", "truncations")},
@@ -399,6 +401,9 @@ def calibrate_report(lines: Sequence[Mapping[str, Any]]) -> str:
         if sum(dist.values()):
             out.append(f"  understandability 1 / 2 / 3: {dist[1]} / {dist[2]} / {dist[3]}, median "
                        f"{stats['understandability_median']:g}")
+        dist = stats["helpfulness"]
+        if sum(dist.values()):
+            out.append(f"  helpfulness (the owner's sample) 1 / 2 / 3: {dist[1]} / {dist[2]} / {dist[3]}")
         cap = proposed_cap(stats)
         if cap is not None:
             out.append(f"  proposed calls per question: {cap} (p90 of answered cells + 1, at least {CAP_FLOOR})")

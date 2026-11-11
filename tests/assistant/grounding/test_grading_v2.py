@@ -825,6 +825,71 @@ def test_review_through_markdown_files(scoring, evaluator, tmp_path: Path) -> No
     assert summary(evaluator, grading, key, tmp_path / "results.jsonl", "--record") == 0
 
 
+def test_helpfulness_review_with_opus_final(scoring, evaluator, tmp_path: Path) -> None:
+    """review --helpfulness draws a sample once: per level setting, the classes in turn (diagnose, interpret,
+    lookup), each pick of the model picked least so far.  With 2 per level of two models' G01 (lookup), G06
+    (interpret) and G08 (diagnose): each level gets one diagnose and one interpret cell, of different models.
+    The file is blind and shows Opus's factual outcome; the import keeps the rating and the note (a later import
+    replaces them); a bad rating is a problem.  Opus's factual grades become final: summary --record no longer
+    waits for the factual queue, and a rating changed later is a new line."""
+    token = {"facts": [{"id": "unit", "kind": "token", "value": "coal_plant", "critical": True,
+                        "derivation": "grading only"}], "manual": ["facts_vs_assumptions"]}
+    key = write_key(tmp_path / "key.yaml", {q: token for q in ("G01", "G06", "G08")})
+    folders = []
+    for model in ("m1", "m2"):
+        records = {f"{q}__{level}__r1": make_record(scoring, q, level, "coal_plant is the unit.", model=model)
+                   for q in ("G01", "G06", "G08") for level in ("small", "medium", "large")}
+        folders.append(results(evaluator, tmp_path / f"res_{model}", records, model=model))
+    grading = tmp_path / "grading"
+    assert grade_ai(evaluator, grading, key, *folders, opus=Opus()) == 0
+    form = tmp_path / "helpful.md"
+    assert review(evaluator, grading, key, [], "--helpfulness", "--per-level", "2", "--export-md", str(form)) == 0
+    states = cell_states(grading)
+    sample = json.loads((grading / "review.json").read_text(encoding="utf-8"))["helpfulness"]["sample"]
+    assert len(sample) == 6
+    for level in ("small", "medium", "large"):
+        picked = [states[t]["cell"] for t in sample if f"__{level}__" in states[t]["cell"][1]]
+        assert sorted(c[1].split("__")[0] for c in picked) == ["G06", "G08"]
+        assert len({c[0] for c in picked}) == 2                              # one of each model
+    text = form.read_text(encoding="utf-8")
+    assert text.count("\n# Cell #") == 6
+    assert "m1" not in text and "res_" not in text and "Tool calls" not in text and "Found right" not in text
+    assert "Opus's factual grading: **answered**." in text
+    first, second = sample[0], sample[1]
+
+    def fill(text: str, token: str, rating: str, note: str = "") -> str:
+        head, rest = text.split(f"# Cell {token}\n", 1)
+        block, sep, tail = rest.partition("\n# Cell #")
+        block = block.replace("- `helpfulness` [1 / 2 / 3]:", f"- `helpfulness` [1 / 2 / 3]: {rating}")
+        if note:
+            block = block.replace("#### Your note\n", f"#### Your note\n\n{note}\n")
+        return f"{head}# Cell {token}\n{block}{sep}{tail}"
+
+    form.write_text(fill(fill(text, first, "1", "Crisp.\nGood fixes."), second, "x"), encoding="utf-8")
+    said: list[str] = []
+    assert review(evaluator, grading, key, [], "--helpfulness", "--import-md", str(form), said=said) == 1
+    assert any(f"{second}: the rating is not 1, 2 or 3" in s for s in said)
+    state = cell_states(grading)[first]["helpfulness"]
+    assert (state["rating"], state["note"]) == (1, "Crisp.\nGood fixes.")
+    assert review(evaluator, grading, key, [], "--helpfulness", "--export-md", str(form)) == 2   # the bad 'x'
+    form.write_text(fill(text, first, "1", "Crisp.\nGood fixes."), encoding="utf-8")
+    assert review(evaluator, grading, key, [], "--helpfulness", "--export-md", str(form)) == 0
+    assert "Crisp.\nGood fixes." in form.read_text(encoding="utf-8")
+    assert review(evaluator, grading, key, [], "--helpfulness", "--per-level", "3", "--export-md", str(form)) == 2
+    out = tmp_path / "results.jsonl"
+    said.clear()
+    assert summary(evaluator, grading, key, out, "--record", said=said) == 0
+    lines = [json.loads(x) for x in out.read_text(encoding="utf-8").splitlines()]
+    assert len(lines) == 18 and {x["grader"] for x in lines} == {"claude-opus-5-5"}
+    assert sorted(x["helpfulness"] for x in lines if x["helpfulness"]) == [1]
+    assert any("rated 1 of 2  1/2/3 1/0/0" in s for s in said) and any("Crisp. Good fixes." in s for s in said)
+    form.write_text(form.read_text(encoding="utf-8").replace("[1 / 2 / 3]: 1", "[1 / 2 / 3]: 2"), encoding="utf-8")
+    assert review(evaluator, grading, key, [], "--helpfulness", "--import-md", str(form)) == 0
+    assert summary(evaluator, grading, key, out, "--record") == 0
+    lines = [json.loads(x) for x in out.read_text(encoding="utf-8").splitlines()]
+    assert len(lines) == 19 and lines[-1]["helpfulness"] == 2
+
+
 # --- 9. agreement ---------------------------------------------------------------------------------------------
 def test_agreement_by_hand(analysis) -> None:
     """Items (owner, Opus): (r,r)×3, (m,m), (w,w), (r,m), (m,r), (w,r).  Agreement 5/8.  Owner margins r 4, m 2,

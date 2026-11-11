@@ -191,8 +191,9 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
 
 ## Grading
 
-Claude Opus 5.5 (`claude-opus-5-5`) grades every cell, blind. The owner then reviews part of the cells, always
-giving their own verdict before seeing Opus's. The owner's review is final.
+Claude Opus 5.5 (`claude-opus-5-5`) grades every cell, blind. The owner then either reviews part of the cells
+factually, always giving their own verdict before seeing Opus's (the owner's review is final), or leaves the
+facts to Opus and rates how helpful a small sample of answers is ([the helpfulness review](#the-helpfulness-review)).
 
 ```
 python tools/assistant_eval.py grade-ai _audit_reports/assistant_eval/{opus,gemini,gemma,gptoss} \
@@ -373,6 +374,38 @@ already holding the owner's letter (leaving it keeps it, as Enter does), then th
 records the final verdicts and the changes. A letter that is not allowed is reported and its cell left as it
 was (exit code 1). An export never overwrites a file that holds letters not imported yet; a cell whose material
 changed since the file was written is refused.
+
+### The helpfulness review
+
+The owner can leave the facts to Opus and rate instead how helpful the answers are, on a small sample of each
+level:
+
+```
+python tools/assistant_eval.py review --dir GRADING --helpfulness --export-md HELPFUL.md [--per-level 8]
+# rate each cell 1 / 2 / 3 and write notes, then
+python tools/assistant_eval.py review --dir GRADING --helpfulness --import-md HELPFUL.md
+python tools/assistant_eval.py summary --dir GRADING --record
+```
+
+The first `--helpfulness` draws the sample once into `review.json` (`helpfulness`) and makes Opus's factual
+grades final (`opus_final`): the factual queue no longer waits, and `summary --record` records every cell with
+Opus's grade (the owner's for a cell already reviewed factually). The sample is `--per-level` cells (default 8)
+of each level setting, drawn with the grading's seed from the cells with an answer and a readable grading of
+Opus's: a level's cells are taken by class in turn (diagnose, interpret, lookup), and each pick is of the model
+picked least often at that level so far. A sample is never drawn again; another `--per-level` is refused.
+
+The file shows each cell blind (no model, no level): the question, the expected behaviour, the answer key, the
+final answers rendered as markdown (no tool calls, no items) and Opus's factual outcome with the items it found
+missing or wrong. Each cell ends with `` - `helpfulness` [1 / 2 / 3]: `` and **Your note**, free text of any
+length up to the next cell. 1 = helpful: the user gets what they need; 2 = partly: the answer is there but too
+long, unfocused or missing something useful (such as what to change); 3 = not helpful. An import saves the
+ratings and notes given, replacing earlier ones; a rating that is not 1–3 is reported (exit code 1). An export
+never overwrites a file with a rating or note not imported yet.
+
+`summary --dir` prints the ratings by level setting and by model within it, and the notes with their cell,
+level, question and model. Each `results.jsonl` line carries `helpfulness` (the rating, or null); a rating given
+or changed after `--record` gives the cell a new line. The notes stay in the grading folder. `calibrate` shows
+the ratings per level setting next to the understandability.
 
 ### summary
 
