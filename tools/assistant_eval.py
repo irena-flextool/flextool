@@ -2394,12 +2394,19 @@ def _reveal(grading: Grading, cell: GradingCell, first: Mapping[str, Any], ask: 
 
 # --- review through markdown files: the owner fills a form in an editor -----------------------------------------
 MD_MARK = re.compile(r"^<!-- flextool-review (first|final) (#\d+) ([0-9a-f]{16}) -->$", re.MULTILINE)
-MD_LINE = re.compile(r"^- `([^`]+)`([^:\n]*):[ \t]*(.*?)[ \t]*$")
+MD_LINE = re.compile(r"^- `([^`]+)`.*\[([^\]\n]*)\]:[ \t]*(.*?)[ \t]*$")
+#: The form line of the first file format (before the item texts moved next to the letters).
+MD_LINE_V1 = re.compile(r"^- `([^`]+)`([^:\n]*):[ \t]*(.*?)[ \t]*$")
+#: The material sections the owner's files leave out: the tool calls and the number excerpts (the numbers are
+#: Opus's to check) and the items (they stand next to the letters).
+MD_DROP = ("Tool calls and results", "Excerpts", "Items to grade")
 MD_FIRST_HEAD = """<!-- flextool-review file: your own verdicts. Opus's are not in this file. -->
 # Review: your own verdicts
 
-Each cell ends with **Your verdicts**: write one letter after each colon, `r` right, `m` missing, `w` wrong
-(only the letters in its brackets), and the understandability `1`, `2` or `3`. {understandability}
+Each cell ends with **Your verdicts**: each item to grade, then the letters it allows in brackets; write one
+after the colon: `r` right, `m` missing, `w` wrong, and the understandability `1`, `2` or `3`. What the letters
+mean for each kind of item is in `{key}`. The numbers (number facts and numbers without a tool source) are
+Opus's verdicts and are not asked here.
 
 Leave a line empty to answer it later: import the file whenever you like
 (`review --dir GRADING --import-md FILE`); the verdicts given are kept and an empty line is asked again by the next
@@ -2421,54 +2428,122 @@ def _md_letter(verdict: Any) -> str:
         str(verdict) if verdict is not None else ""
 
 
+def _deferred(cell: GradingCell) -> set[str]:
+    """The judged items the owner leaves to Opus in the review files: the numbers (a number fact the check did not
+    find, a number without a tool source).  None when Opus has no readable reply."""
+    if cell.ai is None:
+        return set()
+    numbers = {f"fact:{f.id}" for f in cell.entry.facts if f.kind == "number"}
+    return {i.id for i in cell.judged if i.check == "tool_sourced" or (i.check == "facts" and i.id in numbers)}
+
+
+def _owner_items(cell: GradingCell) -> list[scoring.GradeItem]:
+    deferred = _deferred(cell)
+    return [i for i in cell.judged if i.id not in deferred]
+
+
+def _with_deferred(cell: GradingCell, items: Mapping[str, Any]) -> dict[str, Any]:
+    """The owner's verdicts with Opus's for the items left to Opus: a whole set of the cell's judged items."""
+    return {**{i: cell.ai["items"][i]["verdict"] for i in _deferred(cell)}, **items}
+
+
+def _split_what(what: str) -> tuple[str, str]:
+    """``(label, meanings)`` of an item's text: what is checked, and what its verdicts mean (empty for a
+    statement, whose verdicts mean what they always do)."""
+    m = re.search(r"[:.] (?=(right|missing|wrong) = )", what)
+    return (what[:m.start()], what[m.end():]) if m else (what, "")
+
+
+MD_KEY_HEAD = """# Review key
+
+What the letters mean. An item without its own entry below (a statement of the answer key, a name) is judged
+as follows:
+
+- `r` right: the answer gets this item right;
+- `m` missing: the answer does not give it, and says nothing false about it;
+- `w` wrong: the answer says something false about it, or gives another value.
+
+A missing unit next to a right value, or a true claim not marked as an assumption, is only a form slip: it
+does not make the cell incomplete. A wrong unit or a false unmarked claim fails the cell.
+
+**Understandability** — {understandability}
+"""
+
+
+def _md_key(grading: Grading) -> str:
+    """The key file: the general meaning of the letters, then each kind of item the owner judges that has its
+    own (from the items' texts, the same as the graders read)."""
+    seen: dict[str, str] = {}
+    for cell in grading.cells:
+        for i in _owner_items(cell):
+            label, meanings = _split_what(i.what)
+            if meanings:
+                title = "matched a forbidden claim" if i.check == "forbidden" else label
+                seen.setdefault(title, meanings)
+    parts = [MD_KEY_HEAD.format(understandability=scoring.UNDERSTANDABILITY_TEXT)]
+    for title, meanings in seen.items():
+        lines = re.split(r"; (?=(?:right|missing|wrong) = )", meanings.rstrip("."))
+        parts.append(f"## {title}\n\n" + "\n".join(f"- {line}" for line in lines) + "\n")
+    return "\n".join(parts)
+
+
+def _md_key_path(path: Path) -> Path:
+    return path.with_name(f"{path.name.removesuffix('.md')}.key.md")
+
+
+def _md_item_line(i: scoring.GradeItem, tail: str, letter: Any) -> str:
+    label = _split_what(i.what)[0]
+    return (f"- `{i.id}`{' (critical)' if i.critical else ''}: {label} [{tail}]: "
+            f"{_md_letter(letter)}").rstrip()
+
+
 def _md_cell(grading: Grading, cell: GradingCell, kind: str) -> str:
     """The markdown of one cell: its heading, its mark (kind, token, request hash) and either the owner's form
     (``first``) or Opus's verdicts and the final form (``final``), with the material."""
     tag = scoring.data_tag(grading.state["seed"], cell.token)
     parts = [f"# Cell {cell.token}", f"<!-- flextool-review {kind} {cell.token} {cell.request_sha256[:16]} -->", ""]
-    material = scoring.owner_markdown(cell.material, tag)
+    material = scoring.owner_markdown(cell.material, tag, MD_DROP)
     if kind == "first":
         given = cell.state.get("owner_first") or {}
         parts += [material, "", "### Your verdicts", ""]
-        for i in cell.judged:
-            letter = _md_letter((given.get("items") or {}).get(i.id))
-            parts.append(f"- `{i.id}`{' (critical)' if i.critical else ''} "
-                         f"({' / '.join(_letters(i.allowed))}): {letter}".rstrip())
-        parts.append(f"- `understandability` (1 / 2 / 3): {_md_letter(given.get('understandability'))}".rstrip())
+        for i in _owner_items(cell):
+            parts.append(_md_item_line(i, " / ".join(_letters(i.allowed)), (given.get("items") or {}).get(i.id)))
+        parts.append(f"- `understandability` [1 / 2 / 3]: {_md_letter(given.get('understandability'))}".rstrip())
         return "\n".join(parts)
     first, ai = cell.state["owner_first"], cell.ai
     parts += ["### Opus's grading (shown after yours)", "",
               f"The cell ({ai['confidence']}): {_blinded_reason(grading, cell, ai['reason'])}", "",
               "| item | yours | Opus | Opus's reason |", "|---|---|---|---|"]
     form = []
-    for i in cell.judged:
+    for i in _owner_items(cell):
         mine, theirs = first["items"][i.id], ai["items"][i.id]
         differs = mine != theirs["verdict"]
         reason = _blinded_reason(grading, cell, theirs["reason"]).replace("|", "\\|").replace("\n", " ")
         parts.append(f"| `{i.id}` | {mine} | {'**' if differs else ''}{theirs['verdict']}{'**' if differs else ''} "
                      f"({theirs['confidence']}) | {reason} |")
         if differs:
-            form.append(f"- `{i.id}` ({' / '.join(_letters(i.allowed))}; yours {mine}, Opus {theirs['verdict']}): "
-                        f"{_md_letter(mine)}")
+            form.append(_md_item_line(i, f"{' / '.join(_letters(i.allowed))}; yours {mine}, Opus "
+                                         f"{theirs['verdict']}", mine))
     u_differs = first["understandability"] != ai["understandability"]
     parts.append(f"| understandability | {first['understandability']} | {'**' if u_differs else ''}"
                  f"{ai['understandability']}{'**' if u_differs else ''} | |")
     if u_differs:
-        form.append(f"- `understandability` (1 / 2 / 3; yours {first['understandability']}, Opus "
-                    f"{ai['understandability']}): {first['understandability']}")
+        form.append(f"- `understandability` [1 / 2 / 3; yours {first['understandability']}, Opus "
+                    f"{ai['understandability']}]: {first['understandability']}")
     parts += ["", "### Your final verdicts", "", *form, "", "### The cell", "", material]
     return "\n".join(parts)
 
 
 def _md_disagrees(cell: GradingCell, first: Mapping[str, Any]) -> bool:
     ai = cell.ai
-    return ai is not None and (any(first["items"][i.id] != ai["items"][i.id]["verdict"] for i in cell.judged)
+    return ai is not None and (any(first["items"][i.id] != ai["items"][i.id]["verdict"] for i in _owner_items(cell))
                                or first["understandability"] != ai["understandability"])
 
 
 def _md_first_done(cell: GradingCell) -> bool:
     first = cell.state.get("owner_first") or {}
-    return all(i.id in (first.get("items") or {}) for i in cell.judged) and first.get("understandability") is not None
+    return all(i.id in (first.get("items") or {}) for i in _owner_items(cell)) \
+        and first.get("understandability") is not None
 
 
 def _md_reveal_path(path: Path) -> Path:
@@ -2512,8 +2587,8 @@ def _md_settle(cell: GradingCell) -> bool:
     if _owner_done(cell.state) or not _md_first_done(cell) or _md_disagrees(cell, cell.state["owner_first"]):
         return False
     first = cell.state["owner_first"]
-    cell.state.update(owner={"items": dict(first["items"]), "understandability": first["understandability"],
-                             "at": iso(utc_now())}, changes=[])
+    cell.state.update(owner={"items": _with_deferred(cell, first["items"]),
+                             "understandability": first["understandability"], "at": iso(utc_now())}, changes=[])
     write_json(cell.path, cell.state)
     return True
 
@@ -2521,14 +2596,14 @@ def _md_settle(cell: GradingCell) -> bool:
 def _md_write(grading: Grading, path: Path, kind: str, cells: Sequence[GradingCell]) -> None:
     """*cells* as one file at *path*.  A file there is overwritten only when it holds no letter the owner wrote
     and that is not imported yet (it equals the file written from the cells it names); else :class:`Refused`."""
-    head = (MD_FIRST_HEAD.format(understandability=scoring.UNDERSTANDABILITY_TEXT, reveal=_md_reveal_path(path).name)
+    head = (MD_FIRST_HEAD.format(key=_md_key_path(path).name, reveal=_md_reveal_path(path).name)
             if kind == "first" else MD_FINAL_HEAD)
     blocks = []
     for cell in cells:
         # The material as shown (the forms hold only item ids and letters; Opus's reasons are scanned one by one
         # in _blinded_reason, as in the terminal, and the file's own words name Opus).
-        found = _scan(grading, cell, scoring.owner_markdown(cell.material,
-                                                            scoring.data_tag(grading.state["seed"], cell.token)))
+        found = _scan(grading, cell, scoring.owner_markdown(
+            cell.material, scoring.data_tag(grading.state["seed"], cell.token), MD_DROP))
         if found:
             raise Refused(f"Cell {cell.token}: the review file would reveal {', '.join(found)}; nothing is written.")
         blocks.append(_md_cell(grading, cell, kind))
@@ -2550,7 +2625,8 @@ def _export_md(grading: Grading, review: Mapping[str, Any], path: Path, say: Cal
     final = [c for c in queued if _md_first_done(c)]
     if first:
         _md_write(grading, path, "first", first)
-        say(f"{len(first)} cell(s) for your own verdicts: {path}")
+        _md_key_path(path).write_text(_md_key(grading), encoding="utf-8")
+        say(f"{len(first)} cell(s) for your own verdicts: {path} (what the letters mean: {_md_key_path(path).name})")
     if final:
         _md_write(grading, _md_reveal_path(path), "final", final)
         say(f"{len(final)} cell(s) with Opus's verdicts after yours: {_md_reveal_path(path)}")
@@ -2583,7 +2659,8 @@ def _md_blocks(text: str) -> list[tuple[str, str, str, list[tuple[str, str]]]]:
         form = body.split("\n### Your final verdicts\n" if m.group(1) == "final" else "\n### Your verdicts\n", 1)
         lines = form[1].split("\n### ", 1)[0] if len(form) == 2 else ""
         out.append((m.group(1), m.group(2), m.group(3),
-                    [(lm.group(1), lm.group(3)) for lm in map(MD_LINE.match, lines.split("\n")) if lm]))
+                    [(lm.group(1), lm.group(3)) for lm in (MD_LINE.match(x) or MD_LINE_V1.match(x)
+                                                           for x in lines.split("\n")) if lm]))
     return out
 
 
@@ -2611,7 +2688,7 @@ def _import_md(grading: Grading, path: Path, say: Callable[[str], None]) -> int:
         if kind == "first":
             first = cell.state["owner_first"] = cell.state.get("owner_first") or {}
             items = first.setdefault("items", {})
-            asked = [(i.id, _letters(i.allowed)) for i in cell.judged] + \
+            asked = [(i.id, _letters(i.allowed)) for i in _owner_items(cell)] + \
                     [("understandability", {"1": 1, "2": 2, "3": 3})]
             for iid, allowed in asked:
                 try:
@@ -2639,9 +2716,9 @@ def _import_md(grading: Grading, path: Path, say: Callable[[str], None]) -> int:
             problems.append(f"{token}: your own verdicts are not all imported; import the first file first")
             continue
         first, ai = cell.state["owner_first"], cell.ai
-        final = {"items": dict(first["items"]), "understandability": first["understandability"]}
+        final = {"items": _with_deferred(cell, first["items"]), "understandability": first["understandability"]}
         changes, bad = [], False
-        for i in cell.judged:
+        for i in _owner_items(cell):
             if first["items"][i.id] == ai["items"][i.id]["verdict"]:
                 continue
             try:
@@ -2906,9 +2983,12 @@ def reviewed_cells(grading: Grading, review: Mapping[str, Any]) -> list[Any]:
             continue
         ai = {k: v["verdict"] for k, v in c.ai["items"].items()}
         reasons = review["queue"].get(c.token, [])
+        # Items the owner left to Opus (the review files' numbers) count in the owner's outcome with Opus's
+        # verdict, and in no item pair.
         out.append(analysis.ReviewedCell(
-            token=c.token, question=c.question.id, items=tuple((first["items"][i.id], ai[i.id]) for i in c.judged),
-            outcome=(scoring.outcome(c.items, first["items"]), scoring.outcome(c.items, ai)),
+            token=c.token, question=c.question.id,
+            items=tuple((first["items"][i.id], ai[i.id]) for i in c.judged if i.id in first["items"]),
+            outcome=(scoring.outcome(c.items, {**ai, **first["items"]}), scoring.outcome(c.items, ai)),
             understandability=(first["understandability"], c.ai["understandability"]),
             sample=c.token in review["sample"],
             own_matched=[r for r in reasons if r not in ("sample", "all")] == ["own_model"],

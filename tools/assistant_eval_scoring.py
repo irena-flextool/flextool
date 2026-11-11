@@ -1257,15 +1257,21 @@ def _md_quote(text: str) -> str:
     return "\n".join(out)
 
 
-def owner_markdown(material: str, tag: str) -> str:
+def owner_markdown(material: str, tag: str, drop: Iterable[str] = ()) -> str:
     """The owner's view of *material* (:func:`grader_material`) as markdown under a cell heading: its ``##``
     sections become ``###``, the data fences go, the question, the answers and the excerpts are blockquotes (their
-    markdown renders) and each tool call is a code block folded under its number, state and name.  The text is the
-    graders' own; only its form changes."""
+    markdown renders) and each tool call is a code block folded under its number, state and name.  The sections
+    whose titles start with one of *drop* are left out.  The text is the graders' own; only its form changes."""
+    drop = tuple(drop)
     out: list[str] = []
     section = call = ""
     block: list[str] | None = None
     for line in material.split("\n"):
+        if line.startswith("## ") and block is None:
+            section = line[3:]
+        if drop and section.startswith(drop):
+            block = [] if line == f"<<<DATA {tag}>>>" else None if line == f"<<<END {tag}>>>" else block
+            continue
         if block is not None:
             if line == f"<<<END {tag}>>>":
                 text = "\n".join(block)
@@ -1282,7 +1288,6 @@ def owner_markdown(material: str, tag: str) -> str:
         elif line == f"<<<DATA {tag}>>>":
             block = []
         elif line.startswith("## "):
-            section = line[3:]
             out.extend(["", f"### {section}", ""])
         elif re.fullmatch(r"\[\d+\] (ok|failed)", line):
             call = line

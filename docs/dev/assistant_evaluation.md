@@ -351,11 +351,16 @@ python tools/assistant_eval.py review --dir GRADING --import-md REVIEW.md
 python tools/assistant_eval.py review --dir GRADING --import-md REVIEW.final.md
 ```
 
-`--export-md` writes every queued cell not yet reviewed (no sitting limit) as `# Cell #n`. The material is the
-graders' own, rendered: its sections are `###` headings, the fences are gone, the question, the answers and the
-excerpts are blockquotes (their headings three levels lower), and each tool call is a code block folded under
-its number, state and name. Each cell ends with **Your verdicts**, one line per judged item and one for the
-understandability; the owner writes the letter after the colon. Nothing of Opus's is in this file, and every
+`--export-md` writes every queued cell not yet reviewed (no sitting limit) as `# Cell #n`, and the key file
+`REVIEW.key.md`: what the letters mean, in general and for each kind of item that has its own meaning (the
+same texts the graders read). The material is the graders' own, rendered and shortened: its sections are `###`
+headings, the fences are gone, the question and the answers are blockquotes (their headings three levels
+lower), and the tool calls, the excerpts and the items-to-grade list are left out. Each cell ends with **Your
+verdicts**: each item the owner judges, with its text and the letters it allows (`` - `fact:x` (critical):
+statement: … [r / m / w]: ``), and the understandability; the owner writes the letter after the colon. The
+numbers (a number fact the check did not find, a number without a tool source) are left to Opus and not
+asked: the owner's grade of the cell carries Opus's verdicts for them, they count in the owner's outcome
+with Opus's verdict and they are in no item agreement pair. Nothing of Opus's is in this file, and every
 cell's material is leak-scanned as for the terminal.
 
 `--import-md` records the letters as the owner's first verdicts; an empty line is asked again by the next

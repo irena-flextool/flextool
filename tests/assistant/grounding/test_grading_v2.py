@@ -731,7 +731,7 @@ def test_review_owner_first_then_opus(scoring, evaluator, tmp_path: Path) -> Non
 def test_owner_markdown_renders_the_material(scoring) -> None:
     """The fences go, ## sections become ###, the question and answers are blockquotes whose own headings drop
     three levels (not inside their code blocks), each tool call is a code block folded under its number, state
-    and name, with a fence longer than the backticks inside."""
+    and name, with a fence longer than the backticks inside; the dropped sections are left out whole."""
     tag = "0123456789ab"
     material = "\n".join([
         "## Question", scoring.fence("turn 1: How much?", tag),
@@ -745,10 +745,15 @@ def test_owner_markdown_renders_the_material(scoring) -> None:
     assert '<details><summary>[1] ok get_entity</summary>\n\n````\nname: get_entity' in md
     assert "> ##### Short\n> 500 MW.\n>\n> ```\n> # not a heading\n> ```" in md
     assert md.endswith("### Items to grade\n\n- facts_vs_assumptions: x. Allowed: right, missing, wrong")
+    short = scoring.owner_markdown(material, tag, ("Tool calls", "Items to grade"))
+    assert "get_entity" not in short and "Items to grade" not in short and "facts_vs" not in short
+    assert short.startswith("### Question") and short.endswith("> # not a heading\n> ```")
 
 
 def test_review_through_markdown_files(scoring, evaluator, tmp_path: Path) -> None:
-    """--export-md writes the owner's form without anything of Opus's; --import-md records the first verdicts, a
+    """--export-md writes the owner's form without anything of Opus's, the tool calls or the numbers (they are
+    Opus's: number:1:0 is not asked, and the owner's grades carry Opus's verdict for it) and with each item's text
+    next to its letters, and the key file; --import-md records the first verdicts, a
     cell that agrees with Opus is final at once, the others go to FILE.final.md with Opus's verdicts and the
     owner's letters already in; its import records the final verdicts and the changes.  An imported first verdict
     is never replaced; a file with letters not imported yet is never overwritten; a bad letter is a problem."""
@@ -765,24 +770,29 @@ def test_review_through_markdown_files(scoring, evaluator, tmp_path: Path) -> No
     text = form.read_text(encoding="utf-8")
     assert text.count("\n# Cell #") == 2 and "<<<DATA" not in text
     assert "checked" not in text and "(high)" not in text and "fine" not in text     # Opus's reasons, confidences
-    number = next(t for t in ("#1", "#2") if f"first {t} " in text.split("`number:1:0`")[0].rsplit("# Cell", 1)[1])
+    assert "number:1:0" not in text and "Tool calls" not in text and "Items to grade" not in text
+    assert "- `facts_vs_assumptions`: facts and assumptions [r / m / w]:\n" in text and "right = " not in text
+    key_text = (tmp_path / "review.key.md").read_text(encoding="utf-8")
+    assert "## facts and assumptions\n\n- right = every claim" in key_text and "tool source" not in key_text
+    number = next(c["token"] for c in cell_states(grading).values() if "number:1:0" in c["ai"]["items"])
     other = "#2" if number == "#1" else "#1"
 
     def fill(text: str, token: str, answers: dict[str, str]) -> str:
         head, rest = text.split(f"# Cell {token}\n", 1)
         block, sep, tail = rest.partition("\n# Cell #")
         for iid, letter in answers.items():
-            block = re.sub(rf"^(- `{re.escape(iid)}`[^:\n]*:)$", rf"\g<1> {letter}", block, flags=re.MULTILINE)
+            block = re.sub(rf"^(- `{re.escape(iid)}`.*\]:)$", rf"\g<1> {letter}", block, flags=re.MULTILINE)
         return f"{head}# Cell {token}\n{block}{sep}{tail}"
 
     # the number cell agrees with Opus; the other differs on facts_vs_assumptions and has a bad understandability
-    text = fill(text, number, {"number:1:0": "r", "facts_vs_assumptions": "m", "understandability": "1"})
+    text = fill(text, number, {"facts_vs_assumptions": "m", "understandability": "1"})
     form.write_text(fill(text, other, {"facts_vs_assumptions": "r", "understandability": "x"}), encoding="utf-8")
     said: list[str] = []
     assert review(evaluator, grading, key, [], "--import-md", str(form), said=said) == 1
     assert any("'x' is not one of 1 / 2 / 3" in s for s in said)
     states = cell_states(grading)
     assert states[number]["owner"]["items"] == {"number:1:0": "right", "facts_vs_assumptions": "missing"}
+    assert states[number]["owner_first"]["items"] == {"facts_vs_assumptions": "missing"}
     assert states[number]["changes"] == [] and states[other]["owner"] is None
     assert states[other]["owner_first"] == {"items": {"facts_vs_assumptions": "right"}}
     final = tmp_path / "review.final.md"
@@ -790,8 +800,8 @@ def test_review_through_markdown_files(scoring, evaluator, tmp_path: Path) -> No
     # the export refuses to overwrite the bad letter; the fixed file imports, and changing the imported
     # facts_vs_assumptions to w keeps the first verdict r
     assert review(evaluator, grading, key, [], "--export-md", str(form)) == 2
-    form.write_text(form.read_text(encoding="utf-8").replace("(1 / 2 / 3): x", "(1 / 2 / 3): 2")
-                    .replace("(r / m / w): r", "(r / m / w): w"), encoding="utf-8")
+    form.write_text(form.read_text(encoding="utf-8").replace("[1 / 2 / 3]: x", "[1 / 2 / 3]: 2")
+                    .replace("[r / m / w]: r", "[r / m / w]: w"), encoding="utf-8")
     said.clear()
     assert review(evaluator, grading, key, [], "--import-md", str(form), said=said) == 1
     assert any("first verdict right was imported already and is kept" in s for s in said)
@@ -799,9 +809,9 @@ def test_review_through_markdown_files(scoring, evaluator, tmp_path: Path) -> No
                                                           "understandability": 2}
     shown = final.read_text(encoding="utf-8")
     assert f"# Cell {other}" in shown and f"# Cell {number}" not in shown and "checked" in shown
-    assert "- `facts_vs_assumptions` (r / m / w; yours right, Opus missing): r" in shown
-    assert "- `understandability` (1 / 2 / 3; yours 2, Opus 1): 2" in shown
-    final.write_text(shown.replace("yours right, Opus missing): r", "yours right, Opus missing): m"),
+    assert "- `facts_vs_assumptions`: facts and assumptions [r / m / w; yours right, Opus missing]: r" in shown
+    assert "- `understandability` [1 / 2 / 3; yours 2, Opus 1]: 2" in shown
+    final.write_text(shown.replace("yours right, Opus missing]: r", "yours right, Opus missing]: m"),
                      encoding="utf-8")
     assert review(evaluator, grading, key, [], "--import-md", str(final)) == 0
     state = cell_states(grading)[other]
