@@ -156,8 +156,10 @@ def compute_slacks(par, s, v, r) -> None:
     # Reserve slack penalty: step_duration is already here (line below);
     # add timestep_weight to match mod line ~2388.  ``shortfall_scale`` is the same multiplier the LP uses (it
     # equals the reservation for timeseries-only groups), so it is applied once here — not alongside
-    # ``reservation``.
+    # ``reservation``.  The scale is reindexed to vq_reserve's columns as above: its column level is named
+    # ``upDown`` and vq_reserve's ``updown``, so a plain ``.mul`` of two frames whose columns differ in set or
+    # order aligns on the level names and multiplies every group by every upDown (the penalty came out doubled).
     r.costPenalty_reserve_upDown_dt = v.q_reserve.mul(par.step_duration, axis=0) \
         .mul(par.timestep_weight, axis=0) \
         .mul(par.reserve_upDown_group_penalty.reindex(v.q_reserve.columns), axis=1) \
-        .mul(par.reserve_upDown_group_shortfall_scale, axis=1)
+        .mul(par.reserve_upDown_group_shortfall_scale.reindex(columns=v.q_reserve.columns), axis=1)

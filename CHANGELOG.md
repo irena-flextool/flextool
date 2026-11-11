@@ -443,6 +443,11 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   *no_reserve* switched the reserve constraints on. These are no longer built: results are unchanged, except that
   the reserve shortfall tables (`slack__reserve__upDown__group__d` / `__dt`) no longer have an empty column for
   such groups.
+- **The reserve shortfall penalty in the cost tables could be doubled.** In a model with several reserve groups
+  (for example an up and a down reserve), the *upward / downward reserve slack penalty* of `costs__dt` and the cost
+  summaries multiplied each group's shortfall by the scale of every group of the same reserve when the groups were
+  listed in another order, and so came out twice too large. The optimisation was right; only the reported cost was
+  wrong. Each group's shortfall now takes its own scale.
 - **The period average of the reserve a unit or connection holds ignored the time-step weights.**
   `process__reserve__upDown__node__d_average` (`reservation_average`) was the plain mean of the steps, too high
   or too low on representative periods with unequal weights. It is now the time-step-weighted average over the
