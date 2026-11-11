@@ -735,9 +735,11 @@ TURN_KEYS = ("user", "answer", "tool_calls", "rounds", "calls", "continuations",
 STOP_KEYS = ("code", "turn", "round", "request", "request_sha256", "est_input", "provider", "lost_usage",
              "stopped_at", "pace", "stream")
 #: The stops after which the cell is kept and ``--resume`` continues it from its checkpoint: the provider busy or
-#: limiting (also its per-minute input-token quota and its daily quota), no connection, no answer in time.  Any
-#: other stop (key, permission, credit, model, routing, tools, history, a fault) throws the checkpoint away.
-TEMPORARY_STOPS = frozenset({"busy", "rpm", "tpm_input", "connection", "timeout", "quota"})
+#: limiting (also its per-minute input-token quota and its daily quota), no connection, no answer in time, and the
+#: service unable to read a tool call in the model's answer (``tool_call_unreadable``, Ollama's "error parsing tool
+#: call": the service's format problem with one answer, never a graded stop).  Any other stop (key, permission,
+#: credit, model, routing, tools, history, a fault) throws the checkpoint away.
+TEMPORARY_STOPS = frozenset({"busy", "rpm", "tpm_input", "connection", "timeout", "quota", "tool_call_unreadable"})
 #: A cell whose same request the provider refused for its input tokens per minute this many times in a row is not
 #: applicable (the request alone is over the quota; CAL-FINDING 2026-11-10): recorded, never asked again.
 QUOTA_PER_REQUEST = "provider quota per request"
@@ -3246,6 +3248,9 @@ def _summary(args: argparse.Namespace, say: Callable[[str], None]) -> int:
                         f"{row['incomplete']:>3}  escalated {row['escalated']:>3}  failed {row['failed']:>3} "
                         f"(no answer {row['no answer']})  waiting {row['waiting']:>3}  invented {row['invented']:>3}"
                         f"  understandability 1/2/3 {row['u1']}/{row['u2']}/{row['u3']}")
+        attempts = analysis.failed_attempts_line(analysis.failed_attempt_codes(c.record for c in cells))
+        if attempts:
+            say(attempts)
         na = sum(1 for f, _r, _rec, _c in grading.not_applicable if str(f) == folder)
         if na:
             say(f"  not applicable (context): {na}")

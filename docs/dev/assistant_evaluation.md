@@ -95,7 +95,8 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
 - **Errors.** A cell whose answer was cut off, was still too long for the context, or was refused by the provider
   is a graded outcome and is saved. Any other error stops the run with exit code 1 (a daily quota: exit 0):
   - after a *temporary* one (a busy or overloaded service, a rate limit, Google's per-minute input-token quota, no
-    connection, a timeout, a daily quota) the cell is kept: "G05__large__r1: kept up to turn 1, request 7; run
+    connection, a timeout, a daily quota, a tool call the service could not read three times in a row —
+    `tool_call_unreadable`, Ollama's "error parsing tool call", never a graded stop) the cell is kept: "G05__large__r1: kept up to turn 1, request 7; run
     again with --resume to continue it";
   - after any other (a key, permission, credit, model, routing, tools or history error, an internal fault) nothing
     of the cell is saved: "…: nothing was saved for this cell. Run again with --resume." Its next `--resume` asks it
@@ -410,7 +411,10 @@ the ratings per level setting next to the understandability.
 ### summary
 
 `summary --dir` prints, per model, level setting and class: answered, incomplete, escalated, failed (and how many
-had no answer), the cells still waiting, the invented numbers and the understandability ratings. It also writes
+had no answer), the cells still waiting, the invented numbers and the understandability ratings; per model also the
+failed request attempts of its saved turns by code ("failed requests (service or format problems, not part of the
+grade): busy 1, tool_call_unreadable 3"), retried and recovered or not — a count of the service's and the
+format's problems, in no rate. It also writes
 `agreement.txt`: Opus against the owner's first verdicts, per item (3 categories), per outcome (4) and for
 understandability (also linear-weighted kappa), each with n, agreement, Cohen's kappa with a bootstrap interval by
 question, the confusion table and the lenient (Opus kinder) and strict counts. It reports:

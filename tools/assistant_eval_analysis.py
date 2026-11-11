@@ -15,6 +15,10 @@ caps.  Then the evidence for the owner (P3 §7.6 (a)–(c)): tasks per level, th
 evidence level against its automatic level.  With round 1's few cells per class these are evidence for the owner's
 review, not pass/fail decisions.
 
+**Failed requests** (:func:`failed_attempt_codes`, :func:`failed_attempts_line`): per model, the failed request
+attempts of the saved turns by code, which ``summary`` prints as the service's and the format's problems (an
+overload, a tool call the service could not read), never as part of a grade or rate.
+
 **Agreement** (:func:`agreement_report`): the owner's verdicts, given before Opus's were shown, against Opus's on
 the reviewed cells: per item (right / missing / wrong), per outcome (four) and for understandability (1–3, also
 linear-weighted kappa): n, agreement, Cohen's kappa with a bootstrap interval resampled by question, the confusion
@@ -253,6 +257,35 @@ def evidence(lines: Sequence[Mapping[str, Any]]) -> dict[tuple[str, str, bool], 
         if line["outcome"] in ("answered", "escalated") and invented == 0:
             ev.safe[cell].k += 1
     return out
+
+
+def failed_attempt_codes(records: Iterable[Mapping[str, Any]]) -> dict[tuple[str, str], dict[str, int]]:
+    """Per (provider, model): how many failed request attempts of each code the records' turns hold
+    (``failed_attempts``: retried and recovered, or the stopping one of a turn), codes in alphabetical order.  These
+    are the service's and the format's problems (an overload, a rate limit, a tool call the service could not read),
+    not the model's grade: no rate counts them."""
+    out: dict[tuple[str, str], dict[str, int]] = {}
+    for record in records:
+        model = record.get("model") or {}
+        key = (str(model.get("preset")), str(model.get("model") or (record.get("cell") or {}).get("model")))
+        counts = out.setdefault(key, {})
+        for turn in record.get("turns") or []:
+            for attempt in turn.get("failed_attempts") or []:
+                code = str(attempt.get("code"))
+                counts[code] = counts.get(code, 0) + 1
+    return {key: dict(sorted(counts.items())) for key, counts in out.items()}
+
+
+def failed_attempts_line(counts: Mapping[tuple[str, str], Mapping[str, int]]) -> str | None:
+    """The summary's line of :func:`failed_attempt_codes` for one model: ``None`` when no request failed."""
+    merged: dict[str, int] = {}
+    for by_code in counts.values():
+        for code, n in by_code.items():
+            merged[code] = merged.get(code, 0) + n
+    if not merged:
+        return None
+    listed = ", ".join(f"{code} {merged[code]}" for code in sorted(merged))
+    return f"  failed requests (service or format problems, not part of the grade): {listed}"
 
 
 def _pct(rate: Rate) -> str:

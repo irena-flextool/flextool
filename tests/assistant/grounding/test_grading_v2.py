@@ -537,6 +537,25 @@ def test_empty_answer_failed_in_code(scoring, evaluator, tmp_path: Path) -> None
     assert lines["G03"]["cut_off"] is True and lines["G03"]["no_answer"] is False
 
 
+def test_summary_counts_failed_requests_apart_from_the_grade(scoring, evaluator, tmp_path: Path) -> None:
+    """A cell whose turn needed two retries after unreadable tool calls: the summary names them per model as
+    failed requests, a service or format count; the cell is not failed for them (both cells wait for the owner's
+    review: the two-cell pool is all sampled)."""
+    flaky = make_record(scoring, "G01", "small")
+    flaky["turns"][0]["failed_attempts"] = [{"code": "tool_call_unreadable", "status": 500, "provider_code": None,
+                                             "message": "error parsing tool call", "quota": [], "retry_delay": None}] * 2
+    folder = results(evaluator, tmp_path / "res", {"G01__small__r1": flaky,
+                                                   "G03__small__r1": make_record(scoring, "G03", "small")})
+    key = write_key(tmp_path / "key.yaml")
+    grading = tmp_path / "grading"
+    assert grade_ai(evaluator, grading, key, folder, opus=Opus(), extra=("--single-model",)) == 0
+    said: list[str] = []
+    assert summary(evaluator, grading, key, tmp_path / "r.jsonl", said=said) == 0
+    assert "  failed requests (service or format problems, not part of the grade): tool_call_unreadable 2" in said
+    row = next(s for s in said if s.startswith("  small "))
+    assert "n   2" in row and "failed   0" in row and "waiting   2" in row
+
+
 # --- 12. blinding (ported from the earlier grading) -----------------------------------------------------------
 def test_grade_ai_shuffles_across_folders(scoring, evaluator, tmp_path: Path, capsys,
                                          monkeypatch: pytest.MonkeyPatch) -> None:

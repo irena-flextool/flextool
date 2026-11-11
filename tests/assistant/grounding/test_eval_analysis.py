@@ -577,6 +577,26 @@ def test_bootstrap_counts_undefined(analysis) -> None:
     assert analysis.measure(cells, "item", seed=3)["bootstrap"].undefined == boot.undefined
 
 
+def test_failed_attempts_are_counted_by_model_and_code_not_graded(analysis, evaluator) -> None:
+    """Two records of one model hold 2 + 1 unreadable tool calls and 1 overload, a record of another model 1
+    connection error: counted per model and code (alphabetical), and the line lists them for one model."""
+    def record(model: str, *turns: list[str]) -> dict:
+        return {"model": {"preset": "ollama", "model": model}, "cell": {"model": model},
+                "turns": [{"failed_attempts": [{"code": c} for c in codes]} for codes in turns]}
+
+    records = [record("gpt-oss:20b", ["tool_call_unreadable", "tool_call_unreadable"], []),
+               record("gpt-oss:20b", ["busy", "tool_call_unreadable"]), record("qwen3:14b", ["connection"]),
+               record("qwen3:14b")]
+    counts = analysis.failed_attempt_codes(records)
+    assert counts == {("ollama", "gpt-oss:20b"): {"busy": 1, "tool_call_unreadable": 3},
+                      ("ollama", "qwen3:14b"): {"connection": 1}}
+    assert analysis.failed_attempts_line({k: v for k, v in counts.items() if k[1] == "gpt-oss:20b"}) == (
+        "  failed requests (service or format problems, not part of the grade): busy 1, tool_call_unreadable 3")
+    assert analysis.failed_attempts_line(analysis.failed_attempt_codes([record("m", [])])) is None
+    assert "tool_call_unreadable" in evaluator.TEMPORARY_STOPS
+    assert "tool_call_unreadable" not in evaluator.GRADED_STOPS
+
+
 def test_statistics_by_hand(analysis) -> None:
     """Wilson 13/20: z² = 3.8415, centre (0.65 + 0.0960) / 1.1921 = 0.6258, half 1.6442 · 0.11737 = 0.1930.
     Kappa of (p,p), (f,f), (p,unparsed), (f,f): observed 3/4 = 0.75; expected 0.5·0.25 (pass) + 0.5·0.5 (fail)
@@ -613,7 +633,7 @@ def _error(code: str):
 
     cls = {"connection": llm_errors.Unreachable, "timeout": llm_errors.TimedOut, "busy": llm_errors.ServerBusy,
            "auth": llm_errors.AuthFailed, "model": llm_errors.ModelNotFound,
-           "routing": llm_errors.NoMatchingEndpoint}[code]
+           "routing": llm_errors.NoMatchingEndpoint, "tool_call_unreadable": llm_errors.UnreadableToolCall}[code]
     key = "connection_remote" if code == "connection" else code
     return llm_errors.make_error(cls, key, llm_errors.ErrorContext(provider="OpenRouter", host="openrouter.ai"))
 
@@ -629,12 +649,12 @@ def no_waits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(session, "RetryPolicy", functools.partial(RetryPolicy, max_retries=0, connection_wait=0.0))
 
 
-@pytest.mark.parametrize("code", ["connection", "timeout", "busy", "auth", "model", "routing"])
+@pytest.mark.parametrize("code", ["connection", "timeout", "busy", "auth", "model", "routing", "tool_call_unreadable"])
 def test_transient_error_not_saved_and_resumed(evaluator, grounding: Path, tmp_path: Path, code: str,
                                                no_waits) -> None:
     """C6-M5: an error that is not the model's behaviour stops the run with the cell unsaved; --resume asks it.
-    Item 216: a temporary stop (connection, timeout, busy) keeps the cell's checkpoint, which --resume continues;
-    any other (key, model, routing) throws it away."""
+    Item 216: a temporary stop (connection, timeout, busy, a tool call the service could not read) keeps the cell's
+    checkpoint, which --resume continues; any other (key, model, routing) throws it away."""
     out = tmp_path / "out"
     said: list[str] = []
     harness = Scripted([[_answer()], [_error(code)] * 4])
@@ -648,7 +668,7 @@ def test_transient_error_not_saved_and_resumed(evaluator, grounding: Path, tmp_p
 
     assert go() == 1
     assert sorted(p.stem for p in (out / "cells").glob("*.json")) == ["G01__small__r1"]
-    kept = code in ("connection", "timeout", "busy")
+    kept = code in ("connection", "timeout", "busy", "tool_call_unreadable")
     assert said[-1] == ("G03__small__r1: kept up to turn 1, request 1; run again with --resume --accept-data-notice "
                         "to continue it" if kept else
                         "G03__small__r1: nothing was saved for this cell. Run again with --resume "
