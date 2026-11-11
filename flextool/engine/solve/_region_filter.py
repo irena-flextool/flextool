@@ -538,15 +538,18 @@ def _validate_startup_nodes(data: FlexData, region_nodes: dict[str, set[str]],
     if pn is None or pn.height == 0:
         return
     bad: list[str] = []
+    all_region_procs = {q for ps in region_procs.values() for q in ps}
     for p, n in pn.select(pl.col("p").cast(pl.Utf8), pl.col("n").cast(pl.Utf8)).iter_rows():
         for r, nodes in region_nodes.items():
             if n in nodes and p not in region_procs.get(r, set()):
-                bad.append(f"unit {p!r} takes start-up energy from node {n!r} of region {r!r}")
+                who = f"unit {p!r}" if p in all_region_procs else f"unit {p!r} of no region"
+                bad.append(f"{who} takes start-up energy from node {n!r} of region {r!r}")
     if bad:
         raise RuntimeError(
             "split: " + "; ".join(sorted(bad)) + ".  A start-up draw is a term on the unit's start-ups, which are "
-            "in the unit's own region subproblem.  Take the start-up input from a node of the unit's region or a "
-            "node of no region (a commodity node), or bring the node into the unit's region.")
+            "in the unit's own region subproblem (a unit of no region is copied into every region).  Take the "
+            "start-up input from a node of the unit's region or a node of no region (a commodity node), take it "
+            "through a connection into a node of the unit's region, or bring the node into the unit's region.")
 
 
 def _user_constraint_sides(
@@ -801,10 +804,18 @@ def _co2_master_partition(
     data: FlexData,
     master_local_triples: set[tuple[str, str, str]],
     region_master_triples: set[tuple[str, str, str]],
+    master_local_procs: "set[str] | frozenset[str]" = frozenset(),
 ) -> set[str]:
     """Validate the CO2 frames against the master boundary and return
     the CO2-capped groups whose EVERY capped flow is a master-local arc
     (those cap constraints live whole in the master).
+
+    A start-up draw (``startup_from_co2_capped`` / ``_capped_total``,
+    unit__inputNode.startup_input_method) is a term on the unit's
+    ``v_startup``: it is on the master side when the unit is a
+    master-local process (``master_local_procs``), else on the region
+    side (the unit's own region subproblem), and counts towards the
+    group's side like a capped flow.
 
     Hard errors (never a silent degrade):
 
@@ -839,6 +850,12 @@ def _co2_master_partition(
             t = (r["p"], r["source"], r["sink"])
             master_flags_by_g.setdefault(r["g"], []).append(
                 t in master_local_triples)
+    for fld in ("startup_from_co2_capped", "startup_from_co2_capped_total"):
+        df = getattr(data, fld, None)
+        if df is None or df.height == 0:
+            continue
+        for p, g in df.select(pl.col("p").cast(pl.Utf8), pl.col("g").cast(pl.Utf8)).iter_rows():
+            master_flags_by_g.setdefault(g, []).append(p in master_local_procs)
     kept: set[str] = set()
     for g in sorted(master_flags_by_g):
         flags = master_flags_by_g[g]
@@ -848,7 +865,8 @@ def _co2_master_partition(
             raise RuntimeError(
                 f"split: CO2-capped group {g!r} straddles the "
                 f"region/master boundary — it caps both master-local "
-                f"and region-side flows.  A shared CO2 cap cannot be "
+                f"and region-side flows (a start-up draw is on its "
+                f"unit's side).  A shared CO2 cap cannot be "
                 f"split between a region subproblem and the Benders "
                 f"master — regroup so every capped flow is on one side."
             )
@@ -1872,7 +1890,7 @@ def master_network_data(
         master_groups_feature = _master_side_feature_groups(
             data, all_region_nodes, master_hosted_nodes)
         master_groups_co2 = _co2_master_partition(
-            data, master_local_keys, region_master_keys)
+            data, master_local_keys, region_master_keys, _ml_procs)
         # Arc keep-set = cross ∪ region↔master coupling ∪ master-local
         # (audit 0.D: the coupling-arc-only case is load-bearing).
         cross_keys = cross_keys | region_master_keys | master_local_keys
@@ -2140,14 +2158,20 @@ def master_network_data(
                         else _keep_proc(obj))
 
     # Start-up input draws (startup_input_method): none in the network-only master; in master-hosted mode the
-    # units of the kept arcs at master-hosted nodes (a region unit's draw is in its region subproblem).
+    # units of the kept arcs (the master-local units: a region unit's draw is in its region subproblem) at a
+    # master-hosted node or a node of no region (a commodity node, priced like the unit's fuel arc).  A master-local
+    # unit drawing from a region node straddles the boundary (_validate_no_straddling_units).
+    _startup_pn = getattr(data, "process_startup_node", None)
+    _region_node_union = {n for ns in region_nodes.values() for n in ns}
+    startup_nodes_kept = (set() if _startup_pn is None else
+                          {str(n) for n in _startup_pn.get_column("n").to_list()} - _region_node_union)
     for fld in STARTUP_FIELDS:
         obj = getattr(data, fld, None)
         if master_mode and obj is not None:
             if isinstance(obj, Param):
-                obj = _filter_param(_filter_param(obj, "p", cross_procs), "n", set(master_hosted_nodes))
+                obj = _filter_param(_filter_param(obj, "p", cross_procs), "n", startup_nodes_kept)
             else:
-                obj = _filter_frame(_filter_frame(obj, "p", cross_procs), "n", set(master_hosted_nodes))
+                obj = _filter_frame(_filter_frame(obj, "p", cross_procs), "n", startup_nodes_kept)
             if (obj.frame if isinstance(obj, Param) else obj).height == 0:
                 obj = None
         else:
@@ -2452,7 +2476,8 @@ def split(
         master_groups = (
             _master_side_feature_groups(
                 data, all_region_nodes, master_hosted_nodes)
-            | _co2_master_partition(data, _ml_triples, _rm_triples)
+            | _co2_master_partition(data, _ml_triples, _rm_triples,
+                                    master_local_procs)
         )
         # Master-local procs live wholly in the master (F3): regions
         # carry neither their arcs nor their entity rows.

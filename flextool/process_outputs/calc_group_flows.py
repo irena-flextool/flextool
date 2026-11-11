@@ -24,17 +24,42 @@ def _with_startup_draws(node_to_unit: pd.DataFrame, r, s) -> "tuple[pd.DataFrame
     return out, pd.MultiIndex.from_tuples(list(only), names=['process', 'node'])
 
 
-def _with_startup_only_rows(node_set: pd.MultiIndex, startup_only: pd.MultiIndex, s) -> pd.MultiIndex:
-    """``node_set`` (group, process, node) with the startup_only draws (process, node) of each dispatch group at a
-    node of the group, unless the process is wholly inside the group (its draw is then an internal loss)."""
+def _startup_only_aggregators(s, p: str) -> list:
+    """The flow aggregators (``s.flowAggregator``) of the unit ``p`` of a startup_only draw: those whose flowGroup
+    lists the unit at any node.  The draw has no (process, node) membership of its own (a flowGroup cannot name a
+    startup_only arc, ``validate_startup_inputs``), so it goes where the unit goes."""
+    aggregators = getattr(s, 'flowAggregator', None)
+    gpn = getattr(s, 'group_process_node', None)
+    if aggregators is None or len(aggregators) == 0 or gpn is None or len(gpn) == 0:
+        return []
+    members = {(g, q) for g, q, _n in gpn}
+    return [ga for ga in aggregators if (ga, p) in members]
+
+
+def _with_startup_only_rows(node_set: pd.MultiIndex, startup_only: pd.MultiIndex, s, *,
+                            aggregate: bool = False) -> pd.MultiIndex:
+    """``node_set`` with the startup_only draws (process, node) of each dispatch group at a node of the group, unless
+    the process is wholly inside the group (its draw is then an internal loss).
+
+    ``aggregate`` False: ``node_set`` is (group, process, node) and gets the draws in no flow aggregator; True:
+    ``node_set`` is (group, group_aggregate, process, node) and gets a row per aggregator of the draw."""
     if len(startup_only) == 0:
         return node_set
     inside = set(s.nodeGroupDispatch__process_fully_inside)
-    rows = [(g, p, n) for g in s.nodeGroupDispatch for p, n in startup_only
-            if (g, n) in s.group_node and (g, p) not in inside]
+    rows = []
+    for g in s.nodeGroupDispatch:
+        for p, n in startup_only:
+            if (g, n) not in s.group_node or (g, p) in inside:
+                continue
+            aggregators = _startup_only_aggregators(s, p)
+            if aggregate:
+                rows += [(g, ga, p, n) for ga in aggregators]
+            elif not aggregators:
+                rows.append((g, p, n))
     if not rows:
         return node_set
-    extra = pd.MultiIndex.from_tuples(rows, names=['group', 'process', 'node'])
+    names = ['group', 'group_aggregate', 'process', 'node'] if aggregate else ['group', 'process', 'node']
+    extra = pd.MultiIndex.from_tuples(rows, names=names)
     return node_set.append(extra.reorder_levels(list(node_set.names))) if len(node_set) else extra
 
 
@@ -148,7 +173,8 @@ def compute_group_flows(par, s, v, r) -> None:
     r.nodeGroupDispatch__group_aggregate_Unit_to_group_positive__dt = unit_to_group_selected_positive.T.groupby(level=['group', 'group_aggregate']).sum().T
     r.nodeGroupDispatch__group_aggregate_Unit_to_group_negative__dt = unit_to_group_selected_negative.T.groupby(level=['group', 'group_aggregate']).sum().T
 
-    group_to_unit_set = s.nodeGroupDispatch__processGroup__process__node__to_unit.droplevel('unit')
+    group_to_unit_set = _with_startup_only_rows(
+        s.nodeGroupDispatch__processGroup__process__node__to_unit.droplevel('unit'), startup_only, s, aggregate=True)
     group_agg_sets = node_to_unit.columns.join(group_to_unit_set, how='inner')
     group_to_unit_selected = node_to_unit[group_agg_sets.droplevel(['group', 'group_aggregate'])]
     group_to_unit_selected.columns = group_agg_sets

@@ -245,6 +245,7 @@ def _backfill_group_indicator_sets(s, output_dir, *, provider=None):
         ('nodeGroupDispatch', 'nodeGroupDispatch.csv'),
         ('nodeGroupIndicators', 'nodeGroupIndicators.csv'),
         ('flowGroupIndicators', 'flowGroupIndicators.csv'),
+        ('flowAggregator', 'flowAggregator.csv'),
     ):
         stem = fname[:-4]
         df_pl = _provider_lookup_df(provider, "input", stem)

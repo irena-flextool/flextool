@@ -1162,6 +1162,7 @@ def read_sets(
     # when nodeGroupDispatch features are configured.  No FlexData
     # field carries these directly today.
     s.nodeGroupDispatch = pd.Index([], name="group", dtype="object")
+    s.flowAggregator = pd.Index([], name="group", dtype="object")
     s.nodeGroupIndicators = pd.Index([], name="group", dtype="object")
     s.flowGroupIndicators = pd.Index([], name="group", dtype="object")
     s.nodeGroupDispatch__connection_Not_in_aggregate = empty_multi_index(

@@ -37,7 +37,7 @@ import numpy as np
 import spinedb_api as api
 
 from flextool.engine.input._solve_state import FlexToolConfigError
-from flextool.input_derivation._method_constants import METHOD_2WAY_1VAR
+from flextool.input_derivation._method_constants import METHOD_2WAY_1VAR, METHOD_LP, METHOD_MIP
 
 
 __all__ = [
@@ -1391,7 +1391,7 @@ def validate_startup_inputs(db, provider, logger: logging.Logger) -> None:
     negative = sorted(arc for arc, vals in energy_rows.items() if any(v < 0.0 for v in vals))
     if negative:
         errors.append(f"startup_energy must be 0 or above: {', '.join(f'({u}, {n})' for u, n in negative)}.")
-    online_methods = {"method_1way_1var_LP", "method_1way_nvar_LP", "method_1way_1var_MIP", "method_1way_nvar_MIP"}
+    online_methods = METHOD_LP | METHOD_MIP
     process_methods = _process_methods(provider)
     offline = sorted({u for u, _n in roles if process_methods.get(u) not in online_methods})
     if offline:

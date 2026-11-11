@@ -774,3 +774,143 @@ def test_node_group_view_shows_the_start_up_input(tmp_path_factory) -> None:
                ["group", "oilg", "print_dispatch", _s("yes")]]
     oil = _table(tmp_path_factory, "su_oil_group", values, ents, "nodeGroup_flows_dt_gpe")
     assert _per_step(oil, ("oilg", "to_unit", "cp")) == pytest.approx([0.0, -120.0, 0.0, 0.0], abs=1e-6)
+
+
+def test_aggregated_node_group_view_shows_the_startup_only_draw(tmp_path_factory) -> None:
+    """A flow aggregator (flowGroup ``agg``, flow_aggregator dispatch_plots_only) of the unit cp (listed at its
+    output elec: a flowGroup cannot name the startup_only arc) shows cp's draw from oil_n in the aggregate column of
+    nodeGroup_flows_dt_gpe (−120 at t0002, MWh in the step, stored negated), and cp has no column of its own."""
+    ents = _entities([["group", "oilg", None], ["group__node", ["oilg", "oil_n"], None],
+                      ["flowGroup", "agg", None], ["flowGroup__unit__node", ["agg", "cp", "elec"], None]])
+    values = [v for v in _values() if v[:3] != ["node", "oil_n", "node_type"]]
+    values += [["node", "oil_n", "node_type", _s("balance")], ["node", "oil_n", "penalty_up", _f(100.0)],
+               ["group", "oilg", "print_dispatch", _s("yes")],
+               ["flowGroup", "agg", "flow_aggregator", _s("dispatch_plots_only")]]
+    oil = _table(tmp_path_factory, "su_oil_agg", values, ents, "nodeGroup_flows_dt_gpe")
+    assert _per_step(oil, ("oilg", "to_unitGroup", "agg")) == pytest.approx([0.0, -120.0, 0.0, 0.0], abs=1e-6)
+    assert ("oilg", "to_unit", "cp") not in oil.columns
+
+
+# ---------------------------------------------------------------------------
+# Benders with master-hosted nodes: a master-local unit's draw, and the CO2-cap partition
+
+#: Both carrier chains of regions A and B in the master (tests/engine/test_region_filter_master_hosted.py
+#: MASTER_BIG): liquefier_A (h2_A -> lh2_A) is a master-local unit.
+MASTER_BIG = frozenset({"h2_A", "lh2_A", "h2_B", "lh2_B"})
+
+
+@pytest.fixture(scope="module")
+def lh2_master_local_startup(lh2_with_startup):
+    """lh2_with_startup with liquefier_A also online (linear) and drawing 2 MWh/MW of coal from the shared
+    commodity node coal_market at each start-up."""
+    import dataclasses
+
+    from polar_high import Param
+
+    data = lh2_with_startup
+    p_dtype = data.process_source_sink.schema["p"]
+    n_dtype = data.process_source_sink.schema["source"]
+    c_dtype = data.startup_from_commodity.schema["c"]
+    dt = data.dt.select("d", "t")
+
+    def add(frame: pl.DataFrame, rows: pl.DataFrame) -> pl.DataFrame:
+        return pl.concat([frame, rows.select(frame.columns).cast(frame.schema)])
+
+    one = pl.DataFrame({"p": ["liquefier_A"]}).with_columns(pl.col("p").cast(p_dtype))
+    pn = pl.DataFrame({"p": ["liquefier_A"], "n": ["coal_market"]}).with_columns(
+        pl.col("p").cast(p_dtype), pl.col("n").cast(n_dtype))
+    energy = pn.join(dt.select("d").unique(), how="cross").with_columns(value=pl.lit(2.0))
+    new = dataclasses.replace(
+        data, process_online=add(data.process_online, one),
+        process_online_linear=add(data.process_online_linear, one),
+        p_online_dt=add(data.p_online_dt, dt.join(one, how="cross")),
+        process_startup_node=add(data.process_startup_node, pn),
+        p_startup_energy=Param(("p", "n", "d"), add(data.p_startup_energy.frame, energy)),
+        startup_from_commodity=add(data.startup_from_commodity,
+                                   pn.with_columns(c=pl.lit("coal").cast(c_dtype))))
+    new._axis_enums = getattr(data, "_axis_enums", None)
+    return new
+
+
+def _region_membership(data, master_nodes: frozenset[str]):
+    from flextool.engine.solve._region_filter import load_region_membership
+
+    mem = load_region_membership(data, ["region_A", "region_B", "region_C"])
+    for m in mem.values():
+        m["nodes"] = m["nodes"] - set(master_nodes)
+    return mem
+
+
+def test_master_keeps_a_master_local_units_draw_from_a_commodity_node(lh2_master_local_startup) -> None:
+    """With master-hosted nodes the master keeps the draw of its master-local unit liquefier_A from the commodity
+    node coal_market (a node of no region), with its online variables, and prices it as the whole-system LP does;
+    coal_A's draw stays in region A only."""
+    from flextool.engine.solve._region_filter import master_network_data, split
+
+    data = lh2_master_local_startup
+    regions = ["region_A", "region_B", "region_C"]
+    mem = _region_membership(data, MASTER_BIG)
+    master = master_network_data(data, regions, region_membership=mem, master_hosted_nodes=MASTER_BIG)
+    assert sorted(utf8(master.process_startup_node).rows()) == [("liquefier_A", "coal_market")]
+    assert sorted(utf8(master.startup_from_commodity).rows()) == [("liquefier_A", "coal_market", "coal")]
+    assert "liquefier_A" in set(utf8(master.process_online_linear)["p"].to_list())
+    splits = {s.region: s.data for s in split(data, regions=regions, region_membership=mem,
+                                              benders_uncap_cross_region=True, master_hosted_nodes=MASTER_BIG)}
+    assert sorted(utf8(splits["region_A"].process_startup_node).rows()) == [("coal_A", "coal_market")]
+
+    def costs(pb) -> dict[str, float]:
+        m = pb.canonicalise()
+        return {m.col_names[c]: float(m.col_obj[c]) for c in range(m.n_cols)
+                if m.col_names[c].startswith("v_startup_linear[liquefier_A,")}
+
+    # liquefier_A is coarse (the daily h2 / lh2 steps) in the whole system and on the fine step in the master
+    # (every master flow keeps the solve's step), so the columns differ; the cost per MW started is the same.
+    whole = costs(build(data))
+    got = costs(build(master))
+    assert whole and got and all(v > 0.0 for v in whole.values())
+    assert sorted(set(got.values())) == pytest.approx(sorted(set(whole.values())), rel=1e-12)
+
+
+def test_co2_cap_partition_counts_the_start_up_draws() -> None:
+    """_co2_master_partition: a draw is on its unit's side (master for a master-local unit, else region).  A group
+    capping only master-local flows and master-local draws is hosted in the master; a region unit's draw in a group
+    of master-local flows straddles the boundary and is refused."""
+    from types import SimpleNamespace
+
+    from flextool.engine.solve._region_filter import _co2_master_partition
+
+    flows = pl.DataFrame({"p": ["liq"], "source": ["h2_M"], "sink": ["lh2_M"], "c": ["c"], "g": ["cap"]})
+    ml = {("liq", "h2_M", "lh2_M")}
+
+    def data(*draws: tuple[str, str]):
+        su = pl.DataFrame({"p": [p for p, _ in draws], "n": ["fuel"] * len(draws), "c": ["c"] * len(draws),
+                           "g": [g for _, g in draws]}, schema={"p": pl.Utf8, "n": pl.Utf8, "c": pl.Utf8, "g": pl.Utf8})
+        return SimpleNamespace(flow_from_co2_capped=flows, startup_from_co2_capped=su if draws else None)
+
+    assert _co2_master_partition(data(("liq", "cap")), ml, set(), {"liq"}) == {"cap"}
+    assert _co2_master_partition(data(("liq", "drawonly")), ml, set(), {"liq"}) == {"cap", "drawonly"}
+    assert _co2_master_partition(data(("u_A", "regiong")), ml, set(), {"liq"}) == {"cap"}
+    with pytest.raises(RuntimeError, match=r"CO2-capped group 'cap' straddles.*start-up draw"):
+        _co2_master_partition(data(("u_A", "cap")), ml, set(), {"liq"})
+
+
+def test_co2_cap_loaders_keep_a_start_up_only_emitter_without_arcs() -> None:
+    """With no efficiency arcs at all (pss_eff and pss_noEff None), a start-up draw in a capped group still keeps
+    the cap's groups (_load_co2_cap / _load_co2_cap_total): the early return does not drop it."""
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+    from flextool.engine.preprocess.flex_data import _load_co2_cap, _load_co2_cap_total
+
+    prov = FlexDataProvider()
+    prov.put("solve_data/group_co2_max_period", pl.DataFrame({"group": ["co2g"]}))
+    prov.put("solve_data/group_co2_max_total", pl.DataFrame({"group": ["co2g"]}))
+    prov.put("solve_data/commodity_node_co2", pl.DataFrame({"commodity": ["oil"], "node": ["oil_n"]}))
+    prov.put("input/group__node", pl.DataFrame({"group": ["co2g"], "node": ["oil_n"]}))
+    prov.put("solve_data/pdGroup", pl.DataFrame({"group": ["co2g"], "param": ["co2_max_total"], "value": [5.0]}))
+    dt = pl.DataFrame({"d": ["p2020"], "t": ["t0001"]})
+    here = Path(".")
+    assert _load_co2_cap(here, here, None, dt, provider=prov)[0] is None
+    g_max = _load_co2_cap(here, here, None, dt, provider=prov, startup_emitters=True)[0]
+    assert g_max is not None and g_max["g"].to_list() == ["co2g"]
+    assert _load_co2_cap_total(here, here, None, provider=prov)[0] is None
+    total = _load_co2_cap_total(here, here, None, provider=prov, startup_emitters=True)
+    assert total[0]["g"].to_list() == ["co2g"] and total[3] is not None

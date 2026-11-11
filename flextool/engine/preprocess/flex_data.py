@@ -2258,7 +2258,7 @@ inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                      startup_emitters: bool = False):
     """``startup_emitters``: a start-up draw emits in a priced group (:func:`_startup_co2_sets`), so the price
     term stays on without an emitting arc."""
-    if pss_eff is None:
+    if pss_eff is None and not startup_emitters:
         return (None, None, None, None, None)
     files = ["group_co2_price.csv", "commodity_node_co2.csv", "pdtGroup.csv"]
     if not all(_provider_has(provider, f"solve_data/{Path(f).stem}", sd / f)
@@ -2280,7 +2280,7 @@ inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     # narrower side to ``e`` so the join is a native Enum match under
     # Phase 4 activation.
     gcn_e = gcn.with_columns(cast_dim(pl.col("n"), None, "e"))
-    flow_from_co2_priced = (pss_eff
+    flow_from_co2_priced = None if pss_eff is None else (pss_eff
         .join(gcn_e, left_on="source", right_on="n", how="inner")
         .select("p","source","sink","c","g"))
     # noEff variant: source flow into a CO2-priced commodity node where the
@@ -2305,7 +2305,7 @@ inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
             flow_to_co2_priced = None
     # A pure-removal group (no emitting flow at all, only a removal credit)
     # still needs the price term active — don't drop it here.
-    if (flow_from_co2_priced.height == 0 and flow_from_co2_priced_noEff is None
+    if ((flow_from_co2_priced is None or flow_from_co2_priced.height == 0) and flow_from_co2_priced_noEff is None
             and flow_to_co2_priced is None and not startup_emitters):
         return (None, None, None, None, None)
     # ``p_co2_content`` is written by ``apply_direct_params_a`` on every DB path (a reader-less reload seeds it in
@@ -2330,7 +2330,7 @@ def _load_co2_cap(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
                    startup_emitters: bool = False):
     """``startup_emitters``: a start-up draw emits in a capped group (:func:`_startup_co2_sets`), so the cap
     rows stay on without an emitting arc."""
-    if pss_eff is None and pss_noEff is None:
+    if pss_eff is None and pss_noEff is None and not startup_emitters:
         return (None, None, None, None, None, None)
     p = sd / "group_co2_max_period.csv"
     if not _provider_has(provider, "solve_data/group_co2_max_period", p):
@@ -2425,7 +2425,7 @@ def _load_co2_cap_total(inp: Path, sd: Path, pss_eff: pl.DataFrame | None,
     ``startup_emitters``: a start-up draw emits in a total-capped group (:func:`_startup_co2_sets`), so the cap
     row stays on without an emitting arc.
     """
-    if pss_eff is None and pss_noEff is None:
+    if pss_eff is None and pss_noEff is None and not startup_emitters:
         return (None, None, None, None, None)
     p = sd / "group_co2_max_total.csv"
     if not _provider_has(provider, "solve_data/group_co2_max_total", p):
