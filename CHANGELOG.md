@@ -748,7 +748,15 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   and the other `constraint_*capacity_coeff` of unit, node and connection) say in their description that they are a
   map of coefficients indexed by constraint name (description only).
 
-## Release 4.3.0 (D.M.YYYY) — AI assistant
+## Release 4.3.0 (11.11.2026) — AI assistant
+
+### Behaviour changes — read before upgrading
+
+- **Rolling solves of a unit, connection or storage node whose `existing` is a Map by period** (without
+  `virtual_unitsize`) now use the right unit size, so their rolling results can change; see "Solvers and rolling
+  solves".
+- **Gurobi now gets FlexTool's solver options** (it solved at its own defaults before), so Gurobi results can
+  change, for example a MIP stops at `solver_mip_gap`; see "Solvers and rolling solves".
 
 ### AI assistant
 
