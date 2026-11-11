@@ -8,9 +8,9 @@ Mistral, Gemma) make result JSON with floats about one token per 1.4 characters;
 them without a tokenizer (checked against Qwen2.5 and o200k counts of a committed result fixture).  Provider data a
 request replays to the model that produced it (thinking blocks, reasoning details, thought signatures) counts as
 JSON, as the backend sends it; Ollama's reasoning text counts as text, and only on the messages after the last user
-message, where the backend replays it (an estimate that is too high is never corrected down).  A per-session :class:`TokenCorrection` raises the estimates when a provider reports
-more prompt tokens than estimated: by the largest ratio of the last :data:`CORRECTION_WINDOW` requests (never below
-1.0).
+message, where the backend replays it (an estimate that is too high is never corrected down).  A per-session
+:class:`TokenCorrection` raises the estimates when a provider reports more prompt tokens than estimated: by the
+largest ratio of the last :data:`CORRECTION_WINDOW` requests (never below 1.0).
 
 **Budgets** (:data:`LEVEL_BUDGETS`, the free plan's in :data:`FREE_TIER_BUDGETS`) are safety caps, not usage
 limits; :func:`resolve_budget` combines a level with the window (P3 §3.3):

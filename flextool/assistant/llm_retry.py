@@ -2,8 +2,9 @@
 
 Retried, and only before any part of the answer was shown: a rate limit (:class:`RateLimited`), an overloaded
 service (:class:`ServerBusy`) and a tool call the service could not read (:class:`UnreadableToolCall`); a remote
-endpoint that could not be reached (:class:`Unreachable`) once after two seconds.  A wait longer than ``longest_auto_wait`` is not waited for: the error is raised with the "long wait"
-message.  While waiting, :class:`RetryWait` is pushed every second and the cancel event is honoured.
+endpoint that could not be reached (:class:`Unreachable`) once after two seconds.  A wait longer than
+``longest_auto_wait`` is not waited for: the error is raised with the "long wait" message.  While waiting,
+:class:`RetryWait` is pushed every second and the cancel event is honoured.
 
 * **Rate limit**: at most ``max_retries`` retries (``free_plan_rate_retries`` with the free plan on), and all their
   waits together at most ``longest_auto_wait``.  The wait is what the provider names (``retry_after``), else the

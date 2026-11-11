@@ -288,7 +288,7 @@ def test_unreadable_tool_calls_three_times_say_so():
     assert err.message_key == "tool_call_unreadable_final"
     assert err.user_message == str(err) == (
         "Example AI could not read a tool call in the model's answer, 3 times in a row. Ask again, or try another "
-        "model (/model) or a lower level (--tier).")
+        "model (/model), or restart with another level (--tier).")
     assert E.message_for(err, "gui") == (
         "Example AI could not read a tool call in the model's answer, 3 times in a row. Ask again, or pick another "
         "model or level in the assistant settings.")

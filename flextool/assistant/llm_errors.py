@@ -50,7 +50,8 @@ MESSAGES: dict[str, str] = {
     "tool_call_unreadable_retry": ("{provider} could not read a tool call in the model's answer. Asking again "
                                    "(attempt {n} of {max})."),
     "tool_call_unreadable_final": ("{provider} could not read a tool call in the model's answer, {count} times in a "
-                                   "row. Ask again, or try another model (/model) or a lower level (--tier)."),
+                                   "row. Ask again, or try another model (/model), or restart with another level "
+                                   "(--tier)."),
     "quota": ("Your {provider} quota is used up for now. It resets on the provider's schedule, which FlexTool "
               "cannot see. You can switch to another provider or model."),
     "quota_daily": "{provider}: the daily quota of this model is used up; try tomorrow or another model.",
@@ -772,7 +773,9 @@ def _classify_status(status: int | None, body: object, headers: Any, ctx: ErrorC
         return make(AuthFailed, "auth")
     if effective == 403 or "permission_error" in types or "PERMISSION_DENIED" in info.statuses:
         return make(NotPermitted, "permission")
-    if effective == 402 or "billing_error" in types or "insufficient credits" in text:
+    # "insufficient credits" (OpenRouter) only with 402 or 429, the statuses that can mean no credit: the phrase
+    # alone may be a model's or a tool's text quoted in another error.
+    if effective == 402 or "billing_error" in types or (effective == 429 and "insufficient credits" in text):
         return make(NoCredit, "credit")
     rate_limited = effective == 429 or "rate_limit_error" in types or "RESOURCE_EXHAUSTED" in info.statuses
     # In this order (review G9): too large for the minute, a limit of 0, no credit, a used-up quota, a rate limit.

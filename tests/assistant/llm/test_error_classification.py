@@ -112,6 +112,11 @@ CASES = [
     ("openrouter no credit", "openai", "openrouter", 402, {},
      {"error": {"message": "Insufficient credits. Add more using https://example.test/credits", "code": 402}},
      E.NoCredit, None),
+    ("openrouter no credit as a rate limit", "openai", "openrouter", 429, {},
+     {"error": {"message": "Insufficient credits for this request.", "code": 429}}, E.NoCredit, None),
+    # The phrase with another status is no credit error (it may quote a model's or a tool's text).
+    ("insufficient credits in a server error", "openai", "openrouter", 500, {},
+     {"error": {"message": "Upstream said: insufficient credits", "code": 500}}, E.ServerBusy, None),
     ("openrouter free models per day", "openai", "openrouter", 429, {},
      {"error": {"message": "Rate limit exceeded: free-models-per-day. Add credits to unlock more.", "code": 429,
                 "metadata": {"headers": {"X-RateLimit-Limit": "50"}}}}, E.QuotaExhausted, None),
@@ -209,6 +214,8 @@ SAID = {
     "openrouter no endpoints": (404, "", "No endpoints found matching your data policy (Free model publication)."),
     # No links (Gemini quota fixes 2026-11-10): the sentence that leads to one is left out.
     "openrouter no credit": (402, "", "Insufficient credits."),
+    "openrouter no credit as a rate limit": (429, "", "Insufficient credits for this request."),
+    "insufficient credits in a server error": (500, "", "Upstream said: insufficient credits"),
     "openrouter free models per day": (429, "", "Rate limit exceeded: free-models-per-day. Add credits to unlock "
                                                 "more."),
     "anthropic 529": (529, "overloaded_error", "Overloaded"),
