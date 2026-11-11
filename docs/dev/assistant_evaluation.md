@@ -302,15 +302,24 @@ it at once.
 ### Grading with Claude Code instead of the API
 
 The same model can grade through Claude Code subagents (for example on a Max plan) instead of API requests. This
-needs a grading folder that `grade-ai` already started (its `grading.json` fixes the blind order):
+needs a grading folder that `grade-ai` already started (its `grading.json` fixes the blind order). `--start-only`
+starts one without any request:
 
 ```
+python tools/assistant_eval.py grade-ai _audit_reports/assistant_eval/{opus,gemini,gemma,gptoss} \
+    --dir _audit_reports/assistant_eval/grading_v2 --start-only
 python tools/assistant_eval.py grade-ai _audit_reports/assistant_eval/{opus,gemini,gemma,gptoss} \
     --dir _audit_reports/assistant_eval/grading_v2 --export-requests _audit_reports/assistant_eval/cc_grading
 # subagents: read cc_grading/<n>.request.txt, write the JSON reply to cc_grading/<n>.reply.json
 python tools/assistant_eval.py grade-ai _audit_reports/assistant_eval/{opus,gemini,gemma,gptoss} \
     --dir _audit_reports/assistant_eval/grading_v2 --import-replies _audit_reports/assistant_eval/cc_grading
 ```
+
+`--start-only` runs every check of a first `grade-ai` (the folder set, every folder complete, one model only with
+`--single-model`, the leak scan of every request) and writes `grading.json` as the first API run would, its one
+seed drawn then; it needs no API key and no data notice, sends nothing and grades no cell. On a grading folder
+already started it says so and changes nothing; it is refused with `--export-requests`, `--import-replies` or
+`--changed`.
 
 `--export-requests OUT` writes, for every cell `grade-ai` would send now, `OUT/<n>.request.txt`: a `SYSTEM:`
 section and a `USER:` section holding exactly the system and user parts of the API request, after the same

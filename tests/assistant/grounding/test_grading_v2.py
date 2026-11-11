@@ -1524,6 +1524,81 @@ def test_file_route_export_is_blinded_and_leak_scanned(scoring, evaluator, tmp_p
     assert "alpha-one" not in err and not out2.exists()
 
 
+class _FixedSeed:
+    """``random.SystemRandom`` with a fixed draw: two gradings started apart get the same seed."""
+
+    def randrange(self, _n: int) -> int:
+        return 12345
+
+
+def _start_only(evaluator, grading: Path, key: Path, *folders: Path, extra=(), said=None) -> int:
+    """``grade-ai --start-only`` with a backend factory that fails the test if it is ever called."""
+    def factory(*_a):
+        raise AssertionError("--start-only built a backend")
+
+    argv = ["grade-ai", *map(str, folders), "--dir", str(grading), "--key", str(key), "--start-only", *extra]
+    return evaluator.cmd_grade_ai(evaluator.build_parser().parse_args(argv), backend_factory=factory,
+                                  say=said.append if said is not None else (lambda _t: None))
+
+
+def test_start_only_writes_the_grading_and_sends_nothing(scoring, evaluator, tmp_path: Path,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    """--start-only, with no API key and no --accept-data-notice: grading.json as the first API grade-ai writes it
+    (same seed: equal apart from "created"), no cell state, no backend built, nothing in the ledger; then
+    --export-requests exports every cell's request; on a started folder it changes nothing."""
+    alpha, beta, key = _three_cells(scoring, evaluator, tmp_path)
+    monkeypatch.setattr(evaluator.random, "SystemRandom", _FixedSeed)
+    api = tmp_path / "grading_api"
+    assert grade_ai(evaluator, api, key, alpha, beta, opus=Opus()) == 0
+    monkeypatch.delenv("ANTHROPIC_API_KEY")
+    started = tmp_path / "grading"
+    said: list[str] = []
+    assert _start_only(evaluator, started, key, alpha, beta, said=said) == 0
+    assert said[-1].startswith(f"Started the grading in {started}: 3 cells in blind order, 3 to send; nothing "
+                               "was sent.")
+    assert sorted(p.name for p in started.iterdir()) == [evaluator.GRADING_FILE]      # no cells, no lock
+    mine = json.loads((started / evaluator.GRADING_FILE).read_text(encoding="utf-8"))
+    theirs = json.loads((api / evaluator.GRADING_FILE).read_text(encoding="utf-8"))
+    mine.pop("created"), theirs.pop("created")
+    assert mine == theirs and mine["seed"] == 12345
+    assert _ledger_requests() == 3                                       # the API run's three, none more
+    out = tmp_path / "cc"
+    said.clear()
+    assert _file_route(evaluator, started, key, (alpha, beta), "--export-requests", out, said=said) == 0
+    assert said[-1].startswith(f"Exported 3 request(s) to {out} (#1–#3)")
+    states = cell_states(api)
+    assert {e["token"]: e["request_sha256"] for e in json.loads((out / "index.json").read_text())["cells"]} == {
+        t: s["request_sha256"] for t, s in states.items()}
+    # started already: said so, nothing changed (not even with another folder set)
+    before = sorted((p.name, p.read_bytes()) for p in started.rglob("*"))
+    said.clear()
+    assert _start_only(evaluator, started, key, alpha, said=said) == 0
+    assert "is started already" in said[-1] and "nothing was changed" in said[-1]
+    assert sorted((p.name, p.read_bytes()) for p in started.rglob("*")) == before
+
+
+def test_start_only_refusals(scoring, evaluator, tmp_path: Path, capsys) -> None:
+    """--start-only with --export-requests / --import-replies / --changed is refused (exit 2, no folder made);
+    the checks of a first grade-ai still refuse it: one model without --single-model, a leak (nothing written)."""
+    alpha, beta, key = _three_cells(scoring, evaluator, tmp_path)
+    grading = tmp_path / "grading"
+    for extra in (("--export-requests", str(tmp_path / "cc")), ("--import-replies", str(tmp_path / "cc")),
+                  ("--changed",)):
+        assert _start_only(evaluator, grading, key, alpha, beta, extra=extra) == 2
+        assert evaluator.START_ONLY_ALONE in capsys.readouterr().err
+    assert _start_only(evaluator, grading, key, alpha) == 2
+    assert "Grading one model is not blind" in capsys.readouterr().err
+    assert not grading.exists() and not (tmp_path / "cc").exists()
+    record = make_record(scoring, "G01", model="vendor/alpha-one", answer="coal_plant, by teamalpha-one.")
+    leaky = results(evaluator, tmp_path / "leaky", {"G01__small__r1": record}, model="vendor/alpha-one")
+    assert _start_only(evaluator, grading, key, leaky, extra=("--single-model",)) == 2
+    assert "Cell #1: the grader material reveals the model's name; nothing was sent." in capsys.readouterr().err
+    assert not grading.exists()
+    # the file route on a folder not started names the way to start it
+    assert _file_route(evaluator, grading, key, (alpha, beta), "--export-requests", tmp_path / "cc") == 2
+    assert "--start-only" in capsys.readouterr().err
+
+
 def test_agreement_report_per_route(analysis) -> None:
     """Cells graded through both routes: each route's agreement apart (an API-only grading has no such part)."""
     def cell(n: int, owner: str, opus: str, route: str, sample: bool = False):

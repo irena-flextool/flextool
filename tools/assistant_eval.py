@@ -1574,7 +1574,10 @@ EXPORT_INSTRUCTIONS = (
     "A <n>.retry.request.txt is the whole conversation of a retry (your first reply was not the asked JSON): "
     "write the reply to its last USER section to <n>.retry.reply.json.")
 NO_GRADING_FILE_ROUTE = ("No grading in {folder}: the file route continues a grading that grade-ai started (its "
-                         "grading.json fixes the blind order).")
+                         "grading.json fixes the blind order). Start it without any request: grade-ai ... "
+                         "--start-only.")
+START_ONLY_ALONE = ("--start-only only starts a grading (nothing is sent): give it without --export-requests, "
+                    "--import-replies or --changed.")
 
 CellKey = tuple[str, str]
 
@@ -2025,6 +2028,8 @@ def _to_grade(grading: Grading, changed: bool) -> tuple[list[GradingCell], list[
 def cmd_grade_ai(args: argparse.Namespace, *, backend_factory: BackendFactory | None = None,
                  say: Callable[[str], None] = print) -> int:
     try:
+        if args.start_only and (args.export_requests or args.import_replies or args.changed):
+            raise Refused(START_ONLY_ALONE)
         if args.export_requests and args.import_replies:
             raise Refused("Give --export-requests or --import-replies, not both.")
         if args.export_requests or args.import_replies:
@@ -2038,6 +2043,8 @@ def cmd_grade_ai(args: argparse.Namespace, *, backend_factory: BackendFactory | 
             raise Refused("Grading one model is not blind: give the results folders of every model of the matrix "
                           "(their cells are shuffled together), or --single-model.")
         with _Lock(Path(args.dir)):
+            if args.start_only:
+                return _start_only(args, say)
             return _grade_ai(args, backend_factory or _default_backend_factory, say)
     except Refused as exc:
         print(str(exc), file=sys.stderr)
@@ -2119,6 +2126,31 @@ def _grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say: Ca
         backend.close()
     say(f"Every cell is graded ({total}; {sum(c.empty for c in grading.cells)} without an answer are failed in "
         "code). Next: review --dir.")
+    return 0
+
+
+def _start_only(args: argparse.Namespace, say: Callable[[str], None]) -> int:
+    """``grade-ai --start-only``: every check of a first ``grade-ai`` (the folder set, every folder complete, the
+    blinding self-test of every request it would send) and its ``grading.json`` (the blind order, its one seed
+    drawn now), without any request: no key, no data notice, no cell graded.  The file route then continues it.
+    A grading folder already started is left as it is."""
+    if _read_grading(Path(args.dir)) is not None:
+        say(f"The grading in {args.dir} is started already (its grading.json fixes the blind order); nothing was "
+            "changed. Next: grade-ai ... --export-requests OUT, or grade-ai without --start-only.")
+        return 0
+    import assistant_eval_analysis as analysis
+
+    grading = load_grading(args, create=True)
+    for line in analysis.mixed_settings(c.record for c in grading.cells):
+        say(line)
+    if grading.old_grades:
+        say(f"{grading.old_grades} cells carry grades from the earlier grading; they are ignored.")
+    todo, send = _to_grade(grading, False)
+    write_json(grading.folder / GRADING_FILE, grading.state)
+    empty = len(todo) - len(send)
+    say(f"Started the grading in {grading.folder}: {len(grading.cells)} cells in blind order, {len(send)} to "
+        "send" + (f", {empty} without an answer (failed in code)" if empty else "") + "; nothing was sent. Next: "
+        "grade-ai ... --export-requests OUT (the file route), or grade-ai without --start-only (the API).")
     return 0
 
 
@@ -3408,6 +3440,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="grade again the cells whose answer, key or rubric changed (their review starts over)")
     p.add_argument("--accept-data-notice", action="store_true",
                    help="accept Anthropic's data notice for this run only")
+    p.add_argument("--start-only", action="store_true",
+                   help="only start the grading: every check and its grading.json (the blind order), nothing sent "
+                        "(no key or data notice needed); then --export-requests")
     p.add_argument("--export-requests", type=_abs_path, metavar="OUT",
                    help="the file route: write the requests grade-ai would send now to OUT (nothing is sent, "
                         "nothing written to --dir) for Claude Code subagents to grade")
