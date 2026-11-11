@@ -60,6 +60,12 @@ or model, or a history that no longer gives the same request is refused, never f
 :meth:`Session.resume_turn` sends the pending request again and runs the turn on: the same requests as a run that
 retried that request.
 
+**Asking a question again** (item 220): ``run_turn(text, ..., rewind=k)`` deletes question *k* and every later one
+(their answers, tool calls and provider data) and asks *text* as question *k*.  The messages kept are not changed,
+so the request carries the same history (with its provider data) as when question *k* was first asked; earlier
+results already shortened stay shortened, and the usage totals keep the tokens of the deleted answers.  The front
+ends get the stored question with :func:`question_text` and the number a question gets with :func:`next_turn`.
+
 Tool calls run under the context's lock (one per process), taken in a loop that checks the cancel event; before
 the first call of a round the conversation is saved with every call answered "not run", so the saved file is a
 valid history even if FlexTool closes mid-call.  Usage is recorded in the ledger and the conversation for every
@@ -429,6 +435,78 @@ def repair_history(messages: list[Message]) -> bool:
     return changed
 
 
+# --- asking a question again (item 220) -------------------------------------------------------------------------
+class RewindRefused(ValueError):
+    """A question that cannot be asked again here; *reason* is ``"checkpoint"`` (a restored checkpoint waits for
+    :meth:`Session.resume_turn`) or ``"unknown"`` (no question of that number in the chat)."""
+
+    def __init__(self, reason: Literal["checkpoint", "unknown"], turn: int) -> None:
+        super().__init__(REWIND_REFUSALS[reason].format(turn=turn))
+        self.reason = reason
+        self.turn = turn
+
+
+#: Why :class:`RewindRefused` (for the log and the front ends' fallback; the window says it in its own words).
+REWIND_REFUSALS = {
+    "checkpoint": "Question {turn} cannot be asked again while a saved request waits to be sent.",
+    "unknown": "This chat has no question {turn}.",
+}
+
+
+def next_turn(messages: list[Message], rewind: int | None = None) -> int:
+    """The number the next question gets, exactly as :meth:`Session.run_turn` numbers it: the session's own
+    messages left unanswered at the end are dropped; a question without an answer at the end is asked again with
+    the next one under its number; else one more than the highest.  With *rewind*, after the questions from
+    *rewind* on are dropped (:func:`rewind`)."""
+    msgs = list(messages)
+    if rewind is not None:
+        msgs = msgs[:_rewind_start(msgs, rewind)]
+    while msgs and msgs[-1].role == "user" and msgs[-1].kind in CONTROL_KINDS:
+        msgs.pop()
+    last = msgs[-1] if msgs else None
+    if last is not None and last.role == "user" and last.turn:
+        return last.turn
+    return max((m.turn for m in msgs), default=0) + 1
+
+
+def _rewind_start(messages: list[Message], turn: int) -> int:
+    """The index of the first message of question *turn* and later (the end when there is none)."""
+    return next((i for i, m in enumerate(messages) if m.turn >= turn), len(messages))
+
+
+def _question_message(messages: list[Message], turn: int) -> Message:
+    """The stored question of *turn* (its first message); :class:`RewindRefused` when there is none."""
+    if turn >= 1:
+        first = next((m for m in messages if m.turn == turn), None)
+        if first is not None and first.role == "user" and first.kind not in CONTROL_KINDS:
+            return first
+    raise RewindRefused("unknown", turn)
+
+
+def _question_parts(messages: list[Message], turn: int, seed: str | None) -> tuple[str, bool]:
+    """(the question of *turn* as the user typed it, whether it started with *seed*)."""
+    text = prompt.remove_context_blocks(_question_message(messages, turn).text)
+    if seed and text.startswith(f"{seed}\n\n"):
+        return text[len(seed) + 2:], True
+    return text, False
+
+
+def question_text(messages: list[Message], turn: int, seed: str | None = None) -> str:
+    """The stored question of *turn* without its context blocks (a question merged with an unanswered one keeps
+    both questions' text) and without *seed* (the summary a new chat's first question started with, removed only
+    when the text starts with it and a blank line).  :class:`RewindRefused` when the chat has no such question."""
+    return _question_parts(messages, turn, seed)[0]
+
+
+def rewind(messages: list[Message], turn: int, seed: str | None = None) -> str:
+    """Delete the messages of question *turn* and every later one from *messages* (in place; their provider data
+    goes with them, the messages kept are not changed) and return the question as :func:`question_text` gives it.
+    :class:`RewindRefused` (and nothing deleted) when the chat has no such question."""
+    text = question_text(messages, turn, seed)
+    del messages[_rewind_start(messages, turn):]
+    return text
+
+
 def internal_fault(exc: BaseException) -> LLMError:
     """The error of a turn that ended on an exception of FlexTool itself (review G11, C5-3): a conversation file of
     a newer FlexTool says so; anything else is an internal fault to report."""
@@ -681,9 +759,6 @@ class Session:
     @property
     def messages(self) -> list[Message]:
         return self.conversation.messages
-
-    def _last_turn(self) -> int:
-        return max((m.turn for m in self.messages), default=0)
 
     def _compact(self, keep_after: int, keep_calls_from: int | None = None) -> None:
         """Replace each tool result of a turn up to *keep_after* by a short note, and drop all provider data —
@@ -1096,10 +1171,27 @@ class Session:
             emit(Notice(SESSION_MESSAGES["text_call"]))
 
     # --- one turn -------------------------------------------------------------------------------------------------
-    def run_turn(self, user_text: str, on_event: OnEvent, cancel: threading.Event) -> TurnResult:
+    def run_turn(self, user_text: str, on_event: OnEvent, cancel: threading.Event, *, rewind: int | None = None,
+                 seed: str | None = None) -> TurnResult:
         """Answer *user_text*.  Runs in a worker thread; *on_event* gets the events (from this thread);
-        *cancel* (set by :meth:`abort` or the front end) stops the turn and repairs the history."""
+        *cancel* (set by :meth:`abort` or the front end) stops the turn and repairs the history.
+
+        *rewind*: ask question *rewind* again (item 220) — first, under the turn lock, its messages and those of
+        every later question are deleted (:func:`rewind`), and the chat is saved at once; then *user_text* is
+        asked under that number (:func:`next_turn` with *rewind*).  :class:`RewindRefused`, before anything
+        changed, while a restored checkpoint waits (:meth:`resume_turn`) or when the chat has no such question.
+        *seed*: the summary a new chat's first question starts with (hidden from the user): put before
+        *user_text*, and with *rewind* only when the deleted question started with it."""
         with self._turn_lock:
+            if rewind is not None:
+                if self._resumed is not None:
+                    raise RewindRefused("checkpoint", rewind)
+                had_seed = _question_parts(self.messages, rewind, seed)[1]
+                self._rewind(rewind)
+                if not had_seed:
+                    seed = None
+            if seed:
+                user_text = f"{seed}\n\n{user_text}"
             self._cancel = cancel
             self._live = None
             try:
@@ -1109,6 +1201,17 @@ class Session:
             finally:
                 self._cancel = None
                 self._live = None
+
+    def _rewind(self, turn: int) -> None:
+        """Delete question *turn* and every later one (the turn lock is held): the latest context block is again
+        the one of the questions kept, the long notes the model has seen are forgotten (the next request says
+        which it carries), and the chat is saved.  The usage totals stay: the tokens were spent."""
+        del self.messages[_rewind_start(self.messages, turn):]
+        self._last_block = prompt.last_context_block([m.text for m in self.messages if m.role == "user"])
+        self.ctx.notes_sent = set()
+        # Without question 1 no answer is left, so the chat is bound to no model again (store.bound_origin);
+        # ``conversation.origin`` stays the session's, which the ids of the messages kept were made for.
+        self._save()
 
     def resume_turn(self, on_event: OnEvent, cancel: threading.Event) -> TurnResult:
         """Go on with the turn :meth:`restore` set up: its pending request is sent as it was (same history, same
@@ -1174,7 +1277,7 @@ class Session:
         self._drop_dangling_control()
         last = self.messages[-1] if self.messages else None
         unanswered = last is not None and last.role == "user"
-        turn = last.turn if unanswered and last is not None and last.turn else self._last_turn() + 1
+        turn = next_turn(self.messages)
         self._turn_no = turn
         if not unanswered and turn > 1 and (turn - 1) % self.compaction_every == 0:
             self._compact(keep_after=turn - 1 - self.keep_recent_turns)
@@ -1696,9 +1799,11 @@ class TurnWorker:
     def generation(self) -> int:
         return self._generation
 
-    def start(self, text: str, on_event: OnEvent, on_done: Callable[[TurnResult], None]) -> int:
-        """Run a turn for *text*; *on_event* and *on_done* are called from the worker thread, and only while the
-        turn is the current one.  Returns the turn's generation."""
+    def start(self, text: str, on_event: OnEvent, on_done: Callable[[TurnResult], None], *,
+              rewind: int | None = None, seed: str | None = None) -> int:
+        """Run a turn for *text* (*rewind*, *seed*: as :meth:`Session.run_turn`); *on_event* and *on_done* are
+        called from the worker thread, and only while the turn is the current one.  Returns the turn's
+        generation."""
         with self._lock:
             self._generation += 1
             generation = self._generation
@@ -1714,7 +1819,7 @@ class TurnWorker:
 
         def run() -> None:
             try:
-                result = self.session.run_turn(text, events, cancel)
+                result = self.session.run_turn(text, events, cancel, rewind=rewind, seed=seed)
             except BaseException as exc:  # noqa: BLE001 — on_done is always called (review G11, C5-3)
                 logger.error("The AI assistant's turn failed", exc_info=exc)
                 err = cancelled() if cancel.is_set() else internal_fault(exc)
