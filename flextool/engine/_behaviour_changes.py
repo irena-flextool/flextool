@@ -399,6 +399,12 @@ def display_text(notices: Iterable[Iterable[str]]) -> str:
     return "\n\n".join("\n".join(parts) for parts in notices)
 
 
+def unannounced(change_id: str, names: Iterable[str]) -> list[str]:
+    """The *names* (de-duplicated, in order) that :func:`notice` has not yet announced for *change_id* in this
+    run, so that a caller can build its ``detail`` from the fresh names only."""
+    return [n for n in dict.fromkeys(str(n) for n in names) if (change_id, n) not in _announced]
+
+
 def notice(change_id: str, kind: str, names: Iterable[str], detail: str = "") -> bool:
     """Print the notice of *change_id* for the *names* not yet announced in this run.
 
@@ -408,7 +414,7 @@ def notice(change_id: str, kind: str, names: Iterable[str], detail: str = "") ->
         raise KeyError(f"unknown behaviour change {change_id!r}")
     if change_id not in _markers:
         return False
-    fresh = [str(n) for n in dict.fromkeys(str(n) for n in names) if (change_id, str(n)) not in _announced]
+    fresh = unannounced(change_id, names)
     if not fresh:
         return False
     _announced.update((change_id, n) for n in fresh)

@@ -20,6 +20,7 @@ from flextool.engine.preprocess.params._existing import (
     DIVEST_NOT_ALLOWED,
     GROUP_DIVEST_NOT_ACTIVE,
     GROUP_INVEST_NOT_ACTIVE,
+    INVEST_METHODS_ALL,
     INVEST_NOT_ALLOWED,
 )
 
@@ -54,3 +55,9 @@ def test_period_total_methods_are_one_sided():
     assert "invest_period_total" in DIVEST_NOT_ALLOWED
     assert "invest_period_total" not in INVEST_NOT_ALLOWED
     assert "retire_period_total" not in DIVEST_NOT_ALLOWED
+
+
+def test_all_methods_is_the_schema_list():
+    """``INVEST_METHODS_ALL`` (entityInvest / entityDivest are its complements) is every schema value: a new
+    value missing from it would go silently into neither set."""
+    assert INVEST_METHODS_ALL == set(_value_list("invest_methods"))

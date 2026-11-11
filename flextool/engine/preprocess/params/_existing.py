@@ -101,6 +101,15 @@ if TYPE_CHECKING:
 # value lists ``invest_methods`` / ``group_invest_methods`` by
 # tests/engine/test_invest_method_lists.py).
 
+# Every value of the schema list ``invest_methods``.
+INVEST_METHODS_ALL: frozenset[str] = frozenset((
+    "not_allowed", "invest_no_limit", "invest_period", "invest_total",
+    "invest_period_total",
+    "retire_no_limit", "retire_period", "retire_total", "retire_period_total",
+    "invest_retire_no_limit", "invest_retire_period",
+    "invest_retire_total", "invest_retire_period_total",
+    "cumulative_limits",
+))
 INVEST_NOT_ALLOWED: frozenset[str] = frozenset((
     "not_allowed", "retire_period", "retire_total", "retire_no_limit",
     "retire_period_total",
@@ -1873,7 +1882,7 @@ def apply_existing_chain(flex_data: object,
 
 __all__ = [
     # Method-enum constants (re-exported for direct-test use).
-    "INVEST_NOT_ALLOWED", "DIVEST_NOT_ALLOWED",
+    "INVEST_METHODS_ALL", "INVEST_NOT_ALLOWED", "DIVEST_NOT_ALLOWED",
     "GROUP_INVEST_NOT_ACTIVE", "GROUP_DIVEST_NOT_ACTIVE",
     "_INVEST_NOT_ALLOWED", "_DIVEST_NOT_ALLOWED",
     "_INVEST_TOTAL_METHODS", "_DIVEST_TOTAL_METHODS",

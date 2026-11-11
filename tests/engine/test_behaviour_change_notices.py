@@ -66,3 +66,20 @@ def test_display_text_puts_each_notice_in_its_own_paragraph() -> None:
     text = bc.display_text([first, second])
     assert text.split("\n\n") == ["\n".join(first), "\n".join(second)]
     assert text.count("\n\n") == 1 and "Affected projects: p." in text.split("\n\n")[1].splitlines()
+
+
+def test_zero_cost_notice_detail_lists_fresh_entities_only(capsys, monkeypatch) -> None:
+    """A later solve of the run that adds one entity lists only that entity's periods, not those of the entities
+    an earlier solve announced."""
+    from flextool.engine.preprocess.params import _derived
+
+    found = {"invest_cost": {"g": ["p2020"]}, "salvage_value": {}}
+    monkeypatch.setattr(_derived, "_zero_cost_pairs", lambda _s, _p, cost, _c: dict(found[cost]))
+    bc.start_run({"invest_without_cost_offered": "79"})
+    _derived.zero_cost_invest_notice(None, None, None)
+    found["invest_cost"] = {"g": ["p2020", "p2025"], "h": ["p2025"]}
+    _derived.zero_cost_invest_notice(None, None, None)
+    lines = capsys.readouterr().out.splitlines()
+    assert len(lines) == 2, lines
+    assert "(entity, periods): g (p2020)." in lines[0]
+    assert "(entity, periods): h (p2025)." in lines[1] and "g (p2020" not in lines[1], lines[1]

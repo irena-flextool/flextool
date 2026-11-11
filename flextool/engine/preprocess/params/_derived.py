@@ -84,6 +84,7 @@ from flextool.engine.input._param_shapes import (
 )
 from flextool.engine.preprocess.params._existing import (
     DIVEST_NOT_ALLOWED as _DIVEST_NOT_ALLOWED,
+    INVEST_METHODS_ALL as _INVEST_METHODS_ALL,
     INVEST_NOT_ALLOWED as _INVEST_NOT_ALLOWED,
 )
 
@@ -3097,16 +3098,8 @@ def _entityDivest_set(source: "InputSource") -> pl.LazyFrame:
     return _entity_invest_filter(source, _INVEST_METHODS_DIVEST_ALLOWED)
 
 
-# The invest/retire method lists (_INVEST_NOT_ALLOWED / _DIVEST_NOT_ALLOWED)
-# are imported from params/_existing.py, their one definition.
-_INVEST_METHODS_ALL: frozenset[str] = frozenset((
-    "not_allowed", "invest_no_limit", "invest_period", "invest_total",
-    "invest_period_total",
-    "retire_no_limit", "retire_period", "retire_total", "retire_period_total",
-    "invest_retire_no_limit", "invest_retire_period",
-    "invest_retire_total", "invest_retire_period_total",
-    "cumulative_limits",
-))
+# The invest/retire method lists (_INVEST_METHODS_ALL / _INVEST_NOT_ALLOWED /
+# _DIVEST_NOT_ALLOWED) are imported from params/_existing.py, their one definition.
 _INVEST_METHODS_INVEST_ALLOWED: frozenset[str] = (
     _INVEST_METHODS_ALL - _INVEST_NOT_ALLOWED
 )
@@ -5874,6 +5867,10 @@ def zero_cost_invest_notice(source: "InputSource", ed_invest: "pl.DataFrame | No
         return
     invest = _zero_cost_pairs(source, ed_invest, "invest_cost", _OLD_RULE_INVEST_COEFFS)
     divest = _zero_cost_pairs(source, ed_divest, "salvage_value", _OLD_RULE_DIVEST_COEFFS)
+    # A later solve of a multi-solve / rolling run lists only the entities not yet announced.
+    fresh = set(_behaviour_changes.unannounced("invest_without_cost_offered", sorted(set(invest) | set(divest))))
+    invest = {e: ds for e, ds in invest.items() if e in fresh}
+    divest = {e: ds for e, ds in divest.items() if e in fresh}
 
     def _listed(found: dict[str, list[str]]) -> str:
         return ", ".join(f"{e} ({', '.join(ds)})" for e, ds in sorted(found.items()))
