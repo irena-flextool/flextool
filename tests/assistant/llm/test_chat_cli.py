@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import io
 import json
+import re
 import os
 import subprocess
 import sys
@@ -875,3 +876,166 @@ def test_q_with_an_advanced_model_runs_at_advanced(project, fake_backends, echo_
     saved = [json.loads(p.read_text(encoding="utf-8")) for p in folder.glob("*.json")
              if not p.name.endswith(".title.json")]
     assert saved and all("tier" not in data and data["level"] is None for data in saved)
+
+
+# --- asking again: /retry and /edit (item 220) ----------------------------------------------------------------------
+def _questions(models: Models) -> list[str]:
+    """The questions of each request, without context blocks."""
+    from flextool.assistant import prompt
+
+    return [prompt.remove_context_blocks(r.messages[-1].text) for r in models.requests]
+
+
+def test_retry_asks_the_last_question_again_with_the_same_history(project, fake_backends, echo_tool):
+    models = Models([say("First answer."), say("Second answer."), say("Second answer again.")], fake_backends)
+    term = terminal(["q1", "q2", "/retry", "/quit"])
+    endpoint.mark_welcome_seen()
+    assert chat_cli.main(remote(project, "--accept-data-notice"), backend_factory=models, terminal=term) == 0
+    first, second, again = models.requests
+    assert again.messages == second.messages
+    assert "Asking again: q2" in term.stdout.getvalue()
+    assert "Second answer again." in term.stdout.getvalue()
+
+
+def test_retry_and_edit_without_a_question(project, fake_backends):
+    term = terminal(["/retry", "/edit", "/quit"])
+    endpoint.mark_welcome_seen()
+    models = Models([], fake_backends)
+    assert chat_cli.main(remote(project, "--accept-data-notice"), backend_factory=models, terminal=term) == 0
+    out = term.stdout.getvalue()
+    assert "No question to ask again." in out and "No question to edit." in out
+    assert models.requests == []
+
+
+def test_retry_in_a_continued_chat(project, fake_backends, echo_tool):
+    """``--continue``: the chat has no session yet when /retry comes; the question is replaced all the same."""
+    models = Models([say("First answer."), say("Second answer.")], fake_backends)
+    assert chat_cli.main(remote(project, "-q", "First question", "--accept-data-notice"), backend_factory=models,
+                         terminal=terminal()) == 0
+    term = terminal(["/retry", "/quit"])
+    endpoint.mark_welcome_seen()
+    assert chat_cli.main(remote(project, "--continue"), backend_factory=models, terminal=term) == 0
+    again = models.made[-1].requests[0]
+    assert [m.role for m in again.messages] == ["user"]
+    assert _questions(models) == ["First question", "First question"]
+    assert "First answer." not in json.dumps([m.text for m in again.messages])
+
+
+def test_edit_prints_the_question_to_copy_without_line_editing(project, fake_backends, echo_tool):
+    models = Models([say("Answer."), say("Changed answer.")], fake_backends)
+    term = terminal(["first line\\", "second line", "/edit", "changed\\", "question", "/quit"])
+    endpoint.mark_welcome_seen()
+    assert chat_cli.main(remote(project, "--accept-data-notice"), backend_factory=models, terminal=term) == 0
+    out = term.stdout.getvalue()
+    assert ("Your last question is below. Type or paste it with your changes; an empty line keeps the question and "
+            "its answer.\nfirst line \\\nsecond line\n") in out
+    assert _questions(models) == ["first line\nsecond line", "changed\nquestion"]
+    assert [m.role for m in models.requests[-1].messages] == ["user"]
+
+
+def test_an_empty_edit_keeps_the_question_and_its_answer(project, fake_backends, echo_tool, user_config_in_tmp):
+    from flextool.assistant import _files
+    from flextool.assistant.store import open_store
+
+    models = Models([say("Answer.")], fake_backends)
+    term = terminal(["q1", "/edit", "", "/quit"])
+    endpoint.mark_welcome_seen()
+    assert chat_cli.main(remote(project, "--accept-data-notice"), backend_factory=models, terminal=term) == 0
+    assert "Nothing changed: the question and its answer are kept." in term.stdout.getvalue()
+    assert len(models.requests) == 1
+    folder = open_store().project_dir(_files.project_key(project.resolve()))
+    saved = [json.loads(p.read_text(encoding="utf-8")) for p in folder.glob("*.json")
+             if not p.name.endswith(".title.json")]
+    assert [m["text"] for m in saved[0]["messages"]][-1] == "Answer."
+
+
+class _Readline:
+    """A stand-in for GNU readline: the startup hook and the text it puts on the line are recorded."""
+
+    __doc__ = "Importing this module enables command line editing using GNU readline."
+
+    def __init__(self) -> None:
+        self.hook = None
+        self.hooks: list[object] = []
+        self.inserted: list[str] = []
+
+    def set_startup_hook(self, hook=None) -> None:
+        self.hook = hook
+        self.hooks.append(hook)
+
+    def insert_text(self, text: str) -> None:
+        self.inserted.append(text)
+
+
+def _console(monkeypatch, lines: list[object], editor: _Readline) -> list[str]:
+    """The chat's console reads *lines* with :func:`input` (an item ``KeyboardInterrupt`` raises it), calling
+    the startup hook first as readline does; returns the prompts shown."""
+    import builtins
+
+    shown: list[str] = []
+    items = list(lines)
+
+    def fake_input(prompt_text: str = "") -> str:
+        shown.append(prompt_text)
+        if editor.hook is not None:
+            editor.hook()
+        if not items:
+            raise EOFError
+        item = items.pop(0)
+        if item is KeyboardInterrupt:
+            raise KeyboardInterrupt
+        return str(item)
+
+    monkeypatch.setitem(sys.modules, "readline", editor)
+    monkeypatch.setattr(builtins, "input", fake_input)
+    monkeypatch.setattr(chat_cli.Terminal, "_is_console", lambda self: True)
+    return shown
+
+
+def test_edit_puts_the_question_on_the_line_with_readline(project, fake_backends, echo_tool, monkeypatch):
+    editor = _Readline()
+    _console(monkeypatch, ["q1", "/edit", "q1 changed", "/quit"], editor)
+    models = Models([say("Answer."), say("Changed answer.")], fake_backends)
+    term = terminal()
+    endpoint.mark_welcome_seen()
+    assert chat_cli.main(remote(project, "--accept-data-notice"), backend_factory=models, terminal=term) == 0
+    assert editor.inserted == ["q1"]
+    assert editor.hook is None and editor.hooks[-1] is None         # cleared after the line
+    assert "Change the question and press Enter" in term.stdout.getvalue()
+    assert _questions(models) == ["q1", "q1 changed"]
+
+
+def test_ctrl_c_while_editing_clears_the_hook_and_keeps_the_question(project, fake_backends, echo_tool,
+                                                                     monkeypatch):
+    editor = _Readline()
+    _console(monkeypatch, ["q1", "/edit", KeyboardInterrupt, "/quit"], editor)
+    models = Models([say("Answer.")], fake_backends)
+    term = terminal()
+    endpoint.mark_welcome_seen()
+    assert chat_cli.main(remote(project, "--accept-data-notice"), backend_factory=models, terminal=term) == 0
+    assert editor.inserted == ["q1"] and editor.hook is None
+    assert "Stopped." in term.stdout.getvalue()
+    assert len(models.requests) == 1
+
+
+def test_libedit_or_a_question_of_several_lines_is_printed_to_copy(project, fake_backends, echo_tool,
+                                                                  monkeypatch):
+    editor = _Readline()
+    editor.__doc__ = "Importing this module enables command line editing using libedit readline."
+    _console(monkeypatch, ["q1", "/edit", "q1 changed", "/quit"], editor)
+    models = Models([say("Answer."), say("Changed answer.")], fake_backends)
+    term = terminal()
+    endpoint.mark_welcome_seen()
+    assert chat_cli.main(remote(project, "--accept-data-notice"), backend_factory=models, terminal=term) == 0
+    assert editor.inserted == [] and editor.hooks == []
+    assert "Your last question is below." in term.stdout.getvalue()
+    assert _questions(models) == ["q1", "q1 changed"]
+
+
+def test_the_help_lists_retry_and_edit_in_plain_words():
+    lines = [line for line in chat_cli.HELP.splitlines() if line.lstrip().startswith(("/retry", "/edit"))]
+    assert len(lines) == 2
+    texts = lines + [chat_cli.TEXTS[k] for k in ("no_retry", "no_edit", "asking_again", "edit_line", "edit_copy",
+                                                 "edit_kept")]
+    for text in texts:
+        assert not re.search(r"\b(rewind|turn|prompt)", text, re.IGNORECASE), text

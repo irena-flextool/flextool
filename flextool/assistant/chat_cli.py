@@ -9,6 +9,9 @@
   (preset, address, key, model from the live list) and offers to save it.  Then ``you>`` questions and ``/``
   commands.  The answer streams; tool calls, waits and retries are one dim line each; a token line follows each
   answer.  Ctrl-C during an answer stops it at once ("Stopped."); Ctrl-C or Ctrl-D at the prompt leaves.
+  ``/retry`` asks the last question again and ``/edit`` changes it first (item 220): its answer goes, also in a
+  chat continued with ``--continue``.  On a terminal with GNU readline the question is put on the input line to
+  change; elsewhere (Windows without readline, libedit, a question of several lines) it is printed to copy.
 * **One question** (``-q``): never asks anything.  Only the answer goes to stdout; tool lines, notices, the token
   line and errors go to stderr.  Exit codes: 0 answered · 1 the provider gave an error · 2 setup or usage problem ·
   3 the data notice is not accepted · 130 stopped.
@@ -82,6 +85,8 @@ HELP = (
     "  /help          this list\n"
     "  /new           start a new conversation\n"
     "  /new carry     start a new conversation with a short summary of this one\n"
+    "  /retry         ask your last question again; its answer is replaced\n"
+    "  /edit          change your last question and ask it again; its answer is replaced\n"
     "  /model NAME    use another model of this provider (/model alone lists them)\n"
     "  /provider      choose another provider\n"
     "  /privacy       where the data goes and the privacy settings sent with each request\n"
@@ -156,6 +161,13 @@ TEXTS: dict[str, str] = {
     "conversation_carry": "A new conversation; your next question starts with a short summary of the last one.",
     "conversation_continued": "Continuing the conversation of {created} ({n} questions so far).",
     "conversation_missing": "There is no saved conversation {which}for this project; starting a new one.",
+    "no_retry": "No question to ask again.",
+    "no_edit": "No question to edit.",
+    "asking_again": "Asking again: {question}",
+    "edit_line": "Change the question and press Enter; an empty line keeps the question and its answer.",
+    "edit_copy": ("Your last question is below. Type or paste it with your changes; an empty line keeps the "
+                  "question and its answer."),
+    "edit_kept": "Nothing changed: the question and its answer are kept.",
     "model_switched": "The next question goes to {model}.",
     "provider_switched": "The next question goes to {provider}, model {model}.",
     "give_provider": "Give the provider with --provider, one of: {ids}.",
@@ -275,6 +287,20 @@ class Terminal:
         stream = self.stderr if err else self.stdout
         stream.write(text + "\n")
         stream.flush()
+
+
+def line_editor() -> Any | None:
+    """GNU readline, imported only when asked (importing it changes how :func:`input` reads); ``None`` without it
+    or with libedit (macOS), whose startup hook does not put text on the line the same way."""
+    try:
+        import readline
+    except ImportError:
+        return None
+    if getattr(readline, "backend", "readline") == "editline" or "libedit" in (readline.__doc__ or ""):
+        return None
+    if not (hasattr(readline, "set_startup_hook") and hasattr(readline, "insert_text")):
+        return None
+    return readline
 
 
 def _dim(text: str, color: bool) -> str:
@@ -728,6 +754,8 @@ class Chat:
         self.session: Session | None = None
         self.worker: TurnWorker | None = None
         self.seed: str | None = None
+        #: The summary the first question of this conversation started with (a /new carry): asked again with it.
+        self.sent_seed: str | None = None
         self.accepted: set[endpoint.ConsentKey] = set()
         self.free_tier = free_tier_setting(args, settings)
         self.budget = None
@@ -764,6 +792,7 @@ class Chat:
         self._finish_worker()
         old = self.conversation
         self.seed = carry_summary(old.messages) if carry and old.messages else None
+        self.sent_seed = None
         self.store.close(old)
         self.conversation = self.store.new_conversation(self.ctx, self._origin(), self.choice.tier)
         self.session = None
@@ -939,8 +968,9 @@ class Chat:
             self.worker.join(timeout)
 
     # --- a question -----------------------------------------------------------------------------------------------
-    def ask(self, text: str) -> int:
-        """Answer *text*; the exit code of ``-q``."""
+    def ask(self, text: str, *, rewind: int | None = None) -> int:
+        """Answer *text*; the exit code of ``-q``.  *rewind*: *text* replaces question *rewind* and everything
+        after it (:meth:`Session.run_turn`), once the connection is ready."""
         from flextool.assistant.llm_errors import message_for
         from flextool.assistant.usage import format_turn_line
 
@@ -948,9 +978,12 @@ class Chat:
         if code is not None:
             return code
         assert self.worker is not None and self.link is not None
-        if self.seed:
-            text = f"{self.seed}\n\n{text}"
-            self.seed = None
+        if rewind is not None:
+            seed = self.sent_seed
+        else:
+            seed, self.seed = self.seed, None
+            if seed:
+                self.sent_seed = seed
         done = threading.Event()
         box: dict[str, TurnResult] = {}
 
@@ -958,7 +991,7 @@ class Chat:
             box["result"] = result
             done.set()
 
-        self.worker.start(text, self.renderer.event, finished)
+        self.worker.start(text, self.renderer.event, finished, rewind=rewind, seed=seed)
         if self._wait(done, self.worker.stop):
             return 130
         result = box["result"]
@@ -1059,6 +1092,10 @@ class Chat:
             self.term.say(HELP)
         elif name == "/new":
             self.new_conversation(carry=rest == "carry")
+        elif name == "/retry":
+            self.retry()
+        elif name == "/edit":
+            self.edit()
         elif name == "/model":
             self.change_model(rest)
         elif name == "/provider":
@@ -1080,6 +1117,67 @@ class Chat:
         else:
             self.term.say(TEXTS["unknown_command"].format(command=name))
         return True
+
+    # --- asking again ---------------------------------------------------------------------------------------------
+    def _last_question(self) -> int | None:
+        """The number of the conversation's last question (answered or not), ``None`` when it has none."""
+        from flextool.assistant.session import CONTROL_KINDS
+
+        return max((m.turn for m in self.conversation.messages
+                    if m.role == "user" and m.kind not in CONTROL_KINDS and m.turn >= 1), default=None)
+
+    def retry(self) -> None:
+        """``/retry``: ask the last question again; its answer and anything after it go."""
+        from flextool.assistant.session import question_text
+
+        self._finish_worker()
+        turn = self._last_question()
+        if turn is None:
+            self.term.say(TEXTS["no_retry"])
+            return
+        text = question_text(self.conversation.messages, turn, self.sent_seed)
+        self.renderer.note(TEXTS["asking_again"].format(question=text))
+        self.ask(text, rewind=turn)
+
+    def edit(self) -> None:
+        """``/edit``: change the last question, then ask it instead; an empty line changes nothing."""
+        from flextool.assistant.session import question_text
+
+        self._finish_worker()
+        turn = self._last_question()
+        if turn is None:
+            self.term.say(TEXTS["no_edit"])
+            return
+        old = question_text(self.conversation.messages, turn, self.sent_seed)
+        text = self._edited(old)
+        if text is None or not text.strip():
+            self.term.say(TEXTS["edit_kept"])
+            return
+        self.ask(text, rewind=turn)
+
+    def _edited(self, old: str) -> str | None:
+        """The question the user types to replace *old*: on the console with GNU readline *old* is on the input line
+        to change; else *old* is printed to copy, with `` \\`` ending each line but the last (a question of several
+        lines is typed that way).  ``None`` at the end of the input; Ctrl-C raises KeyboardInterrupt."""
+        editor = line_editor() if self.term._is_console() and "\n" not in old else None
+        if editor is None:
+            self.term.say(TEXTS["edit_copy"])
+            self.term.say(" \\\n".join(old.split("\n")))
+            return self.read_question()
+        self.term.say(TEXTS["edit_line"])
+        inserted = False
+
+        def prefill() -> None:
+            nonlocal inserted
+            if not inserted:                # the first line only, not a continuation line
+                inserted = True
+                editor.insert_text(old)
+
+        editor.set_startup_hook(prefill)
+        try:
+            return self.read_question()
+        finally:
+            editor.set_startup_hook()
 
     def change_model(self, model: str) -> None:
         if not model:
