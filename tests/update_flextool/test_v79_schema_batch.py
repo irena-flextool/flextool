@@ -30,7 +30,9 @@ Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
   (retire) has no ``invest_cost`` (``salvage_value``) or a 0 in it;
 * adds the value list ``startup_input_methods`` (``just_input``, ``startup_and_input``, ``startup_only``),
   ``unit__inputNode.startup_input_method`` (``str``, default ``just_input``) and ``unit__inputNode.startup_energy``
-  (float / 1d_map, no default), both in group ``tech_advanced``.
+  (float / 1d_map, no default), both in group ``tech_advanced``;
+* adds ``node.unit_of_measure`` (``str``, default ``MWh``, no value list, group ``basics``) with the description that
+  explains the per-kW cost rule.
 
 It changes no other definition and no value, and a rerun commits nothing.
 """
@@ -71,10 +73,11 @@ MARGIN_CHANGED = {("group", "capacity_margin_method"), ("group", "capacity_margi
 PERIOD_METHOD_NEW = ("constraint", "constraint_period_method")
 DISCOUNT_CHANGED = {(cls, name) for cls in ("unit", "connection", "node") for name in ("discount_rate", "lifetime")}
 STARTUP_NEW = {("unit__inputNode", "startup_input_method"), ("unit__inputNode", "startup_energy")}
+UOM_NEW = ("node", "unit_of_measure")
 #: Every definition the step adds or changes.
 ALL_CHANGED = (set(ONLINE_NEW) | set(RAMP_CHANGED) | set(REDUCE_NEW) | set(GROUP_LIMITS_CHANGED)
                | {ADDER, DURATION} | EFFICIENCY_CHANGED | COEFF_CHANGED | {SHARE_NEW} | MARGIN_CHANGED
-               | {PERIOD_METHOD_NEW} | DISCOUNT_CHANGED | STARTUP_NEW)
+               | {PERIOD_METHOD_NEW} | DISCOUNT_CHANGED | STARTUP_NEW | {UOM_NEW})
 
 
 def _defs(db) -> dict:
@@ -397,6 +400,19 @@ def test_adds_the_startup_input_definitions(plain) -> None:
     assert description.startswith("[MWh per MW started]")
 
 
+# ─── node.unit_of_measure ────────────────────────────────────────────────
+
+
+def test_adds_the_node_unit_of_measure(plain) -> None:
+    assert UOM_NEW not in plain["before"]
+    types, group, description, _default, value_list, default = plain["after"][UOM_NEW]
+    assert types == ("str",) and group == "basics" and value_list is None and default == "MWh"
+    assert description == _shipped()[UOM_NEW] == m.V79_NODE_UNIT_OF_MEASURE_DESCRIPTION
+    assert description.startswith("[text]")
+    # The per-kW rule, with its worked number, is explained here (owner decision 2).
+    assert "per 0.001 of the rate or amount" in description and "entered as 0.5" in description
+
+
 # ─── the step as a whole ─────────────────────────────────────────────────
 
 
@@ -414,7 +430,8 @@ def test_changes_nothing_else(plain) -> None:
 @pytest.mark.parametrize("part", [
     "_v79_constraint_online_coeff", "_v79_ramp_cost_descriptions", "_v79_reduce_detail_methods",
     "_v79_group_limits_by_time", "_v79_solve_step_series", "_v79_capacity_margin", "_v79_constraint_period_method",
-    "_v79_discount_rate_zero", "_v79_startup_input", "_v79_invest_without_cost", "_migrate_v79_schema_batch"])
+    "_v79_discount_rate_zero", "_v79_startup_input", "_v79_invest_without_cost", "_v79_node_unit_of_measure",
+    "_migrate_v79_schema_batch"])
 def test_rerun_is_idempotent(plain, part: str, monkeypatch) -> None:
     with DatabaseMapping(plain["url"]) as db:
         _rerun_changes_nothing(db, getattr(m, part), monkeypatch)

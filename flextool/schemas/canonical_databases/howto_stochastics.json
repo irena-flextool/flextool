@@ -1900,6 +1900,17 @@
     ],
     [
       "node",
+      "unit_of_measure",
+      [
+        "\"MWh\"",
+        "str"
+      ],
+      null,
+      "[text] Unit of measure of this node's amounts, e.g. m3, t, MWh_th (default MWh). A label only: FlexTool converts nothing. Flows into and out of the node, and the capacity of a unit or connection whose output is this node, are rates in this unit per hour (MWh → MW, m3 → m3/h); storage state, storage capacity and inflow per time step are amounts (m3); annual results are per year (m3/a); prices and penalty_up/down are CUR per this unit. Costs given per kW or kWh (invest_cost, fixed_cost, salvage_value) then mean per 0.001 of the rate or amount: 500 CUR per m3/h of capacity is entered as 0.5. An efficiency into or out of this node is output units per input unit (e.g. m3/MWh).",
+      "basics"
+    ],
+    [
+      "node",
       "virtual_unitsize",
       null,
       null,
@@ -4377,6 +4388,12 @@
       "node",
       "storage_state_start",
       "float",
+      0
+    ],
+    [
+      "node",
+      "unit_of_measure",
+      "str",
       0
     ],
     [

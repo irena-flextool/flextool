@@ -6424,6 +6424,40 @@ def _v79_startup_input(db) -> None:
             db.update_parameter_definition(id=pdef["id"], parameter_type_list=types, **fields)
 
 
+#: ``node.unit_of_measure`` description (v79 part 11).  The only parameter description that explains the per-kW
+#: cost rule for a node whose unit is not MWh (owner decision); the cost parameters keep their own wording.
+V79_NODE_UNIT_OF_MEASURE_DESCRIPTION = (
+    "[text] Unit of measure of this node's amounts, e.g. m3, t, MWh_th (default MWh). A label only: FlexTool "
+    "converts nothing. Flows into and out of the node, and the capacity of a unit or connection whose output is "
+    "this node, are rates in this unit per hour (MWh → MW, m3 → m3/h); storage state, storage capacity and "
+    "inflow per time step are amounts (m3); annual results are per year (m3/a); prices and penalty_up/down are "
+    "CUR per this unit. Costs given per kW or kWh (invest_cost, fixed_cost, salvage_value) then mean per 0.001 "
+    "of the rate or amount: 500 CUR per m3/h of capacity is entered as 0.5. An efficiency into or out of this "
+    "node is output units per input unit (e.g. m3/MWh).")
+
+
+def _v79_node_unit_of_measure(db) -> None:
+    """``node.unit_of_measure`` (part of v79).
+
+    A constant string (type ``str``, no value list), default ``MWh``, group ``basics``: the unit of measure of the
+    node's amounts.  Labels only (the results show the node's flows in this unit per hour); the engine does not
+    read it.  No value is rewritten.  Idempotent: an existing definition is updated to the v79 fields.
+    """
+    if not db.get_item("entity_class", name="node"):
+        return
+    _ensure_parameter_group(db, "basics", "6fa8c7", 10)
+    default_val, default_type = to_database("MWh")
+    types = ("str",)
+    fields = {"default_value": default_val, "default_type": default_type, "parameter_value_list_name": None,
+              "parameter_group_name": "basics", "description": V79_NODE_UNIT_OF_MEASURE_DESCRIPTION}
+    pdef = _pdef_or_none(db, "node", "unit_of_measure")
+    if pdef is None:
+        db.add_parameter_definition(entity_class_name="node", name="unit_of_measure", parameter_type_list=types,
+                                    **{k: v for k, v in fields.items() if v is not None})
+    elif any(pdef[k] != v for k, v in fields.items()) or tuple(pdef["parameter_type_list"] or ()) != types:
+        db.update_parameter_definition(id=pdef["id"], parameter_type_list=types, **fields)
+
+
 def _migrate_v79_schema_batch(db) -> None:
     """All schema changes of database version 79 (v78 -> v79), in one step.
 
@@ -6446,6 +6480,8 @@ def _migrate_v79_schema_batch(db) -> None:
     10. An ``invest_method`` that allows investing (retiring) offers the variable also where ``invest_cost``
         (``salvage_value``) is missing or 0: the behaviour-change marker ``invest_without_cost_offered``
         (:func:`_v79_invest_without_cost`).
+    11. ``node.unit_of_measure`` (``str``, default ``MWh``, group ``basics``): the unit of measure of the node's
+        amounts, a label only (:func:`_v79_node_unit_of_measure`).
 
     No value is rewritten.  Each part is idempotent, so a rerun of the step changes nothing.
     """
@@ -6459,10 +6495,12 @@ def _migrate_v79_schema_batch(db) -> None:
     _v79_discount_rate_zero(db)
     _v79_startup_input(db)
     _v79_invest_without_cost(db)
+    _v79_node_unit_of_measure(db)
     _commit_step(db, "v79: constraint_online_coeff, ramp_cost, reduce_*_detail_method, time-varying group "
                      "limits, time series combined over a solve's new_stepduration step, capacity margin by "
                      "entity class and share_of_peak, constraint_period_method, discount_rate 0 is 0 %, "
-                     "startup_input_method and startup_energy, investment offered without invest_cost")
+                     "startup_input_method and startup_energy, investment offered without invest_cost, "
+                     "node.unit_of_measure")
 
 
 def _v79_adder_has_value(value) -> bool:

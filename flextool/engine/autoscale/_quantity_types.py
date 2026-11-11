@@ -626,6 +626,8 @@ PARAMETER_TYPES: dict[tuple[str, str], QuantityType] = {
     ('unitsize', 'commodity'): QuantityType.DIMENSIONLESS,
     # Numeric scaling for the v_trade variable column (analogous to virtual_unitsize on process/node entities).  The variable is in user-MWh divid...
     # Enable automatic row scaling (experimental): derive node_capacity_for_scaling / group_capacity_for_scaling from connected-unit unitsizes (ro...
+    ('unit_of_measure', 'node'): QuantityType.DIMENSIONLESS,
+    # [text] Unit of measure of the node's amounts (m3, t, MWh_th; default MWh). A label only: not read by the LP.
     ('use_for_representative_periods', 'group'): QuantityType.DIMENSIONLESS,
     # yes_no flag marking a group as an aggregation unit for net-load representative-period selection (preprocessor-only; not read by the LP model).
     ('version', 'model'): QuantityType.DIMENSIONLESS,

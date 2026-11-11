@@ -300,6 +300,15 @@ _PARAMETER_SPECS: list[dict] = [
         "filename": "input/node__penalty_method.csv",
     },
     {
+        # A label only (the results show the node's flows in this unit per hour): read by process_outputs
+        # (flextool.units_of_measure.read_node_units), never by the engine.  Explicit values only; a node
+        # without one is MWh.
+        "cl_pars": [("node", "unit_of_measure")],
+        "header": "node,unit_of_measure",
+        "filename": "input/node__unit_of_measure.csv",
+        "filter_in_type": ["str"],
+    },
+    {
         "cl_pars": [("node", "penalty_down"), ("node", "penalty_up"), ("node", "self_discharge_loss"),
                     ("node", "availability"), ("node", "storage_state_reference_value")],
         "header": "node,nodeParam,time,pt_node",
