@@ -695,3 +695,33 @@ def test_a_busy_local_server_is_waited_for_on_the_session_path(tmp_path, tools, 
     result = session.run_turn("question", lambda _e: None, threading.Event())
     assert result.ok and result.text == "Loaded and done."
     assert len(backend.requests) == 7 and now[0] == pytest.approx(2 + 4 + 8 + 16 + 32 + 60, rel=0.2)
+
+
+# --- Ollama's reasoning text (gpt-oss "error parsing tool call", 2026-11-11) --------------------------------------
+def test_ollama_reasoning_is_saved_and_leaves_the_turn_editable(tmp_path, tools, fake_backends, user_config_in_tmp):
+    """The reasoning of an Ollama answer is kept in the saved conversation (owner, 2026-11-11), is never shown,
+    and is no data that keeps this turn's tool results from being shortened (Ollama accepts the request without
+    it); any other message data still is."""
+    from flextool.assistant.llm_adapter import REASONING_TEXT_KEY
+    from flextool.assistant.store import message_from_json, message_to_json
+
+    reasoning = {REASONING_TEXT_KEY: "We need the echo of x."}
+    backend = FakeBackend([calls(call(text="x"), extra=reasoning), say("Echoed.", extra={REASONING_TEXT_KEY: "Done."})],
+                          origin=("ollama", "http://localhost:11434/v1", "gpt-oss:20b"))
+    fake_backends.append(backend)
+    ctx = make_context(tmp_path / "project", input_source="base.sqlite", front_end="terminal")
+    store = open_store()
+    conv = store.new_conversation(ctx, backend.origin, "medium")
+    session = Session(ctx, backend, PRESETS["ollama"], conversation=conv, caps=TurnCaps(), tier="medium",
+                      store=store, ledger=None, facts=None, sleep=lambda _s: False)
+    events: list = []
+    result = session.run_turn("question", events.append, threading.Event())
+    assert result.ok and result.text == "Echoed."
+    assert "".join(e.text for e in events if isinstance(e, TextDelta)) == "Echoed."
+    answer = session.messages[1]
+    assert answer.tool_calls and answer.provider_extra == reasoning
+    assert message_from_json(message_to_json(answer)).provider_extra == reasoning
+    assert session._replays_data(1) is False
+    session.messages[1] = dataclasses.replace(answer, provider_extra={**reasoning, "other_data": [1]})
+    assert session._replays_data(1) is True
+    store.close(conv)

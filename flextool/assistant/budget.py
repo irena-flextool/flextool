@@ -7,7 +7,8 @@ context window.
 Mistral, Gemma) make result JSON with floats about one token per 1.4 characters; the digit-aware form stays above
 them without a tokenizer (checked against Qwen2.5 and o200k counts of a committed result fixture).  Provider data a
 request replays to the model that produced it (thinking blocks, reasoning details, thought signatures) counts as
-JSON, as the backend sends it.  A per-session :class:`TokenCorrection` raises the estimates when a provider reports
+JSON, as the backend sends it; Ollama's reasoning text counts as text, and only on the messages after the last user
+message, where the backend replays it (an estimate that is too high is never corrected down).  A per-session :class:`TokenCorrection` raises the estimates when a provider reports
 more prompt tokens than estimated: by the largest ratio of the last :data:`CORRECTION_WINDOW` requests (never below
 1.0).
 
@@ -55,7 +56,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
 from flextool.assistant import caps as caps_module
-from flextool.assistant.llm_adapter import ANTHROPIC_BLOCKS_KEY
+from flextool.assistant.llm_adapter import ANTHROPIC_BLOCKS_KEY, REASONING_TEXT_KEY
 from flextool.assistant.tiers import ASSUMED_LOCAL_WINDOW, ASSUMED_REMOTE_WINDOW, MIN_WINDOW
 
 if TYPE_CHECKING:
@@ -120,11 +121,12 @@ def _extra_tokens(extra: dict) -> int:
     return approx_tokens(json.dumps(extra, ensure_ascii=False), "json") if extra else 0
 
 
-def _message_parts(m: Message, origin: Origin | None = None) -> tuple[int, int]:
+def _message_parts(m: Message, origin: Origin | None = None, *, after_last_user: bool = False) -> tuple[int, int]:
     """(text tokens, JSON tokens) of one message.  The first message of a fresh context carries tool results, so
     it counts as JSON (the larger estimate).  For the model that produced it (*origin*) an assistant message's
     provider data counts as the backend sends it: Anthropic's content blocks instead of the text and the calls;
-    other data (reasoning details, the calls' thought signatures) on top of them."""
+    other data (reasoning details, the calls' thought signatures) on top of them; the reasoning text (Ollama) as
+    text, and only *after_last_user* (the backend replays it only there)."""
     if m.role == "tool" or m.kind == "continuation":
         return 0, approx_tokens(m.text, "json")
     same = origin is not None and m.origin is not None and tuple(m.origin) == tuple(origin)
@@ -133,7 +135,11 @@ def _message_parts(m: Message, origin: Origin | None = None) -> tuple[int, int]:
     text = approx_tokens(m.text, "text") if m.text else 0
     calls = sum(approx_tokens(f"{c.name}{c.raw_arguments}", "json") for c in m.tool_calls)
     if same:
-        calls += _extra_tokens(m.provider_extra) + sum(_extra_tokens(c.provider_extra) for c in m.tool_calls)
+        extra = {k: v for k, v in m.provider_extra.items() if k != REASONING_TEXT_KEY}
+        calls += _extra_tokens(extra) + sum(_extra_tokens(c.provider_extra) for c in m.tool_calls)
+        reasoning = m.provider_extra.get(REASONING_TEXT_KEY)
+        if after_last_user and isinstance(reasoning, str) and reasoning:
+            text += approx_tokens(reasoning, "text")
     return text, calls
 
 
@@ -151,8 +157,9 @@ def request_parts(req: Request, origin: Origin | None = None, *, schemas: bool =
     tool-less request the backend sends without tools, :func:`~flextool.assistant.providers.schemas_sent`)."""
     text = sum(approx_tokens(layer, "text") for layer in req.system)
     tools = schema_tokens(req.tools) if schemas else 0
-    for m in req.messages:
-        t, j = _message_parts(m, origin)
+    last_user = max((i for i, m in enumerate(req.messages) if m.role == "user"), default=-1)
+    for i, m in enumerate(req.messages):
+        t, j = _message_parts(m, origin, after_last_user=i > last_user)
         text += t
         tools += j
     return text, tools

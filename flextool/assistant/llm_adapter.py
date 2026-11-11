@@ -62,6 +62,12 @@ class Message:
 #: The message data an Anthropic answer keeps: its content blocks, replayed *instead of* the text and the tool calls
 #: to the same origin (:mod:`flextool.assistant.backends.anthropic_messages`).
 ANTHROPIC_BLOCKS_KEY = "anthropic_blocks"
+#: The model's reasoning as one string, for a preset with a :attr:`~flextool.assistant.providers.Preset.
+#: reasoning_wire_key` (Ollama): never shown, replayed only on the assistant messages after the last user message
+#: (the tool rounds of the question being answered), and not data that makes the turn's history uneditable (it is
+#: rebuilt by the model on the next question).  Like all message data it is dropped by a compaction, also one in the
+#: middle of a turn, so the requests after it go without the reasoning of the calls before it.
+REASONING_TEXT_KEY = "reasoning_text"
 
 #: The kinds of the session's own messages (P3 §4.7): the request for the model's note, the note, the first message
 #: of a fresh context, and the "tool limit reached" instruction before the tool-less request.  Backends send them like

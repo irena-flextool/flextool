@@ -4,7 +4,9 @@ OpenAI-compatible base URL.
 The request carries only the fields the preset allows; the knobs' fields go in ``extra_body`` (they land at the
 top level of the body).  The answer streams: text deltas are shown as they come, tool calls are assembled per
 ``index`` with their arguments concatenated, provider data the preset captures (Gemini's thought signatures in
-``extra_content``, OpenRouter's ``reasoning_details``) is merged and replayed only to the same origin.
+``extra_content``, OpenRouter's ``reasoning_details``) is merged and replayed only to the same origin.  The
+reasoning string of a preset with a ``reasoning_wire_key`` (Ollama's ``reasoning``) is joined from its pieces, never
+shown, and replayed to the same origin only on the assistant messages after the last user message.
 
 A connection with ``stream=False`` (the calibration's ``run --no-stream``) asks for the whole answer at once.  Its
 message is read as one chunk whose delta is the whole message (:meth:`OpenAIChatBackend._consume_whole`), so the
@@ -29,6 +31,7 @@ from flextool.assistant.backends._common import (
     error_context,
 )
 from flextool.assistant.llm_adapter import (
+    REASONING_TEXT_KEY,
     Connection,
     Message,
     ModelEntry,
@@ -95,6 +98,7 @@ class _State:
     calls: dict[int, _Call] = field(default_factory=dict)
     message_extra: dict[str, Any] = field(default_factory=dict)
     reasoning: dict[str, list] = field(default_factory=dict)
+    reasoning_text: str = ""        # the preset's reasoning string (reasoning_wire_key), joined; never shown
     plain_body: bool = False        # the answer was a JSON body without an error, no event stream
 
 
@@ -202,7 +206,11 @@ class OpenAIChatBackend:
         out: list[dict] = []
         if req.system:
             out.append({"role": "system", "content": "\n\n".join(req.system)})
-        for m in req.messages:
+        # The reasoning goes back only after the last user message (the tool rounds of this question): Ollama's
+        # gpt-oss template renders it there and nowhere else.  Each user message is one wire user message.
+        last_user = max((i for i, m in enumerate(req.messages) if m.role == "user"), default=-1)
+        reasoning_key = self.preset.reasoning_wire_key
+        for i, m in enumerate(req.messages):
             same = m.origin == self.origin
             if m.role == "user":
                 out.append({"role": "user", "content": m.text})
@@ -214,6 +222,9 @@ class OpenAIChatBackend:
                     for key in sorted(self.preset.capture_message_keys):
                         if key in m.provider_extra:
                             wire[key] = copy.deepcopy(m.provider_extra[key])
+                    reasoning = m.provider_extra.get(REASONING_TEXT_KEY)
+                    if reasoning_key and i > last_user and isinstance(reasoning, str) and reasoning:
+                        wire[reasoning_key] = reasoning
                 out.append(wire)
             else:
                 wire = {"role": "tool", "tool_call_id": m.tool_call_id,
@@ -422,6 +433,12 @@ class OpenAIChatBackend:
                 on_event(TextDelta(refusal))
             for part in delta.get("tool_calls") or []:
                 self._consume_call(part, state, on_event)
+            if self.preset.reasoning_wire_key:
+                # Streamed in pieces (a whole answer's message has it whole): joined, never shown, so it does not
+                # count as output shown.
+                reasoning = delta.get(self.preset.reasoning_wire_key)
+                if isinstance(reasoning, str):
+                    state.reasoning_text += reasoning
             for key in self.preset.capture_message_keys:
                 value = delta.get(key)
                 if isinstance(value, list):
@@ -510,6 +527,8 @@ class OpenAIChatBackend:
                 on_event(Notice(render("unknown_stop", self.ctx, reason=state.finish)))
         extra = dict(state.message_extra)
         extra.update(state.reasoning)
+        if state.reasoning_text:
+            extra[REASONING_TEXT_KEY] = state.reasoning_text
         message = None
         if state.text or calls:
             message = Message("assistant", state.text, tool_calls=calls, provider_extra=extra, origin=self.origin)

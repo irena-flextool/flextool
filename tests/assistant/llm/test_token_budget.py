@@ -281,6 +281,25 @@ def test_a_call_signature_counts_on_top_of_the_call():
     assert budget.request_parts(req, OTHER) == (5, 5 + 7)
 
 
+def test_ollama_reasoning_counts_as_text_only_after_the_last_user_message():
+    """Ollama's reasoning text is replayed only on the assistant messages after the last user message, as text.
+    The user message "q": 5 text tokens; the schema list "[]": 5; the call 'echo{}': ceil(6 / 2.2) + 4 = 7; the tool
+    result "{}": ceil(2 / 2.2) + 4 = 5; the reasoning "a" × 32: ceil(32 / 3.2) + 4 = 14 text tokens.  In the tool
+    round (no user message after the call): text 5 + 14 = 19, JSON 5 + 7 + 5 = 17.  After the next user message the
+    reasoning is not sent and not counted: text 5 + 5 = 10, JSON 17.  To another model: never counted."""
+    from flextool.assistant.llm_adapter import REASONING_TEXT_KEY, Message, ToolCall
+
+    origin = ("ollama", "http://localhost:11434/v1", "gpt-oss:20b")
+    answer = Message("assistant", "", tool_calls=[ToolCall("c1", "echo", {}, "{}")],
+                     provider_extra={REASONING_TEXT_KEY: "a" * 32}, origin=origin)
+    result = Message("tool", "{}", tool_call_id="c1", tool_name="echo")
+    in_the_round = _request(Message("user", "q"), answer, result)
+    assert budget.request_parts(in_the_round, origin) == (19, 17)
+    assert budget.request_parts(in_the_round, OTHER) == (5, 17)
+    next_question = _request(Message("user", "q"), answer, result, Message("user", "q"))
+    assert budget.request_parts(next_question, origin) == (10, 17)
+
+
 def test_the_correction_follows_the_last_four_requests():
     """One request reported three times the estimate; four later ones 1.1 times: the factor is the largest of the
     last four, 1.1."""

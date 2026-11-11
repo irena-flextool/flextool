@@ -1160,7 +1160,12 @@ nor the chat (`tests/assistant/test_import_hygiene.py`).
   end shows (`TextDelta`, `ToolDone`, `Waiting`, `RetryWait`, …) and the `Backend` protocol. Data only one provider
   understands (Anthropic thinking blocks, Gemini thought signatures, OpenRouter reasoning details) travels in
   `provider_extra`, stamped with its origin (preset, base URL, model), and is replayed only to that origin; on a
-  switch it is dropped and tool-call ids are re-mapped.
+  switch it is dropped and tool-call ids are re-mapped. Ollama's reasoning string (the preset's
+  `reasoning_wire_key`, `delta.reasoning` joined) is kept as `provider_extra["reasoning_text"]`: never shown,
+  saved with the conversation, and sent back as `reasoning` only on the assistant messages after the last user
+  message (gpt-oss's template renders it only there; without it the model leaks its analysis into tool calls). It
+  does not make a turn's history uneditable, and like all message data a compaction drops it — also one in the
+  middle of a turn, after which this turn's earlier reasoning is not sent again.
 - **Backends** (`backends/`): Anthropic Messages and OpenAI Chat Completions (also Mistral, OpenRouter, Gemini,
   Ollama, LM Studio and any compatible endpoint). The provider libraries are imported only in `make_backend`.
   `net.py` builds each library's HTTP client: headers rebuilt from an allow-list (the libraries' identification

@@ -86,6 +86,7 @@ from flextool.assistant import caps as caps_module
 from flextool.assistant import prompt, registry, unit_wording
 from flextool.assistant.errors import MESSAGES as TOOL_MESSAGES
 from flextool.assistant.llm_adapter import (
+    REASONING_TEXT_KEY,
     Backend,
     Continuing,
     Event,
@@ -689,7 +690,9 @@ class Session:
         except, from the message at *keep_calls_from* on (a compaction in the middle of a turn: the current part),
         the tool calls' own data (Gemini's thought signatures, which Gemini checks for the current turn's calls;
         review G11, C5-8).  Message data (Anthropic's thinking blocks, reasoning details) is always dropped: a
-        provider that replays it rejects it once the history before it changed (P1-D7)."""
+        provider that replays it rejects it once the history before it changed (P1-D7).  So is Ollama's reasoning
+        text (:data:`~flextool.assistant.llm_adapter.REASONING_TEXT_KEY`): after a compaction in the middle of a
+        turn, the requests go without the reasoning of this turn's earlier calls."""
         calls: dict[str, ToolCall] = {}
         out: list[Message] = []
         kept = self.messages[keep_calls_from:] if keep_calls_from is not None else []
@@ -919,7 +922,10 @@ class Session:
         thinking blocks): then this turn's messages are never edited."""
         if self.preset.capture_tool_call_keys or self.preset.capture_message_keys:
             return True
-        return any(m.provider_extra for m in self.messages[self._part_start(turn):] if m.turn == turn)
+        # The reasoning text is no such data: a request without it is still accepted (Ollama), so it never keeps
+        # this turn's results from being shortened.
+        return any(set(m.provider_extra) - {REASONING_TEXT_KEY}
+                   for m in self.messages[self._part_start(turn):] if m.turn == turn)
 
     def _fit_notice(self, state: _TurnState, emit: OnEvent) -> None:
         if not state.fit_notice:
