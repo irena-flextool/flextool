@@ -99,6 +99,8 @@ ASK_AGAIN_TOOLTIP = "Ask this question again (R). Its answer is replaced."
 EDIT_TOOLTIP = "Change this question and ask it again (E). Its answer is replaced."
 ASK_AGAIN_KEY = "R"
 EDIT_KEY = "E"
+#: The R key always asks first (review decision D8); the ↻ button and the menu only when later questions go too.
+CONFIRM_ASK_AGAIN = "Ask question {n} again? Its answer is removed."
 CONFIRM_LATER = "This also removes the {n} later questions and answers."
 CONFIRM_LATER_ONE = "This also removes the later question and its answer."
 EDIT_SEND_TITLE = "Send the changed question"

@@ -191,6 +191,26 @@ def test_a_question_the_chat_lacks_is_refused_and_nothing_changes(tmp_path, turn
         rewind(list(session.messages), turn)
 
 
+def test_the_terminals_turn_worker_says_a_refusal_in_plain_words(tmp_path):
+    """``TurnWorker`` (the terminal's) turns :class:`RewindRefused` into a notice and a result that is neither ok
+    nor an error (nothing was asked), never an internal fault."""
+    from flextool.assistant.llm_adapter import Notice
+    from flextool.assistant.session import TurnWorker
+
+    session, backend, _ctx = make(tmp_path, [say("one")])
+    assert ask(session, "q1").ok
+    before = dumped(session.messages)
+    events: list = []
+    done: list = []
+    worker = TurnWorker(session)
+    worker.start("again", events.append, done.append, rewind=5)
+    assert worker.join(5)
+    (result,) = done
+    assert (result.ok, result.error, result.rounds) == (False, None, 0)
+    assert events == [Notice("This chat has no question 5.")]
+    assert dumped(session.messages) == before and len(backend.requests) == 1
+
+
 def test_a_waiting_checkpoint_refuses_asking_again(tmp_path):
     snaps: list = []
     session, _backend, ctx = make(tmp_path, [say("one")], on_checkpoint=snaps.append)

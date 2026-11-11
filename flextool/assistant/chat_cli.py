@@ -999,6 +999,8 @@ class Chat:
         if self.quiet and result.text.strip():
             self.term.stdout.write(result.text.rstrip("\n") + "\n")
             self.term.stdout.flush()
+        if result.error is None and not result.ok:
+            return 1                        # nothing was asked (TurnWorker: a question that cannot be asked again)
         line = format_turn_line(result.usage, self.conversation.usage, self.link.conn.route.label)
         if result.error is not None:
             if result.error.code == "cancelled":

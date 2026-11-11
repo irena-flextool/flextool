@@ -82,11 +82,15 @@ change it (where the symbols cannot be shown, on Windows without the Segoe UI Sy
 "Edit"). R or E on a question line, and its right-click menu, do the same. The question's answer, and every later
 question with its answer, are removed from the chat and from what the assistant is sent next; when later questions
 go too, the window asks first ("This also removes the 2 later questions and answers.", a question still being
-answered counted). During an answer, the answer stops once you confirm, and the question goes right after. With ✎
+answered counted). R always asks first ("Ask question 2 again? Its answer is removed."), so a stray key press
+removes nothing. During an answer, the answer stops once you confirm, and the question goes right after. With ✎
 the status line says "Editing question N: Enter sends it, Escape cancels."; nothing is removed until you press
-Enter, and Escape gives the box back what you had typed in it. Asking the first question again lets the chat take
-the model in the settings, as a new chat does. Results the assistant had already shortened to keep the
-conversation short stay shortened. The token line's "Whole chat" still counts the tokens of the removed answers:
+Enter, and Escape gives the box back what you had typed in it (while an answer is coming, Escape stops the answer
+instead; press it again to cancel the edit). If the question you are changing is removed meanwhile (you asked an
+earlier one again), the edit ends and the box gets back what you had typed. A question asked again goes to the
+chat's own model, also the first one. A chat started with a summary of an earlier one (*New chat with summary*)
+keeps the summary hidden and sends it with its first question again. Results the assistant had already shortened
+to keep the conversation short stay shortened. The token line's "Whole chat" still counts the tokens of the removed answers:
 they were used.
 
 Each question also tells the assistant what you have selected in the FlexTool window: the input sources and

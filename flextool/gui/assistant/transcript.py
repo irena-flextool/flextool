@@ -62,14 +62,35 @@ TOOL_CLOSED = "▸"
 DETAIL_INDENT = "    "
 
 
+def _shortcut_modifiers(widget: tk.Misc) -> int:
+    """The ``event.state`` bits of a key held with R or E that make it not the question's key (it is a shortcut or
+    types another character).  Tk reports the modifiers differently per windowing system:
+
+    * Control is 0x4 everywhere;
+    * X11: Mod1 (0x8) is Alt; Mod2 (0x10) is usually Num Lock, so it is not counted;
+    * aqua (macOS): Mod1 (0x8) is Command, Mod2 (0x10) is Option (Option+R types "®");
+    * win32: 0x8 is Num Lock (not counted), Alt is 0x20000.
+    """
+    try:
+        system = str(widget.tk.call("tk", "windowingsystem"))
+    except tk.TclError:
+        system = "x11"
+    if system == "aqua":
+        return 0x4 | 0x8 | 0x10
+    if system == "win32":
+        return 0x4 | 0x20000
+    return 0x4 | 0x8
+
+
 class Transcript(ttk.Frame):
     """The transcript widget.  *on_escape* stops the answer; *bind_commands(widget)* adds the window's tab
     commands to the text widget's own bindings; *on_question(action, n)* asks question *n* again (``"again"``) or
-    puts it in the input box (``"edit"``) — without it a question gets no buttons."""
+    puts it in the input box (``"edit"``) — without it a question gets no buttons; from the R and E keys it is
+    called with ``key=True`` (R asks first, review decision D8)."""
 
     def __init__(self, parent: tk.Misc, *, on_escape: Callable[[], None] | None = None,
                  bind_commands: Callable[[tk.Misc], None] | None = None,
-                 on_question: Callable[[str, int], None] | None = None) -> None:
+                 on_question: Callable[..., None] | None = None) -> None:
         super().__init__(parent)
         # No insertion cursor: zero width, and no blink timer (insertofftime 0).  The insert mark still moves
         # with the arrow keys, for selecting with Shift and for Enter / space on a tool line.
@@ -95,6 +116,7 @@ class Transcript(ttk.Frame):
         self._tool_headers: dict[int, str] = {}
         self._example = False
         self._aqua = is_aqua(self.text)
+        self._shortcut_modifiers = _shortcut_modifiers(self.text)
         self._configure_tags()
         self._bind_lines()
         self._bind_keys(bind_commands)
@@ -181,10 +203,10 @@ class Transcript(ttk.Frame):
             return None
         if event.keysym in NAV_KEYSYMS:
             return None
-        if event.keysym in ("r", "R", "e", "E") and not event.state & (0x4 | 0x8):
+        if event.keysym in ("r", "R", "e", "E") and not event.state & self._shortcut_modifiers:
             line = self.question_line_at("insert")
             if line is not None:
-                self._question_action(AGAIN if event.keysym in ("r", "R") else EDIT, line)
+                self._question_action(AGAIN if event.keysym in ("r", "R") else EDIT, line, key=True)
         return "break"
 
     def _focus(self, *, next_: bool) -> str:
@@ -304,10 +326,13 @@ class Transcript(ttk.Frame):
             pass
         return None
 
-    def _question_action(self, action: str, line: int) -> None:
+    def _question_action(self, action: str, line: int, *, key: bool = False) -> None:
         turn = self._turns.get(line)
         if turn is not None and self._on_question is not None:
-            self._on_question(action, turn)
+            if key:
+                self._on_question(action, turn, key=True)
+            else:
+                self._on_question(action, turn)
 
     def _add_buttons(self, line: int) -> None:
         from flextool.gui.hover_tooltip import attach_tooltip
@@ -599,14 +624,17 @@ class Transcript(ttk.Frame):
         return buttons
 
     # --- a reopened chat ------------------------------------------------------------------------------------
-    def render_history(self, messages: list[Message] | tuple[Message, ...], provider: str) -> None:
+    def render_history(self, messages: list[Message] | tuple[Message, ...], provider: str, *,
+                       seed: str | None = None) -> None:
         """A saved conversation: questions, answers (Markdown), tool calls closed with their stored result, the
-        context blocks hidden behind one line each."""
+        context blocks hidden behind one line each.  *seed* (the summary the chat's first question started with)
+        is not shown: the first question is shown as the user typed it."""
         from flextool.assistant import prompt
         from flextool.assistant.session import continuation_part, continuing_text
 
         self.clear()
         results = {m.tool_call_id: m for m in messages if m.role == "tool"}
+        first = True
         for m in messages:
             if m.kind == "continuation":
                 part = continuation_part(m)
@@ -624,7 +652,11 @@ class Transcript(ttk.Frame):
                 block = m.text.lstrip()[:len(m.text.lstrip()) - len(rest)].strip() if rest != m.text else ""
                 if block:
                     self._context_line(block)
-                line = self.append_user(prompt.remove_context_blocks(m.text), pending=False)
+                question = prompt.remove_context_blocks(m.text)
+                if first and seed and question.startswith(f"{seed}\n\n"):
+                    question = question[len(seed) + 2:]         # as session.question_text
+                first = False
+                line = self.append_user(question, pending=False)
                 self.set_turn(line, m.turn)
             elif m.role == "assistant":
                 if m.text.strip():

@@ -334,7 +334,8 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
 - **Ask a question again, as it was or changed.** In the AI assistant window each question has two small buttons:
   ↻ asks it again and ✎ puts it in the box to change (Enter sends it, Escape keeps the question as it was); R and E
   on a question line and its right-click menu do the same. The answer, and the questions and answers after it, are
-  replaced; when later questions go too, the window asks first. In the terminal chat, `/retry` asks the last
+  replaced; when later questions go too, or with the R key, the window asks first. A question asked again goes to
+  the chat's own model. In the terminal chat, `/retry` asks the last
   question again and `/edit` changes it first. See "Ask" and "Commands" in "The AI assistant".
 
 ### Fixes

@@ -612,10 +612,17 @@ def test_tool_lines_share_their_tags_and_still_open_one_by_one(host):
 
 
 # --- asking a question again: the buttons, keys and menu of a question (item 220) ----------------------------------
-def _question_transcript(host, actions: list):
+def _question_transcript(host, actions: list, keys: list | None = None):
+    """A transcript whose questions' actions go to *actions* as (action, n), and whether each came from a key
+    (R / E: ``key=True``) to *keys*."""
     from flextool.gui.assistant.transcript import Transcript
 
-    transcript = Transcript(host, on_question=lambda action, n: actions.append((action, n)))
+    def on_question(action: str, n: int, *, key: bool = False) -> None:
+        actions.append((action, n))
+        if keys is not None:
+            keys.append(key)
+
+    transcript = Transcript(host, on_question=on_question)
     transcript.pack(fill="both", expand=True)
     host.update()
     return transcript
@@ -675,7 +682,8 @@ def test_r_and_e_on_a_question_line_and_its_right_click_menu(host, monkeypatch):
     import tkinter as tk
 
     actions: list = []
-    transcript = _question_transcript(host, actions)
+    keys: list = []
+    transcript = _question_transcript(host, actions, keys)
     try:
         text = transcript.text
         transcript.notice("A notice line.")
@@ -687,8 +695,14 @@ def test_r_and_e_on_a_question_line_and_its_right_click_menu(host, monkeypatch):
         key(text, "<Key-E>")
         text.mark_set("insert", "1.2")
         key(text, "<Key-r>")                                # a notice line: nothing
-        assert actions == [("again", 3), ("edit", 3)]
+        assert actions == [("again", 3), ("edit", 3)] and keys == [True, True]
         assert transcript.contents() == before              # no key typed into the transcript
+        # Held with Control, R and E are not the question's keys (which other bits count per windowing system:
+        # transcript._shortcut_modifiers; Alt's bit is not set by a synthetic event on a bare X server).
+        text.mark_set("insert", f"user_{line} + 7 chars")
+        key(text, "<Control-Key-r>")
+        key(text, "<Control-Key-e>")
+        assert len(actions) == 2
         text.mark_set("insert", f"user_{line} + 7 chars")
         key(text, "<KeyRelease-Right>")
         shaded = text.tag_ranges("keyboard_line")
@@ -703,7 +717,7 @@ def test_r_and_e_on_a_question_line_and_its_right_click_menu(host, monkeypatch):
         assert [menu.entrycget(i, "label") for i in range(menu.index("end") + 1)] == ["Ask again", "Edit"]
         menu.invoke(0)
         menu.invoke(1)
-        assert actions[2:] == [("again", 3), ("edit", 3)]
+        assert actions[2:] == [("again", 3), ("edit", 3)] and keys[2:] == [False, False]   # the menu: no key
         x, y, _w, _h = text.bbox("1.2")
         text.event_generate("<Button-3>", x=x + 1, y=y + 1)
         assert len(posted) == 1                             # not a question line: no menu

@@ -701,3 +701,120 @@ def test_a_second_action_replaces_the_waiting_one_and_closing_drops_it(windows, 
     window.close_chat(tab, ask=False)
     assert tab._confirm is None and not dialog.winfo_exists()
     assert len(backends.made[0].requests) == 3
+
+
+def _press_on_question(tab: ChatTab, turn: int, sequence: str) -> None:
+    """*sequence* (``"<Key-r>"``, ``"<Key-e>"``) with the transcript's insert mark on question *turn*."""
+    text = tab.transcript.text
+    text.mark_set("insert", f"user_{tab.transcript.line_of(turn)} + 2 chars")
+    key(text, sequence)
+
+
+def test_a_chat_started_with_a_summary_sends_it_once_and_never_shows_it_in_the_question(windows, backends):
+    """The summary of *New chat with summary* goes with question 1 only, never twice: a redraw after a later question
+    is asked again hides it from question 1, ✎ shows only the question, the title is the question, and ↻ on
+    question 1 sends the summary once (the worker takes the question from the chat, not from the window)."""
+    from flextool.assistant import prompt
+
+    seed = "Summary of the earlier chat:\n- Which units invest? Wind and solar."
+    save_provider(LOCAL)
+    backends.add([say("One."), say("Two."), say("Two again."), say("One again.")])
+    window = windows.open()
+    window.new_chat(seed=seed)
+    tab = ask(window, "first question")
+    wait_idle(window, tab)
+    ask(window, "second question", tab)
+    wait_idle(window, tab)
+    _buttons(tab, 2)[0].invoke()                    # the last question: no dialog; the chat is drawn again
+    wait_idle(window, tab)
+    contents = tab.transcript.contents()
+    assert "Two again." in contents and "Summary of the earlier chat" not in contents
+    assert "You  first question" in contents and tab.first_question == "first question"
+    assert tab.transcript.turn_text(1) == "first question"
+    _buttons(tab, 1)[1].invoke()
+    assert tab.input.get("1.0", "end-1c") == "first question"
+    key(tab.input, "<Escape>")
+    _buttons(tab, 1)[0].invoke()
+    tab._confirm.action_button.invoke()
+    wait_idle(window, tab)
+    sent = [prompt.remove_context_blocks(m.text) for m in backends.made[0].requests[3].messages if m.role == "user"]
+    assert sent == [f"{seed}\n\nfirst question"]
+    assert [prompt.remove_context_blocks(t) for t in _user_texts(tab)] == [f"{seed}\n\nfirst question"]
+    contents = tab.transcript.contents()
+    assert "One again." in contents and "Summary of the earlier chat" not in contents
+    assert tab.first_question == "first question"
+
+
+def test_an_edit_ends_when_its_question_goes_with_an_earlier_one_asked_again(windows, backends):
+    """✎ on question 2, then ↻ on question 1: question 2 is removed, so the edit ends and the box gets back what it
+    held before the edit."""
+    save_provider(LOCAL)
+    window = windows.open()
+    tab = _two_questions(window, backends, say("One again."))
+    tab.input.insert("1.0", "draft")
+    _buttons(tab, 2)[1].invoke()
+    assert tab.input.get("1.0", "end-1c") == "second question" and tab._editing == 2
+    _buttons(tab, 1)[0].invoke()
+    tab._confirm.action_button.invoke()
+    wait_idle(window, tab)
+    assert tab._editing is None and tab._draft is None
+    assert tab.input.get("1.0", "end-1c") == "draft" and tab.status_text == ""
+    assert "One again." in tab.transcript.contents() and len(_user_texts(tab)) == 1
+
+
+def test_the_r_key_always_asks_first_the_button_and_e_do_not(windows, backends):
+    """Review decision D8: R asks "Ask question N again? Its answer is removed." also with no later question (with
+    one, both sentences); ↻ asks only when later questions go; E never (nothing goes until Enter)."""
+    save_provider(LOCAL)
+    backends.add([say("One."), say("One again."), say("Two."), say("Two again.")])
+    window = windows.open()
+    tab = ask(window, "first question")
+    wait_idle(window, tab)
+    _press_on_question(tab, 1, "<Key-r>")
+    dialog = tab._confirm
+    assert str(dialog.message_label.cget("text")) == "Ask question 1 again? Its answer is removed."
+    dialog.cancel_button.invoke()
+    assert len(backends.made[0].requests) == 1 and not tab.busy
+    _press_on_question(tab, 1, "<Key-e>")
+    assert tab._confirm is None and tab.input.get("1.0", "end-1c") == "first question" and tab._editing == 1
+    key(tab.input, "<Escape>")
+    _press_on_question(tab, 1, "<Key-r>")
+    tab._confirm.action_button.invoke()
+    wait_idle(window, tab)
+    assert "One again." in tab.transcript.contents()
+    ask(window, "second question", tab)
+    wait_idle(window, tab)
+    _press_on_question(tab, 1, "<Key-r>")
+    assert str(tab._confirm.message_label.cget("text")) == (
+        "Ask question 1 again? Its answer is removed. This also removes the later question and its answer.")
+    tab._confirm.cancel_button.invoke()
+    _buttons(tab, 2)[0].invoke()                    # ↻ with nothing later: no dialog
+    assert tab._confirm is None
+    wait_idle(window, tab)
+    assert "Two again." in tab.transcript.contents() and len(backends.made[0].requests) == 4
+
+
+def test_a_question_asked_again_and_stopped_keeps_its_stopped_notice_and_counts(windows, backends, monkeypatch):
+    """Stopped in the window before the worker's Rewound arrives: the redraw keeps "Stopped.", and until the worker
+    says whether the question was sent it counts as a later question."""
+    save_provider(LOCAL)
+    entered, stopped = threading.Event(), threading.Event()
+    original = AssistantWorker._rewinding
+
+    def rewinding(self, job, session, conv):
+        entered.set()
+        assert stopped.wait(10)
+        return original(self, job, session, conv)
+
+    monkeypatch.setattr(AssistantWorker, "_rewinding", rewinding)
+    window = windows.open()
+    tab = _two_questions(window, backends, say("never shown"))
+    _buttons(tab, 2)[0].invoke()
+    pump(window, entered.is_set, timeout=5)
+    tab.stop()
+    assert tab._later(1) == 2                       # question 2 as shown, and the one stopped before it was sent
+    stopped.set()
+    wait_idle(window, tab, timeout=10)
+    contents = tab.transcript.contents()
+    assert contents.count("You  second question") == 1
+    assert contents.rstrip().endswith(strings.STOPPED)

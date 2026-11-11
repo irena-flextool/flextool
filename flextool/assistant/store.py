@@ -241,12 +241,16 @@ def _legacy_limit(text: str) -> tuple[str, str]:
     return text, ""
 
 
-def first_question(messages: list[Message] | list[dict[str, Any]]) -> str:
-    """The first user question without the context block, on one line, at most 80 characters."""
+def first_question(messages: list[Message] | list[dict[str, Any]], seed: str | None = None) -> str:
+    """The first user question without the context block, on one line, at most 80 characters; without *seed* (the
+    summary a new chat's first question started with) when the question starts with it and a blank line."""
     for m in messages:
         role, text = (m.role, m.text) if isinstance(m, Message) else (m.get("role"), m.get("text", ""))
         if role == "user":
-            text = " ".join(_CONTEXT_BLOCK.sub("", str(text), count=1).split())
+            text = _CONTEXT_BLOCK.sub("", str(text), count=1)
+            if seed and text.startswith(f"{seed}\n\n"):
+                text = text[len(seed) + 2:]
+            text = " ".join(text.split())
             return text if len(text) <= FIRST_QUESTION_CHARS else text[:FIRST_QUESTION_CHARS - 1].rstrip() + "…"
     return ""
 

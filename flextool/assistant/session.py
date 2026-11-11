@@ -1826,6 +1826,12 @@ class TurnWorker:
         def run() -> None:
             try:
                 result = self.session.run_turn(text, events, cancel, rewind=rewind, seed=seed)
+            except RewindRefused as exc:
+                # Not a fault: nothing changed and nothing was sent.  The terminal restores no checkpoint and
+                # takes the question it asks again from the chat just before, so this is not expected; it is said
+                # in plain words all the same (a result without an error and not ok: nothing was asked).
+                events(Notice(str(exc)))
+                result = TurnResult("", False, None, 0)
             except BaseException as exc:  # noqa: BLE001 — on_done is always called (review G11, C5-3)
                 logger.error("The AI assistant's turn failed", exc_info=exc)
                 err = cancelled() if cancel.is_set() else internal_fault(exc)

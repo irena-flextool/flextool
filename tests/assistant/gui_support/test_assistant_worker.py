@@ -555,9 +555,9 @@ def test_a_question_asked_again_keeps_the_earlier_ones_and_gets_its_number(proje
     assert [ev.turn for _jid, ev in rig.events if isinstance(ev, TurnStarted)] == [1, 2, 2]
     (rewound,) = _of(rig, Rewound, again.job_id)
     assert list(rewound.messages) == kept               # what the chat keeps, before the question is sent
-    order = [type(ev).__name__ for jid, ev in rig.events if jid in (again.job_id, None)]
-    tail = order[order.index("Rewound"):]
-    assert tail.index("Rewound") < tail.index("TurnStarted") < tail.index("TurnFinished") < tail.index("RouteShown")
+    assert rewound.turn == 2
+    order = [type(ev).__name__ for jid, ev in rig.events if jid == again.job_id]
+    assert order.index("Rewound") < order.index("TurnStarted") < order.index("TurnFinished")
     messages = rig.worker.session.messages
     assert messages[:2] == kept and [m.turn for m in messages] == [1, 1, 2, 2]
     assert messages[2].text == "second, changed" and messages[3].text == "Two again."
@@ -583,6 +583,7 @@ def test_a_question_that_cannot_be_asked_again_changes_nothing(project, tools, r
     rig.wait_for(Idle, count=2)
     assert [ev.reason for ev in _of(rig, TurnRefused, gone.job_id)] == [strings.CANNOT_ASK_AGAIN_GONE]
     assert [list(ev.messages) for ev in _of(rig, Rewound, gone.job_id)] == [before]     # the whole history again
+    assert [ev.turn for ev in _of(rig, Rewound, gone.job_id)] == [None]                 # nothing deleted
     assert _of(rig, TurnStarted, gone.job_id) == []
     monkeypatch.setattr(Session, "checkpoint_waiting", property(lambda _self: True))
     waiting = rig.job("first again", rewind=1)
@@ -593,11 +594,13 @@ def test_a_question_that_cannot_be_asked_again_changes_nothing(project, tools, r
     assert [m["text"] for m in _messages_on_disk(project, rig.worker.conversation_id)] == [m.text for m in before]
 
 
-def test_asked_again_from_the_first_question_the_chat_takes_the_saved_model(project, tools, rigs):
-    """Without question 1 no answer is left: the chat is bound to no model, as a new one (store.bound_origin); a
-    question asked again from question 2 still goes with the chat's own model."""
+def test_asked_again_from_the_first_question_the_chat_keeps_its_own_model(project, tools, rigs):
+    """Review decision D7: a question asked again goes to the chat's own model, from question 2 and from question 1
+    alike (no answer is left then, but the chat is prepared from what it was held with), even after the settings
+    name another model."""
     _settings(LOCAL)
-    rig = Rig(project, [FakeBackend([say("One."), say("Two."), say("Two again.")]), FakeBackend([say("Other.")])])
+    rig = Rig(project, [FakeBackend([say("One."), say("Two."), say("Two again."), say("One again.")]),
+                        FakeBackend([say("Other.")])])
     rigs.append(rig)
     rig.job("first")
     rig.wait_for(Idle)
@@ -608,13 +611,30 @@ def test_asked_again_from_the_first_question_the_chat_takes_the_saved_model(proj
     rig.worker.submit(SettingsChanged())
     rig.job("second again", rewind=2)
     rig.wait_for(Idle, count=3)
-    assert [b.origin[2] for b in rig.made] == ["fake-model"]
     first = rig.job("first again", rewind=1)
     rig.wait_for(Idle, count=4)
-    assert [b.origin[2] for b in rig.made] == ["fake-model", "other-model"]
-    assert [m.text for m in rig.worker.session.messages if m.role == "assistant"] == ["Other."]
-    shown = [ev.prepared for jid, ev in rig.events if isinstance(ev, RouteShown) and ev.prepared is not None]
-    assert shown[-1].model == "other-model"
+    assert [b.origin[2] for b in rig.made] == ["fake-model"]
+    assert [m.text for m in rig.worker.session.messages if m.role == "assistant"] == ["One again."]
     assert _of(rig, TurnStarted, first.job_id)[0].turn == 1
     data = json.loads(_conversation_file(project, rig.worker.conversation_id).read_text(encoding="utf-8"))
-    assert data["origin"][2] == "other-model"
+    assert data["origin"][2] == "fake-model"
+
+
+def test_a_question_asked_again_as_it_was_is_taken_from_the_chat_with_its_summary_once(project, tools, rigs):
+    """The window's text of a question asked again as it was is not what is sent: the worker takes the question
+    from the chat (session.question_text without the seed), and the session puts the summary the chat started
+    with back once — never twice, whatever the window showed."""
+    from flextool.assistant import prompt
+
+    seed = "Summary of the earlier chat:\n- question one"
+    _settings(LOCAL)
+    rig = Rig(project, [FakeBackend([say("One."), say("One again.")])])
+    rigs.append(rig)
+    rig.job("first", seed=seed)
+    rig.wait_for(Idle)
+    rig.job(f"{seed}\n\nfirst", rewind=1, seed=seed, again=True)     # as a window showing the summary would send
+    rig.wait_for(Idle, count=2)
+    sent = [m.text for m in rig.requests()[1].messages if m.role == "user"]
+    assert [prompt.remove_context_blocks(t) for t in sent] == [f"{seed}\n\nfirst"]
+    stored = [m for m in rig.worker.session.messages if m.role == "user"]
+    assert [prompt.remove_context_blocks(m.text) for m in stored] == [f"{seed}\n\nfirst"]
