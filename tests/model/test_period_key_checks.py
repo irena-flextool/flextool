@@ -316,3 +316,47 @@ def test_rule_5b_solve_timeline_is_checked(tmp_path) -> None:
     assert str(err.value) == (
         "timeline 'timestep_duration' is not set for: tl2 (timeset 'ts2' of solve 's2').  Every timeline a solve "
         "uses needs a Map(timestep -> duration_in_hours); without it all time-weighted quantities collapse to zero.")
+
+
+# ---------------------------------------------------------------------------
+# Item 73: profile.profile.  An unnamed 1-D map keyed by periods is a period map; keys that are periods and time
+# steps of the model are an error; a period map that misses periods of the scenario's solves is warned about once
+# (the profile is 0 there).  The scenario's only period is p2020; p2025 is a period of another scenario.
+
+PROFILE_BOTH = ("profile 'wind_profile', parameter 'profile' (alternative 'c73_both'): the map keys match both "
+                "periods and time steps of the model; set the map's index name to 'period' or 'time' "
+                "(keys 'p2020', 't0001').")
+
+
+def test_profile_map_with_period_and_time_step_keys_is_an_error(tmp_path_factory) -> None:
+    msg = _error(tmp_path_factory, "c73_both",
+                 [["profile", "wind_profile", "profile", _map([["t0001", 0.5], ["p2020", 0.3]])]])
+    assert msg == SHAPE + PROFILE_BOTH
+
+
+def test_labelled_time_profile_map_is_silent(tmp_path_factory) -> None:
+    """A map labelled ``time`` is a time series: neither the period-map warning nor the mixed-keys error."""
+    _silent(tmp_path_factory, "c73_lab", [
+        ["profile", "wind_profile", "profile", _map([["t0001", 0.5], ["t0002", 0.3]], "time")]])
+
+
+@pytest.mark.parametrize("index_name", [None, "period"])
+def test_profile_period_map_without_the_scenario_period_warns(tmp_path_factory, index_name) -> None:
+    alt = f"c73_miss_{index_name}"
+    url, scen = make_db(tmp_path_factory, alt=alt, base_chain=PLANT_CHAIN, values=[
+        ["profile", "wind_profile", "profile", _map([["p2025", 0.3]], index_name)]])
+    assert _check(url, scen) == (
+        f"Warning: profile 'wind_profile', parameter 'profile' (alternative '{alt}') has no value for period(s) "
+        "p2020: the profile is 0 in those periods. Add the periods to the map, or give the profile a constant "
+        "value.\n")
+
+
+@pytest.mark.parametrize("index_name", [None, "period"])
+def test_profile_period_map_covering_the_scenario_periods_is_silent(tmp_path_factory, index_name) -> None:
+    _silent(tmp_path_factory, f"c73_ok_{index_name}", [
+        ["profile", "wind_profile", "profile", _map([["p2020", 0.3], ["p2025", 0.4]], index_name)]])
+
+
+def test_profile_time_map_is_silent(tmp_path_factory) -> None:
+    _silent(tmp_path_factory, "c73_time", [
+        ["profile", "wind_profile", "profile", _map([["t0001", 0.5], ["t0002", 0.3]])]])

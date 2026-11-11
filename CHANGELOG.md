@@ -536,6 +536,13 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
 - **A run reloaded from edited `solve_data` files left out the operating costs of a period or time step without
   a word** when the inflation factor, the share of the year, the time step duration or the time step weight had no
   value for it; it now stops with an error that names the file and the missing periods or time steps.
+- **A `profile` map without `index_name` keyed by periods was read as a time series and gave 0.** A map such
+  as *p2020: 0.3, p2025: 0.35* now gives each period its value in every time step, as the same map with
+  `index_name` *period* does (single, rolling, nested and stochastic solves). A map whose keys are both periods and
+  time steps of the model (or a key that is both) stops the run with an error naming the profile and the
+  alternative: set its `index_name` to *period* or *time*. A profile period map (with or without `index_name`)
+  that leaves out periods of the scenario's solves gets one warning per run naming the profile and those periods;
+  the profile is 0 there.
 
 #### User constraints
 

@@ -2646,6 +2646,44 @@ def _period_key_finding(raw: bytes, takes_time: bool, universe: set[str],
     return unknown()
 
 
+def _profile_period_finding(raw: bytes, universe: set[str], universe_b: tuple[bytes, ...],
+                            timesteps: frozenset[str] | set[str], solve_periods: set[str]):
+    """``("both", keys)``, ``("missing", periods)`` or None for one Map value of ``profile.profile`` (item 73).
+
+    A 1-D profile map without an index name (Spine's ``x``) is read as a period map when its keys are periods and
+    as a time series when they are time steps (``_profiles._silent_map_tier``).  ``both``: its keys match periods
+    and time steps of the model (or one key is both, a period named like a time step) — there is no right reading.
+    ``missing``: a period map (labelled ``period``, the outer level of a period x time map labelled ``period``, or
+    a silent 1-D map read as periods) without a value for some of ``solve_periods``; the profile is 0 in those
+    periods.  A value naming no period of ``universe`` (``universe_b``: their quoted JSON forms) is a time series or
+    a map of keys that are no period (:func:`_period_key_finding` reports those) and is not parsed."""
+    from flextool.engine.input._param_shapes import _normalise_label
+
+    if not any(name in raw for name in universe_b):
+        return None
+    value = json.loads(raw)
+    if not isinstance(value, dict) or value.get("index_type") == "float":
+        return None
+    levels = _value_levels(value)
+    if len(levels) not in (1, 2):
+        return None
+    label = _normalise_label(levels[0][0])
+    keys = set(levels[0][1])
+    if not keys:
+        return None
+    if label is None and len(levels) == 1:
+        hits_periods = not keys.isdisjoint(universe)
+        hits_steps = not keys.isdisjoint(timesteps)
+        if hits_periods and hits_steps:
+            return ("both", sorted(keys & universe) + sorted((keys & set(timesteps)) - universe))
+        if not hits_periods:
+            return None
+    elif label != "period":
+        return None
+    missing = sorted(solve_periods - keys)
+    return ("missing", missing) if missing else None
+
+
 _PERIOD_KEY_HEADER = "Map keys that are not periods of any solve in the database:\n  "
 _PERIOD_KEY_ESCAPE = "\nIf a key is a period of data you keep for other models, add it to model.periods_available."
 _PERIOD_SHAPE_HEADER = "Period maps that the model cannot read:\n  "
@@ -2678,7 +2716,12 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
       then a warning, the value is not used, and :func:`validate_time_series_keys` has stopped the run first for a
       time-series parameter) — ``{p2050: ...}`` is a period map with a key that is no period;
     * a ``time`` / ``t`` level or a time series on a parameter that cannot vary over time → error;
-    * numeric keys (2020) → error (periods are names; such a value crashed the read).
+    * numeric keys (2020) → error (periods are names; such a value crashed the read);
+    * ``profile.profile`` (:func:`_profile_period_finding`, item 73): an unnamed 1-D map is read as a period map
+      when its keys are periods, so keys that match both periods and time steps of the model (or a key that is
+      both) → error; a period map (unnamed, or labelled ``period``) without a value for some periods of the
+      scenario's solves → one warning per map (the profile is 0 there; the parameter resolver would drop such an
+      entity without a word, ``_param_shapes._silent_entity_axes``).
 
     Each error names the entity, the parameter, the alternative and up to 3 keys, with the closest period
     (:func:`_period_suggestions`).  Without ``whole`` (a source that is not a URL) the universe is the scenario's,
@@ -2706,6 +2749,9 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
     timesteps_b = frozenset(t.encode() for t in timesteps)
     step_forms = _StepForms(lambda: timesteps)
     seen: dict[tuple, object] = {}
+    profile_seen: dict[bytes, object] = {}
+    universe_b = tuple(f'"{name}"'.encode() for name in universe)
+    solve_periods = set(time_vocab[0])
     errors: list[str] = []      # keys that are no period (depend on the universe)
     shape_errors: list[str] = []  # time steps, time series and numbers (always errors)
     warnings: list[str] = []
@@ -2724,6 +2770,21 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
             raw = pv["value"]
             if isinstance(raw, str):
                 raw = raw.encode()
+            if (cls, par) == ("profile", "profile"):
+                profile_finding = profile_seen.get(raw, False)
+                if profile_finding is False:
+                    profile_finding = profile_seen[raw] = _profile_period_finding(
+                        raw, universe, universe_b, timesteps, solve_periods)
+                if profile_finding is not None:
+                    code, names = profile_finding
+                    if code == "both":
+                        shape_errors.append(
+                            f"{where}: the map keys match both periods and time steps of the model; set the "
+                            f"map's index name to 'period' or 'time' (keys {_shown(names)}).")
+                    else:
+                        warnings.append(
+                            f"{where} has no value for period(s) {', '.join(names)}: the profile is 0 in those "
+                            "periods. Add the periods to the map, or give the profile a constant value.")
             cache_key = (raw, takes_time)
             finding = seen.get(cache_key, False)
             if finding is False:

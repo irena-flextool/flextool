@@ -640,13 +640,20 @@ turning `existing_count = capacity / unitsize` into a spurious fraction
   hardened); `_ed_explicit_period_param`, `_per_solve_sets`; `profile`
   in real solves (reads the engine-written canonical `pt_profile.csv` /
   `pbt_profile`, not the raw Map).
-- *Residual, latent* — the `_profiles.py` **raw-Spine fallback**
-  readers (`_profile_time_lf` matches only `t`/`i`/`time`;
-  `_profile_period_time_lf` / `_profile_period_only_lf` gate on literal
-  `"period"`). An `"x"`-indexed profile Map read via these returns empty
-  (silent zero profile). Only reachable when the averaged-CSV primary
-  path is absent (tests / runner bypass), so not a live-solve bug —
-  harden if that path ever becomes load-bearing.
+- *Profile tiers (item 73)* — `_profiles._classify_profile_rows` reads a
+  1-D profile Map without an index name by its keys against the solve's
+  `_param_shapes._period_time_vocab(dt)` (`_silent_map_tier`): periods
+  only → period tier (`_profile_period_only_lf` reads the `x` column as
+  the period), else time tier; the `InMemoryReader` column fallback uses
+  the same rule. Unlike the resolver's silent drop of an entity whose keys
+  miss the solve (`_silent_entity_axes`), the run is told:
+  `validate_period_keys` warns once per run about a profile period map
+  that misses periods of the scenario's solves and stops on keys that
+  are periods and time steps of the model. `_profile_time_lf`'s raw
+  fallback also reads `x`. Residual: `_profile_period_time_lf` still
+  gates on a literal `"period"` outer level (a silent outer level is
+  tiered `stochastic`), and the CSV `pdtProfile` seed has no period
+  tier at all (item 222).
 - *Guarded by schema* — `invest_max_total` and `virtual_unitsize` are
   declared `float`-only in `parameter_types` (no `map` row), so the
   `keep="last"` collapse in `_e_explicit_param` and in the

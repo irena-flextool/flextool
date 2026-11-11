@@ -136,29 +136,41 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 
-def _classify_profile_rows(source: "InputSource") -> dict[str, str]:
+def _classify_profile_rows(source: "InputSource",
+                           dt: "pl.DataFrame | None" = None) -> dict[str, str]:
     """Return ``{profile_name: tier}`` where tier ∈ {``scalar``,
-    ``period``, ``time``, ``stochastic``}.
+    ``period``, ``time``, ``period_time``, ``stochastic``}.
 
     Reads ``profile.profile`` raw values from the source and
     dispatches on Python type:
 
     * ``float`` / ``str`` / ``bool`` → tier ``scalar`` (``p_profile.csv``).
     * Map with ``index_name=='time'`` → tier ``time`` (``pt_profile.csv``).
-    * Map with ``index_name=='period'`` → tier ``period``
-      (``pd_profile.csv`` — note: not consumed by ``write_pdtProfile``).
+    * Map with ``index_name=='period'`` → tier ``period``.
+    * 1-D Map without an index name (Spine's silent ``x``) → classified by
+      its keys (:func:`_silent_map_tier`, item 73): ``period`` when they hit
+      the solve's periods and none of its time steps, else ``time``.
     * 3-deep Map → tier ``stochastic`` (``pbt_profile.csv``).
-    * Other Map shapes (deterministic 1d_map, 2d_map(period, t)) →
-      tier ``period`` or ``time`` per outermost ``index_name``.
+    * 2-D Map → ``period_time`` when the outer level is ``period``, else
+      ``stochastic``.
+
+    *dt* is the solve's ``(d, t)`` frame: the period / time-step vocabulary of
+    the silent-map rule (:func:`~flextool.engine.input._param_shapes._period_time_vocab`,
+    so the solve's own periods plus the active stochastic branch anchors).
+    Without *dt* a silent map stays ``time`` (the pre-item-73 reading).
 
     Profiles absent from the parameter table are not in the returned
     dict.  The caller treats them as tier 5 (zero fallback).
 
     Implementation strategy: peek at the SpineDbReader's per-row raw
-    value via ``_param_rows`` when available; fall back to column-name
-    heuristics on the CSV-shaped frame for sources that don't expose
-    raw parameter values (``InMemoryReader``).
+    value via ``_param_rows`` when available; fall back to the frame's
+    columns for sources that don't expose raw parameter values
+    (``InMemoryReader``).  The column fallback reads a frame with ONE index
+    column that is neither ``period`` nor ``t`` / ``time`` (a silent ``x``)
+    by the same key rule, never as ``stochastic``.
     """
+    from flextool.engine.input._param_shapes import _period_time_vocab
+    periods, timesteps = _period_time_vocab(dt)
     # Try to access the typed raw values via SpineDbReader's internals.
     rows_by_name: dict[str, object] = {}
     if hasattr(source, "_class_name_to_id") and hasattr(source, "_param_rows"):
@@ -171,7 +183,7 @@ def _classify_profile_rows(source: "InputSource") -> dict[str, str]:
                     name = source._entity_by_id[eid][1]  # type: ignore[attr-defined]
                     rows_by_name[name] = v
     if rows_by_name:
-        return {n: _tier_for_value(v) for n, v in rows_by_name.items()}
+        return {n: _tier_for_value(v, periods, timesteps) for n, v in rows_by_name.items()}
     # Column-shape fallback for InMemoryReader (used in unit tests).
     try:
         df = source.parameter("profile", "profile")
@@ -180,6 +192,9 @@ def _classify_profile_rows(source: "InputSource") -> dict[str, str]:
     if df.height == 0:
         return {}
     cols = set(df.columns)
+    index_cols = cols - {"name", "value"}
+    silent_col = next(iter(index_cols)) if (
+        len(index_cols) == 1 and not index_cols & {"period", "t", "time"}) else None
     out: dict[str, str] = {}
     for name in df["name"].unique().to_list():
         if cols == {"name", "value"}:
@@ -192,20 +207,48 @@ def _classify_profile_rows(source: "InputSource") -> dict[str, str]:
             # 2d_map(period, t) — fold as time-axis per period.  Treat
             # as a multi-row variant of "time" here; the resolver knows.
             out[name] = "period_time"
+        elif silent_col is not None:
+            # A 1-D map under a silent index column: the same key rule as a raw value.
+            keys = df.filter(pl.col("name") == name).get_column(silent_col).cast(pl.Utf8).to_list()
+            out[name] = _silent_map_tier(keys, periods, timesteps)
         else:
             # Generic / stochastic 3d_map — defer to the per-solve pbt_profile frame.
             out[name] = "stochastic"
     return out
 
 
-def _tier_for_value(v: object) -> str:
+def _silent_map_tier(keys: "object", periods: "set[str] | None",
+                     timesteps: "set[str] | None") -> str:
+    """Tier of a 1-D profile map without an index name (item 73): ``period`` when its keys hit the solve's
+    periods and none of its time steps, else ``time``.
+
+    A key that is not a period of this solve (a period of another roll / sub-solve, or of no solve) does not
+    stop the period reading: the map has no value in this solve's other periods and the profile is 0 there, as
+    for a map labelled ``period``.  Unlike the parameter resolver, which drops such an entity without a word
+    (``_param_shapes._silent_entity_axes``), the run is told: ``validate_period_keys`` warns once per run about
+    a profile period map that misses model periods, and stops the run on a map whose keys match both periods
+    and time steps of the model (so the "both" case never reaches a solve from the database; here it keeps the
+    time reading).  Keys matching neither stay ``time`` (0, as before; ``validate_period_keys`` reports keys
+    that are no period).
+    """
+    key_set = {str(k) for k in keys if k is not None}
+    hits_periods = bool(periods) and not key_set.isdisjoint(periods)
+    hits_timesteps = bool(timesteps) and not key_set.isdisjoint(timesteps)
+    return "period" if hits_periods and not hits_timesteps else "time"
+
+
+def _tier_for_value(v: object, periods: "set[str] | None" = None,
+                    timesteps: "set[str] | None" = None) -> str:
     """Classify a single raw Spine parameter value.
 
-    Mirror of the input-writer dispatch logic.
+    Mirror of the input-writer dispatch logic.  *periods* / *timesteps*: the
+    solve's vocabulary for a 1-D map without an index name
+    (:func:`_silent_map_tier`); ``None`` keeps such a map ``time``.
     """
     from spinedb_api.parameter_value import (
         Map, TimeSeries, Array,
     )
+    from flextool.engine.input._param_shapes import _normalise_label
     if not isinstance(v, (Map, TimeSeries, Array)):
         return "scalar"
     if isinstance(v, TimeSeries):
@@ -225,7 +268,10 @@ def _tier_for_value(v: object) -> str:
                 return "period"
             if outer_idx == "time":
                 return "time"
-            # Empty or generic index — assume time-axis (the typical
+            if _normalise_label(v.index_name) is None:
+                # Spine's silent ``x`` (or no name): read by the keys (item 73).
+                return _silent_map_tier(v.indexes, periods, timesteps)
+            # Any other explicit name — assume time-axis (the typical
             # flextool 1d_map default).
             return "time"
         if depth == 2:
@@ -288,7 +334,7 @@ def _profile_time_lf(source: "InputSource",
     lacks the frame (e.g. tests that bypass the runner).
 
     The Spine fallback path: the source column may be ``t`` (when
-    ``index_name='time'``) or ``i`` (default index name).  Either way
+    ``index_name='time'``) or ``i`` / ``x`` (no index name).  Either way
     the column maps 1:1 to t.  Mirrors how ``pdtNodeInflow`` already
     sources averaged values from ``solve_data/pt_node_inflow.csv``.
     """
@@ -330,15 +376,10 @@ def _profile_time_lf(source: "InputSource",
     if raw.height == 0:
         return pl.LazyFrame(schema=empty_schema)
     cols = raw.columns
-    # Find the time-axis column.  Prefer 't' (canonical) over 'i'
-    # (generic Map fallback) when both are present.
-    if "t" in cols:
-        t_col = "t"
-    elif "i" in cols:
-        t_col = "i"
-    elif "time" in cols:
-        t_col = "time"
-    else:
+    # Find the time-axis column.  Prefer 't' (canonical) over 'i' / 'x'
+    # (a map without an index name) when both are present.
+    t_col = next((c for c in ("t", "i", "time", "x") if c in cols), None)
+    if t_col is None:
         return pl.LazyFrame(schema=empty_schema)
     raw_lf = (raw.lazy()
                   .filter(pl.col("name").is_in(time_profiles))
@@ -409,13 +450,11 @@ def _profile_period_only_lf(source: "InputSource",
                                   ) -> pl.LazyFrame:
     """Lazy ``[f, d, t, value]`` for 1d_map(period) profiles.
 
-    Note: flextool's ``write_pdtProfile`` does **not** consult
-    ``pd_profile.csv``; the only deterministic period-keyed branch is
-    via the parent-period fold of ``pbt_profile`` (tier 2).  This
-    helper exists for completeness and is wired in only when the
-    fixture explicitly populates a 1d_map_period profile (rare /
-    historical).  Mirror behaviour: broadcast across t of the matching
-    period.
+    A map labelled ``period`` and a map without an index name whose keys
+    are periods (:func:`_silent_map_tier`, item 73) both land here: the
+    silent map's key column (Spine's ``x``) is read as the period.
+    Broadcast across t of the matching period; a period the map does not
+    name has no row (the profile is 0 there, the zero tier).
     """
     if not period_profiles:
         return pl.LazyFrame(schema={
@@ -431,11 +470,16 @@ def _profile_period_only_lf(source: "InputSource",
         return pl.LazyFrame(schema={
             "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
-    cols = raw.columns
-    if "period" not in cols:
+    # The period key: the ``period`` column of a labelled map, else the one key column of a map without an
+    # index name (``x``); a frame holding both kinds has the other column null on each row.
+    key_cols = [c for c in raw.columns if c not in ("name", "value", "t", "time")]
+    if "period" in key_cols:
+        key_cols = ["period"] + [c for c in key_cols if c != "period"]
+    if not key_cols:
         return pl.LazyFrame(schema={
             "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
+    raw = raw.select("name", pl.coalesce([pl.col(c).cast(pl.Utf8) for c in key_cols]).alias("period"), "value")
     # Branch periods get their anchor period's value (this reader bypasses _param_shapes).
     raw = inherit_active_branch_periods(raw.filter(pl.col("name").is_in(period_profiles)),
                                         group_keys=("name",), period_col="period")
@@ -827,7 +871,7 @@ def p_profile_value_lf(source: "InputSource",
             "per-solve scaffolding; the work folder on disk is never read."
         )
 
-    tiers = _classify_profile_rows(source)
+    tiers = _classify_profile_rows(source, dt)
     scalar_profiles = sorted(p for p, t in tiers.items() if t == "scalar")
     period_profiles = sorted(p for p, t in tiers.items() if t == "period")
     time_profiles = sorted(p for p, t in tiers.items() if t == "time")

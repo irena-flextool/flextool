@@ -404,3 +404,49 @@ def test_apply_profile_cascade_param_shape() -> None:
     assert out.dims == ("f", "d", "t")
     assert out.frame.height == 1
     assert out.frame["value"][0] == pytest.approx(1.5)
+
+
+# ---------------------------------------------------------------------------
+# Item 73: the column fallback (``InMemoryReader``) reads a map without an index name (one ``x`` column) by its
+# keys, the same rule as a raw Spine value (``_silent_map_tier``) -- never as a stochastic map.
+# ---------------------------------------------------------------------------
+
+
+def _silent_x_source(keys: list[str], values: list[float]) -> InMemoryReader:
+    return InMemoryReader(
+        entities={"profile": pl.DataFrame({"name": ["wind"]})},
+        parameters={("profile", "profile"): pl.DataFrame(
+            {"name": ["wind"] * len(keys), "x": keys, "value": values})},
+    )
+
+
+def test_column_fallback_silent_x_period_keys_read_as_period() -> None:
+    """{d1: 0.3, d2: 0.4} under ``x`` -> tier ``period``; cell (d, t) = map[d] on every t."""
+    src = _silent_x_source(["d1", "d2"], [0.3, 0.4])
+    dt = _make_dt(["d1", "d2"], ["t01", "t02"])
+    assert _classify_profile_rows(src, dt) == {"wind": "period"}
+    out = p_profile_value_lf(src, dt).collect()
+    expected = pl.DataFrame({"f": ["wind"] * 4, "d": ["d1", "d1", "d2", "d2"], "t": ["t01", "t02"] * 2,
+                             "value": [0.3, 0.3, 0.4, 0.4]})
+    eq, diff = _frames_equal(out, expected, ("f", "d", "t"))
+    assert eq, diff
+
+
+def test_column_fallback_silent_x_time_keys_read_as_time() -> None:
+    """{t01: 0.5, t02: 0.7} under ``x`` -> tier ``time``; cell (d, t) = map[t] in every period."""
+    src = _silent_x_source(["t01", "t02"], [0.5, 0.7])
+    dt = _make_dt(["d1", "d2"], ["t01", "t02"])
+    assert _classify_profile_rows(src, dt) == {"wind": "time"}
+    out = p_profile_value_lf(src, dt).collect()
+    expected = pl.DataFrame({"f": ["wind"] * 4, "d": ["d1", "d1", "d2", "d2"], "t": ["t01", "t02"] * 2,
+                             "value": [0.5, 0.7, 0.5, 0.7]})
+    eq, diff = _frames_equal(out, expected, ("f", "d", "t"))
+    assert eq, diff
+
+
+def test_column_fallback_silent_x_other_solve_periods_read_as_zero() -> None:
+    """{d3: 0.3} under ``x`` in a solve of d1 only: no period of this solve -> the profile is 0 here."""
+    src = _silent_x_source(["d3"], [0.3])
+    dt = _make_dt(["d1"], ["t01"])
+    out = p_profile_value_lf(src, dt).collect()
+    assert out["value"].to_list() == [0.0]
