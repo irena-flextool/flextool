@@ -50,7 +50,7 @@ NO_RECORD_NOTE = ("43 runs have no run record (state no_record, verified false):
                   "results may be from a failed or older run. Say so when you use them.")
 #: The no-record note of a page that lists none of those runs (Cycle 2 review m3).
 NO_RECORD_COUNT = "43 runs have no run record (state no_record); none is on this page."
-COST_UNIT = ("M CUR (default convention), discounted, all periods (costs_discounted_p_); compare runs over the same "
+COST_UNIT = ("M CUR, discounted, all periods (costs_discounted_p_); compare runs over the same "
              "periods; penalty_cost: slack penalties")
 
 
@@ -248,7 +248,7 @@ def test_overview(lctx, cost_reads) -> None:
     # Units: the 6 changed (invested 1, 4, 7, 10, 13; divested 16) and the two largest other totals (15: 150,
     # 14: 140), by total; 140 three times: by name.
     assert capacity["unit"] == {
-        "table": "unit_capacity_ed_p", "unit": "MW (default convention)",
+        "table": "unit_capacity_ed_p", "unit": "MW",
         "columns": ["entity", "existing", "invested", "total", "divested"],
         "rows": [[UNIT.format(13), 130.0, 100.0, 230.0, None], [UNIT.format(10), 100.0, 100.0, 200.0, None],
                  [UNIT.format(7), 70.0, 100.0, 170.0, None], [UNIT.format(15), 150.0, 0.0, 150.0, None],
@@ -259,7 +259,7 @@ def test_overview(lctx, cost_reads) -> None:
                                                              for k in range(6, 0, -1)]
     assert "shown" not in capacity["connection"]
     assert capacity["storage"] == {
-        "table": "node_capacity_ed_p", "unit": "MWh (default convention)",
+        "table": "node_capacity_ed_p", "unit": "MWh",
         "columns": ["entity", "existing", "invested", "total", "in_construction"],
         "rows": [["pumped_hydro_reservoir_03", 1000.0, 0.0, 1000.0, 0.0],
                  ["battery_storage_west_01", 0.0, 455.5, 455.5, 0.0],
@@ -267,8 +267,8 @@ def test_overview(lctx, cost_reads) -> None:
     assert out["capacity_periods"].startswith("existing: p2020; total, in_construction: p2030; invested, divested: "
                                               "summed over periods")
     assert out["slacks"] == {"columns": ["slack", "table", "unit", "entries", "largest"], "rows": [
-        ["vq_state_up", "node_slack_up_d_e", "MWh/a (default convention)", 2, [["west_grid_node"], "p2025", 1520.5]],
-        ["vq_reserve", "nodeGroup_slack_reserve_d_eeg", "MWh/a (default convention)", 1,
+        ["vq_state_up", "node_slack_up_d_e", "MWh/a", 2, [["west_grid_node"], "p2025", 1520.5]],
+        ["vq_reserve", "nodeGroup_slack_reserve_d_eeg", "MWh/a", 1,
          [["primary_reserve", "up", "all_nodes_group"], "p2025", 2.25]]]}
     assert out["notes"] == ["Each slack's entries: query_result on its table."]
     # basic caps at 32 768 tokens: 5 entities a class
@@ -279,14 +279,15 @@ def test_overview(lctx, cost_reads) -> None:
 
 
 def test_the_overview_shortens_in_a_fixed_order(lctx) -> None:
-    """Critique M5: at 1 950 characters (basic, 16 384 tokens: 3 entities a class; its 2 000 characters fit the
-    step "categories to 3" since the overview gives ``finished`` short, Cycle 2 review n3) the overview is cut by
+    """Critique M5: at 1 830 characters (basic, 16 384 tokens: 3 entities a class; its 2 000 characters fit the
+    step "categories to 3" since the overview gives ``finished`` short, Cycle 2 review n3; 1 950 until the units
+    lost their " (default convention)" ending, 2026-11-11, which let a third entity fit) the overview is cut by
     its steps — categories under 1 % of the costs, entities to 3, slacks to 3, categories to 3, entities to 2 —
     each cut saying what it shows, never the bare ``truncated`` text."""
     caps = resolve_budget("small", 16_384, "loaded", local=True).result_caps
-    text = _text(_with_caps(lctx, dataclasses.replace(caps, max_chars=1_950)), detail="overview", folders=[NEWEST])
+    text = _text(_with_caps(lctx, dataclasses.replace(caps, max_chars=1_830)), detail="overview", folders=[NEWEST])
     out = json.loads(text)
-    assert len(text) <= 1_950 and "truncated" not in out
+    assert len(text) <= 1_830 and "truncated" not in out
     assert out["cost_split"]["rows"] == [["commodity_cost", 600.0], ["upward slack penalty", 300.0],
                                          ["unit investment/retirement", 200.0]]
     assert out["cost_split"]["shown"] == "3 of 12; every one: query_result on costs_discounted_p_"

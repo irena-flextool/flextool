@@ -1,10 +1,10 @@
 """How the tools word units (O2, O14): the one place a tool result gets a unit text.
 
-FlexTool does not check units.  MW, MWh, CUR (the model currency) and tonnes of CO2 are the documented default
-convention.  A node can set ``unit_of_measure`` (m3, t, MWh_th): its flows, storage, prices and the inputs about it
-are then labelled in that unit, and the tools show those labels plain.  A model may also use other units
-consistently without setting it.  So a unit made of convention units is shown as ``"MW (default convention)"``;
-units that are fixed by FlexTool (hours, years, fractions, counts) and units a node set are shown plain.
+A node's ``unit_of_measure`` (default MWh) sets the units of its amounts, flows (that unit per hour: MW for MWh)
+and prices; CUR is the model currency and emissions are in tonnes of CO2.  FlexTool labels units and does not
+convert them.  Since unit_of_measure (2026-11-11, owner) a unit is shown as the tool has it, without a caveat: the
+label of a node without unit_of_measure is its declared default, not a guess.  A unit text of an older session or
+recording that still ends in " (default convention)" is shown without that ending.
 
 The longer notes (:data:`UNITS_NOTE`, :data:`STORED_VALUES_NOTE`) are sent in full in a result until a request
 that carried the full note was answered, and after that by their key only (:func:`add_session_notes`).  A note
@@ -19,7 +19,8 @@ import re
 from collections.abc import Callable, Iterable
 from typing import Any
 
-CONVENTION_SUFFIX = " (default convention)"
+#: The ending units had before unit_of_measure; :func:`shown_unit` removes it.
+OLD_CONVENTION_SUFFIX = " (default convention)"
 
 #: A part of a unit (split at "/", "·", spaces and parentheses) that belongs to the default convention.
 _CONVENTION_PART = re.compile(r"(?:MW|kW|MVA)\w*|CUR|Mt|t|tCO2\w*")
@@ -31,9 +32,9 @@ _ENERGY_PART = re.compile(r"[kMGT]?(?:W|VA)h?")
 UNITS_CONVENTION = "units_convention"
 STORED_VALUES = "stored_values"
 
-UNITS_NOTE = ("FlexTool does not check units. The units shown are its default convention (MW, MWh, CUR for the "
-              "model currency, tonnes of CO2). A node can set unit_of_measure; its flows are then in that unit per "
-              "hour and the tools show it. Time steps are in hours and lifetimes in years.")
+UNITS_NOTE = ("Each node's unit_of_measure (default MWh) sets the units of its values: amounts in that unit, flows "
+              "in that unit per hour (MW for MWh), prices per that unit. CUR is the model currency; emissions are in "
+              "tonnes of CO2. Time steps are in hours and lifetimes in years.")
 STORED_VALUES_NOTE = ("These are the values stored in the input data. When FlexTool runs it may add defaults, "
                       "derive other values or rescale some (for example inflow with an inflow_method); the "
                       "results show what the model used.")
@@ -45,7 +46,8 @@ DIMENSIONLESS = "dimensionless"
 
 
 def is_convention_unit(unit: str) -> bool:
-    """Whether *unit* contains a part of the default convention (MW, kWh, CUR, t, tCO2, MVA ...)."""
+    """Whether *unit* contains a part of FlexTool's default units (MW, kWh, CUR, t, tCO2, MVA ...): a result with
+    one carries :data:`UNITS_NOTE`."""
     return any(_CONVENTION_PART.fullmatch(part) for part in _SPLIT.split(unit) if part)
 
 
@@ -57,15 +59,11 @@ def is_energy_unit(unit: str | None) -> bool:
 
 
 def shown_unit(unit: str | None) -> str | None:
-    """*unit* as a tool shows it: ``"MW (default convention)"`` for a convention unit, else as it is."""
+    """*unit* as a tool shows it: stripped, without the ending of before unit_of_measure; ``None`` for none."""
     if unit is None:
         return None
-    unit = unit.strip()
-    if not unit:
-        return None
-    if unit.endswith(CONVENTION_SUFFIX):
-        return unit
-    return unit + CONVENTION_SUFFIX if is_convention_unit(unit) else unit
+    unit = unit.strip().removesuffix(OLD_CONVENTION_SUFFIX).strip()
+    return unit or None
 
 
 def add_session_notes(payload: dict, keys: Iterable[str], sent: set[str], in_flight: set[str] | None = None) -> dict:

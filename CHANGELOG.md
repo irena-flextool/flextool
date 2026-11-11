@@ -88,7 +88,9 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   are unit templates (`{A}/h`, `{R}`, `CUR/{kR}`) that read as before for MWh nodes; a label in your own
   `plot_settings.yaml` without tokens is shown as written. The dispatch plots' y-axis and the GUI hover follow the
   node, and the AI assistant shows the units of the inputs and results of such a node (`inflow` in m3, `penalty_up`
-  in CUR/m3, `startup_energy` in m3 per MW started) and does not add up values of nodes of different units.
+  in CUR/m3, `startup_energy` in m3 per MW started) and does not add up values of nodes of different units. A
+  node without `unit_of_measure` is MWh, so the assistant now states every unit plainly instead of adding "(default
+  convention)" to it.
   Warnings when the input data is read: a connection, commodity, nodeGroup, flowGroup or group capacity limit over
   nodes of different units, a reserve / inertia / non-synchronous / capacity-margin group with a member that is not
   MWh, and a value that looks like a rate (`m3/h`). Costs entered per kW or kWh (`invest_cost`, `fixed_cost`,
@@ -805,6 +807,11 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   `flextool-assistant --call TOOL '{...}'` runs one tool in the terminal. See "The AI assistant" in the
   documentation. New requirements: `mcp` (2.3 or later 2.x), `platformdirs`, `jsonschema`; run "Update
   FlexTool" (or `pip install -e .`) to get them and the new command.
+- **How the assistant answers.** At every level the assistant gives the answer first. A question about one value
+  gets the value, its unit and where it is stored, and nothing more. A why-question gets the cause in plain words,
+  the few numbers that show it, the other causes it checked in one line, and what you could change, each option
+  with its effect and drawback. It names entities, parameters, result tables and documents, never its tools, and
+  adds a caveat only when it changes the conclusion.
 
 ### Parameter descriptions and result labels
 

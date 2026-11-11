@@ -417,7 +417,7 @@ def test_get_slack_summary_with_feeding_entities(tmp_path: Path, tests_db: Path)
         (40.0, 4.5), (30.0, 3.5), (None, None)]
     assert reserve["detail_tables"] == ["nodeGroup_reserve_d_eegp"]
     assert (slack["slack"], slack["table"], slack["unit"]) == ("vq_state_up", "node_slack_up_d_e",
-                                                                "MWh/a (default convention)")
+                                                                "MWh/a")
     assert slack["entries"] == [{"entity": ["west"], "period": "p2020", "value": 12.5}]
     assert slack["total"] == {"p2020": 12.5}
     assert "node.penalty_up" in slack["related_inputs"]
@@ -428,7 +428,7 @@ def test_get_slack_summary_with_feeding_entities(tmp_path: Path, tests_db: Path)
                                                    "entity": ["coal_plant", "west"]}]}
     assert out["penalty_costs"]["entries"] == [{"category": "upward slack penalty", "period": "p2020",
                                                 "value": 0.125}]
-    assert out["penalty_costs"]["unit"] == "M CUR/a (default convention)" and out["none_found"] is False
+    assert out["penalty_costs"]["unit"] == "M CUR/a" and out["none_found"] is False
     assert _call(ctx, "get_slack_summary", run="clean_1")["none_found"] is True
 
 

@@ -58,7 +58,7 @@ def test_tools_read_a_real_run(solved_project: Path) -> None:
     assert (coal["state"], coal["results_usable"], coal.get("unusable_code")) == ("succeeded", True, None)
 
     costs = _call(ctx, "query_result", run="coal_1", table="annualized_costs_d_p")
-    assert costs["unit"] == "M CUR/a (default convention)"
+    assert costs["unit"] == "M CUR/a"
     assert costs["rows"]
 
     log = _call(ctx, "get_run_log", run="coal_1")

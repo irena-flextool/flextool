@@ -66,7 +66,7 @@ def test_three_parameters_of_two_entities_in_one_table(ctx) -> None:
     assert (cells[chp, "availability"]["value"], cells[chp, "availability"]["is_default"]) == (1.0, True)
     # One unit per parameter in the header (neither unit has virtual_unitsize in all, so existing is MW); no unit
     # column, since no cell differs.
-    assert out["units"] == {"existing": "MW (default convention)", "invest_cost": "CUR/kW (default convention)",
+    assert out["units"] == {"existing": "MW", "invest_cost": "CUR/kW",
                             "availability": "dimensionless"}
     assert "unit" not in out["columns"]
     # A note every cell of a parameter shares is in the header once, not in the rows.

@@ -157,7 +157,7 @@ def test_wide_aggregation_equals_the_long_form(rctx, results_project: Path) -> N
     assert _rows(out) == [("p2020", "west", 26.66666667), ("p2020", "east", 2.0), ("p2025", "west", 50.0),
                           ("p2025", "east", 4.5)]
     assert out["applied"]["how"].startswith("mean of the sum over unit: ")
-    assert out["unit"] == "MW (default convention)" and out["semantics"] == "instantaneous"
+    assert out["unit"] == "MW" and out["semantics"] == "instantaneous"
     assert out["applied"]["combined_over"] == ["entity", "time"]
     assert any("equal step lengths" in n for n in out["notes"])
 
@@ -220,7 +220,7 @@ def test_the_aggregation_guard(rctx) -> None:
     # Annual costs: summed over categories per period (100 + 2.5 = 102.5) yes, over periods no.
     out = _call(rctx, "query_result", run="base_1", table="annualized_costs_d_p", group_by=["period"], agg="sum")
     assert _rows(out) == [("p2020", 102.5), ("p2025", 0.0)]
-    assert out["unit"] == "M CUR/a (default convention)"
+    assert out["unit"] == "M CUR/a"
     assert _refused(rctx, "query_result", run="base_1", table="annualized_costs_d_p", group_by=[],
                     agg="sum").startswith("These are annual values; adding them across periods")
     # Prices do not add up; their mean over time and nodes is the mean of the single values: p2020
@@ -335,7 +335,7 @@ def test_mixed_unit_tables(rctx) -> None:
     out = _call(rctx, "query_result", run="base_1", table="nodeGroup_gdt_p",
                 filters={"parameter": ["1. Loss of load"]}, group_by=["group", "period"], agg="sum")
     assert _rows(out) == [("g1", "p2020", 5.0), ("g1", "p2025", 1.0)]
-    assert out["unit"] == "MWh (default convention)" and out["semantics"] == "per_step"
+    assert out["unit"] == "MWh" and out["semantics"] == "per_step"
     assert any("not scaled to a full year" in n for n in out["notes"])
 
 
@@ -363,7 +363,7 @@ def test_describe_list_and_find(rctx) -> None:
                      "annualized_costs_d_p", "node_prices_dt_e", "nodeGroup_gdt_p", "group_node",
                      "unit_capacity_ed_p", "CO2_d_g", "costs_dt_p"}
     hits = _call(rctx, "find_result_tables", query="nodal energy price")["tables"]
-    assert hits[0]["table"] == "node_prices_dt_e" and hits[0]["unit"] == "CUR/MWh (default convention)"
+    assert hits[0]["table"] == "node_prices_dt_e" and hits[0]["unit"] == "CUR/MWh"
     message = _refused(rctx, "query_result", run="base_1", table="unit_outputNode_dt")
     assert message.startswith('There is no result table "unit_outputNode_dt" in "base_1".')
 

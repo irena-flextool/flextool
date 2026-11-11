@@ -163,22 +163,22 @@ def test_get_parameter_shows_the_node_unit(uom_ctx) -> None:
     rec = _call(uom_ctx, "get_parameter", entity_class="node", parameter="penalty_up", entity=["water"],
                 scenario=SCENARIO)
     assert rec["unit"] == "CUR/m3"
-    # The same node in a scenario without the alternative keeps the default convention.
+    # The same node in a scenario without the alternative keeps the default unit, MWh.
     rec = _call(uom_ctx, "get_parameter", entity_class="node", parameter="inflow", entity=["water"],
                 scenario="desal_water_storage")
-    assert rec["unit"] == "MWh per time step (default convention)"
+    assert rec["unit"] == "MWh per time step"
 
 
 def test_result_units_come_from_the_footer(uom_ctx) -> None:
     out = _call(uom_ctx, "query_result", run="desal_uom_1", table="unit_outputNode_dt_ee",
                 group_by=["unit", "node"], agg="max")
-    assert out["unit"] == {"water": "m3/h", "west": "MW (default convention)"}
+    assert out["unit"] == {"water": "m3/h", "west": "MW"}
     # A sum over the water and the electricity node has no unit: refused.
     message = _refused(uom_ctx, "query_result", run="desal_uom_1", table="unit_outputNode_dt_ee",
                        group_by=["period"], agg="sum")
     assert "different units" in message
     described = _call(uom_ctx, "describe_result_table", run="desal_uom_1", table="unit_capacity_ed_p")
-    assert described["unit_by_row"] == {"unit": {"med_desal": "m3/h", "coal_plant": "MW (default convention)"}}
+    assert described["unit_by_row"] == {"unit": {"med_desal": "m3/h", "coal_plant": "MW"}}
     message = _refused(uom_ctx, "query_result", run="desal_uom_1", table="unit_capacity_ed_p",
                        group_by=["period"], agg="sum")
     assert "different units" in message

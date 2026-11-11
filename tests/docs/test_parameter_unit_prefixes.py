@@ -71,18 +71,22 @@ def test_overrides_name_schema_parameters_and_are_needed() -> None:
 
 
 @pytest.mark.parametrize("unit,shown", [
-    ("MW·s", "MW·s (default convention)"),
-    ("Mt", "Mt (default convention)"),
-    ("M CUR/a", "M CUR/a (default convention)"),
-    ("CUR/kWh", "CUR/kWh (default convention)"),
-    ("tCO2/MWh", "tCO2/MWh (default convention)"),
+    ("MW·s", "MW·s"),
+    ("Mt", "Mt"),
+    ("M CUR/a", "M CUR/a"),
+    (" CUR/kWh ", "CUR/kWh"),
+    ("tCO2/MWh", "tCO2/MWh"),
+    ("MW (default convention)", "MW"),                 # a unit text of before unit_of_measure
+    ("", None),
     ("units/a", "units/a"),
     ("h", "h"),
     ("fraction", "fraction"),
     ("p.u.", "p.u."),
     ("hours", "hours"),
 ])
-def test_shown_unit_marks_the_default_convention(unit: str, shown: str) -> None:
+def test_shown_unit_is_the_unit_as_given(unit: str, shown: str | None) -> None:
+    """Since unit_of_measure a unit is shown as it is: the label of a node without unit_of_measure is its declared
+    default (MWh), so it needs no caveat."""
     from flextool.assistant.unit_wording import shown_unit
 
     assert shown_unit(unit) == shown

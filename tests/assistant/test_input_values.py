@@ -44,7 +44,7 @@ def test_winner_and_the_values_it_overrides(ctx) -> None:
     assert rec["provenance"]["alternatives_highest_first"][-3:] == ["coal", "west", "init"]
     assert "rank_order" not in rec["provenance"]
     # coal_plant has no virtual_unitsize in tests.json, so existing is a capacity in MW.
-    assert rec["unit"] == "MW (default convention)"
+    assert rec["unit"] == "MW"
 
 
 def test_default_when_no_alternative_sets_it(ctx) -> None:
@@ -86,7 +86,7 @@ def test_series_summary(ctx) -> None:
     assert rec["shape"] == "a map, 1 index level (time)"
     assert rec["shape_note"].startswith("FlexTool reads this parameter as a constant, or a map with 1 or 3 index "
                                         "levels.")
-    assert rec["unit"] == "MWh per time step (default convention)"
+    assert rec["unit"] == "MWh per time step"
     part = _call(ctx, "get_parameter", entity_class="node", parameter="inflow", entity=["west"], scenario="coal",
                  time_range={"from": "t0001", "to": "t0003"})
     # The first three steps of the same series.
@@ -165,7 +165,7 @@ def test_compare_inputs_of_two_scenarios(ctx) -> None:
 
 def test_describe_parameter_uses_the_shipped_schema(ctx) -> None:
     out = _call(ctx, "describe_parameter", entity_class="unit", parameter="invest_cost")
-    assert out["unit"] == "CUR/kW (default convention)"
+    assert out["unit"] == "CUR/kW"
     assert any("multiplies the value by 1000" in n for n in out["notes"])
     assert out["schema_note"] == "This is the parameter as this FlexTool defines it."
     listing = _call(ctx, "describe_parameter", entity_class="node")
