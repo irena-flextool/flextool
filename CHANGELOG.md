@@ -1,3 +1,11 @@
+## Unreleased
+
+- **Gurobi options are applied.** `gurobi_cl` takes parameters only as `Name=value` arguments; it ignored the
+  `ReadParams=<file>` argument FlexTool passed ("Unknown parameter: 'ReadParams' (ignored)") and solved at its
+  defaults. Each parameter of the merged options (`solver_config/gurobi.opt`, `solver_mip_gap`,
+  `--solver-time-limit`, `solver_arguments`) is now passed as its own `Name=value` argument, so Gurobi results can
+  change (for example a MIP now stops at the requested `solver_mip_gap` instead of Gurobi's 1e-4).
+
 ## Release 4.2.2 (8.11.2026) — time steps other than 1 h: new_stepduration and inflow scaling fixes
 
 These bugs affect models whose time steps are not 1 h, solves with `new_stepduration`, nested solves where a solve
