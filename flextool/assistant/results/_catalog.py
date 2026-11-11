@@ -20,7 +20,13 @@ from typing import Any
 
 from flextool.assistant.textsearch import BM25, term_counts
 from flextool.lean_parquet import LeanLayout
-from flextool.process_outputs._output_meta import OUTPUT_DIMS, OUTPUT_TRANSFORM, Semantics, Transform
+from flextool.process_outputs._output_meta import (
+    OUTPUT_DIMS,
+    OUTPUT_TRANSFORM,
+    Semantics,
+    Transform,
+    resolve_columns,
+)
 
 OTHER_TOPIC = "Other"
 
@@ -111,14 +117,16 @@ def _footer_key(key: tuple[str, ...], layout: LeanLayout) -> str:
 def measures(stem: str, layout: LeanLayout) -> list[Measure]:
     """The :class:`Measure` of every data column of a table (in the order of ``layout.physical``)."""
     declared = declared_measures(stem)
-    if declared is not None and "*" in declared:
+    if declared is not None and set(declared) == {"*"}:     # a uniform table
         return [declared["*"]] * len(layout.physical)
     footer: dict[str, Any] = layout.column_meta or {}
+    # A mixed-unit table: the unit of each column from the same resolver as the result files (its label level).
+    resolved = (resolve_columns(stem, list(layout.columns), level_names=list(layout.col))
+                if declared and layout.columns else None)
     out: list[Measure] = []
-    for key in layout.columns:
-        label = key[-1] if key else ""
-        if declared is not None and label in declared:
-            out.append(declared[label])
+    for i, key in enumerate(layout.columns):
+        if resolved is not None and resolved[i].semantics is not Semantics.DIMENSION:
+            out.append(Measure(resolved[i].unit, resolved[i].semantics.value))
             continue
         meta = footer.get(_footer_key(key, layout))
         if isinstance(meta, dict) and meta.get("semantics") and meta.get("semantics") != "dimension":

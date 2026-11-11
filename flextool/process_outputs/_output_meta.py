@@ -23,7 +23,8 @@ new processed outputs may not land undocumented.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -1009,12 +1010,12 @@ def result_key_summary(result_key: str) -> "tuple[str, str, str] | None":
     if spec is None:
         return None
     if isinstance(spec, dict):
-        units = sorted({t.unit for t in spec.values() if t.unit})
+        units = summarise_units([t.unit for t in spec.values()])
         sems = sorted({t.semantics.value for t in spec.values()
                        if t.semantics is not Semantics.DIMENSION})
         if not sems:
             return None
-        return ("; ".join(units) if units else "ratio",
+        return (units or "ratio",
                 "mixed" if len(sems) > 1 else sems[0],
                 "Mixed-unit table — units vary by column.")
     if spec.semantics is Semantics.DIMENSION:
@@ -1090,7 +1091,7 @@ def output_metadata_rows(output_key: str, columns) -> list[dict[str, str]]:
 
 
 def datapackage_resource(
-    output_key: str, path: str, index_names, measure_columns,
+    output_key: str, path: str, index_names, measure_columns, *, header=None,
 ) -> dict:
     """A Frictionless ``tabular-data-resource`` describing one written CSV.
 
@@ -1101,33 +1102,25 @@ def datapackage_resource(
     descriptor stays valid Frictionless).  Always returns a resource (an
     undeclared output simply yields string/dimension fields), so the sidecar
     documents the full ``output_csv/`` tree, declared or not.
+
+    ``header`` is the list of column labels as written to the CSV (index
+    columns first, a tuple per column when the file has several header rows).
+    When given, the field names are the written header: the labels of a
+    column joined with ``|`` (with ``flextool:header`` = the label list) and a
+    ``dialect`` with ``headerRows`` / ``headerJoin`` for a multi-row header,
+    so a Frictionless reader derives the same field names from the file.
     """
-    meta = derive_column_meta(output_key, measure_columns) or {}
-    fields: list[dict[str, str]] = []
+    resolved = resolve_columns(output_key, measure_columns) or []
+    meta = {i: m for i, m in enumerate(resolved)}
+    n_index = len(list(index_names))
+    fields: list[dict] = []
     seen: set[str] = set()
 
-    def _dimension_field(name: str) -> dict[str, str]:
+    def _dimension_field(name: str) -> dict:
         return {"name": name, "type": "string", "flextool:semantics": "dimension"}
 
-    for name in index_names:
-        if name is None:
-            continue
-        key = str(name)
-        if key in seen:
-            continue
-        seen.add(key)
-        fields.append(_dimension_field(key))
-
-    for col in measure_columns:
-        name = str(col)
-        if name in seen:
-            continue
-        seen.add(name)
-        cm = meta.get(name)
-        if cm is None or cm.semantics is Semantics.DIMENSION:
-            fields.append(_dimension_field(name))
-            continue
-        spec: dict[str, str] = {
+    def _measure_field(name: str, cm: ColumnMeta) -> dict:
+        spec: dict = {
             "name": name,
             "type": "number",
             "flextool:semantics": cm.semantics.value,
@@ -1141,14 +1134,202 @@ def datapackage_resource(
             spec["flextool:formula"] = cm.formula
         if cm.docs:
             spec["flextool:docs"] = cm.docs
-        fields.append(spec)
+        return spec
 
-    return {
+    n_header_rows = 1
+    if header is not None:
+        labels = [c if isinstance(c, tuple) else (c,) for c in header]
+        n_header_rows = max((len(t) for t in labels), default=1)
+        for pos, label in enumerate(labels):
+            texts = ["" if v is None else str(v) for v in label]
+            name = "|".join(texts)
+            cm = meta.get(pos - n_index) if pos >= n_index else None
+            if cm is None or cm.semantics is Semantics.DIMENSION:
+                spec = _dimension_field(name)
+            else:
+                spec = _measure_field(name, cm)
+            if n_header_rows > 1:
+                spec["flextool:header"] = texts
+            fields.append(spec)
+    else:
+        for name in index_names:
+            if name is None:
+                continue
+            key = str(name)
+            if key in seen:
+                continue
+            seen.add(key)
+            fields.append(_dimension_field(key))
+
+        for i, col in enumerate(measure_columns):
+            name = str(col)
+            if name in seen:
+                continue
+            seen.add(name)
+            cm = meta.get(i)
+            if cm is None or cm.semantics is Semantics.DIMENSION:
+                fields.append(_dimension_field(name))
+                continue
+            fields.append(_measure_field(name, cm))
+
+    resource = {
         "name": output_key.replace("_", "-").strip("-").lower() or "resource",
         "path": path,
         "profile": "tabular-data-resource",
         "schema": {"fields": fields},
     }
+    if n_header_rows > 1:
+        resource["dialect"] = {"headerRows": list(range(1, n_header_rows + 1)), "headerJoin": "|"}
+    return resource
+
+
+# ── Column → unit resolver ──────────────────────────────────────────────────
+# One function gives the unit of every column of a result table; the parquet footer, the Excel sheets, the CSV
+# sidecars (``units.csv``, ``datapackage.json``), the results-database descriptions and the plot labels all
+# read it, so they cannot disagree.
+
+#: The name of the column level that a scenario comparison puts above the table's own column levels.
+SCENARIO_LEVEL = "scenario"
+#: The display word of a measure that has no unit (a share, a capacity factor), as in the results database.
+UNITLESS = "per unit"
+
+
+@dataclass(frozen=True)
+class UnitContext:
+    """What the units of one scenario's result columns can depend on beyond the table itself.
+
+    ``node_units`` maps a node to its unit of measure.  It is empty today (every node has the default units);
+    the node ``unit_of_measure`` feature fills it, and :func:`resolve_columns` then gives a column the unit of
+    its node.  An empty context gives exactly the default units."""
+
+    node_units: Mapping[str, str] = field(default_factory=dict)
+
+
+def _column_labels(columns) -> tuple[list[tuple], list | None]:
+    """``(labels, level_names)`` of *columns*: every label as a tuple (one element per column level) and the
+    level names when *columns* is a pandas index that names its levels."""
+    names = getattr(columns, "names", None)
+    labels = [c if isinstance(c, tuple) else (c,) for c in columns]
+    if names is not None and all(n is None for n in names):
+        names = None
+    return labels, (list(names) if names is not None else None)
+
+
+def _label_level(output_key: str, n_levels: int, level_names) -> int:
+    """The position of the column level whose labels a mixed-unit table's map is keyed by.
+
+    The map labels are on the table's innermost declared column level (``parameter`` / ``quantity`` in
+    :data:`OUTPUT_DIMS`).  The level is found by its name when the columns name their levels, else by its
+    position below an optional leading ``scenario`` level, so an entity or group that happens to be named like
+    a map label is never read as one."""
+    dims = OUTPUT_DIMS.get(output_key)
+    declared = dims.columns if dims is not None else ()
+    if level_names is not None and declared and declared[-1] in level_names:
+        return list(level_names).index(declared[-1])
+    return n_levels - 1
+
+
+def _scenario_level(output_key: str, n_levels: int, level_names) -> int | None:
+    """The position of the comparison's ``scenario`` column level, or ``None`` when there is none."""
+    if level_names is not None:
+        return list(level_names).index(SCENARIO_LEVEL) if SCENARIO_LEVEL in level_names else None
+    dims = OUTPUT_DIMS.get(output_key)
+    if dims is not None and dims.columns and n_levels == len(dims.columns) + 1:
+        return 0
+    return None
+
+
+def _context_for(ctx, scenario) -> "UnitContext | None":
+    """The :class:`UnitContext` of one column: *ctx* itself, or its entry for the column's scenario."""
+    if ctx is None or isinstance(ctx, UnitContext):
+        return ctx
+    return ctx.get(scenario) if scenario is not None else None
+
+
+def _unit_of(tf: Transform, ctx: "UnitContext | None") -> str:
+    """The unit of a column that underwent *tf*.  With node units this is where a column's node sets the
+    unit; with no context, or an empty one, it is the transform's unit."""
+    del ctx  # no override yet: every node has the default units
+    return tf.unit
+
+
+def resolve_columns(
+    output_key: str, columns, *, level_names=None,
+    ctx: "UnitContext | Mapping[str, UnitContext] | None" = None,
+) -> list[ColumnMeta] | None:
+    """One :class:`ColumnMeta` per column of the result table *output_key*, in column order.
+
+    *columns* is ``df.columns`` (single- or multi-level, with or without the comparison's top ``scenario``
+    level) or a list of labels.  A mixed-unit table's per-column map is looked up on the label of its declared
+    label level (see :func:`_label_level`), never on the text of the whole tuple.  *level_names* overrides the
+    level names of *columns*.  *ctx* is one :class:`UnitContext` or one per scenario (keyed by the
+    ``scenario`` level's value).  ``ColumnMeta.name`` is ``str`` of the column label, the key of the parquet
+    footer.  Returns ``None`` when the output is not declared in :data:`OUTPUT_TRANSFORM`."""
+    spec = OUTPUT_TRANSFORM.get(output_key)
+    if spec is None:
+        return None
+    labels, names = _column_labels(columns)
+    if level_names is not None:
+        names = list(level_names)
+    docs = DOCS_ANCHOR.get(output_key, "")
+    out: list[ColumnMeta] = []
+    for col, label in zip(columns, labels):
+        name = str(col)
+        n = len(label)
+        scen_pos = _scenario_level(output_key, n, names)
+        if isinstance(spec, dict):
+            pos = _label_level(output_key, n, names)
+            key = label[pos] if pos != scen_pos else None
+            tf = spec.get(str(key), spec.get('*')) if key is not None else spec.get('*')
+        else:
+            tf = spec
+        # Index/key dimension, a pure membership set, or a column absent from a mixed-table map → dimension.
+        if tf is None or tf.semantics is Semantics.DIMENSION or is_dimension(name):
+            out.append(ColumnMeta(name, "", Semantics.DIMENSION, "Index / key dimension."))
+            continue
+        scenario = label[scen_pos] if scen_pos is not None else None
+        out.append(ColumnMeta(
+            name=name,
+            unit=_unit_of(tf, _context_for(ctx, scenario)),
+            semantics=tf.semantics,
+            tooltip=tf.tooltip,
+            long=tf.description,
+            formula=FORMULA_OVERRIDE.get((output_key, name), ""),
+            docs=docs,
+        ))
+    return out
+
+
+def column_units(output_key: str, columns, *, level_names=None, ctx=None) -> list[str]:
+    """The unit of every column of *output_key*, in column order (``""`` for a dimension column, a unitless
+    measure and an undeclared table).  See :func:`resolve_columns`."""
+    resolved = resolve_columns(output_key, columns, level_names=level_names, ctx=ctx)
+    if resolved is None:
+        return [""] * len(list(columns))
+    return [m.unit for m in resolved]
+
+
+def row_units(output_key: str, index, ctx: "UnitContext | None" = None) -> list[str] | None:
+    """The unit of every row of *output_key* when the unit varies by row (a table with the node as a row
+    level, such as ``node_capacity_ed_p``, once nodes can have their own units), else ``None``.  Always
+    ``None`` today: the units of every table vary by column only."""
+    del output_key, index, ctx
+    return None
+
+
+def display_unit(meta: ColumnMeta) -> str:
+    """The unit of a measure column as shown to people: its unit, or ``per unit`` for a unitless measure."""
+    if meta.semantics is Semantics.DIMENSION:
+        return ""
+    return meta.unit or UNITLESS
+
+
+def summarise_units(units) -> str:
+    """One text for a set of units: the unit when all agree, else the distinct units sorted and joined with
+    ``"; "``; ``""`` when there is none.  The single reducer of the ``Units`` sheet, the results-database
+    descriptions, the GUI hover and the plot labels."""
+    distinct = sorted({u for u in units if u})
+    return "; ".join(distinct)
 
 
 def derive_column_meta(
@@ -1156,36 +1337,13 @@ def derive_column_meta(
 ) -> dict[str, ColumnMeta] | None:
     """Derive ``{column_name: ColumnMeta}`` for one output.
 
-    ``columns`` is the iterable of *leaf* column names (e.g. cost categories),
-    typically ``df.columns`` before any scenario-level wrapping.  Dimension
-    columns get ``Semantics.DIMENSION``; measure columns get the output's
-    declared transform.  The declared value may be a single ``Transform``
-    (uniform) or a ``{column_label: Transform}`` map (mixed-unit tables, with
-    an optional ``'*'`` default).  Returns ``None`` when the output is not (yet)
-    declared in :data:`OUTPUT_TRANSFORM`, so callers can treat absence as
-    "no metadata".
+    ``columns`` is ``df.columns`` before the scenario level is prepended (the keys are ``str`` of each
+    column label, the parquet-footer keys).  Dimension columns get ``Semantics.DIMENSION``; measure columns
+    get the output's declared transform, for a mixed-unit table the entry of the column's label on its
+    declared label level (see :func:`resolve_columns`).  Returns ``None`` when the output is not (yet)
+    declared in :data:`OUTPUT_TRANSFORM`, so callers can treat absence as "no metadata".
     """
-    spec = OUTPUT_TRANSFORM.get(output_key)
-    if spec is None:
+    resolved = resolve_columns(output_key, columns)
+    if resolved is None:
         return None
-    docs = DOCS_ANCHOR.get(output_key, "")
-    out: dict[str, ColumnMeta] = {}
-    for col in columns:
-        name = str(col)
-        tf = spec.get(name, spec.get('*')) if isinstance(spec, dict) else spec
-        # Index/key dimension, a pure membership set, or a column absent from a
-        # mixed-table map → dimension.
-        if tf is None or tf.semantics is Semantics.DIMENSION or is_dimension(name):
-            out[name] = ColumnMeta(name, "", Semantics.DIMENSION,
-                                   "Index / key dimension.")
-            continue
-        out[name] = ColumnMeta(
-            name=name,
-            unit=tf.unit,
-            semantics=tf.semantics,
-            tooltip=tf.tooltip,
-            long=tf.description,
-            formula=FORMULA_OVERRIDE.get((output_key, name), ""),
-            docs=docs,
-        )
-    return out
+    return {m.name: m for m in resolved}
