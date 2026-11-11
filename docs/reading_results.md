@@ -74,4 +74,6 @@ See [Prices](results.md#prices) and [CO2 emissions](results.md#co2-emissions).
 
 **Annualized or discounted.** An *annualized* value is for one year of the period: the hours of the period are scaled to the 8760 hours of a year. A *discounted* value is a present value: it is multiplied by the years the period represents and by the period's discount factor.
 
+**Where the units are written.** In the Excel workbook the first sheet, `Units`, gives the unit of every sheet; a sheet with several header rows has the unit of each column as its last header row (`unit of measure`), and a sheet with one header row has its units in a small block to the right of its data. In the CSV output, `units.csv` gives the unit of every column of every file. See [Units in the files](results.md#units-in-the-files).
+
 **Your units.** FlexTool does not convert units: a flow is in MW only if your inputs are in MW and MWh. A water node in m³ gives flows in m³/h. The parameter units are in the [Parameter catalogue](parameter_catalogue.md).

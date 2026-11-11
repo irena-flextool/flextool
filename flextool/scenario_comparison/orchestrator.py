@@ -10,6 +10,7 @@ import yaml
 
 from flextool.lean_parquet import write_lean_parquet
 from flextool.process_outputs._sheet_names import excel_sheet_name
+from flextool.process_outputs._excel_writer import reserved_sheet_names, write_excel_with_metadata
 
 from flextool.scenario_comparison.config_builder import (
     assign_palette_colors,
@@ -465,9 +466,9 @@ def run(
         filename = 'compare_' + str(len(scenario_folders)) + '_scens.xlsx'
         target_dir = excel_dir if excel_dir is not None else plot_dir
         excel_path = os.path.join(target_dir, filename)
-        # Build list of (sheet_name, df) sorted alphabetically
-        sheets: list[tuple[str, pd.DataFrame]] = []
-        used_names: set[str] = set()
+        # Build list of (sheet_name, raw_key, df) sorted alphabetically; the raw key gives the units.
+        sheets: list[tuple[str, str, pd.DataFrame]] = []
+        used_names: set[str] = reserved_sheet_names()
         for name, df in combined_dfs.items():
             display_name, export = _parse_rename(rename_raw.get(name, name))
             if not export:
@@ -475,12 +476,10 @@ def run(
             if (not df.empty) & (len(df) > 0):
                 # At most 31 characters, the __d / __dt suffix kept, distinct without regard to case.
                 sheet_name = excel_sheet_name(display_name, used_names)
-                sheets.append((sheet_name, df))
+                sheets.append((sheet_name, name, df))
         sheets.sort(key=lambda x: x[0].lower())
 
-        with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
-            for sheet_name, df in sheets:
-                df.to_excel(writer, sheet_name=sheet_name)
+        write_excel_with_metadata(excel_path, sheets)
         print(f'\nWrote comparison of {len(scenario_folders)} scenarios to xlsx file: {excel_path}')
 
     print('\nDone!')

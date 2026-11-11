@@ -1,4 +1,3 @@
-import json
 import logging
 import os
 import re
@@ -18,11 +17,18 @@ from flextool import run_record
 
 from flextool.lean_parquet import read_lean_parquet, read_lean_parquet_solve_labels, write_lean_parquet
 from flextool.process_outputs._sheet_names import excel_sheet_name
+from flextool.process_outputs._excel_writer import reserved_sheet_names, write_excel_with_metadata  # noqa: F401
 from flextool.process_outputs.solve_order import INVESTMENT_PERIOD_TABLES, period_solve_labels
 from flextool.process_outputs._output_meta import (
     datapackage_resource,
     derive_column_meta,
-    output_metadata_rows,
+)
+from flextool.process_outputs._csv_sidecars import (
+    reserved_csv_names,
+    summary_solve_row,
+    units_rows,
+    write_datapackage,
+    write_units_csv,
 )
 from flextool.plot_outputs.orchestrator import plot_dict_of_dataframes
 from flextool.plot_outputs.color_template import resolve_plot_settings_path
@@ -113,57 +119,6 @@ def _frame_axes(df) -> tuple[list, list]:
     if isinstance(df, pd.Series):
         return index_names, [df.name if df.name is not None else 'value']
     return index_names, list(df.columns)
-
-
-def write_excel_with_metadata(excel_path, sheets) -> None:
-    """Write ``sheets`` to ``excel_path`` with embedded output metadata.
-
-    ``sheets`` is a list of ``(sheet_name, raw_output_key, df)``.  Each frame
-    is written to its own sheet; per-column unit/semantics (derived from the
-    metadata catalog via the raw output key) are surfaced two ways:
-
-    * header-cell **comments** (hover notes) on the measure columns of
-      single-level-column frames, and
-    * a trailing ``_output_metadata`` index sheet listing every documented
-      ``(sheet, output, column, unit, semantics, tooltip, formula)``.
-
-    The data grid itself is untouched — metadata rides alongside it.
-    """
-    meta_rows: list[dict] = []
-    with pd.ExcelWriter(excel_path, engine='xlsxwriter') as writer:
-        for sheet_name, raw_key, df in sheets:
-            df.to_excel(writer, sheet_name=sheet_name)
-            _, measure_cols = _frame_axes(df)
-            rows = output_metadata_rows(raw_key, measure_cols)
-            for r in rows:
-                meta_rows.append({"sheet": sheet_name, **r})
-            # Header comments only for single-level DataFrame columns — pandas
-            # writes multi-level column headers across several rows (plus an
-            # index-name row), which the simple (0, nidx+j) anchor below would
-            # not address correctly; the _output_metadata sheet still covers
-            # those (and Series-valued sheets).
-            if rows and isinstance(df, pd.DataFrame) and df.columns.nlevels == 1:
-                worksheet = writer.sheets[sheet_name]
-                nidx = df.index.nlevels
-                by_col = {r["column"]: r for r in rows}
-                for j, col in enumerate(df.columns):
-                    r = by_col.get(str(col))
-                    if r is None:
-                        continue
-                    note = [f"unit: {r['unit'] or '—'}",
-                            f"semantics: {r['semantics']}"]
-                    if r["tooltip"]:
-                        note.append(r["tooltip"])
-                    if r["formula"]:
-                        note.append(f"formula: {r['formula']}")
-                    worksheet.write_comment(0, nidx + j, "\n".join(note))
-        if meta_rows:
-            meta_df = pd.DataFrame(
-                meta_rows,
-                columns=["sheet", "output", "column", "unit",
-                         "semantics", "tooltip", "long", "formula"],
-            )
-            meta_df.to_excel(writer, sheet_name="_output_metadata", index=False)
 
 
 def _provider_lookup_df(provider, parent: str, stem: str):
@@ -1292,29 +1247,39 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
                 if os.path.isfile(file_path):
                     os.remove(file_path)
 
-        # Accumulate Frictionless resources for the sidecar datapackage.json
-        # (units + semantics per column; CSVs themselves stay byte-identical).
+        # Accumulate the sidecars: Frictionless resources for datapackage.json and
+        # the units.csv rows (units + semantics per column; the CSVs themselves
+        # stay byte-identical).
         dp_resources: list[dict] = []
+        unit_rows: list[dict] = []
+
+        def _describe_csv(table_name, csv_filename, frame, written):
+            index_names, measure_cols = _frame_axes(frame)
+            header = list(written.columns)
+            dp_resources.append(datapackage_resource(
+                table_name, csv_filename, index_names, measure_cols, header=header))
+            unit_rows.extend(units_rows(
+                table_name, csv_filename, header, len(index_names), measure_cols))
 
         # Different CSV writing logic depending on data source
         if read_parquet_dir:
             # Simplified CSV writing from parquet (no par,s,v,r available)
             rename_raw = settings.get('rename', {})
-            used_csv_names: dict[str, str] = {}
+            used_csv_names = reserved_csv_names(with_summary=True)
             for table_name, df in results.items():
                 csv_filename = _csv_filename(table_name, rename_raw, used_csv_names)
                 csv_path = os.path.join(csv_dir, csv_filename)
-                dp_resources.append(datapackage_resource(
-                    table_name, csv_filename, *_frame_axes(df)))
                 df_copy = df.reset_index()
                 df_copy.columns.names = [None] * df_copy.columns.nlevels
+                _describe_csv(table_name, csv_filename, df, df_copy)
                 df_copy.to_csv(csv_path, index=False, float_format='%.8g')
         else:
             # Full CSV writing from output_raw (par,s,v,r available)
             write_summary_csv(par, s, v, r, csv_dir)
+            unit_rows.append(summary_solve_row())
 
             rename_raw = settings.get('rename', {})
-            used_csv_names = {'summary_solve.csv': 'summary_solve'}
+            used_csv_names = reserved_csv_names(with_summary=True)
             for table_name, df in results.items():
                 if isinstance(df, (pd.MultiIndex, pd.Index)):
                     df = df.to_frame(index=False)
@@ -1366,23 +1331,17 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
                 csv_filename = _csv_filename(table_name, rename_raw, used_csv_names)
                 csv_path = os.path.join(csv_dir, csv_filename)
-                dp_resources.append(datapackage_resource(
-                    table_name, csv_filename, *_frame_axes(df)))
-                df = df.reset_index()
-                df.columns.names = [None] * df.columns.nlevels
-                df.to_csv(csv_path, index=False, float_format='%.8g')
+                written = df.reset_index()
+                written.columns.names = [None] * written.columns.nlevels
+                _describe_csv(table_name, csv_filename, df, written)
+                written.to_csv(csv_path, index=False, float_format='%.8g')
 
-        # Sidecar metadata descriptor for the CSV bundle (units + semantics).
+        # Sidecar metadata for the CSV bundle (units + semantics).  A single-result
+        # write replaces only its own table's entries in the existing sidecars.
         if dp_resources:
-            dp = {
-                "name": "flextool-output-csv",
-                "profile": "tabular-data-package",
-                "title": "FlexTool processed outputs",
-                "resources": sorted(dp_resources, key=lambda r: r["path"]),
-            }
-            with open(os.path.join(csv_dir, 'datapackage.json'),
-                      'w', encoding='utf-8') as fh:
-                json.dump(dp, fh, indent=2)
+            write_datapackage(csv_dir, dp_resources, merge=bool(single_result))
+        if unit_rows:
+            write_units_csv(csv_dir, unit_rows, merge=bool(single_result))
 
         start = log_time('Wrote to csv', start, timing_recorder)
 
@@ -1395,7 +1354,7 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         # Build list of (sheet_name, raw_key, df) sorted alphabetically.  The
         # raw key is kept so unit/semantics metadata can be derived per sheet.
         sheets: list[tuple[str, str, pd.DataFrame]] = []
-        used_names: set[str] = set()
+        used_names: set[str] = reserved_sheet_names()
         for name, df in results.items():
             display_name, export = _parse_rename_entry(
                 rename_raw.get(name, name)

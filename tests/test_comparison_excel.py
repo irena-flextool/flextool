@@ -82,6 +82,9 @@ class TestComparisonExcelDirectory(unittest.TestCase):
 
         # Verify the file name matches expected pattern
         self.assertEqual(xlsx_files[0].name, "compare_2_scens.xlsx")
+        # The comparison workbook opens on the Units sheet, like the scenario workbook.
+        import openpyxl
+        self.assertEqual(openpyxl.load_workbook(xlsx_files[0]).sheetnames[0], "Units")
 
     def test_excel_not_written_to_separate_directory(self) -> None:
         """Ensure no 'output_excel_comparison' directory is created."""

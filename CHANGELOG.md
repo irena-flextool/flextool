@@ -1,5 +1,21 @@
 ## Unreleased
 
+- **New: units of measure in the result workbooks and CSV folder; layout change of the Excel sheets.** The scenario
+  workbook and the scenario-comparison workbook (which had no units at all) open on a new `Units` sheet: one row
+  per result sheet with its table, unit(s), semantics and description, the sheet names linking to the sheets;
+  `_output_metadata` follows it. A sheet with several header rows (two or more column levels, and every sheet of a
+  comparison) gains one header row, `unit of measure`, as its last header row: a Power Query or script that reads
+  such a sheet with a fixed number of header rows shifts by one. A sheet with one header row keeps its header at
+  `A1`, but its data is now an Excel Table `tbl_<sheet>`, its row index values are repeated on every row instead of
+  merged, and a unit block sits to the right of the Table (`pd.read_excel` of the whole sheet also returns those
+  columns: read the Table, or pass `usecols`). The CSV files are unchanged; a new `units.csv` lists the unit of every
+  value column (file, position, header labels, unit, semantics), and `datapackage.json` now names each field by the
+  header written to the file (labels joined with `|`, `headerRows` for several header rows), so it matches its CSV.
+  `units.csv` and `datapackage.json` are reserved names in the `rename` section. Fixed: the per-column units of
+  `reserve__upDown__group__d` (and of any mixed-unit table with several column levels) were missing from the parquet
+  metadata, the `_output_metadata` sheet and `datapackage.json`, and the result tools of the AI assistant gave the
+  capacity-margin `penalty_cost` and `capacity_price` columns the unit MW. A single-result write updates only its
+  own entries in `units.csv` and `datapackage.json`. See [Units in the files](docs/results.md#units-in-the-files).
 - **Behaviour change (outputs): VRE curtailment, VRE potential and flow-group energies per period are scaled to
   a full year.** `unit_curtailment__outputNode__d`, `unit_outputNode_VRE_potential__d` and the `cumulative_flow` of
   `group_flow__d` were sums over the sampled time steps (the flow group's also without the timestep weights); they

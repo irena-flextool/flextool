@@ -315,6 +315,9 @@ every value connected to those nodes has to use them: prices in CUR/kg, efficien
 between the units (MWh of electricity per kg), capacities in kg/h, and the results of those nodes are in kg/h
 and kg even where the label says MW or MWh.
 
+The units written with the results (the `Units` sheet and `unit of measure` header row of the Excel workbook,
+`units.csv` of the CSV output, the results-database descriptions, the plot labels) follow the default convention.
+
 Two places need care:
 
 - Values entered per kW or kWh — `invest_cost`, `fixed_cost` and `salvage_value` of units, connections and

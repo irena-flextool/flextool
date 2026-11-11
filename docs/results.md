@@ -7,8 +7,8 @@ The result tables are stored as **parquet** (the canonical store) and a configur
 | Location | Format | When written | Notes |
 | --- | --- | --- | --- |
 | `output_parquet/<scenario>/*.parquet` | parquet | always (canonical) | one file per result table; read by the GUI, the scenario-comparison tools, and `read_parquet_dir=True` re-runs |
-| `output_csv/<scenario>/*.csv` | CSV | when `output-csv` is enabled | one CSV per parquet, plus `summary_solve.csv` (diagnostic overview) |
-| `output_excel/output_<scenario>.xlsx` | Excel | when `output-excel` is enabled | one workbook per scenario; alphabetically ordered sheets |
+| `output_csv/<scenario>/*.csv` | CSV | when `output-csv` is enabled | one CSV per parquet, plus `summary_solve.csv` (diagnostic overview), `units.csv` and `datapackage.json` (see [Units in the files](#units-in-the-files)) |
+| `output_excel/output_<scenario>.xlsx` | Excel | when `output-excel` is enabled | one workbook per scenario: the `Units` and `_output_metadata` sheets, then the result sheets in alphabetical order |
 | `output_plots/<scenario>/*.png` (or svg/pdf) | image | when `output-plot` is enabled | driven by the bundled `flextool/schemas/default_plots.yaml` |
 | `<output-location>/results.sqlite` (or `--results-db-url`) | SpineDB | when `output-spinedb` is enabled (`--write-methods spinedb`) | the processed result tables written into a SpineDB using the FlexTool results schema (`flextool/schemas/spinedb_results_schema.json`); one Spine **alternative** per run (named after the scenario) so multiple runs coexist in one file. Time series land as nested Spine `Map` values on the model entity classes (node / unit / connection / group / model). |
 
@@ -29,6 +29,7 @@ For stochastic models the parquets carry only the **realised / committed** resul
 
 With `output_horizon = yes` (a debug option), `output_parquet/<scenario>/horizon/` holds a **raw LP dump**: one parquet per LP variable and constraint, named as in the model (`v_flow.parquet`, `v_invest_p.parquet`, `nodeBalance_eq.parquet`, …), with every row of every solve — realized and unrealized (forecast branches, rolling look-ahead) alike — appended over the solves and rolls. Columns: the LP index columns (`p`, `n`, `d`, `t`, …), `solve`, `roll`, `realized` (`true` for the rows that also reach the normal results; empty for a variable or constraint without a period index), and `value` + `reduced_cost` for a variable or `dual` for a constraint. The values are raw solver values: primal values per unitsize as in the LP, duals and reduced costs only divided by `scale_the_objective` (HiGHS sign convention, probability and time weights included, empty for a MIP solve) — no unitsize, price or cost conversion. A solve decomposed with Benders is not dumped. The dump keeps every constraint's index until the solve's outputs are written, so it raises peak memory on large models.
 
+- [Units in the files](#units-in-the-files)
 - [Costs](#costs)
 - [Cost by entity](#cost-by-entity)
 - [Prices](#prices)
@@ -48,6 +49,15 @@ With `output_horizon = yes` (a debug option), `output_parquet/<scenario>/horizon
 - [DC power flow](#dc-power-flow)
 - [Slack and penalty values](#slack-and-penalty-values)
 - [Plotted data as CSV](#plotted-data-as-csv)
+
+## Units in the files
+
+The unit of measure of every value column is written with the results; it follows the convention of [Units of measure](reference/entities_and_time.md#units-of-measure) (a column without a unit, such as a share, says `per unit`).
+
+- **Excel, a sheet with several header rows** (a table with two or more column levels, such as `unit__outputNode__dt` with the levels `unit` and `node`, and every sheet of a scenario comparison): the last header row is `unit of measure` and gives the unit of each column right above its data. `pd.read_excel(path, sheet_name=..., header=[0, 1, 2], index_col=[0, 1])` reads such a sheet back, with one more header row than the table has column levels.
+- **Excel, a sheet with one header row** (for example `annualized_costs__d`, `node_state__dt`): the header row at `A1` holds the column names, and the data is an Excel Table named `tbl_<sheet name>` (characters other than letters, digits, `_` and `.` become `_`). The row index values are repeated on every row, not merged. To the right of the Table, one empty column apart, a small block gives the units: `all value columns` and the unit when every value column has the same unit, else one line per value column. Power Query reads the Table (`Excel.Workbook(...){[Item="tbl_annualized_costs__d", Kind="Table"]}[Data]`), so the unit block does not enter the query. `pd.read_excel` reads the whole sheet, the unit block included: pass `usecols` with the Table's columns, or drop the columns after the first empty one.
+- **Excel, the first sheet `Units`**: one row per result sheet with the sheet name (a link to the sheet), the table name, the unit(s) (a table whose units differ by column lists them with `(by column)`), the semantics (instantaneous, annualized, discounted, …) and a description. `_output_metadata` follows with one row per value column, and the header cells of a one-header-row sheet carry the same information as comments.
+- **CSV**: the CSV files are written as before; `units.csv` next to them has one row per value column: `file`, `position` (the 0-based column of the file), `header_1`, `header_2`, … (the labels of the column in the file's header rows, empty below the file's last header row), `unit` and `semantics`. `summary_solve.csv` has one row (`M CUR`) for its costs. `datapackage.json` is a Frictionless descriptor of every CSV file: the field names are the labels of a column joined with `|` (`coal|east`), a file with several header rows says so in its `dialect` (`headerRows`, `headerJoin`), and each value field has its `unit`. The names `units.csv` and `datapackage.json` cannot be given to a result in the `rename` section of the output settings.
 
 ## Costs
 
