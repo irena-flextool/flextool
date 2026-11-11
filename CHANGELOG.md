@@ -545,10 +545,12 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   not change.
 - **A node with nothing to balance it ran without a word (#276).** A node without any unit or connection in the
   scenario (because none was linked, or because they are not active in it) now gets a warning: with an `inflow`,
-  only the penalty slack can meet it; without one, the node does nothing. A *balance* node without an `inflow` whose
-  units and connections only take energy out of it (a fuel node that should be a *commodity* node) or only bring
-  energy into it gets a warning too. Commodity nodes are not checked, storage nodes only for being empty. The run
-  continues and the model is unchanged.
+  only the penalty slack can meet it; without one, the node does nothing. A *balance* node whose units and
+  connections only take energy out of it (a fuel node that should be a *commodity* node) and that has no positive
+  `inflow`, or whose units and connections only bring energy into it and that has no negative `inflow` (demand),
+  gets a warning too. A connection's direction follows its `transfer_method`, or the `transfer_method` of a group
+  that holds both its nodes; a unit with a negative `existing` counts both ways. Commodity nodes are not checked,
+  storage nodes only for being empty. The run continues and the model is unchanged.
 - **A mistyped period key was dropped without a word.** A period map keyed *y2020* in a
   model whose period is *p2020* gave `existing` 0, an extra key such as *p2030x* was ignored, and `startup_cost`
   keyed by time steps or by 2020 vanished or crashed. Now a map key of a period parameter that is not a period of
@@ -602,11 +604,15 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   alternative: set its `index_name` to *period* or *time*. A profile period map (with or without `index_name`)
   that leaves out periods of the solves the scenario runs gets one warning per run naming the profile and those
   periods; the profile is 0 there.
-- **A two-level (period + time) `profile` map without `index_name` gave 0.** It was taken for a stochastic
-  map, which has three levels, so the profile was 0 in every time step without a word. Such a map whose outer keys
-  are periods now reads as the same map with `index_name` *period* and *time* (item 223). Outer keys that are time
-  steps, both periods and time steps, or no period stop the run with an error naming the profile and the
-  alternative; a period missing from the map gets the warning above. Three-level (stochastic) maps are unchanged.
+- **A two-level (period + time) `profile` map with an unnamed level gave 0.** Two shapes were affected: a map
+  without `index_name` on its outer level (its inner level with or without `index_name` *time*), which was taken
+  for a stochastic map (those have three levels), and a map with `index_name` *period* on its outer level but none
+  on its inner level, whose time steps were not read. Either way the profile was 0 in every time step without a
+  word. Both now read as the same map with `index_name` *period* and *time* (item 223), when the outer keys are
+  periods (the stochastic branch periods take their anchor period's curve), in single, rolling and stochastic
+  solves. Unnamed outer keys that are time steps, both periods and time steps, or no period, and unnamed inner keys
+  that are periods, stop the run with an error naming the profile and the alternative; a period missing from the
+  map gets the warning above. Three-level (stochastic) maps are unchanged.
 
 #### User constraints
 
@@ -794,6 +800,13 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
 - **The battery of the non-synchronous how-to example was a node without anything connected in the *wind*
   scenario.** The battery node is now active only in the *battery* alternative, like its connection. The *wind*
   scenario no longer has the idle node; its results do not change otherwise.
+- **Getting the corrected example databases.** A `how to example databases/Demand.sqlite` or
+  `non_sync_and_curtailment.sqlite` left by FlexTool 4.3 or older is rebuilt from the new data when the FlexTool
+  window starts or FlexTool is updated (see "A canonical example database left at an older version is rebuilt"
+  above; the old file is kept as `<name>.v<version>.bak`). A file already at this FlexTool's version is never
+  replaced, so your edits are kept: to get the corrected copy, rename or delete the file and start the FlexTool
+  window again (or run `python -m flextool.update_flextool.canonical_databases materialize` in the FlexTool
+  folder).
 
 #### AI assistant
 

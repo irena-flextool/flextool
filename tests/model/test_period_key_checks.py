@@ -469,28 +469,147 @@ def _wind_run(tmp_path_factory, alt: str, profile: list):
     return list(run(tmp_path_factory, url, scen).values())[-1]
 
 
+# The three spellings of one period x time map: outer level unnamed (Spine's ``x``) and inner unnamed, outer
+# labelled ``period`` and inner unnamed (the reader names that inner level ``x``), both labelled (the reference).
+SHAPES_2D = {
+    "unnamed": lambda outer: _map2(outer),
+    "period_outer": lambda outer: _map2(outer, "period"),
+    "labelled": lambda outer: _map2(outer, "period", "time"),
+}
+
+
 @pytest.fixture(scope="module")
 def wind_2d(tmp_path_factory):
-    return {name: _wind_run(tmp_path_factory, f"c223_run_{name}", value) for name, value in (
-        ("unnamed", _map2({"p2020": CURVE_2D})),
-        ("labelled", _map2({"p2020": CURVE_2D}, "period", "time")))}
+    return {name: _wind_run(tmp_path_factory, f"c223_run_{name}", shape({"p2020": CURVE_2D}))
+            for name, shape in SHAPES_2D.items()}
 
 
-def test_unnamed_2d_profile_fixes_the_flows(wind_2d) -> None:
+@pytest.mark.parametrize("shape", ["unnamed", "period_outer"])
+def test_unnamed_2d_profile_fixes_the_flows(wind_2d, shape) -> None:
     from tests.engine._unit_db import flow
 
-    flows = flow(wind_2d["unnamed"], "wind_plant", "wind_plant", "west").to_list()
+    flows = flow(wind_2d[shape], "wind_plant", "wind_plant", "west").to_list()
     assert flows[:3] == pytest.approx([20.0, 40.0, 60.0], abs=1e-6)
     assert max(abs(f) for f in flows[3:]) == pytest.approx(0.0, abs=1e-6)
 
 
-def test_unnamed_2d_profile_equals_the_labelled_map(wind_2d) -> None:
-    unnamed, labelled = wind_2d["unnamed"], wind_2d["labelled"]
+def _assert_same_lp(step, ref) -> None:
     for field in ("p_profile_value", "p_flow_upper", "p_flow_lower"):
-        a, b = getattr(unnamed.flex_data, field, None), getattr(labelled.flex_data, field, None)
+        a, b = getattr(step.flex_data, field, None), getattr(ref.flex_data, field, None)
         if a is None and b is None:
             continue
         assert utf8(a.frame).sort(a.frame.columns[:-1]).equals(utf8(b.frame).sort(b.frame.columns[:-1])), field
-    assert float(unnamed.solution.obj) == pytest.approx(float(labelled.solution.obj), rel=1e-12)
-    a, b = utf8(unnamed.solution.value("v_flow")), utf8(labelled.solution.value("v_flow"))
+    assert float(step.solution.obj) == pytest.approx(float(ref.solution.obj), rel=1e-12)
+    a, b = utf8(step.solution.value("v_flow")), utf8(ref.solution.value("v_flow"))
     assert a.sort(a.columns[:-1]).equals(b.sort(b.columns[:-1]))
+
+
+@pytest.mark.parametrize("shape", ["unnamed", "period_outer"])
+def test_unnamed_2d_profile_equals_the_labelled_map(wind_2d, shape) -> None:
+    _assert_same_lp(wind_2d[shape], wind_2d["labelled"])
+
+
+def test_2d_profile_with_period_inner_keys_is_an_error(tmp_path_factory) -> None:
+    """An unnamed inner level keyed by periods would be read as time steps (and give 0)."""
+    msg = _error(tmp_path_factory, "c223_inner",
+                 [["profile", "wind_profile", "profile", _map2({"p2020": {"p2020": 0.5}}, "period")]])
+    assert msg == SHAPE + (
+        "profile 'wind_profile', parameter 'profile' (alternative 'c223_inner'): the inner keys of the two-level "
+        "map are periods ('p2020'), not time steps. A two-level profile map is period x time: key the outer level "
+        "by period and the inner level by time step.")
+
+
+def _hand_flow(t: str) -> float:
+    """100 MW x the profile: 20 / 40 / 60 MW at t0001..t0003, 0 at the steps the map does not name."""
+    return 100.0 * CURVE_2D.get(t, 0.0)
+
+
+def _assert_hand_flows(step, unit: str, sink: str) -> set[tuple[str, str]]:
+    from tests.engine._unit_db import unitsize
+
+    rows = (utf8(step.solution.value("v_flow"))
+            .filter((pl.col("p") == unit) & (pl.col("source") == unit) & (pl.col("sink") == sink)))
+    assert rows.height > 0
+    size = unitsize(step, unit)
+    for d, t, v in zip(rows["d"], rows["t"], rows["value"]):
+        assert v * size == pytest.approx(_hand_flow(t), abs=1e-6), (d, t)
+    return {(d, t) for d, t in zip(rows["d"], rows["t"])}
+
+
+# Rolling: y2020_2day_dispatch rolled 24 h / 12 h (rolls start at t0001, t0013, ...); each roll's flows follow
+# the map at its own steps, so the first roll has 20 / 40 / 60 MW at t0001..t0003 and every other step is 0.
+ROLLING = [
+    ["solve", "y2020_2day_dispatch", "solve_mode", b64("rolling_window", "str")],
+    ["solve", "y2020_2day_dispatch", "rolling_solve_horizon", b64(24.0, "float")],
+    ["solve", "y2020_2day_dispatch", "rolling_solve_jump", b64(12.0, "float")],
+]
+
+
+def _wind_rolling(tmp_path_factory, alt: str, profile: list) -> dict:
+    url, scen = make_db(tmp_path_factory, alt=alt, base_chain=WIND_CHAIN, values=[
+        *ROLLING,
+        ["unit", "wind_plant", "existing", b64(100.0, "float")],
+        ["unit__node__profile", ["wind_plant", "west", "wind_profile"], "profile_method", b64("fixed", "str")],
+        ["profile", "wind_profile", "profile", profile]])
+    return run(tmp_path_factory, url, scen)
+
+
+@pytest.fixture(scope="module")
+def wind_2d_rolling(tmp_path_factory):
+    return {name: _wind_rolling(tmp_path_factory, f"c223_roll_{name}", shape({"p2020": CURVE_2D}))
+            for name, shape in SHAPES_2D.items()}
+
+
+@pytest.mark.parametrize("shape", ["unnamed", "period_outer"])
+def test_unnamed_2d_profile_rolling(wind_2d_rolling, shape) -> None:
+    steps, ref = wind_2d_rolling[shape], wind_2d_rolling["labelled"]
+    assert len(steps) == len(ref) > 1
+    seen: set[tuple[str, str]] = set()
+    for step, ref_step in zip(steps.values(), ref.values()):
+        seen |= _assert_hand_flows(step, "wind_plant", "west")
+        _assert_same_lp(step, ref_step)
+    assert {("p2020", t) for t in CURVE_2D} <= seen
+
+
+# Stochastic: 2_day_stochastic_dispatch of stochastics.json (anchor period1, branch periods period1_<branch>).
+# The map is keyed by the anchor; every branch period inherits its curve, so wind_plant (100 MW, fixed) gives
+# 20 / 40 / 60 MW at t0001..t0003 in each branch and 0 at the other steps.
+STOCHASTICS_JSON = Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "stochastics.json"
+STOCH_BRANCH_PERIODS = {f"period1_{b}" for b in ("realized", "upper", "lower", "mid")}
+
+
+def _stoch_chain() -> list[str]:
+    import json
+
+    rows = [r for r in json.loads(STOCHASTICS_JSON.read_text())["scenario_alternatives"]
+            if r[0] == "2_day_stochastic_dispatch"]
+    nxt = {a: b for _, a, b in rows}
+    alt = next(a for a in nxt if a not in set(nxt.values()))
+    chain = []
+    while alt is not None:
+        chain.append(alt)
+        alt = nxt.get(alt)
+    return chain
+
+
+@pytest.fixture(scope="module")
+def wind_2d_stoch(tmp_path_factory):
+    out = {}
+    for name, shape in SHAPES_2D.items():
+        url, scen = make_db(tmp_path_factory, alt=f"c223_stoch_{name}", base_chain=_stoch_chain(),
+                            fixture_json=STOCHASTICS_JSON, values=[
+                                ["unit", "wind_plant", "existing", b64(100.0, "float")],
+                                ["unit__node__profile", ["wind_plant", "demand_node", "wind"], "profile_method",
+                                 b64("fixed", "str")],
+                                ["profile", "wind", "profile", shape({"period1": CURVE_2D})]])
+        out[name] = last_stochastic(run(tmp_path_factory, url, scen))
+    return out
+
+
+@pytest.mark.parametrize("shape", ["unnamed", "period_outer"])
+def test_unnamed_2d_profile_stochastic(wind_2d_stoch, shape) -> None:
+    seen = _assert_hand_flows(wind_2d_stoch[shape], "wind_plant", "demand_node")
+    assert {d for d, _t in seen} == STOCH_BRANCH_PERIODS
+    for d in STOCH_BRANCH_PERIODS:
+        assert {(d, t) for t in CURVE_2D} <= seen, d
+    _assert_same_lp(wind_2d_stoch[shape], wind_2d_stoch["labelled"])

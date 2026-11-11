@@ -1212,25 +1212,50 @@ def validate_connection_node_memberships(db, logger: logging.Logger) -> None:
 
 def _node_flow_sides(db) -> tuple[set[str], set[str]]:
     """``(supplied, drained)``: the nodes a unit / connection of the scenario can bring energy into, and take
-    energy out of (``db`` scenario-filtered).  A ``unit__outputNode`` supplies its node and a ``unit__inputNode``
-    drains it; a ``connection__node__node`` (connection, source, sink) with ``transfer_method`` ``unidirectional``
-    drains its source and supplies its sink, any other connection flows both ways and counts as both sides at
-    both nodes."""
+    energy out of (``db`` scenario-filtered).
+
+    * A ``unit__outputNode`` supplies its node and a ``unit__inputNode`` drains it.  An anti-energy unit (a
+      negative ``existing`` in some alternative / period of the scenario) runs its flows the other way; its links
+      count on both sides instead of reversed, since it may also invest or have a positive ``existing`` in another
+      period (a false negative rather than a new false positive).
+    * A ``connection__node__node`` (connection, source, sink) whose effective ``transfer_method`` is
+      ``unidirectional`` drains its source and supplies its sink; any other connection flows both ways and counts
+      as both sides at both nodes.  The effective method is the connection's own (or the default), overridden by
+      the ``transfer_method`` of a group (``group__node``) holding both endpoints, as the model does
+      (``_dc_power_flow.derive_dc_power_flow``); groups that set different overrides (an error of the model) count
+      as both ways.
+    """
     supplied: set[str] = set()
     drained: set[str] = set()
+    anti_energy = {pv["entity_byname"][0] for pv in _pv_rows(db, "unit", "existing")
+                   if pv["type"] is not None and _bad_hit(pv, lambda v: v < 0.0) is not None}
     for cls, side in (("unit__outputNode", supplied), ("unit__inputNode", drained)):
         for ent in db.find_entities(entity_class_name=cls):
             byname = ent["entity_byname"]
             if byname and len(byname) >= 2:
                 side.add(byname[1])
+                if byname[0] in anti_energy:
+                    supplied.add(byname[1])
+                    drained.add(byname[1])
     default_transfer = str(_definition_default(db, "connection", "transfer_method") or "regular")
     transfer = {k[0]: v for k, v in _str_values(db, "connection", "transfer_method").items()}
+    group_methods = {k[0]: v for k, v in _str_values(db, "group", "transfer_method").items()
+                     if v != "use_connection_transfer_methods"}
+    group_nodes: dict[str, set[str]] = {}
+    if group_methods:
+        for ent in db.find_entities(entity_class_name="group__node"):
+            byname = ent["entity_byname"]
+            if byname and len(byname) >= 2 and byname[0] in group_methods:
+                group_nodes.setdefault(byname[0], set()).add(byname[1])
     for ent in db.find_entities(entity_class_name="connection__node__node"):
         byname = ent["entity_byname"]
         if not byname or len(byname) < 3:
             continue
         conn, source, sink = byname[0], byname[1], byname[2]
-        if transfer.get(conn, default_transfer) == "unidirectional":
+        overrides = {m for g, m in group_methods.items() if {source, sink} <= group_nodes.get(g, set())}
+        method = (overrides.pop() if len(overrides) == 1 else "regular") if overrides else transfer.get(
+            conn, default_transfer)
+        if method == "unidirectional":
             drained.add(source)
             supplied.add(sink)
         else:
@@ -1247,23 +1272,40 @@ def warn_node_connections(db) -> None:
     * A node without any unit (``unit__inputNode`` / ``unit__outputNode``) or connection
       (``connection__node__node``): with a non-zero ``inflow`` (and ``inflow_method`` other than ``no_inflow``)
       only the penalty slack can meet the inflow; without one the node does nothing.
-    * A ``balance`` / ``balance_within_period`` node without a non-zero ``inflow`` whose units and connections
-      only bring energy in, or only take energy out (:func:`_node_flow_sides`): its flows can only be balanced by
-      the penalty slack.  ``storage`` nodes are exempt (the storage state is the other side).
+    * A ``balance`` / ``balance_within_period`` node whose units and connections only bring energy in, or only
+      take energy out (:func:`_node_flow_sides`), and whose inflow does not provide the other side: its flows can
+      only be balanced by the penalty slack.  ``inflow`` is energy into the node, negative for a demand
+      (``annual_flow`` is always positive; the scaling methods keep the sign of ``inflow``), so a positive inflow
+      (in some step or period) is a supply and a negative one a demand: a node with only draining links needs a
+      positive inflow, one with only supplying links a negative inflow (or an ``energy_margin_method``
+      *inflow_adder*, extra demand in the investment solve).  A demand-only node with only a negative inflow is
+      still one-sided (nothing supplies the demand nor the flows out).  ``storage`` nodes are exempt (the
+      storage state is the other side).  When in doubt the check stays silent: a missed warning is better than a
+      wrong one.
     """
     default_type = str(_definition_default(db, "node", "node_type") or "balance")
     node_types = {k[0]: v for k, v in _str_values(db, "node", "node_type").items()}
     default_method = str(_definition_default(db, "node", "inflow_method") or "use_original")
     methods = {k[0]: v for k, v in _str_values(db, "node", "inflow_method").items()}
     inflow_alt: dict[str, str] = {}
+    inflow_in: set[str] = set()   # a positive inflow somewhere: the inflow supplies the node
+    inflow_out: set[str] = set()  # a negative inflow somewhere: the inflow drains the node
     for pv in _pv_rows(db, "node", "inflow"):
         if pv["type"] is None:
             continue
         name = pv["entity_byname"][0]
         if methods.get(name, default_method) == "no_inflow":
             continue
-        if _bad_hit(pv, lambda v: v != 0.0) is not None:
-            inflow_alt[name] = pv["alternative_name"]
+        numbers = _raw_numbers(pv["value"], pv["type"])
+        if _bad_hit(pv, lambda v: v > 0.0, numbers) is not None:
+            inflow_in.add(name)
+            inflow_alt.setdefault(name, pv["alternative_name"])
+        if _bad_hit(pv, lambda v: v < 0.0, numbers) is not None:
+            inflow_out.add(name)
+            inflow_alt.setdefault(name, pv["alternative_name"])
+    for (name, *_rest), method in _str_values(db, "node", "energy_margin_method").items():
+        if method == "inflow_adder":
+            inflow_out.add(name)
     supplied, drained = _node_flow_sides(db)
     for node in sorted(_entity_names(db, "node")):
         node_type = node_types.get(node, default_type)
@@ -1276,17 +1318,18 @@ def warn_node_connections(db) -> None:
             else:
                 _warn(f"node '{node}' has no units or connections and no inflow; it does nothing in this scenario.")
             continue
-        if node_type not in ("balance", "balance_within_period") or node in inflow_alt:
+        if node_type not in ("balance", "balance_within_period"):
             continue
-        if node not in supplied:
-            _warn(f"node '{node}' (node_type {node_type}) has no inflow and its units / connections only take "
-                  "energy out of it; nothing brings energy in, so those flows can only be met by the penalty slack "
-                  "(penalty_up). Add a unit or connection that supplies it, give it an inflow, or make it a "
-                  "commodity node.")
-        elif node not in drained:
-            _warn(f"node '{node}' (node_type {node_type}) has no inflow and its units / connections only bring "
-                  "energy into it; nothing takes energy out, so those flows stay at 0 or only the penalty slack "
-                  "(penalty_down) absorbs them. Add a unit or connection that takes from it, or give it an inflow.")
+        if node not in supplied and node not in inflow_in:
+            _warn(f"node '{node}' (node_type {node_type}) has no positive inflow and its units / connections only "
+                  "take energy out of it; nothing brings energy in, so those flows stay at 0, or only the penalty "
+                  "slack (penalty_up) can supply them. Add a unit or connection that supplies it, give it a "
+                  "positive inflow, or make it a commodity node.")
+        elif node not in drained and node not in inflow_out:
+            _warn(f"node '{node}' (node_type {node_type}) has no negative inflow (demand) and its units / "
+                  "connections only bring energy into it; nothing takes energy out, so those flows stay at 0, or "
+                  "only the penalty slack (penalty_down) can absorb them. Add a unit or connection that takes from "
+                  "it, or give it a negative inflow.")
 
 
 def validate_node_invest_without_storage(db, logger: logging.Logger) -> None:
@@ -2811,6 +2854,8 @@ def _profile_period_finding(raw: bytes, universe: set[str], universe_b: tuple[by
       like a time step) — there is no right reading;
     * ``time``: the outer keys of a 2-D map are time steps (none a period);
     * ``unknown``: the outer keys of a 2-D map are neither periods nor time steps (the keys are returned);
+    * ``inner_period``: the inner level of a period x time map (outer level labelled ``period`` or read as periods)
+      has no index name and its keys are periods, none a time step (the keys that are periods are returned);
     * ``missing``: a period map (labelled ``period``, the outer level of a period x time map labelled ``period``
       or without a label, or a silent 1-D map read as periods) without a value for some of ``solve_periods``;
       the profile is 0 in those periods.
@@ -2844,6 +2889,14 @@ def _profile_period_finding(raw: bytes, universe: set[str], universe_b: tuple[by
             return None
     elif label != "period":
         return None
+    if len(levels) == 2 and _normalise_label(levels[1][0]) is None:
+        # The inner level of a period x time map without an index name is read as the time step (whatever the
+        # outer level's label).  Inner keys that are not time steps either are reported by
+        # validate_time_series_keys; inner keys that are periods (the levels swapped, or a period map nested in a
+        # period map) are not, because that check takes an unnamed level keyed by periods for a period level.
+        inner = set(levels[1][1])
+        if inner and inner.isdisjoint(timesteps) and not inner.isdisjoint(universe):
+            return ("inner_period", sorted(inner & universe))
     missing = sorted(solve_periods - keys)
     return ("missing", missing) if missing else None
 
@@ -2884,7 +2937,9 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
     * ``profile.profile`` (:func:`_profile_period_finding`, items 73 / 223): an unnamed 1-D map, and the outer
       level of an unnamed 2-D map, is read as periods when its keys are periods, so keys that match both periods
       and time steps of the model (or a key that is both) → error; a 2-D map whose unnamed outer keys are time
-      steps → error, or neither periods nor time steps → error (keys that are no period); a period map (unnamed,
+      steps → error, or neither periods nor time steps → error (keys that are no period); an unnamed inner level
+      of a period x time map (outer level labelled ``period`` or read as periods) keyed by periods → error (the
+      inner level is read as time steps; other inner keys are :func:`validate_time_series_keys`'s); a period map (unnamed,
       or labelled ``period``) without a value for some periods of the solves that run (:func:`_used_solve_periods`; a solve no model runs does not count) → one warning per map (the profile is 0 there; the parameter resolver would drop such an
       entity without a word, ``_param_shapes._silent_entity_axes``).
 
@@ -2953,6 +3008,11 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
                             f"{where}: the outer keys of the two-level map are time steps ({_shown(names)}). A "
                             "two-level profile map is period x time: key the outer level by period (index name "
                             "'period') and the inner level by time step, or use a one-level time map.")
+                    elif code == "inner_period":
+                        shape_errors.append(
+                            f"{where}: the inner keys of the two-level map are periods ({_shown(names)}), not time "
+                            "steps. A two-level profile map is period x time: key the outer level by period and the "
+                            "inner level by time step.")
                     elif code == "unknown":
                         one = len(names) == 1
                         errors.append(

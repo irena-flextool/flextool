@@ -5666,7 +5666,7 @@ def _warn_fractional_integer_unit_counts(flex_data: "FlexData", db_reader: "Inpu
     ``min_instant_flow`` infeasible.  Without ``virtual_unitsize`` the unit size is the largest ``existing`` over
     the periods, so a period-Map ``existing`` that drops (17 → 8.5 MW) gives a fraction.  Read from the solve's own
     Param, so single, rolling, nested and stochastic sub-solves are all checked, and a count derived from a wrong
-    unit size shows too.  Entities with an explicit ``virtual_unitsize`` are left to the input check
+    unit size shows too.  Entities with a positive ``virtual_unitsize`` are left to the input check
     (``input_derivation._validators.warn_existing_not_whole_units``, where ``existing`` is the count itself).
     Results are unchanged.
     """
@@ -5686,7 +5686,7 @@ def _warn_fractional_integer_unit_counts(flex_data: "FlexData", db_reader: "Inpu
             vu = _try_param_explicit(db_reader, cls, "virtual_unitsize")
             if vu is not None and vu.height > 0:
                 names -= {str(n) for n, v in zip(vu["name"].to_list(), vu["value"].to_list())
-                          if v is not None and float(v) != 0.0}
+                          if v is not None and float(v) > 0.0}
     names -= warned
     if not names:
         return

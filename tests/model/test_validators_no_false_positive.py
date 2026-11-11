@@ -51,10 +51,10 @@ def _empty(*nodes: str) -> str:
 
 
 def _only_drained(*nodes: str) -> str:
-    return "".join(f"Warning: node '{n}' (node_type balance) has no inflow and its units / connections only take "
-                   "energy out of it; nothing brings energy in, so those flows can only be met by the penalty slack "
-                   "(penalty_up). Add a unit or connection that supplies it, give it an inflow, or make it a "
-                   "commodity node.\n" for n in nodes)
+    return "".join(f"Warning: node '{n}' (node_type balance) has no positive inflow and its units / connections "
+                   "only take energy out of it; nothing brings energy in, so those flows stay at 0, or only the "
+                   "penalty slack (penalty_up) can supply them. Add a unit or connection that supplies it, give it a "
+                   "positive inflow, or make it a commodity node.\n" for n in nodes)
 
 
 _WEST = {s: _empty_with_inflow("west", "west")

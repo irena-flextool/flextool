@@ -208,7 +208,7 @@ def _classify_profile_rows(source: "InputSource",
             out[name] = "period"
         elif cols == {"name", "t", "value"}:
             out[name] = "time"
-        elif cols == {"name", "period", "t", "value"}:
+        elif cols in ({"name", "period", "t", "value"}, {"name", "period", "x", "value"}):
             # 2d_map(period, t) — fold as time-axis per period.  Treat
             # as a multi-row variant of "time" here; the resolver knows.
             out[name] = "period_time"
@@ -431,18 +431,22 @@ def _profile_period_time_lf(source: "InputSource",
         })
     cols = raw.columns
     # The outer (period) key: ``period``, or ``x`` of a map whose outer level has no index name (item 223).
-    # The inner (time) key: ``t`` (or ``i``) of a labelled inner level, ``x_2`` of an unnamed inner level
-    # under an unnamed outer one.  A frame holding several shapes has the other columns null on each row.
+    # The inner (time) key: ``t`` (or ``i``) of a labelled inner level; ``x_2`` of an unnamed inner level under
+    # an unnamed outer one; ``x`` of an unnamed inner level under an outer level labelled ``period`` (the reader
+    # names the first unnamed level ``x``, whatever its depth).  A frame holding several shapes has the other
+    # columns null on each row, so ``x`` is the time key exactly on the rows whose ``period`` is set.
     period_cols = [c for c in ("period", "x") if c in cols]
-    t_cols = [c for c in ("t", "i", "x_2") if c in cols]
-    if not period_cols or not t_cols:
+    t_exprs = [pl.col(c).cast(pl.Utf8) for c in ("t", "i", "x_2") if c in cols]
+    if "period" in cols and "x" in cols:
+        t_exprs.append(pl.when(pl.col("period").is_not_null()).then(pl.col("x").cast(pl.Utf8)))
+    if not period_cols or not t_exprs:
         return pl.LazyFrame(schema={
             "f": schema_dtype(_enums, "f"), "d": schema_dtype(_enums, "d"), "t": schema_dtype(_enums, "t"), "value": pl.Float64,
         })
     t_col = "t"
     raw = raw.select("name",
                      pl.coalesce([pl.col(c).cast(pl.Utf8) for c in period_cols]).alias("period"),
-                     pl.coalesce([pl.col(c).cast(pl.Utf8) for c in t_cols]).alias(t_col),
+                     pl.coalesce(t_exprs).alias(t_col),
                      "value")
     # Branch periods get their anchor period's curve (this reader bypasses _param_shapes).
     raw = inherit_active_branch_periods(raw.filter(pl.col("name").is_in(pt_profiles)),

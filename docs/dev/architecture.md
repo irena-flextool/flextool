@@ -653,7 +653,9 @@ turning `existing_count = capacity / unitsize` into a spurious fraction
   fallback also reads `x`. A 2-D Map whose outer level has no index name
   is `period_time` by the same rule on its outer keys (item 223;
   `_profile_period_time_lf` reads `x` as the period and `x_2` / `t` as the
-  time step, the column fallback likewise); other unnamed 2-D Maps stay
+  time step, the column fallback likewise; under an outer level labelled
+  `period` the reader names the unnamed inner level `x`, read as the time
+  step on the rows whose `period` is set); other unnamed 2-D Maps stay
   `stochastic` (only 3-level Maps fill `pbt_profile`), and
   `validate_period_keys` stops the run on them (outer keys that are time
   steps, both kinds, or no period). Residual: the CSV `pdtProfile` seed

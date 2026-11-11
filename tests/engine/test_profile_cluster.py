@@ -506,3 +506,21 @@ def test_raw_silent_2d_map_tiers() -> None:
     assert _tier_for_value(tt, periods, steps) == "stochastic"
     deep = Map(["p2020"], [Map(["t0001"], [Map(["t0001"], [0.2])])])
     assert _tier_for_value(deep, periods, steps) == "stochastic"
+
+
+def test_column_fallback_period_outer_unnamed_inner_reads_as_period_time() -> None:
+    """Outer level labelled ``period``, inner level without an index name: the reader names the inner level ``x``
+    (the first unnamed level), so ``x`` is the time step on the rows whose ``period`` is set."""
+    src = InMemoryReader(
+        entities={"profile": pl.DataFrame({"name": ["wind"]})},
+        parameters={("profile", "profile"): pl.DataFrame(
+            {"name": ["wind"] * 4, "period": ["d1", "d1", "d2", "d2"], "x": ["t01", "t02", "t01", "t02"],
+             "value": [0.2, 0.4, 0.6, 0.8]})},
+    )
+    dt = _make_dt(["d1", "d2"], ["t01", "t02"])
+    assert _classify_profile_rows(src, dt) == {"wind": "period_time"}
+    out = p_profile_value_lf(src, dt).collect()
+    expected = pl.DataFrame({"f": ["wind"] * 4, "d": ["d1", "d1", "d2", "d2"], "t": ["t01", "t02"] * 2,
+                             "value": [0.2, 0.4, 0.6, 0.8]})
+    eq, diff = _frames_equal(out, expected, ("f", "d", "t"))
+    assert eq, diff

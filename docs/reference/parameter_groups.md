@@ -136,10 +136,14 @@ rerun fixes them all. A warning is printed once per scenario read in the run log
 - A node (not *commodity*) without any unit (`unit__inputNode`, `unit__outputNode`) or connection
   (`connection__node__node`) in the scenario: with an `inflow` only the penalty slack (`penalty_up` /
   `penalty_down`) can meet it; without one the node does nothing. Also a *balance* or *balance_within_period* node
-  without an `inflow` whose units and connections only bring energy in, or only take energy out: those flows can
-  only be balanced by the penalty slack. A connection with `transfer_method` *unidirectional* only takes from its
-  first node and brings to its second; other connections count both ways. *storage* nodes are not checked for
-  this (the storage state takes the rest). An `inflow` of 0 and `inflow_method` *no_inflow* count as no inflow.
+  whose units and connections only take energy out, without a positive `inflow` (a supply), or only bring energy
+  in, without a negative `inflow` (a demand) or an `energy_margin_method` *inflow_adder*: those flows stay at 0, or
+  only the penalty slack can balance them. A node that only has demand (negative `inflow`) and units or
+  connections that only take energy out is warned about too. A connection with `transfer_method` *unidirectional*
+  (its own, or the `transfer_method` of a group that holds both its nodes) only takes from its first node and
+  brings to its second; other connections count both ways. A unit with a negative `existing` (an anti-energy unit)
+  counts on both sides of its nodes. *storage* nodes are not checked for this (the storage state takes the rest).
+  An `inflow` of 0 and `inflow_method` *no_inflow* count as no inflow. The check stays silent when in doubt.
 
 Other checks (time series keys, timesets, input shares, minimum-load curves, ladders, group limits) are described
 with their parameters.
