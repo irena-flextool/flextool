@@ -626,8 +626,9 @@ def write_summary_csv(par, s, v, r, csv_dir):
             f.write(f'"CO2 [Mt]",{co2_total:.6g},"System-wide annualized CO2 emissions for realized periods"\n')
 
         # Slack variables section
-        f.write('\n"Slack variables multiplied by timestep duration (creating or removing energy/matter, ')
-        f.write('creating inertia, adding synchronous generation, decreasing capacity margin, creating reserve)"\n')
+        f.write('\n"Slack variables multiplied by timestep duration and timestep weight, summed over the solved '
+                'time steps of each period (creating or removing energy/matter, creating inertia, adding '
+                'synchronous generation, creating reserve); capacity margin per period"\n')
 
         # Node state slack - upward (creating energy)
         for node in r.upward_node_slack_d_sample.columns:

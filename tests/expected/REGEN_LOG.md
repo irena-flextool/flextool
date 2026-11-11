@@ -1505,3 +1505,19 @@ The goldens with uniform weights are unchanged.  Generated with `pytest tests/te
 <scenario>`; the regeneration also rewrote the time stamp of `summary_solve.csv` and `base_weighted/costs__dt.csv`
 (`0` → `0.0` number format), which were put back to their previous content.  The section header ("Slack variables
 multiplied by timestep duration ...") is unchanged, so the other 17 goldens that print it stay as they are.
+
+## 2026-11-11 — `summary_solve.csv` slack section header, 19 scenarios (item 219 follow-up)
+
+**Context.** The header of the slack section said "Slack variables multiplied by timestep duration (... decreasing
+capacity margin ...)". Since item 219 the lines are also weighted by the timestep weight, and the CapMargin line was
+never multiplied by a duration (it is per period). The header now reads "Slack variables multiplied by timestep
+duration and timestep weight, summed over the solved time steps of each period (creating or removing energy/matter,
+creating inertia, adding synchronous generation, creating reserve); capacity margin per period".
+
+**Effect.** Only that header line changes, in the 19 goldens that print it: `2_day_stochastic_dispatch`, `5weeks_battery_intraperiod_blocks`, `base`, `base_weighted`, `capacity_margin`, `co2_additional_measures`, `co2_existing_measures`, `co2_without_measures`, `csp_existing`, `csp_fixed_design`, `csp_gas_backup`, `csp_optimised_design`, `csp_without`, `fullYear`, `fullYear_roll`, `multi_year_wind_growth_cap`, `multi_year_wind_no_investment`, `scale_to_peak_flow`, `wind_weighted`.
+No value, no other line and no other CSV changes (`git diff`: 19 lines removed, 19 added, all the header).
+
+Generated with `pytest "tests/test_scenarios.py::test_scenario[<scenario>]" --regenerate <scenario>` per scenario;
+the regeneration also rewrote the time stamp line of `summary_solve.csv` and the number / header format of some
+other CSVs (`costs__dt.csv`, `node__d.csv`, `node__dt.csv`, `slack__upward__node_state__dt.csv`), which were put
+back to their previous content (copied from a backup taken before the run). The 19 scenarios then pass in compare mode.
