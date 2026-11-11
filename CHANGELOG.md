@@ -1,5 +1,16 @@
 ## Unreleased
 
+- **Behaviour change: `discount_rate` 0 is 0 % (annuity = invest_cost / lifetime); before it was 5 %.** Any
+  `discount_rate` of 0 or below used to be replaced by 0.05 in the annuity, and a missing or non-positive `lifetime`
+  by 20 years. Now 0 gives the straight-line annuity (`salvage_value / lifetime` for a retirement) and a missing
+  rate is the schema default 0.05, as before. A negative `discount_rate` is an input error. A unit, connection or
+  node that invests with an `invest_cost` or retires with a `salvage_value` without a `lifetime` is an error, and so
+  is one with `lifetime_method` `reinvest_choice` / `no_investment` that invests, retires or has `existing`
+  capacity (its capacity ends after the lifetime). The database upgrade marks the entities whose results change
+  (`discount_rate_zero_is_zero`, entities that can invest or retire with an explicit rate ≤ 0) and the run prints a
+  notice for them. The FlexTool 2 importer now writes an `interest` of 0 as `discount_rate` 0 (before it was left
+  out, so it became 5 %); a `lifetime` of 0 is still left out, so such an investing unit now needs a lifetime.
+  Schema: part of data version 79 (descriptions of `discount_rate` and `lifetime`).
 - **New: user constraints summed over a period (`constraint.constraint_period_method`).** *per_timestep*
   (default) keeps the rows of before. *period_total* writes one row per period over the period's total: each step's
   flow and online terms are multiplied by its duration and timestep weight and divided by the period's share of a

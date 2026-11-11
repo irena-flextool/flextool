@@ -158,6 +158,8 @@ def test_salvage_value_mixed_shapes(tmp_path_factory):
          _pmap({"p2020": 10.0, "p2025": 0.0, "p2030": 10.0, "p2035": 10.0})],
         ["unit", "wind_plant", "invest_method", "invest_retire_total"],
         ["unit", "wind_plant", "salvage_value", 5.0],
+        # A retirement with a salvage_value needs a lifetime (validate_basic_sanity).
+        ["unit", "wind_plant", "lifetime", 20.0],
     ]
     step = _single(_solve(tmp_path_factory, "tests.json", _overlay(values)))
     divest = _pairs(step.flex_data.ed_divest_set)

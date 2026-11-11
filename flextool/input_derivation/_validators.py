@@ -1836,6 +1836,60 @@ def _where(alt: str, key: str | None) -> str:
 _PERCENT_SUSPECT = 1.5
 
 
+# invest_method values that allow investing / retiring (preprocess/params/_npv.py _INVEST_NOT_ALLOWED /
+# _DIVEST_NOT_ALLOWED are their complements).
+_NO_INVEST = frozenset(("not_allowed", "retire_period", "retire_total", "retire_no_limit"))
+_NO_RETIRE = frozenset(("not_allowed", "invest_period", "invest_total", "invest_no_limit"))
+_BOUNDED_LIFETIME = frozenset(("reinvest_choice", "no_investment"))
+
+
+def _nonzero_names(src, cls: str, param: str, bad=lambda v: v != 0.0) -> set[str]:
+    """Entities of ``cls`` whose explicit ``param`` has an element where ``bad`` holds (default: not 0)."""
+    out: set[str] = set()
+    for pv in _pv_rows(src, cls, param):
+        if pv["type"] is None:
+            continue
+        if _bad_hit(pv, bad) is not None:
+            out.add(pv["entity_byname"][0])
+    return out
+
+
+def _missing_lifetime(src, cls: str, methods: dict[str, str]) -> list[str]:
+    """Errors for the ``cls`` entities that need a ``lifetime`` and have none.
+
+    A lifetime is needed when the annuity uses it (investing with a non-zero ``invest_cost``, retiring with a
+    non-zero ``salvage_value``) and when the lifetime window does: ``lifetime_method`` ``reinvest_choice`` /
+    ``no_investment`` on an entity that invests or retires, or has ``existing`` capacity (its end of life is
+    start + lifetime).  The default ``reinvest_automatic`` without investment needs none.
+    """
+    with_life = {pv["entity_byname"][0] for pv in _pv_rows(src, cls, "lifetime") if pv["type"] is not None}
+    db = getattr(src, "_db", src)
+    default_method = str(_definition_default(db, cls, "lifetime_method") or "reinvest_automatic")
+    life_methods = {k[0]: v for k, v in _str_values(src, cls, "lifetime_method").items()}
+    invest_cost = _nonzero_names(src, cls, "invest_cost")
+    salvage = _nonzero_names(src, cls, "salvage_value")
+    bounded = {e for e in set(methods) | set(life_methods)
+               if life_methods.get(e, default_method) in _BOUNDED_LIFETIME}
+    existing = _nonzero_names(src, cls, "existing", lambda v: v > 0.0) & bounded if bounded else set()
+    errors: list[str] = []
+    for ent in sorted(set(methods) | existing):
+        if ent in with_life:
+            continue
+        method = methods.get(ent, "not_allowed")
+        why = None
+        if method not in _NO_INVEST and ent in invest_cost:
+            why = f"it can invest (invest_method {method}) and has an invest_cost"
+        elif method not in _NO_RETIRE and ent in salvage:
+            why = f"it can retire (invest_method {method}) and has a salvage_value"
+        elif ent in bounded and (method != "not_allowed" or ent in existing):
+            what = "invests or retires" if method != "not_allowed" else "has existing capacity"
+            why = (f"its lifetime_method is {life_methods.get(ent, default_method)} and it {what}, so its capacity "
+                   "ends after the lifetime")
+        if why is not None:
+            errors.append(f"{cls} '{ent}' has no lifetime, but {why}. Give the lifetime in years.")
+    return errors
+
+
 def validate_basic_sanity(src) -> None:
     """Values that make no sense, or are almost surely a typing mistake (#170).
 
@@ -1853,6 +1907,10 @@ def validate_basic_sanity(src) -> None:
       ``retire_min/max_total`` (unit, connection, node, group); the problem would be infeasible;
     * ``lifetime`` ≤ 0 on a unit / connection / node that can invest or retire (``invest_method`` other than
       ``not_allowed``): the investment would be charged for no years.
+    * no ``lifetime`` on a unit / connection / node whose annuity or lifetime window needs it
+      (:func:`_missing_lifetime`): investing with an ``invest_cost``, retiring with a ``salvage_value``, or a
+      ``lifetime_method`` ``reinvest_choice`` / ``no_investment`` with investment, retirement or ``existing``;
+    * ``discount_rate`` < 0 (unit / connection / node); 0 is the straight-line annuity.
 
     ``existing`` as a time series, keyed by time steps or by numbers is :func:`validate_period_keys`'.
 
@@ -1935,6 +1993,10 @@ def validate_basic_sanity(src) -> None:
         scan(cls, "lifetime", [(lambda v: v <= 0.0,
              f"lifetime must be above 0 when the {cls} can invest or retire; with 0 the investment is charged for "
              "no years. Give the lifetime in years.", errors)], only=investing)
+        scan(cls, "discount_rate", [(lambda v: v < 0.0,
+             "discount_rate must be 0 or above (0 gives the straight-line annuity invest_cost / lifetime).",
+             errors)])
+        errors.extend(_missing_lifetime(src, cls, methods[cls]))
 
     for text in warnings:
         _warn(text)

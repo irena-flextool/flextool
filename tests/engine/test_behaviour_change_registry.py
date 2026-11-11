@@ -61,5 +61,6 @@ def test_migration_markers_are_registered() -> None:
                                                               "ladder_tier_labels_as_written",
                                                               "unnamed_maps_read_per_depth",
                                                               "solve_step_series_combined",
-                                                              "energy_margin_adder_per_original_step"}
+                                                              "energy_margin_adder_per_original_step",
+                                                              "discount_rate_zero_is_zero"}
     assert written <= set(BEHAVIOUR_CHANGES)

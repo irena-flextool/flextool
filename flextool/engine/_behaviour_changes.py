@@ -242,6 +242,15 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "capacity_margin_counts_by_flow"),
         ),
         BehaviourChange(
+            id="discount_rate_zero_is_zero",
+            summary=("A discount_rate of 0 is now 0 %: the annuity of an investment is invest_cost / lifetime "
+                     "(salvage_value / lifetime for a retirement). Before, a discount_rate of 0 or below was "
+                     "read as 5 %, so these investments cost more per year (results change). A negative "
+                     "discount_rate is now an input error, and an investing or retiring entity with a cost "
+                     "needs a lifetime (before: 20 years)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "discount_rate_zero_is_zero"),
+        ),
+        BehaviourChange(
             id="gui_solver_defaults",
             summary=("Runs started from the FlexTool GUI now use the same solver settings as terminal and Spine "
                      "Toolbox runs: presolve is on (before: choose), and the MIP gap of each solve comes from its "

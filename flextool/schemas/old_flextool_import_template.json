@@ -946,7 +946,7 @@
       "discount_rate",
       0.05,
       null,
-      "[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
+      "[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -1034,7 +1034,7 @@
       "lifetime",
       null,
       null,
-      "[years] Used to calculate annuity together with interest rate. Constant or period.",
+      "[years] Used to calculate annuity together with interest rate. Required when the entity invests or retires with a cost, and when lifetime_method is reinvest_choice or no_investment. Constant or period.",
       "investment"
     ],
     [
@@ -1586,7 +1586,7 @@
       "discount_rate",
       0.05,
       null,
-      "[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
+      "[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -1682,7 +1682,7 @@
       "lifetime",
       null,
       null,
-      "[years] Used to calculate annuity together with interest rate. Constant or period.",
+      "[years] Used to calculate annuity together with interest rate. Required when the entity invests or retires with a cost, and when lifetime_method is reinvest_choice or no_investment. Constant or period.",
       "investment"
     ],
     [
@@ -2210,7 +2210,7 @@
       "discount_rate",
       0.05,
       null,
-      "[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
+      "[e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -2298,7 +2298,7 @@
       "lifetime",
       null,
       null,
-      "[years] Used to calculate annuity together with interest rate. Constant or period.",
+      "[years] Used to calculate annuity together with interest rate. Required when the entity invests or retires with a cost, and when lifetime_method is reinvest_choice or no_investment. Constant or period.",
       "investment"
     ],
     [

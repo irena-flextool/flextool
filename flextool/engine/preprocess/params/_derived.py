@@ -3219,9 +3219,9 @@ def _eea_pairs(source: "InputSource",
     """Compute non-zero ``ed_entity_annual`` pairs (e, d).
 
     Algorithm (audit §3.7.5/6, ``entity_annual_calc_params.py:177-198``):
-      annuity[e, d] = #methods_for_e * invest_value[e, d] * 1000 * r
-                       / (1 - 1/(1+r)^n)
-    where r = max(0.05, discount_rate); n = max(20, lifetime).
+      annuity[e, d] = #methods_for_e * invest_value[e, d] * 1000
+                       * annuity_factor(discount_rate, lifetime)
+    (``preprocess/_annuity.py``).
 
     For ``ed_invest`` we only need the *non-zero* predicate, so we can
     short-circuit: a pair (e, d) has non-zero annuity iff
@@ -8850,28 +8850,6 @@ def p_entity_divested_from_handoff(
 # ---------------------------------------------------------------------------
 
 
-_INVEST_NOT_ALLOWED_F: frozenset[str] = frozenset((
-    "not_allowed", "retire_period", "retire_total", "retire_no_limit",
-))
-_DIVEST_NOT_ALLOWED_F: frozenset[str] = frozenset((
-    "not_allowed", "invest_period", "invest_total", "invest_no_limit",
-))
-
-
-def _annuity(invest_value: float, discount_rate: float,
-              lifetime: float) -> float:
-    """Mirror :func:`flextool/preprocessing/entity_annual_calc_params._annuity`.
-
-    annuity = invest_value * 1000 * r / (1 - 1/(1+r)^n) with mod's
-    ≤ 0 fallbacks: r → 0.05, n → 20.
-    """
-    r = discount_rate if discount_rate > 0 else 0.05
-    n = lifetime if lifetime > 0 else 20.0
-    if r == 0:
-        return 0.0
-    return invest_value * 1000.0 * r / (1.0 - (1.0 / (1.0 + r)) ** n)
-
-
 def _entity_classes_lookup(source: "InputSource"
                               ) -> tuple[set[str], set[str], set[str]]:
     """Return ``(process_set, node_set, connection_set)`` of entity names.
@@ -9019,38 +8997,6 @@ def _resolve_pdX(per_period: dict[tuple[str, str], float] | None,
         if v is not None:
             return v
     return scalar.get(e, 0.0)
-
-
-def _per_method_annuity(e: str, d: str,
-                            cost_param_name: str,
-                            cost_per: dict[tuple[str, str], float] | None,
-                            cost_scalar: dict[str, float],
-                            disc_per: dict[tuple[str, str], float] | None,
-                            disc_scalar: dict[str, float],
-                            life_per: dict[tuple[str, str], float] | None,
-                            life_scalar: dict[str, float],
-                            methods_for_e: list[str],
-                            disallowed: frozenset[str],
-                            unit_set: set[str],
-                            node_set: set[str],
-                            conn_set: set[str]) -> float:
-    """Sum-over-allowed-methods annuity reproducing
-    ``entity_annual_calc_params._per_method_annuity_invest/divest``.
-
-    Each method m ∈ methods_for_e \\ disallowed contributes
-    ``_annuity(cost_value(e, d), discount_rate(e, d), lifetime(e, d))``.
-    """
-    v = 0.0
-    if e not in unit_set and e not in node_set and e not in conn_set:
-        return 0.0
-    for m in methods_for_e:
-        if m in disallowed:
-            continue
-        cost = _resolve_pdX(cost_per, cost_scalar, e, d)
-        disc = _resolve_pdX(disc_per, disc_scalar, e, d)
-        life = _resolve_pdX(life_per, life_scalar, e, d)
-        v += _annuity(cost, disc, life)
-    return v
 
 
 def _p_discount_years_from_source(source: "InputSource",

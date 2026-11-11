@@ -537,7 +537,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -634,7 +634,7 @@
       "lifetime",
       null,
       null,
-      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Constant or period.",
+      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Required when the connection invests or retires with a cost (invest_cost, salvage_value), and when lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment). Constant or period.",
       "investment"
     ],
     [
@@ -1372,7 +1372,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -1507,7 +1507,7 @@
       "lifetime",
       null,
       null,
-      "[years] Operating lifetime. It starts when the storage capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the storage capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Constant or period.",
+      "[years] Operating lifetime. It starts when the storage capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the storage capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Required when the node invests or retires with a cost (invest_cost, salvage_value), and when lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment). Constant or period.",
       "investment"
     ],
     [
@@ -2288,7 +2288,7 @@
         "float"
       ],
       null,
-      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime. Constant or period.",
+      "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / lifetime. No value means 0.05. Must be 0 or above. Constant or period.",
       "investment"
     ],
     [
@@ -2382,7 +2382,7 @@
       "lifetime",
       null,
       null,
-      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Constant or period.",
+      "[years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the interest rate to calculate the annuity. What happens at the end of the lifetime depends on lifetime_method: reinvest_automatic keeps the capacity to the end of the model horizon, reinvest_choice retires it, no_investment retires it once. Required when the unit invests or retires with a cost (invest_cost, salvage_value), and when lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment). Constant or period.",
       "investment"
     ],
     [

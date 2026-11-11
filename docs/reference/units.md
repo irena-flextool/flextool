@@ -76,6 +76,8 @@ Each asset that can be invested in should have `invest_cost`, `lifetime` and `di
 
 `invest_cost` * `discount_rate` / { 1 - [ 1 / ( 1 + `discount_rate` ) ] ^ `lifetime` } + `fixed_cost`
 
+A `discount_rate` of 0 gives the straight-line annuity `invest_cost` / `lifetime` + `fixed_cost`. Without a value the `discount_rate` is 0.05; a negative value is an input error. `lifetime` is required when the asset invests or retires with a cost, and when its `lifetime_method` is `reinvest_choice` or `no_investment`.
+
 The next step is to consider inflation adjustment - future costs are adjusted to a common price base. There is a model-wide assumption for the `inflation_rate`. By default it is 0 (i.e. no inflation, real inputs), but it can be changed through the `inflation_rate` parameter set for the *flexTool* `model` entity. The inflation adjustment factor for every period in the model is calculated from the `inflation_rate` using the `years_represented` parameter of each `solve`, which defines how many years the period represents. Values for `years_represented` are used to calculate how many `years_from_solve_start` each year is. The formula is:
 
 [ 1 / ( 1 + `inflation_rate` ) ] ^ `years_from_solve_start`

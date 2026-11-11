@@ -79,6 +79,8 @@ The discount rate converts a lump-sum investment cost into annual payments over 
 annual_payment = invest_cost * discount_rate / (1 - (1 / (1 + discount_rate))^lifetime)
 ```
 
+A `discount_rate` of 0 gives the straight-line annuity `invest_cost / lifetime` (no interest). Without a value the rate is 0.05; a negative rate is an input error. The `lifetime` has no default: it is required when the entity invests or retires with a cost (`invest_cost`, `salvage_value`), and when its `lifetime_method` is `reinvest_choice` or `no_investment` (also for existing capacity without investment), since the capacity then ends after the lifetime.
+
 **Example**: A solar plant costs 800 EUR/kW with a 25-year lifetime and 5% discount rate:
 ```
 annual_payment = 800 * 0.05 / (1 - 1/1.05^25) = 800 * 0.0710 = 56.8 EUR/kW/year approximately
@@ -120,9 +122,9 @@ For **invested** assets, the fixed cost is paid in every period the new capacity
 | `inflation_rate` | Model | 0 | General inflation rate. Set to 0 for real inputs. |
 | `inflation_offset_investment` | Model | 0 | When in the year investment costs occur (0 = start) |
 | `inflation_offset_operations` | Model | 0.5 | When in the year operational costs occur (0.5 = middle) |
-| `discount_rate` | Entity | 0.05 | Technology-specific WACC for annualizing investments |
+| `discount_rate` | Entity | 0.05 | Technology-specific WACC for annualizing investments; 0 gives invest_cost / lifetime |
 | `invest_cost` | Entity | - | Overnight investment cost [CUR/kW] |
-| `lifetime` | Entity | - | Economic lifetime [years] |
+| `lifetime` | Entity | - | Economic lifetime [years]; required when the entity invests or retires with a cost |
 | `fixed_cost` | Entity | - | Annual fixed O&M cost [CUR/kW/year] |
 | `salvage_value` | Entity | - | Residual value at end of life [CUR/kW] |
 

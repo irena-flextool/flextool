@@ -22,7 +22,10 @@ Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
   ``capacity_margin`` descriptions, and writes the marker ``capacity_margin_counts_by_flow``
   only on a database with a ``manual`` capacity-margin group;
 * adds the value list ``constraint_period_methods`` (``per_timestep``, ``period_total``) and
-  ``constraint.constraint_period_method`` (``str``, default ``per_timestep``, group ``constraint``).
+  ``constraint.constraint_period_method`` (``str``, default ``per_timestep``, group ``constraint``);
+* rewrites the ``discount_rate`` / ``lifetime`` descriptions of unit / connection / node (0 is the
+  straight-line annuity; lifetime required) and writes the marker ``discount_rate_zero_is_zero`` only on a
+  database where an investing entity has an explicit ``discount_rate`` ≤ 0.
 
 It changes no other definition and no value, and a rerun commits nothing.
 """
@@ -61,10 +64,11 @@ COEFF_CHANGED = set(m._V79_CONSTRAINT_COEFF_PARAMETERS)
 SHARE_NEW = ("group", "capacity_margin_share")
 MARGIN_CHANGED = {("group", "capacity_margin_method"), ("group", "capacity_margin")}
 PERIOD_METHOD_NEW = ("constraint", "constraint_period_method")
+DISCOUNT_CHANGED = {(cls, name) for cls in ("unit", "connection", "node") for name in ("discount_rate", "lifetime")}
 #: Every definition the step adds or changes.
 ALL_CHANGED = (set(ONLINE_NEW) | set(RAMP_CHANGED) | set(REDUCE_NEW) | set(GROUP_LIMITS_CHANGED)
                | {ADDER, DURATION} | EFFICIENCY_CHANGED | COEFF_CHANGED | {SHARE_NEW} | MARGIN_CHANGED
-               | {PERIOD_METHOD_NEW})
+               | {PERIOD_METHOD_NEW} | DISCOUNT_CHANGED)
 
 
 def _defs(db) -> dict:
@@ -134,6 +138,10 @@ def _migrate(tmp_path_factory, tag: str, values: dict) -> dict:
             _set(db, "node", node, "energy_margin_adder", values["node"], alt)
         if "group" in values:
             _set(db, "group", "stoch_g", "capacity_margin_method", values["group"], alt)
+        unit = sorted(e["name"] for e in db.get_items("entity", entity_class_name="unit"))[0]
+        if "unit_disc" in values:
+            _set(db, "unit", unit, "invest_method", "invest_no_limit", alt)
+            _set(db, "unit", unit, "discount_rate", values["unit_disc"], alt)
         if values:
             db.commit_session("test values")
         before, lists_before, markers_before = _defs(db), _lists(db), _markers(db)
@@ -141,7 +149,7 @@ def _migrate(tmp_path_factory, tag: str, values: dict) -> dict:
     with DatabaseMapping(url) as db:
         after, lists_after, markers = _defs(db), _lists(db), _markers(db)
     return {"url": url, "before": before, "after": after, "lists_before": lists_before, "lists_after": lists_after,
-            "markers_before": markers_before, "markers": markers, "solve": solve, "node": node}
+            "markers_before": markers_before, "markers": markers, "solve": solve, "node": node, "unit": unit}
 
 
 @pytest.fixture(scope="module")
@@ -320,6 +328,28 @@ def test_adds_the_constraint_period_method(plain) -> None:
     assert description == shipped[PERIOD_METHOD_NEW] and description.startswith("[choice]")
 
 
+# ─── discount_rate 0 is 0 % ──────────────────────────────────────────────
+
+
+def test_rewrites_the_discount_rate_and_lifetime_descriptions(plain) -> None:
+    shipped = _shipped()
+    for key in DISCOUNT_CHANGED:
+        assert plain["after"][key][2] == shipped[key] != plain["before"][key][2]
+        assert plain["after"][key][:2] + plain["after"][key][3:] == plain["before"][key][:2] + plain["before"][key][3:]
+    assert "0 gives the straight-line annuity invest_cost / lifetime" in shipped[("unit", "discount_rate")]
+    assert "Required when the node invests or retires with a cost" in shipped[("node", "lifetime")]
+
+
+def test_discount_rate_marker_only_for_an_explicit_zero(tmp_path_factory, plain, monkeypatch) -> None:
+    assert "discount_rate_zero_is_zero" not in plain["markers"]
+    five = _migrate(tmp_path_factory, "v79_disc_five", {"unit_disc": 0.05})
+    assert "discount_rate_zero_is_zero" not in five["markers"]
+    zero = _migrate(tmp_path_factory, "v79_disc_zero", {"unit_disc": 0.0})
+    assert json.loads(zero["markers"]["discount_rate_zero_is_zero"]) == {"since": 79, "entities": [zero["unit"]]}
+    with DatabaseMapping(zero["url"]) as db:
+        _rerun_changes_nothing(db, m._v79_discount_rate_zero, monkeypatch)
+
+
 # ─── the step as a whole ─────────────────────────────────────────────────
 
 
@@ -337,7 +367,7 @@ def test_changes_nothing_else(plain) -> None:
 @pytest.mark.parametrize("part", [
     "_v79_constraint_online_coeff", "_v79_ramp_cost_descriptions", "_v79_reduce_detail_methods",
     "_v79_group_limits_by_time", "_v79_solve_step_series", "_v79_capacity_margin", "_v79_constraint_period_method",
-    "_migrate_v79_schema_batch"])
+    "_v79_discount_rate_zero", "_migrate_v79_schema_batch"])
 def test_rerun_is_idempotent(plain, part: str, monkeypatch) -> None:
     with DatabaseMapping(plain["url"]) as db:
         _rerun_changes_nothing(db, getattr(m, part), monkeypatch)

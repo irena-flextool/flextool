@@ -2,7 +2,7 @@
 
 Timeline ``tl``: t1..t4, 1 h steps.  Node ``n`` with demand 50, 60, 80, 70 MWh and an upward penalty of
 10 000 CUR/MWh.  Unit ``gen`` -> ``n``: no existing capacity, invest_cost 100 CUR/kW, lifetime 1 year and discount
-rate 0.05 (annuity 1.05 × 1e5 = 1.05e5 CUR/MW/a), other_operational_cost 1 CUR/MWh.  One period ``p1``, years_represented 1.
+rate 0 (straight-line annuity 100 × 1000 / 1 = 1e5 CUR/MW/a), other_operational_cost 1 CUR/MWh.  One period ``p1``, years_represented 1.
 
 Timeset ``rp``: ``timeset_duration {t1: 2}`` with ``representative_period_weights`` {t1: {t1: 1}, t3: {t1: 1}}
 (base periods t1 and t3 are both represented by the block t1..t2).  Timeset ``full``: ``timeset_duration {t1: 4}``.
@@ -64,7 +64,7 @@ def build_db(tmp_dir: Path, solves: dict[str, dict]) -> str:
         ("unit", "gen", "invest_method", "invest_no_limit"),
         ("unit", "gen", "invest_cost", 100.0),
         ("unit", "gen", "lifetime", 1.0),
-        ("unit", "gen", "discount_rate", 0.05),
+        ("unit", "gen", "discount_rate", 0.0),
         ("unit__outputNode", ("gen", "n"), "other_operational_cost", 1.0),
     ]
     for solve, params in solves.items():

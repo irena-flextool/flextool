@@ -6255,6 +6255,75 @@ def _v79_constraint_period_method(db) -> None:
         db.update_parameter_definition(id=pdef["id"], parameter_type_list=("str",), **fields)
 
 
+#: v79: an explicit discount_rate 0 is 0 % (the straight-line annuity), no longer 5 %; lifetime is required where
+#: the annuity or the lifetime window uses it.
+_V79_DISCOUNT_RATE_DESCRIPTION = (
+    "[-] e.g. 0.05 means 5% per year. Discount rate for investments (WACC). Reflects the financing cost and risk "
+    "premium for this technology. When the model inflation_rate > 0, this should be a nominal rate. When "
+    "inflation_rate = 0, this should be a real rate. Used to annualize investment costs over the lifetime: "
+    "annuity = invest_cost x r / (1 - (1 + r)^-lifetime). 0 gives the straight-line annuity invest_cost / "
+    "lifetime. No value means 0.05. Must be 0 or above. Constant or period.")
+_V79_LIFETIME_REQUIRED = (
+    " Required when the {what} invests or retires with a cost (invest_cost, salvage_value), and when "
+    "lifetime_method is reinvest_choice or no_investment (also for existing capacity without investment).")
+_V79_LIFETIME_DESCRIPTIONS: dict[str, str] = {
+    cls: (
+        f"[years] Operating lifetime. It starts when the {cap} starts to operate: with a construction lead time, "
+        "after the construction. Used with the interest rate to calculate the annuity. What happens at the end of "
+        f"the lifetime depends on lifetime_method: reinvest_automatic keeps the {cap} to the end of the model "
+        "horizon, reinvest_choice retires it, no_investment retires it once."
+        + _V79_LIFETIME_REQUIRED.format(what=what) + " Constant or period.")
+    for cls, cap, what in (("unit", "capacity", "unit"), ("connection", "capacity", "connection"),
+                           ("node", "storage capacity", "node"))}
+
+
+def _v79_numbers(value) -> list[float]:
+    """Every number of a parsed value (a constant, or the leaves of a map / time series)."""
+    if isinstance(value, bool) or value is None:
+        return []
+    if isinstance(value, (int, float)):
+        return [float(value)]
+    values = getattr(value, "values", None)
+    if values is None:
+        return []
+    out: list[float] = []
+    for v in values:
+        out.extend(_v79_numbers(v))
+    return out
+
+
+def _v79_discount_rate_zero(db) -> None:
+    """``discount_rate`` 0 is 0 % (part of v79).
+
+    Before v79 an explicit ``discount_rate`` of 0 or below was read as 5 %; now 0 gives the straight-line annuity
+    ``invest_cost / lifetime`` and a negative value is an input error.  No value is rewritten.  The
+    ``discount_rate`` and ``lifetime`` descriptions of unit / connection / node are rewritten.  Behaviour-change
+    marker ``discount_rate_zero_is_zero`` (``{"since": 79, "entities": [...]}``) only on a database where an
+    entity that can invest or retire (an ``invest_method`` other than ``not_allowed``) has an explicit
+    ``discount_rate`` element ≤ 0: its results change.  Idempotent: a rerun finds the descriptions and the marker
+    written.
+    """
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        pdef = _pdef_or_none(db, cls, "discount_rate")
+        if pdef is not None and (pdef["description"] or "") != _V79_DISCOUNT_RATE_DESCRIPTION:
+            db.update_parameter_definition(id=pdef["id"], description=_V79_DISCOUNT_RATE_DESCRIPTION)
+        pdef = _pdef_or_none(db, cls, "lifetime")
+        if pdef is not None and (pdef["description"] or "") != _V79_LIFETIME_DESCRIPTIONS[cls]:
+            db.update_parameter_definition(id=pdef["id"], description=_V79_LIFETIME_DESCRIPTIONS[cls])
+        investing = {pv["entity_byname"][0] for pv in db.find_parameter_values(
+            entity_class_name=cls, parameter_definition_name="invest_method")
+            if from_database(pv["value"], pv["type"]) not in (None, "not_allowed")}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="discount_rate"):
+            name = pv["entity_byname"][0]
+            if name in investing and any(v <= 0.0 for v in _v79_numbers(from_database(pv["value"], pv["type"]))):
+                entities.add(name)
+    if entities:
+        _v77_set_marker(db, "discount_rate_zero_is_zero", json.dumps({"since": 79, "entities": sorted(entities)}))
+
+
 def _migrate_v79_schema_batch(db) -> None:
     """All schema changes of database version 79 (v78 -> v79), in one step.
 
@@ -6270,6 +6339,8 @@ def _migrate_v79_schema_batch(db) -> None:
        ``capacity_margin_counts_by_flow`` (:func:`_v79_capacity_margin`).
     7. ``constraint.constraint_period_method`` (``per_timestep`` / ``period_total``)
        (:func:`_v79_constraint_period_method`).
+    8. ``discount_rate`` 0 is 0 % (straight-line annuity), no longer 5 %: the ``discount_rate`` / ``lifetime``
+       descriptions and the behaviour-change marker ``discount_rate_zero_is_zero`` (:func:`_v79_discount_rate_zero`).
 
     No value is rewritten.  Each part is idempotent, so a rerun of the step changes nothing.
     """
@@ -6280,9 +6351,10 @@ def _migrate_v79_schema_batch(db) -> None:
     _v79_solve_step_series(db)
     _v79_capacity_margin(db)
     _v79_constraint_period_method(db)
+    _v79_discount_rate_zero(db)
     _commit_step(db, "v79: constraint_online_coeff, ramp_cost, reduce_*_detail_method, time-varying group "
                      "limits, time series combined over a solve's new_stepduration step, capacity margin by "
-                     "entity class and share_of_peak, constraint_period_method")
+                     "entity class and share_of_peak, constraint_period_method, discount_rate 0 is 0 %")
 
 
 def _v79_adder_has_value(value) -> bool:

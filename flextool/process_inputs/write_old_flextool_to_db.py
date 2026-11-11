@@ -1344,21 +1344,23 @@ def _write_storage_units(
         interest = _get_unit_type_param(data, unit, "interest")
 
         # Cost on discharger only; lifetime and interest on all three
-        # (always set so sensitivities can enable investment later)
+        # (always set so sensitivities can enable investment later).  An
+        # interest of 0 is written: FlexTool reads 0 as 0 % (straight-line
+        # annuity), while no value is the 5 % default.
         _add_param_if_set(db, "unit", (discharger_name,), "invest_cost",
                           inv_cost_kw, alt_name, counters)
         _add_param_if_set(db, "unit", (discharger_name,), "lifetime",
                           lifetime, alt_name, counters)
         _add_param_if_set(db, "unit", (discharger_name,), "discount_rate",
-                          interest, alt_name, counters)
+                          interest, alt_name, counters, skip_zero=False)
         _add_param_if_set(db, "unit", (charger_name,), "lifetime",
                           lifetime, alt_name, counters)
         _add_param_if_set(db, "unit", (charger_name,), "discount_rate",
-                          interest, alt_name, counters)
+                          interest, alt_name, counters, skip_zero=False)
         _add_param_if_set(db, "node", (storage_node,), "lifetime",
                           lifetime, alt_name, counters)
         _add_param_if_set(db, "node", (storage_node,), "discount_rate",
-                          interest, alt_name, counters)
+                          interest, alt_name, counters, skip_zero=False)
 
         # 'invested capacity (MW)' / 'invested storage (MWh)' are in existing
         # (_ft2_capacity); 'max invest' is the FT2 v_invest limit, the one
@@ -1543,7 +1545,7 @@ def _write_units(
 
         interest_rate = _get_unit_type_param(data, unit, "interest")
         _add_param_if_set(db, "unit", (unit_name,), "discount_rate", interest_rate,
-                          alt_name, counters)
+                          alt_name, counters, skip_zero=False)
 
         # -- investment: FT2 v_invest <= max invest (MW) --
         has_max_invest = (
@@ -1836,7 +1838,7 @@ def _write_connections(
         _add_param_if_set(db, "connection", (conn_name,), "lifetime",
                           conn.lifetime, alt_name, counters)
         _add_param_if_set(db, "connection", (conn_name,), "discount_rate",
-                          conn.interest, alt_name, counters)
+                          conn.interest, alt_name, counters, skip_zero=False)
 
         has_max_invest = (
             conn.max_invest_mw is not None and conn.max_invest_mw > 0

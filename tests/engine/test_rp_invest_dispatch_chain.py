@@ -1,17 +1,17 @@
 """Invest on representative periods, dispatch the full timeline: the invested capacity is handed over (b5 chain).
 
 The model (``tests/engine/_tiny_model_db.py``): one node with demand 50, 60, 80, 70 MWh in t1..t4 (1 h steps),
-upward penalty 10 000 CUR/MWh; one unit to invest in at 100 CUR/kW, lifetime 1 year, discount rate 0.05, other
+upward penalty 10 000 CUR/MWh; one unit to invest in at 100 CUR/kW, lifetime 1 year, discount rate 0, other
 operational cost 1 CUR/MWh.  ``invest_rp`` sees only the representative block t1..t2 (weight 2 × 1 / 2 = 1, period share 2/8760);
 ``dispatch`` runs t1..t4 on the capacity ``invest_rp`` built.
 
 Hand values (independent of the code; they take the convention that the first period p1 has discount factor 1,
-with inflation_rate unset and years_represented 1).  The discount rate is 0.05, not 0: an entered 0 is replaced by
-0.05 in the annuity (a default ported from the GMPL model), so the spec's interest rate 0 cannot be used.
+with inflation_rate unset and years_represented 1).  The discount rate is the spec's 0: the straight-line annuity
+invest_cost / lifetime (before schema v79 an entered 0 was read as 0.05).
 
 * Investment.  Below 60 MW every MW short costs 1 MWh × 4380 × 1e4 = 4.38e7 CUR/a, far above the annuity
-  (r = 0.05, n = 1: 1e5 × 0.05 / (1 − 1.05⁻¹) = 1.05e5 CUR/MW/a); a MW above
-  60 saves nothing.  So **60 MW**, and the investment cost is 60 × 1.05e5 = **6.3 M CUR**, counted once.
+  (r = 0, n = 1: 100 CUR/kW × 1000 / 1 = 1e5 CUR/MW/a); a MW above
+  60 saves nothing.  So **60 MW**, and the investment cost is 60 × 1e5 = **6.0 M CUR**, counted once.
 * Dispatch on 60 MW.  Generation 50, 60, 60, 60, unserved 0, 0, **20, 10** MWh (30 MWh); annualised with the
   dispatch share 4/8760: 30 × 8760 / 4 = **65 700 MWh/a**.
 * Without the handover the dispatch solve has 0 MW: 260 MWh unserved (569 400 MWh/a).
@@ -31,7 +31,7 @@ INVESTED_MW = 60.0
 UNSERVED_MWH = {"t1": 0.0, "t2": 0.0, "t3": 20.0, "t4": 10.0}
 UNSERVED_MWH_PER_YEAR = 30.0 * 8760.0 / 4.0          # 65 700
 UNSERVED_WITHOUT_HANDOVER_MWH = 50.0 + 60.0 + 80.0 + 70.0  # 260
-INVEST_COST_MCUR = INVESTED_MW * 100.0 * 1000.0 * 1.05 / 1e6  # 6.3
+INVEST_COST_MCUR = INVESTED_MW * 100.0 * 1000.0 / 1.0 / 1e6  # 6.0 (r = 0, lifetime 1)
 
 
 @pytest.fixture(scope="module")
