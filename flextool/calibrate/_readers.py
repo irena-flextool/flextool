@@ -21,8 +21,9 @@ Signals
   ≥0).  Dense and always present on a valid solve → the robust adequacy
   signal the loop steers on.
 * ``unit_curtailment_outputNode_d_ee`` — per-(unit, sink) curtailment
-  (MWh); OPTIONAL (absent when nothing curtails).  Provided now for the
-  over-build guard (C1c) to consume.
+  (MWh/a: each period scaled to a full year); OPTIONAL (absent when nothing
+  curtails).  Informational: the ``curtailment_mwh`` column of the record
+  (the over-build guard does not read it).
 * ``cost_node_discounted_d_ec`` — discounted per-(node, category) node
   cost (M€); its ``"upward slack penalty"`` category is the monetised
   slack.  This table is legitimately ABSENT on a zero-slack solve
@@ -118,9 +119,9 @@ def read_curtailment_by_sink(assess_dir: Path) -> dict[str, float]:
     ``(scenario, unit, sink)``; each period's curtailment scaled to a full
     year, MWh/a), sums each column over periods and groups the totals by
     ``sink`` node.  Informational (the ``curtailment_mwh`` column of the
-    calibration record), on the same annual basis as the other energies.  The file is OPTIONAL (no curtailment ⇒ no
-    table); a missing file yields ``{}``.  Consumed by the over-build guard
-    (C1c).
+    calibration record), summed over the periods like the residual of
+    :func:`read_residual_unserved`, so with one period it is MWh per year.  The file is OPTIONAL (no curtailment ⇒ no
+    table); a missing file yields ``{}``.  The over-build guard does not read it.
     """
     path = Path(assess_dir) / _resolve_filename(_CURTAILMENT_KEY)
     if not path.is_file():

@@ -19,6 +19,10 @@ Two CSVs are written by :func:`write_report`:
 
 Both are emitted in a fully deterministic order: iterations ascending,
 nodes sorted lexicographically.
+
+Units: the ``*_mwh`` energies (residual, curtailment) are MWh/a (each period
+scaled to a full year) summed over the periods, so with one period they are
+MWh per year.
 """
 
 from __future__ import annotations
