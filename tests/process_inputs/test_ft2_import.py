@@ -976,6 +976,63 @@ def test_annuity_report_covers_sensitivity_capacity(
     assert ("units", "invested capacity (MW)") not in found
 
 
+def test_interest_zero_is_written_and_blank_interest_is_not(tmp_path: Path) -> None:
+    """FT2's annuity is -PMT(interest, lifetime, 1), which at an interest of 0 is 1 / lifetime: FlexTool's
+    discount_rate 0.  So a typed 0 is written as discount_rate 0 (unit, storage and connection); a blank interest
+    writes nothing (the schema default)."""
+    sheets = ft2_sheets()
+    col = UNIT_TYPE_HEADER.index
+    for row in sheets["unit_type"][1:]:
+        if row[0] == "coal":
+            row[col("interest")] = 0
+        if row[0] == "battery":
+            row[col("interest")] = 0
+        if row[0] == "wind":
+            row[col("interest")] = None
+    sheets["nodeNode"].append(["elec", "nodeA", "nodeB", 10, 10, None, 50, 0.01, 100, 40, 0, None, 0])
+    sheets["gridNode"].append(["elec", "nodeB", None, None, None, None, None, None, None, 0, 0, 1])
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    url = f"sqlite:///{tmp_path / 'm.sqlite'}"
+    report = import_old_flextool_xlsm(str(xlsm), url)
+    assert not report.failed
+    unit = {name[0]: value for (name, _alt), value in _values(url, "unit", "discount_rate").items()}
+    assert unit["coal_nodeA"] == 0
+    assert "wind_nodeA" not in unit
+    storage_rates = [v for k, v in unit.items() if k.startswith("battery")]
+    assert storage_rates and all(v == 0 for v in storage_rates)
+    assert all(v == 0 for v in _values(url, "node", "discount_rate").values())
+    conn = _values(url, "connection", "discount_rate")
+    assert list(conn.values()) == [0]
+
+
+def test_ft2_annuity_matches_pmt() -> None:
+    """Excel's -PMT(r, n, 1): r / (1 - (1 + r)^-n), and 1 / n at r = 0 (hand values)."""
+    from flextool.process_inputs.write_old_flextool_to_db import ft2_annuity
+
+    assert ft2_annuity(0.0, 25) == pytest.approx(0.04)
+    assert ft2_annuity(0.08, 30) == pytest.approx(0.0888274334, rel=1e-9)
+
+
+def test_annuity_typed_over_the_formula_is_reported(tmp_path: Path) -> None:
+    """An annuity that is not -PMT(interest, lifetime, 1) is reported (FlexTool 4 ignores the column); one that
+    matches, at interest 0.05 or 0, is not."""
+    sheets = ft2_sheets()
+    col = UNIT_TYPE_HEADER.index
+    for row in sheets["unit_type"][1:]:
+        if row[0] == "coal":  # 0.05, 40 years: the formula gives 0.0582782; 0.1 was typed over it
+            row[col("annuity")] = 0.1
+        if row[0] == "wind":  # 0.05, 25 years: the formula's value
+            row[col("annuity")] = 0.0709524572
+        if row[0] == "battery":  # interest 0, 15 years: 1 / 15
+            row[col("interest")] = 0
+            row[col("annuity")] = 1 / 15
+    xlsm = write_workbook(tmp_path / "model.xlsx", sheets)
+    report = import_old_flextool_xlsm(str(xlsm), f"sqlite:///{tmp_path / 'm.sqlite'}")
+    found = {(u.sheet, u.column): u for u in report.unmapped}
+    assert found[("unit_type", "annuity")].entities == ["coal"]
+    assert "typed over the formula" in found[("unit_type", "annuity")].reason
+
+
 def test_workbook_without_time_in_use_refused(tmp_path: Path) -> None:
     """FT2 solves the ts_time steps with in_use (flexModel.mod time_in_use): with none
     there is nothing to solve.  The import says so and writes no database (before: a

@@ -211,6 +211,7 @@ class NodeNodeConnection:
     lifetime: float | None
     interest: float | None
     is_hvdc: bool
+    annuity: float | None = None  # FT2's own -PMT(interest, lifetime, 1); checked, not imported
 
 
 @dataclass
@@ -736,7 +737,7 @@ def _read_connections(wb: openpyxl.Workbook) -> list[NodeNodeConnection]:
     c_inv_cost = _col("inv.cost/kW")
     c_life = _col("lifetime")
     c_interest = _col("interest")
-    _col("annuity")
+    c_annuity = _col("annuity")
     c_hvdc = _col("HVDC")
 
     for row in rows[1:]:
@@ -764,6 +765,7 @@ def _read_connections(wb: openpyxl.Workbook) -> list[NodeNodeConnection]:
             lifetime=_safe_float(_get(row, c_life)),
             interest=_safe_float(_get(row, c_interest)),
             is_hvdc=is_hvdc,
+            annuity=_safe_float(_get(row, c_annuity)),
         ))
     return result
 

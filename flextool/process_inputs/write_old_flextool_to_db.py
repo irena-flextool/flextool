@@ -585,7 +585,8 @@ _MASTER_MAPPED = frozenset({
 })
 
 #: unit_type parameters the importer reads, or need not read (annuity: FT4
-#: computes it from interest and lifetime).
+#: computes it from interest and lifetime; :func:`_annuity_mismatch_items`
+#: reports an FT2 annuity that is not that value).
 _UNIT_TYPE_MAPPED = frozenset({
     "efficiency", "min load", "eff at min load", "ramp up (p.u. per min)",
     "ramp down (p.u. per min)", "o&m cost/mwh", "availability", "max reserve",
@@ -792,6 +793,45 @@ _INVESTED_CAPACITY_REASON = (
 )
 
 
+def ft2_annuity(interest: float, lifetime: float) -> float:
+    """FT2's annuity factor, ``-PMT(interest, lifetime, 1)`` in its workbook: ``r / (1 - (1 + r)^-n)``, and
+    ``1 / n`` at an interest of 0 (Excel's PMT at rate 0).  The same as FlexTool 4's annuity of ``discount_rate``
+    and ``lifetime``, so the importer maps ``interest`` to ``discount_rate`` (0 included) and drops the column."""
+    if abs(interest) < 1e-9:
+        return 1.0 / lifetime
+    return interest / (1.0 - (1.0 + interest) ** -lifetime)
+
+
+_ANNUITY_MISMATCH_REASON = (
+    "The annuity in the workbook is not the one its interest and lifetime "
+    "give, so it was typed over the formula. FlexTool 4 computes the annuity "
+    "from 'interest' (as discount_rate) and 'lifetime' and ignores this "
+    "column, so the investment costs differ from FlexTool 2. Set the interest "
+    "or the lifetime to give the annuity you meant."
+)
+
+
+def _annuity_mismatch_items(data: OldFlexToolData) -> list[UnmappedItem]:
+    """An FT2 ``annuity`` that differs from :func:`ft2_annuity` of its ``interest`` and ``lifetime`` (a value typed
+    over the workbook formula): FT4 uses only interest and lifetime.  A blank annuity, interest or lifetime is not
+    checked."""
+    def mismatch(annuity: Any, interest: Any, lifetime: Any) -> bool:
+        if not all(isinstance(v, (int, float)) for v in (annuity, interest, lifetime)) or lifetime <= 0:
+            return False
+        expected = ft2_annuity(float(interest), float(lifetime))
+        return abs(float(annuity) - expected) > 1e-6 * max(1.0, abs(expected))
+
+    items = []
+    types = [ut.name for ut in data.unit_types
+             if mismatch(ut.params.get("annuity"), ut.params.get("interest"), ut.params.get("lifetime"))]
+    if types:
+        items.append(UnmappedItem("unit_type", "annuity", types, _ANNUITY_MISMATCH_REASON))
+    conns = [f"{c.node1}_{c.node2}" for c in data.connections if mismatch(c.annuity, c.interest, c.lifetime)]
+    if conns:
+        items.append(UnmappedItem("nodeNode", "annuity", conns, _ANNUITY_MISMATCH_REASON))
+    return items
+
+
 def _positive(value: Any) -> bool:
     return isinstance(value, (int, float)) and value > 0
 
@@ -966,6 +1006,7 @@ def _collect_unmapped(data: OldFlexToolData) -> list[UnmappedItem]:
         items.append(availability)
     items.extend(_profile_scaling_items(data))
     items.extend(_invested_capacity_items(data))
+    items.extend(_annuity_mismatch_items(data))
     items.extend(_free_storage_investment_items(data))
     # time_in_years first: it changes the balance of every cost.
     tiy = _time_in_years_item(data)
