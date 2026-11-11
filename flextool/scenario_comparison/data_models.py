@@ -50,6 +50,8 @@ class TimeSeriesResults:
       1. Add a field below with type ``pd.DataFrame | None = None``
       2. The field name must exactly match the parquet filename (without .parquet)
       3. from_dict() will populate it automatically; a warning flags unknown files
+         (tests/scenario_comparison/test_data_models_registry.py checks every processed parquet table of
+         ``engine.output._parquet_bundle.REGISTRY`` has a field)
     """
 
     # --- Unit outputs ---
@@ -106,8 +108,10 @@ class TimeSeriesResults:
     nodeGroup_flows_dt_g: pd.DataFrame | None = None
     nodeGroup_gd_p: pd.DataFrame | None = None
     nodeGroup_gdt_p: pd.DataFrame | None = None
+    nodeGroup_g_p: pd.DataFrame | None = None            # horizon totals (energy ratios)
     nodeGroup_VRE_share_d_g: pd.DataFrame | None = None
     nodeGroup_VRE_share_dt_g: pd.DataFrame | None = None
+    nodeGroup_VRE_share_g: pd.DataFrame | None = None    # horizon total (energy ratio)
     nodeGroup_inertia_dt_g: pd.DataFrame | None = None
     nodeGroup_inertia_largest_flow_dt_g: pd.DataFrame | None = None
     nodeGroup_unit_node_inertia_dt_gee: pd.DataFrame | None = None
@@ -129,6 +133,8 @@ class TimeSeriesResults:
     costs_discounted_d_p: pd.DataFrame | None = None
     costs_discounted_p_: pd.DataFrame | None = None
     annualized_costs_d_p: pd.DataFrame | None = None
+    discountFactors_d_p: pd.DataFrame | None = None      # debug runs only
+    entity_annuity_d_p: pd.DataFrame | None = None       # debug runs only
 
     # --- Per-entity cost break-down (unit/connection/node, period level) ---
     cost_unit_annualized_d_ec: pd.DataFrame | None = None
