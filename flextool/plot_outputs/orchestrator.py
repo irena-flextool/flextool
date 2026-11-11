@@ -265,7 +265,10 @@ def _apply_dimension_rules(
     # Sum row levels marked 'm' (includes 'y'/'z' rewritten above)
     sum_row_levels = [i for i, char in enumerate(rules[:nr_row_levels]) if char == 'm']
     if sum_row_levels:
-        summed_dimensions.extend(df.index.names[i] for i in sum_row_levels)
+        # A plain 'm' over a one-member level (e.g. the single 'horizon' row) changes nothing, so the title does not
+        # call it summed; a 'y'/'z' level is named even with one period, since it is weighted by the years.
+        summed_dimensions.extend(df.index.names[i] for i in sum_row_levels
+                                 if i in weight_row_levels or df.index.get_level_values(i).nunique() > 1)
         keep_levels = [i for i in range(nr_row_levels) if i not in sum_row_levels]
         if len(keep_levels) > 0:
             df = df.groupby(level=keep_levels).sum(min_count=min_count)

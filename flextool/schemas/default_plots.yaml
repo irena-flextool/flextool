@@ -1524,6 +1524,7 @@ plots:
         axis_bounds: [[0, 1], [0, 1], [0, 1], [0, 1], [], [0, 1]]
         axis_tick_format: ['.0%', '.0%', '.0%', '.0%', '1,.0f', '.0%']
         xlabel: [percent, percent, percent, percent, MWh (annualized), percent]
+        ylabel: ''
         comparison_overrides:
           map_dimensions_for_plots: [gd_sp, fg_bu]
           max_items_per_plot: 40
@@ -1542,9 +1543,11 @@ plots:
         max_subplots_per_file: 8
         axis_bounds: [[0, 1], [0, 1], [0, 1], [0, 1], [], [0, 1]]
         axis_tick_format: ['.0%', '.0%', '.0%', '.0%', '1,.0f', '.0%']
-        xlabel: [percent (horizon total, energy ratio), percent (horizon total, energy ratio),
-                 percent (horizon total, energy ratio), percent (horizon total, energy ratio), MWh (horizon total),
-                 percent (horizon total, energy ratio)]
+        # Quote the labels: a comma inside an unquoted flow-sequence item splits it in two.
+        xlabel: ['percent (horizon total, energy ratio)', 'percent (horizon total, energy ratio)',
+                 'percent (horizon total, energy ratio)', 'percent (horizon total, energy ratio)',
+                 'MWh (horizon total)', 'percent (horizon total, energy ratio)']
+        ylabel: ''
         scenario_rule: g
         comparison_overrides:
           max_items_per_plot: 40

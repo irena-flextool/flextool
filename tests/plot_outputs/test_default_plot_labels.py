@@ -5,7 +5,10 @@
 * A per-period plot of an annualized table (``OUTPUT_TRANSFORM`` semantics ``annualized``) says "(annualized)" or
   "/a".
 * No table is a plain sample sum any more (``ENERGY_PERIOD``): a ``y`` total of such a table would multiply a sample
-  sum by years.
+  sum by years. The root rule: a ``y`` total is only drawn of an annualized table (or an annualized count).
+* A per-subplot label list has one label per subplot (the length of the per-subplot ``axis_tick_format`` /
+  ``axis_bounds`` lists), and every label has balanced parentheses: an unquoted comma inside a YAML ``[...]`` item
+  splits the label in two, which these catch.
 
 Each config is checked in single mode and in comparison mode (``comparison_overrides`` merged over the config).
 Some configs put the value label on the axis the comparison view swaps to, so a check passes when either axis
@@ -36,9 +39,10 @@ def _configs():
 
 
 def _period_rule(cfg) -> str | None:
+    """The rule of the period level (``d``), in the row or the column part."""
     index_types, rules = cfg["map_dimensions_for_plots"]
-    rows = index_types.split("_")[0]
-    return rules[rows.index("d")] if "d" in rows else None
+    types, rules = index_types.replace("_", ""), rules.replace("_", "")
+    return rules[types.index("d")] if "d" in types else None
 
 
 def _axis_labels(cfg) -> list[str]:
@@ -73,3 +77,37 @@ def test_no_table_is_a_plain_sample_sum() -> None:
     users = [key for key, t in OUTPUT_TRANSFORM.items()
              if t is ENERGY_PERIOD or (isinstance(t, dict) and any(v is ENERGY_PERIOD for v in t.values()))]
     assert users == []
+
+
+def _semantics(table: str) -> set:
+    transform = OUTPUT_TRANSFORM.get(table)
+    transforms = transform.values() if isinstance(transform, dict) else [transform]
+    return {getattr(t, "semantics", None) for t in transforms if t is not None}
+
+
+def test_horizon_totals_are_of_annualized_tables() -> None:
+    allowed = {Semantics.ANNUALIZED, Semantics.COUNT}
+    bad = [f"{where}: {sorted(map(str, sem))}" for where, table, cfg in _configs() if _period_rule(cfg) == "y"
+           for sem in [_semantics(table)] if not sem or not sem <= allowed]
+    assert not bad, "\n".join(bad)
+
+
+def _per_subplot_lengths(cfg) -> set[int]:
+    return {len(cfg[k]) for k in ("axis_tick_format", "axis_bounds") if isinstance(cfg.get(k), list)}
+
+
+def test_label_lists_have_one_label_per_subplot() -> None:
+    bad = []
+    for where, _t, cfg in _configs():
+        counts = _per_subplot_lengths(cfg)
+        for key in ("xlabel", "ylabel"):
+            label = cfg.get(key)
+            if isinstance(label, list) and (len(counts) != 1 or len(label) not in counts):
+                bad.append(f"{where}: {key} has {len(label)} labels, per-subplot lists have {sorted(counts)}")
+    assert not bad, "\n".join(bad)
+
+
+def test_labels_have_balanced_parentheses() -> None:
+    bad = [f"{where}: {x!r}" for where, _t, cfg in _configs() for x in _axis_labels(cfg)
+           if x.count("(") != x.count(")")]
+    assert not bad, "\n".join(bad)

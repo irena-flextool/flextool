@@ -123,6 +123,30 @@ class TestPeriodWeightingRules:
         )
 
 
+class TestSummedTitleLevels:
+    """The title names a level as summed only when the sum changes something: a plain 'm' over a one-member level
+    (the single 'horizon' row of a horizon table) is not named; a 'y' level is named even with one period."""
+
+    @staticmethod
+    def _summed(index_name: str, members: list[str], rules: str) -> list:
+        df = pd.DataFrame({"gA": [0.5] * len(members)}, index=pd.Index(members, name=index_name))
+        df.columns.name = "group"
+        letter = "d" if index_name == "period" else "x"
+        cfg = PlotConfig(plot_name="title test", map_dimensions_for_plots=[f"{letter}_g", rules])
+        out = _apply_dimension_rules(df, cfg, (0, 100))
+        assert out is not None
+        return out[3]
+
+    def test_one_member_m_level_is_not_named(self):
+        assert self._summed("horizon", ["total"], "m_b") == []
+
+    def test_many_member_m_level_is_named(self):
+        assert self._summed("horizon", ["a", "b"], "m_b") == ["horizon"]
+
+    def test_one_period_y_level_is_named(self):
+        assert self._summed("period", ["p1"], "y_b") == ["period"]
+
+
 class TestPreparePlotData:
     """Test that prepare_plot_data produces Figures for various chart types."""
 

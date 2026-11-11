@@ -111,3 +111,8 @@ def test_comparison_dispatch_plot_draws_nothing_at_gap_rows() -> None:
     # t0..t2 at 0-2, the 3 gap rows at 3-5, t3..t5 at 6-8.
     assert covered == {0, 1, 2, 6, 7, 8}
     assert ax.get_xlim() == (0.0, 8.0)
+    # The legend still lists both areas, each with a patch handle (the areas are now PolyCollections, not
+    # pandas' area artists).
+    handles, labels = ax.get_legend_handles_labels()
+    assert labels == ["coal", "wind"]
+    assert all(isinstance(h, matplotlib.collections.PolyCollection) for h in handles)
