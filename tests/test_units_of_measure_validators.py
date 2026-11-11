@@ -66,7 +66,7 @@ def test_connection_across_units(tmp_path, schema_db_url, caplog) -> None:
                 ("connection", ("line",)), ("connection__node__node", ("line", "elec", "east"))]
     found = _uom(tmp_path, schema_db_url, caplog, entities)
     assert len(found) == 1, found
-    assert "Connection 'pipe'" in found[0] and "elec (MWh), water (m3)" in found[0] and MIXED in found[0]
+    assert "Connection 'pipe'" in found[0] and "MWh: elec; m3: water" in found[0] and MIXED in found[0]
 
 
 def test_commodity_across_units(tmp_path, schema_db_url, caplog) -> None:
@@ -85,8 +85,8 @@ def test_node_group_across_units_warns_once(tmp_path, schema_db_url, caplog) -> 
     found = _uom(tmp_path, schema_db_url, caplog, entities)
     assert len(found) == 1, found
     assert found[0].startswith("Group 'all':") and MIXED in found[0]
-    # At most three nodes named.
-    assert "east (MWh), elec (MWh), heat (MWh_th) and 1 more" in found[0]
+    # Grouped by unit, so the m3 node that makes the sum mixed is named (WP1 review S3).
+    assert "MWh: east, elec; MWh_th: heat; m3: water" in found[0]
 
 
 def test_flow_group_across_units(tmp_path, schema_db_url, caplog) -> None:
@@ -107,7 +107,8 @@ def test_power_feature_group_with_a_non_power_node(tmp_path, schema_db_url, capl
     entities = [("group", ("g",)), ("group__node", ("g", "water"))]
     found = _uom(tmp_path, schema_db_url, caplog, entities, WATER + [("group", ("g",), flag, value)])
     assert len(found) == 1, found
-    assert f"it has {feature}, which are in MW" in found[0] and "water (m3) is not in MWh" in found[0]
+    assert f"it has {feature}; these group features are in MW (inertia in MW·s)" in found[0]
+    assert "water (m3) is not in MWh" in found[0]
 
 
 def test_reserve_group_with_a_non_power_node(tmp_path, schema_db_url, caplog) -> None:
@@ -146,11 +147,18 @@ def test_multi_output_unit_gives_no_warning(tmp_path, schema_db_url, caplog) -> 
     assert _uom(tmp_path, schema_db_url, caplog, entities) == []
 
 
-@pytest.mark.parametrize("value", ["m3/h", "kg/s", "MW"])
-def test_rate_like_value(tmp_path, schema_db_url, caplog, value: str) -> None:
+@pytest.mark.parametrize("value,shown,fix", [("m3/h", "m3/h/h", "m3"), ("kg/s", "kg/s/h", "kg"),
+                                             ("MW", "MW/h", "MWh")])
+def test_rate_like_value(tmp_path, schema_db_url, caplog, value: str, shown: str, fix: str) -> None:
+    """The warning shows the label the value would give and the amount unit to set (WP1 review S5)."""
     found = _uom(tmp_path, schema_db_url, caplog, [], [("node", ("water",), "unit_of_measure", value)])
     assert len(found) == 1, found
     assert "looks like a rate" in found[0] and f"'{value}'" in found[0]
+    assert f"flows would be labelled '{shown}'. Set '{fix}'." in found[0]
+
+
+def test_a_capital_w_in_a_name_is_not_a_rate(tmp_path, schema_db_url, caplog) -> None:
+    assert _uom(tmp_path, schema_db_url, caplog, [], [("node", ("water",), "unit_of_measure", "Wood_t")]) == []
 
 
 def test_database_without_the_definition(tmp_path, caplog) -> None:

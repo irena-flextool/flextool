@@ -35,8 +35,11 @@ TOKENS = ("{kR}", "{kA}", "{R}", "{A}")
 
 _WATT_HOUR = re.compile(r"^(.*W)h(.*)$")
 _MEGAWATT_HOUR = re.compile(r"^MWh(.*)$")
-#: A value that names a rate, not an amount: ends in ``/h`` or ``/s``, or a ``W`` not followed by ``h``.
-_RATE_LIKE = re.compile(r"(/h|/s)$|W(?!h)")
+#: A value that names a rate, not an amount: ends in ``/h`` or ``/s``, or is a power unit (``W``, ``kW``,
+#: ``MW``, ``GW``, ``TW``, optionally with a ``_<suffix>``).  A capital W elsewhere (``Wood_t``) is not a rate.
+_RATE_LIKE = re.compile(r"(/h|/s)$|^[kMGT]?W(_.*)?$")
+#: The power-unit form of :data:`_RATE_LIKE`, for the suggested amount (``MW_th`` -> ``MWh_th``).
+_POWER_UNIT = re.compile(r"^([kMGT]?W)(_.*)?$")
 
 
 def normalise(value) -> str:
@@ -91,17 +94,40 @@ def has_tokens(template: str) -> bool:
     return any(token in template for token in TOKENS)
 
 
+def _compound(text: str) -> bool:
+    """Whether *text* needs parentheses after a ``/`` (``m3/h``, ``0.001 m3``; not ``MW`` or ``(0.001 t)``)."""
+    if text.startswith("(") and text.endswith(")"):
+        return False
+    return "/" in text or " " in text
+
+
+def _substitute(template: str, values: Mapping[str, str]) -> str:
+    """*template* with each token replaced by its value in *values*; a value that follows a ``/`` and is itself
+    compound is parenthesised (``CUR/{R}`` for m3 -> ``CUR/(m3/h)``, never ``CUR/m3/h``)."""
+    out = template
+    for token in TOKENS:
+        if token not in out:
+            continue
+        value = values[token]
+        if _compound(value):
+            out = out.replace("/" + token, f"/({value})")
+        out = out.replace(token, value)
+    return out
+
+
 def fill(template: str, amount: str) -> str:
     """*template* with its tokens filled for the amount unit *amount*.
 
     A template without tokens is returned as written.  A template with tokens and ``amount ==``
-    :data:`MIXED_UOM` gives :data:`MIXED_UOM` (the whole text: a mixed sum has no unit, per year or not)."""
+    :data:`MIXED_UOM` gives :data:`MIXED_UOM` (the whole text: a mixed sum has no unit, per year or not).  A
+    compound unit after a ``/`` is parenthesised: ``CUR/{R}`` gives ``CUR/(m3/h)``; the default ``CUR/MW`` is
+    unchanged."""
     if not has_tokens(template):
         return template
     if amount == MIXED_UOM:
         return MIXED_UOM
-    return (template.replace("{kR}", kilo_rate(amount)).replace("{kA}", kilo_amount(amount))
-            .replace("{R}", rate_of(amount)).replace("{A}", amount))
+    return _substitute(template, {"{kR}": kilo_rate(amount), "{kA}": kilo_amount(amount),
+                                  "{R}": rate_of(amount), "{A}": amount})
 
 
 def node_unit(node: str, node_units: Mapping[str, str]) -> str:
@@ -130,10 +156,13 @@ def units_of(nodes: Iterable[str], node_units: Mapping[str, str]) -> str:
 def shares_capacity(method: str) -> bool:
     """Whether a process of *method* (``input/process_method``) bounds the sum of its outputs by its capacity.
 
-    An indirect unit (``METHOD_INDIRECT``, the ``nvar`` methods: more than one input or output arc, or a delay)
-    gets ``maxOutputSum`` (with ``maxOutputSum_online``): the sum of its capacity-side outputs is at most its
-    capacity, and ``maxFlow`` caps each arc as well.  A direct unit has one flow, capped by ``maxFlow``.  The
-    indirect methods are exactly the ``_nvar_`` ones (a test pins this against ``METHOD_INDIRECT``)."""
+    An indirect unit (``METHOD_INDIRECT``, the ``nvar`` methods: more than one input, or more than one output,
+    or a delay) gets ``maxOutputSum`` (with ``maxOutputSum_online``): the sum of its capacity-side outputs is at
+    most its capacity, and ``maxFlow`` caps each arc as well.  A direct unit has one flow, capped by
+    ``maxFlow``; a unit with one input and one output is direct although it has two arcs.  The engine rejects an
+    indirect unit without an output, so *shared* never applies to input-side nodes.  A process without a method
+    (``""``) is not shared.  The indirect methods are exactly the ``_nvar_`` ones (a test pins this against
+    ``METHOD_INDIRECT``)."""
     return "_nvar_" in method
 
 
@@ -156,18 +185,41 @@ def capacity_units(template: str, nodes: Iterable[str], node_units: Mapping[str,
         return fill(template, units[0])
     if not shared:
         return "; ".join(fill(template, unit) for unit in units)
-    out = template
+    joined = {}
     for token, form in (("{kR}", kilo_rate), ("{kA}", kilo_amount), ("{R}", rate_of), ("{A}", lambda a: a)):
-        if token not in out:
-            continue
-        joined = " + ".join(form(unit) for unit in units)
-        out = out.replace(token, joined if out == token else f"({joined})")
+        # The kilo forms of a non-MWh node are parenthesised on their own; inside the sum they need not be:
+        # CUR/(kW + 0.001 m3/h).
+        joined[token] = " + ".join(_strip_parentheses(form(unit)) for unit in units)
+    if template in TOKENS:
+        return joined[template]
+    out = template
+    for token in TOKENS:
+        if token in out:
+            out = out.replace(token, f"({joined[token]})")
     return out
 
 
+def _strip_parentheses(text: str) -> str:
+    """*text* without one pair of enclosing parentheses (``(0.001 m3/h)`` -> ``0.001 m3/h``)."""
+    return text[1:-1] if text.startswith("(") and text.endswith(")") else text
+
+
 def looks_like_rate(value: str) -> bool:
-    """Whether a ``unit_of_measure`` value names a rate (``m3/h``, ``kg/s``, ``MW``), not an amount."""
+    """Whether a ``unit_of_measure`` value names a rate (``m3/h``, ``kg/s``, ``MW``, ``MW_th``), not an amount.
+    A capital W inside a name (``Wood_t``, ``Water``) is not a rate."""
     return bool(_RATE_LIKE.search(normalise(value)))
+
+
+def amount_of_rate(value: str) -> str:
+    """The amount unit a rate-like *value* most likely means: ``/h`` or ``/s`` removed (``m3/h`` -> ``m3``),
+    a power unit given its ``h`` (``MW`` -> ``MWh``, ``MW_th`` -> ``MWh_th``); else *value* unchanged."""
+    text = normalise(value)
+    if text.endswith(("/h", "/s")):
+        return text[:-2]
+    match = _POWER_UNIT.match(text)
+    if match:
+        return f"{match.group(1)}h{match.group(2) or ''}"
+    return text
 
 
 def node_units_from_rows(rows: Iterable[tuple[str, object]]) -> dict[str, str]:
@@ -186,7 +238,8 @@ def read_node_units(provider) -> dict[str, str]:
     :data:`NODE_UNITS_FRAME` (columns ``node``, ``unit_of_measure``).
 
     Empty when there is no provider, no frame (a database without the definition) or no explicit value: every
-    node is then :data:`DEFAULT_A`."""
+    node is then :data:`DEFAULT_A`.  The default is ``MWh`` whatever the database's definition default says (a
+    changed default in a user database is not read)."""
     if provider is None or not provider.has(NODE_UNITS_FRAME):
         return {}
     frame = provider.get(NODE_UNITS_FRAME)

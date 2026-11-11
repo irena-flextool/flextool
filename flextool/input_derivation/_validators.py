@@ -1203,6 +1203,19 @@ def _named_units(nodes, node_units: dict[str, str]) -> str:
     return ", ".join(named) + more
 
 
+def _nodes_by_unit(nodes, node_units: dict[str, str]) -> str:
+    """``MWh: east, elec; MWh_th: heat; m3: water``: the nodes grouped by their unit (units in the order of
+    first appearance), at most three named per unit, so the node that makes a set mixed is always named."""
+    by_unit: dict[str, list[str]] = {}
+    for n in nodes:
+        by_unit.setdefault(uom.node_unit(n, node_units), []).append(n)
+    parts = []
+    for unit, members in by_unit.items():
+        more = f" and {len(members) - 3} more" if len(members) > 3 else ""
+        parts.append(f"{unit}: {', '.join(members[:3])}{more}")
+    return "; ".join(parts)
+
+
 def _unit_capacity_nodes(db) -> dict[str, list[str]]:
     """``{unit: [capacity-side nodes]}``: the output nodes whose ``conversion_flow_coeff`` is not 0 everywhere
     (a 0 output is not in the capacity constraints), else the input nodes."""
@@ -1243,7 +1256,8 @@ def validate_units_of_measure(db, logger: logging.Logger) -> None:
         if uom.looks_like_rate(value):
             logger.warning(
                 "Node '%s' has unit_of_measure '%s', which looks like a rate: unit_of_measure is the amount unit "
-                "(m3, MWh), not the rate. Flows are then shown in this unit per hour (m3 -> m3/h).", node, value)
+                "(m3, MWh), not the rate, and flows would be labelled '%s'. Set '%s'.",
+                node, value, uom.rate_of(uom.normalise(value)), uom.amount_of_rate(value))
     if not node_units:
         return
 
@@ -1257,7 +1271,7 @@ def validate_units_of_measure(db, logger: logging.Logger) -> None:
             logger.warning(
                 "Connection '%s' joins nodes with different units of measure: %s. Its flow, losses and capacity "
                 "are labelled '%s'; a connection moves one quantity, so check that this is intended.",
-                conn, _named_units(ends, node_units), uom.MIXED_UOM)
+                conn, _nodes_by_unit(ends, node_units), uom.MIXED_UOM)
 
     commodity_nodes: dict[str, list[str]] = {}
     for ent in db.find_entities(entity_class_name="commodity__node"):
@@ -1267,7 +1281,7 @@ def validate_units_of_measure(db, logger: logging.Logger) -> None:
             logger.warning(
                 "Commodity '%s' is used by nodes with different units of measure: %s. Its price and co2_content "
                 "are per the unit of each node, so one value cannot fit them all.",
-                commodity, _named_units(sorted(nodes), node_units))
+                commodity, _nodes_by_unit(sorted(nodes), node_units))
 
     group_nodes: dict[str, list[str]] = {}
     for ent in db.find_entities(entity_class_name="group__node"):
@@ -1297,14 +1311,14 @@ def validate_units_of_measure(db, logger: logging.Logger) -> None:
         nodes = sorted(group_nodes.get(g, []))
         reasons: list[str] = []
         if mixed(nodes):
-            reasons.append(f"its member nodes have different units of measure ({_named_units(nodes, node_units)}), "
+            reasons.append(f"its member nodes have different units of measure ({_nodes_by_unit(nodes, node_units)}), "
                            f"so its sums are labelled '{uom.MIXED_UOM}'")
         features = sorted(set(power_groups.get(g, [])))
         not_power = [n for n in nodes if not re.fullmatch(r"MWh(_.*)?", uom.node_unit(n, node_units))]
         if features and not_power:
-            reasons.append(f"it has {' and '.join(features)}, which are in MW and assume power nodes, but "
-                           f"{_named_units(not_power, node_units)} {'is' if len(not_power) == 1 else 'are'} not "
-                           f"in MWh")
+            reasons.append(f"it has {' and '.join(features)}; these group features are in MW (inertia in MW·s) "
+                           f"and assume power nodes, but {_named_units(not_power, node_units)} "
+                           f"{'is' if len(not_power) == 1 else 'are'} not in MWh")
         if g in limited:
             capacity_units: dict[str, list[str]] = {}
             for n in nodes:
@@ -1330,7 +1344,7 @@ def validate_units_of_measure(db, logger: logging.Logger) -> None:
         if mixed(nodes):
             logger.warning(
                 "flowGroup '%s': its flows are at nodes with different units of measure (%s), so its sums are "
-                "labelled '%s'.", g, _named_units(sorted(nodes), node_units), uom.MIXED_UOM)
+                "labelled '%s'.", g, _nodes_by_unit(sorted(nodes), node_units), uom.MIXED_UOM)
 
 
 def validate_connection_delay(db, logger: logging.Logger) -> None:

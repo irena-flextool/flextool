@@ -58,7 +58,10 @@ def test_kilo_forms(amount: str, k_rate: str, k_amount: str) -> None:
     ("{R}", "m3", "m3/h"), ("{A}/a", "m3", "m3/a"), ("CUR/{A}", "m3", "CUR/m3"),
     ("CUR/{kR}", "m3", "CUR/(0.001 m3/h)"), ("CUR/{kA}", "m3", "CUR/(0.001 m3)"), ("{R}", "MWh_th", "MW_th"),
     ("{A}/a", MIXED, MIXED), ("CUR/{kR}", MIXED, MIXED), ("{R}", MIXED, MIXED),
-    ("MW", "m3", "MW"), ("MW", MIXED, "MW"), ("", "m3", "")])
+    ("MW", "m3", "MW"), ("MW", MIXED, "MW"), ("", "m3", ""),
+    # A compound unit after "/" is parenthesised (WP1 review S1): per m3/h, not per m3 per hour.
+    ("CUR/{R}", "m3", "CUR/(m3/h)"), ("CUR/{R}", "t", "CUR/(t/h)"), ("CUR/{R}", "MWh_th", "CUR/MW_th"),
+    ("{R}/a", "m3", "m3/h/a")])
 def test_fill(template: str, amount: str, label: str) -> None:
     assert uom.fill(template, amount) == label
 
@@ -85,6 +88,9 @@ def test_units_of() -> None:
     ("CUR/{kR}", ["east", "heat"], True, "CUR/(kW + kW_th)"),
     ("CUR/{kR}", ["east", "heat"], False, "CUR/kW; CUR/kW_th"),
     ("CUR/{kR}", ["water"], True, "CUR/(0.001 m3/h)"),
+    ("CUR/{kR}", ["east", "water"], True, "CUR/(kW + 0.001 m3/h)"),
+    ("CUR/{R}", ["east", "water"], True, "CUR/(MW + m3/h)"),
+    ("CUR/{R}", ["east", "water"], False, "CUR/MW; CUR/(m3/h)"),
     ("{R}", [], True, "MW"),
     ("MW", ["east", "heat"], True, "MW"),
 ])
@@ -104,9 +110,16 @@ def test_shares_capacity_is_the_indirect_methods() -> None:
 
 @pytest.mark.parametrize("value,rate_like", [
     ("m3/h", True), ("kg/s", True), ("MW", True), ("kW", True), ("MW_th", True), ("W", True),
-    ("m3", False), ("MWh", False), ("MWh_th", False), ("kWh", False), ("t", False), ("", False)])
+    ("m3", False), ("MWh", False), ("MWh_th", False), ("kWh", False), ("t", False), ("", False),
+    ("Wood_t", False), ("Water", False), ("Water_m3", False), ("H2_LHV_MWh_W", False)])
 def test_looks_like_rate(value: str, rate_like: bool) -> None:
     assert uom.looks_like_rate(value) is rate_like
+
+
+@pytest.mark.parametrize("value,amount", [
+    ("m3/h", "m3"), ("kg/s", "kg"), ("MW", "MWh"), ("MW_th", "MWh_th"), ("kW", "kWh"), ("m3", "m3")])
+def test_amount_of_rate(value: str, amount: str) -> None:
+    assert uom.amount_of_rate(value) == amount
 
 
 class _Provider:
