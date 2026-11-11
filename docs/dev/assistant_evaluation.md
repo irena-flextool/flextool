@@ -71,7 +71,11 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
 - **One record per cell.** A cell is one model at one level setting answering one question. The records go to the
   `--out` folder. They are redacted, and they stay local: `_audit_reports/` is git-ignored. Each question gets a
   fresh conversation. The eight turns of S01 share one conversation, and S01 runs only at the model's automatic
-  level.
+  level. A finished cell's record holds its level setting (`setting_key`: the caps, the window, the history policy
+  and the hashes of the instructions and tools, `system_hash` and `tools_hash`). `summary` and `grade-ai` warn when
+  the cells of one model at one level were asked with more than one `tools_hash` or `system_hash` (a record written
+  before the key was recorded counts as `unknown`, which warns only beside a known one): their grades are not of
+  one setting.
 - **Local models (Ollama).** Make one variant of the model for each context size. For example, write a Modelfile
   with `FROM <model>` (a model you have pulled) and `PARAMETER num_ctx 32768`, then run
   `ollama create <model>-32k -f Modelfile`.
@@ -98,6 +102,11 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
     connection, a timeout, a daily quota, a tool call the service could not read three times in a row —
     `tool_call_unreadable`, Ollama's "error parsing tool call", never a graded stop) the cell is kept: "G05__large__r1: kept up to turn 1, request 7; run
     again with --resume to continue it";
+  - a tool call the service could not read is one answer's format problem, not the service's state: after it the
+    run does not stop but goes on with the next cell, and at its end (also when the day's budget ends it) it names
+    the kept cells — "2 cell(s) kept after a tool call the service could not read: G04__medium__r1,
+    G05__medium__r1; run again with --resume to continue them." — and exits with code 1 (0 only when no cell is
+    left kept or unsaved);
   - after any other (a key, permission, credit, model, routing, tools or history error, an internal fault) nothing
     of the cell is saved: "…: nothing was saved for this cell. Run again with --resume." Its next `--resume` asks it
     from the start.

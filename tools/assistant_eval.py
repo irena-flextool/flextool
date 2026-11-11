@@ -28,8 +28,9 @@ read it: ``docs/dev/assistant_evaluation.md``.
 
 Exit codes: 0 done (also: the daily request budget is used, run again with --resume) · 1 failed (also: an error
 that is not the model's behaviour stopped a cell: after a temporary one its checkpoint is kept and --resume
-continues it from the request that failed; after any other nothing of it is saved) · 2 usage or a refused project /
-results folder · 3 the data notice was not accepted.
+continues it from the request that failed; after any other nothing of it is saved; and a run that went on past
+cells kept after a tool call the service could not read, also when it then ended for the day's budget) · 2 usage
+or a refused project / results folder · 3 the data notice was not accepted.
 """
 from __future__ import annotations
 
@@ -1283,6 +1284,18 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
     def budget_used() -> bool:
         return daily is not None and today_count() >= daily
 
+    # The cells kept after a tool call the service could not read (one answer's format problem, not the
+    # service's state): the run goes on with the next cell and ends with exit code 1, naming them.
+    unreadable: list[str] = []
+    again = "--resume" + (" --accept-data-notice" if accepted else "")
+
+    def ended(code: int) -> int:
+        if not unreadable:
+            return code
+        say(f"{len(unreadable)} cell(s) kept after a tool call the service could not read: "
+            f"{', '.join(unreadable)}; run again with {again} to continue them.")
+        return 1
+
     probed: dict[str, Any] = {}
     for level in levels:
         model = variant_name(args.model, contexts[level]) if level in contexts else args.model
@@ -1329,7 +1342,7 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                     continue
                 if budget_used():
                     say(done)
-                    return 0
+                    return ended(0)
                 setting_id = setting_key(setting)
 
                 def checkpoint_for(previous: dict | None, cid: str = cid, setting_id: dict = setting_id) \
@@ -1394,17 +1407,21 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                         continue
                     if outcome in ("budget", "quota") or cp.budget_stop or isinstance(exc, DailyBudgetUsed):
                         say(done)
-                        return 0
+                        return ended(0)
                     if outcome == "kept":
                         say(f"{cid}: {exc.kept_text}; run again with {again} to continue it")
+                        if exc.code == "tool_call_unreadable":
+                            unreadable.append(cid)       # the service's state is fine: the next cell is asked
+                            continue
                     else:
                         say(f"{cid}: nothing was saved for this cell. Run again with {again}.")
-                    return 1
+                    return ended(1)
                 finally:
                     backend.close()
                 record = _record(question, setting, repeat, preset=preset, identity=identity,
                                  knobs_sent=knobs_sent, free_tier=free, git=git, turns=turns, sending=sending)
                 record.update(_resume_fields(cp, turns))
+                record["setting_key"] = setting_id              # the summary warns of a level's mixed settings
                 if saved is not None and int(saved.get("requests_sent") or 0):
                     # The replaced record's requests stay counted for their day (written first: a crash
                     # between the two counts them twice, never not at all).
@@ -1416,7 +1433,11 @@ def _run(args: argparse.Namespace, backend_factory: BackendFactory, prober: Prob
                 say(f"{cid}: saved")
                 if budget_used():
                     say(done)
-                    return 0
+                    return ended(0)
+    if unreadable:
+        say(f"The other cells of {args.model} are in {out}"
+            + (f" ({len(skipped)} skipped by the owner)." if skipped else "."))
+        return ended(0)
     say(f"All cells of {args.model} are in {out}"
         + (f" ({len(skipped)} skipped by the owner)." if skipped else "."))
     return 0
@@ -2033,6 +2054,8 @@ def _grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say: Ca
     from flextool.assistant.usage import Ledger
 
     grading = load_grading(args, create=True)
+    for line in analysis.mixed_settings(c.record for c in grading.cells):
+        say(line)
     if grading.old_grades:
         say(f"{grading.old_grades} cells carry grades from the earlier grading; they are ignored.")
     todo, send = _to_grade(grading, args.changed)
@@ -3221,6 +3244,8 @@ def _summary(args: argparse.Namespace, say: Callable[[str], None]) -> int:
     graded = sum(c.graded for c in grading.cells)
     review = review_state(grading) if graded == len(grading.cells) else None
     grades = {c.token: final_grade(c, review) for c in grading.cells}
+    for line in analysis.mixed_settings(c.record for c in grading.cells):
+        say(line)
     for folder in grading.state["results"]:
         cells = [c for c in grading.cells if c.key[0] == folder]
         run = read_json(Path(folder) / RUN_FILE)

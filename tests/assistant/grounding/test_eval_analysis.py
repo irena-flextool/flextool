@@ -597,6 +597,24 @@ def test_failed_attempts_are_counted_by_model_and_code_not_graded(analysis, eval
     assert "tool_call_unreadable" not in evaluator.GRADED_STOPS
 
 
+def test_an_older_records_unreadable_tool_call_is_counted_as_one(analysis) -> None:
+    """A record written before ``tool_call_unreadable`` existed holds Ollama's "error parsing tool call" as
+    ``busy`` with status 500: counted as ``tool_call_unreadable``; a real overload (another message, or another
+    status with that message) stays ``busy``."""
+    message = ("error parsing tool call: raw='{\"agg\":\"sum\",\"max_rows=10?\"}', "
+               "err=invalid character '}' after object key")
+    attempts = [{"code": "busy", "status": 500, "provider_code": "api_error", "message": message, "quota": [],
+                 "retry_delay": None},
+                {"code": "busy", "status": 503, "provider_code": None, "message": "server overloaded", "quota": [],
+                 "retry_delay": None},
+                {"code": "busy", "status": 429, "provider_code": None, "message": message, "quota": [],
+                 "retry_delay": None}]
+    record = {"model": {"preset": "ollama", "model": "gpt-oss:20b"}, "cell": {"model": "gpt-oss:20b"},
+              "turns": [{"failed_attempts": attempts}]}
+    assert analysis.failed_attempt_codes([record]) == {("ollama", "gpt-oss:20b"): {"busy": 2,
+                                                                                   "tool_call_unreadable": 1}}
+
+
 def test_statistics_by_hand(analysis) -> None:
     """Wilson 13/20: z² = 3.8415, centre (0.65 + 0.0960) / 1.1921 = 0.6258, half 1.6442 · 0.11737 = 0.1930.
     Kappa of (p,p), (f,f), (p,unparsed), (f,f): observed 3/4 = 0.75; expected 0.5·0.25 (pass) + 0.5·0.5 (fail)
@@ -649,12 +667,12 @@ def no_waits(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(session, "RetryPolicy", functools.partial(RetryPolicy, max_retries=0, connection_wait=0.0))
 
 
-@pytest.mark.parametrize("code", ["connection", "timeout", "busy", "auth", "model", "routing", "tool_call_unreadable"])
+@pytest.mark.parametrize("code", ["connection", "timeout", "busy", "auth", "model", "routing"])
 def test_transient_error_not_saved_and_resumed(evaluator, grounding: Path, tmp_path: Path, code: str,
                                                no_waits) -> None:
     """C6-M5: an error that is not the model's behaviour stops the run with the cell unsaved; --resume asks it.
-    Item 216: a temporary stop (connection, timeout, busy, a tool call the service could not read) keeps the cell's
-    checkpoint, which --resume continues; any other (key, model, routing) throws it away."""
+    Item 216: a temporary stop (connection, timeout, busy) keeps the cell's checkpoint, which --resume continues;
+    any other (key, model, routing) throws it away."""
     out = tmp_path / "out"
     said: list[str] = []
     harness = Scripted([[_answer()], [_error(code)] * 4])
@@ -668,7 +686,7 @@ def test_transient_error_not_saved_and_resumed(evaluator, grounding: Path, tmp_p
 
     assert go() == 1
     assert sorted(p.stem for p in (out / "cells").glob("*.json")) == ["G01__small__r1"]
-    kept = code in ("connection", "timeout", "busy", "tool_call_unreadable")
+    kept = code in ("connection", "timeout", "busy")
     assert said[-1] == ("G03__small__r1: kept up to turn 1, request 1; run again with --resume --accept-data-notice "
                         "to continue it" if kept else
                         "G03__small__r1: nothing was saved for this cell. Run again with --resume "
@@ -679,6 +697,43 @@ def test_transient_error_not_saved_and_resumed(evaluator, grounding: Path, tmp_p
     cells = evaluator.read_cells(out)
     assert sorted(cells) == ["G01__small__r1", "G03__small__r1", "G04__small__r1"]
     assert all(t["stop"] == "end" for r in cells.values() for t in r["turns"])
+
+
+def test_an_unreadable_tool_call_keeps_the_cell_and_the_run_goes_on(evaluator, grounding: Path, tmp_path: Path,
+                                                                    no_waits) -> None:
+    """A tool call the service could not read (after the session's retries) keeps G03's checkpoint but does not end
+    the run: G04 is asked and saved; the run ends with exit code 1 and names the kept cell; --resume continues it
+    (exit 0, every cell saved)."""
+    out = tmp_path / "out"
+    said: list[str] = []
+    harness = Scripted([[_answer()], [_error("tool_call_unreadable")] * 4])
+
+    def go(*extra: str) -> int:
+        args = evaluator.build_parser().parse_args(
+            ["run", "--project", str(grounding), "--provider", "openrouter", "--model", PAID, "--out", str(out),
+             "--accept-data-notice", "--questions", "G01,G03,G04", "--levels", "basic", *extra])
+        return evaluator.cmd_run(args, backend_factory=harness.factory, prober=harness.prober, info=None,
+                                 say=said.append, allow_unsolved=True)
+
+    assert go() == 1
+    assert sorted(p.stem for p in (out / "cells").glob("*.json")) == ["G01__small__r1", "G04__small__r1"]
+    assert evaluator.partial_path(out, "G03__small__r1").is_file()
+    assert ("G03__small__r1: kept up to turn 1, request 1; run again with --resume --accept-data-notice to "
+            "continue it") in said
+    assert "G04__small__r1: saved" in said
+    assert said[-2:] == [f"The other cells of {PAID} are in {out}.",
+                         "1 cell(s) kept after a tool call the service could not read: G03__small__r1; run again "
+                         "with --resume --accept-data-notice to continue them."]
+    said.clear()
+    assert go("--resume") == 0
+    assert said[-1] == f"All cells of {PAID} are in {out}."
+    cells = evaluator.read_cells(out)
+    assert sorted(cells) == ["G01__small__r1", "G03__small__r1", "G04__small__r1"]
+    assert not any((out / evaluator.PARTIAL_DIR).iterdir())
+    # every finished record holds its level setting, the one its checkpoint was checked against
+    keys = [r["setting_key"] for r in cells.values()]
+    assert keys[0]["level"] == "small" and len(keys[0]["tools_hash"]) == 16 and len(keys[0]["system_hash"]) == 16
+    assert all(k == keys[0] for k in keys)
 
 
 def test_run_plans_its_matrix_and_a_stopped_folder_is_incomplete(evaluator, scoring, grounding: Path,

@@ -259,11 +259,25 @@ def evidence(lines: Sequence[Mapping[str, Any]]) -> dict[tuple[str, str, bool], 
     return out
 
 
+#: The start of Ollama's message for a tool call it could not read (an older record holds it as ``busy``).
+UNREADABLE_TOOL_CALL_MESSAGE = "error parsing tool call"
+
+
+def attempt_code(attempt: Mapping[str, Any]) -> str:
+    """The code of one failed attempt: ``tool_call_unreadable`` also for one recorded before that code existed."""
+    code = str(attempt.get("code"))
+    if code == "busy" and attempt.get("status") == 500 \
+            and str(attempt.get("message") or "").startswith(UNREADABLE_TOOL_CALL_MESSAGE):
+        return "tool_call_unreadable"
+    return code
+
+
 def failed_attempt_codes(records: Iterable[Mapping[str, Any]]) -> dict[tuple[str, str], dict[str, int]]:
     """Per (provider, model): how many failed request attempts of each code the records' turns hold
     (``failed_attempts``: retried and recovered, or the stopping one of a turn), codes in alphabetical order.  These
     are the service's and the format's problems (an overload, a rate limit, a tool call the service could not read),
-    not the model's grade: no rate counts them."""
+    not the model's grade: no rate counts them.  An attempt recorded before ``tool_call_unreadable`` was its own
+    code (``busy``, status 500, a message starting "error parsing tool call": Ollama's) is counted as one."""
     out: dict[tuple[str, str], dict[str, int]] = {}
     for record in records:
         model = record.get("model") or {}
@@ -271,9 +285,39 @@ def failed_attempt_codes(records: Iterable[Mapping[str, Any]]) -> dict[tuple[str
         counts = out.setdefault(key, {})
         for turn in record.get("turns") or []:
             for attempt in turn.get("failed_attempts") or []:
-                code = str(attempt.get("code"))
+                code = attempt_code(attempt)
                 counts[code] = counts.get(code, 0) + 1
     return {key: dict(sorted(counts.items())) for key, counts in out.items()}
+
+
+#: The hashes of a cell's level setting (``setting_key`` of its record) whose mix within one model and level the
+#: summary and grade-ai warn of: cells asked with other instructions or tools are not of one setting.
+SETTING_HASHES = (("tools_hash", "tools"), ("system_hash", "instructions"))
+
+
+def mixed_settings(records: Iterable[Mapping[str, Any]]) -> list[str]:
+    """One warning per (provider, model, level) and hash of :data:`SETTING_HASHES` that more than one value holds
+    among the records' ``setting_key`` (a record without it, written before the key was recorded: ``unknown``,
+    which alone warns of nothing).  In provider, model, level order."""
+    seen: dict[tuple[str, str, str], dict[str, set[str]]] = {}
+    for record in records:
+        cell = record.get("cell") or {}
+        model = record.get("model") or {}
+        key = (str(model.get("preset")), str(cell.get("model") or model.get("model")), str(cell.get("level_setting")))
+        setting = record.get("setting_key")
+        hashes = seen.setdefault(key, {name: set() for name, _what in SETTING_HASHES})
+        for name, _what in SETTING_HASHES:
+            value = setting.get(name) if isinstance(setting, Mapping) else None
+            hashes[name].add(str(value) if value else "unknown")
+    out = []
+    for (preset, model, level), hashes in sorted(seen.items()):
+        for name, what in SETTING_HASHES:
+            if len(hashes[name]) > 1:
+                values = sorted(hashes[name], key=lambda v: (v == "unknown", v))
+                out.append(f"Warning: the cells of {preset} {model} at level {level} were asked with "
+                           f"{len(values)} different {what} ({name} {', '.join(values)}): their grades are not "
+                           "of one setting.")
+    return out
 
 
 def failed_attempts_line(counts: Mapping[tuple[str, str], Mapping[str, int]]) -> str | None:

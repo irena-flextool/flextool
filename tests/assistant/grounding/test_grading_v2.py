@@ -556,6 +556,36 @@ def test_summary_counts_failed_requests_apart_from_the_grade(scoring, evaluator,
     assert "n   2" in row and "failed   0" in row and "waiting   2" in row
 
 
+def test_mixed_level_settings_are_warned_of(scoring, evaluator, tmp_path: Path) -> None:
+    """Three cells of m1 at small: G01 asked with tools t1 and instructions s1, G03 with tools t2 and s1, G04 a
+    record written before setting_key (unknown).  Tools: t1, t2, unknown (3); instructions: s1, unknown (2): both
+    are warned of by grade-ai and summary.  At large every cell t1 and s1, at medium every record unknown: no
+    warning."""
+    def cell(qid: str, level: str, tools: str | None, system: str | None) -> dict:
+        record = make_record(scoring, qid, level)
+        if tools is not None:
+            record["setting_key"] = {"level": level, "tools_hash": tools, "system_hash": system}
+        return record
+
+    folder = results(evaluator, tmp_path / "res", {
+        "G01__small__r1": cell("G01", "small", "t1", "s1"), "G03__small__r1": cell("G03", "small", "t2", "s1"),
+        "G04__small__r1": cell("G04", "small", None, None),
+        **{f"{q}__large__r1": cell(q, "large", "t1", "s1") for q in ("G01", "G03", "G04")},
+        **{f"{q}__medium__r1": cell(q, "medium", None, None) for q in ("G01", "G03", "G04")}})
+    expected = ["Warning: the cells of ollama m1 at level small were asked with 3 different tools (tools_hash t1, "
+                "t2, unknown): their grades are not of one setting.",
+                "Warning: the cells of ollama m1 at level small were asked with 2 different instructions "
+                "(system_hash s1, unknown): their grades are not of one setting."]
+    key = write_key(tmp_path / "key.yaml")
+    grading = tmp_path / "grading"
+    said: list[str] = []
+    assert grade_ai(evaluator, grading, key, folder, opus=Opus(), extra=("--single-model",), said=said) == 0
+    assert [s for s in said if s.startswith("Warning:")] == expected
+    said.clear()
+    assert summary(evaluator, grading, key, tmp_path / "r.jsonl", said=said) == 0
+    assert [s for s in said if s.startswith("Warning:")] == expected
+
+
 # --- 12. blinding (ported from the earlier grading) -----------------------------------------------------------
 def test_grade_ai_shuffles_across_folders(scoring, evaluator, tmp_path: Path, capsys,
                                          monkeypatch: pytest.MonkeyPatch) -> None:
