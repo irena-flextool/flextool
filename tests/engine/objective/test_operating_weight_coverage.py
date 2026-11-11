@@ -28,8 +28,10 @@ from .conftest import solver_options
 PERIODS = ["p2020", "p2025"]
 
 
-def _data(*, inflation: dict[str, float], drop_step: str | None = None) -> FlexData:
-    """The 107-T1 vehicle; ``drop_step`` removes the (p2025, t0001) row of that (d, t) Param."""
+def _data(*, inflation: dict[str, float], drop_step: str | None = None, drop_share: bool = False) -> FlexData:
+    """The 107-T1 vehicle; ``drop_step`` removes the (p2025, t0001) row of that (d, t) Param, ``drop_share``
+    the p2025 row of ``p_period_share``."""
+    shares = {d: 1.0 for d in PERIODS if not (drop_share and d == "p2025")}
     dt = pl.DataFrame({"d": PERIODS, "t": ["t0001", "t0001"]})
 
     def dt_param(name: str, value: float) -> Param:
@@ -47,7 +49,7 @@ def _data(*, inflation: dict[str, float], drop_step: str | None = None) -> FlexD
         p_step_duration=dt_param("p_step_duration", 1.0),
         p_timestep_weight=dt_param("p_timestep_weight", 1.0),
         p_inflation_op=Param(("d",), pl.DataFrame({"d": list(inflation), "value": list(inflation.values())})),
-        p_period_share=Param(("d",), pl.DataFrame({"d": PERIODS, "value": [1.0, 1.0]})),
+        p_period_share=Param(("d",), pl.DataFrame({"d": list(shares), "value": list(shares.values())})),
         nodeBalance=nodeBalance, nodeBalance_dt=nodeBalance_dt,
         p_inflow=Param(("n", "d", "t"), nodeBalance_dt.with_columns(value=pl.lit(-5.0))),
         p_penalty_up=Param(("n", "d", "t"), nodeBalance_dt.with_columns(value=pl.lit(1e4))),
@@ -81,13 +83,22 @@ def test_objective_weights_each_period_by_its_inflation_factor() -> None:
     assert float(sol.obj) == pytest.approx(150.0, rel=1e-9)
 
 
-def test_inflation_factor_missing_a_period_is_an_error() -> None:
+@pytest.mark.parametrize("field, name, csv", [
+    ("p_inflation_op", "p_inflation_factor_operations_yearly", "p_inflation_factor_operations_yearly.csv"),
+    ("p_period_share", "complete_period_share_of_year", "complete_period_share_of_year_calc.csv"),
+])
+def test_period_param_missing_a_period_is_an_error(field: str, name: str, csv: str) -> None:
+    """The (d,) checks name the parameter, the missing period (not the covered one) and its solve_data file."""
+    if field == "p_inflation_op":
+        data = _data(inflation={"p2020": 1.0})
+    else:
+        data = _data(inflation={"p2020": 1.0, "p2025": 2.0}, drop_share=True)
     with pytest.raises(FlexToolConfigError) as err:
-        _build(_data(inflation={"p2020": 1.0}))
+        _build(data)
     msg = str(err.value)
-    assert "p_inflation_factor_operations_yearly" in msg
+    assert f"({name})" in msg
     assert "'p2025'" in msg and "'p2020'" not in msg
-    assert "solve_data/p_inflation_factor_operations_yearly.csv" in msg
+    assert f"solve_data/{csv}" in msg
 
 
 @pytest.mark.parametrize("field", ["p_timestep_weight", "p_step_duration"])

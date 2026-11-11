@@ -101,7 +101,8 @@ def test_co2_period_cap_set_is_the_lp_capped_groups(tmp_path_factory) -> None:
 
 def test_co2_max_period_on_a_price_group_is_ignored_with_a_warning(tmp_path_factory, caplog) -> None:
     """co2_extra: co2_method price, co2_price 10, co2_max_period 100 → not capped, not CO2-limited in the
-    outputs, the same LP as without its co2_max_period, and one warning naming the group and the method."""
+    outputs, the same LP as without its co2_max_period, and one warning naming the group, the alternative and
+    the method."""
     priced = [["group", "co2_extra", "co2_method", text("price")],
               ["group", "co2_extra", "co2_price", num(10.0)]]
     with caplog.at_level(logging.WARNING):
@@ -119,7 +120,9 @@ def test_co2_max_period_on_a_price_group_is_ignored_with_a_warning(tmp_path_fact
     tmp = tmp_path_factory.mktemp("i84a_mps")
     assert _mps(st, tmp / "a.mps") == _mps(ref_st, tmp / "b.mps")
     assert len(warnings) == 1, warnings
-    assert "co2_max_period" in warnings[0] and "'price'" in warnings[0]
+    assert warnings[0] == (
+        "Group 'co2_extra' has co2_max_period (alternative 'i84a_extra') but its co2_method 'price' has no "
+        "period cap: the limit is ignored. Use a co2_method with 'period' in it to apply the limit.")
 
 
 # ---------------------------------------------------------------------------

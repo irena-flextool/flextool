@@ -128,8 +128,7 @@ def validate_timeline_timestep_duration(db) -> None:
     ``db`` is the scenario-filtered ``SpineDBBackend`` (its bulk value index, ``input_derivation.run``) or
     DatabaseMapping.  All the offenders go into one error.
     """
-    from flextool.engine.input._timeline_rules import (
-        rule5_model_solves, solve_period_timesets, time_structure_from_backend)
+    from flextool.engine.input._timeline_rules import solve_period_timesets, time_structure_from_backend
 
     timelines = [ent["entity_byname"][0]
                  for ent in db.find_entities(entity_class_name="timeline")]
@@ -144,10 +143,7 @@ def validate_timeline_timestep_duration(db) -> None:
     # used timeline -> (timeset, solve) that first names it (None: the unresolved-solve fallback)
     used: dict[str, tuple[str, str] | None] = {}
     unresolved = False
-    solves = list(dict.fromkeys([s for _model, listed in structure.model_solves for s in listed]
-                                + sorted(structure.contained_solves)))
-    if not solves:
-        solves = rule5_model_solves(structure)[1] or list(structure.solves)
+    solves = _used_solves(structure)
     for solve in solves:
         pairs = solve_period_timesets(solve, structure)
         if not pairs:
@@ -190,6 +186,35 @@ def validate_timeline_timestep_duration(db) -> None:
                     "of 0 h or less weighs its flows, costs and balances by 0 or less).")
     if errors:
         raise FlexToolConfigError("\n".join(errors))
+
+
+def _used_solves(structure) -> list[str]:
+    """The solves of the scenario that run: the solves of ``model.solves`` and ``solve.contains_solves``, else
+    Rule 4's choice (``_timeline_rules.rule5_model_solves``), else every solve.  ``structure`` is the scenario's
+    ``_timeline_rules.TimeStructure``."""
+    from flextool.engine.input._timeline_rules import rule5_model_solves
+
+    solves = list(dict.fromkeys([s for _model, listed in structure.model_solves for s in listed]
+                                + sorted(structure.contained_solves)))
+    if not solves:
+        solves = rule5_model_solves(structure)[1] or list(structure.solves)
+    return solves
+
+
+def _used_solve_periods(src) -> set[str]:
+    """The periods of the solves that run (:func:`_used_solves`): each one's ``period_timeset`` as the engine
+    resolves it (``_timeline_rules.solve_period_timesets``, the Rule 1 / 2 / 5b default included) plus its
+    ``realized_periods`` and ``invest_periods``.  A solve defined in the alternatives that no model runs brings
+    no period (unlike :func:`_scenario_periods`)."""
+    from flextool.engine.input._timeline_rules import solve_period_timesets, time_structure_from_backend
+
+    structure = time_structure_from_backend(_RowsView(src))
+    periods: set[str] = set()
+    for solve in _used_solves(structure):
+        periods.update(period for period, _timeset in solve_period_timesets(solve, structure) or [])
+        periods.update(structure.realized_periods.get(solve, []))
+        periods.update(structure.invest_periods.get(solve, []))
+    return periods
 
 
 def _pv_rows(src, entity_class: str, parameter: str) -> Iterable:
@@ -827,6 +852,15 @@ def _explicit_values(db, entity_class: str, parameter: str) -> dict[str, list[fl
     return out
 
 
+def _explicit_value_alternatives(db, entity_class: str, parameter: str) -> dict[str, str]:
+    """``{entity: alternative}`` of the scenario's explicit values of a one-dimensional class's ``parameter``:
+    the alternative each value comes from (the scenario filter leaves the top-ranked one), for messages in the
+    style of :func:`_where`."""
+    return {pv["entity_byname"][0]: pv["alternative_name"]
+            for pv in db.find_parameter_values(entity_class_name=entity_class, parameter_definition_name=parameter)
+            if pv["type"] is not None}
+
+
 def _entities_with_value(db, entity_class: str, parameter: str, value: str) -> set[str]:
     """Entities of ``entity_class`` whose explicit ``parameter`` value is ``value``."""
     return {pv["entity_byname"][0]
@@ -882,12 +916,13 @@ def validate_group_limit_flags(db, logger: logging.Logger) -> None:
                if pv["type"] is not None}
     for limit, capping, kind in (("co2_max_period", CO2_MAX_PERIOD_METHODS, "period"),
                                  ("co2_max_total", CO2_MAX_TOTAL_METHODS, "total")):
-        for g in sorted(_explicit_values(db, "group", limit)):
+        for g, alt in sorted(_explicit_value_alternatives(db, "group", limit).items()):
             method = methods.get(g, "none" if default is None else str(default))
             if method not in capping:
                 logger.warning(
-                    "Group '%s' has %s but its co2_method '%s' has no %s cap: the limit is ignored. Use a "
-                    "co2_method with '%s' in it to apply the limit.", g, limit, method, kind, kind)
+                    "Group '%s' has %s %s but its co2_method '%s' has no %s cap: the limit is ignored. Use a "
+                    "co2_method with '%s' in it to apply the limit.", g, limit, _where(alt, None), method, kind,
+                    kind)
 
 
 def validate_non_sync_one_variable_connections(db, provider, logger: logging.Logger) -> None:
@@ -2736,7 +2771,7 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
     * ``profile.profile`` (:func:`_profile_period_finding`, item 73): an unnamed 1-D map is read as a period map
       when its keys are periods, so keys that match both periods and time steps of the model (or a key that is
       both) → error; a period map (unnamed, or labelled ``period``) without a value for some periods of the
-      scenario's solves → one warning per map (the profile is 0 there; the parameter resolver would drop such an
+      solves that run (:func:`_used_solve_periods`; a solve no model runs does not count) → one warning per map (the profile is 0 there; the parameter resolver would drop such an
       entity without a word, ``_param_shapes._silent_entity_axes``).
 
     Each error names the entity, the parameter, the alternative and up to 3 keys, with the closest period
@@ -2767,7 +2802,7 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
     seen: dict[tuple, object] = {}
     profile_seen: dict[bytes, object] = {}
     universe_b = tuple(f'"{name}"'.encode() for name in universe)
-    solve_periods = set(time_vocab[0])
+    solve_periods: set[str] | None = None  # periods of the solves that run, read at the first profile map
     errors: list[str] = []      # keys that are no period (depend on the universe)
     shape_errors: list[str] = []  # time steps, time series and numbers (always errors)
     warnings: list[str] = []
@@ -2789,6 +2824,8 @@ def validate_period_keys(src, whole: DatabaseTimeFacts | None = None,
             if (cls, par) == ("profile", "profile"):
                 profile_finding = profile_seen.get(raw, False)
                 if profile_finding is False:
+                    if solve_periods is None:
+                        solve_periods = _used_solve_periods(src)
                     profile_finding = profile_seen[raw] = _profile_period_finding(
                         raw, universe, universe_b, timesteps, solve_periods)
                 if profile_finding is not None:

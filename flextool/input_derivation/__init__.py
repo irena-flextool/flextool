@@ -268,6 +268,10 @@ def run(
 
         # Every time step of the scenario's timelines (``_scenario_time_vocab``, the steps ``input/timeline.csv``
         # holds); read before the parameter specs because ``pd_node`` precedes ``timeline.csv`` among them.
+        # The steps are ``str(key)`` of the timeline map keys, the form the spec frames carry.  A
+        # ``time_series``-typed ``timestep_duration`` (its steps would be date-time stamps) is unreachable today:
+        # the timeline reader (``_solve_config.params_to_dict``) keeps only Map / Array / scalar values, so such a
+        # timeline is never built and none of its steps reaches the model.
         timesteps = sorted(set().union(*time_vocab[1].values()))
         timestep_keyed_drops = _timestep_keyed_drops()
         for spec in _PARAMETER_SPECS:

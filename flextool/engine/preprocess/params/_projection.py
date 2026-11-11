@@ -59,7 +59,7 @@ from flextool.engine.input._param_shapes import (
     resolve_facet_groups,
 )
 from flextool.engine.preprocess._co2_methods import CO2_MAX_PERIOD_METHODS
-from flextool.engine.preprocess._reserve_methods import RESERVE_METHODS_BY_PARTITION
+from flextool.engine.preprocess._reserve_methods import RESERVE_METHODS_BY_PARTITION, RESERVE_NO_RESERVE
 
 
 def _to_e(expr: pl.Expr) -> pl.Expr:
@@ -1459,9 +1459,10 @@ def process_sink_nonSync(source: "InputSource") -> pl.DataFrame:
 
 def reserve_upDown_group(source: "InputSource") -> pl.DataFrame:
     """Distinct ``(r, ud, g)`` tuples for reserves with a ``reserve_method``
-    other than ``no_reserve`` (the active reserve subset; entities without a
-    method are silently dropped, mirroring flextool's preprocessing; the
-    same set as ``emit/_leaf_sets.derive_reserve_upDown_group``).  A
+    other than ``no_reserve`` (the active reserve subset; the same set as
+    ``emit/_leaf_sets.derive_reserve_upDown_group``).  A
+    ``reserve__upDown__group`` without an explicit method gets the schema
+    default ``no_reserve`` from the source, so it is left out as well.  A
     ``no_reserve`` group has no requirement, so it gets no shortfall
     variable or reserve rows.
 
@@ -1471,7 +1472,7 @@ def reserve_upDown_group(source: "InputSource") -> pl.DataFrame:
     if df is None:
         return _empty({"r": pl.Utf8, "ud": pl.Utf8, "g": pl.Utf8})
     return (df.lazy()
-              .filter(pl.col("value").cast(pl.Utf8) != "no_reserve")
+              .filter(pl.col("value").cast(pl.Utf8) != RESERVE_NO_RESERVE)
               .pipe(rename_to_axis, {"reserve": "r", "upDown": "ud", "group": "g"})
               .select("r", "ud", "g")
               .unique()

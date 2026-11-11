@@ -58,11 +58,11 @@ def cost_summaries(par, s, v, r, debug):
     try:
         costs_dt['upward reserve slack penalty'] = r.costPenalty_reserve_upDown_dt.xs('up', level='updown', axis=1).sum(axis=1)
     except KeyError:
-        costs_dt['upward reserve slack penalty'] = 0
+        costs_dt['upward reserve slack penalty'] = 0.0
     try:
         costs_dt['downward reserve slack penalty'] = r.costPenalty_reserve_upDown_dt.xs('down', level='updown', axis=1).sum(axis=1)
     except KeyError:
-        costs_dt['downward reserve slack penalty'] = 0
+        costs_dt['downward reserve slack penalty'] = 0.0
 
     results.append((costs_dt, 'costs_dt_p'))
 

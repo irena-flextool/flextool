@@ -442,7 +442,7 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   built an unused reserve shortfall variable for it at each time step, and a model whose only reserve groups were
   *no_reserve* switched the reserve constraints on. These are no longer built: results are unchanged, except that
   the reserve shortfall tables (`slack__reserve__upDown__group__d` / `__dt`) no longer have an empty column for
-  such groups.
+  such groups, and in a model whose only reserve groups are *no_reserve* the reserve-provision tables are empty.
 - **The reserve shortfall penalty in the cost tables could be doubled.** In a model with several reserve groups
   (for example an up and a down reserve), the *upward / downward reserve slack penalty* of `costs__dt` and the cost
   summaries multiplied each group's shortfall by the scale of every group of the same reserve when the groups were
@@ -457,9 +457,9 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
 #### Input checks
 
 - **A `co2_max_period` or `co2_max_total` on a group whose `co2_method` has no such cap is reported.** The
-  value is ignored (for example `co2_max_period` with `co2_method` *price*); the run now warns, naming the group
-  and its method. Before, such a group with `co2_max_period` was also listed as CO2-limited in the group CO2
-  results although no limit applied; the results now list only the groups whose method caps their emissions.
+  value is ignored (for example `co2_max_period` with `co2_method` *price*); the run now warns, naming the group,
+  the alternative and its method. Before, such a group with `co2_max_period` was also listed as CO2-limited in
+  the group CO2 results although no limit applied; the results now list only the groups whose method caps their emissions.
 - **A limit given as a period map no longer drops the periods it leaves out without a word.** A period
   the solve uses (look-ahead periods included) but a period map does not cover is now an error naming the entity,
   the parameter and the missing periods. Before, such a period got a CO2 cap of 0 (`co2_max_period`), no
@@ -556,8 +556,8 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   `index_name` *period* does (single, rolling, nested and stochastic solves). A map whose keys are both periods and
   time steps of the model (or a key that is both) stops the run with an error naming the profile and the
   alternative: set its `index_name` to *period* or *time*. A profile period map (with or without `index_name`)
-  that leaves out periods of the scenario's solves gets one warning per run naming the profile and those periods;
-  the profile is 0 there.
+  that leaves out periods of the solves the scenario runs gets one warning per run naming the profile and those
+  periods; the profile is 0 there.
 
 #### User constraints
 

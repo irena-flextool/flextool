@@ -357,6 +357,33 @@ def test_profile_period_map_covering_the_scenario_periods_is_silent(tmp_path_fac
         ["profile", "wind_profile", "profile", _map([["p2020", 0.3], ["p2025", 0.4]], index_name)]])
 
 
+# O11: only the solves that run count.  s_extra (period p2025, timeset 2day) is defined in the override
+# alternative; it runs only when model.solves lists it.
+EXTRA_SOLVE = [["solve", "s_extra", None]]
+EXTRA_SOLVE_VALUES = [
+    ["solve", "s_extra", "period_timeset", _map([["p2025", "2day"]], "period")],
+    ["solve", "s_extra", "realized_periods", b64({"value_type": "str", "data": ["p2025"]}, "array")],
+    ["profile", "wind_profile", "profile", _map([["p2020", 0.3]])]]
+
+
+def test_profile_period_map_ignores_a_solve_that_does_not_run(tmp_path_factory) -> None:
+    """s_extra is in no model.solves: its period p2025 is not a period the profile needs."""
+    _silent(tmp_path_factory, "c73_unused", EXTRA_SOLVE_VALUES, entities=EXTRA_SOLVE)
+
+
+def test_profile_period_map_warns_for_a_solve_that_runs(tmp_path_factory) -> None:
+    """model.solves lists s_extra after y2020_2day_dispatch: the profile has no value for its period p2025."""
+    alt = "c73_used"
+    url, scen = make_db(tmp_path_factory, alt=alt, base_chain=PLANT_CHAIN, entities=EXTRA_SOLVE, values=[
+        *EXTRA_SOLVE_VALUES,
+        ["model", "flexTool", "solves",
+         b64({"value_type": "str", "data": ["y2020_2day_dispatch", "s_extra"]}, "array")]])
+    assert _check(url, scen) == (
+        f"Warning: profile 'wind_profile', parameter 'profile' (alternative '{alt}') has no value for period(s) "
+        "p2025: the profile is 0 in those periods. Add the periods to the map, or give the profile a constant "
+        "value.\n")
+
+
 def test_profile_time_map_is_silent(tmp_path_factory) -> None:
     _silent(tmp_path_factory, "c73_time", [
         ["profile", "wind_profile", "profile", _map([["t0001", 0.5], ["t0002", 0.3]])]])
