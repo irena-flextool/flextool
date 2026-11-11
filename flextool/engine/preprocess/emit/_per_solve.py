@@ -622,7 +622,8 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
         solve_data_dir / "period_with_history.csv", provider=provider
     )
     process_set = frozenset(_read_singles(input_dir / "process.csv", provider=provider))
-    node_set = frozenset(_read_singles(input_dir / "node.csv", provider=provider))
+    # Node investment is storage capacity: only storage nodes (nodeState) get v_invest_n / v_divest_n.
+    node_set = frozenset(_read_singles(solve_data_dir / "nodeState.csv", provider=provider))
     entity_set = _read_singles(input_dir / "entity.csv", provider=provider)
 
     eim = _read_pairs(input_dir / "entity__invest_method.csv", provider=provider)

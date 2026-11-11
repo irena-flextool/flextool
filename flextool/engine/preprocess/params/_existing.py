@@ -1087,16 +1087,29 @@ def pd_invest_set_lf(source: "InputSource",
               .sort("p", "d"))
 
 
+def _storage_nodes_only(nd_lf: pl.LazyFrame, source: "InputSource") -> pl.LazyFrame:
+    """``nd_lf`` restricted to the nodes with ``node_type`` ``storage`` (``nodeState``)."""
+    from flextool.engine.preprocess.params._projection import nodeState
+
+    state = nodeState(source)
+    n_dtype = nd_lf.collect_schema().get("n")
+    return nd_lf.join(state.lazy().select(pl.col("n").cast(n_dtype)), on="n", how="semi")
+
+
 def nd_invest_set_lf(source: "InputSource",
                             ed_invest_lf: pl.LazyFrame,
                             ) -> pl.LazyFrame:
-    """Lazy ``[n, d]`` — ``ed_invest_set`` partitioned to nodes."""
+    """Lazy ``[n, d]`` — ``ed_invest_set`` partitioned to storage nodes (``nodeState``).
+
+    Node capacity is storage capacity (``state_unitsize``): a non-storage node with an
+    ``invest_method`` gets no variable (``validate_node_invest_without_storage`` warns).
+    """
     cls_lf = _entity_class_partition_lf(source)
-    return (ed_invest_lf
+    return (_storage_nodes_only(ed_invest_lf
               .join(cls_lf, on="e", how="inner")
               .filter(pl.col("kind") == "node")
               .pipe(rename_to_axis, {"e": "n"})
-              .select("n", "d")
+              .select("n", "d"), source)
               .unique()
               .sort("n", "d"))
 
@@ -1118,13 +1131,17 @@ def pd_divest_set_lf(source: "InputSource",
 def nd_divest_set_lf(source: "InputSource",
                             ed_divest_lf: pl.LazyFrame,
                             ) -> pl.LazyFrame:
-    """Lazy ``[n, d]`` — ``ed_divest_set`` partitioned to nodes."""
+    """Lazy ``[n, d]`` — ``ed_divest_set`` partitioned to storage nodes (``nodeState``).
+
+    Node capacity is storage capacity (``state_unitsize``): a non-storage node with an
+    ``invest_method`` gets no variable (``validate_node_invest_without_storage`` warns).
+    """
     cls_lf = _entity_class_partition_lf(source)
-    return (ed_divest_lf
+    return (_storage_nodes_only(ed_divest_lf
               .join(cls_lf, on="e", how="inner")
               .filter(pl.col("kind") == "node")
               .pipe(rename_to_axis, {"e": "n"})
-              .select("n", "d")
+              .select("n", "d"), source)
               .unique()
               .sort("n", "d"))
 

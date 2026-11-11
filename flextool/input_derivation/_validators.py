@@ -50,6 +50,7 @@ __all__ = [
     "validate_ladder_methods",
     "validate_group_output_memberships",
     "validate_connection_node_memberships",
+    "validate_node_invest_without_storage",
     "validate_connection_delay",
     "validate_unit_input_shares",
     "validate_output_min_coeff",
@@ -1153,6 +1154,29 @@ def validate_connection_node_memberships(db, logger: logging.Logger) -> None:
                 "nodes or its connection__node__node — '%s' not included. Check your data!",
                 name, name,
             )
+
+
+def validate_node_invest_without_storage(db, logger: logging.Logger) -> None:
+    """Warn when a node that is not a storage node has an ``invest_method`` that invests or retires.
+
+    Node investment and retirement are storage capacity (``state_unitsize``, MWh): only a node with
+    ``node_type`` ``storage`` gets ``v_invest_n`` / ``v_divest_n``.  An ``invest_method`` on a balance,
+    commodity or other node is ignored (no variable); this names the node so that a leftover method is
+    noticed.  ``db`` is scenario-filtered.
+    """
+    default_type = str(_definition_default(db, "node", "node_type") or "balance")
+    node_types = {k[0]: v for k, v in _str_values(db, "node", "node_type").items()}
+    for (name, *_rest), method in sorted(_str_values(db, "node", "invest_method").items()):
+        if method in _NO_INVEST and method in _NO_RETIRE:
+            continue
+        node_type = node_types.get(name, default_type)
+        if node_type == "storage":
+            continue
+        logger.warning(
+            "Node '%s' has invest_method %s but node_type %s: only storage nodes can invest or retire, "
+            "so '%s' gets no investment. Remove its invest_method or make it a storage node.",
+            name, method, node_type, name,
+        )
 
 
 def validate_connection_delay(db, logger: logging.Logger) -> None:

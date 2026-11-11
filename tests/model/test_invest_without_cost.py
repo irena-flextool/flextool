@@ -219,3 +219,24 @@ def test_notice_names_the_newly_offered_pairs(tmp_path_factory, capsys) -> None:
     assert "Investment without invest_cost (entity, periods): g (p2020)." in lines[0], lines[0]
     assert "Retirement without salvage_value (entity, periods): r (p2020)." in lines[0], lines[0]
     assert "invest_max_period 0" in lines[0]
+
+
+def test_f_non_storage_node_invest_method_gets_no_variable(tmp_path_factory, caplog) -> None:
+    """Node investment is storage capacity: the balance node ``west`` with ``invest_method`` ``invest_no_limit``
+    and no ``invest_cost`` gets no ``v_invest_n`` (before, a free degenerate column), and the validator names
+    it.  Solved under ``FLEXTOOL_AUTOSCALE_STRICT=1`` (no scale gap for a node outside ``nodeState``)."""
+    import logging
+
+    with caplog.at_level(logging.WARNING):
+        steps = run(tmp_path_factory, *make_db(tmp_path_factory, alt="i218_f", base_chain=CHAIN, values=BASE + [
+            ["node", "west", "invest_method", _s("invest_no_limit")],
+        ]))
+    step = next(iter(steps.values()))
+    nd = step.flex_data.nd_invest_set
+    assert nd is None or "west" not in {str(n) for n in nd["n"].to_list()}
+    try:
+        assert utf8(step.solution.value("v_invest_n")).height == 0
+    except KeyError:
+        pass  # no v_invest_n variable at all
+    assert any("Node 'west' has invest_method invest_no_limit but node_type balance" in r.getMessage()
+               for r in caplog.records), [r.getMessage() for r in caplog.records]
