@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import logging
 import time
+import weakref
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
@@ -5399,6 +5400,8 @@ def load_flextool(source: "Path | str | FlexInputSource",
         # rule reads (process_minload above included).
         _apply_coarse_process_frames(flex_data)
 
+        _warn_fractional_integer_unit_counts(flex_data, db_reader)
+
         # Phase 4.6 — end-of-load FlexData → Enum sweep.  With the global
         # flipped on above, the cascade emits Enum-typed dim columns
         # throughout, but ad-hoc CSV-fallback paths inside the cascade
@@ -5443,6 +5446,70 @@ def load_flextool(source: "Path | str | FlexInputSource",
             set_global_axis_enums(None)
         else:
             set_global_axis_enums(axis_enums)
+
+
+# Units already reported by :func:`_warn_fractional_integer_unit_counts`, per run: a rolling run loads one FlexData
+# per roll through the run's one ``db_reader``, and each unit is reported once per run.
+_FRACTIONAL_COUNT_WARNED: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def _warn_fractional_integer_unit_counts(flex_data: "FlexData", db_reader: "InputSource | None") -> None:
+    """Warn for each unit / connection with integer online variables whose ``p_process_existing_count`` (existing
+    capacity / unit size, the number of existing units) is not a whole number in some period of this solve.
+
+    ``v_online_integer`` counts whole units up to that count (``maxOnline_integer`` / ``maxShutdown_integer``), so
+    a count such as 0.5 cannot all be online: below 1 the unit can never be online, which can make a floor such as
+    ``min_instant_flow`` infeasible.  Without ``virtual_unitsize`` the unit size is the largest ``existing`` over
+    the periods, so a period-Map ``existing`` that drops (17 → 8.5 MW) gives a fraction.  Read from the solve's own
+    Param, so single, rolling, nested and stochastic sub-solves are all checked, and a count derived from a wrong
+    unit size shows too.  Entities with an explicit ``virtual_unitsize`` are left to the input check
+    (``input_derivation._validators.warn_existing_not_whole_units``, where ``existing`` is the count itself).
+    Results are unchanged.
+    """
+    ec = flex_data.p_process_existing_count
+    integer = flex_data.process_online_integer
+    if ec is None or integer is None or integer.height == 0 or ec.frame.height == 0:
+        return
+    names = {str(x) for x in integer.get_column(integer.columns[0]).to_list()}
+    warned: set[str] = set()
+    if db_reader is not None:
+        from flextool.engine.preprocess.params._derived import _try_param_explicit
+        try:
+            warned = _FRACTIONAL_COUNT_WARNED.setdefault(db_reader, set())
+        except TypeError:  # pragma: no cover — a reader that cannot be weak-referenced: no per-run memory
+            pass
+        for cls in ("unit", "connection"):
+            vu = _try_param_explicit(db_reader, cls, "virtual_unitsize")
+            if vu is not None and vu.height > 0:
+                names -= {str(n) for n, v in zip(vu["name"].to_list(), vu["value"].to_list())
+                          if v is not None and float(v) != 0.0}
+    names -= warned
+    if not names:
+        return
+    frame = (ec.frame.with_columns(pl.col("p").cast(pl.Utf8), pl.col("d").cast(pl.Utf8))
+             .filter(pl.col("p").is_in(sorted(names))
+                     & ((pl.col("value") - pl.col("value").round(0)).abs()
+                        > 1e-6 * pl.max_horizontal(pl.lit(1.0), pl.col("value").abs()))))
+    if frame.height == 0:
+        return
+    units: set[str] = set()
+    if flex_data.process_unit is not None and flex_data.process_unit.height > 0:
+        units = {str(x) for x in flex_data.process_unit.get_column(flex_data.process_unit.columns[0]).to_list()}
+    unitsize: dict[str, float] = {}
+    if flex_data.p_unitsize is not None:
+        us = flex_data.p_unitsize.frame
+        unitsize = dict(zip(us["p"].cast(pl.Utf8).to_list(), us["value"].to_list()))
+    for (p,), rows in frame.sort(["p", "d"]).group_by(["p"], maintain_order=True):
+        counts = ", ".join(f"{v:g} in {d}" for d, v in zip(rows["d"].to_list(), rows["value"].to_list()))
+        size = unitsize.get(p)
+        size_txt = f" of {size:g} MW" if size is not None else ""
+        cls = "unit" if p in units else "connection"
+        warned.add(p)
+        print(f"Warning: {cls} '{p}' has integer online variables (whole units), but its existing capacity makes "
+              f"{counts} units{size_txt}, not a whole number of units. Integer online units cannot use the "
+              f"fraction (below 1 the {cls} can never be online). Without virtual_unitsize, one unit is the "
+              f"largest existing capacity over the periods; set virtual_unitsize to the size of one unit and "
+              f"existing to the number of units, or use startup_method linear.", flush=True)
 
 
 def _apply_db_overrides(flex_data: "FlexData", db_reader: "InputSource",

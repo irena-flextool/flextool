@@ -534,6 +534,12 @@ class PdLookup:
             return True
         return any((e, param, db) in self._pd for db in self._branches_for_d.get(d, ()))
 
+    def explicit_rows(self, param: str) -> list[tuple[str, float]]:
+        """``(entity, value)`` of every explicit value of *param*: one per period row of ``pd_<class>`` (a period
+        Map) and the ``p_<class>`` constant, in file order (pd rows first)."""
+        return ([(e, v) for (e, prm, _d), v in self._pd.items() if prm == param]
+                + [(e, v) for (e, prm), v in self._p.items() if prm == param])
+
 
 # ---------------------------------------------------------------------------
 # PdtLookup — 7/9-branch period+time fallback.

@@ -1,5 +1,14 @@
 ## Unreleased
 
+- **Rolling solves: unit size of a period-Map `existing`.** A unit, connection or storage node without
+  `virtual_unitsize` whose `existing` is a Map by period got a unit size of 1000 MW in the rolls of a rolling solve
+  (single solves were right), so a 17 MW unit counted as 0.017 units. With `startup_method = binary` such a unit
+  could never be online, and a `min_instant_flow` floor that needed it made roll 1 infeasible. The unit size is now
+  the largest `existing` over the periods in every solve, as for a constant `existing`. Rolling results of such
+  models can change.
+- **Warning for a fractional unit count with binary start-ups.** A unit or connection with integer online variables
+  whose existing capacity is not a whole number of units in a period (for example `existing` dropping from 17 to
+  8.5 MW without `virtual_unitsize`: 0.5 units) now gets a warning naming it, the count and the unit size.
 - **Gurobi options are applied.** `gurobi_cl` takes parameters only as `Name=value` arguments; it ignored the
   `ReadParams=<file>` argument FlexTool passed ("Unknown parameter: 'ReadParams' (ignored)") and solved at its
   defaults. Each parameter of the merged options (`solver_config/gurobi.opt`, `solver_mip_gap`,
