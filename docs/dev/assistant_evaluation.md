@@ -288,6 +288,36 @@ stops the run with exit code 1 and saves nothing for that cell; an error during 
 prompt is unique). `grade-ai`, `review` and `summary --record` lock the grading folder: two of them cannot work on
 it at once.
 
+### Grading with Claude Code instead of the API
+
+The same model can grade through Claude Code subagents (for example on a Max plan) instead of API requests. This
+needs a grading folder that `grade-ai` already started (its `grading.json` fixes the blind order):
+
+```
+python tools/assistant_eval.py grade-ai _audit_reports/assistant_eval/{opus,gemini,gemma,gptoss} \
+    --dir _audit_reports/assistant_eval/grading_v2 --export-requests _audit_reports/assistant_eval/cc_grading
+# subagents: read cc_grading/<n>.request.txt, write the JSON reply to cc_grading/<n>.reply.json
+python tools/assistant_eval.py grade-ai _audit_reports/assistant_eval/{opus,gemini,gemma,gptoss} \
+    --dir _audit_reports/assistant_eval/grading_v2 --import-replies _audit_reports/assistant_eval/cc_grading
+```
+
+`--export-requests OUT` writes, for every cell `grade-ai` would send now, `OUT/<n>.request.txt`: a `SYSTEM:`
+section and a `USER:` section holding exactly the system and user parts of the API request, after the same
+blinding and leak scan (a leak refuses the export). `OUT/index.json` lists the tokens with their request hashes
+and the instructions for the agents; it names no model, level or results folder. Nothing is sent and nothing is
+written to the grading folder. A reply left in OUT for a request that changed since is set aside as `.stale`.
+
+`--import-replies OUT` reads each `OUT/<n>.reply.json` (the raw reply text) through the same strict check as an
+API reply and records the cell as the API route does, with `grader` "claude-opus-5-5 via Claude Code (file
+route)", `route` `file` and no usage. A cell whose request hash changed since the export is refused: export
+again. A reply that fails the check is not recorded; `OUT/<n>.retry.request.txt` then holds the API's retry (the
+request, the first reply as `ASSISTANT:` and the same feedback as `USER:`), and a later import reads
+`OUT/<n>.retry.reply.json` (invalid again: saved as unparsed). The import reports how many cells it recorded,
+how many need a retry and how many replies are missing; run it again to continue. It never overwrites a graded
+cell unless the cell changed and `--changed` is given. The review queue, the summary and the agreement treat
+these grades like API grades; `summary` counts the AI grades per route, `agreement.txt` gives each route's
+agreement apart when both are used, and each `results.jsonl` line carries `ai_route`.
+
 ### review
 
 `review` starts once Opus has graded every cell. The queue is drawn once:

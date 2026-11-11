@@ -5,6 +5,7 @@ run in CI, never collected by pytest.
     python tools/assistant_eval.py run --project DIR --provider ID --model M --out RESULTS [...]
     python tools/assistant_eval.py run ... --out RESULTS --skip CELL --skip-reason TEXT  (or --unskip CELL)
     python tools/assistant_eval.py grade-ai RESULTS ... --dir GRADING [--accept-data-notice] [--changed]
+    python tools/assistant_eval.py grade-ai RESULTS ... --dir GRADING --export-requests OUT  (then --import-replies OUT)
     python tools/assistant_eval.py review --dir GRADING [--sitting N] [--regrade #N] [--all]
     python tools/assistant_eval.py summary --dir GRADING [--record]
     python tools/assistant_eval.py calibrate [results.jsonl]
@@ -1533,6 +1534,20 @@ CHANGED_MATERIAL = ("Cell {token} was graded from other material (its answer, th
                     "Run grade-ai --changed to grade the changed cells again, or use a new --dir.")
 SUMMARY_DIR = "summary now reads a grading folder: summary --dir GRADING."
 REASON_WITHHELD = "[reason withheld]"
+#: The file route (``grade-ai --export-requests`` / ``--import-replies``): the same model graded through Claude
+#: Code subagents, which read the exported requests and write the replies (no API request, no usage).
+FILE_GRADER = "claude-opus-5-5 via Claude Code (file route)"
+FILE_ROUTE = "file"
+API_ROUTE = "api"
+EXPORT_INDEX = "index.json"
+EXPORT_FORMAT = 1
+EXPORT_INSTRUCTIONS = (
+    "Each <n>.request.txt is one grading request: act as the grader its SYSTEM section describes, grade the "
+    "material of its USER section and write your reply, the JSON object alone, to <n>.reply.json in this folder. "
+    "A <n>.retry.request.txt is the whole conversation of a retry (your first reply was not the asked JSON): "
+    "write the reply to its last USER section to <n>.retry.reply.json.")
+NO_GRADING_FILE_ROUTE = ("No grading in {folder}: the file route continues a grading that grade-ai started (its "
+                         "grading.json fixes the blind order).")
 
 CellKey = tuple[str, str]
 
@@ -1637,6 +1652,13 @@ class GradingCell:
     @property
     def unparsed(self) -> bool:
         return "unparsed" in ((self.state or {}).get("ai") or {})
+
+    @property
+    def route(self) -> str | None:
+        """How the AI grade came: ``api`` (an Anthropic request; grades without a route are such) or ``file``
+        (a Claude Code subagent through ``--export-requests`` / ``--import-replies``); ``None`` without one."""
+        ai = (self.state or {}).get("ai")
+        return str(ai.get("route") or API_ROUTE) if ai else None
 
     @property
     def graded(self) -> bool:
@@ -1875,7 +1897,6 @@ def ask_grader(backend: Any, material: str, allowed: Mapping[str, Sequence[str]]
     from flextool.assistant.llm_adapter import Message, Request
     from flextool.assistant.llm_errors import LLMError
     from flextool.assistant.llm_retry import RetryPolicy, call_with_retries
-    from flextool.assistant.thoughts import strip_thoughts
 
     cancel = threading.Event()
     messages = [Message("user", material)]
@@ -1900,12 +1921,31 @@ def ask_grader(backend: Any, material: str, allowed: Mapping[str, Sequence[str]]
                                      "retry_error": exc.code}) from exc
         on_usage(reply.usage)
         usage.append(_usage_json(reply.usage))
-        last = strip_thoughts(reply.message.text) if reply.message is not None else ""
-        parsed, problems = scoring.check_reply(last, allowed, passed)
+        last, parsed, problems = read_reply(reply.message.text if reply.message is not None else "", allowed, passed)
         if parsed is not None:
-            return {**parsed, "attempts": attempt + 1, "usage": usage}
+            return graded_result(parsed, attempt + 1, usage)
         messages += [Message("assistant", last or "(no text)"), Message("user", scoring.retry_text(problems))]
-    return {"unparsed": last[:2_000], "attempts": 2, "usage": usage, "problems": problems}
+    return unparsed_result(last, usage, problems)
+
+
+def read_reply(text: str, allowed: Mapping[str, Sequence[str]], passed: Iterable[str] = ()) \
+        -> tuple[str, dict[str, Any] | None, list[str]]:
+    """``(text, parsed, problems)`` of a grader reply, whichever route it came by: its reasoning blocks removed,
+    then :func:`scoring.check_reply` (the strict check)."""
+    from flextool.assistant.thoughts import strip_thoughts
+
+    last = strip_thoughts(text)
+    parsed, problems = scoring.check_reply(last, allowed, passed)
+    return last, parsed, problems
+
+
+def graded_result(parsed: Mapping[str, Any], attempts: int, usage: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    return {**parsed, "attempts": attempts, "usage": list(usage)}
+
+
+def unparsed_result(last: str, usage: Sequence[Mapping[str, Any]], problems: Sequence[str]) -> dict[str, Any]:
+    """A reply invalid after the retry: kept (cut) for the owner, who grades the cell from scratch."""
+    return {"unparsed": last[:2_000], "attempts": 2, "usage": list(usage), "problems": list(problems)}
 
 
 def _new_state(cell: GradingCell, previous: Mapping[str, Any] | None) -> dict[str, Any]:
@@ -1929,9 +1969,44 @@ def _current_state(cell: GradingCell) -> dict[str, Any]:
     return dict(_fresh_state(cell) or cell.state or {})
 
 
+def _record_ai(cell: GradingCell, result: Mapping[str, Any], *, pending: bool) -> None:
+    """Saves the AI grade *result* of *cell* (``cells/<n>.json``, atomically): a review written meanwhile is kept,
+    an earlier grade moves into the history (``--changed``), a continued pending retry adds no history entry."""
+    base = _current_state(cell) if pending else _new_state(cell, _fresh_state(cell))
+    base.pop("pending", None)
+    cell.state = {**base, "ai": dict(result), "graded_at": iso(utc_now())}
+    write_json(cell.path, cell.state)
+
+
+def _to_grade(grading: Grading, changed: bool) -> tuple[list[GradingCell], list[GradingCell]]:
+    """``(todo, send)``: the cells grade-ai grades now (not graded, or changed with *changed*) and of them those
+    with an answer (one request each).  Refused: changed cells without *changed*, and any leak the blinding
+    self-test finds in a request as it would be sent (every hit named, nothing sent)."""
+    stale = [c for c in grading.cells if c.stale]
+    if stale and not changed:
+        raise Refused(CHANGED_MATERIAL.format(token=stale[0].token) + f" ({len(stale)} cell(s) changed.)")
+    todo = [c for c in grading.cells if c.state is None or c.stale or not c.graded]
+    send = [c for c in todo if not c.empty]
+    # The blinding self-test of every request this run would send, all of it as sent, before anything is sent.
+    hits = [(c, found) for c in send for found in [_scan(grading, c, _request_text(c.material, c.allowed))] if found]
+    if hits:
+        raise Refused("\n".join(f"Cell {c.token}: the grader material reveals {', '.join(found)}; nothing was sent."
+                                for c, found in hits))
+    return todo, send
+
+
 def cmd_grade_ai(args: argparse.Namespace, *, backend_factory: BackendFactory | None = None,
                  say: Callable[[str], None] = print) -> int:
     try:
+        if args.export_requests and args.import_replies:
+            raise Refused("Give --export-requests or --import-replies, not both.")
+        if args.export_requests or args.import_replies:
+            if _read_grading(Path(args.dir)) is None:
+                raise Refused(NO_GRADING_FILE_ROUTE.format(folder=args.dir))
+            if args.export_requests:                # it only reads the grading folder: no lock
+                return _export_requests(args, Path(args.export_requests), say)
+            with _Lock(Path(args.dir)):
+                return _import_replies(args, Path(args.import_replies), say)
         if _read_grading(Path(args.dir)) is None and len(args.results) == 1 and not args.single_model:
             raise Refused("Grading one model is not blind: give the results folders of every model of the matrix "
                           "(their cells are shuffled together), or --single-model.")
@@ -1954,16 +2029,7 @@ def _grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say: Ca
     grading = load_grading(args, create=True)
     if grading.old_grades:
         say(f"{grading.old_grades} cells carry grades from the earlier grading; they are ignored.")
-    stale = [c for c in grading.cells if c.stale]
-    if stale and not args.changed:
-        raise Refused(CHANGED_MATERIAL.format(token=stale[0].token) + f" ({len(stale)} cell(s) changed.)")
-    todo = [c for c in grading.cells if c.state is None or c.stale or not c.graded]
-    send = [c for c in todo if not c.empty]
-    # The blinding self-test of every request this run would send, all of it as sent, before anything is sent.
-    hits = [(c, found) for c in send for found in [_scan(grading, c, _request_text(c.material, c.allowed))] if found]
-    if hits:
-        raise Refused("\n".join(f"Cell {c.token}: the grader material reveals {', '.join(found)}; nothing was sent."
-                                for c, found in hits))
+    todo, send = _to_grade(grading, args.changed)
     total = len(grading.cells)
     backend = ledger = route = preset = None
     if send:
@@ -2017,10 +2083,7 @@ def _grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say: Ca
                 say(f"Stopped at cell {c.token} of {total}: {message_for(exc, 'terminal')} Run the same command "
                     "again to continue.")
                 return 1
-            base = _current_state(c) if pending else _new_state(c, _fresh_state(c))
-            base.pop("pending", None)
-            c.state = {**base, "ai": result, "graded_at": iso(utc_now())}
-            write_json(c.path, c.state)
+            _record_ai(c, result, pending=bool(pending))
             say(f"Cell {c.token}: graded ({done} of {len(send)} to send"
                 + ("; the reply could not be read" if "unparsed" in result else "") + ").")
     finally:
@@ -2028,6 +2091,147 @@ def _grade_ai(args: argparse.Namespace, backend_factory: BackendFactory, say: Ca
     say(f"Every cell is graded ({total}; {sum(c.empty for c in grading.cells)} without an answer are failed in "
         "code). Next: review --dir.")
     return 0
+
+
+# --- grade-ai, the file route: Claude Code subagents grade instead of the API ---------------------------------
+def request_file_text(material: str, retry: tuple[str, Sequence[str]] | None = None) -> str:
+    """A grading request as a plain text an LLM agent reads: ``SYSTEM:`` then ``USER:``, exactly the system part
+    and the user part the API request sends.  *retry* ``(first reply, problems)`` adds the "JSON only" retry as
+    the API sends it: the first reply (``ASSISTANT:``) and the retry text (``USER:``)."""
+    parts = ["SYSTEM:", scoring.GRADER_PROMPT_V2, "", "USER:", material]
+    if retry is not None:
+        first, problems = retry
+        parts += ["", "ASSISTANT:", first or "(no text)", "", "USER:", scoring.retry_text(problems)]
+    return "\n".join(parts) + "\n"
+
+
+def _write_text(path: Path, text: str) -> None:
+    """*text* at *path*, through a temp file and ``os.replace``."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+    tmp.write_text(text, encoding="utf-8", newline="\n")
+    os.replace(tmp, path)
+
+
+def _set_aside(path: Path) -> bool:
+    """A reply that answered other material is kept as ``<name>.stale``, never read again."""
+    if not path.is_file():
+        return False
+    os.replace(path, path.with_name(path.name + ".stale"))
+    return True
+
+
+def _export_paths(out: Path, cell: GradingCell) -> dict[str, Path]:
+    n = cell.number
+    return {"request": out / f"{n}.request.txt", "reply": out / f"{n}.reply.json",
+            "retry_request": out / f"{n}.retry.request.txt", "retry_reply": out / f"{n}.retry.reply.json"}
+
+
+def _token_range(tokens: Sequence[str]) -> str:
+    numbers = sorted(int(t.lstrip("#")) for t in tokens)
+    return f"#{numbers[0]}–#{numbers[-1]}" if numbers else "none"
+
+
+def _export_requests(args: argparse.Namespace, out: Path, say: Callable[[str], None]) -> int:
+    """``grade-ai --export-requests OUT``: the request of every cell grade-ai would send now, as
+    ``OUT/<n>.request.txt``, and ``OUT/index.json`` (the tokens and their request hashes; no model, level or
+    folder name).  The same selection, blinding and leak scan as the API route; nothing is written to the grading
+    folder.  A reply in OUT to a cell whose request changed since the last export is set aside."""
+    grading = load_grading(args, create=False)
+    todo, send = _to_grade(grading, args.changed)
+    old = read_json(out / EXPORT_INDEX) if (out / EXPORT_INDEX).is_file() else {}
+    before = {e["token"]: e["request_sha256"] for e in old.get("cells") or []}
+    entries, aside = [], 0
+    for c in send:
+        paths = _export_paths(out, c)
+        if before.get(c.token) not in (None, c.request_sha256):
+            aside += sum(_set_aside(paths[k]) for k in ("reply", "retry_request", "retry_reply"))
+        _write_text(paths["request"], request_file_text(c.material))
+        entries.append({"token": c.token, "request": paths["request"].name, "reply": paths["reply"].name,
+                        "request_sha256": c.request_sha256})
+    write_json(out / EXPORT_INDEX, {"format": EXPORT_FORMAT, "instructions": EXPORT_INSTRUCTIONS,
+                                    "cells": entries})
+    empty = sum(1 for c in todo if c.empty)
+    say(f"Exported {len(entries)} request(s) to {out} ({_token_range([e['token'] for e in entries])})"
+        + (f"; {empty} cell(s) without an answer need none (import fails them in code)" if empty else "")
+        + (f"; {aside} reply file(s) to an earlier request set aside as .stale" if aside else "")
+        + ". When the replies are written: grade-ai ... --import-replies " + str(out))
+    return 0
+
+
+def _import_replies(args: argparse.Namespace, out: Path, say: Callable[[str], None]) -> int:
+    """``grade-ai --import-replies OUT``: each exported cell's ``OUT/<n>.reply.json`` through the same strict
+    check as an API reply, recorded as the API route records it (grader :data:`FILE_GRADER`, route ``file``, no
+    usage).  A cell whose request changed since the export is refused (export again).  A reply that fails the
+    check is not recorded: ``OUT/<n>.retry.request.txt`` gets the API's retry, and a later import reads
+    ``OUT/<n>.retry.reply.json`` (invalid again: recorded unparsed, as the API route does).  A graded cell is never
+    overwritten unless it changed and ``--changed`` is given; running it again continues."""
+    if not (out / EXPORT_INDEX).is_file():
+        raise Refused(f"No {EXPORT_INDEX} in {out}: run grade-ai --export-requests {out} first.")
+    index = read_json(out / EXPORT_INDEX)
+    if not isinstance(index, dict) or index.get("format") != EXPORT_FORMAT:
+        raise Refused(f"{out / EXPORT_INDEX} is not an export of grade-ai --export-requests; export again.")
+    grading = load_grading(args, create=False)
+    todo, _send = _to_grade(grading, args.changed)
+    waiting = {c.token for c in todo}
+    for c in todo:
+        if c.empty:                        # failed in code, as the API route records it
+            c.state = {**_new_state(c, _fresh_state(c)), "graded_at": iso(utc_now())}
+            write_json(c.path, c.state)
+    by_token = {c.token: c for c in grading.cells}
+    recorded, retry, missing, refused, done = [], [], [], [], []
+    for entry in index.get("cells") or []:
+        token = str(entry.get("token"))
+        c = by_token.get(token)
+        if c is None:
+            refused.append(token)
+            say(f"Cell {token}: not a cell of this grading; export again.")
+            continue
+        if token not in waiting:
+            done.append(token)             # graded already (not overwritten)
+            continue
+        if entry.get("request_sha256") != c.request_sha256:
+            refused.append(token)
+            say(f"Cell {token}: its request changed since the export (its answer, the answer key or the rubric); "
+                f"not recorded. Export again: grade-ai ... --export-requests {out}")
+            continue
+        paths = _export_paths(out, c)
+        if not paths["reply"].is_file():
+            missing.append(token)
+            continue
+        passed = [i.id for i in c.items if i.auto]
+        first, parsed, problems = read_reply(paths["reply"].read_text(encoding="utf-8"), c.allowed, passed)
+        result: dict[str, Any] | None = None
+        if parsed is not None:
+            result = graded_result(parsed, 1, [])
+        else:
+            text = request_file_text(c.material, (first, problems))
+            found = _scan(grading, c, text)
+            if found:
+                refused.append(token)
+                say(f"Cell {token}: the retry request reveals {', '.join(found)}; not written.")
+                continue
+            current = paths["retry_request"].read_text(encoding="utf-8") if paths["retry_request"].is_file() else None
+            if current == text and paths["retry_reply"].is_file():
+                last, parsed, problems = read_reply(paths["retry_reply"].read_text(encoding="utf-8"), c.allowed,
+                                                    passed)
+                result = graded_result(parsed, 2, []) if parsed is not None else unparsed_result(last, [], problems)
+            else:
+                if current != text:        # a retry reply to an earlier first reply answers another retry
+                    _set_aside(paths["retry_reply"])
+                    _write_text(paths["retry_request"], text)
+                retry.append(token)
+                continue
+        pending = (c.state or {}).get("pending") if not c.stale else None
+        _record_ai(c, {**result, "grader": FILE_GRADER, "route": FILE_ROUTE}, pending=bool(pending))
+        recorded.append(token)
+    left = sum(1 for c in grading.cells if not c.graded)
+    say(f"Recorded {len(recorded)}; needing a retry {len(retry)}"
+        + (f" (write <n>.retry.reply.json for {', '.join(retry)})" if retry else "")
+        + f"; missing {len(missing)}" + (f" ({_token_range(missing)})" if missing else "")
+        + (f"; refused {len(refused)}" if refused else "") + (f"; graded already {len(done)}" if done else "")
+        + f". {left} of {len(grading.cells)} cells still wait for a grade.")
+    return 2 if refused else 0
 
 
 # --- review: the owner judges first, then sees Opus's verdicts --------------------------------------------------
@@ -2285,8 +2489,8 @@ def final_grade(cell: GradingCell, review: Mapping[str, Any] | None) -> dict[str
         return None
     ai = cell.ai
     verdicts = {k: v["verdict"] for k, v in ai["items"].items()}
-    return {"grader": analysis.GRADER_MODEL, "outcome": scoring.outcome(cell.items, verdicts), "verdicts": verdicts,
-            "understandability": ai["understandability"]}
+    return {"grader": ai.get("grader") or analysis.GRADER_MODEL, "outcome": scoring.outcome(cell.items, verdicts),
+            "verdicts": verdicts, "understandability": ai["understandability"]}
 
 
 def summary_line(record: Mapping[str, Any], run: Mapping[str, Any], *, key_version: int | None,
@@ -2307,7 +2511,7 @@ def summary_line(record: Mapping[str, Any], run: Mapping[str, Any], *, key_versi
                               "missing": [], "wrong": [], "critical_missing": [], "form_missing": [],
                               "invented_numbers": 0, "no_answer": False, "cut_off": False, "understandability": None,
                               "ai_outcome": None, "ai_understandability": None, "ai_confidence": None,
-                              "items_overridden": [], "diagnostics": {}}
+                              "ai_route": None, "items_overridden": [], "diagnostics": {}}
     if cell is not None and grade is not None:
         ai = cell.ai
         ai_verdicts = {k: v["verdict"] for k, v in ai["items"].items()} if ai else {}
@@ -2318,7 +2522,7 @@ def summary_line(record: Mapping[str, Any], run: Mapping[str, Any], *, key_versi
                       understandability=grade["understandability"],
                       ai_outcome=scoring.outcome(cell.items, ai_verdicts) if ai else None,
                       ai_understandability=ai["understandability"] if ai else None,
-                      ai_confidence=ai["confidence"] if ai else None,
+                      ai_confidence=ai["confidence"] if ai else None, ai_route=cell.route if ai else None,
                       items_overridden=sorted(k for k, v in grade["verdicts"].items()
                                               if ai and grade["grader"] == "owner" and ai_verdicts.get(k) != v),
                       diagnostics=dict(cell.diagnostics))
@@ -2406,7 +2610,8 @@ def reviewed_cells(grading: Grading, review: Mapping[str, Any]) -> list[Any]:
             outcome=(scoring.outcome(c.items, first["items"]), scoring.outcome(c.items, ai)),
             understandability=(first["understandability"], c.ai["understandability"]),
             sample=c.token in review["sample"],
-            own_matched=[r for r in reasons if r not in ("sample", "all")] == ["own_model"]))
+            own_matched=[r for r in reasons if r not in ("sample", "all")] == ["own_model"],
+            route=c.route or API_ROUTE))
     return out
 
 
@@ -2477,6 +2682,13 @@ def _summary(args: argparse.Namespace, say: Callable[[str], None]) -> int:
                                          seed=int(grading.state["seed"]))
         (grading.folder / AGREEMENT_FILE).write_text(text + "\n", encoding="utf-8")
         say(text)
+    routes: dict[str, int] = {}
+    for c in grading.cells:
+        if c.route is not None:
+            routes[c.route] = routes.get(c.route, 0) + 1
+    if routes:
+        say("AI grades by route: " + ", ".join(f"{r} {routes[r]}" for r in sorted(routes))
+            + f" ({API_ROUTE}: {analysis.GRADER_MODEL} through the API; {FILE_ROUTE}: {FILE_GRADER}).")
     if not args.record:
         return 0
     if review is None:
@@ -2579,6 +2791,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help="grade again the cells whose answer, key or rubric changed (their review starts over)")
     p.add_argument("--accept-data-notice", action="store_true",
                    help="accept Anthropic's data notice for this run only")
+    p.add_argument("--export-requests", type=_abs_path, metavar="OUT",
+                   help="the file route: write the requests grade-ai would send now to OUT (nothing is sent, "
+                        "nothing written to --dir) for Claude Code subagents to grade")
+    p.add_argument("--import-replies", type=_abs_path, metavar="OUT",
+                   help="the file route: record the replies the subagents wrote to OUT (OUT/<n>.reply.json)")
     p.add_argument("--key", default=str(scoring.KEY_PATH), help=argparse.SUPPRESS)
     p.add_argument("--set", default=str(scoring.SET_PATH), help=argparse.SUPPRESS)
 

@@ -1144,3 +1144,184 @@ def test_summary_and_calibrate_leave_a_skipped_cell_out(scoring, evaluator, anal
     assert cal.split()[2] == "2/2"
     assert "  skipped: 1 (by the owner, in no rate: S01 at small)" in report
     assert "small: 2 cells, 2 answered" in report
+
+
+# --- 13. the file route: Claude Code subagents grade instead of the API ---------------------------------------
+def _file_route(evaluator, grading: Path, key: Path, folders, flag: str, out: Path, *extra: str,
+                said=None) -> int:
+    argv = ["grade-ai", *map(str, folders), "--dir", str(grading), "--key", str(key), flag, str(out), *extra]
+    return evaluator.cmd_grade_ai(evaluator.build_parser().parse_args(argv),
+                                  say=said.append if said is not None else (lambda _t: None))
+
+
+def _start_grading(evaluator, grading: Path, key: Path, *folders: Path) -> None:
+    """A grading folder with its grading.json (the blind order) and no cell graded, as a first grade-ai leaves
+    it: made without any request."""
+    args = evaluator.build_parser().parse_args(["grade-ai", *map(str, folders), "--dir", str(grading), "--key",
+                                                str(key), *(["--single-model"] if len(folders) == 1 else [])])
+    evaluator.write_json(grading / evaluator.GRADING_FILE, evaluator.load_grading(args, create=True).state)
+
+
+def _request_parts(text: str) -> tuple[str, str]:
+    """(system, user) of an exported request: the SYSTEM section, then the USER section."""
+    assert text.startswith("SYSTEM:\n") and text.endswith("\n")
+    system, user = text[len("SYSTEM:\n"):-1].split("\n\nUSER:\n", 1)
+    return system, user
+
+
+def _fake_reply(material: str) -> str:
+    """What the fake Opus answers to *material* (the same text the API route's fake backend returns)."""
+    from types import SimpleNamespace
+
+    return Opus().reply(SimpleNamespace(messages=[SimpleNamespace(text=material)])).message.text
+
+
+def test_file_route_records_like_the_api_route(scoring, evaluator, tmp_path: Path) -> None:
+    """3 cells graded through the API (fake backend) and, in a copy of that grading folder's grading.json, through
+    the file route with the same replies: each exported request is exactly the API request's system and user part;
+    the export writes nothing to the grading folder and its index names no model, level or folder; the import
+    records each cell as the API route did, the ai block byte-equal apart from the grader, the route and the
+    usage (no usage comes through Claude Code: []).  A second import overwrites nothing; summary counts the route."""
+    alpha, beta, key = _three_cells(scoring, evaluator, tmp_path)
+    api = tmp_path / "grading_api"
+    opus = Opus()
+    assert grade_ai(evaluator, api, key, alpha, beta, opus=opus) == 0
+    sent = {r.messages[0].text: r for r in opus.requests}
+    files = tmp_path / "grading_file"
+    files.mkdir()
+    (files / evaluator.GRADING_FILE).write_bytes((api / evaluator.GRADING_FILE).read_bytes())
+    out = tmp_path / "cc"
+    before = sorted((p.name, p.read_bytes()) for p in files.rglob("*"))
+    said: list[str] = []
+    assert _file_route(evaluator, files, key, (alpha, beta), "--export-requests", out, said=said) == 0
+    assert sorted((p.name, p.read_bytes()) for p in files.rglob("*")) == before       # nothing written to --dir
+    assert said[-1].startswith(f"Exported 3 request(s) to {out} (#1–#3)")
+    index_text = (out / "index.json").read_text(encoding="utf-8")
+    for hidden in ("alpha", "beta", "vendor", "res_", "small", "claude", "opus", str(tmp_path)):
+        assert hidden not in index_text.lower(), hidden
+    index = json.loads(index_text)
+    states = cell_states(api)
+    assert [e["token"] for e in index["cells"]] == ["#1", "#2", "#3"]
+    for e in index["cells"]:
+        assert e["request_sha256"] == states[e["token"]]["request_sha256"]
+        system, user = _request_parts((out / e["request"]).read_text(encoding="utf-8"))
+        assert user in sent and (system,) == sent[user].system                # exactly what the API sent
+        (out / e["reply"]).write_text(_fake_reply(user), encoding="utf-8")
+    said.clear()
+    assert _file_route(evaluator, files, key, (alpha, beta), "--import-replies", out, said=said) == 0
+    assert said[-1] == "Recorded 3; needing a retry 0; missing 0. 0 of 3 cells still wait for a grade."
+    graded = cell_states(files)
+    for token, state in states.items():
+        mine = dict(graded[token])
+        ai = mine.pop("ai")
+        assert (ai.pop("grader"), ai.pop("route"), ai.pop("usage")) == (
+            "claude-opus-5-5 via Claude Code (file route)", "file", [])
+        theirs = dict(state)
+        their_ai = theirs.pop("ai")
+        assert len(their_ai.pop("usage")) == 1
+        assert json.dumps(ai) == json.dumps(their_ai)                            # byte-equal, in its key order
+        mine.pop("graded_at"), theirs.pop("graded_at")
+        assert mine == theirs
+    snapshot = {p.name: p.read_bytes() for p in (files / "cells").glob("*.json")}
+    assert _file_route(evaluator, files, key, (alpha, beta), "--import-replies", out, said=said) == 0
+    assert said[-1].startswith("Recorded 0;") and "graded already 3" in said[-1]
+    assert {p.name: p.read_bytes() for p in (files / "cells").glob("*.json")} == snapshot
+    said.clear()
+    assert summary(evaluator, files, key, tmp_path / "r.jsonl", said=said) == 0
+    assert any(t.startswith("AI grades by route: file 3 ") for t in said)
+    assert not (files / evaluator.LOCK_FILE).exists()
+
+
+def test_file_route_refuses_a_changed_request(scoring, evaluator, tmp_path: Path) -> None:
+    """A reply to a request exported before the key changed is refused (exit 2, export again) and not recorded;
+    a new export sets the old reply aside and the import then waits for a new one."""
+    alpha, beta, key = _three_cells(scoring, evaluator, tmp_path)
+    grading = tmp_path / "grading"
+    _start_grading(evaluator, grading, key, alpha, beta)
+    out = tmp_path / "cc"
+    assert _file_route(evaluator, grading, key, (alpha, beta), "--export-requests", out) == 0
+    for e in json.loads((out / "index.json").read_text(encoding="utf-8"))["cells"]:
+        _system, user = _request_parts((out / e["request"]).read_text(encoding="utf-8"))
+        (out / e["reply"]).write_text(_fake_reply(user), encoding="utf-8")
+    write_key(key, key_version=KEY_VERSION + 1)
+    said: list[str] = []
+    assert _file_route(evaluator, grading, key, (alpha, beta), "--import-replies", out, said=said) == 2
+    assert "Cell #1: its request changed since the export" in said[0] and "--export-requests" in said[0]
+    assert said[-1].startswith("Recorded 0; needing a retry 0; missing 0; refused 3")
+    assert cell_states(grading) == {}
+    assert _file_route(evaluator, grading, key, (alpha, beta), "--export-requests", out) == 0
+    assert (out / "1.reply.json.stale").is_file() and not (out / "1.reply.json").exists()
+    assert _file_route(evaluator, grading, key, (alpha, beta), "--import-replies", out, said=said) == 0
+    assert said[-1].startswith("Recorded 0; needing a retry 0; missing 3 (#1–#3)")
+
+
+def test_file_route_retry_after_a_failed_strict_check(scoring, evaluator, tmp_path: Path) -> None:
+    """A reply that is no JSON object is not recorded: <n>.retry.request.txt is the API's retry (the request, the
+    first reply as ASSISTANT, the same feedback text as USER); the retry reply is then recorded with attempts 2;
+    a second invalid one is recorded unparsed, as the API route does."""
+    folder = results(evaluator, tmp_path / "res", {"G01__small__r1": make_record(scoring, "G01"),
+                                                   "G03__small__r1": make_record(scoring, "G03")})
+    key = write_key(tmp_path / "key.yaml")
+    grading = tmp_path / "grading"
+    _start_grading(evaluator, grading, key, folder)
+    out = tmp_path / "cc"
+    assert _file_route(evaluator, grading, key, (folder,), "--export-requests", out) == 0
+    users = {}
+    for n in (1, 2):
+        users[n] = _request_parts((out / f"{n}.request.txt").read_text(encoding="utf-8"))[1]
+        (out / f"{n}.reply.json").write_text("It is right.", encoding="utf-8")
+    said: list[str] = []
+    assert _file_route(evaluator, grading, key, (folder,), "--import-replies", out, said=said) == 0
+    assert said[-1].startswith("Recorded 0; needing a retry 2 (write <n>.retry.reply.json for #1, #2)")
+    assert cell_states(grading) == {}
+    feedback = scoring.retry_text(["The reply is not a JSON object: send the JSON object alone, with no text "
+                                   "around it."])
+    retry = (out / "1.retry.request.txt").read_text(encoding="utf-8")
+    assert retry == (f"SYSTEM:\n{scoring.GRADER_PROMPT_V2}\n\nUSER:\n{users[1]}\n\nASSISTANT:\nIt is right.\n\n"
+                     f"USER:\n{feedback}\n")
+    (out / "1.retry.reply.json").write_text(_fake_reply(users[1]), encoding="utf-8")
+    (out / "2.retry.reply.json").write_text("still no", encoding="utf-8")
+    assert _file_route(evaluator, grading, key, (folder,), "--import-replies", out, said=said) == 0
+    assert said[-1].startswith("Recorded 2; needing a retry 0; missing 0")
+    ai = {t: s["ai"] for t, s in cell_states(grading).items()}
+    assert ai["#1"]["attempts"] == 2 and "unparsed" not in ai["#1"] and ai["#1"]["route"] == "file"
+    assert (ai["#2"]["unparsed"], ai["#2"]["attempts"], ai["#2"]["usage"]) == ("still no", 2, [])
+
+
+def test_file_route_export_is_blinded_and_leak_scanned(scoring, evaluator, tmp_path: Path, capsys) -> None:
+    """The exported text is the blinded material (a model name the blinding cleans is "[assistant]"); a leak the
+    blinding cannot clean (a name glued to a word) refuses the export, naming the kind, not the text, and no
+    request is written."""
+    record = make_record(scoring, "G01", model="vendor/alpha-one", answer="coal_plant, says alpha-one.")
+    clean = results(evaluator, tmp_path / "res_clean", {"G01__small__r1": record}, model="vendor/alpha-one")
+    key = write_key(tmp_path / "key.yaml")
+    grading = tmp_path / "grading"
+    _start_grading(evaluator, grading, key, clean)
+    out = tmp_path / "cc"
+    assert _file_route(evaluator, grading, key, (clean,), "--export-requests", out) == 0
+    text = (out / "1.request.txt").read_text(encoding="utf-8")
+    assert "says [assistant]." in text and "alpha-one" not in text
+    record = make_record(scoring, "G01", model="vendor/alpha-one", answer="coal_plant, by teamalpha-one.")
+    leaky = results(evaluator, tmp_path / "res_leaky", {"G01__small__r1": record}, model="vendor/alpha-one")
+    other = tmp_path / "grading2"
+    _start_grading(evaluator, other, key, leaky)
+    out2 = tmp_path / "cc2"
+    assert _file_route(evaluator, other, key, (leaky,), "--export-requests", out2) == 2
+    err = capsys.readouterr().err
+    assert "Cell #1: the grader material reveals the model's name; nothing was sent." in err
+    assert "alpha-one" not in err and not out2.exists()
+
+
+def test_agreement_report_per_route(analysis) -> None:
+    """Cells graded through both routes: each route's agreement apart (an API-only grading has no such part)."""
+    def cell(n: int, owner: str, opus: str, route: str, sample: bool = False):
+        return analysis.ReviewedCell(f"#{n}", f"G{n:02d}", (("right", "right"),), (owner, opus), (1, 1),
+                                     sample=sample, route=route)
+
+    cells = [cell(1, "answered", "answered", "api", True), cell(2, "failed", "answered", "file", True),
+             cell(3, "answered", "answered", "file")]
+    text = analysis.agreement_report(cells, unreviewed=0, whole_rest=False, unparsed=0, seed=0)
+    assert "== Graded through the api route: all reviewed cells (1; 1 of the random sample) ==" in text
+    assert "== Graded through the file route: all reviewed cells (2; 1 of the random sample) ==" in text
+    assert "random sample outcome disagreements 1 of 1" in text
+    assert "route" not in analysis.agreement_report(cells[:1], unreviewed=0, whole_rest=False, unparsed=0, seed=0)

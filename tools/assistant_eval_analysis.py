@@ -457,6 +457,8 @@ class ReviewedCell:
     understandability: tuple[int, int]
     sample: bool = False
     own_matched: bool = False
+    #: How Opus's grade came: ``api`` or ``file`` (a Claude Code subagent through grade-ai's file route).
+    route: str = "api"
 
 
 def measure(cells: Sequence[ReviewedCell], name: str, *, seed: int = 0) -> dict[str, Any]:
@@ -562,6 +564,18 @@ def agreement_report(reviewed: Sequence[ReviewedCell], *, unreviewed: int, whole
                "(raw counts; matched difficulty) ==")
     out.append(f"  Opus's own: {_raw(own)}")
     out.append(f"  random sample: {_raw(sample)}")
+    routes = sorted({c.route for c in reviewed})
+    if routes != ["api"] and routes:
+        # The same model by another route (the file route: Claude Code subagents): its agreement apart.
+        for route in routes:
+            of_route = [c for c in reviewed if c.route == route]
+            in_sample = [c for c in of_route if c.sample]
+            out.append(f"== Graded through the {route} route: all reviewed cells ({len(of_route)}; "
+                       f"{len(in_sample)} of the random sample) ==")
+            out += _measure_lines(of_route, seed=seed)
+            if in_sample:
+                d = sum(1 for c in in_sample if c.outcome[0] != c.outcome[1])
+                out.append(f"  random sample outcome disagreements {d} of {len(in_sample)}")
     if unparsed:
         out.append(f"{unparsed} cell(s) Opus's reply could not be read for: graded by the owner alone, left out.")
     return "\n".join(out)
