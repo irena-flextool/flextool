@@ -1,4 +1,14 @@
-## Unreleased
+## Release 4.3.0 (11.11.2026) — AI assistant
+
+### Behaviour changes — read before upgrading
+
+- **Rolling solves of a unit, connection or storage node whose `existing` is a Map by period** (without
+  `virtual_unitsize`) now use the right unit size, so their rolling results can change; see "Solvers and rolling
+  solves".
+- **Gurobi now gets FlexTool's solver options** (it solved at its own defaults before), so Gurobi results can
+  change, for example a MIP stops at `solver_mip_gap`; see "Solvers and rolling solves".
+
+### AI assistant
 
 - **Fixed: a chat in the AI assistant window changed model after the settings changed.** An open or reopened chat
   took the model saved later for new chats at its next question (and that model's level). A chat now keeps the
@@ -55,6 +65,14 @@
   `flextool-assistant --call TOOL '{...}'` runs one tool in the terminal. See "The AI assistant" in the
   documentation. New requirements: `mcp` (2.3 or later 2.x), `platformdirs`, `jsonschema`; run "Update
   FlexTool" (or `pip install -e .`) to get them and the new command.
+- **How the assistant answers.** At every level the assistant gives the answer first. A question about one value
+  gets the value, its unit and where it is stored, and nothing more. A why-question gets the cause in plain words,
+  the few numbers that show it, the other causes it checked in one line, and what you could change, each option
+  with its effect and drawback. It names entities, parameters, result tables and documents, never its tools, and
+  adds a caveat only when it changes the conclusion.
+
+### Parameter descriptions and result labels
+
 - **Changed: every parameter description starts with its unit**, in the default convention (MW, MWh, CUR,
   tCO2): `[MW]`, `[CUR/MWh]`, `[hours]`; `[-]` for a share or ratio, followed by an example (`[-] e.g. 0.9 means
   90%`); words where the unit depends on the use (`[unit of the constraint per MW]`); `[choice]`, `[yes/no]`,
@@ -70,6 +88,9 @@
   `nodeGroup_gdt_p` are MWh per time step (labelled MW before); `entity_annuity_d_p` is the discounted investment
   cost per MW (labelled as a yearly annuity before); the capacity factor tables `unit_outputs_cf_d_ee`,
   `unit_inputs_cf_d_ee` and `connection_cf_d_e` now carry their metadata (a ratio).
+
+### Runs: records, logs and the GUI
+
 - **New: every run records itself in its output folder.** `output_parquet/<run>/_run_status.json` says whether the
   run is running, succeeded, failed, was interrupted, killed or crashed, with each solve's outcome (solver status,
   accepted / rejected and why, objective), the error of a failed run, the input database and scenario, the
@@ -106,6 +127,9 @@
   wrote no outputs, yet Spine Toolbox and the comparison steps read its `finish_time` as a finished run. Such a run
   now exits 1 and leaves the output-info database unchanged. A calibration no longer takes the outputs of an
   earlier run for those of a Benders run without an incumbent.
+
+### Solvers and rolling solves
+
 - **Rolling solves: unit size of a period-Map `existing`.** A unit, connection or storage node without
   `virtual_unitsize` whose `existing` is a Map by period got a unit size of 1000 MW in the rolls of a rolling solve
   (single solves were right), so a 17 MW unit counted as 0.017 units. With `startup_method = binary` such a unit
