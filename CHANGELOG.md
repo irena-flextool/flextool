@@ -474,6 +474,10 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   names, every value is read back to its own variable, and a solution that does not match the model stops the run
   with an error. Needs polar-high 3.12.4. The first `--save-memory` run after the upgrade does not reuse a
   warm-start basis saved by an earlier version.
+- **A crash on macOS could be reported as "killed".** The run record, `flextool-run` and the solver-stack check
+  (`python -m flextool.env_check`) read a signal number with Linux's numbering, so on macOS a bus error (SIGBUS,
+  signal 10 there) was recorded as a kill by SIGUSR1, and signal 7 as a bus error. Signals are now named by the
+  computer's own numbering.
 
 #### Input checks
 

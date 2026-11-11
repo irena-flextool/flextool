@@ -6,9 +6,11 @@ current interpreter (which, in any environment able to run the test suite,
 has a working solver stack).
 """
 
+import enum
 import json
 import os
 import platform
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -38,14 +40,56 @@ def test_windows_normal_exits_are_not_faults(rc):
     assert env_check.is_native_fault(rc, plat="win32") is False
 
 
-@pytest.mark.parametrize("rc", [-11, -4, -7, -6, -8])  # SEGV ILL BUS ABRT FPE
-def test_posix_native_faults(rc):
-    assert env_check.is_native_fault(rc, plat="linux") is True
+def _host_signal(name):
+    """``-signum`` of signal *name* on this computer (the numbers differ between systems); skip where it has none."""
+    signum = getattr(signal, name, None)
+    if signum is None:
+        pytest.skip(f"this computer has no {name}")
+    return -int(signum)
 
 
-@pytest.mark.parametrize("rc", [0, 1, 2, -15, -2])  # incl. SIGTERM, SIGINT
-def test_posix_non_faults(rc):
+@pytest.mark.parametrize("name", ["SIGSEGV", "SIGILL", "SIGBUS", "SIGABRT", "SIGFPE"])
+def test_posix_native_faults(name):
+    assert env_check.is_native_fault(_host_signal(name), plat="linux") is True
+
+
+@pytest.mark.parametrize("rc", [0, 1, 2])
+def test_posix_normal_exits_are_not_faults(rc):
     assert env_check.is_native_fault(rc, plat="linux") is False
+
+
+@pytest.mark.parametrize("name", ["SIGTERM", "SIGINT", "SIGKILL", "SIGUSR1"])
+def test_posix_stop_signals_are_not_faults(name):
+    assert env_check.is_native_fault(_host_signal(name), plat="linux") is False
+
+
+# Darwin's and Linux's numbers for the signals where they differ (and the ones around them).
+_MACOS_SIGNALS = enum.IntEnum("Signals", {
+    "SIGILL": 4, "SIGABRT": 6, "SIGEMT": 7, "SIGFPE": 8, "SIGKILL": 9, "SIGBUS": 10, "SIGSEGV": 11, "SIGUSR1": 30,
+})
+_LINUX_SIGNALS = enum.IntEnum("Signals", {
+    "SIGILL": 4, "SIGABRT": 6, "SIGBUS": 7, "SIGFPE": 8, "SIGKILL": 9, "SIGUSR1": 10, "SIGSEGV": 11,
+})
+
+
+@pytest.mark.parametrize(
+    ("table", "plat", "rc", "fault", "described"),
+    [
+        (_MACOS_SIGNALS, "darwin", -10, True, "SIGBUS (bus error)"),
+        (_MACOS_SIGNALS, "darwin", -7, False, "SIGEMT"),
+        (_MACOS_SIGNALS, "darwin", -11, True, "SIGSEGV (segmentation fault)"),
+        (_MACOS_SIGNALS, "darwin", -30, False, "SIGUSR1"),
+        (_LINUX_SIGNALS, "linux", -7, True, "SIGBUS (bus error)"),
+        (_LINUX_SIGNALS, "linux", -10, False, "SIGUSR1"),
+        (_LINUX_SIGNALS, "linux", -30, False, "signal 30"),
+    ],
+)
+def test_posix_signals_are_named_in_the_running_systems_numbering(monkeypatch, table, plat, rc, fault, described):
+    """Item 215: on macOS 10 is SIGBUS (Linux: SIGUSR1), so a macOS SIGBUS is a native fault, not a kill."""
+    monkeypatch.setattr(signal, "Signals", table)
+    assert env_check.is_native_fault(rc, plat=plat) is fault
+    assert env_check.describe_fault(rc, plat=plat) == described
+    assert env_check.signal_name(-rc) == (None if described.startswith("signal ") else described.split(" (")[0])
 
 
 def test_none_and_zero_never_fault():
