@@ -13,7 +13,7 @@
       
       
       
-        <link rel="prev" href="../testing/">
+        <link rel="prev" href="../assistant_evaluation/">
       
       
         <link rel="next" href="../inject_between_solves/">
@@ -49,6 +49,8 @@
         <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
       
     
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -521,6 +523,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../../results_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how_to/" class="md-nav__link">
         
   
@@ -753,6 +811,34 @@
     
   
     Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ai_assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
   
 
     
@@ -1274,6 +1360,34 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../assistant_evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -1374,6 +1488,28 @@
     <span class="md-ellipsis">
       
         Memory and timing diagnostics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run record
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#user-folders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User folders
       
     </span>
   </a>
@@ -1638,6 +1774,28 @@
     <span class="md-ellipsis">
       
         Memory and timing diagnostics
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#run-record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Run record
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#user-folders" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        User folders
       
     </span>
   </a>
@@ -1995,6 +2153,54 @@ environment) is in <a href="../architecture/#runtime-options">architecture.md, "
 <div class="highlight"><pre><span></span><code><span class="nv">FLEXTOOL_MEM_SAMPLER</span><span class="o">=</span><span class="m">1</span><span class="w"> </span><span class="nv">FLEXTOOL_MEM_SAMPLER_INTERVAL_MS</span><span class="o">=</span><span class="m">50</span><span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>python<span class="w"> </span>run_flextool.py<span class="w"> </span>input.sqlite<span class="w"> </span>output_info.sqlite<span class="w"> </span>--scenario-name<span class="w"> </span>base
 </code></pre></div>
+<h2 id="run-record">Run record</h2>
+<p>Each run writes <code>_run_status.json</code> and <code>_run.log</code> into its <code>output_parquet/&lt;run&gt;/</code> folder. <code>_run.log</code> is written by
+the process that holds the run's output pipe, when there is one.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Set to</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FLEXTOOL_RUN_LOG_OWNER</code></td>
+<td>unset</td>
+<td><code>1</code></td>
+<td>Set by the GUI and <code>flextool-run</code> in the environment of the engine run they start (only that direct child; the engine removes it, so no run it starts sees it). It tells the engine that its parent writes <code>_run.log</code> from the output pipe, with the native solver lines and crash dumps: the engine prints one marker line for the parent instead of copying its own console output into the log. Not for use by hand.</td>
+</tr>
+<tr>
+<td><code>FLEXTOOL_RUN_STOP_FILE</code></td>
+<td>unset</td>
+<td>a file path</td>
+<td>Set by the GUI in the environment of a calibration or representative-period job, and inherited by every <code>flextool-run</code> supervisor that job starts. When the file appears (the GUI writes the reason into it when the job is stopped), the supervisor kills its engine and records the run as <code>killed</code> with that reason; a supervisor that finds it before its engine starts runs nothing. The supervisor leaves it out of the engine's environment. Not for use by hand.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="user-folders">User folders</h2>
+<p>FlexTool keeps its per-user files (the AI assistant's settings, saved chats, usage ledger, key file and caches) in
+the platform's user config and cache folders, found with <code>platformdirs</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Default</th>
+<th>Set to</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FLEXTOOL_USER_HOME</code></td>
+<td>unset (the platform's folders)</td>
+<td>folder</td>
+<td>FlexTool's user config folder becomes <code>&lt;folder&gt;/config</code> and its user cache folder <code>&lt;folder&gt;/cache</code>. The test suite sets it for every test process and every process a test starts (<code>tests/user_dirs_guard.py</code>), so no test reads or writes the real user folders.</td>
+</tr>
+</tbody>
+</table>
 <h2 id="process-level">Process level</h2>
 <p>Set when <code>flextool</code> is imported, with <code>setdefault</code> semantics: a value already in the environment wins.</p>
 <table>

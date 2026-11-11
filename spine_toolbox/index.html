@@ -50,6 +50,8 @@
       
     
     
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
     <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -521,6 +523,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../results_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../how_to/" class="md-nav__link">
         
   
@@ -949,6 +1007,34 @@
     
   
     Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ai_assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
   
 
     
@@ -1473,6 +1559,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../dev/assistant_evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../dev/env_vars/" class="md-nav__link">
         
   
@@ -1929,8 +2043,8 @@ workflow.</p>
   roots its outputs at. See <a href="#choosing-the-project-folder">Choosing the project folder</a>
   below. (This replaces the older <code>flextool_location.txt</code>; you may rename the
   connection to "Project folder" in the Toolbox GUI if you like.)</li>
-<li><strong>FlexTool</strong> (Tool) — the solve step. Runs <code>flextool/cli/cmd_run_flextool.py</code> (the same
-  module as the <code>flextool-run</code> console script) as a subprocess. Receives the <strong>Input
+<li><strong>FlexTool</strong> (Tool) — the solve step. Runs <code>flextool/cli/cmd_run_flextool.py</code> (the engine
+  that the <code>flextool-run</code> console script supervises) as a subprocess. Receives the <strong>Input
   data</strong>, <strong>Output info</strong>, and <strong>Output settings</strong> database URLs as arguments.</li>
 <li><strong>Output info</strong> (Data Store) — <code>output_info.sqlite</code>, where the FlexTool run records
   what it produced (scenario list, output locations).</li>
@@ -1945,9 +2059,10 @@ workflow.</p>
 </ul>
 <h2 id="how-flextool-itself-runs">How FlexTool itself runs</h2>
 <p>The <strong>FlexTool</strong> workflow item is a Spine Toolbox <code>Tool</code> whose specification is a thin
-Python entry that calls <code>flextool/cli/cmd_run_flextool.py</code> — the same CLI command the
-FlexTool GUI and the <code>flextool-run</code> console script invoke. Once it starts, no Spine
-Toolbox code is in the loop:</p>
+Python entry that calls <code>flextool/cli/cmd_run_flextool.py</code> — the engine that the FlexTool
+GUI runs and the <code>flextool-run</code> console script supervises. Once it starts, no Spine
+Toolbox code is in the loop (the run's <code>_run.log</code> holds FlexTool's own console output; the
+solver's native lines are only in the Tool's console):</p>
 <ul>
 <li>The engine reads inputs from the <strong>Input data</strong> Spine database via <code>SpineDBBackend</code>.</li>
 <li>Per-solve preprocessing produces polars frames in memory.</li>
@@ -1968,7 +2083,7 @@ Toolbox-produced results, and the Toolbox can run a GUI-made project.</p>
 <h3 id="choosing-the-project-folder">Choosing the project folder</h3>
 <p>The project folder is set by editing <strong>one line</strong> in the user-local, gitignored
 file <code>templates/project_folder.txt</code> (seeded for you by <code>flextool-update</code>):</p>
-<div class="highlight"><pre><span></span><code>projects/Rivendell
+<div class="highlight"><pre><span></span><code>projects/MyProject
 </code></pre></div>
 <p>The path may be <strong>absolute</strong> or <strong>relative to the FlexTool root</strong>. Leave the
 file <strong>blank</strong> (or with only comment lines) to send outputs to the FlexTool root

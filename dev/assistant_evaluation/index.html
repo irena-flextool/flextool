@@ -1,0 +1,2546 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.">
+      
+      
+        <meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland">
+      
+      
+      
+        <link rel="prev" href="../testing/">
+      
+      
+        <link rel="next" href="../env_vars/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../img/irena_flextool_favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Evaluating the AI assistant - IRENA FlexTool</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#evaluating-the-ai-assistants-levels" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="IRENA FlexTool" class="md-header__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            IRENA FlexTool
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Evaluating the AI assistant
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="IRENA FlexTool" class="md-nav__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    IRENA FlexTool
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../interface_overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../install_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model outputs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../results_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how_to/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../advanced_concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interfaces
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Interfaces
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../flextool_gui_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../spine_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine database editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../excel_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../terminal_workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ai_assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Solvers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/highs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HiGHS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/gurobi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gurobi
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/cplex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CPLEX
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/xpress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Xpress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../solvers/copt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    COPT
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The engine pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LP scaling pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../slack_convention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Slack convention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../decomposition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../db_schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database schema and migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-questions-and-their-classes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The questions and their classes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-grounding-project" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The grounding project
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-the-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running the models
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#grading" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grading
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Grading">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#items-and-outcomes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Items and outcomes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-graders-see" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the graders see
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#grade-ai" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        grade-ai
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#grading-with-claude-code-instead-of-the-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grading with Claude Code instead of the API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        review
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#review-in-a-markdown-editor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        review in a markdown editor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-helpfulness-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The helpfulness review
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-evidence-for-the-owner" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The evidence for the owner
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-answer-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The answer key
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-resultsjsonl-over-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading results.jsonl over time
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../inject_between_solves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Injecting parameters between solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archived
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Archived
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/browser_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../archived/install_web_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface install (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-questions-and-their-classes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The questions and their classes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-grounding-project" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The grounding project
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#running-the-models" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Running the models
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#grading" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grading
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Grading">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#items-and-outcomes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Items and outcomes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#what-the-graders-see" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What the graders see
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#grade-ai" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        grade-ai
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#grading-with-claude-code-instead-of-the-api" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Grading with Claude Code instead of the API
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        review
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#review-in-a-markdown-editor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        review in a markdown editor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-helpfulness-review" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The helpfulness review
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#summary" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        summary
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-evidence-for-the-owner" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The evidence for the owner
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-answer-key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The answer key
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-resultsjsonl-over-time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading results.jsonl over time
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="evaluating-the-ai-assistants-levels">Evaluating the AI assistant's levels</h1>
+<p>The assistant works at three levels: basic, standard and advanced. Each level has its own instructions, tools and
+token budgets. FlexTool places a model at a level from its name, its size and its context window. The
+<strong>calibration</strong> checks those placements and budgets on questions whose answers are known. It is run by hand, at
+release time or when the levels change. It never runs in CI, and pytest never collects it.</p>
+<p>Everything lives under <code>tools/</code>, which is not packaged:</p>
+<table>
+<thead>
+<tr>
+<th>file</th>
+<th>what it holds</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>tools/assistant_eval.py</code></td>
+<td>the command line: <code>build</code>, <code>run</code>, <code>grade-ai</code>, <code>review</code>, <code>summary</code>, <code>calibrate</code></td>
+</tr>
+<tr>
+<td><code>tools/assistant_eval_scoring.py</code></td>
+<td>the question set and answer key formats, the automatic checks, the graded items and the grader material</td>
+</tr>
+<tr>
+<td><code>tools/assistant_eval_analysis.py</code></td>
+<td>the calibration tables and the agreement figures</td>
+</tr>
+<tr>
+<td><code>tools/assistant_eval_data/grounding_set.yaml</code></td>
+<td>the questions, each with a difficulty class</td>
+</tr>
+<tr>
+<td><code>tools/assistant_eval_data/answer_key.yaml</code></td>
+<td>the answers, written by an independent oracle</td>
+</tr>
+<tr>
+<td><code>tools/assistant_eval_data/results.jsonl</code></td>
+<td>the committed summary, one line per graded answer</td>
+</tr>
+<tr>
+<td><code>tests/assistant/grounding_projects.py</code></td>
+<td>the synthetic project the questions are about</td>
+</tr>
+</tbody>
+</table>
+<h2 id="the-questions-and-their-classes">The questions and their classes</h2>
+<p>Each question has one of three difficulty classes:</p>
+<ul>
+<li><strong>lookup</strong>: one value or fact. This includes units, inactive entities, a failed run, and questions the data
+  cannot answer.</li>
+<li><strong>interpret</strong>: a question across tables or scenarios, or about an equation.</li>
+<li><strong>diagnose</strong>: a causal chain over several steps, such as why there is unserved energy or why an investment has
+  its size.</li>
+</ul>
+<p>The basic level is meant for lookup questions. Standard adds interpret questions, and advanced adds diagnose
+questions. Every model answers every question at every level setting. This shows what a model does at its own
+level, and whether it escalates cleanly at a lower one.</p>
+<h2 id="the-grounding-project">The grounding project</h2>
+<p><code>python tools/assistant_eval.py build --out DIR</code> builds the project the questions are about and solves it (about
+half a minute). The project uses <code>tests/fixtures/tests.json</code> with three override alternatives:</p>
+<ul>
+<li><code>h2_lookup</code>: a storage node whose description gives its own units;</li>
+<li><code>demand_update</code>: a run that succeeds, after which the source is rewritten so that the next run fails in the
+  input checks;</li>
+<li><code>invest_2day</code>: an investment version of the 48-hour solve.</li>
+</ul>
+<p>The fixture's scenarios <code>coal</code> and <code>coal_co2_price</code> are solved as they are. The project folder name has a space
+and an <code>ä</code> in it.</p>
+<p><code>build</code> writes a marker file, <code>.flextool_grounding_project.json</code>. The marker holds a hash of the source database,
+the run id of each result folder, and a fingerprint of the source, the overrides and the run ids. <code>run</code> refuses a
+project without a valid marker, and one that has changed since it was built: another database, another input
+source, results of another run, or a run of its own made again. It also refuses a project built without its runs.
+Data from a real project therefore never reaches a calibration model.</p>
+<p>Two builds are never the same project. The source database differs in its hash from build to build (the database
+records its own times), and every run gets a new run id. A rebuild therefore starts a new matrix: results folders
+made on an earlier build cannot be continued with <code>--resume</code> on the new one, nor summarised or sampled together
+with results of the new one. Keep the build for as long as its results are being run and graded.</p>
+<h2 id="running-the-models">Running the models</h2>
+<div class="highlight"><pre><span></span><code>python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provider PRESET --model MODEL \
+    --out _audit_reports/assistant_eval/MODEL_NAME [--levels basic,standard,advanced] [--accept-data-notice]
+</code></pre></div>
+<ul>
+<li><strong>Keys</strong> are read from the system keyring or from the provider's environment variable. They are never given on
+  the command line or in a file.</li>
+<li><strong>The data notice</strong> is the one the chat shows. <code>--accept-data-notice</code> accepts it for this run only, and only for
+  a grounding project: nothing is kept, so every run on a remote service needs the flag (also with <code>--resume</code>), an
+  acceptance in the chat does not cover a calibration, and the chat still asks. When the probe shows that a model
+  is forwarded (an Ollama cloud model), that route's notice is asked as well.</li>
+<li><strong>One record per cell.</strong> A cell is one model at one level setting answering one question. The records go to the
+  <code>--out</code> folder. They are redacted, and they stay local: <code>_audit_reports/</code> is git-ignored. Each question gets a
+  fresh conversation. The eight turns of S01 share one conversation, and S01 runs only at the model's automatic
+  level.</li>
+<li><strong>Local models (Ollama).</strong> Make one variant of the model for each context size. For example, write a Modelfile
+  with <code>FROM &lt;model&gt;</code> (a model you have pulled) and <code>PARAMETER num_ctx 32768</code>, then run
+  <code>ollama create &lt;model&gt;-32k -f Modelfile</code>.
+  Do the same for <code>-16k</code> and <code>-64k</code>. Then pass
+  <code>--ollama-context basic=16384,standard=32768,advanced=65536</code>. Before the first cell of each setting, the runner
+  loads that setting's variant and records its context and memory use. If the variant runs with a smaller context
+  than asked, or does not fit fully in graphics memory, every cell of that setting is recorded as "not applicable
+  (context)" and not run.
+  On a card whose memory is partly used by the desktop, a model may never fit fully. <code>--allow-cpu-offload</code> runs
+  a variant that loaded with the asked context but is partly on the CPU. Each cell records the offload: the
+  model's size, its size in graphics memory and the share on the CPU (<code>cpu_offload</code> in the cell and in its
+  <code>results.jsonl</code> line, null when the model was fully in graphics memory). A variant whose context is smaller
+  than asked is still not applicable.</li>
+<li><strong>OpenRouter free models.</strong> <code>--relax-data-collection</code> lets OpenRouter use providers that keep the data of the
+  requests. The data is synthetic, and each cell records this. The runner stops after a daily number of requests:
+  45 for a <code>:free</code> model by default, or <code>--max-requests-per-day N</code>. When it stops, it prints "Daily request budget
+  used. Run again with --resume --accept-data-notice tomorrow." (without the flag for a local model). The budget
+  is checked before every request, also inside a cell: the cell's checkpoint is kept (below) and the next day
+  continues it from that request, so a cell of more requests than one day allows (S01) finishes over two days. A
+  provider's "quota used" reply stops it in the same way.</li>
+<li><strong>Errors.</strong> A cell whose answer was cut off, was still too long for the context, or was refused by the provider
+  is a graded outcome and is saved. Any other error stops the run with exit code 1 (a daily quota: exit 0):</li>
+<li>after a <em>temporary</em> one (a busy or overloaded service, a rate limit, Google's per-minute input-token quota, no
+    connection, a timeout, a daily quota) the cell is kept: "G05__large__r1: kept up to turn 1, request 7; run
+    again with --resume to continue it";</li>
+<li>after any other (a key, permission, credit, model, routing, tools or history error, an internal fault) nothing
+    of the cell is saved: "…: nothing was saved for this cell. Run again with --resume." Its next <code>--resume</code> asks it
+    from the start.
+  The requests a cell sent count towards the day's budget once each (<code>spent.json</code> in the results folder, the
+  checkpoints and the records).</li>
+<li><strong>Checkpoints and <code>--resume</code> (item 216).</strong> Before every request the runner writes the cell's checkpoint,
+  <code>RESULTS/partial/&lt;cell id&gt;.json</code>: the finished turns as they go into the record, the current turn's notices,
+  failed attempts and seconds, the conversation and the turn's state, and <code>requests_by_day</code> (the answered requests
+  it holds, by UTC day). <code>--resume</code> continues a kept cell from the request that failed: the finished turns (of
+  S01, for example) are not asked again, and the failed request is sent again as it was (the same history,
+  <code>tool_choice</code> and output limit, a fresh retry budget). A process that died (Ctrl-C, a crash) leaves a
+  checkpoint with no stop: <code>--resume</code> continues it too and counts its pending request once on that day (it may
+  have been sent). The checkpoint is removed when the cell's record is written. It is continued only when it is
+  of this format, of this folder's model and project (<code>identity</code>), of the same level setting (level, model id
+  sent, window, caps and result caps, compaction, history, free plan, route, the hashes of the instructions and
+  tools) and when the restored conversation gives the same request byte for byte; else the cell starts again,
+  with one line: "G01__medium__r1: started again from the start (the level setting changed: window)" (or "the
+  instructions or tools changed", "a checkpoint of another format", "the checkpoint no longer gives the same
+  request"). A checkpoint written by an older format or commit is never filled with defaults: a field missing or
+  unknown is another format. A resume on another commit is allowed and recorded (the point's <code>git</code> and
+  <code>stopped_git</code>), not prevented: the hashes guarantee only the next request, so such a cell can mix two code
+  versions. The record's <code>resume</code> says how often and where the cell was continued: <code>{"count", "points": [{"turn",
+  "round", "request", "code", "provider", "lost_usage", "stopped_at", "resumed_at", "pace", "stream", "git",
+  "stopped_git", "request_sha256", "body_sha256"}]}</code> (0 points for a cell that never stopped); the stopped turn's
+  <code>failed_attempts</code> hold the stopping attempts, as a retry would; <code>results.jsonl</code> gets <code>resumes</code>, <code>resume_points</code>
+  (<code>[[turn, round]]</code>) and <code>resume_codes</code>. The graders never see any of it. <strong>A checkpoint holds what was sent,
+  unredacted</strong> (0600): do not share a results folder with a <code>partial/</code> in it; <code>grade-ai</code>, <code>review</code> and <code>summary</code>
+  read only a checkpoint's position (to name an unfinished cell), <code>calibrate</code> never.</li>
+<li><strong>Google's per-minute input-token quota.</strong> Gemma on Google's free tier refuses every request whose input alone
+  is over its per-minute input-token quota (CAL-FINDING 2026-11-10). That 429 has its own code, <code>tpm_input</code>
+  (retried like a rate limit, never a graded stop). When the provider refuses the same request (the same
+  <code>request_sha256</code>) twice in a row for it, the cell is "not applicable (provider quota per request)": its record
+  keeps the finished turns, the quota (<code>quota</code>), the stops and every request it took, and has
+  <code>not_applicable_scope: "cell"</code>, so no later <code>--resume</code> asks it, whatever its setting. Every stop in <code>spent.json</code>
+  and in a checkpoint names its request (<code>request_sha256</code>) and the request's corrected estimate (<code>est_input</code>).
+  Another code that stops the same request three times in a row is only named ("the same request failed 3 times;
+  --skip it or wait").</li>
+<li><strong>What the provider said.</strong> After FlexTool's own message the console shows the provider's own words: its HTTP
+  status, its error code and its message, for example
+  <code>Google Gemini said: 429 RESOURCE_EXHAUSTED — You exceeded your current quota. Quota exceeded for metric: …</code>,
+  then each different text of the cell's earlier failed attempts once (<code>earlier attempts (2): 503 UNAVAILABLE —
+  …</code>). The stop's entry in <code>spent.json</code> keeps it: <code>provider</code> (the stopping answer: <code>code</code>, FlexTool's error code
+  such as <code>rpm</code> or <code>busy</code>; <code>status</code>; <code>provider_code</code>; <code>message</code>) and <code>attempts</code> (every failed attempt of the cell
+  in the same form, the stopping one last), with the run's <code>pace</code> and <code>stream</code>. A saved turn keeps its failed
+  attempts too (<code>failed_attempts</code>; the turn's <code>error</code> has <code>provider</code>). The message is redacted (no key, no local
+  path) and at most 300 characters. An error that came with no provider answer (no connection, a timeout, a
+  stream that ended early) has <code>null</code> status, code and message.</li>
+<li><strong><code>--pace SECONDS</code></strong> keeps at least that many seconds between the starts of two requests of the run, on top of
+  FlexTool's own pacing (the spacing is the largest of the pace, the interval learned from rate limits, the
+  preset's seed and the provider's request-limit headers). The pace is not learned or kept for the chat. A
+  provider that limits the tokens per minute refuses requests that are each small enough: every request of a cell
+  carries about 5 000 tokens of instructions and tool descriptions, so a few back to back exceed the minute.
+  For Gemma via Google (preset <code>gemini</code>) use <code>--pace 20</code>.</li>
+<li><strong><code>--no-stream</code></strong> asks for whole answers instead of streamed ones (the OpenAI-compatible providers; refused for
+  Anthropic). The answer is read as the streamed one is: the same text (reasoning blocks such as Gemma's
+  <code>&lt;thought&gt;</code> removed), tool calls with their provider data (Gemini's thought signatures), usage and error
+  classification. Gemma via Google answered whole requests more reliably than streamed ones in manual tests.</li>
+<li><strong><code>--pace</code> and <code>--no-stream</code> are part of the folder's record, not of its identity</strong>: <code>run.json</code> lists every
+  run's <code>pace</code> and <code>stream</code> (<code>runs</code>), each cell records the ones it was asked with (in <code>model</code>), and a <code>--resume</code>
+  may change them.</li>
+<li><strong><code>--resume</code></strong> skips finished cells, continues the kept ones and asks again the others that stopped. It also runs a
+  cell recorded as not applicable once its setting fits. A saved cell that is asked again stays in the folder
+  until its new record replaces it, so a stop on the way never leaves the cell missing. <code>run.json</code> records the
+  questions, levels and repeats every run of the folder planned (its <code>matrix</code>), before any cell is asked. It refuses to continue a folder made with another model,
+  provider, address, free-plan setting, Ollama contexts, CPU-offload setting, data-collection setting or project. Other levels,
+  questions or repeats are fine.</li>
+<li><strong>Skipping a cell that never completes.</strong> A cell kept at a request that fails every time (the same request
+  stopped again and again) does not finish. The owner can leave it out:</li>
+</ul>
+<div class="highlight"><pre><span></span><code>python tools/assistant_eval.py run --resume --project DIR/"Grounding project ä" --provider PRESET \
+    --model MODEL --out RESULTS --skip S01__small__r1 --skip-reason "the endpoint breaks off"
+</code></pre></div>
+<p>with the other options of the folder's first run (its identity is checked as for <code>--resume</code>). <code>--skip</code> can be
+  given more than once. Nothing is asked and no notice or key is needed: <code>run.json</code> records each cell as "not
+  applicable (skipped by owner)" (its <code>skipped</code> entry) with the reason, the time and the attempts and requests
+  <code>spent.json</code> and a saved record show (null when nothing tells). The skip is part of the folder's record, not of
+  its identity, so a later <code>--resume</code> is not refused; it leaves the cell out. A cell id the folder cannot have is
+  refused, with the closest ids named; a finished or not-applicable cell cannot be skipped. A skipped cell keeps
+  its checkpoint (its requests are in the skip's count; the attempts are the stops of <code>spent.json</code>). <code>--unskip CELL</code>
+  takes a skip back (the entry moves to <code>unskipped</code>) and the next <code>--resume</code> asks the cell again, from its
+  checkpoint when it has one (a cell skipped before checkpoints, such as S01 of the first Gemma folder, starts once
+  from the start). <code>--unskip CELL</code> also takes back a cell not applicable for the provider's quota per request: its
+  record goes (its requests stay counted in <code>spent.json</code>, <code>replaced</code>) and the next <code>--resume</code> asks it from the
+  start, for example after the provider's limit changed. <code>grade-ai</code>, <code>review</code>
+  and <code>summary</code> accept a folder whose only gaps are skipped cells: a skipped cell is in no rate and no agreement
+  figure. <code>summary</code> prints it apart ("skipped: 1", with the cell and the reason), <code>summary --record</code> appends it as
+  outcome <code>skipped</code> (with <code>skip_reason</code> and <code>skip_attempts</code>) and <code>calibrate</code> lists it apart in the same way.
+- <strong>Usage.</strong> The requests are counted in the usage ledger under the provider's name with "(calibration)" added,
+  apart from chat use.</p>
+<h2 id="grading">Grading</h2>
+<p>Claude Opus 5.5 (<code>claude-opus-5-5</code>) grades every cell, blind. The owner then either reviews part of the cells
+factually, always giving their own verdict before seeing Opus's (the owner's review is final), or leaves the
+facts to Opus and rates how helpful a small sample of answers is (<a href="#the-helpfulness-review">the helpfulness review</a>).</p>
+<div class="highlight"><pre><span></span><code>python tools/assistant_eval.py grade-ai _audit_reports/assistant_eval/{opus,gemini,gemma,gptoss} \
+    --dir _audit_reports/assistant_eval/grading_v2 --accept-data-notice
+python tools/assistant_eval.py review --dir _audit_reports/assistant_eval/grading_v2      # repeat until done
+python tools/assistant_eval.py summary --dir _audit_reports/assistant_eval/grading_v2 --record
+python tools/assistant_eval.py calibrate
+</code></pre></div>
+<p>All grading state lives in the grading folder (<code>--dir</code>): <code>grading.json</code> (the blind order and its seed, the results
+folders, the key version), <code>cells/&lt;n&gt;.json</code> (Opus's grading and the owner's review of cell #n), <code>review.json</code> (the
+review queue and its random sample) and <code>agreement.txt</code>. The results folders are only read. A grading folder made
+by the earlier grading (no "missing" verdict, no "incomplete" outcome) is refused: grade into a new folder.</p>
+<h3 id="items-and-outcomes">Items and outcomes</h3>
+<p>The automatic checks run against the answer key: facts with their units and SI prefixes, that every number in the
+answer comes from a tool result, forbidden claims, "the data does not answer" questions, the failed run and
+escalation. A check can only settle that an item is <strong>right</strong>. Every other finding is an item a grader judges,
+with the verdicts it allows:</p>
+<ul>
+<li><strong>right</strong>: the answer gets this item right;</li>
+<li><strong>missing</strong>: the answer does not give it, and says nothing false about it;</li>
+<li><strong>wrong</strong>: the answer says something false about it, or gives another value.</li>
+</ul>
+<p>A number fact the check did not find is judged with the numbers that carry the fact's unit in the answer. A
+number with no tool source is right (a shown or plain calculation, or a general constant) or wrong (invented). A
+match of a forbidden pattern is wrong, or right when the answer does not claim it (for example, negated).</p>
+<p>Each cell gets one outcome:</p>
+<ul>
+<li><strong>answered</strong>: nothing missing and nothing wrong;</li>
+<li><strong>incomplete</strong>: nothing wrong and no invented number, but something missing (a critical item too: the line
+  lists <code>critical_missing</code>);</li>
+<li><strong>escalated</strong>: a clean hand-over to a higher level and nothing wrong (what it left out does not count);</li>
+<li><strong>failed</strong>: something wrong, an invented number, or no final answer.</li>
+</ul>
+<p>A missing unit next to a right value, or a true claim not marked as an assumption, does not make a cell
+incomplete: it is counted as <code>form_missing</code>. A wrong unit or a false unmarked claim fails the cell. A cell whose
+final answer is empty (for example, cut off while the model was still reasoning) is failed without asking Opus
+(<code>no_answer</code> in its line). The tools called and the run's health are not items; the line keeps them as
+diagnostics.</p>
+<p>Each cell also gets an understandability rating, which never changes the outcome: 1 = clear (the user gets the
+answer on the first reading), 2 = understandable with effort (the answer is there, but buried, out of order or
+needs a second reading), 3 = hard to follow.</p>
+<h3 id="what-the-graders-see">What the graders see</h3>
+<p>Opus and the owner see the same material: the question, the expected behaviour ("a full answer is expected" or
+"escalating to a higher level is acceptable"), the answer key, the items the checks found right, each tool call
+with its arguments and its result (folded to 4 000 characters), and the final message of each turn. Reasoning
+blocks (<code>&lt;thought&gt;</code>, <code>&lt;think&gt;</code>) are removed, and so are reasoning fields, continuation notes, notices, usage and
+times. The answer the graders see is the final message; text a model streamed between tool rounds is not
+recorded.</p>
+<p>Grading is blind. The cells of every model are shuffled together, and a cell is shown as <code>Cell #n</code>. Model and
+family names become "[assistant]", phrases that name the level become "[level]", the level texts' fixed
+escalation sentences become "[escalation sentence]", and the sizes of cut tool results are hidden. Before
+anything is sent or shown, a leak scan checks every request as it would be sent; if something still names the
+model, the level, a cap or the time of a run, nothing is sent, and every cell it found is named. The blinding is
+partial: style, tool names (the basic level has fewer tools) and answer length can still hint at the model.</p>
+<p>Answers and tool texts are data. Every text a model wrote or a tool returned is inside a fence
+<code>&lt;&lt;&lt;DATA tag&gt;&gt;&gt;</code> … <code>&lt;&lt;&lt;END tag&gt;&gt;&gt;</code> whose tag the model could not know; material that holds its own tag is
+refused. Opus's reply must be exactly the asked JSON (every item once, each verdict among the item's allowed
+ones, confidences, reasons of at most 200 characters). Two slips are accepted and recorded in the grade's
+<code>relaxed</code> list: a reason over 200 characters is cut to 200, and a verdict for an item the automatic checks found
+right is dropped. An otherwise invalid reply gets one retry that names what was wrong, field by field (only
+FlexTool's own item ids and field names); a second invalid reply is saved as unparsed and goes to the owner. An answer whose text, tool names or arguments seem to address a grader
+goes to the owner too, whatever Opus said.</p>
+<h3 id="grade-ai">grade-ai</h3>
+<p><code>grade-ai</code> sends one request per cell (none for a cell without an answer), through FlexTool's retries and pacing.
+A cell whose items the automatic checks all found right is sent too: its request asks only for the
+understandability.
+The key comes from the keyring or <code>ANTHROPIC_API_KEY</code>; <code>--accept-data-notice</code> accepts Anthropic's data notice for
+this run only. The requests are counted in the usage ledger as "Anthropic (calibration)". Give it the results
+folders of every model; one folder alone is refused unless <code>--single-model</code>. The folder set is fixed by the first
+<code>grade-ai</code>. It refuses results folders that miss a planned cell (one of the <code>run.json</code> matrix; for a folder from
+before the matrix, any question, level or repeat another graded folder has) or have cells that are not finished
+(a cell the owner skipped with <code>run --skip</code> is no gap; a cell not applicable for the provider's quota per
+request is complete). The refusal names the cells and each folder's <code>run --resume</code> command; a cell with only
+a checkpoint is named "(unfinished: checkpoint at turn 2, request 7)". A cell that came back later would change
+the grading's cells, so <code>grade-ai</code>, <code>review</code> and <code>summary</code> refuse until every folder is complete.</p>
+<p>Run the same command again to continue: a cell that was graded from the same material is skipped. If a cell's
+answer, the answer key or the rubric has changed since, <code>grade-ai</code> stops; <code>--changed</code> grades those cells again and
+keeps their earlier grading in the cell's history (their review starts over). An error that is not an answer
+stops the run with exit code 1 and saves nothing for that cell; an error during the retry keeps the first reply
+(already paid), and the next run sends only the retry. Grading requests are sent without prompt caching (each
+prompt is unique). <code>grade-ai</code>, <code>review</code> and <code>summary --record</code> lock the grading folder: two of them cannot work on
+it at once.</p>
+<h3 id="grading-with-claude-code-instead-of-the-api">Grading with Claude Code instead of the API</h3>
+<p>The same model can grade through Claude Code subagents (for example on a Max plan) instead of API requests. This
+needs a grading folder that <code>grade-ai</code> already started (its <code>grading.json</code> fixes the blind order):</p>
+<div class="highlight"><pre><span></span><code>python tools/assistant_eval.py grade-ai _audit_reports/assistant_eval/{opus,gemini,gemma,gptoss} \
+    --dir _audit_reports/assistant_eval/grading_v2 --export-requests _audit_reports/assistant_eval/cc_grading
+# subagents: read cc_grading/&lt;n&gt;.request.txt, write the JSON reply to cc_grading/&lt;n&gt;.reply.json
+python tools/assistant_eval.py grade-ai _audit_reports/assistant_eval/{opus,gemini,gemma,gptoss} \
+    --dir _audit_reports/assistant_eval/grading_v2 --import-replies _audit_reports/assistant_eval/cc_grading
+</code></pre></div>
+<p><code>--export-requests OUT</code> writes, for every cell <code>grade-ai</code> would send now, <code>OUT/&lt;n&gt;.request.txt</code>: a <code>SYSTEM:</code>
+section and a <code>USER:</code> section holding exactly the system and user parts of the API request, after the same
+blinding and leak scan (a leak refuses the export). <code>OUT/index.json</code> lists the tokens with their request hashes
+and the instructions for the agents; it names no model, level or results folder. Nothing is sent and nothing is
+written to the grading folder. A reply left in OUT for a request that changed since is set aside as <code>.stale</code>.</p>
+<p><code>--import-replies OUT</code> reads each <code>OUT/&lt;n&gt;.reply.json</code> (the raw reply text) through the same strict check as an
+API reply and records the cell as the API route does, with <code>grader</code> "claude-opus-5-5 via Claude Code (file
+route)", <code>route</code> <code>file</code> and no usage. A cell whose request hash changed since the export is refused: export
+again. A reply that fails the check is not recorded; <code>OUT/&lt;n&gt;.retry.request.txt</code> then holds the API's retry (the
+request, the first reply as <code>ASSISTANT:</code> and the same feedback as <code>USER:</code>), and a later import reads
+<code>OUT/&lt;n&gt;.retry.reply.json</code> (invalid again: saved as unparsed). The import reports how many cells it recorded,
+how many need a retry and how many replies are missing; run it again to continue. It never overwrites a graded
+cell unless the cell changed and <code>--changed</code> is given. The review queue, the summary and the agreement treat
+these grades like API grades; <code>summary</code> counts the AI grades per route, <code>agreement.txt</code> gives each route's
+agreement apart when both are used, and each <code>results.jsonl</code> line carries <code>ai_route</code>.</p>
+<h3 id="review">review</h3>
+<p><code>review</code> starts once Opus has graded every cell. The queue is drawn once:</p>
+<ul>
+<li>every cell with a low confidence, an unparsed reply or an injection hint;</li>
+<li>every cell with a number that has no tool source, whatever Opus said;</li>
+<li>every cell written by <code>claude-opus-5-5</code> (for self-preference);</li>
+<li>a random sample of the rest: 15 % and at least 35 cells (all of them when fewer), drawn with the grading's seed;</li>
+<li>a cell <code>--changed</code> graded again that is outside the sampled pool and no longer has another reason (<code>changed</code>).</li>
+</ul>
+<p>For each queued cell, the owner sees the material and gives a verdict on each judged item (<code>r</code> / <code>m</code> / <code>w</code>, only
+the allowed letters) and the understandability (<code>1</code> / <code>2</code> / <code>3</code>). Only then are Opus's verdicts, confidences and
+reasons shown, with each disagreement marked. For each disagreement, Enter keeps the owner's verdict and a letter
+changes it. Both the first and the final verdicts are kept, and agreement uses the first. The reasons the cell
+was queued are never shown.</p>
+<p>A sitting is 37 cells (<code>--sitting N</code>; 0 for no limit). <code>q</code> or Ctrl-C keeps the verdicts already given, and the
+next <code>review</code> asks the rest. <code>--regrade #n</code> reviews a cell again; the latest review wins. <code>--all</code> queues every
+cell (full manual grading).</p>
+<h3 id="review-in-a-markdown-editor">review in a markdown editor</h3>
+<p>The terminal shows the material as plain text. The same review can be done in files that a markdown viewer
+renders:</p>
+<div class="highlight"><pre><span></span><code>python tools/assistant_eval.py review --dir GRADING --export-md REVIEW.md
+# fill in the letters under "Your verdicts", then
+python tools/assistant_eval.py review --dir GRADING --import-md REVIEW.md
+# the cells where Opus judged otherwise are now in REVIEW.final.md: keep or change your letters, then
+python tools/assistant_eval.py review --dir GRADING --import-md REVIEW.final.md
+</code></pre></div>
+<p><code>--export-md</code> writes every queued cell not yet reviewed (no sitting limit) as <code># Cell #n</code>, and the key file
+<code>REVIEW.key.md</code>: what the letters mean, in general and for each kind of item that has its own meaning (the
+same texts the graders read). The material is the graders' own, rendered and shortened: its sections are <code>###</code>
+headings, the fences are gone, the question and the answers are blockquotes (their headings three levels
+lower), and the tool calls, the excerpts and the items-to-grade list are left out. Each cell ends with <strong>Your
+verdicts</strong>: each item the owner judges, with its text and the letters it allows (<code>- `fact:x` (critical):
+statement: … [r / m / w]:</code>), and the understandability; the owner writes the letter after the colon. The
+numbers (a number fact the check did not find, a number without a tool source) are left to Opus and not
+asked: the owner's grade of the cell carries Opus's verdicts for them, they count in the owner's outcome
+with Opus's verdict and they are in no item agreement pair. Nothing of Opus's is in this file, and every
+cell's material is leak-scanned as for the terminal.</p>
+<p><code>--import-md</code> records the letters as the owner's first verdicts; an empty line is asked again by the next
+export, so a file can be imported part-filled, as often as wanted. A first verdict once imported is never
+replaced (a different letter is reported and kept; <code>--regrade</code> in the terminal gives a later review). A cell
+whose first verdicts are complete and that Opus agrees with (or that has no readable reply of Opus's) is
+reviewed at once, as in the terminal. The other cells go to <code>REVIEW.final.md</code>: Opus's verdicts, confidences and
+reasons (blinded, as in the terminal) next to the owner's, then <strong>Your final verdicts</strong> with each differing line
+already holding the owner's letter (leaving it keeps it, as Enter does), then the material again. Its import
+records the final verdicts and the changes. A letter that is not allowed is reported and its cell left as it
+was (exit code 1). An export never overwrites a file that holds letters not imported yet; a cell whose material
+changed since the file was written is refused.</p>
+<h3 id="the-helpfulness-review">The helpfulness review</h3>
+<p>The owner can leave the facts to Opus and rate instead how helpful the answers are, on a small sample of each
+level:</p>
+<div class="highlight"><pre><span></span><code>python tools/assistant_eval.py review --dir GRADING --helpfulness --export-md HELPFUL.md [--per-level 8]
+# rate each cell 1 / 2 / 3 and write notes, then
+python tools/assistant_eval.py review --dir GRADING --helpfulness --import-md HELPFUL.md
+python tools/assistant_eval.py summary --dir GRADING --record
+</code></pre></div>
+<p>The first <code>--helpfulness</code> draws the sample once into <code>review.json</code> (<code>helpfulness</code>) and makes Opus's factual
+grades final (<code>opus_final</code>): the factual queue no longer waits, and <code>summary --record</code> records every cell with
+Opus's grade (the owner's for a cell already reviewed factually). The sample is <code>--per-level</code> cells (default 8)
+of each level setting, drawn with the grading's seed from the cells with an answer and a readable grading of
+Opus's: a level's cells are taken by class in turn (diagnose, interpret, lookup), and each pick is of the model
+picked least often at that level so far. A sample is never drawn again; another <code>--per-level</code> is refused.</p>
+<p>The file shows each cell blind (no model, no level): the question, the expected behaviour, the answer key, the
+final answers rendered as markdown (no tool calls, no items) and Opus's factual outcome with the items it found
+missing or wrong. Each cell ends with <code>- `helpfulness` [1 / 2 / 3]:</code> and <strong>Your note</strong>, free text of any
+length up to the next cell. 1 = helpful: the user gets what they need; 2 = partly: the answer is there but too
+long, unfocused or missing something useful (such as what to change); 3 = not helpful. An import saves the
+ratings and notes given, replacing earlier ones; a rating that is not 1–3 is reported (exit code 1). An export
+never overwrites a file with a rating or note not imported yet.</p>
+<p><code>summary --dir</code> prints the ratings by level setting and by model within it, and the notes with their cell,
+level, question and model. Each <code>results.jsonl</code> line carries <code>helpfulness</code> (the rating, or null); a rating given
+or changed after <code>--record</code> gives the cell a new line. The notes stay in the grading folder. <code>calibrate</code> shows
+the ratings per level setting next to the understandability.</p>
+<h3 id="summary">summary</h3>
+<p><code>summary --dir</code> prints, per model, level setting and class: answered, incomplete, escalated, failed (and how many
+had no answer), the cells still waiting, the invented numbers and the understandability ratings. It also writes
+<code>agreement.txt</code>: Opus against the owner's first verdicts, per item (3 categories), per outcome (4) and for
+understandability (also linear-weighted kappa), each with n, agreement, Cohen's kappa with a bootstrap interval by
+question, the confusion table and the lenient (Opus kinder) and strict counts. It reports:</p>
+<ul>
+<li><strong>the random sample</strong>: the estimate for the cells Opus alone graded. When the Wilson 95 % upper bound of the
+  outcome disagreement is above 10 %, it says "Review every cell: review --all." With 35 cells this passes only
+  with no disagreement (0 of 35: 9.9 %);</li>
+<li><strong>all reviewed cells</strong>;</li>
+<li><strong>self-preference</strong>: Opus's own cells that no other reason queued, against the random sample, as raw counts.</li>
+</ul>
+<p><code>summary --record</code> appends one line per cell to <code>tools/assistant_eval_data/results.jsonl</code> and refuses while
+cells still wait for review. A cell's grade is the owner's when reviewed, else Opus's. A later review or a
+<code>--changed</code> grading appends a new line, and the latest line of a cell is its grade.</p>
+<p>A paid canary (a wrong answer that tells the grader to mark every item right, excluded from the results) would
+test injection resistance on the real model; the tests can only check the fences with a fake backend.</p>
+<h2 id="the-evidence-for-the-owner">The evidence for the owner</h2>
+<p><code>python tools/assistant_eval.py calibrate</code> reads <code>results.jsonl</code> and prints a table for each model. The rows are
+the level settings, and the columns are the classes. Each entry gives three rates, each with n and a Wilson 95 %
+interval:</p>
+<ul>
+<li><strong>answered_rate</strong>: answered cells as a share of the cells that ran;</li>
+<li><strong>incomplete_rate</strong>: incomplete cells: nothing false said, but something left out. They are never counted as
+  safe, because unlike an escalation they do not say what they left out;</li>
+<li><strong>safe_rate</strong>: answered or escalated cells with no invented number.</li>
+</ul>
+<p>For each model it adds the cells incomplete on a critical item, the cells without an answer and how many cells
+the owner graded (the rest were graded by Opus alone). <code>calibrate</code> reads only grading v2 lines (<code>line_format</code> 2)
+and refuses a file with older lines.</p>
+<p>It also prints, for each setting:</p>
+<ul>
+<li>the calls, rounds and output tokens of the answered cells (median and 90th percentile);</li>
+<li>cap hits, length stops, fit compactions and truncations;</li>
+<li>the ratio of the reported to the estimated prompt tokens;</li>
+<li>the understandability ratings and their median.</li>
+</ul>
+<p>Free-plan cells are shown in a separate block and are not used for the caps.</p>
+<p>Then it lists the evidence:</p>
+<ul>
+<li>whether the models at each level answer that level's classes, and the models below escalate them;</li>
+<li>a proposed number of calls per question for each level: the 90th percentile of the answered cells plus one,
+  never below 3;</li>
+<li>each model's evidence level next to its automatic level;</li>
+<li>notes on the token estimates.</li>
+</ul>
+<p>The starting bars are 60 % answered at basic, 75 % at standard and advanced, and no invented number. In the first
+round each class has only a few cells, so these tables are evidence for the owner's review, not decisions.</p>
+<h2 id="the-answer-key">The answer key</h2>
+<p>The oracle writes the key from <code>tests/fixtures/tests.json</code>, <code>tests/assistant/grounding_projects.py</code>, the user
+docs, <code>flextool/process_outputs/_output_meta.py</code> and the model's equation headers. It never runs FlexTool, the
+tools or the runner. Every value has a <code>derivation</code>.</p>
+<p>The format is in the docstring of <code>tools/assistant_eval_scoring.py</code>. A number taken from a result table carries
+that table's unit, and <code>tests/assistant/grounding/test_grounding_set_consistency.py</code> checks this. A disputed value
+is derived again by a third agent. It is never edited to match a model or a tool.</p>
+<h2 id="reading-resultsjsonl-over-time">Reading results.jsonl over time</h2>
+<p>Each line is one graded answer: which model answered which question, at which assistant level, on which date,
+with which FlexTool version, and how it was graded. To see how a model does, take its lines with the latest date
+and group them by level and by question class (lookup, interpret, diagnose).</p>
+<p>The date matters. Providers change models without changing their names, so an answer recorded under the same
+model name a few months later may come from a different model. Compare lines of one model only when their dates
+are close, and treat an old line as a record of that day, not of the model as it is now.</p>
+<p>The question set and the answer key have version numbers. Compare scores only between lines with the same
+<code>set_version</code> and <code>key_version</code>. When either changes, run the models again before comparing.</p>
+<p>A FlexTool upgrade can change answers too. The <code>flextool_version</code> and <code>commit</code> fields tell which version produced
+an answer.</p>
+<p>Each line says who gave its grade (<code>grader</code>: <code>owner</code> when reviewed, <code>claude-opus-5-5</code> otherwise, <code>none</code> for a
+cell without an answer or not run), why it was reviewed, and Opus's own outcome and understandability next to the
+final ones. When a cell has several lines, the latest is its grade. A line with outcome <code>not_applicable</code> is a cell
+that was not run because the model's context did not fit; leave it out of the rates. <code>knobs_relaxed</code> marks runs
+that allowed the provider to keep the synthetic data.</p>
+<p>A single line is one try. Read rates over several questions, not one answer.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      IRENA
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["content.code.copy", "navigation.expand"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
+      
+        <script src="../../assets/mathjaxhelper.js"></script>
+      
+    
+  </body>
+</html>

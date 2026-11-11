@@ -1,0 +1,5366 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.">
+      
+      
+        <meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland">
+      
+      
+      
+        <link rel="prev" href="../results/">
+      
+      
+        <link rel="next" href="../formulation/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../img/irena_flextool_favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>Results catalogue - IRENA FlexTool</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#results-catalogue" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="IRENA FlexTool" class="md-header__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            IRENA FlexTool
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Results catalogue
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="IRENA FlexTool" class="md-nav__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    IRENA FlexTool
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../interface_overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install_gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model outputs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#costs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Costs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Costs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#annualized_costs_d_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        annualized_costs_d_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#costs_discounted_d_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        costs_discounted_d_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#costs_discounted_p_" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        costs_discounted_p_
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#costs_dt_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        costs_dt_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cost-by-entity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cost by entity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cost by entity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cost_connection_annualized_d_ec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cost_connection_annualized_d_ec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost_connection_discounted_d_ec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cost_connection_discounted_d_ec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost_node_annualized_d_ec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cost_node_annualized_d_ec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost_node_discounted_d_ec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cost_node_discounted_d_ec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost_unit_annualized_d_ec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cost_unit_annualized_d_ec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost_unit_discounted_d_ec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cost_unit_discounted_d_ec
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prices
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Prices">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#co2_price_period_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        co2_price_period_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#co2_price_total_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        co2_price_total_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_prices_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_prices_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reserve_prices_dt_ppg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        reserve_prices_dt_ppg
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#energy-flows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Energy flows
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Energy flows">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connection_d_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_d_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_dt_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_dt_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_leftward_d_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_leftward_d_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_leftward_dt_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_leftward_dt_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_losses_d_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_losses_d_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_losses_dt_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_losses_dt_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_rightward_d_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_rightward_d_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_rightward_dt_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_rightward_dt_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_inputnode_d_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_inputNode_d_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_inputnode_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_inputNode_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_outputnode_d_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_outputNode_d_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_outputnode_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_outputNode_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capacity-factors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Capacity factors
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Capacity factors">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connection_cf_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_cf_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_inputs_cf_d_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_inputs_cf_d_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_outputs_cf_d_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_outputs_cf_d_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#energy-balance-in-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Energy balance in nodes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Energy balance in nodes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#node_d_ep" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_d_ep
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_dt_ep" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_dt_ep
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_state_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_state_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unit-online-and-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit online and startup
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Unit online and startup">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unit_online_average_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_online_average_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_online_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_online_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_startup_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_startup_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connection-online-and-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connection online and startup
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Connection online and startup">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connection_online_average_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_online_average_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_online_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_online_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_startup_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_startup_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unit-curtailment-and-vre-potential" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit curtailment and VRE potential
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Unit curtailment and VRE potential">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unit_vre_potential_outputnode_d_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_VRE_potential_outputNode_d_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_vre_potential_outputnode_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_VRE_potential_outputNode_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_curtailment_outputnode_d_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_curtailment_outputNode_d_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_curtailment_outputnode_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_curtailment_outputNode_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_curtailment_share_outputnode_d_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_curtailment_share_outputNode_d_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_curtailment_share_outputnode_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_curtailment_share_outputNode_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node-group-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node group results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Node group results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_vre_share_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_VRE_share_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_vre_share_dt_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_VRE_share_dt_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_flows_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_flows_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_flows_d_gpe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_flows_d_gpe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_flows_dt_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_flows_dt_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_flows_dt_gpe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_flows_dt_gpe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_gd_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_gd_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_gdt_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_gdt_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flow-group-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flow group results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Flow group results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#flowgroup_gd_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flowGroup_gd_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flowgroup_gd_t" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flowGroup_gd_t
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capacity-and-investment-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Capacity and investment results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Capacity and investment results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connection_capacity_ed_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_capacity_ed_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dual_invest_effective_connection_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dual_invest_effective_connection_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dual_invest_effective_node_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dual_invest_effective_node_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dual_invest_effective_unit_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dual_invest_effective_unit_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_capacity_ed_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_capacity_ed_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_capacity_ed_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_capacity_ed_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#co2-emissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CO2 emissions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CO2 emissions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#co2__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CO2__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#co2_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CO2_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#process_co2_d_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        process_co2_d_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reserves" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reserves
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reserves">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#process_reserve_average_d_eppe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        process_reserve_average_d_eppe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#process_reserve_updown_node_dt_eppe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        process_reserve_upDown_node_dt_eppe
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inertia-and-non-synchronous-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inertia and non-synchronous generation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Inertia and non-synchronous generation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_inertia_dt_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_inertia_dt_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_inertia_largest_flow_dt_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_inertia_largest_flow_dt_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_unit_node_inertia_dt_gee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_unit_node_inertia_dt_gee
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ramps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ramps
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Ramps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unit_ramp_inputs_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_ramp_inputs_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_ramp_outputs_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_ramp_outputs_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dc-power-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DC power flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="DC power flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dc_angle_diff_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dc_angle_diff_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dc_angle_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dc_angle_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slack-and-penalty-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Slack and penalty values
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Slack and penalty values">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_slack_capacity_margin_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_slack_capacity_margin_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_slack_inertia_dt_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_slack_inertia_dt_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_slack_nonsync_dt_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_slack_nonsync_dt_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_slack_reserve_dt_eeg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_slack_reserve_dt_eeg
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#other" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Other">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connection_dc_power_flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_dc_power_flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#discountfactors_d_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        discountFactors_d_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#entity_annuity_d_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        entity_annuity_d_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flowgroupindicators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flowGroupIndicators
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#group_node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        group_node
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#group_process" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        group_process
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#group_process_node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        group_process_node
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroupdispatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroupDispatch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroupindicators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroupIndicators
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_slack_inertia_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_slack_inertia_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_slack_nonsync_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_slack_nonsync_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_slack_reserve_d_eeg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_slack_reserve_d_eeg
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_dc_power_flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_dc_power_flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_inflow__dt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_inflow__dt
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_slack_down_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_slack_down_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_slack_down_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_slack_down_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_slack_up_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_slack_up_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_slack_up_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_slack_up_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#timeline_breaks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        timeline_breaks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#years_represented__d" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        years_represented__d
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how_to/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../advanced_concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interfaces
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Interfaces
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../flextool_gui_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../spine_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../spine_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine database editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../excel_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../terminal_workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ai_assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Solvers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/highs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HiGHS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/gurobi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gurobi
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/cplex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CPLEX
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/xpress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Xpress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/copt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    COPT
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The engine pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LP scaling pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/slack_convention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Slack convention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/decomposition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/db_schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database schema and migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/assistant_evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/inject_between_solves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Injecting parameters between solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archived
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Archived
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../archived/browser_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../archived/install_web_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface install (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#costs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Costs
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Costs">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#annualized_costs_d_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        annualized_costs_d_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#costs_discounted_d_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        costs_discounted_d_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#costs_discounted_p_" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        costs_discounted_p_
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#costs_dt_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        costs_dt_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#cost-by-entity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cost by entity
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Cost by entity">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#cost_connection_annualized_d_ec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cost_connection_annualized_d_ec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost_connection_discounted_d_ec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cost_connection_discounted_d_ec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost_node_annualized_d_ec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cost_node_annualized_d_ec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost_node_discounted_d_ec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cost_node_discounted_d_ec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost_unit_annualized_d_ec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cost_unit_annualized_d_ec
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#cost_unit_discounted_d_ec" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cost_unit_discounted_d_ec
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prices" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Prices
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Prices">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#co2_price_period_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        co2_price_period_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#co2_price_total_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        co2_price_total_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_prices_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_prices_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#reserve_prices_dt_ppg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        reserve_prices_dt_ppg
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#energy-flows" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Energy flows
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Energy flows">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connection_d_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_d_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_dt_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_dt_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_leftward_d_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_leftward_d_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_leftward_dt_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_leftward_dt_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_losses_d_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_losses_d_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_losses_dt_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_losses_dt_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_rightward_d_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_rightward_d_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_rightward_dt_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_rightward_dt_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_inputnode_d_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_inputNode_d_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_inputnode_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_inputNode_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_outputnode_d_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_outputNode_d_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_outputnode_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_outputNode_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capacity-factors" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Capacity factors
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Capacity factors">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connection_cf_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_cf_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_inputs_cf_d_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_inputs_cf_d_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_outputs_cf_d_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_outputs_cf_d_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#energy-balance-in-nodes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Energy balance in nodes
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Energy balance in nodes">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#node_d_ep" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_d_ep
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_dt_ep" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_dt_ep
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_state_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_state_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unit-online-and-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit online and startup
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Unit online and startup">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unit_online_average_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_online_average_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_online_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_online_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_startup_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_startup_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connection-online-and-startup" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connection online and startup
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Connection online and startup">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connection_online_average_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_online_average_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_online_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_online_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connection_startup_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_startup_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#unit-curtailment-and-vre-potential" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Unit curtailment and VRE potential
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Unit curtailment and VRE potential">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unit_vre_potential_outputnode_d_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_VRE_potential_outputNode_d_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_vre_potential_outputnode_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_VRE_potential_outputNode_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_curtailment_outputnode_d_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_curtailment_outputNode_d_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_curtailment_outputnode_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_curtailment_outputNode_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_curtailment_share_outputnode_d_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_curtailment_share_outputNode_d_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_curtailment_share_outputnode_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_curtailment_share_outputNode_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#node-group-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Node group results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Node group results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_vre_share_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_VRE_share_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_vre_share_dt_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_VRE_share_dt_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_flows_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_flows_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_flows_d_gpe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_flows_d_gpe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_flows_dt_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_flows_dt_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_flows_dt_gpe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_flows_dt_gpe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_gd_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_gd_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_gdt_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_gdt_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#flow-group-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Flow group results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Flow group results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#flowgroup_gd_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flowGroup_gd_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flowgroup_gd_t" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flowGroup_gd_t
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#capacity-and-investment-results" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Capacity and investment results
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Capacity and investment results">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connection_capacity_ed_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_capacity_ed_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dual_invest_effective_connection_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dual_invest_effective_connection_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dual_invest_effective_node_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dual_invest_effective_node_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dual_invest_effective_unit_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dual_invest_effective_unit_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_capacity_ed_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_capacity_ed_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_capacity_ed_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_capacity_ed_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#co2-emissions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CO2 emissions
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CO2 emissions">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#co2__" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CO2__
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#co2_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CO2_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#process_co2_d_eee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        process_co2_d_eee
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reserves" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reserves
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reserves">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#process_reserve_average_d_eppe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        process_reserve_average_d_eppe
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#process_reserve_updown_node_dt_eppe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        process_reserve_upDown_node_dt_eppe
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inertia-and-non-synchronous-generation" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Inertia and non-synchronous generation
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Inertia and non-synchronous generation">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_inertia_dt_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_inertia_dt_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_inertia_largest_flow_dt_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_inertia_largest_flow_dt_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_unit_node_inertia_dt_gee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_unit_node_inertia_dt_gee
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ramps" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ramps
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Ramps">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#unit_ramp_inputs_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_ramp_inputs_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#unit_ramp_outputs_dt_ee" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        unit_ramp_outputs_dt_ee
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dc-power-flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DC power flow
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="DC power flow">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dc_angle_diff_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dc_angle_diff_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#dc_angle_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dc_angle_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#slack-and-penalty-values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Slack and penalty values
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Slack and penalty values">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_slack_capacity_margin_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_slack_capacity_margin_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_slack_inertia_dt_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_slack_inertia_dt_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_slack_nonsync_dt_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_slack_nonsync_dt_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_slack_reserve_dt_eeg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_slack_reserve_dt_eeg
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#other" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Other
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Other">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#connection_dc_power_flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        connection_dc_power_flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#discountfactors_d_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        discountFactors_d_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#entity_annuity_d_p" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        entity_annuity_d_p
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#flowgroupindicators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        flowGroupIndicators
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#group_node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        group_node
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#group_process" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        group_process
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#group_process_node" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        group_process_node
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroupdispatch" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroupDispatch
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroupindicators" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroupIndicators
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_slack_inertia_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_slack_inertia_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_slack_nonsync_d_g" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_slack_nonsync_d_g
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#nodegroup_slack_reserve_d_eeg" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        nodeGroup_slack_reserve_d_eeg
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_dc_power_flow" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_dc_power_flow
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_inflow__dt" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_inflow__dt
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_slack_down_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_slack_down_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_slack_down_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_slack_down_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_slack_up_d_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_slack_up_d_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#node_slack_up_dt_e" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        node_slack_up_dt_e
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#timeline_breaks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        timeline_breaks
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#years_represented__d" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        years_represented__d
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="results-catalogue">Results catalogue</h1>
+<p>Every result table FlexTool writes, generated from the code. A table is written to
+<code>output_parquet/&lt;scenario&gt;/&lt;table&gt;.parquet</code>, and with CSV output to <code>output_csv/&lt;scenario&gt;/</code> under the
+CSV name of the default output settings. The parquet's top column level is <code>scenario</code>; the levels
+below it are listed as column levels. Membership sets are flat tables whose first column is
+<code>scenario</code>, followed by the listed row levels; <code>timeline_breaks</code> is a flat <code>(period, time)</code> table.
+Units are the default convention of FlexTool (MW, MWh, CUR);
+see <a href="../results/">Model outputs</a> for what the results mean and how they are computed.</p>
+<h2 id="costs">Costs</h2>
+<p>See <a href="../results/#costs">Costs</a> in Model outputs.</p>
+<h3 id="annualized_costs_d_p"><code>annualized_costs_d_p</code></h3>
+<p>Total cost of each period by cost category, scaled to a full year of operation, including the yearly investment, retirement and fixed costs.</p>
+<ul>
+<li>Files: <code>annualized_costs_d_p.parquet</code>, <code>annualized_costs__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>category</code></li>
+<li>every column: M CUR/a, annualized</li>
+<li>Results database: <code>model</code> entity <code>cost_annualized</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>costs_dt_p</code></li>
+</ul>
+<h3 id="costs_discounted_d_p"><code>costs_discounted_d_p</code></h3>
+<p>Cost of each period by cost category, discounted and multiplied by the years the period represents (the net present value the objective counts).</p>
+<ul>
+<li>Files: <code>costs_discounted_d_p.parquet</code>, <code>costs_discounted__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>category</code></li>
+<li>every column: M CUR, discounted</li>
+<li>Results database: <code>model</code> entity <code>cost_discounted_solve</code> parameter</li>
+</ul>
+<h3 id="costs_discounted_p_"><code>costs_discounted_p_</code></h3>
+<p>Discounted cost by cost category, totalled over all periods of the run.</p>
+<ul>
+<li>Files: <code>costs_discounted_p_.parquet</code>, <code>costs_discounted.csv</code></li>
+<li>Rows: <code>category</code>; column levels: none</li>
+<li>every column: M CUR, discounted</li>
+<li>Results database: <code>model</code> entity <code>cost_discounted_total</code> parameter</li>
+</ul>
+<h3 id="costs_dt_p"><code>costs_dt_p</code></h3>
+<p>Operational and penalty costs incurred in each time step by cost category, in currency (not millions), with the step duration and timestep weight applied and not scaled to a year.</p>
+<ul>
+<li>Files: <code>costs_dt_p.parquet</code>, <code>costs__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>category</code></li>
+<li>every column: CUR, per_step</li>
+<li>Results database: <code>model</code> entity <code>cost_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>annualized_costs_d_p</code></li>
+</ul>
+<h2 id="cost-by-entity">Cost by entity</h2>
+<p>See <a href="../results/#cost-by-entity">Cost by entity</a> in Model outputs.</p>
+<h3 id="cost_connection_annualized_d_ec"><code>cost_connection_annualized_d_ec</code></h3>
+<p>Annualized cost of each connection and period by cost category.</p>
+<ul>
+<li>Files: <code>cost_connection_annualized_d_ec.parquet</code>, <code>cost_connection_annualized__d.csv</code></li>
+<li>Rows: <code>period</code>, <code>connection</code>; column levels: <code>category</code></li>
+<li>every column: M CUR/a, annualized</li>
+<li>Results database: <code>connection</code> entity <code>cost_annualized</code> parameter</li>
+</ul>
+<h3 id="cost_connection_discounted_d_ec"><code>cost_connection_discounted_d_ec</code></h3>
+<p>Discounted cost of each connection and period by cost category.</p>
+<ul>
+<li>Files: <code>cost_connection_discounted_d_ec.parquet</code>, <code>cost_connection_discounted__d.csv</code></li>
+<li>Rows: <code>period</code>, <code>connection</code>; column levels: <code>category</code></li>
+<li>every column: M CUR, discounted</li>
+<li>Results database: <code>connection</code> entity <code>cost_discounted</code> parameter</li>
+</ul>
+<h3 id="cost_node_annualized_d_ec"><code>cost_node_annualized_d_ec</code></h3>
+<p>Annualized cost of each node and period by cost category (storage investment and retirement, fixed costs, balance slack penalties).</p>
+<ul>
+<li>Files: <code>cost_node_annualized_d_ec.parquet</code>, <code>cost_node_annualized__d.csv</code></li>
+<li>Rows: <code>period</code>, <code>node</code>; column levels: <code>category</code></li>
+<li>every column: M CUR/a, annualized</li>
+<li>Results database: <code>node</code> entity <code>cost_annualized</code> parameter</li>
+</ul>
+<h3 id="cost_node_discounted_d_ec"><code>cost_node_discounted_d_ec</code></h3>
+<p>Discounted cost of each node and period by cost category.</p>
+<ul>
+<li>Files: <code>cost_node_discounted_d_ec.parquet</code>, <code>cost_node_discounted__d.csv</code></li>
+<li>Rows: <code>period</code>, <code>node</code>; column levels: <code>category</code></li>
+<li>every column: M CUR, discounted</li>
+<li>Results database: <code>node</code> entity <code>cost_discounted</code> parameter</li>
+</ul>
+<h3 id="cost_unit_annualized_d_ec"><code>cost_unit_annualized_d_ec</code></h3>
+<p>Annualized cost of each unit and period by cost category; summed over units, connections and nodes it gives the system annualized costs.</p>
+<ul>
+<li>Files: <code>cost_unit_annualized_d_ec.parquet</code>, <code>cost_unit_annualized__d.csv</code></li>
+<li>Rows: <code>period</code>, <code>unit</code>; column levels: <code>category</code></li>
+<li>every column: M CUR/a, annualized</li>
+<li>Results database: <code>unit</code> entity <code>cost_annualized</code> parameter</li>
+</ul>
+<h3 id="cost_unit_discounted_d_ec"><code>cost_unit_discounted_d_ec</code></h3>
+<p>Discounted cost of each unit and period by cost category; summed over units, connections and nodes it gives the system discounted costs.</p>
+<ul>
+<li>Files: <code>cost_unit_discounted_d_ec.parquet</code>, <code>cost_unit_discounted__d.csv</code></li>
+<li>Rows: <code>period</code>, <code>unit</code>; column levels: <code>category</code></li>
+<li>every column: M CUR, discounted</li>
+<li>Results database: <code>unit</code> entity <code>cost_discounted</code> parameter</li>
+</ul>
+<h2 id="prices">Prices</h2>
+<p>See <a href="../results/#prices">Prices</a> in Model outputs.</p>
+<h3 id="co2_price_period_d_g"><code>co2_price_period_d_g</code></h3>
+<p>Shadow price of the per-period CO2 cap of each group, in the currency of the period (positive when the cap binds).</p>
+<ul>
+<li>Files: <code>co2_price_period_d_g.parquet</code>, <code>group_CO2_price_period__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>group</code></li>
+<li>every column: CUR/t, price</li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="co2_price_total_d_g"><code>co2_price_total_d_g</code></h3>
+<p>Shadow price of the cumulative CO2 cap of each group, in discounted currency per tonne, the same in every period.</p>
+<ul>
+<li>Files: <code>co2_price_total_d_g.parquet</code>, <code>group_CO2_price_total__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>group</code></li>
+<li>every column: CUR/t, price</li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="node_prices_dt_e"><code>node_prices_dt_e</code></h3>
+<p>Price of energy at each balanced node and time step: the cost of one more unit of demand there (the dual of the node balance), in the price base of the cost inputs.</p>
+<ul>
+<li>Files: <code>node_prices_dt_e.parquet</code>, <code>node_prices__dt.csv</code></li>
+<li>Rows: <code>solve</code>, <code>period</code>, <code>time</code>; column levels: <code>node</code></li>
+<li>every column: CUR/MWh, price</li>
+<li>Results database: <code>node</code> entity <code>price_t</code> parameter</li>
+</ul>
+<h3 id="reserve_prices_dt_ppg"><code>reserve_prices_dt_ppg</code></h3>
+<p>Price of each reserve, direction and group in each time step: the cost of one more MW of every requirement of the group held for the step.</p>
+<ul>
+<li>Files: <code>reserve_prices_dt_ppg.parquet</code>, <code>reserve_price__upDown__group__dt.csv</code></li>
+<li>Rows: <code>solve</code>, <code>period</code>, <code>time</code>; column levels: <code>reserve</code>, <code>updown</code>, <code>node_group</code></li>
+<li>every column: CUR/MW, price</li>
+<li>Results database: not written there</li>
+</ul>
+<h2 id="energy-flows">Energy flows</h2>
+<p>See <a href="../results/#energy-flows">Energy flows</a> in Model outputs.</p>
+<h3 id="connection_d_eee"><code>connection_d_eee</code></h3>
+<p>Net flow through each connection summed over the period and scaled to a full year, positive from the first to the second node.</p>
+<ul>
+<li>Files: <code>connection_d_eee.parquet</code>, <code>connection__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>process</code></li>
+<li>every column: MWh/a, annualized</li>
+<li>Results database: <code>connection__node__node</code> entity <code>flow_annualized</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>connection_dt_eee</code></li>
+</ul>
+<h3 id="connection_dt_eee"><code>connection_dt_eee</code></h3>
+<p>Net flow through each connection in each time step, positive from the first to the second node.</p>
+<ul>
+<li>Files: <code>connection_dt_eee.parquet</code>, <code>connection__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>process</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>connection__node__node</code> entity <code>flow_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>connection_d_eee</code></li>
+</ul>
+<h3 id="connection_leftward_d_eee"><code>connection_leftward_d_eee</code></h3>
+<p>Net flow of each connection into its first node summed over the period and scaled to a full year.</p>
+<ul>
+<li>Files: <code>connection_leftward_d_eee.parquet</code>, <code>connection_leftward__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>process</code>, <code>node</code></li>
+<li>every column: MWh/a, annualized</li>
+<li>Results database: <code>connection__node__node</code> entity <code>flow_to_first_node_annualized</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>connection_leftward_dt_eee</code></li>
+</ul>
+<h3 id="connection_leftward_dt_eee"><code>connection_leftward_dt_eee</code></h3>
+<p>Net flow of each connection into its first node in each time step.</p>
+<ul>
+<li>Files: <code>connection_leftward_dt_eee.parquet</code>, <code>connection_leftward__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>process</code>, <code>node</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>connection__node__node</code> entity <code>flow_to_first_node_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>connection_leftward_d_eee</code></li>
+</ul>
+<h3 id="connection_losses_d_eee"><code>connection_losses_d_eee</code></h3>
+<p>Losses of each connection summed over the period and scaled to a full year, negative when energy is lost.</p>
+<ul>
+<li>Files: <code>connection_losses_d_eee.parquet</code>, <code>connection_losses__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>process</code></li>
+<li>every column: MWh/a, annualized</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>connection_losses_dt_eee</code></li>
+</ul>
+<h3 id="connection_losses_dt_eee"><code>connection_losses_dt_eee</code></h3>
+<p>Losses of each connection in each time step: the flow out minus the flow in, negative when energy is lost.</p>
+<ul>
+<li>Files: <code>connection_losses_dt_eee.parquet</code>, <code>connection__dt_losses.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>process</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>connection_losses_d_eee</code></li>
+</ul>
+<h3 id="connection_rightward_d_eee"><code>connection_rightward_d_eee</code></h3>
+<p>Net flow of each connection into its second node summed over the period and scaled to a full year.</p>
+<ul>
+<li>Files: <code>connection_rightward_d_eee.parquet</code>, <code>connection_rightward__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>process</code>, <code>node</code></li>
+<li>every column: MWh/a, annualized</li>
+<li>Results database: <code>connection__node__node</code> entity <code>flow_to_second_node_annualized</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>connection_rightward_dt_eee</code></li>
+</ul>
+<h3 id="connection_rightward_dt_eee"><code>connection_rightward_dt_eee</code></h3>
+<p>Net flow of each connection into its second node in each time step.</p>
+<ul>
+<li>Files: <code>connection_rightward_dt_eee.parquet</code>, <code>connection_rightward__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>process</code>, <code>node</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>connection__node__node</code> entity <code>flow_to_second_node_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>connection_rightward_d_eee</code></li>
+</ul>
+<h3 id="unit_inputnode_d_ee"><code>unit_inputNode_d_ee</code></h3>
+<p>Flow from each input node into each unit summed over the period and scaled to a full year, as a negative value.</p>
+<ul>
+<li>Files: <code>unit_inputNode_d_ee.parquet</code>, <code>unit__inputNode__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>unit</code>, <code>node</code></li>
+<li>every column: MWh/a, annualized</li>
+<li>Results database: <code>unit__node</code> entity <code>flow_annualized</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>unit_inputNode_dt_ee</code></li>
+</ul>
+<h3 id="unit_inputnode_dt_ee"><code>unit_inputNode_dt_ee</code></h3>
+<p>Flow from each input node into each unit in each time step, as a negative value.</p>
+<ul>
+<li>Files: <code>unit_inputNode_dt_ee.parquet</code>, <code>unit__inputNode__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>unit</code>, <code>node</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>unit__node</code> entity <code>flow_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>unit_inputNode_d_ee</code></li>
+</ul>
+<h3 id="unit_outputnode_d_ee"><code>unit_outputNode_d_ee</code></h3>
+<p>Flow from each unit to each of its output nodes summed over the period and scaled to a full year.</p>
+<ul>
+<li>Files: <code>unit_outputNode_d_ee.parquet</code>, <code>unit__outputNode__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>unit</code>, <code>node</code></li>
+<li>every column: MWh/a, annualized</li>
+<li>Results database: <code>unit__node</code> entity <code>flow_annualized</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>unit_outputNode_dt_ee</code></li>
+</ul>
+<h3 id="unit_outputnode_dt_ee"><code>unit_outputNode_dt_ee</code></h3>
+<p>Flow from each unit to each of its output nodes in each time step.</p>
+<ul>
+<li>Files: <code>unit_outputNode_dt_ee.parquet</code>, <code>unit__outputNode__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>unit</code>, <code>node</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>unit__node</code> entity <code>flow_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>unit_outputNode_d_ee</code></li>
+</ul>
+<h2 id="capacity-factors">Capacity factors</h2>
+<p>See <a href="../results/#capacity-factors">Capacity factors</a> in Model outputs.</p>
+<h3 id="connection_cf_d_e"><code>connection_cf_d_e</code></h3>
+<p>Capacity factor of each connection in each period: the absolute flow in either direction divided by the connection capacity and the period's hours.</p>
+<ul>
+<li>Files: <code>connection_cf_d_e.parquet</code>, <code>connection_cf__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>connection</code></li>
+<li>every column: dimensionless, ratio</li>
+<li>Results database: <code>connection__node__node</code> entity <code>cf</code> parameter</li>
+</ul>
+<h3 id="unit_inputs_cf_d_ee"><code>unit_inputs_cf_d_ee</code></h3>
+<p>Capacity factor of each unit's input flow in each period: the period's flow divided by the unit capacity and the period's hours.</p>
+<ul>
+<li>Files: <code>unit_inputs_cf_d_ee.parquet</code>, <code>unit_cf__inputNode__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>unit</code>, <code>source</code></li>
+<li>every column: dimensionless, ratio</li>
+<li>Results database: <code>unit__node</code> entity <code>cf</code> parameter</li>
+</ul>
+<h3 id="unit_outputs_cf_d_ee"><code>unit_outputs_cf_d_ee</code></h3>
+<p>Capacity factor of each unit's output flow in each period: the period's flow divided by the unit capacity and the period's hours.</p>
+<ul>
+<li>Files: <code>unit_outputs_cf_d_ee.parquet</code>, <code>unit_cf__outputNode__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>unit</code>, <code>sink</code></li>
+<li>every column: dimensionless, ratio</li>
+<li>Results database: <code>unit__node</code> entity <code>cf</code> parameter</li>
+</ul>
+<h2 id="energy-balance-in-nodes">Energy balance in nodes</h2>
+<p>See <a href="../results/#energy-balance-in-nodes">Energy balance in nodes</a> in Model outputs.</p>
+<h3 id="node_d_ep"><code>node_d_ep</code></h3>
+<p>Energy balance of each node by category, summed over the period and scaled to a full year.</p>
+<ul>
+<li>Files: <code>node_d_ep.parquet</code>, <code>node__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>node</code>, <code>category</code></li>
+<li>every column: MWh/a, annualized</li>
+<li>Results database: <code>node</code> entity <code>balance</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>node_dt_ep</code></li>
+</ul>
+<h3 id="node_dt_ep"><code>node_dt_ep</code></h3>
+<p>Energy balance of each node in each time step by category: flows from and to units and connections, self-discharge, loss of load, excess load and inflow.</p>
+<ul>
+<li>Files: <code>node_dt_ep.parquet</code>, <code>node__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>node</code>, <code>category</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>node</code> entity <code>balance_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>node_d_ep</code></li>
+</ul>
+<h3 id="node_state_dt_e"><code>node_state_dt_e</code></h3>
+<p>Stored energy of each storage node at each time step.</p>
+<ul>
+<li>Files: <code>node_state_dt_e.parquet</code>, <code>node_state__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>node</code></li>
+<li>every column: MWh, level</li>
+<li>Results database: <code>node</code> entity <code>state_t</code> parameter</li>
+</ul>
+<h2 id="unit-online-and-startup">Unit online and startup</h2>
+<p>See <a href="../results/#unit-online-and-startup">Unit online and startup</a> in Model outputs.</p>
+<h3 id="unit_online_average_d_e"><code>unit_online_average_d_e</code></h3>
+<p>Average number of units online of each unit with online variables over the period, weighted by step duration.</p>
+<ul>
+<li>Files: <code>unit_online_average_d_e.parquet</code>, <code>unit_online__d_average.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>process</code></li>
+<li>every column: units, average</li>
+<li>Results database: <code>unit</code> entity <code>online_average</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>unit_online_dt_e</code></li>
+</ul>
+<h3 id="unit_online_dt_e"><code>unit_online_dt_e</code></h3>
+<p>Number of units online of each unit with online variables, in each time step.</p>
+<ul>
+<li>Files: <code>unit_online_dt_e.parquet</code>, <code>unit_online__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>process</code></li>
+<li>every column: units, level</li>
+<li>Results database: <code>unit</code> entity <code>online_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>unit_online_average_d_e</code></li>
+</ul>
+<h3 id="unit_startup_d_e"><code>unit_startup_d_e</code></h3>
+<p>Startups of each unit with online variables in the period, scaled to a full year.</p>
+<ul>
+<li>Files: <code>unit_startup_d_e.parquet</code>, <code>unit_startup__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>process</code></li>
+<li>every column: units/a, count</li>
+<li>Results database: <code>unit</code> entity <code>startup_cumulative</code> parameter</li>
+</ul>
+<h2 id="connection-online-and-startup">Connection online and startup</h2>
+<p>See <a href="../results/#connection-online-and-startup">Connection online and startup</a> in Model outputs.</p>
+<h3 id="connection_online_average_d_e"><code>connection_online_average_d_e</code></h3>
+<p>Average number of units online of each connection with a startup method over the period, weighted by step duration.</p>
+<ul>
+<li>Files: <code>connection_online_average_d_e.parquet</code>, <code>connection_online__d_average.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>process</code></li>
+<li>every column: units, average</li>
+<li>Results database: <code>connection</code> entity <code>online_average</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>connection_online_dt_e</code></li>
+</ul>
+<h3 id="connection_online_dt_e"><code>connection_online_dt_e</code></h3>
+<p>Number of units online of each connection with a startup method, in each time step.</p>
+<ul>
+<li>Files: <code>connection_online_dt_e.parquet</code>, <code>connection_online__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>process</code></li>
+<li>every column: units, level</li>
+<li>Results database: <code>connection</code> entity <code>online_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>connection_online_average_d_e</code></li>
+</ul>
+<h3 id="connection_startup_d_e"><code>connection_startup_d_e</code></h3>
+<p>Startups of each connection with a startup method in the period, scaled to a full year.</p>
+<ul>
+<li>Files: <code>connection_startup_d_e.parquet</code>, <code>connection_startup__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>process</code></li>
+<li>every column: units/a, count</li>
+<li>Results database: <code>connection</code> entity <code>startup_cumulative</code> parameter</li>
+</ul>
+<h2 id="unit-curtailment-and-vre-potential">Unit curtailment and VRE potential</h2>
+<p>See <a href="../results/#unit-curtailment-and-vre-potential">Unit curtailment and VRE potential</a> in Model outputs.</p>
+<h3 id="unit_vre_potential_outputnode_d_ee"><code>unit_VRE_potential_outputNode_d_ee</code></h3>
+<p>Potential output of each VRE unit to each output node summed over the period with the timestep weights, not scaled to a full year.</p>
+<ul>
+<li>Files: <code>unit_VRE_potential_outputNode_d_ee.parquet</code>, <code>unit_outputNode_VRE_potential__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>unit</code>, <code>sink</code></li>
+<li>every column: MWh, per_period</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>unit_VRE_potential_outputNode_dt_ee</code></li>
+</ul>
+<h3 id="unit_vre_potential_outputnode_dt_ee"><code>unit_VRE_potential_outputNode_dt_ee</code></h3>
+<p>Potential output of each VRE unit to each output node in each time step: capacity times the upper-limit profile.</p>
+<ul>
+<li>Files: <code>unit_VRE_potential_outputNode_dt_ee.parquet</code>, <code>unit_outputNode_VRE_potential__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>unit</code>, <code>sink</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>unit_VRE_potential_outputNode_d_ee</code></li>
+</ul>
+<h3 id="unit_curtailment_outputnode_d_ee"><code>unit_curtailment_outputNode_d_ee</code></h3>
+<p>Curtailment of each VRE unit at each output node summed over the period with the timestep weights, not scaled to a full year.</p>
+<ul>
+<li>Files: <code>unit_curtailment_outputNode_d_ee.parquet</code>, <code>unit_curtailment__outputNode__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>unit</code>, <code>sink</code></li>
+<li>every column: MWh, per_period</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>unit_curtailment_outputNode_dt_ee</code></li>
+</ul>
+<h3 id="unit_curtailment_outputnode_dt_ee"><code>unit_curtailment_outputNode_dt_ee</code></h3>
+<p>Curtailment of each VRE unit at each output node in each time step: the potential minus the actual output.</p>
+<ul>
+<li>Files: <code>unit_curtailment_outputNode_dt_ee.parquet</code>, <code>unit_curtailment__outputNode__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>unit</code>, <code>sink</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>unit__node</code> entity <code>curtailment_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>unit_curtailment_outputNode_d_ee</code></li>
+</ul>
+<h3 id="unit_curtailment_share_outputnode_d_ee"><code>unit_curtailment_share_outputNode_d_ee</code></h3>
+<p>Curtailment of each VRE unit as a share of its potential output over the period.</p>
+<ul>
+<li>Files: <code>unit_curtailment_share_outputNode_d_ee.parquet</code>, <code>unit_outputNode_VRE_curtailment_share__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>unit</code>, <code>sink</code></li>
+<li>every column: dimensionless, ratio</li>
+<li>Results database: <code>unit__node</code> entity <code>curtailment_share</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>unit_curtailment_share_outputNode_dt_ee</code></li>
+</ul>
+<h3 id="unit_curtailment_share_outputnode_dt_ee"><code>unit_curtailment_share_outputNode_dt_ee</code></h3>
+<p>Curtailment of each VRE unit as a share of its potential output in each time step.</p>
+<ul>
+<li>Files: <code>unit_curtailment_share_outputNode_dt_ee.parquet</code>, <code>unit_outputNode_VRE_curtailment_share__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>unit</code>, <code>sink</code></li>
+<li>every column: dimensionless, ratio</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>unit_curtailment_share_outputNode_d_ee</code></li>
+</ul>
+<h2 id="node-group-results">Node group results</h2>
+<p>See <a href="../results/#node-group-results">Node group results</a> in Model outputs.</p>
+<h3 id="nodegroup_vre_share_d_g"><code>nodeGroup_VRE_share_d_g</code></h3>
+<p>Share of the inflow (demand) of each indicator group covered by VRE units, averaged over the time steps of the period.</p>
+<ul>
+<li>Files: <code>nodeGroup_VRE_share_d_g.parquet</code>, <code>group_node_VRE_share__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>group</code></li>
+<li>every column: dimensionless, ratio</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>nodeGroup_VRE_share_dt_g</code></li>
+</ul>
+<h3 id="nodegroup_vre_share_dt_g"><code>nodeGroup_VRE_share_dt_g</code></h3>
+<p>Share of the inflow (demand) of each indicator group covered by VRE units in each time step.</p>
+<ul>
+<li>Files: <code>nodeGroup_VRE_share_dt_g.parquet</code>, <code>group_node_VRE_share__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>group</code></li>
+<li>every column: dimensionless, ratio</li>
+<li>Results database: <code>group</code> entity <code>VRE_share_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>nodeGroup_VRE_share_d_g</code></li>
+</ul>
+<h3 id="nodegroup_flows_d_g"><code>nodeGroup_flows_d_g</code></h3>
+<p>Inflow summed over the member nodes of each indicator group, summed over the period and scaled to a full year.</p>
+<ul>
+<li>Files: <code>nodeGroup_flows_d_g.parquet</code>, <code>group_total_inflow__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>group</code></li>
+<li>every column: MWh/a, annualized</li>
+<li>Results database: <code>group</code> entity <code>flow_annualized</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>nodeGroup_flows_dt_g</code></li>
+</ul>
+<h3 id="nodegroup_flows_d_gpe"><code>nodeGroup_flows_d_gpe</code></h3>
+<p>Energy into and out of each dispatch group by type and item, summed over the period and scaled to a full year.</p>
+<ul>
+<li>Files: <code>nodeGroup_flows_d_gpe.parquet</code>, <code>group_flows__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>group</code>, <code>type</code>, <code>item</code></li>
+<li>every column: MWh/a, annualized</li>
+<li>Results database: <code>group</code> entity <code>sum_flow_annualized</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>nodeGroup_flows_dt_gpe</code></li>
+</ul>
+<h3 id="nodegroup_flows_dt_g"><code>nodeGroup_flows_dt_g</code></h3>
+<p>Inflow summed over the member nodes of each indicator group (nodes with an inflow method) in each time step.</p>
+<ul>
+<li>Files: <code>nodeGroup_flows_dt_g.parquet</code>, <code>group_total_inflow__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>group</code></li>
+<li>every column: MWh, per_step</li>
+<li>Results database: <code>group</code> entity <code>flow_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>nodeGroup_flows_d_g</code></li>
+</ul>
+<h3 id="nodegroup_flows_dt_gpe"><code>nodeGroup_flows_dt_gpe</code></h3>
+<p>Energy in each time step into and out of each dispatch group by type (slack, units, unit groups, connections, connection groups, inflow, internal losses) and item.</p>
+<ul>
+<li>Files: <code>nodeGroup_flows_dt_gpe.parquet</code>, <code>group_flows__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>group</code>, <code>type</code>, <code>item</code></li>
+<li>every column: MWh, per_step</li>
+<li>Results database: <code>group</code> entity <code>sum_flow_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>nodeGroup_flows_d_gpe</code></li>
+</ul>
+<h3 id="nodegroup_gd_p"><code>nodeGroup_gd_p</code></h3>
+<p>Indicators of each indicator group in each period: loss of load, excess load and curtailment as shares of demand, the VRE share of demand and the annualized inflow.</p>
+<ul>
+<li>Files: <code>nodeGroup_gd_p.parquet</code>, <code>group_node__d.csv</code></li>
+<li>Rows: <code>group</code>, <code>period</code>; column levels: <code>parameter</code></li>
+<li><code>1. Loss of load share</code>: dimensionless, ratio</li>
+<li><code>2. VRE share of demand</code>: dimensionless, ratio</li>
+<li><code>3. Excess load share</code>: dimensionless, ratio</li>
+<li><code>4. Curtailed VRE of demand</code>: dimensionless, ratio</li>
+<li><code>5. Annualized inflow</code>: MWh/a, annualized</li>
+<li><code>6. Curtailed VRE of potential VRE</code>: dimensionless, ratio</li>
+<li>Results database: <code>group</code> entity <code>indicator</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>nodeGroup_gdt_p</code></li>
+</ul>
+<h3 id="nodegroup_gdt_p"><code>nodeGroup_gdt_p</code></h3>
+<p>Indicator building blocks of each indicator group in each time step: loss of load, VRE generation, excess load, curtailed VRE, inflow and VRE shares.</p>
+<ul>
+<li>Files: <code>nodeGroup_gdt_p.parquet</code>, <code>group_node__dt.csv</code></li>
+<li>Rows: <code>group</code>, <code>period</code>, <code>time</code>; column levels: <code>parameter</code></li>
+<li><code>1. Loss of load</code>: MWh, per_step</li>
+<li><code>2. VRE generation</code>: MWh, per_step</li>
+<li><code>3. Excess load</code>: MWh, per_step</li>
+<li><code>4. Curtailed VRE</code>: MWh, per_step</li>
+<li><code>5. Timestep inflow</code>: MWh, per_step</li>
+<li><code>6. Curtailed VRE of potential VRE</code>: dimensionless, ratio</li>
+<li><code>7. Annualized inflow</code>: MWh/a, annualized</li>
+<li><code>8. VRE share of demand</code>: dimensionless, ratio</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>nodeGroup_gd_p</code></li>
+</ul>
+<h2 id="flow-group-results">Flow group results</h2>
+<p>See <a href="../results/#flow-group-results">Flow group results</a> in Model outputs.</p>
+<h3 id="flowgroup_gd_p"><code>flowGroup_gd_p</code></h3>
+<p>Sum of the absolute flows of the member legs of each flow group over the period (cumulative_flow) and its average power (average_flow).</p>
+<ul>
+<li>Files: <code>flowGroup_gd_p.parquet</code>, <code>group_flow__d.csv</code></li>
+<li>Rows: <code>group</code>, <code>period</code>; column levels: <code>parameter</code></li>
+<li><code>cumulative_flow</code>: MWh, per_period</li>
+<li><code>average_flow</code>: MW, average</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>flowGroup_gd_t</code></li>
+</ul>
+<h3 id="flowgroup_gd_t"><code>flowGroup_gd_t</code></h3>
+<p>Signed net flow into the nodes of each flow group in each time step (into the group's nodes positive).</p>
+<ul>
+<li>Files: <code>flowGroup_gd_t.parquet</code>, <code>group_flow__dt.csv</code></li>
+<li>Rows: <code>group</code>, <code>period</code>, <code>time</code>; column levels: <code>parameter</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>flowGroup_gd_p</code></li>
+</ul>
+<h2 id="capacity-and-investment-results">Capacity and investment results</h2>
+<p>See <a href="../results/#capacity-and-investment-results">Capacity and investment results</a> in Model outputs.</p>
+<h3 id="connection_capacity_ed_p"><code>connection_capacity_ed_p</code></h3>
+<p>Capacity of each connection in each period: existing, invested, in construction, divested and the total in service.</p>
+<ul>
+<li>Files: <code>connection_capacity_ed_p.parquet</code>, <code>connection_capacity__d.csv</code></li>
+<li>Rows: <code>connection</code>, <code>period</code>; column levels: <code>parameter</code></li>
+<li>every column: MW, level</li>
+<li>Results database: <code>connection</code> entity <code>capacity</code> parameter</li>
+</ul>
+<h3 id="dual_invest_effective_connection_d_e"><code>dual_invest_effective_connection_d_e</code></h3>
+<p>Marginal value of one more unit of capacity of each investable connection in each period (positive: more capacity would lower the cost).</p>
+<ul>
+<li>Files: <code>dual_invest_effective_connection_d_e.parquet</code>, <code>connection_invest_marginal__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>entity</code></li>
+<li>every column: CUR/kW, price</li>
+<li>Results database: <code>connection</code> entity <code>invest_marginal</code> parameter</li>
+</ul>
+<h3 id="dual_invest_effective_node_d_e"><code>dual_invest_effective_node_d_e</code></h3>
+<p>Marginal value of one more unit of storage capacity of each investable storage node in each period (positive: more capacity would lower the cost).</p>
+<ul>
+<li>Files: <code>dual_invest_effective_node_d_e.parquet</code>, <code>node_invest_marginal__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>entity</code></li>
+<li>every column: CUR/kWh, price</li>
+<li>Results database: <code>node</code> entity <code>invest_marginal</code> parameter</li>
+</ul>
+<h3 id="dual_invest_effective_unit_d_e"><code>dual_invest_effective_unit_d_e</code></h3>
+<p>Marginal value of one more unit of capacity of each investable unit in each period (positive: more capacity would lower the cost).</p>
+<ul>
+<li>Files: <code>dual_invest_effective_unit_d_e.parquet</code>, <code>unit_invest_marginal__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>entity</code></li>
+<li>every column: CUR/kW, price</li>
+<li>Results database: <code>unit</code> entity <code>invest_marginal</code> parameter</li>
+</ul>
+<h3 id="node_capacity_ed_p"><code>node_capacity_ed_p</code></h3>
+<p>Storage capacity of each storage node in each period: existing, invested, in construction, divested and the total in service.</p>
+<ul>
+<li>Files: <code>node_capacity_ed_p.parquet</code>, <code>node_capacity__d.csv</code></li>
+<li>Rows: <code>node</code>, <code>period</code>; column levels: <code>parameter</code></li>
+<li>every column: MWh, level</li>
+<li>Results database: <code>node</code> entity <code>capacity</code> parameter</li>
+</ul>
+<h3 id="unit_capacity_ed_p"><code>unit_capacity_ed_p</code></h3>
+<p>Capacity of each unit in each period: existing, invested, in construction, divested and the total in service.</p>
+<ul>
+<li>Files: <code>unit_capacity_ed_p.parquet</code>, <code>unit_capacity__d.csv</code></li>
+<li>Rows: <code>unit</code>, <code>period</code>; column levels: <code>parameter</code></li>
+<li>every column: MW, level</li>
+<li>Results database: <code>unit</code> entity <code>capacity</code> parameter</li>
+</ul>
+<h2 id="co2-emissions">CO2 emissions</h2>
+<p>See <a href="../results/#co2-emissions">CO2 emissions</a> in Model outputs.</p>
+<h3 id="co2__"><code>CO2__</code></h3>
+<p>CO2 emissions of the whole model totalled over the years the periods represent (one column per scenario path when a stochastic run has several).</p>
+<ul>
+<li>Files: <code>CO2__.parquet</code>, <code>co2.csv</code></li>
+<li>Rows: <code>param_CO2</code>; column levels: <code>scope</code></li>
+<li>every column: Mt, horizon</li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="co2_d_g"><code>CO2_d_g</code></h3>
+<p>Annual CO2 emissions of each CO2-priced or CO2-capped group, by period.</p>
+<ul>
+<li>Files: <code>CO2_d_g.parquet</code>, <code>group_CO2__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>group</code></li>
+<li>every column: t/a, annualized</li>
+<li>Results database: <code>group</code> entity <code>CO2_annualized</code> parameter</li>
+</ul>
+<h3 id="process_co2_d_eee"><code>process_co2_d_eee</code></h3>
+<p>Annual CO2 emissions of each unit and connection flow by commodity and node, by period (negative for a removal).</p>
+<ul>
+<li>Files: <code>process_co2_d_eee.parquet</code>, <code>process__d_co2.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>type</code>, <code>process</code>, <code>commodity</code>, <code>node</code></li>
+<li>every column: t/a, annualized</li>
+<li>Results database: <code>unit</code> entity <code>CO2_annualized</code> parameter</li>
+</ul>
+<h2 id="reserves">Reserves</h2>
+<p>See <a href="../results/#reserves">Reserves</a> in Model outputs.</p>
+<h3 id="process_reserve_average_d_eppe"><code>process_reserve_average_d_eppe</code></h3>
+<p>Reserve held by each unit or connection for each reserve, direction and node, averaged over the period.</p>
+<ul>
+<li>Files: <code>process_reserve_average_d_eppe.parquet</code>, <code>process__reserve__upDown__node__d_average.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>process</code>, <code>reserve</code>, <code>updown</code>, <code>node</code></li>
+<li>every column: MW, average</li>
+<li>Results database: <code>unit__reserve__upDown__node</code> entity <code>reservation_average</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>process_reserve_upDown_node_dt_eppe</code></li>
+</ul>
+<h3 id="process_reserve_updown_node_dt_eppe"><code>process_reserve_upDown_node_dt_eppe</code></h3>
+<p>Reserve held by each unit or connection for each reserve, direction and node in each time step.</p>
+<ul>
+<li>Files: <code>process_reserve_upDown_node_dt_eppe.parquet</code>, <code>process__reserve__upDown__node__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>process</code>, <code>reserve</code>, <code>updown</code>, <code>node</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>unit__reserve__upDown__node</code> entity <code>reservation_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>process_reserve_average_d_eppe</code></li>
+</ul>
+<h2 id="inertia-and-non-synchronous-generation">Inertia and non-synchronous generation</h2>
+<p>See <a href="../results/#inertia-and-non-synchronous-generation">Inertia and non-synchronous generation</a> in Model outputs.</p>
+<h3 id="nodegroup_inertia_dt_g"><code>nodeGroup_inertia_dt_g</code></h3>
+<p>Inertia available in each inertia group in each time step.</p>
+<ul>
+<li>Files: <code>nodeGroup_inertia_dt_g.parquet</code>, <code>group_inertia__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>group</code></li>
+<li>every column: MW·s, level</li>
+<li>Results database: <code>group</code> entity <code>inertia_t</code> parameter</li>
+</ul>
+<h3 id="nodegroup_inertia_largest_flow_dt_g"><code>nodeGroup_inertia_largest_flow_dt_g</code></h3>
+<p>Largest single flow into the nodes of each inertia group in each time step.</p>
+<ul>
+<li>Files: <code>nodeGroup_inertia_largest_flow_dt_g.parquet</code>, <code>group_inertia_largest_flow__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>group</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>group</code> entity <code>inertia_largest_flow_t</code> parameter</li>
+</ul>
+<h3 id="nodegroup_unit_node_inertia_dt_gee"><code>nodeGroup_unit_node_inertia_dt_gee</code></h3>
+<p>Inertia contribution of each unit or connection at each node of each inertia group in each time step.</p>
+<ul>
+<li>Files: <code>nodeGroup_unit_node_inertia_dt_gee.parquet</code>, <code>group__unit__node_inertia__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>group</code>, <code>process</code>, <code>node</code></li>
+<li>every column: MW·s, level</li>
+<li>Results database: <code>group</code> entity <code>inertia_unit_node_t</code> parameter</li>
+</ul>
+<h2 id="ramps">Ramps</h2>
+<p>See <a href="../results/#ramps">Ramps</a> in Model outputs.</p>
+<h3 id="unit_ramp_inputs_dt_ee"><code>unit_ramp_inputs_dt_ee</code></h3>
+<p>Change of each unit's input flow from the previous time step.</p>
+<ul>
+<li>Files: <code>unit_ramp_inputs_dt_ee.parquet</code>, <code>unit_ramp__inputNode__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>unit</code>, <code>source</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>unit__node</code> entity <code>ramp_t</code> parameter</li>
+</ul>
+<h3 id="unit_ramp_outputs_dt_ee"><code>unit_ramp_outputs_dt_ee</code></h3>
+<p>Change of each unit's output flow from the previous time step.</p>
+<ul>
+<li>Files: <code>unit_ramp_outputs_dt_ee.parquet</code>, <code>unit_ramp__outputNode__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>unit</code>, <code>sink</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>unit__node</code> entity <code>ramp_t</code> parameter</li>
+</ul>
+<h2 id="dc-power-flow">DC power flow</h2>
+<p>See <a href="../results/#dc-power-flow">DC power flow</a> in Model outputs.</p>
+<h3 id="dc_angle_diff_dt_e"><code>dc_angle_diff_dt_e</code></h3>
+<p>Voltage angle difference between the first and the second node of each DC power-flow connection in each time step.</p>
+<ul>
+<li>Files: <code>dc_angle_diff_dt_e.parquet</code>, <code>dc_angle_diff_dt_e.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>connection</code></li>
+<li>every column: rad, level</li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="dc_angle_dt_e"><code>dc_angle_dt_e</code></h3>
+<p>Voltage angle of each DC power-flow node in each time step.</p>
+<ul>
+<li>Files: <code>dc_angle_dt_e.parquet</code>, <code>dc_angle_dt_e.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>node</code></li>
+<li>every column: rad, level</li>
+<li>Results database: not written there</li>
+</ul>
+<h2 id="slack-and-penalty-values">Slack and penalty values</h2>
+<p>See <a href="../results/#slack-and-penalty-values">Slack and penalty values</a> in Model outputs.</p>
+<h3 id="nodegroup_slack_capacity_margin_d_g"><code>nodeGroup_slack_capacity_margin_d_g</code></h3>
+<p>Capacity margin shortfall of each group in each investment period, not scaled to a year.</p>
+<ul>
+<li>Files: <code>nodeGroup_slack_capacity_margin_d_g.parquet</code>, <code>slack__capacity_margin__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>group</code></li>
+<li>every column: MW, level</li>
+<li>Results database: <code>group</code> entity <code>slack_capacity_margin</code> parameter</li>
+</ul>
+<h3 id="nodegroup_slack_inertia_dt_g"><code>nodeGroup_slack_inertia_dt_g</code></h3>
+<p>Inertia shortfall of each inertia group in each time step.</p>
+<ul>
+<li>Files: <code>nodeGroup_slack_inertia_dt_g.parquet</code>, <code>slack__inertia_group__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>group</code></li>
+<li>every column: MW·s, level</li>
+<li>Results database: <code>group</code> entity <code>slack_inertia_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>nodeGroup_slack_inertia_d_g</code></li>
+</ul>
+<h3 id="nodegroup_slack_nonsync_dt_g"><code>nodeGroup_slack_nonsync_dt_g</code></h3>
+<p>Non-synchronous generation above the allowed share of each group in each time step.</p>
+<ul>
+<li>Files: <code>nodeGroup_slack_nonsync_dt_g.parquet</code>, <code>slack__nonsync_group__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>group</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>group</code> entity <code>slack_nonsync_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>nodeGroup_slack_nonsync_d_g</code></li>
+</ul>
+<h3 id="nodegroup_slack_reserve_dt_eeg"><code>nodeGroup_slack_reserve_dt_eeg</code></h3>
+<p>Reserve shortfall of each reserve, direction and group in each time step.</p>
+<ul>
+<li>Files: <code>nodeGroup_slack_reserve_dt_eeg.parquet</code>, <code>slack__reserve__upDown__group__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>reserve</code>, <code>updown</code>, <code>node_group</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: <code>group__reserve__upDown</code> entity <code>slack_reserve_t</code> parameter</li>
+<li>Counterpart at the other time resolution: <code>nodeGroup_slack_reserve_d_eeg</code></li>
+</ul>
+<h2 id="other">Other</h2>
+<h3 id="connection_dc_power_flow"><code>connection_dc_power_flow</code></h3>
+<p>Set of the connections in a DC power-flow network.</p>
+<ul>
+<li>Files: <code>connection_dc_power_flow.parquet</code>, <code>connection_dc_power_flow.csv</code></li>
+<li>Membership set; its columns: <code>connection</code></li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="discountfactors_d_p"><code>discountFactors_d_p</code></h3>
+<p>Operations and investment discount factors of each period (written only in a debug run).</p>
+<ul>
+<li>Files: <code>discountFactors_d_p.parquet</code>, <code>discount_factors__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>param</code></li>
+<li>every column: dimensionless, ratio</li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="entity_annuity_d_p"><code>entity_annuity_d_p</code></h3>
+<p>Discounted investment cost per MW of the capacity of each unit, connection and storage node decided in a period (written only in a debug run).</p>
+<ul>
+<li>Files: <code>entity_annuity_d_p.parquet</code>, <code>entity_annuity.csv</code></li>
+<li>Rows: <code>solve</code>, <code>period</code>; column levels: <code>entity</code></li>
+<li>every column: CUR/MW, discounted</li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="flowgroupindicators"><code>flowGroupIndicators</code></h3>
+<p>Set of the flow groups with indicator output.</p>
+<ul>
+<li>Files: <code>flowGroupIndicators.parquet</code>, <code>flowGroupIndicators.csv</code></li>
+<li>Membership set; its columns: <code>group</code></li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="group_node"><code>group_node</code></h3>
+<p>Membership set: the nodes of each group.</p>
+<ul>
+<li>Files: <code>group_node.parquet</code>, <code>group_node.csv</code></li>
+<li>Membership set; its columns: <code>group</code>, <code>node</code></li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="group_process"><code>group_process</code></h3>
+<p>Membership set: the units and connections of each group.</p>
+<ul>
+<li>Files: <code>group_process.parquet</code>, <code>group_process.csv</code></li>
+<li>Membership set; its columns: <code>group</code>, <code>process</code></li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="group_process_node"><code>group_process_node</code></h3>
+<p>Membership set: the (unit or connection, node) flows of each group.</p>
+<ul>
+<li>Files: <code>group_process_node.parquet</code>, <code>group_process_node.csv</code></li>
+<li>Membership set; its columns: <code>group</code>, <code>process</code>, <code>node</code></li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="nodegroupdispatch"><code>nodeGroupDispatch</code></h3>
+<p>Set of the node groups with dispatch output (print_dispatch).</p>
+<ul>
+<li>Files: <code>nodeGroupDispatch.parquet</code>, <code>nodeGroupDispatch.csv</code></li>
+<li>Membership set; its columns: <code>group</code></li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="nodegroupindicators"><code>nodeGroupIndicators</code></h3>
+<p>Set of the node groups with indicator output (print_indicators).</p>
+<ul>
+<li>Files: <code>nodeGroupIndicators.parquet</code>, <code>nodeGroupIndicators.csv</code></li>
+<li>Membership set; its columns: <code>group</code></li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="nodegroup_slack_inertia_d_g"><code>nodeGroup_slack_inertia_d_g</code></h3>
+<p>Inertia shortfall of each inertia group summed over the period and scaled to a full year.</p>
+<ul>
+<li>Files: <code>nodeGroup_slack_inertia_d_g.parquet</code>, <code>slack__inertia_group__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>group</code></li>
+<li>every column: MW·s/a, annualized</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>nodeGroup_slack_inertia_dt_g</code></li>
+</ul>
+<h3 id="nodegroup_slack_nonsync_d_g"><code>nodeGroup_slack_nonsync_d_g</code></h3>
+<p>Non-synchronous generation above the allowed share of each group summed over the period and scaled to a full year.</p>
+<ul>
+<li>Files: <code>nodeGroup_slack_nonsync_d_g.parquet</code>, <code>slack__nonsync_group__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>group</code></li>
+<li>every column: MWh/a, annualized</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>nodeGroup_slack_nonsync_dt_g</code></li>
+</ul>
+<h3 id="nodegroup_slack_reserve_d_eeg"><code>nodeGroup_slack_reserve_d_eeg</code></h3>
+<p>Reserve shortfall of each reserve, direction and group summed over the period and scaled to a full year.</p>
+<ul>
+<li>Files: <code>nodeGroup_slack_reserve_d_eeg.parquet</code>, <code>slack__reserve__upDown__group__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>reserve</code>, <code>updown</code>, <code>node_group</code></li>
+<li>every column: MWh/a, annualized</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>nodeGroup_slack_reserve_dt_eeg</code></li>
+</ul>
+<h3 id="node_dc_power_flow"><code>node_dc_power_flow</code></h3>
+<p>Set of the nodes in a DC power-flow network.</p>
+<ul>
+<li>Files: <code>node_dc_power_flow.parquet</code>, <code>node_dc_power_flow.csv</code></li>
+<li>Membership set; its columns: <code>node</code></li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="node_inflow__dt"><code>node_inflow__dt</code></h3>
+<p>Inflow of each node in each time step as given to the model (demand is negative).</p>
+<ul>
+<li>Files: <code>node_inflow__dt.parquet</code>, <code>node_inflow__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>node</code></li>
+<li>every column: MWh, per_step</li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="node_slack_down_d_e"><code>node_slack_down_d_e</code></h3>
+<p>Downward slack (excess load) of each balanced node summed over the period and scaled to a full year.</p>
+<ul>
+<li>Files: <code>node_slack_down_d_e.parquet</code>, <code>slack__downward__node_state__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>node</code></li>
+<li>every column: MWh/a, annualized</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>node_slack_down_dt_e</code></li>
+</ul>
+<h3 id="node_slack_down_dt_e"><code>node_slack_down_dt_e</code></h3>
+<p>Downward slack (excess load) of each balanced node in each time step.</p>
+<ul>
+<li>Files: <code>node_slack_down_dt_e.parquet</code>, <code>slack__downward__node_state__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>node</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>node_slack_down_d_e</code></li>
+</ul>
+<h3 id="node_slack_up_d_e"><code>node_slack_up_d_e</code></h3>
+<p>Upward slack (loss of load) of each balanced node summed over the period and scaled to a full year.</p>
+<ul>
+<li>Files: <code>node_slack_up_d_e.parquet</code>, <code>slack__upward__node_state__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>node</code></li>
+<li>every column: MWh/a, annualized</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>node_slack_up_dt_e</code></li>
+</ul>
+<h3 id="node_slack_up_dt_e"><code>node_slack_up_dt_e</code></h3>
+<p>Upward slack (loss of load) of each balanced node in each time step.</p>
+<ul>
+<li>Files: <code>node_slack_up_dt_e.parquet</code>, <code>slack__upward__node_state__dt.csv</code></li>
+<li>Rows: <code>period</code>, <code>time</code>; column levels: <code>node</code></li>
+<li>every column: MW, instantaneous</li>
+<li>Results database: not written there</li>
+<li>Counterpart at the other time resolution: <code>node_slack_up_d_e</code></li>
+</ul>
+<h3 id="timeline_breaks"><code>timeline_breaks</code></h3>
+<p>Realized time steps at which a time-series plot starts a new line (gaps, representative period starts, periods that do not continue the previous one).</p>
+<ul>
+<li>Files: <code>timeline_breaks.parquet</code>, <code>timeline_breaks.csv</code></li>
+<li>Membership set; its columns: <code>period</code>, <code>time</code></li>
+<li>Results database: not written there</li>
+</ul>
+<h3 id="years_represented__d"><code>years_represented__d</code></h3>
+<p>Number of years each period represents.</p>
+<ul>
+<li>Files: <code>years_represented__d.parquet</code>, <code>years_represented__d.csv</code></li>
+<li>Rows: <code>period</code>; column levels: <code>param</code></li>
+<li>every column: a, count</li>
+<li>Results database: not written there</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      IRENA
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
+      
+        <script src="../assets/mathjaxhelper.js"></script>
+      
+    
+  </body>
+</html>

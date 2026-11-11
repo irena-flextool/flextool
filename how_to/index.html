@@ -13,7 +13,7 @@
       
       
       
-        <link rel="prev" href="../results/">
+        <link rel="prev" href="../formulation/">
       
       
         <link rel="next" href="../advanced_concepts/">
@@ -49,6 +49,8 @@
         <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
       
     
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
     
     <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -501,6 +503,62 @@
     
   
     Model outputs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
   
 
     
@@ -1356,6 +1414,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../ai_assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../env_vars/" class="md-nav__link">
         
   
@@ -1840,6 +1926,34 @@
     
   
     Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/assistant_evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
   
 
     
@@ -3071,13 +3185,13 @@ This spill unit has to be in entities:
 <li>a source for external energy (pumped storage plant will lose energy due to charging losses). Wind power plant will be used as a source for external energy.</li>
 </ul>
 <p>There are two ways to handle the water to electricity coefficient. Here, we convert the reservoir capacity and inflow to potential energy. 
-The unit of the inflow should be the power that can be created from the quantity of the incoming water at maximum efficiency [MW]. In the same way, the existing storage capacity should be the maximum amount of stored energy that the reservoir can hold [MWh].
+The inflow should be the energy that can be created from the incoming water of each time step at maximum efficiency [MWh] per time step (on hourly steps, the potential power in MW). In the same way, the existing storage capacity should be the maximum amount of stored energy that the reservoir can hold [MWh].
 In this implementation of reservoir hydro power, there is an option to spill water (energy) from the storage so that it does not run through the plant. The simplest way of allowing spilling is setting the downward penalty of the node to 0. This way the energy can disappear from the storage without a cost. The quantity of spilled energy can be seen from the results as the 'downward slack' of the node.</p>
 <p>The <em>reservoir</em> <code>node</code> needs to be added to an alternative in the <code>Entity Alternative</code> sheet (if Toolbox 0.8, after 5/2024).</p>
 <p>The required parameters of the reservoir node are (node_c and node_t sheets if using Excel input data):</p>
 <ul>
 <li><code>node_type</code>: storage</li>
-<li><code>inflow</code>: Mapping of the incoming water as the potential power [MW]</li>
+<li><code>inflow</code>: Mapping of the incoming water as the potential energy [MWh] per time step (on hourly steps, the potential power in MW)</li>
 <li><code>existing</code>: The maximum size of the reservoir as the potential energy [MWh]</li>
 <li><code>penalty_up</code>: a large number to prefer not creating energy from nowhere</li>
 <li><code>penalty_down</code>: 0 or a large number (spilling or not)</li>
@@ -3543,11 +3657,11 @@ Other reason might be that both dispatch and storage solves are aggregated with 
 <ul>
 <li><code>energy_margin_method</code> - <em>none</em> (default, off), <em>inflow_multiplier</em>, or <em>inflow_adder</em>.</li>
 <li><code>energy_margin_multiplier</code> - the factor (default 1.0). When <code>energy_margin_method = inflow_multiplier</code>, the node's demand (inflow) is multiplied by this factor <strong>in the investment solve only</strong> — the dispatch solves always see the true demand. A value of 1.1 makes the investment stage build for about 10% more demand, so the real capacity is enough to meet the real demand under the true annual VRE. A value of 1.0 has no effect.</li>
-<li><code>energy_margin_adder</code> - the extra demand in MWh (default 0.0). When <code>energy_margin_method = inflow_adder</code>, this many MWh of extra demand (negative inflow) is added at the node <strong>in the investment solve only</strong>; the dispatch solves always see the true demand. A value of 0.0 has no effect.</li>
+<li><code>energy_margin_adder</code> - the extra demand in MWh per time step (default 0.0). When <code>energy_margin_method = inflow_adder</code>, this many MWh of extra demand (negative inflow) is added to every time step at the node <strong>in the investment solve only</strong>; the dispatch solves always see the true demand. A value of 0.0 has no effect.</li>
 </ul>
 <p>For example, to build about 10% more into a demand node, set <code>energy_margin_method = inflow_multiplier</code> and <code>energy_margin_multiplier = 1.1</code> on that node.</p>
 <p>The energy margin enters only the node balance. The reserve requirement, the non-synchronous limit and the capacity margin of a group follow the real demand; use <code>capacity_margin</code> for a capacity surplus.</p>
-<p>Use <code>inflow_adder</code> as the additive alternative to the multiplier. Because the multiplier scales the node's <em>existing</em> demand, it is a no-op on a node whose native inflow is zero — a common shape for a bare adequacy / slack node that carries no demand series of its own. <code>inflow_adder</code> instead adds a fixed block of demand at the node: it deepens the node's demand where it already has inflow and, crucially, <strong>creates</strong> the demand where the node had none, spreading the MWh uniformly across every investment-stage timestep (a constant adder), or placing per-period values if authored as a period map. Set <code>energy_margin_method = inflow_adder</code> and <code>energy_margin_adder = &lt;MWh&gt;</code> on the node to raise investment-stage adequacy headroom without touching dispatch demand.</p>
+<p>Use <code>inflow_adder</code> as the additive alternative to the multiplier. Because the multiplier scales the node's <em>existing</em> demand, it is a no-op on a node whose native inflow is zero — a common shape for a bare adequacy / slack node that carries no demand series of its own. <code>inflow_adder</code> instead adds a fixed block of demand at the node: it deepens the node's demand where it already has inflow and, crucially, <strong>creates</strong> the demand where the node had none, adding the same MWh to every investment-stage time step (a constant adder; on 24 h steps a margin of 10 MW needs a value of 240), or placing per-period values if authored as a period map. Set <code>energy_margin_method = inflow_adder</code> and <code>energy_margin_adder = &lt;MWh&gt;</code> on the node to raise investment-stage adequacy headroom without touching dispatch demand.</p>
 <p>The margin is extra demand for the investment decision only, not load: it does not raise reserve requirements (a reserve group's <code>increase_reserve_ratio</code> follows the un-margined demand).</p>
 <p>The energy margin is a per-node lever for regions whose adequacy gap is driven by VRE optimism and can be closed by building more of an investable response (more VRE, storage, or imports). It cannot help a region whose VRE collapses to near zero during the stress period when the only investable response is more VRE that serves the same demand — those regions need firm capacity or imports instead.</p>
 <p>It is complementary to the <code>capacity_margin_method</code> (see the <a href="../reference/#limits-for-nodes">group reference</a>): <code>capacity_margin_method</code> targets peak-capacity adequacy (headroom above the peak net load), whereas the energy margin targets sustained-energy adequacy across the year.</p>
@@ -3786,7 +3900,7 @@ The other parameters documented as "stochastic time" in the reference (<code>ava
 <code>solve</code> parameter <code>decomposition</code> to <em>benders</em> on the solve(s) you want
 decomposed (optionally tuning <code>benders_max_iter</code> and <code>benders_tolerance</code>;
 they default to <code>50</code> / <code>1e-3</code>). Then run normally:</p>
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_run_flextool<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code>flextool-run<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>sqlite:///input_data.sqlite<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--scenario-name<span class="w"> </span>multi_region
 </code></pre></div>

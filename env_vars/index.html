@@ -13,7 +13,7 @@
       
       
       
-        <link rel="prev" href="../terminal_workflow/">
+        <link rel="prev" href="../ai_assistant/">
       
       
         <link rel="next" href="../solvers/">
@@ -49,6 +49,8 @@
         <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
       
     
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
     
     <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -521,6 +523,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../results_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../how_to/" class="md-nav__link">
         
   
@@ -770,6 +828,34 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../ai_assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -833,10 +919,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#twins-of-run_flextool-flags" class="md-nav__link">
+  <a href="#twins-of-flextool-run-flags" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Twins of run_flextool flags
+        Twins of flextool-run flags
       
     </span>
   </a>
@@ -848,6 +934,17 @@
     <span class="md-ellipsis">
       
         Process and GUI settings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ai-assistant" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AI assistant
       
     </span>
   </a>
@@ -1346,6 +1443,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../dev/assistant_evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../dev/env_vars/" class="md-nav__link">
         
   
@@ -1568,10 +1693,10 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#twins-of-run_flextool-flags" class="md-nav__link">
+  <a href="#twins-of-flextool-run-flags" class="md-nav__link">
     <span class="md-ellipsis">
       
-        Twins of run_flextool flags
+        Twins of flextool-run flags
       
     </span>
   </a>
@@ -1583,6 +1708,17 @@
     <span class="md-ellipsis">
       
         Process and GUI settings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#ai-assistant" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AI assistant
       
     </span>
   </a>
@@ -1613,7 +1749,7 @@
 <p>FlexTool takes its settings from three places:</p>
 <ul>
 <li>the <strong>database</strong>: what changes the model or its answer (for example a solve's <code>scaling</code> or <code>solver_mip_gap</code>);</li>
-<li>a <strong>command-line flag</strong> of <code>run_flextool</code>: a choice for one run (threads, time limit, <code>--save-memory</code>, ...);</li>
+<li>a <strong>command-line flag</strong> of <code>flextool-run</code>: a choice for one run (threads, time limit, <code>--save-memory</code>, ...);</li>
 <li>an <strong>environment variable</strong>: a setting for a whole process, and the twin of a flag where you have no command
   line — a Spine Toolbox tool, a Python console or script, a CI job.</li>
 </ul>
@@ -1624,7 +1760,7 @@ calibrator or a workflow inherits them exactly as you set them in the shell. The
 set by a flag or an environment variable, and where it came from.</p>
 <p>All variables are optional, and an empty value counts as unset. In the first table, a value FlexTool cannot
 read (for example <code>FLEXTOOL_HIGHS_THREADS=many</code>) is ignored with one warning that names the variable.</p>
-<h2 id="twins-of-run_flextool-flags">Twins of <code>run_flextool</code> flags</h2>
+<h2 id="twins-of-flextool-run-flags">Twins of <code>flextool-run</code> flags</h2>
 <table>
 <thead>
 <tr>
@@ -1747,7 +1883,12 @@ read (for example <code>FLEXTOOL_HIGHS_THREADS=many</code>) is ignored with one 
 <tr>
 <td><code>MALLOC_ARENA_MAX</code></td>
 <td>integer</td>
-<td>Linux: cap on glibc's malloc arenas. <code>run_flextool</code> sets <code>4</code>, which keeps memory from fragmenting over long runs, unless you set a value.</td>
+<td>Linux: cap on glibc's malloc arenas. The FlexTool engine (what <code>flextool-run</code> runs) sets <code>4</code>, which keeps memory from fragmenting over long runs, unless you set a value.</td>
+</tr>
+<tr>
+<td><code>FLEXTOOL_RUN_LOG_MAX_BYTES</code></td>
+<td>bytes (default <code>4194304</code>, 4 MiB; at most <code>268435456</code>, 256 MiB)</td>
+<td>Size limit of the run log <code>_run.log</code> in each run's <code>output_parquet/&lt;run&gt;/</code> folder. A longer log keeps its first 64 KiB and its last this many bytes, with a line that says how many bytes were left out between them. A larger value is taken as 256 MiB. The GUI's log window shows at most 2 MiB of a log: its start and its end, with a line that says how much is left out.</td>
 </tr>
 <tr>
 <td><code>POLARS_PREFER_PKG</code></td>
@@ -1766,6 +1907,62 @@ read (for example <code>FLEXTOOL_HIGHS_THREADS=many</code>) is ignored with one 
 </tr>
 </tbody>
 </table>
+<h2 id="ai-assistant">AI assistant</h2>
+<p>The assistant has no variables of its own: its choices are flags of <code>flextool-assistant</code> and its settings. It
+reads only the key of the AI service you chose, from that service's variable. A key in the variable wins over a
+key stored in the system keyring or in the key file, and the chat says where its key came from.</p>
+<table>
+<thead>
+<tr>
+<th>Variable</th>
+<th>Set to</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>OPENAI_API_KEY</code></td>
+<td>key</td>
+<td>The key of OpenAI for the assistant chat. It wins over a key stored in the system keyring or the key file.</td>
+</tr>
+<tr>
+<td><code>ANTHROPIC_API_KEY</code></td>
+<td>key</td>
+<td>The key of Anthropic for the assistant chat. It wins over a key stored in the system keyring or the key file.</td>
+</tr>
+<tr>
+<td><code>MISTRAL_API_KEY</code></td>
+<td>key</td>
+<td>The key of Mistral for the assistant chat. It wins over a key stored in the system keyring or the key file.</td>
+</tr>
+<tr>
+<td><code>OPENROUTER_API_KEY</code></td>
+<td>key</td>
+<td>The key of OpenRouter for the assistant chat. It wins over a key stored in the system keyring or the key file.</td>
+</tr>
+<tr>
+<td><code>GEMINI_API_KEY</code></td>
+<td>key</td>
+<td>The key of Google Gemini for the assistant chat. It wins over a key stored in the system keyring or the key file.</td>
+</tr>
+<tr>
+<td><code>OLLAMA_CONTEXT_LENGTH</code></td>
+<td>tokens, e.g. <code>16384</code></td>
+<td>Ollama's own: the context length Ollama loads models with. The assistant needs at least 12288 (a smaller context sends no question); set it where the Ollama server starts and restart Ollama.</td>
+</tr>
+<tr>
+<td><code>PYTHON_KEYRING_BACKEND</code></td>
+<td>backend class</td>
+<td>keyring's own: which keyring backend stores the keys. FlexTool does not use a backend that stores keys unencrypted.</td>
+</tr>
+</tbody>
+</table>
+<p>The provider libraries the assistant uses read more variables of their own: <code>OPENAI_BASE_URL</code>, <code>OPENAI_ORG_ID</code>,
+<code>OPENAI_PROJECT_ID</code>, <code>OPENAI_CUSTOM_HEADERS</code>, <code>OPENAI_LOG</code>, <code>ANTHROPIC_BASE_URL</code>, <code>ANTHROPIC_AUTH_TOKEN</code>,
+<code>ANTHROPIC_CUSTOM_HEADERS</code> and <code>ANTHROPIC_LOG</code>. FlexTool ignores them: it gives each library the address and the
+key itself and sends only the request headers it needs, so these variables change nothing. Proxy variables
+(<code>HTTPS_PROXY</code>, <code>NO_PROXY</code>, ...) and the system proxy settings apply only to services on the internet, never to
+a model on this computer or your local network; the chat names the proxy it uses.</p>
 <p>FlexTool also reads developer variables (diagnostics, profiling, Benders experiments, test switches). They are
 described in the developer guide, are not meant for production runs and can change between releases.</p>
 

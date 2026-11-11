@@ -50,6 +50,8 @@
       
     
     
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
     <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
@@ -582,6 +584,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#units-of-measure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Units of measure
+      
+    </span>
+  </a>
   
 </li>
       
@@ -1123,6 +1136,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../results_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../how_to/" class="md-nav__link">
         
   
@@ -1355,6 +1424,34 @@
     
   
     Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../ai_assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
   
 
     
@@ -1879,6 +1976,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../dev/assistant_evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../dev/env_vars/" class="md-nav__link">
         
   
@@ -2158,6 +2283,17 @@
         
       </ul>
     </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#units-of-measure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Units of measure
+      
+    </span>
+  </a>
   
 </li>
       
@@ -2728,7 +2864,7 @@
 <li>
 <p><em>period_timeset</em>: map of periods with associated timesets that will be included in the solve. Index: period name, value: timeset name.</p>
 </li>
-<li><em>new_stepduration</em>: Hours. Creates a new <code>timeline</code> from the old for this <code>solve</code> with this timestep duration. The new timeline sums <code>inflow</code> over the time steps that form each new time step (a constant <code>inflow</code> counts once per time step it combines) and averages the other timeseries data like <code>profile</code> over them, weighted by their durations. The <code>new_stepduration</code> must be a whole multiple of the timeline's time steps (on a timeline with time steps of different lengths, every new time step must end where a time step of the timeline ends); FlexTool stops with an error otherwise. All timesets used by the solve must resolve to the same underlying timeline. Steps are aggregated from the start of each <code>timeset_duration</code> block (a block that is not a multiple of the step ends with a shorter step); a gap between blocks stays a gap, and when several timesets share the timeline each period keeps its own timesteps. A timeset used by this solve cannot be used by a solve without <code>new_stepduration</code> or with a different one. See also the group-level <code>new_stepduration</code> for flex-temporal decomposition.</li>
+<li><em>new_stepduration</em>: [hours] Creates a new <code>timeline</code> from the old for this <code>solve</code> with this timestep duration. The new timeline sums <code>inflow</code> over the time steps that form each new time step (a constant <code>inflow</code> counts once per time step it combines) and averages the other timeseries data like <code>profile</code> over them, weighted by their durations. The <code>new_stepduration</code> must be a whole multiple of the timeline's time steps (on a timeline with time steps of different lengths, every new time step must end where a time step of the timeline ends); FlexTool stops with an error otherwise. All timesets used by the solve must resolve to the same underlying timeline. Steps are aggregated from the start of each <code>timeset_duration</code> block (a block that is not a multiple of the step ends with a shorter step); a gap between blocks stays a gap, and when several timesets share the timeline each period keeps its own timesteps. A timeset used by this solve cannot be used by a solve without <code>new_stepduration</code> or with a different one. See also the group-level <code>new_stepduration</code> for flex-temporal decomposition.</li>
 <li><em>realized_periods</em>: these are the periods the model will 'realize' - i.e., what periods will be reported in the results from this solve</li>
 <li><em>realized_invest_periods</em> Array of the periods that will realize the investment decisions. If this is not defined when the invest_periods exist, the realized_periods are used to realize the invests as well</li>
 <li><em>invest_periods</em>: array of periods in which investments can be decided in this solve (applies only to entities that can be invested in). With a construction lead time, the capacity comes online later.</li>
@@ -2736,7 +2872,7 @@
 <li><em>solver</em>: choice of a solver. HiGHS is the default and only fully supported backend (called via the <code>highspy</code> Python bindings). CPLEX can still be wired in as an advanced option for licensed users via <code>solver_precommand</code> / <code>solver_arguments</code>; see the how-to.</li>
 <li><em>solver_arguments</em>: Map of solver option name → value, forwarded verbatim to the active solver. This is where the former <code>highs_*</code> shortcuts now live. For HiGHS, set <code>solver</code> to choose the method ('simplex' or 'ipm' which is interior point method; use 'choose' for MIP models, since 'simplex' and 'ipm' will not work), <code>parallel</code> ('on' or 'off') to control parallelisation of single solves (it can be better to turn it off when executing multiple scenarios in parallel), and <code>presolve</code> ('on' or 'off') to toggle presolve (which can have a large impact on solution time when solves are large). These only affect speed, not results.</li>
 <li><em>solve_mode</em>: a single solve or a set of rolling optimisation windows solved in a sequence</li>
-<li><em>timeline_hole_multiplier</em>: [unitless, default 1.0] Multiplier applied to the inverse-step-duration term in the <code>nodeBalance_eq</code> for variable-step timelines. Tunes how strongly an unrepresented gap between two timesteps is amortised into the storage state equation. Leave at the default unless investigating large-step / sparse-timeline numerical issues.</li>
+<li><em>timeline_hole_multiplier</em>: [-] default 1.0. Multiplier applied to the inverse-step-duration term in the <code>nodeBalance_eq</code> for variable-step timelines. Tunes how strongly an unrepresented gap between two timesteps is amortised into the storage state equation. Leave at the default unless investigating large-step / sparse-timeline numerical issues.</li>
 <li>
 <p>Rolling window parameters:</p>
 <ul>
@@ -2795,6 +2931,24 @@
 <li>If a <code>solve</code> in <code>model</code>: <code>solves</code> does not exist, create a <code>solve</code> where all <code>periods_available</code> are realized</li>
 </ul>
 <p>For example in the case above, it would have been possible to not fill the <code>timeset</code>: <code>timeline</code> as there is only one <code>timeline</code> to choose. Leaving out the <code>period_timeset</code> would result in an error as there are multiple <code>timesets</code> to choose.</p>
+<h2 id="units-of-measure">Units of measure</h2>
+<p>FlexTool does not check units. It combines the numbers you enter as they are, so any set of units works as
+long as it is consistent. The parameter descriptions, the defaults and the result labels use a default
+convention because it reads well for most energy models:
+- power and flows: MW; energy and storage: MWh
+- money: CUR, the currency of your model (results show costs in millions, M CUR)
+- emissions: tonnes of CO2
+- time: hours for time steps, years for lifetimes and years represented — these are fixed, not a convention.</p>
+<p>You can use other units for some nodes, for example kg/h for hydrogen flows and kg for its storage. Then
+every value connected to those nodes has to use them: prices in CUR/kg, efficiencies and conversion factors
+between the units (MWh of electricity per kg), capacities in kg/h, and the results of those nodes are in kg/h
+and kg even where the label says MW or MWh.
+Two places need care:
+- Values entered per kW or kWh — <code>invest_cost</code>, <code>fixed_cost</code> and <code>salvage_value</code> of units, connections and
+  storage nodes, and the group <code>penalty_capacity_margin</code> — are multiplied by 1000 by FlexTool. With other
+  units this means "currency per thousandth of the flow unit" (CUR per g/h when flows are in kg/h).
+- Penalty defaults (for example <code>penalty_up</code> 10 000 CUR/MWh) are sized for MWh. Set them yourself when a node
+  uses other units.</p>
 <h2 id="nodes">Nodes</h2>
 <h3 id="defining-how-the-node-functions">Defining how the node functions</h3>
 <p>These parameters will define how the node will behave and use the data it is given (available choices are marked in <em>italics</em>):</p>
@@ -2828,12 +2982,12 @@ Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alterna
 <h3 id="data-for-nodes">Data for nodes</h3>
 <p>Input data is set with the following parameters:</p>
 <ul>
-<li><code>inflow</code> - [MWh] Inflow into the node (negative is outflow). Constant or time series.</li>
-<li><code>annual_flow</code> - [MWh] Annual flow in energy units (always positive, the sign of inflow defines in/out). Constant or period.</li>
-<li><code>peak_inflow</code> - [MWh] Highest flow for scaling the inflow. Used only with <code>inflow_method = scale_to_annual_and_peak_flow</code>, which then needs <code>annual_flow</code> and an <code>inflow</code> profile for every period. Give it with the sign of <code>inflow</code> (negative for a demand).</li>
-<li><code>energy_margin_method</code> - How the node's investment-stage energy margin is applied. Options: <em>none</em> (default, off, no scaling), <em>inflow_multiplier</em> (multiply this node's inflow by <code>energy_margin_multiplier</code> in the investment solve only) and <em>inflow_adder</em> (add <code>energy_margin_adder</code> MWh of extra demand in the investment solve only). See <a href="../how_to/#how-to-add-an-energy-margin-for-investment-adequacy">How to add an energy margin for investment adequacy</a>.</li>
+<li><code>inflow</code> - [MWh] per time step. Energy flowing into the node in each time step (negative is outflow, e.g. demand). The value is the energy of the whole step, not a rate: on 1 h steps it equals the average MW, and on 3 h steps it is 3 × the average MW. When the step length of your data changes, rescale the values yourself, e.g. sum hourly values to get 3 h steps, or halve MW values for 0.5 h steps. FlexTool does not convert them, and time-series values whose time names are not on the timeline are ignored. FlexTool sums the values for you only when a solve's <code>new_stepduration</code> coarsens the timeline, and when a group's <code>new_stepduration</code> balances the node per coarse step. A constant value is used as the same energy in every step. Constant or time series.</li>
+<li><code>annual_flow</code> - [MWh/a] Annual flow in energy units (always positive, the sign of inflow defines in/out). Constant or period.</li>
+<li><code>peak_inflow</code> - [MWh] per time step. The highest inflow of a time step that the scaled inflow should reach. Used only with <code>inflow_method = scale_to_annual_and_peak_flow</code>, which then needs <code>annual_flow</code> and an <code>inflow</code> profile for every period. Use the same scale and sign as <code>inflow</code> (negative for a demand); if you change the step length, rescale it as you rescale <code>inflow</code>. Each period reaches its own <code>peak_inflow</code>; with a solve's <code>new_stepduration</code>, <code>peak_inflow</code> is matched per original time step.</li>
+<li><code>energy_margin_method</code> - How the node's investment-stage energy margin is applied. Options: <em>none</em> (default, off, no scaling), <em>inflow_multiplier</em> (multiply this node's inflow by <code>energy_margin_multiplier</code> in the investment solve only) and <em>inflow_adder</em> (add <code>energy_margin_adder</code> MWh of extra demand to each time step of the investment solve only). See <a href="../how_to/#how-to-add-an-energy-margin-for-investment-adequacy">How to add an energy margin for investment adequacy</a>.</li>
 <li><code>energy_margin_multiplier</code> - [factor] Multiplier applied to the node's inflow in the investment solve only, when <code>energy_margin_method = inflow_multiplier</code>. Default 1 (no effect). A value of 1.1 makes the investment stage build for ~10% more demand, so the built capacity meets the true demand under the true (lower) annual VRE availability. Dispatch solves always see the true, un-margined inflow. The margin does not enter the reserve requirement (a group <code>increase_reserve_ratio</code>), the non-synchronous limit or the capacity margin, which follow the real demand (set <code>capacity_margin</code> for a capacity surplus). Constant.</li>
-<li><code>energy_margin_adder</code> - [MWh] Extra demand (negative inflow) added to the node in the investment solve only, when <code>energy_margin_method = inflow_adder</code>. Default 0 (no effect). Adds a fixed amount of demand rather than scaling existing demand, so it also works on a node with no native inflow (e.g. a zero-inflow slack node) where the multiplier is a no-op. Dispatch solves always see the true, un-margined inflow. Like the multiplier, the added demand does not enter the reserve requirement, the non-synchronous limit or the capacity margin. Constant, period or period+time.</li>
+<li><code>energy_margin_adder</code> - [MWh] per time step. Extra demand (negative inflow) added to every time step of the investment solve, when <code>energy_margin_method = inflow_adder</code>. The value is not a total that is divided over the steps: each step gets the full value. On 24 h steps, a margin of 10 MW needs a value of 240. FlexTool does not rescale it, including when the investment solve uses <code>new_stepduration</code>. Default 0 (no effect). Adds a fixed amount of demand rather than scaling existing demand, so it also works on a node with no native inflow (e.g. a zero-inflow slack node) where the multiplier is a no-op. Dispatch solves always see the true, un-margined inflow. Like the multiplier, the added demand does not enter the reserve requirement, the non-synchronous limit or the capacity margin. Constant, period or period+time.</li>
 <li><code>existing</code> - [MWh or count] Existing storage capacity or number of storage units (requires <code>node_type=storage</code>). If <code>virtual_unitsize</code> is given, then <code>existing</code> is the number of units (capacity = <code>existing</code> × <code>virtual_unitsize</code>). Otherwise <code>existing</code> is the existing capacity of a single unit (typically in MWh). Constant or period.</li>
 <li><code>invest_cost</code> - [CUR/kWh] Overnight investment cost of new storage capacity. It is paid as an annuity over the years the storage capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the storage capacity is built (comes online) is used.</li>
 <li><code>salvage_value</code> - [CUR/kWh] Salvage value of the storage. A retirement earns it as an annuity over <code>lifetime</code> (see <a href="#retirements">retirements</a>). Constant or period.</li>
@@ -2849,11 +3003,11 @@ Only exist in Toolbox 0.7, before 5/2024. It is replaced by <code>Entity Alterna
 <li><code>retire_max_total</code> / <code>retire_min_total</code> - [MWh] Largest allowed / smallest required total retirement over all solves. Investments and existing capacity do not change it. Constant.</li>
 <li><code>cumulative_max_capacity</code> - [MWh] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.</li>
 <li><code>cumulative_min_capacity</code> - [MWh] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.</li>
-<li><code>fixed_cost</code> - [CUR/kWh] Annual fixed cost for storage. New storage capacity pays it only while it operates. Constant or period.</li>
+<li><code>fixed_cost</code> - [CUR/kWh/a] Annual fixed cost for storage. New storage capacity pays it only while it operates. Constant or period.</li>
 <li><code>penalty_up</code> - [CUR/MWh] Penalty cost for energy not served (decreasing consumption) in the node. The cost scales with both the magnitude (MW) and the duration (hours) of the violation. Default value is 10 000. Constant, period, time, period+time or stochastic time. The default applies to every node without a value of its own, and to the periods and timesteps that a map leaves out.</li>
 <li><code>penalty_down</code> - [CUR/MWh] Penalty cost for excess energy (increasing consumption) in the node. The cost scales with both the magnitude (MW) and the duration (hours) of the violation. Default value is 10 000. Constant, period, time, period+time or stochastic time. The default applies to every node without a value of its own, and to the periods and timesteps that a map leaves out.</li>
 <li><code>virtual_unitsize</code> - [MWh] Size of one unit. With it, <code>existing</code> is the number of units. Investments and retirements are continuous; their limits are in MWh. No value: the existing capacity, or 1000 MWh without it.</li>
-<li><code>self_discharge_loss</code> - [e.g. 0.01 means the content shrinks by the factor 1/1.01 every hour] Loss of stored energy over time: the content decays continuously at ln(1 + loss) per hour, for every modelled time step whatever its length; energy charged or discharged within a step is treated as spread evenly over the step. Constant, period, time or period+time (a time-varying loss decays each step at its own rate; a coarse step or timeset block decays by the sum of its hours' losses; this is exact for stored energy, while energy charged within such a step is weighted as if the loss were constant over the step, which overstates what is kept when the loss changes a lot inside the step).</li>
+<li><code>self_discharge_loss</code> - [-] e.g. 0.01 means the content shrinks by the factor 1/1.01 every hour. Loss of stored energy over time: the content decays continuously at ln(1 + loss) per hour, for every modelled time step whatever its length; energy charged or discharged within a step is treated as spread evenly over the step. Constant, period, time or period+time (a time-varying loss decays each step at its own rate; a coarse step or timeset block decays by the sum of its hours' losses; this is exact for stored energy, while energy charged within such a step is weighted as if the loss were constant over the step, which overstates what is kept when the loss changes a lot inside the step).</li>
 <li><code>availability</code> - [e.g. 0.9 means 90%] Fraction of capacity available for storage. Constant, period, time, period+time or stochastic time.</li>
 <li><code>invest_forced</code> - [MWh] Forces exactly this much new storage capacity to come online in the period, overriding the investment optimisation (as setting <code>invest_min_period</code> and <code>invest_max_period</code> equal). Constant or period.</li>
 <li><code>constraint_state_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient) placing the storage state variable on the left side of a user-defined <code>constraint</code>.</li>
@@ -2979,7 +3133,7 @@ and the <code>storage_state_reference_price</code> parameter yourself.</p>
 <li>Only <code>existing</code> capacity (the capacity before the model run) can be retired, until its end of life; a required retirement (<code>retire_min_period</code>, <code>retire_min_total</code>) that the existing capacity cannot supply stops the run with an error naming the entity and the period. See <a href="#retirements">retirements</a>.</li>
 <li><code>cumulative_max_capacity</code> - [MW] Maximum cumulative capacity (considers existing, invested and retired capacity). Constant or period.</li>
 <li><code>cumulative_min_capacity</code> - [MW] Minimum cumulative capacity (considers existing, invested and retired capacity). Constant or period.</li>
-<li><code>fixed_cost</code> - [CUR/kW] Annual fixed cost for capacity. New capacity pays it only while it operates. Constant or period.</li>
+<li><code>fixed_cost</code> - [CUR/kW/a] Annual fixed cost for capacity. New capacity pays it only while it operates. Constant or period.</li>
 <li><code>delay</code> - [hours] A time delay between the input nodes and the output nodes of the unit. Either a constant (the delay in hours) or a map of delays (index: delay in hours, value: weight, the share of the input flow arriving after that delay; the weights should sum to 1). Requires that the time resolutions in the model are always integer multiples of these delays. Used when modelling process delays (e.g. heat-storage charge cycles or production lag).</li>
 <li><code>constraint_invested_capacity_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient) putting the unit's capacity that comes online in each period on the left side of a user-defined <code>constraint</code>. Without a construction lead time, this is the capacity invested in that period. Coefficient per MW.</li>
 <li><code>constraint_cumulative_pre_built_capacity_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in service at the start of each period on the left side of the user constraint. This is existing capacity plus capacity that came online in earlier periods, minus earlier retirements. Capacity coming online in the period itself is in the invested term. Coefficient per MW.</li>
@@ -3084,8 +3238,8 @@ and the <code>storage_state_reference_price</code> parameter yourself.</p>
 - <code>inertia_constant</code> - [MWs/MW] Inertia constant for a synchronously connected unit to this node. Constant.
 - <code>ramp_method</code> - Choice of ramp method. 'ramp_limit' poses a limit on the speed of ramp. 'ramp_cost' poses a cost on ramping the flow (NOT FUNCTIONAL AS OF 19.3.2023).
 - <code>ramp_cost</code> - [CUR/MW] Cost of ramping the unit. Constant.
-- <code>ramp_speed_up</code> - [per unit / minute] Maximum ramp up speed, as a share of capacity per minute. Between two consecutive time steps the flow may rise by at most <code>ramp_speed_up × 60 × (average duration of the two steps in hours) × capacity</code> (the capacity of that side: <code>capacity_max_coeff</code> × capacity on an output, the input limit of <code>input_share_max</code> on an input). Time steps aggregated with a solve's <code>new_stepduration</code> ramp from each other as consecutive steps. A unit or connection between coarse nodes (a group's <code>new_stepduration</code>) ramps between its coarse steps, with their durations: with 24-h steps a speed of 1/1440 or more never binds within a period. No limit applies across a gap in the timeline, at the start of a representative period or at the first step of a solve; a period whose time steps continue the previous period's on the same timeline (consecutive parts of one timeline; a forecast branch that continues the timeline in a stochastic solve) ramps from the previous period's last step, while periods that reuse the same timeset (the usual multi-year setup) do not ramp from each other; a rolling window continues from the flow of the previous window where it continues the previous window's last realized step on the timeline, by position in time (a solve with longer time steps continues the finer step that ends where its own previous step ends). A speed of 1/60 or more on hourly steps never binds within a period. For a unit with online variables the ramp applies to the capacity online in both steps — units starting or stopping in the step are limited instead by the startup / shutdown output below, not by the online capacity's own ramp — and it also limits the output in the step the unit starts in to <code>min_load + ½ × ramp_speed_up × 60 × step duration</code> of the started capacity (and <code>ramp_speed_down</code> the step before a shutdown); see <a href="../how_to/#how-to-add-a-minimum-load-start-up-and-ramp">How to add a minimum load, start-up and ramp</a>. An online unit with a ramp limit that something keeps online (<code>p_fix_online</code>, a minimum-uptime carry, a fixed profile, a <code>min_load</code> time series jumping more than the step's ramp room) while its reachable flow moves faster than the ramp is now infeasible — previously, free fake starts/stops rescued it; units without online variables already behaved this way. Constant.
-- <code>ramp_speed_down</code> - [per unit / minute] Maximum ramp down speed, as <code>ramp_speed_up</code> for decreases. Constant.
+- <code>ramp_speed_up</code> - [share of capacity per minute] Maximum ramp up speed, as a share of capacity per minute. Between two consecutive time steps the flow may rise by at most <code>ramp_speed_up × 60 × (average duration of the two steps in hours) × capacity</code> (the capacity of that side: <code>capacity_max_coeff</code> × capacity on an output, the input limit of <code>input_share_max</code> on an input). Time steps aggregated with a solve's <code>new_stepduration</code> ramp from each other as consecutive steps. A unit or connection between coarse nodes (a group's <code>new_stepduration</code>) ramps between its coarse steps, with their durations: with 24-h steps a speed of 1/1440 or more never binds within a period. No limit applies across a gap in the timeline, at the start of a representative period or at the first step of a solve; a period whose time steps continue the previous period's on the same timeline (consecutive parts of one timeline; a forecast branch that continues the timeline in a stochastic solve) ramps from the previous period's last step, while periods that reuse the same timeset (the usual multi-year setup) do not ramp from each other; a rolling window continues from the flow of the previous window where it continues the previous window's last realized step on the timeline, by position in time (a solve with longer time steps continues the finer step that ends where its own previous step ends). A speed of 1/60 or more on hourly steps never binds within a period. For a unit with online variables the ramp applies to the capacity online in both steps — units starting or stopping in the step are limited instead by the startup / shutdown output below, not by the online capacity's own ramp — and it also limits the output in the step the unit starts in to <code>min_load + ½ × ramp_speed_up × 60 × step duration</code> of the started capacity (and <code>ramp_speed_down</code> the step before a shutdown); see <a href="../how_to/#how-to-add-a-minimum-load-start-up-and-ramp">How to add a minimum load, start-up and ramp</a>. An online unit with a ramp limit that something keeps online (<code>p_fix_online</code>, a minimum-uptime carry, a fixed profile, a <code>min_load</code> time series jumping more than the step's ramp room) while its reachable flow moves faster than the ramp is now infeasible — previously, free fake starts/stops rescued it; units without online variables already behaved this way. Constant.
+- <code>ramp_speed_down</code> - [share of capacity per minute] Maximum ramp down speed, as <code>ramp_speed_up</code> for decreases. Constant.
 - <code>constraint_flow_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient) placing this flow variable on the left side of a user-defined <code>constraint</code>. Applied per timestep to the directional flow between the unit and the node.</p>
 <h3 id="units-constrained-by-profiles">Units constrained by profiles</h3>
 <p>Some generators (e.g. VRE) are not converting energy from one node to the other. Instead, their generation is determined (or limited) by a specific generation profile set by a <code>profile</code> entity with a <code>profile_method</code>, thats state whether the profile forces an <em>upper_limit</em>, <em>lower_limit</em> or <em>equal</em>ity. Finally <code>profile</code> entity is given a <code>profile</code> value: constant, period (applies to all timesteps of that period), time, period+time or stochastic time. One needs to use <code>node__profile</code>, <code>unit__node__profile</code> or <code>connection__profile</code> to apply the profile to specific energy flow (or storage state in the case of <code>node__profile</code>).</p>
@@ -3117,7 +3271,7 @@ and the <code>storage_state_reference_price</code> parameter yourself.</p>
 <li><code>constraint_retired_capacity_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity retired in each period on the left side of the user constraint. Coefficient per MW.</li>
 <li><code>constraint_in_construction_capacity_coeff</code> - A map of coefficients (Index: constraint name, value: coefficient). Puts the capacity in construction in each period on the left side of the user constraint. Capacity is in construction from the period of the investment decision until it comes online. It is zero without a construction lead time. Coefficient per MW.</li>
 <li><code>other_operational_cost</code> - [CUR/MWh] Other operational variable cost for trasferring over the connection. Constant, period, time or period+time.</li>
-<li><code>fixed_cost</code> - [CUR/kW] Annual fixed cost. New capacity pays it only while it operates. Constant or period.</li>
+<li><code>fixed_cost</code> - [CUR/kW/a] Annual fixed cost. New capacity pays it only while it operates. Constant or period.</li>
 <li><code>invest_cost</code> - [CUR/kW] Overnight investment cost of new capacity. It is paid as an annuity over the years the capacity operates. Construction time costs with their interest must be included here. Constant or period: the value of the period when the capacity is built (comes online) is used.</li>
 <li><code>discount_rate</code> - [e.g. 0.05 equals 5%] Discount rate for investments (WACC). Reflects the financing cost and risk for this technology. Should be nominal when model <code>inflation_rate</code> &gt; 0, real when <code>inflation_rate</code> = 0. Constant or period.</li>
 <li><code>lifetime</code> - [years] Operating lifetime. It starts when the capacity starts to operate: with a construction lead time, after the construction. Used with the discount rate to calculate the annuity. What happens at the end of the lifetime depends on <code>lifetime_method</code>: <em>reinvest_automatic</em> keeps the capacity to the end of the model horizon, <em>reinvest_choice</em> retires it, <em>no_investment</em> retires it once. The <code>existing</code> capacity ends at the first year of the model run plus the <code>lifetime</code> of the first period (in every solve of a chain of solves). Constant or period.</li>
@@ -3139,12 +3293,12 @@ and the <code>storage_state_reference_price</code> parameter yourself.</p>
 <p>Some <code>nodes</code> can act as a source or a sink of commodities instead of forcing a balance between inputs and outputs. To make that happen, commodities must have a <code>price</code> and be connected to those <code>nodes</code> that serve (or buy) that particular <code>commodity</code> at the given <code>price</code>. In other words, <code>commodity</code> is separate from <code>node</code> so that the user can use the same <code>commodity</code> properties for multiple nodes. Commodities can also have a <code>co2_content</code>. The <code>commodity</code> and its <code>nodes</code> are connected by establishing a new entity between the <code>commodity</code> and each of its <code>nodes</code> (e.g. <em>coal--coal_market</em>).</p>
 <ul>
 <li><code>price</code> - [CUR/MWh or other unit] Price of the commodity. Constant, period or time.</li>
-<li><code>co2_content</code> - [CO2 ton per MWh] Constant.</li>
+<li><code>co2_content</code> - [tCO2/MWh] Constant.</li>
 <li><code>price_method</code> - How the commodity price enters the LP. <code>price</code> (default) treats <code>price</code> as the marginal cost of every traded MWh. <code>price_ladder_annual</code> / <code>price_ladder_cumulative</code> activate a stepped supply curve authored via the parameters below; the engine then represents commodity trade as a sum of tier variables, one per ladder step.</li>
 <li><code>price_ladder_annual</code> - Stepped supply curve for <code>price_method = price_ladder_annual</code>. 2d map of (tier, period) → price/volume entries. Each tier's <code>quantity</code> is a per-year amount; a solve covering less than a full year (a short solve, or one roll of a rolling solve) is only allowed its own share of that year's quantity, in proportion to the hours it covers. In a stochastic solve the forecast branches of a period use that period's ladder.</li>
 <li><code>price_ladder_cumulative</code> - Stepped supply curve for <code>price_method = price_ladder_cumulative</code>. 2d map with rolling cumulative breakpoints.</li>
 <li>Ladder tiers (both ladders): a tier label is a name, kept as written (<code>1</code>, <code>01</code> and <code>a</code> are three different tiers); the model buys the tiers by price, whatever their labels or order. Every tier needs a <code>price</code> (a tier without one is an error). A tier without a <code>quantity</code> is unlimited.</li>
-<li><code>unitsize</code> - Numeric scaling for the <code>v_trade</code> variable (analogous to <code>virtual_unitsize</code> on units). Used with the price-ladder methods to keep tier-step variables well scaled; default 1.0.</li>
+<li><code>unitsize</code> - [MWh] Numeric scaling for the <code>v_trade</code> variable (analogous to <code>virtual_unitsize</code> on units). Used with the price-ladder methods to keep tier-step variables well scaled; default 1.0.</li>
 </ul>
 <p><img alt="image-1.png" src="../img/concept/commodities.png" /></p>
 <h2 id="groups">Groups</h2>
@@ -3171,19 +3325,19 @@ and the <code>storage_state_reference_price</code> parameter yourself.</p>
 <ul>
 <li><code>has_inertia</code> - A flag whether the group of nodes has an inertia constraint active. Default <em>no</em>. Without <em>yes</em> the group has no inertia constraint, even if <code>inertia_limit</code> is given.</li>
 <li><code>inertia_limit</code> - [MWs] Minimum for synchronous inertia in the group of nodes. Used only when <code>has_inertia</code> is <em>yes</em>; no value (or 0) means no requirement. Constant or period.</li>
-<li><code>penalty_inertia</code> - [CUR/MWs] Penalty for violating the inertia constraint. The cost scales with the duration of the violation. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. Constant or period.</li>
+<li><code>penalty_inertia</code> - [CUR/MWs per hour] Penalty for violating the inertia constraint. The cost scales with the duration of the violation. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. Constant or period.</li>
 <li><code>has_non_synchronous</code> - A flag whether the group of nodes has the non-synchronous share constraint active. Default <em>no</em>. Without <em>yes</em> the group has no non-synchronous constraint, even if <code>non_synchronous_limit</code> is given.</li>
 <li><code>non_synchronous_limit</code> - [share, e.g. 0.8 means 80%] The maximum share of non-synchronous generation in the node group, of the group's supply measured with the real demand (without an energy margin). Flows between the group's nodes are excluded. Used only when <code>has_non_synchronous</code> is <em>yes</em>; with the flag and no value (or 0), no non-synchronous infeed is allowed (violations are penalised). Constant or period.</li>
 <li><code>penalty_non_synchronous</code> - [CUR/MWh] Penalty for violating the non synchronous constraint. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. Constant or period.</li>
 <li><code>capacity_margin_method</code> - How the group of nodes enforces a capacity margin constraint in the investment mode. Options: <em>none</em> (default, no constraint) and <em>manual</em> (require the group to have <code>capacity_margin</code> MW of capacity above the peak net load of the real demand; an energy margin does not count). The constraint applies in the investment periods of each solve (and their stochastic branch periods); a solve without <code>invest_periods</code> (dispatch, rolling dispatch) has none.</li>
 <li><code>capacity_margin</code> - [MW] How much capacity a node group is required to have in addition to the peak net load in the investment time series. Used only by the investment mode when <code>capacity_margin_method = manual</code>, in the investment periods of a solve; without that method the value is ignored. No value (or 0) requires capacity to cover the peak net load. Constant or period.</li>
-<li><code>penalty_capacity_margin</code> - [CUR/kW] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over lifetime like investment costs), so a penalty of e.g. 1000 CUR/kW is not comparable to an investment cost of 1000 CUR/kW which would be annualized to a much lower annual cost. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. In a stochastic fan each forecast branch period has its own shortfall, and its penalty is weighted by the forecast's probability. Constant or period.</li>
+<li><code>penalty_capacity_margin</code> - [CUR/kW/a] Penalty for violating the capacity margin constraint. Uses operational discounting (not annualized over lifetime like investment costs), so a penalty of e.g. 1000 CUR/kW is not comparable to an investment cost of 1000 CUR/kW which would be annualized to a much lower annual cost. Default 5000, applied to every group without a value of its own (and to the periods a map leaves out); 0 makes the violation free. In a stochastic fan each forecast branch period has its own shortfall, and its penalty is weighted by the forecast's probability. Constant or period.</li>
 <li><code>share_loss_of_load</code> - Force the upward slack of the nodes in this group to be equal or inflow (demand) weighted</li>
 </ul>
 <h3 id="co2-costs-and-limits">CO2 costs and limits</h3>
 <ul>
 <li><code>co2_method</code> - Choice of the CO2 method or a combination of methods: no_method, price, period, total, price_period, price_total, period_total, price_period_total.</li>
-<li><code>co2_price</code> [CUR/ton] CO2 price for a group of nodes. Constant or period. A period-indexed Map may cover <em>more</em> periods than the current solve realises — extra entries are silently ignored, so the same shared CO2-price dataset can drive solves with different period subsets. If the active solve activates <code>co2_price</code> topology (a priced commodity is wired up) but no <code>co2_price</code> or <code>co2_content</code> value is supplied for a needed period, the engine logs a warning and skips the CO2 cost term for that period rather than raising an error.</li>
+<li><code>co2_price</code> [CUR/tCO2] CO2 price for a group of nodes. Constant or period. A period-indexed Map may cover <em>more</em> periods than the current solve realises — extra entries are silently ignored, so the same shared CO2-price dataset can drive solves with different period subsets. If the active solve activates <code>co2_price</code> topology (a priced commodity is wired up) but no <code>co2_price</code> or <code>co2_content</code> value is supplied for a needed period, the engine logs a warning and skips the CO2 cost term for that period rather than raising an error.</li>
 <li><code>co2_max_period</code> [tCO2/a] Annualized maximum limit for emitted CO2 in each period (tonnes per year of the period). Constant or period. In a rolling solve each roll applies the limit to its own window (realized part and look-ahead): its emissions are annualised over the window's hours of each period. The limit is carried across the rolls: each roll may emit the share of the period's limit reached by the end of its horizon, minus the emissions earlier rolls already realized in the period, so the realized emissions of a period stay within the limit. In a rolling solve the reported CO2 price of a period is the shadow price of the last roll that covers the period.</li>
 <li><code>co2_max_total</code> [tCO2] Cumulative limit for emitted CO2 over the whole solve horizon: each period's annualized emissions times the years it represents (<code>years_represented</code>), summed over the periods, so the model chooses when to emit. In a rolling solve or a chain of solves the limit is carried: each roll or solve may emit the part of the limit allotted to the periods it reaches (in a rolling solve, the <code>years_represented</code>-weighted share of the solve's periods reached by the end of the roll's horizon; a solve of a chain reaches all of its own periods) minus what earlier rolls and solves already realized, counted the same way (annualized and times <code>years_represented</code>). The realized emissions of the whole chain therefore stay within the limit, but an early solve of a chain may use up what later solves would have needed. In a stochastic solve each forecast path gets the whole remaining limit.</li>
 </ul>
@@ -3296,9 +3450,9 @@ and the <code>storage_state_reference_price</code> parameter yourself.</p>
 <ul>
 <li><code>reserve_method</code> - Choice of reserve method (<code>no_reserve</code>, <code>timeseries_only</code>, <code>dynamic_only</code>, <code>large_failure_only</code> or their combinations). A dynamic or large_failure requirement needs no <code>reservation</code>: it applies once a unit or connection at a node of the group has an <code>increase_reserve_ratio</code> (dynamic; or the group has one) or a <code>large_failure_ratio</code> (large_failure) for this reserve.</li>
 <li><code>reservation</code> - [MW] Amount of reserve required. Constant, period, time, period+time or stochastic time.</li>
-<li><code>penalty_reserve</code> - [CUR/MW] Penalty cost for not fulfilling the reserve requirement, per MW of shortfall and hour. Constant. Default 5000 (applied to every reserve group without a value of its own, so a reserve requirement is never free to leave unmet). The unmet part (reserve shortfall) can cover the whole requirement of every method and is always priced with this penalty: for a timeseries requirement the shortfall is at most <code>reservation</code>; for a dynamic requirement at most the sum of the participating flows' capacities × <code>increase_reserve_ratio</code> (at a node a unit consumes from, its full-load input), plus the group's demand term; for a large_failure requirement at most the largest failing unit's or connection's capacity × <code>large_failure_ratio</code> (summed over its flows into the group, or the full-load input it draws from the group for downward reserve) (capacity = existing plus the most that can be invested by that period; with unlimited investment <code>max_flow_for_unconstrained_variables</code> is used). A group combining methods adds these up.</li>
+<li><code>penalty_reserve</code> - [CUR/MW per hour] Penalty cost for not fulfilling the reserve requirement, per MW of shortfall and hour. Constant. Default 5000 (applied to every reserve group without a value of its own, so a reserve requirement is never free to leave unmet). The unmet part (reserve shortfall) can cover the whole requirement of every method and is always priced with this penalty: for a timeseries requirement the shortfall is at most <code>reservation</code>; for a dynamic requirement at most the sum of the participating flows' capacities × <code>increase_reserve_ratio</code> (at a node a unit consumes from, its full-load input), plus the group's demand term; for a large_failure requirement at most the largest failing unit's or connection's capacity × <code>large_failure_ratio</code> (summed over its flows into the group, or the full-load input it draws from the group for downward reserve) (capacity = existing plus the most that can be invested by that period; with unlimited investment <code>max_flow_for_unconstrained_variables</code> is used). A group combining methods adds these up.</li>
 <li><code>increase_reserve_ratio</code> - [factor] For a group with a dynamic <code>reserve_method</code>: in each time step the requirement increases by this ratio times the demand of the group's nodes in that step (the negative part of each node's inflow, in MW: the step's inflow divided by the step duration; a node with positive inflow does not count and does not offset another node's demand). The extra demand of an <code>energy_margin</code> does not count: the requirement follows the real demand. Ignored (with a warning) for other methods. Constant.</li>
-<li><code>reserve_duration</code> - [h] Time span over which committed reserve power must be sustainable from storage. Constant. Absent or 0 means the reserve is instantaneous-power-only (legacy behaviour); no storage-energy coupling is added.</li>
+<li><code>reserve_duration</code> - [hours] Time span over which committed reserve power must be sustainable from storage. Constant. Absent or 0 means the reserve is instantaneous-power-only (legacy behaviour); no storage-energy coupling is added.</li>
 </ul>
 <h4 id="storage-backed-reserve-energy-adequacy-reserve_duration">Storage-backed reserve energy adequacy (<code>reserve_duration</code>)</h4>
 <p>By default a reserve reservation only withholds <em>power</em> (MW of headroom) from

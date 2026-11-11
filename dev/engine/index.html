@@ -16,6 +16,7 @@
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
 <link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
 <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+<link href="../../stylesheets/extra.css" rel="stylesheet"/>
 <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
 </head>
 <body dir="ltr">
@@ -254,6 +255,30 @@
 </a>
 </li>
 <li class="md-nav__item">
+<a class="md-nav__link" href="../../results_catalogue/">
+<span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../formulation/">
+<span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="../../how_to/">
 <span class="md-ellipsis">
     
@@ -357,6 +382,18 @@
     
   
     Terminal / CLI
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../ai_assistant/">
+<span class="md-ellipsis">
+    
+  
+    AI assistant
   
 
     
@@ -590,6 +627,24 @@
 </a>
 <nav aria-label="LP build: model/core.py and the feature modules" class="md-nav">
 <ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#equation-headers">
+<span class="md-ellipsis">
+      
+        Equation headers
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#capacity-symbols-used-in-the-headers">
+<span class="md-ellipsis">
+      
+        Capacity symbols used in the headers
+      
+    </span>
+</a>
+</li>
 <li class="md-nav__item">
 <a class="md-nav__link" href="#required-fields">
 <span class="md-ellipsis">
@@ -947,6 +1002,18 @@
 </a>
 </li>
 <li class="md-nav__item">
+<a class="md-nav__link" href="../assistant_evaluation/">
+<span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="../env_vars/">
 <span class="md-ellipsis">
     
@@ -1099,6 +1166,24 @@
 </a>
 <nav aria-label="LP build: model/core.py and the feature modules" class="md-nav">
 <ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#equation-headers">
+<span class="md-ellipsis">
+      
+        Equation headers
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#capacity-symbols-used-in-the-headers">
+<span class="md-ellipsis">
+      
+        Capacity symbols used in the headers
+      
+    </span>
+</a>
+</li>
 <li class="md-nav__item">
 <a class="md-nav__link" href="#required-fields">
 <span class="md-ellipsis">
@@ -1556,21 +1641,6 @@ its dims and unit, and every equation family in emit order with the
 module it lives in. Each row, objective term and variable carries an
 <code>EQ.</code> / <code>OBJ.</code> / <code>VAR.</code> header with its formula, so
 <code>grep -rn "EQ. ─── maxFlow" flextool/engine</code> finds an equation.</p>
-<p><strong>Capacity symbols used in the headers.</strong> For a unit, connection or storage
-node <code>e</code> in period <code>d</code>:</p>
-<ul>
-<li><code>capacity[e,d] = existing[e,d] × virtual_unitsize[e]</code> when
-  <code>virtual_unitsize</code> is set, else <code>existing[e,d]</code> (MW, or MWh for storage).
-  With <code>virtual_unitsize</code>, <code>existing</code> is the number of units.</li>
-<li><code>unitsize[e] = virtual_unitsize[e]</code>, else <code>existing</code> (the largest period
-  value), else 1000.</li>
-<li><code>existing_count[e,d] = capacity[e,d] / unitsize[e]</code>: equal to <code>existing</code>
-  when <code>virtual_unitsize</code> is set; otherwise 1 (less in a period whose
-  <code>existing</code> is below the largest, 0 without existing capacity).</li>
-<li><code>invest_*</code>, <code>retire_*</code>, <code>cumulative_*</code>, <code>invest_forced</code> and the capacity a
-  construction lead time carries are MW (MWh) in every case. <code>v_invest</code> and
-  <code>v_divest</code> are continuous, in units of <code>unitsize</code>.</li>
-</ul>
 <p><strong>What lives where.</strong> <code>model/core.py</code> holds the core model that every run
 uses: node balance, storage state, flows and capacity, conversion,
 investment maxima, CO2 caps, user constraints, profiles and the core
@@ -1590,6 +1660,67 @@ alternate optimum the solver returns, so moving a step in the table of
 contents (or a variable in <code>_declare_variables</code>) changes results on
 degenerate models. Check the effect with <code>tools/lp_snapshot.py</code>
 (see CONTRIBUTING.md "Running Tests").</p>
+<h3 id="equation-headers">Equation headers</h3>
+<p>Every row family, variable and objective term carries a header comment
+directly above its <code>add_cstr</code> / <code>add_var</code> call (or the term it returns),
+and the generated <a href="../../formulation/">formulation page</a> is built from these
+headers (<code>flextool/docs_build/formulation.py</code>, the one reader of this
+grammar; <code>tests/docs/test_header_grammar.py</code> checks it):</p>
+<div class="highlight"><pre><span></span><code>        <span class="c1"># ─── EQ. ─── maxOnline_{linear,integer} ──────────────────────────────</span>
+        <span class="c1"># ─────────────────────────────────────────────────────────────────────</span>
+        <span class="c1"># v_online[p,d,t] − Σ v_invest_p[p,d′] + Σ v_divest_p[p,d′]  ≤ existing_count[p,d]</span>
+        <span class="c1">#   ∀ (p,d,t) ∈ p_idx</span>
+        <span class="c1"># Units online cannot exceed the units built.</span>
+</code></pre></div>
+<ul>
+<li><strong>First line:</strong> <code># ─── KIND. ─── names ───</code>, <code>KIND</code> one of <code>EQ</code>, <code>VAR</code>,
+  <code>OBJ</code>. When the names do not fit, continuation lines follow: <code>#</code> and 13
+  spaces, then more names, until a line that ends in <code>─</code>.</li>
+<li><strong>Names</strong> are separated by <code>/</code>, <code>,</code> or <code>;</code>. A <code>(…)</code> part is a
+  qualifier and is dropped (<code>v_flow (coarse processes)</code> is <code>v_flow</code>); a
+  <code>label:</code> before a name is dropped (<code>&lt;family&gt;_coarse: maxFlow_coarse</code>).
+  <code>{a,b}</code> expands to each alternative, <code>[_x]</code> is optional
+  (<code>co2_max_total[_path]</code> is <code>co2_max_total</code> and <code>co2_max_total_path</code>).
+  <code>{sfx}</code> is the one declared placeholder (<code>_linear</code>, <code>_integer</code>);
+  <code>&lt;family&gt;</code> appears only in a label. Each expanded name is an identifier:
+  the row or column name the LP carries (OBJ: the term's name).</li>
+<li><strong>Free-text header:</strong> a header whose names are words
+  (<code># ─── OBJ. ─── reserve shortfall ───</code>) carries the names on the next
+  line, <code># names: a, b</code>.</li>
+<li><strong>Body:</strong> the comment lines that follow, up to the first line that is not
+  a comment or the next header; a line of <code>─</code> is a rule and is skipped. The
+  body starts with the <strong>formula</strong> (the row, <code>∀</code> its domain, then the
+  symbols it uses, indented) and continues with the <strong>prose</strong> from the
+  first unindented line that starts with a capitalised word (<code>Forces …</code>,
+  <code>Row rule …</code>). An indented line in the prose is a formula fragment.</li>
+<li><strong>One header per family.</strong> A generic row helper carries no header; its
+  callers do (<code>ROW_HELPERS</code> in the test: <code>_coarse_flows.add_cstr</code> /
+  <code>add_twin</code> / <code>add_row_rule_cstr</code>, <code>_lead_time.period_limit</code>,
+  <code>core._ramp_family</code>, <code>_cumulative_invest._group_period_limit_online</code>,
+  <code>_online._add_max_input_flow_online</code>).</li>
+<li><strong>Ratchets</strong> (<code>tests/docs/test_header_grammar.py</code>): every <code>add_cstr</code> /
+  <code>add_var</code> in <code>engine/model/</code> has a header earlier in its function or sits
+  in a row helper whose callers have one; every autoscale
+  <code>CONSTRAINT_FAMILIES</code> / <code>VARIABLE_FAMILIES</code> key is a header name, its
+  <code>_coarse</code> twin, or a key <code>lookup_cstr</code> reaches by suffix
+  (<code>PREFIX_REGISTERED</code>); every <code>_obj_*</code> step and <code>objective_terms</code> has an
+  <code>OBJ.</code> header.</li>
+</ul>
+<h3 id="capacity-symbols-used-in-the-headers">Capacity symbols used in the headers</h3>
+<p>For a unit, connection or storage node <code>e</code> in period <code>d</code>:</p>
+<ul>
+<li><code>capacity[e,d] = existing[e,d] × virtual_unitsize[e]</code> when
+  <code>virtual_unitsize</code> is set, else <code>existing[e,d]</code> (MW, or MWh for storage).
+  With <code>virtual_unitsize</code>, <code>existing</code> is the number of units.</li>
+<li><code>unitsize[e] = virtual_unitsize[e]</code>, else <code>existing</code> (the largest period
+  value), else 1000.</li>
+<li><code>existing_count[e,d] = capacity[e,d] / unitsize[e]</code>: equal to <code>existing</code>
+  when <code>virtual_unitsize</code> is set; otherwise 1 (less in a period whose
+  <code>existing</code> is below the largest, 0 without existing capacity).</li>
+<li><code>invest_*</code>, <code>retire_*</code>, <code>cumulative_*</code>, <code>invest_forced</code> and the capacity a
+  construction lead time carries are MW (MWh) in every case. <code>v_invest</code> and
+  <code>v_divest</code> are continuous, in units of <code>unitsize</code>.</li>
+</ul>
 <h3 id="required-fields">Required fields</h3>
 <p>The data each feature needs is declared as module-level tuples at the
 top of <code>model/core.py</code>:</p>

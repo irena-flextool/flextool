@@ -16,7 +16,7 @@
         <link rel="prev" href="../excel_interface/">
       
       
-        <link rel="next" href="../env_vars/">
+        <link rel="next" href="../ai_assistant/">
       
       
         
@@ -49,6 +49,8 @@
         <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
       
     
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
     
     <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -501,6 +503,62 @@
     
   
     Model outputs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
   
 
     
@@ -1330,6 +1388,34 @@
   
   
     <li class="md-nav__item">
+      <a href="../ai_assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../env_vars/" class="md-nav__link">
         
   
@@ -1814,6 +1900,34 @@
     
   
     Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/assistant_evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
   
 
     
@@ -2606,13 +2720,21 @@
 </code></pre></div>
 <p>The database already exists, so the input-preparation phase is skipped automatically (it runs only when <code>--tabular-file-path</code> or <code>--csv-directory-path</code> is given). Phase 2 then runs the model and writes outputs in one pass. Results land in <code>output_plots/base/</code> and <code>output_parquet/base/</code>.</p>
 <h2 id="scripts-overview">Scripts overview</h2>
-<p>Root-level scripts are backward-compatible wrappers that delegate to modules under <code>flextool/cli/</code>. Both invocation styles work:</p>
-<div class="highlight"><pre><span></span><code><span class="c1"># Root-level script (backward compat)</span>
+<p>Root-level scripts are backward-compatible wrappers that delegate to modules under <code>flextool/cli/</code>. To run the
+model, use the <code>flextool-run</code> console script:</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Console script (preferred for model runs)</span>
+flextool-run<span class="w"> </span>...
+
+<span class="c1"># Root-level script (backward compat)</span>
 python<span class="w"> </span>run_flextool.py<span class="w"> </span>...
 
-<span class="c1"># Module invocation (preferred)</span>
+<span class="c1"># Module invocation</span>
 python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_run_flextool<span class="w"> </span>...
 </code></pre></div>
+<p><code>flextool-run</code> runs the engine (<code>flextool.cli.cmd_run_flextool</code>) as a child process and writes everything the
+engine prints into the run's log, <code>output_parquet/&lt;scenario&gt;/_run.log</code>, including the solver's own lines and a
+crash dump. It takes the same arguments and exits with the engine's exit code. The other two forms run the engine
+in the same process; their <code>_run.log</code> holds only FlexTool's own console output.</p>
 <h3 id="workflow-and-execution">Workflow and execution</h3>
 <table>
 <thead>
@@ -2630,7 +2752,7 @@ python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_run_fle
 </tr>
 <tr>
 <td><code>run_flextool.py</code></td>
-<td><code>flextool.cli.cmd_run_flextool</code></td>
+<td><code>flextool.cli.cmd_run_flextool</code> (run it with <code>flextool-run</code>)</td>
 <td>Runs the optimization model and writes outputs</td>
 </tr>
 <tr>
@@ -2802,8 +2924,13 @@ python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_run_fle
 <h2 id="run_flextoolpy-model-execution"><code>run_flextool.py</code> &mdash; model execution</h2>
 <p>Runs the FlexTool optimization model directly. This is called internally by <code>execute_flextool_workflow.py</code> but can also be used standalone. After solving, it writes outputs and records scenario information in the output database.</p>
 <h3 id="usage_1">Usage</h3>
-<div class="highlight"><pre><span></span><code>python run_flextool.py INPUT_DB_URL [OUTPUT_DB_URL] [options]
+<div class="highlight"><pre><span></span><code>flextool-run INPUT_DB_URL [OUTPUT_DB_URL] [options]
 </code></pre></div>
+<p><code>python run_flextool.py</code> and <code>python -m flextool.cli.cmd_run_flextool</code> take the same arguments.</p>
+<p>Each run writes two files into its <code>output_parquet/&lt;subdir&gt;/</code> folder: <code>_run_status.json</code> (running, succeeded,
+failed, ...; each solve's outcome; whether the parquet files there belong to this run) and <code>_run.log</code> (the run's
+console output). Under <code>flextool-run</code>, the GUI, the workflow runner and the calibrator the log also holds the
+solver's native output and any crash dump.</p>
 <h3 id="positional-arguments_1">Positional arguments</h3>
 <table>
 <thead>
@@ -2885,6 +3012,14 @@ python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_run_fle
 <td><code>--only-first-file-per-plot</code></td>
 <td>Only produce the first file for each plot (quick overview mode)</td>
 </tr>
+<tr>
+<td><code>--input-source-file PATH</code></td>
+<td>The file the input database was made from (e.g. an Excel file), recorded in <code>_run_status.json</code></td>
+</tr>
+<tr>
+<td><code>--run-launcher NAME</code></td>
+<td>Who started the run, recorded in <code>_run_status.json</code> (default <code>direct</code>; <code>flextool-run</code> adds <code>flextool-run</code> unless one is given)</td>
+</tr>
 </tbody>
 </table>
 <p><strong>Debug and diagnostics:</strong></p>
@@ -2909,7 +3044,7 @@ python<span class="w"> </span>-m<span class="w"> </span>flextool.cli.cmd_run_fle
 <p><strong>Scaling and solver tuning:</strong></p>
 <p>Each of these flags has an environment-variable twin for runs without a command line (Spine Toolbox, a
 script); a given flag wins over the variable, and the variable over the solve's database value. See
-<a href="../env_vars/">Environment variables</a>.</p>
+<a href="../env_vars/">Environment variables</a>. <code>flextool-run</code> passes them to the engine unchanged.</p>
 <table>
 <thead>
 <tr>
@@ -2991,7 +3126,7 @@ the filter-only inspector:</p>
 </tbody>
 </table>
 <h3 id="example">Example</h3>
-<div class="highlight"><pre><span></span><code>python<span class="w"> </span>run_flextool.py<span class="w"> </span><span class="se">\</span>
+<div class="highlight"><pre><span></span><code>flextool-run<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>sqlite:///templates/examples.sqlite<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>sqlite:///output_info.sqlite<span class="w"> </span><span class="se">\</span>
 <span class="w">    </span>--scenario-name<span class="w"> </span>base

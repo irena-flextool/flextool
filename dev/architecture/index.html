@@ -16,6 +16,7 @@
 <link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
 <link href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&amp;display=fallback" rel="stylesheet"/>
 <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+<link href="../../stylesheets/extra.css" rel="stylesheet"/>
 <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
 </head>
 <body dir="ltr">
@@ -254,6 +255,30 @@
 </a>
 </li>
 <li class="md-nav__item">
+<a class="md-nav__link" href="../../results_catalogue/">
+<span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../formulation/">
+<span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="../../how_to/">
 <span class="md-ellipsis">
     
@@ -357,6 +382,18 @@
     
   
     Terminal / CLI
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../../ai_assistant/">
+<span class="md-ellipsis">
+    
+  
+    AI assistant
   
 
     
@@ -864,6 +901,46 @@
 </a>
 </li>
 <li class="md-nav__item">
+<a class="md-nav__link" href="#run-record">
+<span class="md-ellipsis">
+      
+        Run record
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ai-assistant-tools">
+<span class="md-ellipsis">
+      
+        AI assistant tools
+      
+    </span>
+</a>
+<nav aria-label="AI assistant tools" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ai-assistant-chat">
+<span class="md-ellipsis">
+      
+        AI assistant chat
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ai-assistant-in-the-flextool-window">
+<span class="md-ellipsis">
+      
+        AI assistant in the FlexTool window
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#solve-to-solve-handoff">
 <span class="md-ellipsis">
       
@@ -1030,6 +1107,18 @@
     
   
     Testing
+  
+
+    
+  </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="../assistant_evaluation/">
+<span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
   
 
     
@@ -1475,6 +1564,46 @@
 </a>
 </li>
 <li class="md-nav__item">
+<a class="md-nav__link" href="#run-record">
+<span class="md-ellipsis">
+      
+        Run record
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ai-assistant-tools">
+<span class="md-ellipsis">
+      
+        AI assistant tools
+      
+    </span>
+</a>
+<nav aria-label="AI assistant tools" class="md-nav">
+<ul class="md-nav__list">
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ai-assistant-chat">
+<span class="md-ellipsis">
+      
+        AI assistant chat
+      
+    </span>
+</a>
+</li>
+<li class="md-nav__item">
+<a class="md-nav__link" href="#ai-assistant-in-the-flextool-window">
+<span class="md-ellipsis">
+      
+        AI assistant in the FlexTool window
+      
+    </span>
+</a>
+</li>
+</ul>
+</nav>
+</li>
+<li class="md-nav__item">
 <a class="md-nav__link" href="#solve-to-solve-handoff">
 <span class="md-ellipsis">
       
@@ -1712,6 +1841,9 @@ packages. Every CLI command also has an installed entry point in
 </tr>
 </tbody>
 </table>
+<p>Two entry points are top-level modules outside <code>flextool/cli/</code> (<code>[tool.setuptools] py-modules</code>), because they
+must act before <code>import flextool</code>: <code>flextool_run_supervisor</code> (<code>flextool-run</code>, see "Run record") and
+<code>flextool_assistant_entry</code> (<code>flextool-assistant</code>, see "AI assistant tools").</p>
 <h3 id="runtime-options">Runtime options</h3>
 <p><code>flextool/run_options.py</code> holds the one resolver for every operator option that has more than one form, and
 the registry of every environment variable FlexTool reads. Where a setting belongs:</p>
@@ -1735,7 +1867,17 @@ the registry of every environment variable FlexTool reads. Where a setting belon
    solve with <code>RunOptions.with_db</code> (e.g. <code>scaling</code>).</li>
 <li>A child FlexTool process (GUI job, calibration iteration, workflow run) gets the parent's flag-given choices
    as flags (<code>RunOptions.to_argv()</code>) and inherits the parent's environment untouched. Benders region workers are
-   threads and read the same <code>RunOptions</code>.</li>
+   threads and read the same <code>RunOptions</code>. The launcher label is a flag too (<code>--run-launcher</code>; the outermost one
+   is kept). <strong>One exception:</strong> a <em>pipe owner</em> — the GUI's <code>_run_job</code> and the <code>flextool-run</code> supervisor
+   (<code>flextool_run_supervisor.py</code>), which read the engine's output pipe and write <code>_run.log</code> — adds
+   <code>FLEXTOOL_RUN_LOG_OWNER=1</code>, <code>PYTHONIOENCODING=utf-8</code> and <code>PYTHONUNBUFFERED=1</code> to the <code>env=</code> copy of its
+   <strong>direct</strong> child. They describe the pipe, not a run choice. The engine reads and removes
+   <code>FLEXTOOL_RUN_LOG_OWNER</code>, so no process it starts inherits it; the owner's own <code>os.environ</code> is not changed.
+   The calibrator, the representative-period iteration and the workflow runner start the supervisor with
+   <code>env=None</code>. <strong>A second exception:</strong> <code>FLEXTOOL_RUN_STOP_FILE</code> is set only by the GUI, in the <code>env=</code> of an
+   auxiliary job's process (a calibration, a representative-period iteration), passed on by inheritance and read
+   only by the <code>flextool-run</code> supervisor, which drops it from the engine's <code>env=</code>. It is the job's stop channel
+   (see "Run record"), never a run choice.</li>
 <li>Process-level variables (<code>MALLOC_ARENA_MAX</code>, <code>_RJEM_MALLOC_CONF</code>, <code>POLARS_*</code>) keep <code>setdefault</code> semantics: a
    value already in the environment wins.  The exception is <code>POLARS_MAX_THREADS</code> while <code>flextool/__init__.py</code>
    imports polars: see "Thread budget" below.</li>
@@ -1786,9 +1928,18 @@ documented variable that is no longer read.</p>
 ├── model_builder/                 Synthetic / mock-up scenario generator.
 ├── representative_periods/        Greedy convex-hull representative-period
 │                                    clustering.
+├── assistant/                     The AI assistant: read-only tools (registry,
+│                                    input / result / diagnostics tools, docs
+│                                    index), the connection server for agents,
+│                                    and the chat (service backends, session,
+│                                    store, terminal front end).
+├── docs_build/                    Generated docs pages (formulation, results
+│                                    catalogue) and the assistant's docs index.
 ├── gui/                           Tkinter desktop application (main_window,
 │                                    result_viewer, plot_canvas,
-│                                    network_graph, check_tree, dialogs/...).
+│                                    network_graph, check_tree, dialogs/...,
+│                                    assistant/ — the AI assistant's chat
+│                                    window).
 ├── helpers/                       Small standalone diagnostic utilities
 │                                    (file compare, LP coefficient inspector,
 │                                    schema converters).
@@ -1802,6 +1953,10 @@ documented variable that is no longer read.</p>
 │                                    migration snapshots.
 └── lean_parquet.py                Tiny parquet loader used by the GUI
                                      ResultViewer.
+
+Top-level modules that run before `import flextool` (py-modules):
+  flextool_run_supervisor.py (flextool-run), flextool_assistant_entry.py
+  (flextool-assistant); build-time only: _flextool_build.py.
 
 Root wrapper scripts (kept for Spine Toolbox workflow compatibility):
   run_flextool.py, write_outputs.py, scenario_results.py,
@@ -2784,8 +2939,12 @@ affinity) limits FlexTool's processing and the solver (<code>flextool/_thread_bu
 <code>POLARS_MAX_THREADS</code> only at import, and <code>import flextool</code> imports it, so <code>flextool/__init__.py</code> runs, in this
 order: the thread budget (<code>apply_before_polars</code>: when the process is a FlexTool command that accepts
 <code>--threads</code> — <code>sys.orig_argv</code> holds <code>-m flextool.cli.cmd_run_flextool</code> / <code>cmd_solve_mps</code> /
-<code>cmd_execute_flextool_workflow</code> / <code>flextool.calibrate</code>, or <code>sys.argv[0]</code> is <code>flextool-run[.exe]</code> or the
-<code>cmd_run_flextool.py</code> file Spine Toolbox runs — the flag is read from the command line, full name only; then
+<code>cmd_execute_flextool_workflow</code> / <code>flextool.calibrate</code> (<code>-m flextool.cli.cmd_run_flextool</code> is also the engine
+that <code>flextool-run</code> supervises), or <code>sys.argv[0]</code> is a <code>flextool-run[.exe]</code> installed before the supervisor (which
+ran the engine in-process) or the <code>cmd_run_flextool.py</code> file Spine Toolbox runs — the flag is read from the
+command line, full name only; the assistant (<code>flextool-assistant</code>, <code>-m flextool_assistant_entry</code>) reads its
+<code>--threads</code> the same way, and without it its budget is 1 (<code>command_default_threads</code>: it reads files while a model
+may be running and must not compete with it; <code>FLEXTOOL_THREADS</code> does not raise it); then
 <code>POLARS_MAX_THREADS = min(B, the user's POLARS_MAX_THREADS, else 8)</code>), the allocator config, <code>import polars</code>,
 the rest of the package, and finally <code>restore_env</code>, which puts <code>POLARS_MAX_THREADS</code> back exactly as it was.
 The environment therefore never carries B: a child gets <code>--threads</code> on its command line (workflow, calibrator,
@@ -2805,6 +2964,230 @@ parallel-simplex opt-in, at most B. Benders: without <code>--benders-workers</co
 </code></pre></div>
 <p>Cross-solve state moves through <code>FlexDataProvider</code> keys; the <code>solve_data/</code>
 CSVs exist only as a debugging aid.</p>
+<h2 id="run-record">Run record</h2>
+<p>Every engine run (<code>cmd_run_flextool.main</code>, once its scenario and output folder are known) writes two files into
+<code>output_parquet/&lt;subdir&gt;/</code> (<code>flextool/run_record/</code>):</p>
+<ul>
+<li><strong><code>_run_status.json</code></strong> (schema <code>flextool.run_status</code>) — written by the <strong>engine</strong>, the only process that knows
+  the verdicts: <code>RunRecorder</code> (<code>_status.py</code>) creates it as <code>running</code>, rewrites it atomically as solves start and
+  are classified, and finishes it in <code>main()</code>'s <code>finally</code> (<code>succeeded</code> / <code>failed</code> / <code>interrupted</code>). It records each
+  solve's model status and acceptance, the error, the input, the options and threads, and <code>outputs.parquet_state</code>:
+  a failed run keeps the earlier run's parquet, marked <code>previous_run</code>. <code>write_outputs</code> keeps both files when it
+  empties the folder.</li>
+<li><strong><code>_run.log</code></strong> — written by the <strong>pipe owner</strong>, the process that reads the engine's stdout + stderr pipe and so
+  also sees native solver output and crash dumps: the GUI job thread (<code>ExecutionManager._run_job</code>) or the
+  <code>flextool-run</code> supervisor (<code>flextool_run_supervisor.py</code>, also used by the workflow runner, the calibrator and the
+  representative-period iteration). The owner sets <code>FLEXTOOL_RUN_LOG_OWNER=1</code> in its child's <code>env=</code> (the first
+  exception in "Runtime options" item 4; <code>FLEXTOOL_RUN_STOP_FILE</code> below is the second); the engine then prints one marker line with the folder and <code>run_id</code>, and
+  the owner (<code>RunLogOwner</code>, <code>_owner.py</code>) writes the log from there, hiding the marker. Without an owner (Spine
+  Toolbox, <code>python -m flextool.cli.cmd_run_flextool</code>, a Python console) the engine copies its own Python streams
+  (<code>_tee.py</code>, <code>log_capture: "python"</code>). The log keeps its first 64 KiB and last <code>FLEXTOOL_RUN_LOG_MAX_BYTES</code>.</li>
+<li>When the engine dies without finishing its status (a crash, a kill, a signal), the owner finishes it from the
+  exit code (<code>classify_exit</code>: <code>killed</code>, <code>interrupted</code>, <code>crashed</code>). Without an owner a reader derives <code>abandoned</code> from
+  a stale <code>running</code> (<code>effective_state</code>).</li>
+<li>A run the GUI stops is <code>killed</code> with the reason (<code>ExecutionManager._stop_job_locked</code>: the job is KILLED with its
+  <code>kill_reason</code> before its process is killed). A calibration or representative-period job runs its engines under
+  <code>flextool-run</code> supervisors, which own those records, so the GUI does not kill them with the rest: it gives the
+  job's process <code>FLEXTOOL_RUN_STOP_FILE</code> (a file in a private temp folder, inherited by each supervisor), writes
+  the reason into that file, kills the job's process and everything not under a supervisor, gives the
+  supervisors 10 s to kill their engines and record <code>killed</code>, then kills what is left (<code>stop_aux_tree</code>).
+  The stop thread is the file's only owner and removes its folder at the end. A job's worker finishes the record
+  before the job's output folder is free for the next job, and closing FlexTool waits (at most 15 s) for those
+  records.</li>
+<li>A GUI job whose engine ends before it starts its record (an early error, a kill in its first seconds) would leave
+  the folder's previous <code>succeeded</code> record, and its results would still be offered. The GUI then writes a minimal
+  <code>failed</code> / <code>killed</code> record (<code>record_run_without_marker</code>, <code>_owner.py</code>) whose <code>outputs</code> carry the previous ones
+  (<code>carried_outputs</code>, the same rule the engine uses), with the engine's early output in <code>_run.log</code>. It writes only
+  over an older finished record or a legacy folder with parquet; never into a missing folder, over a record that
+  cannot be read, over another run's <code>running</code> record, or over a run that started at or after the launch. The run
+  id on disk is read again just before the replace, and the log is written after the status, only while the status
+  is still the GUI's.</li>
+</ul>
+<p>The supervisor is a top-level module that never imports <code>flextool</code> (that imports polars): it loads <code>_owner.py</code> and
+<code>env_check.py</code> by path, so <code>_owner.py</code> stays stdlib-only with no relative imports.</p>
+<p><strong>Whether a folder's results may be offered</strong> is one pure rule, <code>run_record.results_usable(status)</code> (with
+<code>unusable_reason</code>): no record (a folder from before run records) → usable; otherwise only <code>succeeded</code> with
+<code>parquet_state == "written"</code>. Every consumer calls it and none restates it:</p>
+<ul>
+<li>the GUI executed list (<code>ExecutedScenarioManager.scan_executed</code> → <code>ExecutedScenarioInfo.status</code> /
+  <code>run_state</code> / <code>checkable</code>): a row that is not usable shows its state in the check column (✗ / … / –) with a
+  tooltip, cannot be checked, is unchecked on a rescan, and its ▶ opens <code>_run.log</code>. The timestamp is the run's
+  <code>finished_at</code> (else <code>started_at</code>), so sorting is unchanged. The list is refreshed once when a job's engine has
+  written its record;</li>
+<li>the result viewer (<code>ResultViewer._scan_scenarios</code> drops such folders after the ordering merge) and the
+  comparison (<code>OutputActionManager._build_comparison_cmd</code>; after a batch <code>ExecutionManager._run_post_execution</code>
+  leaves out folders whose latest job failed). A new reader of run folders calls it too.</li>
+</ul>
+<p><code>ExecutionManager</code> also starts at most one job per output folder at a time (<code>_pick_next_pending</code>).</p>
+<h2 id="ai-assistant-tools">AI assistant tools</h2>
+<p><code>flextool/assistant/</code> holds read-only tools that let an AI assistant answer questions about one project: input data
+by scenario, results, run logs and slack, and the documentation; the connection server that gives them to an AI
+agent; and FlexTool's own chat with an AI service ("AI assistant chat" below). User page:
+<a href="../../ai_assistant/">The AI assistant</a>.
+<code>flextool/assistant/__init__.py</code> imports nothing; every module imports what it needs when first used.</p>
+<ul>
+<li><strong>Registry</strong> (<code>registry.py</code>). Each tool module (<code>tools/orientation</code>, <code>discovery</code>, <code>inputs</code>, <code>results</code>,
+  <code>diagnostics</code>) lists its <code>Tool</code>s in <code>TOOLS</code> (name, title, description ending with the data-not-instructions
+  sentence, a closed JSON schema without ranges, handler, area, <code>small_tier</code>). <code>call_tool(ctx, name, args)</code> is the
+  only way to run one and never raises: it clamps the caps arguments (<code>caps.py</code>: <code>--result-cap</code> presets and hard
+  ceilings), validates against the schema with <code>jsonschema</code> (mcp does not validate on stdio), runs the handler and
+  fits the payload with <code>fit_json</code> (compact JSON, whole trailing rows dropped with a <code>truncated</code> note). A
+  <code>ToolError</code> carries a message key of <code>errors.MESSAGES</code>, the one table of user-facing texts; any other exception
+  becomes the fault message, with the traceback on stderr only. <code>tools_for_tier("small")</code> is the basic set.</li>
+<li><strong>Redaction</strong> (<code>redact.py</code>) runs once, in <code>fit_json</code>, on every string of every payload and every message: the
+  project folder → <code>&lt;project&gt;</code>, home → <code>~</code>, host and user names, other absolute paths → their last part.</li>
+<li><strong>Inputs</strong> (<code>inputs/_db.py</code>). One read-only, percent-encoded SQLite URI open per file (<code>mode=ro</code> counts only
+  with <code>uri=true</code>; a raw <code>#</code> or <code>%</code> makes SQLite create another file), <code>sqlite_timeout=5</code>; a fixed list of item
+  types is fetched and the mapping closed, so no file handle stays open. The scenario view (rank order,
+  <code>entity_alternative</code>, <code>is_enabled</code>) is computed in our code; spinedb-api's scenario filter is only the oracle of
+  its test. Input sources and their numbers come from <code>gui.input_sources</code> / <code>gui.settings_io</code> (Tk-free), read
+  only; a spreadsheet is read through its conversion <code>intermediate/&lt;stem&gt;.sqlite</code>.</li>
+<li><strong>Results</strong> (<code>results/</code>). A run folder is offered only when <code>run_record.results_usable</code> says so (see "Run
+  record"); the message comes from <code>unusable_code</code>. Tables are read and aggregated wide (<code>flextool/lean_parquet.py</code>
+  footer layout); only a reduced frame is unpivoted. <code>check_aggregation</code> refuses sums with no meaning (power over
+  time, annual values over periods, levels, ratios). Units are worded only by <code>unit_wording.py</code>, as the default
+  convention (units are not enforced by FlexTool). Comparison files are used while their <code>_metadata.json</code> members
+  match the current successful runs, else the member folders.</li>
+<li><strong>Docs</strong> (<code>docs_store.py</code>, <code>flextool/docs_build/</code>). The build step <code>_flextool_build.BuildPy</code> copies the curated
+  Markdown (<code>docs_build/scope.CURATED_DOCS</code>) into <code>flextool/assistant/_docs/md/</code>; an editable install reads the
+  clone's <code>docs/</code>. On first use the formulation page, the results catalogue and the BM25 index are generated by the
+  installed FlexTool into the user cache folder, keyed by FlexTool version + source hash. The web docs generate the
+  same two pages with the same generator (<code>tools/mkdocs_hooks.py</code>).</li>
+</ul>
+<p><strong>The connection server for agents</strong> (<code>flextool-assistant --mcp</code>, <code>mcp_server.py</code>, mcp 2.x low-level <code>Server</code>,
+telemetry middleware removed). The protocol uses stdin and stdout, so <code>flextool_assistant_entry.py</code>, a
+standard-library-only top-level module, keeps private duplicates of fd 0 and fd 1 for the protocol, then points
+fd 1 and <code>sys.stdout</code> at stderr and fd 0 at the null device (on Windows also the Win32 standard handles, and
+binary mode on the duplicates) <strong>before</strong> <code>import flextool</code>, whose dependencies and start-up checks may print.
+The server's streams are explicit <code>anyio</code> wrappers over those duplicates (UTF-8, <code>\n</code>), so mcp's own stdio claim
+is skipped. Tool calls run in a worker thread that takes the context's lock, so <code>ping</code> and <code>tools/list</code> answer
+during a slow call. The server sends the instructions of <code>prompt.instructions</code> (data use, units convention,
+vocabulary), lists the tools with read-only annotations, serves the docs pages as <code>flextool-docs:///&lt;page&gt;</code>
+resources and the level texts (<code>prompt.ADDENDA</code>) as the prompts <code>basic</code>, <code>standard</code>, <code>advanced</code>. <code>--tier basic</code>
+lists and runs only the basic set and defaults to the small result cap.</p>
+<p>When <code>import flextool</code> stops with <code>CompatRuntimeRequired</code> (env_check: this processor needs the compatible polars
+build), the entry module loads <code>mcp_server.py</code> by path (it imports only the standard library at module level) and
+serves one tool, <code>flextool_setup_problem</code>, that returns the fix. The assistant options have no environment-variable
+twins.</p>
+<p><code>--call TOOL [JSON | @file.json]</code> runs one tool through the same <code>call_tool</code> and prints its text (support and
+testing). Tests: <code>tests/assistant/</code> (<code>test_server_stdio.py</code> drives the installed command over real stdio and fails
+on any non-protocol byte on stdout); CI smoke: <code>.github/scripts/mcp_smoke.py</code> (wheel check in <code>publish.yml</code>, the
+Toolbox bundle, the old-CPU emulation's degraded server).</p>
+<h3 id="ai-assistant-chat">AI assistant chat</h3>
+<p><code>flextool-assistant</code> without <code>--mcp</code> / <code>--call</code> is the chat (<code>chat_cli.py</code>); the same layers serve the FlexTool
+window ("AI assistant in the FlexTool window" below). <code>--mcp</code> and <code>--call</code> import none of the service libraries (<code>anthropic</code>, <code>openai</code>, <code>keyring</code>)
+nor the chat (<code>tests/assistant/test_import_hygiene.py</code>).</p>
+<ul>
+<li><strong>Neutral model</strong> (<code>llm_adapter.py</code>): <code>Message</code>, <code>ToolCall</code>, <code>Request</code>, <code>Reply</code>, <code>Usage</code>, the events a front
+  end shows (<code>TextDelta</code>, <code>ToolDone</code>, <code>Waiting</code>, <code>RetryWait</code>, …) and the <code>Backend</code> protocol. Data only one provider
+  understands (Anthropic thinking blocks, Gemini thought signatures, OpenRouter reasoning details) travels in
+  <code>provider_extra</code>, stamped with its origin (preset, base URL, model), and is replayed only to that origin; on a
+  switch it is dropped and tool-call ids are re-mapped.</li>
+<li><strong>Backends</strong> (<code>backends/</code>): Anthropic Messages and OpenAI Chat Completions (also Mistral, OpenRouter, Gemini,
+  Ollama, LM Studio and any compatible endpoint). The provider libraries are imported only in <code>make_backend</code>.
+  <code>net.py</code> builds each library's HTTP client: headers rebuilt from an allow-list (the libraries' identification
+  headers and the variables they read add nothing), our own proxy decision (a local endpoint is never proxied), no
+  redirects, cancel by shutting the open sockets. Presets (<code>providers.py</code>) name no models; they say which request
+  fields a service accepts and which privacy fields are sent (<code>store: false</code>, OpenRouter
+  <code>provider.data_collection</code>).</li>
+<li><strong>Errors and retries</strong> (<code>llm_errors.py</code>, <code>llm_retry.py</code>): every library error becomes one <code>LLMError</code> subclass
+  with a plain-English message; our own retry loop (no library retries), never after the first streamed output.</li>
+<li><strong>Probes</strong> (<code>probes.py</code>): before the first question, the model's context and tool support (Ollama <code>/api/show</code>,
+  load, <code>/api/ps</code>; LM Studio; the OpenRouter model list; Anthropic limits), standard library only and proxy-less
+  for local servers. A model Ollama forwards to another host (its cloud) gives a remote route.</li>
+<li><strong>Session</strong> (<code>session.py</code>): the agent loop — rounds of tool calls per question capped by level, tool calls under
+  the process-wide tool lock, the history kept valid for every provider after a cut-off, refusal, stop or error;
+  compaction points (every <code>compaction_every</code> questions, a context overflow, a rejected signature, a resume with
+  changed instructions) drop all provider data. <code>TurnWorker</code> runs turns in a daemon thread; a stop returns at once.</li>
+<li><strong>Prompt</strong> (<code>prompt.py</code>): five byte-stable layers (core rules, orientation, documentation map, level text,
+  front-end note) and the context block (project, input source, scenario) at the start of a user message; the
+  agent connection's instructions reuse the same rules.</li>
+<li><strong>Levels</strong> (<code>tiers.py</code>, standard library only): <code>resolve_tier</code> places a model from <code>TIER_RULES</code> (data, first
+  match wins: small-model words, the reported or named size, family words, GPT major ≥ 5, a fallback guess by
+  route) and caps it by the context window (<code>WINDOW_LEVELS</code>; below <code>MIN_WINDOW</code> it raises <code>WindowTooSmall</code>). The
+  automatic level is the lower of the two; <code>allowed_levels</code> is it and below, or up to the window's level for an
+  unrecognised model (<code>ALLOW_HIGHER_WHEN_UNRECOGNISED</code>). There is no bypass in shipped code: a stored or <code>--tier</code>
+  level above the allowed ones is lowered with a notice (<code>-q</code> with <code>--tier</code> exits 2). Before a probe the front ends
+  use <code>probes.cached_facts</code> (user cache); the settings dialog never probes. The level changes only the prompt
+  (<code>prompt.ADDENDA</code>), the tool list (<code>registry.tools_for_tier</code>; basic = the <code>small_tier</code> tools, any other name
+  refused by the session before the registry) and the budget — never what a tool returns. Agents choose a level
+  with the connection prompts or <code>--mcp --tier</code> (not checked against their model).</li>
+<li><strong>Budgets</strong> (<code>budget.py</code>, standard library only): <code>LevelBudget</code> per level (<code>LEVEL_BUDGETS</code>, the free plan's
+  <code>FREE_TIER_BUDGETS</code>): rounds, tool calls per question and per round, the output limit (≤ window / 4 for a known
+  window), planned calls and the prefix budget the shipped layers and schemas must fit
+  (<code>tests/assistant/test_prompt_budget.py</code>). <code>resolve_budget</code> adds the window's class (<code>WINDOW_CLASSES</code>: result-cap
+  ceiling, <code>fit_caps</code> for windows under 32 768, and the compaction rhythm; settings <code>compaction_every</code> /
+  <code>keep_recent_turns</code> <code>null</code> = automatic). <code>approx_tokens</code> is a digit-aware estimate (<code>JSON_CHARS_PER_TOKEN</code>,
+  pinned by <code>tests/assistant/llm/test_token_estimate.py</code> against real tokenizer counts) corrected per session by the
+  reported prompt tokens (<code>TokenCorrection</code>); the session's pre-send fit compacts or, for origins with replay data,
+  asks for an answer without tools, and sends nothing when the estimate plus the answer limit stays above 95 % of
+  the window (a reported one, or the assumed local one). The free plan
+  (<code>free_tier_on</code>: the setting, else on only for an OpenRouter <code>:free</code> id) lowers rounds and calls, caps results at
+  medium and, in the FlexTool window, gives the chat's gated backend a limit of one request at a time; the first rate-limit reply on a route with it off
+  shows the hint once (<code>settings.free_tier_suggested</code>).</li>
+<li><strong>Local files</strong> (<code>_files.py</code>, <code>settings.py</code>, <code>store.py</code>, <code>usage.py</code>, <code>keys.py</code>, <code>endpoint.py</code>), in
+  <code>platformdirs.user_config_dir("flextool")/assistant/</code>: settings, conversations per project (lock file per open
+  conversation, purge by age at every start), the usage ledger, the key file (opt-in; the keyring first, the
+  preset's environment variable before both) and <code>acknowledgements.json</code>. Every read-modify-write runs under a
+  lock file; every time is UTC.</li>
+<li><strong>Data notice</strong> (<code>endpoint.py</code>): the route (loopback, local network, remote; the proxy; the forwarded host), the
+  indicator line, and the notice a remote route needs before the first question. An acceptance is kept per
+  preset, normalised address, proxy host, forwarded host and notice wording.</li>
+<li><strong>Terminal</strong> (<code>chat_cli.py</code>): the REPL (a terminal only) and <code>-q</code> (only the answer on stdout; exit codes 0 / 1 /
+  2 / 3 / 130). The question and the probe run in daemon threads, so Ctrl-C stops them at once. The banner gives the
+  level and why (<code>level_lines</code>); <code>/context</code> the window, the result cap and the compaction rhythm of the session's
+  budget; <code>--free-tier on|off|auto</code> overrides <code>settings.free_tier</code> for the session.</li>
+</ul>
+<h3 id="ai-assistant-in-the-flextool-window">AI assistant in the FlexTool window</h3>
+<p><code>flextool/gui/assistant/</code> is the window's front end on the same session, store, settings, keys, notices and ledger
+(user page: <a href="../../ai_assistant/">The AI assistant</a>, "Chat in the FlexTool window"). Everything without Tk — the
+worker, the provider gate, the Markdown parser, the window geometry, the strings — is tested in the sharded job
+(<code>tests/assistant/gui_support/</code>); the Tk modules in the <code>gui-tests</code> job (<a href="../testing/">Testing</a>, "GUI tests").</p>
+<ul>
+<li><strong>Entry and lifecycle</strong> (<code>entry.py</code>, <code>AssistantEntry</code>, created by <code>MainWindow</code>): "AI assistant…" + ⚙ in side-menu
+  row 5. Building it only runs <code>importlib.util.find_spec</code>; the chat window, the dialogs, the SDKs, the keyring and
+  the store are imported on the first click. It closes the chat window on a project switch, rename or deletion
+  (one window per project) and waits for its workers (5 s; the Project dialog and the project combo refuse a
+  rename or deletion while one still runs a tool call, <code>before_project_change</code>); <code>project_utils.rename_project</code>
+  moves the saved chats (<code>store.rename_project</code>), <code>notify_assistant_project_deleted</code> deletes them
+  (<code>store.forget_project</code>). At FlexTool close (<code>MainWindow._on_close</code>, before the settings save) it withdraws the
+  windows, shuts the workers down, deletes the runtime file and purges, within 3 s; at start (after 3 s) it purges
+  and removes runtime files of gone processes.</li>
+<li><strong>Threads</strong>: one <code>AssistantWorker</code> daemon thread per chat tab owns its <code>Session</code>, conversation and lock; the Tk
+  thread never calls the network, keyring, probes, store or ledger (except reading the settings and the welcome
+  flag when a window opens). Worker → Tk only through queues drained by one <code>after(50)</code> poll. The process-wide
+  <code>ProviderGate</code> (<code>gate.py</code>) lets <code>parallel_requests</code> (1–4) model requests per provider run at once (a free-plan
+  chat's own <code>limit</code> is 1), gives slots in arrival order and shares a rate-limit cool-down between chats; tool
+  calls run outside it, under the process-wide tool lock. A shut-down worker saves a checkpoint in which a running
+  tool call is "Not run: FlexTool was closed…", so the file is always a resumable history. A project rename or
+  deletion moves or deletes its chats on one FIFO daemon thread (<code>project_utils</code>); every store user waits for the
+  queued hooks first (<code>wait_project_hooks</code>). The Tk thread's blocking waits (project change, close) pump
+  <code>dooneevent(FILE_EVENTS | DONT_WAIT)</code>, so a worker's Tcl call (a finalizer collected on its thread) finishes;
+  closed assistant dialogs retire their Tk variables on the Tk thread.</li>
+<li><strong>Window</strong> (<code>chat_window.py</code>, <code>chat_tab.py</code>, <code>transcript.py</code>, <code>notices.py</code>, <code>settings_dialog.py</code>): chats as
+  <code>ttk.Notebook</code> tabs with an overflow budget (the Chats menu shows the hidden ones), restored when the window
+  opens again (<code>store.open_chats</code>); one data notice at a time; the size per monitor configuration in
+  <code>GlobalSettings.assistant_window_geometry</code>; a key shield on every assistant Toplevel so the main window's
+  <code>bind_all</code> shortcuts never fire from it. The settings' level rows list "Automatic" and only
+  <code>TierChoice.allowed</code> (from cached facts; ttk cannot grey single entries) with <code>TierChoice.lines()</code>, and the free
+  plan as a three-entry list (automatic / on / off → <code>free_tier</code> null / true / false); the worker's setup
+  fingerprint includes <code>free_tier</code>, so a saved change applies from the next question.</li>
+<li><strong>What the window shows</strong> (<code>gui_state.py</code>): <code>snapshot_from_main</code> reads the main window's checks and highlights
+  and <code>ResultViewer.view_state()</code> on the Tk thread (each part on its own, about 2 ms); every Send takes its own
+  snapshot (<code>ContextSnapshot.gui</code>), which the prompt renders as the context block. While a project is open,
+  <code>ContextPublisher</code> polls it every second and hands a changed payload to the <code>RuntimeContextWriter</code>
+  (<code>flextool/assistant/runtime_context.py</code>): one file per process,
+  <code>&lt;config&gt;/assistant/runtime/&lt;project key&gt;.&lt;pid&gt;.json</code>, names and selections only, rewritten every 30 s while the
+  poll ticks (a hung Tk thread's file goes stale), deleted by the writer thread at close. An agent's
+  <code>get_gui_context</code> (<code>--mcp</code>, <code>--call</code>) reads the file of the window in use (<code>read_runtime_context</code>: process alive,
+  written within 120 s; the latest focus <code>active_at</code>, then <code>changed_at</code>, then <code>written_at</code>); a live process with
+  only a stale file reads as open but not answering (<code>responding: false</code>).</li>
+</ul>
+<p>Tests: <code>tests/assistant/llm/</code> — no network (a socket guard refuses anything but loopback), synthetic provider
+payloads through <code>httpx2.MockTransport</code>, a scripted <code>FakeBackend</code> for the session and the chat, loopback servers
+for the probes and the cancel. Real provider replies are recorded by hand with <code>tools/record_llm_replies.py</code> on
+the synthetic test project only, scrubbed, checked and replayed in CI (<a href="../testing/">Testing</a>, "Recorded provider
+replies").</p>
 <h2 id="solve-to-solve-handoff">Solve-to-solve handoff</h2>
 <p>When a solve is part of a rolling-horizon, nested, or sub-solve chain, the
 just-solved problem produces a <code>SolveHandoff</code> (typed in-memory carrier).
@@ -2953,8 +3336,8 @@ slack semantics.</p>
      <code>_quantity_types.py</code>). Buckets matrix columns by quantity-type
      (energy, capacity, monetary, …) and applies a power-of-2 scaler
      per type to compress the median-of-type onto O(1). Has structural
-     limits: cannot compress within-type spread, and the Rivendell
-     guard prevents over-shrinking columns with mixed-magnitude
+     limits: cannot compress within-type spread, and a guard
+     prevents over-shrinking columns with mixed-magnitude
      coefficients on a single row. Like Layer 1, the magnitude-bucketing
      readout walks the spine in bounded row-batches via
      <code>bounded_coefficient_walk</code> (the log2-magnitude histogram reducer)

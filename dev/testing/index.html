@@ -16,7 +16,7 @@
         <link rel="prev" href="../db_schema/">
       
       
-        <link rel="next" href="../env_vars/">
+        <link rel="next" href="../assistant_evaluation/">
       
       
         
@@ -49,6 +49,8 @@
         <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
       
     
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
     
     <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
@@ -521,6 +523,62 @@
   
   
     <li class="md-nav__item">
+      <a href="../../results_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how_to/" class="md-nav__link">
         
   
@@ -753,6 +811,34 @@
     
   
     Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../ai_assistant/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
   
 
     
@@ -1426,6 +1512,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#gui-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GUI tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#test-suite-environment-variables" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1475,6 +1572,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#recorded-provider-replies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recorded provider replies
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#related-pages" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1489,6 +1597,34 @@
   
 </nav>
       
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../assistant_evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -1840,6 +1976,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#gui-tests" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        GUI tests
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#test-suite-environment-variables" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1882,6 +2029,17 @@
     <span class="md-ellipsis">
       
         Adding a new test
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#recorded-provider-replies" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Recorded provider replies
       
     </span>
   </a>
@@ -2222,6 +2380,10 @@ contract.</p>
 <td><code>csv_reload</code></td>
 <td>CSV reload contract tests in <code>tests/csv_reload/</code> — opt-in</td>
 </tr>
+<tr>
+<td><code>gui</code></td>
+<td>Opens a real Tk window — opt-in with <code>--run-gui</code> (see "GUI tests" below)</td>
+</tr>
 </tbody>
 </table>
 <p>The <code>smoke</code> marker is attached automatically to scenarios in
@@ -2243,7 +2405,28 @@ Run them with <code>pytest -m csv_reload tests/csv_reload/</code>.</p>
 <li><strong>full</strong> — push to <code>master</code> and nightly cron; full Layer-1 plus
   Layer-2 MPS parity (30-minute timeout).</li>
 <li><strong>slow</strong> — nightly only; <code>-m slow</code>.</li>
+<li><strong>gui-tests</strong> — every push and PR, a required check: the Tk tests
+  under xvfb (see "GUI tests" below).</li>
 </ul>
+<h3 id="gui-tests">GUI tests</h3>
+<p>The tests that open a real Tk window are the modules listed in
+<code>_GUI_DISPLAY_MODULES</code> (<code>tests/conftest.py</code>) and the tests marked <code>gui</code>
+(<code>pytestmark = pytest.mark.gui</code>, e.g. every module of <code>tests/gui/assistant/</code>).
+They are skipped unless <code>--run-gui</code> is given; <code>--gui-only</code> deselects
+everything else.  Never run them on your own display — they move windows
+and the keyboard focus. Run them under xvfb, with openbox as the window
+manager as the CI job does (mapping, focus, grabs and the work area then
+behave as on a desktop):</p>
+<div class="highlight"><pre><span></span><code>xvfb-run<span class="w"> </span>-a<span class="w"> </span>sh<span class="w"> </span>-c<span class="w"> </span><span class="s1">'openbox &amp; sleep 1; python -m pytest tests/gui --run-gui --gui-only -n 0'</span>
+</code></pre></div>
+<p>The <code>gui-tests</code> job of <code>ci.yml</code> runs exactly this on Linux (Python 3.14,
+<code>--timeout 300</code>). It runs serially: the focus is one per display, so tests
+in parallel processes on one display take it from each other. A test that
+checks where the focus went asks the window (<code>focus_lastfor()</code>), not the
+display (<code>focus_get()</code>). A dialog is transient to its parent, and a window
+manager never maps a transient of a withdrawn window: open dialogs over a
+mapped window. The Tk-free modules of <code>tests/gui/</code> run in the sharded
+Tests workflow. Windows and macOS Tk are checked by hand.</p>
 <h3 id="test-suite-environment-variables">Test-suite environment variables</h3>
 <p>Opt-in switches read by the test suite only (registered with audience <code>test</code> in <code>ENV_KNOBS</code>,
 <code>flextool/run_options.py</code>). The runtime developer switches the suite also uses, such as
@@ -2270,6 +2453,12 @@ Run them with <code>pytest -m csv_reload tests/csv_reload/</code>.</p>
 <td><code>1500</code></td>
 <td>MB</td>
 <td>RSS budget of the input-derivation memory test <code>tests/spinedb_backend/test_memory_budget.py</code>, for machines with unrelated memory pressure.</td>
+</tr>
+<tr>
+<td><code>FLEXTOOL_TEST_KEYRING_LOG</code></td>
+<td>set by the suite</td>
+<td>file</td>
+<td>Set by the root <code>conftest.py</code> in the first process of a session and inherited by the xdist workers: every process appends a call that reached a system keyring backend, or a store or removal on the default keyring, to this file, and the session fails when it is not empty (<code>tests/user_dirs_guard.py</code>). Not for use by hand.</td>
 </tr>
 </tbody>
 </table>
@@ -2308,6 +2497,56 @@ test so scenarios that share solve names cannot cross-contaminate.</p>
   belong in the per-commit gate; mark anything that builds and solves
   an LP with <code>solver</code>; mark anything over ~30 s with <code>slow</code>.</li>
 </ul>
+<h2 id="recorded-provider-replies">Recorded provider replies</h2>
+<p>The AI assistant's backend tests run on synthetic payloads (<code>tests/assistant/llm/payloads/</code>). The real answers of
+each AI service are kept as recordings under <code>tests/assistant/llm/recorded/&lt;preset&gt;/&lt;case&gt;.json</code>, made by hand with
+<code>tools/record_llm_replies.py</code> and checked in CI by <code>tests/assistant/llm/test_recorded_replies.py</code> (skipped while
+there are none). A recording is made <strong>only</strong> against the synthetic test project that the tool builds itself
+(<code>tests/fixtures/tests.json</code> with the runs of the assistant tests), never against a user's project.</p>
+<p>To record one service:</p>
+<ol>
+<li>Make its key findable as the chat finds it: the preset's environment variable (<code>GEMINI_API_KEY</code>, …) or
+   <code>flextool-assistant --set-key --provider &lt;preset&gt;</code>. The key is never given on the command line. For a local
+   server, start it with the model loaded the way users run it (for Ollama, <code>OLLAMA_CONTEXT_LENGTH=16384</code>).</li>
+<li>Run, from the repository root:
+   <div class="highlight"><pre><span></span><code>python<span class="w"> </span>tools/record_llm_replies.py<span class="w"> </span>--preset<span class="w"> </span>gemini<span class="w"> </span>--model<span class="w"> </span>&lt;a<span class="w"> </span>model<span class="w"> </span>from<span class="w"> </span>flextool-assistant<span class="w"> </span>--list-models&gt;
+python<span class="w"> </span>tools/record_llm_replies.py<span class="w"> </span>--preset<span class="w"> </span>ollama<span class="w"> </span>--model<span class="w"> </span>&lt;a<span class="w"> </span>pulled<span class="w"> </span>model<span class="w"> </span>that<span class="w"> </span>supports<span class="w"> </span>tools&gt;
+python<span class="w"> </span>tools/record_llm_replies.py<span class="w"> </span>--preset<span class="w"> </span>openai_compatible<span class="w"> </span>--base-url<span class="w"> </span>http://localhost:8000/v1<span class="w"> </span>--model<span class="w"> </span>&lt;name&gt;
+</code></pre></div>
+   The tool asks two fixed questions (one about input data, one about a result) through the real session, so the
+   service is billed for a few requests. It writes the file only when both questions were answered, the model made
+   at least two rounds of tool calls, the scrubbed recording passes the scrub check and it replays to the same
+   answers; otherwise it says why and writes nothing (exit 1).</li>
+<li>Look through the file before committing it, then run
+   <code>pytest tests/assistant/llm/test_recorded_replies.py</code>.</li>
+</ol>
+<p>What the scrub does before writing: no request header is recorded; message, call, response and request ids
+(<code>chatcmpl-…</code>, <code>msg_…</code>, <code>toolu_…</code>, <code>gen-…</code>, <code>call_…</code>, <code>req_…</code>) become placeholders of the same format, the same
+everywhere in the file; organisation and project ids, run ids, e-mail addresses and the key are replaced; the
+FlexTool redaction removes the project folder, the home folder, user and host names and other absolute paths; the
+address of a custom endpoint becomes <code>https://endpoint.example.test/v1</code>. Any other address than the preset's own
+or one on this computer keeps its scheme, port and route kind with a placeholder host (<code>192.0.2.1</code> or
+<code>[2001:db8::1]</code> on the local network, <code>endpoint.example.test</code> elsewhere) and the preset's path; a <code>remote_host</code>
+outside the known services becomes <code>forwarded.example.test</code>. In every text, the top-level fields included, an IP
+address outside loopback and the documentation ranges becomes a numbered documentation address (<code>192.0.2.N</code>,
+<code>2001:db8::N</code>, never the endpoint's), and a host name of the local network (<code>*.lan</code>, <code>*.local</code>, <code>*.home</code>,
+<code>*.internal</code>, <code>*.intranet</code>, <code>*.corp</code>, <code>*.localdomain</code>, <code>*.home.arpa</code>, or a one-label host after <code>://</code>) becomes
+<code>host-N.example.test</code>; a one-label endpoint host is replaced only as a host (<code>://gpu</code>, <code>gpu:11434</code>), never inside a
+word. Public host names in texts stay. Of the model server's own answers only the fields the probe reads are
+recorded (Ollama <code>/api/show</code>: capabilities, <code>remote_host</code>, parameter size, architecture and context length;
+<code>/api/ps</code>: the recorded model's name, context, size and graphics memory, no digest; LM Studio: the recorded model's
+context, load state and capabilities), and a model list keeps only the recorded model. Signatures and thinking text stay, because the replay needs them. Response headers are kept only from an
+allow-list (<code>content-type</code>, <code>retry-after</code>, <code>retry-after-ms</code>, <code>x-ratelimit-*</code>, <code>anthropic-ratelimit-*</code>).</p>
+<p>What the scrub check (in the tool and in CI) refuses: a key-like text (<code>sk-</code>, <code>sk-ant-</code>, <code>sk-or-</code>, <code>AIza…</code>), a run
+of 32 or more letters and digits outside a signature field, an absolute path, an e-mail address, a request header,
+<code>x-stainless-*</code>, <code>openai-organization</code> or <code>openai-project</code> anywhere, a project name other than the fixture's, an
+IP address outside loopback and the documentation ranges, a host name of the local network or a one-label host
+after <code>://</code>, a <code>base_url</code> or <code>remote_host</code> outside the known services, and (in the tool) the endpoint's own host
+left anywhere — a one-label one as a whole word. The check's patterns are its own and looser than the scrub's, and
+it also reads each streamed answer joined, so an address the scrub missed, or one split over two pieces, is
+refused rather than written.</p>
+<p>When a recording settles a point the design marked unverified (for example the shape of Ollama's <code>remote_host</code>
+or of LM Studio's model list), correct the code and its tests in the same change.</p>
 <h2 id="related-pages">Related pages</h2>
 <ul>
 <li><a href="../architecture/"><code>architecture.md</code></a> — pipeline end-to-end,

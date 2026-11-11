@@ -1,0 +1,3461 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="IRENA FlexTool is an energy and power systems model for understanding the role of variable power generation in future energy systems. It performs capacity expansion planning as well as operational planning.">
+      
+      
+        <meta name="author" content="Juha Kiviluoma, VTT Technical Centre of Finland">
+      
+      
+      
+        <link rel="prev" href="../terminal_workflow/">
+      
+      
+        <link rel="next" href="../env_vars/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../img/irena_flextool_favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.1">
+    
+    
+      
+        <title>AI assistant - IRENA FlexTool</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#the-ai-assistant" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="IRENA FlexTool" class="md-header__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            IRENA FlexTool
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              AI assistant
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="IRENA FlexTool" class="md-nav__button md-logo" aria-label="IRENA FlexTool" data-md-component="logo">
+      
+  <img src="../img/irena_flextool_favicon.png" alt="logo">
+
+    </a>
+    IRENA FlexTool
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/irena-flextool/flextool" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    GitHub
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Introduction
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../interface_overview/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Choosing an interface
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install_gui/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../install_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install with Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../tutorial/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Tutorial
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Concepts
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Concepts
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model outputs
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results_catalogue/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Results catalogue
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../formulation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Model formulation
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how_to/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to recipes
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../advanced_concepts/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Advanced concepts
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Interfaces
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Interfaces
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../flextool_gui_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    FlexTool GUI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../spine_toolbox/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine Toolbox
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../spine_database/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Spine database editor
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../excel_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Excel as input/output
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../terminal_workflow/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Terminal / CLI
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#where-your-data-goes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where your data goes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chat-in-the-flextool-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chat in the FlexTool window
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Chat in the FlexTool window">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#open-the-chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open the chat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ask" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ask
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data-notice-and-where-the-data-goes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data notice and where the data goes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#chats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chats
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chat-in-the-terminal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chat in the terminal
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Chat in the terminal">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-you-need" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What you need
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#start-a-chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start a chat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-data-notice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The data notice
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#one-question-from-a-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One question from a script
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commands
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#services" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Services
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#models-on-this-computer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Models on this computer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Levels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conversations-and-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversations and settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#chat-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chat options
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connect-an-ai-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect an AI agent
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Connect an AI agent">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-an-agent-needs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What an agent needs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connect-claude-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect Claude Code
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connect-another-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect another agent
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Options
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#levels-for-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Levels for agents
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#assistant-levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assistant levels
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Assistant levels">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-the-level-is-chosen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the level is chosen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#budgets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Budgets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-free-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The free plan
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-fast-requests-are-sent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How fast requests are sent
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#units" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Units
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#try-a-tool-from-the-terminal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Try a tool from the terminal
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-something-goes-wrong" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When something goes wrong
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solvers
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Solvers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Solver selection
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/highs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    HiGHS
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/gurobi/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gurobi
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/cplex/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CPLEX
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/xpress/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Xpress
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../solvers/copt/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    COPT
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_7" >
+        
+          
+          <label class="md-nav__link" for="__nav_7" id="__nav_7_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Developer guide
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_7_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Developer guide
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/architecture/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Architecture overview
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/engine/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The engine pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/scaling/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    LP scaling pipeline
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/slack_convention/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Slack convention
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/decomposition/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Decomposition
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/db_schema/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Database schema and migration
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/testing/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Testing
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/assistant_evaluation/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Evaluating the AI assistant
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/env_vars/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Environment variables (developer)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dev/inject_between_solves/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Injecting parameters between solves
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../release/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Changelog
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+          
+        
+        <input class="md-nav__toggle md-toggle md-toggle--indeterminate" type="checkbox" id="__nav_9" >
+        
+          
+          <label class="md-nav__link" for="__nav_9" id="__nav_9_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Archived
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_9_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_9">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Archived
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../archived/browser_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../archived/install_web_interface/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Web interface install (deprecated)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#where-your-data-goes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Where your data goes
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chat-in-the-flextool-window" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chat in the FlexTool window
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Chat in the FlexTool window">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#open-the-chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Open the chat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ask" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Ask
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#data-notice-and-where-the-data-goes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Data notice and where the data goes
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#chats" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chats
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#chat-in-the-terminal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chat in the terminal
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Chat in the terminal">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-you-need" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What you need
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#start-a-chat" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Start a chat
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-data-notice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The data notice
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#one-question-from-a-script" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        One question from a script
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#commands" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Commands
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#services" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Services
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#models-on-this-computer" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Models on this computer
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Levels
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#conversations-and-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Conversations and settings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#chat-options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Chat options
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#connect-an-ai-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect an AI agent
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Connect an AI agent">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#what-an-agent-needs" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What an agent needs
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connect-claude-code" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect Claude Code
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#connect-another-agent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Connect another agent
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#options" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Options
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#levels-for-agents" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Levels for agents
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#assistant-levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Assistant levels
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Assistant levels">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-the-level-is-chosen" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the level is chosen
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#budgets" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Budgets
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#the-free-plan" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The free plan
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#how-fast-requests-are-sent" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How fast requests are sent
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#units" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Units
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#try-a-tool-from-the-terminal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Try a tool from the terminal
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#when-something-goes-wrong" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        When something goes wrong
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+  
+  
+
+
+<h1 id="the-ai-assistant">The AI assistant</h1>
+<p>The FlexTool AI assistant answers questions about a FlexTool project: what a parameter is set to in a scenario,
+what a result table shows, why a run failed, where slack appeared, how two scenarios differ. It reads what it needs
+with a set of read-only FlexTool tools. The tools cannot change input data, settings or results, and they cannot
+start a run.</p>
+<p>The tools give the assistant:</p>
+<ul>
+<li>the input data of the project's input sources, scenario by scenario, as FlexTool would use it (the winning value
+  of each parameter after the alternatives are ranked);</li>
+<li>the results of the scenarios that have been run (the parquet files in <code>output_parquet/</code>), with filters, sums and
+  averages over the dimensions that allow them, and comparisons between scenarios;</li>
+<li>the run log and run status of each run, including which solves were accepted and the slack (penalty) in the
+  results;</li>
+<li>the FlexTool documentation, including the model's equations and the list of result tables.</li>
+</ul>
+<p>There are three ways to use it:</p>
+<ul>
+<li><strong>Chat in the FlexTool window</strong>: "AI assistant…" in the side menu opens a chat window for the open project. It
+  talks to an AI model of the service you choose (a service on the internet with your key, or a model running on
+  this computer), gives it the tools, and tells it what you have selected in the window.</li>
+<li><strong>Chat in the terminal</strong>: <code>flextool-assistant</code> does the same in a terminal.</li>
+<li><strong>Connect an AI agent</strong> such as Claude Code: the agent starts the tools itself and uses its own model.</li>
+</ul>
+<p>The window and the terminal share the settings, the keys, the accepted data notices and the saved conversations.</p>
+<h2 id="where-your-data-goes">Where your data goes</h2>
+<p>Your questions and everything the tools return — input data, results, run logs and documentation, and the names of
+your project and scenarios — are sent to the AI service that answers. FlexTool cannot say how that service stores
+or uses the data: it may be kept, reviewed or used for training, depending on the service, your account and your
+plan. Free plans often let the provider use your data for training. Check the provider's current policies yourself
+before you use a project with data you may not share. FlexTool takes local folder paths, your user name and the
+computer's name out of what the tools return, but it does not remove anything else: names of units, nodes and
+scenarios, and all values, are sent as they are.</p>
+<p>The only reliable way to keep the data on this computer is a model that runs on it (Ollama or LM Studio), which
+needs a powerful computer. Some models offered through such programs still run elsewhere: Ollama's cloud models
+are sent to Ollama's servers. The chat finds out before it sends anything and treats them as a service on the
+internet.</p>
+<h2 id="chat-in-the-flextool-window">Chat in the FlexTool window</h2>
+<h3 id="open-the-chat">Open the chat</h3>
+<p>"AI assistant…" is in the side menu above "Execution jobs…"; the ⚙ button beside it opens the assistant settings.
+The first time either is used, a short text explains how the assistant works ("How this works" in the chat window
+shows it again); "Open settings" there goes straight to the settings. Opening FlexTool or the chat window sends
+nothing: your data leaves this computer only when you send a question.</p>
+<p>The chat window belongs to the open project. It closes when you switch to another project, rename the project or
+delete it, and it is as tall as the screen it opens on. A size and place you give it are remembered for that screen
+layout ("Reset window layout" in "UI settings…" forgets them).</p>
+<h3 id="settings">Settings</h3>
+<table>
+<thead>
+<tr>
+<th>Setting</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Provider, Address</td>
+<td>The AI service (see <a href="#services">Services</a>); the address can be changed for a model on this computer or a custom endpoint.</td>
+</tr>
+<tr>
+<td>Key</td>
+<td>"Store key" keeps the pasted key in the system keyring, or, after a warning, unencrypted in a file. A key in the service's environment variable is used instead of a stored one, and the dialog says so. The key is never shown again.</td>
+</tr>
+<tr>
+<td>Model</td>
+<td>The service's own model list ("Refresh list"), or type a model name. The list shows only chat models, and for a remote service of them only stable releases, the newest version of each model (Ollama and LM Studio list every chat model you installed); "Show all models" — or <code>--all</code> with <code>--list-models</code> in the terminal — also shows pre-releases (preview, experimental, beta…), <code>-latest</code> aliases, older versions and models whose name says they are for something else than chat (embedding, tts, transcribe, image, video, music, live, realtime and the like). A chosen model the short list leaves out stays in it, marked "(pre-release)", "(alias)", "(older version)" or "(not a chat model)". "Test model" sends one tiny request (no data of your project; after the data notice) and says whether the model answers, with the time to the first part of the answer and to its end, or the provider's own words when it refuses; it waits up to 300 seconds and the button stops it meanwhile. A model the provider says is not available to your account is then left out of the list and marked "(not available to your account)" under "Show all models", until Refresh list, a new key, a successful test or 7 days. The mark holds only for the key the test used (FlexTool saves a one-way fingerprint of the key, never the key), so a key changed in the environment variable, the keyring or the key file does not see it. In the terminal: <code>flextool-assistant --test-model --provider ID --model NAME</code>.</td>
+</tr>
+<tr>
+<td>Level</td>
+<td>Automatic (from the model name and its context size), or a lower level you choose; the list offers only the levels the model allows, and the lines below it say why (see <a href="#assistant-levels">Assistant levels</a>). For a model FlexTool does not recognise, higher levels are offered at your own risk.</td>
+</tr>
+<tr>
+<td>Free plan</td>
+<td>Fewer steps for each question, to stay within the request limits of a free plan: Automatic (on only for an OpenRouter model whose name ends <code>:free</code>), On or Off (see <a href="#the-free-plan">The free plan</a>).</td>
+</tr>
+<tr>
+<td>Questions answered at the same time</td>
+<td>1 to 4 (default 1): how many chats may wait for the service at once; more chats wait their turn, so several chats on a free plan do not multiply its "too many requests" answers.</td>
+</tr>
+<tr>
+<td>Data use</td>
+<td>Where the data goes, the privacy settings sent with every request (OpenRouter's data-collection setting can be turned off, after a question), and the settings only your account can change.</td>
+</tr>
+<tr>
+<td>Keep conversations for</td>
+<td>Days (default 30). Older conversations are deleted when FlexTool closes; <code>0</code> saves no conversations.</td>
+</tr>
+</tbody>
+</table>
+<p>Saved settings apply to each chat from its next question, except the provider, the address and the model: a chat
+keeps the model that answered in it, also when it is reopened, and with it its level (unless you change the level
+of that same model). A new chat, or one without an answer yet, uses the saved ones. The top of the window shows the
+selected chat's service, model and level ("Anthropic · claude-opus-5-5 · advanced") and where its data goes.</p>
+<h3 id="ask">Ask</h3>
+<p>Type in the box at the bottom and press Enter to send; Ctrl+Enter starts a new line. The question shows at once,
+and you can type the next one while the answer comes; Send is available again when the answer is done. Stop (or
+Escape) stops the answer; what arrived stays in the chat.</p>
+<p>Each question also tells the assistant what you have selected in the FlexTool window: the input sources and
+scenarios checked and highlighted, the results checked and highlighted (with whether their latest run succeeded),
+and what the result viewer shows (mode, scenarios, plot and time range). The assistant uses the highlighted input
+source and scenario when your question names none.</p>
+<p>Each tool call is one line in the chat; click it (or press Enter on it) to see the arguments and the first 4 000
+characters of what was sent to the service. Under the buttons, always in view, a line gives the tokens of the last
+question and of the whole chat, rounded to thousands ("This question: 26k in, 8k out · Whole chat: 250k in, 5k
+out"; "in" counts every token sent, also the ones the service read from its cache), and the window's last line
+gives the service's tokens today and this month, rounded the same way ("Anthropic today 12k in, 1k out · this month
+256k in, 9k out (this FlexTool installation)"); today and the month follow your computer's calendar, and both count every chat and terminal session of this FlexTool installation. An error that a setting fixes
+comes with an "Open settings" button; a conversation that got too long for the model offers "New chat" and "New chat
+with summary".</p>
+<h3 id="data-notice-and-where-the-data-goes">Data notice and where the data goes</h3>
+<p>The top line of the window says where the data of the current chat goes, in the same words as the terminal (see
+<a href="#start-a-chat">Start a chat</a>), and a second line says when a privacy setting is turned off. Before the first
+question goes to a service on the internet or to an Ollama cloud model, the window shows the data notice of
+<a href="#the-data-notice">The data notice</a> with "Send to …" and "Cancel"; Cancel sends nothing. "Send to …" cannot be
+pressed in the first half second, so a key pressed while you were still typing does not accept it. Accepting it
+in the window or in the terminal is the same acceptance.</p>
+<h3 id="chats">Chats</h3>
+<p>Each chat is a tab, named by a number ("1", "2", …) that a chat of the project keeps for good. The last tab is
+always an empty "New chat": sending a question there makes it a chat, and a new "New chat" appears. Several chats
+can answer at the same time (see "Questions answered at the same time"). A sign before the number says what a chat
+is doing: "…" working, "‖" waiting for its turn, "?" its data notice is open, "!" its last question ended with an
+error, "•" an answer arrived while you were in another chat.</p>
+<ul>
+<li><strong>Chats menu</strong>: the open chats (also those that do not fit in the tab row, counted on the button as "Chats (3
+  more)"), New chat, "Reopen a saved chat", "Delete a saved chat" and "Delete all closed chats…", Rename chat… and
+  Close chat. A saved chat is listed with its number, its name, its date and the first words of its first
+  question.</li>
+<li><strong>Rename</strong>: "Rename chat…" in the Chats menu or the tab's right-click menu, or a double click on the tab. An empty
+  name shows the number again.</li>
+<li><strong>Close</strong>: "Close chat", Ctrl+W or a middle click. The answer stops, what was received is saved, and the chat is
+  under "Reopen a saved chat". When conversations are not saved (<code>0</code> days), closing a chat that has questions asks
+  first.</li>
+<li><strong>Keys</strong>: Ctrl+Tab and Ctrl+Shift+Tab (or Ctrl+Page Down and Ctrl+Page Up) go to the next and the previous chat,
+  Ctrl+T to "New chat". On macOS Command+T and Command+W work too.</li>
+</ul>
+<p>Answers show their headings, lists, <strong>bold</strong>, <em>italic</em>, <code>code</code> and tables. Bold and italic text has the size and
+font of the rest of the answer, and code the fixed-width font at the same size; headings are larger. The text of
+the chat window (the answers, the box you type in, the tool lines) and of the assistant's dialogs is one point
+larger than FlexTool's body text: 11 pt at the default size, and it follows the font size setting.</p>
+<p>The chats that were open come back when you open the chat window again, also after FlexTool restarts. An answer
+that was in progress is not restarted; ask again if you need it.</p>
+<p>Closing FlexTool stops every answer without asking and saves what was received; a tool call that was running is
+recorded as not run, so the chat can go on after a restart. Renaming a project moves its saved chats with it, and
+deleting a project deletes them. While a chat is still finishing a tool call, a rename or deletion of its project
+is refused for a moment: "The AI assistant is still finishing a tool call. Try again in a moment."</p>
+<h2 id="chat-in-the-terminal">Chat in the terminal</h2>
+<h3 id="what-you-need">What you need</h3>
+<ul>
+<li>FlexTool installed (see <a href="../install_gui/">Install with FlexTool GUI</a> or <a href="../install_toolbox/">Install with Spine Toolbox</a>).
+  After an update, run "Update FlexTool" (or <code>pip install -e .</code> in a source checkout) so that the
+  <code>flextool-assistant</code> command exists.</li>
+<li>An account with an AI service and its key, or a model running on this computer (see
+  <a href="#models-on-this-computer">Models on this computer</a>). The model must support tool calls: the assistant reads
+  your data with them.</li>
+<li>A FlexTool project folder: the folder of a project of the FlexTool window (<code>projects/&lt;project name&gt;/</code>), or any
+  folder with an <code>input_sources/</code> folder and the result folders FlexTool writes.</li>
+</ul>
+<h3 id="start-a-chat">Start a chat</h3>
+<div class="highlight"><pre><span></span><code>flextool-assistant<span class="w"> </span>--project-path<span class="w"> </span>/home/me/flextool/projects/MyProject
+</code></pre></div>
+<p>The first time, the chat prints a short text on how the assistant works. Then, if no AI service is set up yet, it
+asks for one: the service, its address (for a model on this computer or a custom endpoint), the key (typed without
+being shown, then stored in the system keyring) and a model from the service's own list. It offers to keep these
+for the next start. Starting the chat sends none of your data; only the service's model list is fetched while you
+choose.</p>
+<p>Then type a question after <code>you&gt;</code>. The answer appears as it arrives. Each tool call the assistant makes is one dim
+line, for example <code>· search_docs query="penalty_up" → 5 results (0.1 s)</code>, and after each answer a line gives the
+tokens used, rounded to thousands (<code>tokens 26k in (20k from cache) · 8k out · conversation 250k in · 5k out</code>). End
+a line with <code>\</code> to go on with the question on the next line. Ctrl-C stops an answer at once;
+Ctrl-C or Ctrl-D at the prompt leaves the chat.</p>
+<p>The start of the chat shows where the data goes:</p>
+<ul>
+<li>"Data goes to: Google Gemini (generativelanguage.googleapis.com)." for a service on the internet, with " It is
+  sent through the proxy {proxy}." when your proxy settings send it through a proxy;</li>
+<li>"Endpoint on this computer (localhost:11434). FlexTool sends data only there; if that server forwards requests,
+  data leaves this computer." for a model server on this computer;</li>
+<li>"Endpoint on your local network (192.168.1.20)." for a server on your local network;</li>
+<li>"Data goes to: Ollama cloud (ollama.com), forwarded by Ollama on this computer." for an Ollama cloud model
+  ("forwarded by Ollama at 192.168.1.20:11434." when that Ollama runs elsewhere on your network).</li>
+</ul>
+<p>For an address that starts with <code>http://</code> and is neither on this computer nor on your local network, the line
+ends with " The connection is not encrypted: the key and the data can be read on the way." Use an <code>https://</code>
+address for such a server when it has one.</p>
+<h3 id="the-data-notice">The data notice</h3>
+<p>Before the first question goes to a service on the internet (or to Ollama's cloud), the chat shows the data notice:
+what is sent, to which service and address, that FlexTool cannot guarantee how it is stored or used, and, when a
+proxy applies, that the proxy can also see it (and, for an unencrypted <code>http://</code> address on the internet, that
+the connection is not encrypted). Type <code>yes</code> to send; anything else sends nothing. The answer is kept,
+so the notice is shown again only when the service, its address, the proxy or the notice itself changes. A model on
+this computer or your local network needs no notice.</p>
+<h3 id="one-question-from-a-script">One question from a script</h3>
+<div class="highlight"><pre><span></span><code>flextool-assistant<span class="w"> </span>--project-path<span class="w"> </span>/home/me/flextool/projects/MyProject<span class="w"> </span>-q<span class="w"> </span><span class="s2">"Which runs failed, and why?"</span>
+</code></pre></div>
+<p>With <code>-q</code> the chat asks nothing: only the answer goes to the standard output; tool lines, notices, the token line
+and errors go to the standard error. It needs a service set up before (run the chat once without <code>-q</code>, or give
+<code>--provider</code> and <code>--model</code>) and an accepted data notice: <code>--accept-data-notice</code> accepts it for good (it prints the
+notice on the standard error). The exit code says what happened:</p>
+<table>
+<thead>
+<tr>
+<th>Exit code</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>answered</td>
+</tr>
+<tr>
+<td>1</td>
+<td>the AI service gave an error (the message says which)</td>
+</tr>
+<tr>
+<td>2</td>
+<td>something is not set up: no service, no model, no key, a chat without a terminal, or a <code>--tier</code> above the levels the model allows</td>
+</tr>
+<tr>
+<td>3</td>
+<td>the data notice for this service has not been accepted; nothing was sent</td>
+</tr>
+<tr>
+<td>130</td>
+<td>stopped with Ctrl-C</td>
+</tr>
+</tbody>
+</table>
+<p>The chat without <code>-q</code> needs a terminal: with piped input it stops (exit 2), so neither the data notice nor a key is
+ever read from piped text.</p>
+<h3 id="commands">Commands</h3>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>/help</code></td>
+<td>The list of commands.</td>
+</tr>
+<tr>
+<td><code>/new</code></td>
+<td>Start a new conversation.</td>
+</tr>
+<tr>
+<td><code>/new carry</code></td>
+<td>Start a new conversation whose first question carries a short summary of this one.</td>
+</tr>
+<tr>
+<td><code>/model NAME</code></td>
+<td>Go on with another model of the same service; <code>/model</code> alone lists the models.</td>
+</tr>
+<tr>
+<td><code>/provider</code></td>
+<td>Choose another service.</td>
+</tr>
+<tr>
+<td><code>/privacy</code></td>
+<td>Where the data goes, the privacy settings sent with each request, and the settings only your account can change.</td>
+</tr>
+<tr>
+<td><code>/usage</code></td>
+<td>The tokens used today and this month for each service, then by month, service and model.</td>
+</tr>
+<tr>
+<td><code>/context</code></td>
+<td>What the assistant is told about your choices (project, input source, scenario); after the first question also the model's context size, how much one tool result may hold and how often earlier results are shortened.</td>
+</tr>
+<tr>
+<td><code>/welcome</code></td>
+<td>The text on how the assistant works.</td>
+</tr>
+<tr>
+<td><code>/save</code></td>
+<td>Keep this service, model and level for the next start, and the free plan when <code>--free-tier</code> was given.</td>
+</tr>
+<tr>
+<td><code>/quit</code></td>
+<td>Leave the chat.</td>
+</tr>
+</tbody>
+</table>
+<p>To list the models of another service from the terminal, give its <code>--provider</code> ID (table below), for example
+<code>flextool-assistant --list-models --provider ollama</code>. Add <code>--all</code> to list every model, also the ones the short list
+leaves out.</p>
+<h3 id="services">Services</h3>
+<table>
+<thead>
+<tr>
+<th><code>--provider</code></th>
+<th>Service</th>
+<th>Key variable</th>
+<th>Sent with every request</th>
+<th>Set in your account</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>openai</code></td>
+<td>OpenAI</td>
+<td><code>OPENAI_API_KEY</code></td>
+<td><code>store: false</code> (the requests are not kept for later viewing in your account)</td>
+<td>data sharing and training settings of your organisation; zero data retention needs approval from OpenAI</td>
+</tr>
+<tr>
+<td><code>anthropic</code></td>
+<td>Anthropic</td>
+<td><code>ANTHROPIC_API_KEY</code></td>
+<td>—</td>
+<td>data retention arrangements and training terms of your account</td>
+</tr>
+<tr>
+<td><code>mistral</code></td>
+<td>Mistral</td>
+<td><code>MISTRAL_API_KEY</code></td>
+<td>—</td>
+<td>whether your plan allows training on your data, and the opt-out</td>
+</tr>
+<tr>
+<td><code>openrouter</code></td>
+<td>OpenRouter</td>
+<td><code>OPENROUTER_API_KEY</code></td>
+<td><code>provider.data_collection: deny</code> (only providers that do not collect your requests); optionally <code>provider.zdr: true</code></td>
+<td>your OpenRouter privacy settings, which apply on top</td>
+</tr>
+<tr>
+<td><code>gemini</code></td>
+<td>Google Gemini</td>
+<td><code>GEMINI_API_KEY</code></td>
+<td>—</td>
+<td>free tier: Google may use prompts and answers to improve its products; paid tier terms differ</td>
+</tr>
+<tr>
+<td><code>ollama</code></td>
+<td>Ollama on this computer (<code>http://localhost:11434/v1</code>)</td>
+<td>none</td>
+<td>—</td>
+<td>Ollama cloud models: check Ollama's terms yourself</td>
+</tr>
+<tr>
+<td><code>lmstudio</code></td>
+<td>LM Studio on this computer (<code>http://localhost:1234/v1</code>)</td>
+<td>none</td>
+<td>—</td>
+<td>—</td>
+</tr>
+<tr>
+<td><code>openai_compatible</code></td>
+<td>any other service with the same request format as OpenAI (give <code>--base-url</code>)</td>
+<td>none</td>
+<td>—</td>
+<td>check how the service handles data yourself</td>
+</tr>
+</tbody>
+</table>
+<p>The OpenRouter settings are in the settings file (see <a href="#conversations-and-settings">Conversations and settings</a>):
+<code>"openrouter.data_collection": "allow"</code> relaxes the first (the chat then says so), <code>"openrouter.zdr": true</code> uses
+only providers that keep no copy of your requests, which narrows the list of models you can use, free models
+especially.</p>
+<p>FlexTool gives each service only the request headers it needs; the version, operating system and other
+identification headers that the service libraries would add are not sent.</p>
+<h3 id="keys">Keys</h3>
+<p>The chat looks for the key of the service in this order and says where it found it:</p>
+<ol>
+<li>the service's environment variable (table above, and <a href="../env_vars/#ai-assistant">Environment variables</a>);</li>
+<li>the system keyring (Windows Credential Manager, macOS Keychain, the Secret Service on Linux);</li>
+<li>the key file, only if you chose it.</li>
+</ol>
+<p><code>flextool-assistant --set-key --provider gemini</code> asks for the key without showing it and stores it in the system
+keyring. Where there is no usable keyring, <code>--set-key --key-file</code> stores it unencrypted in <code>keys.json</code> in the
+assistant's folder (on Linux and macOS readable by you only), after a warning. <code>flextool-assistant --forget-key --provider gemini</code>
+removes a stored key after asking <code>[y/N]</code> (add <code>--yes</code> to skip the question in a script); <strong>Forget key</strong> in the settings asks too, with Cancel as the default. A key is never written to a project folder or a conversation, and never shown in a message.</p>
+<h3 id="models-on-this-computer">Models on this computer</h3>
+<p><strong>Ollama</strong>: install Ollama and pull a model that supports tools (the model's page in the Ollama library lists
+"tools"). Ollama loads models with a short context by default, too short for the assistant's instructions and
+tools; FlexTool needs a context of at least 12 288 tokens, so start the Ollama server with, for example,
+<code>OLLAMA_CONTEXT_LENGTH=16384</code> (or more). Before the first question the chat
+loads the model and checks the context it runs with, and stops with that advice when it is too small. When the
+model does not fit in the graphics card's memory, the chat says that it will be slower. FlexTool sends no limits of
+threads or graphics memory: the Ollama server uses the computer as it is set up to. Ollama cloud models (names
+ending in <code>:cloud</code> or <code>-cloud</code>, or models Ollama forwards to another host) run on Ollama's servers: the chat shows
+them as such and asks for the data notice.</p>
+<p><strong>LM Studio</strong>: load a model in LM Studio with a context length of at least 12 288 tokens (for example 16 384) and start its server.
+When the model is loaded, the chat checks its context before the first question.</p>
+<p>Another server with the OpenAI request format: <code>--provider openai_compatible --base-url http://localhost:8000/v1</code>.
+A server on this computer or your local network never goes through a proxy.</p>
+<p>A model on this computer may take minutes to load or to read a long question, and a large model of a service may
+think for minutes before it answers; the chat shows "Waiting for the model (45 s) — Ctrl-C stops" meanwhile. FlexTool
+waits up to 15 minutes for a model on this computer or your local network and up to 5 minutes for a service on the
+internet, counted from the last part of the answer that arrived.</p>
+<h3 id="levels">Levels</h3>
+<p>The start of the chat shows the level and why, for example "Level: basic (a model of about 14 billion
+parameters)", followed by "Higher levels are not available for it." when the model allows no higher level. <code>--tier
+basic</code> (or <code>standard</code>) chooses a lower level yourself; <code>/save</code> keeps the choice. A level above the ones the model
+allows is lowered to the automatic level with a notice; with <code>-q</code> the chat stops instead (exit code 2) and sends
+nothing. <code>--free-tier on</code> switches the free plan on for the session. See <a href="#assistant-levels">Assistant levels</a>.</p>
+<h3 id="conversations-and-settings">Conversations and settings</h3>
+<p>The chat keeps its files in the assistant folder of your user configuration: <code>~/.config/flextool/assistant/</code> on
+Linux, <code>%LOCALAPPDATA%\flextool\assistant\</code> on Windows, <code>~/Library/Application Support/flextool/assistant/</code> on
+macOS.</p>
+<ul>
+<li><strong>Conversations</strong> are saved per project. <code>--continue</code> goes on with the newest conversation of the project,
+  <code>--continue ID</code> with another one. A conversation open in another terminal or FlexTool window is not opened twice:
+  the chat starts a new one. Conversations older than 30 days are deleted when the assistant starts.</li>
+<li><strong>Settings</strong> (<code>settings.json</code>): the service, address, model and level that <code>/save</code> keeps, the privacy settings,
+  <code>conversation_expiry_days</code> (default 30; <code>0</code> saves no conversations), <code>compaction_every</code> (how often older tool
+  results are replaced by a short note so the conversation stays short) and <code>keep_recent_turns</code> (how many recent
+  questions keep their tool results) — both automatic by default, from the model's context size (see
+  <a href="#budgets">Budgets</a>); a number overrides it — and <code>free_tier</code> (<code>null</code> automatic, <code>true</code> on, <code>false</code> off). Flags
+  override the settings for one session.</li>
+<li><strong>Usage</strong> (<code>usage.json</code>): the tokens of each month, service and model, and of each of the last 40 days, as each
+  service reported them; FlexTool does not estimate what a service did not report, and shows a cost only when the
+  service reports one. <code>flextool-assistant --usage</code> prints today's and this month's tokens of each service, then
+  every month. It contains no questions or answers and is kept when conversations are
+  deleted.</li>
+<li><strong>Acknowledgements</strong> (<code>acknowledgements.json</code>): the data notices you accepted.</li>
+</ul>
+<h3 id="chat-options">Chat options</h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--project-path FOLDER</code> / <code>--project NAME</code></td>
+<td>The project (as for the agent connection below).</td>
+</tr>
+<tr>
+<td><code>--provider ID</code></td>
+<td>The service for this session (table above).</td>
+</tr>
+<tr>
+<td><code>--model NAME</code></td>
+<td>The model for this session. <code>flextool-assistant --list-models --provider ID</code> lists the models of a service; <code>--test-model</code> checks that the model answers (one tiny request, no project data).</td>
+</tr>
+<tr>
+<td><code>--base-url URL</code></td>
+<td>The address of the service: a custom endpoint, or a model server on another port or computer.</td>
+</tr>
+<tr>
+<td><code>--tier basic\|standard\|advanced</code></td>
+<td>The assistant level: the automatic one or lower (see <a href="#assistant-levels">Assistant levels</a>).</td>
+</tr>
+<tr>
+<td><code>--free-tier on\|off\|auto</code></td>
+<td>The free plan for this session (see <a href="#the-free-plan">The free plan</a>); default: the saved setting, else automatic.</td>
+</tr>
+<tr>
+<td><code>--input-source SOURCE</code>, <code>--scenario NAME</code></td>
+<td>The input source and scenario the assistant uses when a question names none.</td>
+</tr>
+<tr>
+<td><code>--result-cap small\|medium\|large</code></td>
+<td>How much one tool result may hold (default: by level).</td>
+</tr>
+<tr>
+<td><code>-q QUESTION</code></td>
+<td>One question, then stop (see above).</td>
+</tr>
+<tr>
+<td><code>--accept-data-notice</code></td>
+<td>Accept the data notice of this service for good.</td>
+</tr>
+<tr>
+<td><code>--continue [ID]</code></td>
+<td>Go on with a saved conversation.</td>
+</tr>
+<tr>
+<td><code>--no-color</code></td>
+<td>No colours.</td>
+</tr>
+<tr>
+<td><code>--threads N</code></td>
+<td>Threads for FlexTool's own processing (default 1, so the assistant never slows down a running model).</td>
+</tr>
+<tr>
+<td><code>--verbose</code></td>
+<td>More messages on the standard error.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="connect-an-ai-agent">Connect an AI agent</h2>
+<p>An AI agent such as Claude Code can use the same tools with its own model. FlexTool starts them for the agent; the
+agent's service gets everything the tools return (see <a href="#where-your-data-goes">Where your data goes</a>).</p>
+<h3 id="what-an-agent-needs">What an agent needs</h3>
+<ul>
+<li>FlexTool installed (see <a href="../install_gui/">Install with FlexTool GUI</a> or <a href="../install_toolbox/">Install with Spine Toolbox</a>).
+  The tools come with FlexTool; after an update, run "Update FlexTool" (or <code>pip install -e .</code> in a source checkout)
+  so that the <code>flextool-assistant</code> command exists.</li>
+<li>An AI agent that can start tools on your computer through the Model Context Protocol (MCP), an open standard for
+  connecting AI agents to tools. Claude Code is one; many other agents and editors support it too.</li>
+<li>A FlexTool project folder: the folder of a project of the FlexTool window (<code>projects/&lt;project name&gt;/</code>), or any
+  folder with an <code>input_sources/</code> folder and the result folders FlexTool writes.</li>
+</ul>
+<h3 id="connect-claude-code">Connect Claude Code</h3>
+<p>Give Claude Code the command that starts the tools for one project. Use the absolute path of the project folder:</p>
+<div class="highlight"><pre><span></span><code>claude<span class="w"> </span>mcp<span class="w"> </span>add<span class="w"> </span>flextool<span class="w"> </span>--<span class="w"> </span>flextool-assistant<span class="w"> </span>--mcp<span class="w"> </span>--project-path<span class="w"> </span>/home/me/flextool/projects/MyProject
+</code></pre></div>
+<p>Claude Code does not activate your Python environment, so if <code>claude mcp list</code> says <code>flextool-assistant</code> is not
+found, give the full path of the command in the Python environment where FlexTool is installed, for example:</p>
+<div class="highlight"><pre><span></span><code>claude<span class="w"> </span>mcp<span class="w"> </span>add<span class="w"> </span>flextool<span class="w"> </span>--<span class="w"> </span>/home/me/venv/bin/flextool-assistant<span class="w"> </span>--mcp<span class="w"> </span>--project-path<span class="w"> </span>/home/me/flextool/projects/MyProject
+claude<span class="w"> </span>mcp<span class="w"> </span>add<span class="w"> </span>flextool<span class="w"> </span>--<span class="w"> </span>C:<span class="se">\f</span>lextool<span class="se">\v</span>env<span class="se">\S</span>cripts<span class="se">\f</span>lextool-assistant.exe<span class="w"> </span>--mcp<span class="w"> </span>--project-path<span class="w"> </span>C:<span class="se">\f</span>lextool<span class="se">\p</span>rojects<span class="se">\M</span>yProject
+</code></pre></div>
+<p><code>claude mcp add</code> connects the tools for the folder you run it in. Add <code>--scope user</code> (before <code>flextool</code>) to use them
+in every folder. A Claude Code session that was already open sees a new connection only after it is started again.</p>
+<p>With the Spine Toolbox bundle, start the tools with the bundle's own Python (the path depends on where you unpacked
+the bundle):</p>
+<div class="highlight"><pre><span></span><code>claude<span class="w"> </span>mcp<span class="w"> </span>add<span class="w"> </span>flextool<span class="w"> </span>--<span class="w"> </span><span class="s2">"C:\Spine Toolbox\_internal\Python\python.exe"</span><span class="w"> </span>-m<span class="w"> </span>flextool_assistant_entry<span class="w"> </span>--mcp<span class="w"> </span>--project-path<span class="w"> </span>C:<span class="se">\f</span>lextool<span class="se">\p</span>rojects<span class="se">\M</span>yProject
+</code></pre></div>
+<p>Then start Claude Code and ask, for example, "What is the existing capacity of coal_plant in scenario coal?" or
+"Did the latest run of scenario base succeed, and if not, why?". Claude Code starts the tools itself when it needs
+them; you do not start anything by hand. <code>claude mcp list</code> shows whether the connection works.</p>
+<p>While the project is open in the FlexTool window, the agent's <code>get_gui_context</code> tool returns what is selected there
+(the input sources, scenarios and results checked and highlighted, and what the result viewer shows), so you can
+ask about "the selected run". The window keeps these names and selections in a small file in the assistant folder
+(no paths, no data values, nothing from your chats) and deletes it when the project closes; the agent's service
+gets them only when the agent calls the tool. Without the window, the tool says so and gives the options the tools
+were started with.</p>
+<p>To connect another project, add it under another name (<code>claude mcp add flextool-other -- …</code>), or remove the first
+one (<code>claude mcp remove flextool</code>).</p>
+<h3 id="connect-another-agent">Connect another agent</h3>
+<p>Agents that read a configuration file usually take the command and its arguments separately:</p>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"mcpServers"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">    </span><span class="nt">"flextool"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<span class="w">      </span><span class="nt">"command"</span><span class="p">:</span><span class="w"> </span><span class="s2">"flextool-assistant"</span><span class="p">,</span>
+<span class="w">      </span><span class="nt">"args"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"--mcp"</span><span class="p">,</span><span class="w"> </span><span class="s2">"--project-path"</span><span class="p">,</span><span class="w"> </span><span class="s2">"/home/me/flextool/projects/MyProject"</span><span class="p">]</span>
+<span class="w">    </span><span class="p">}</span>
+<span class="w">  </span><span class="p">}</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>The tools talk to the agent through the command's standard input and output, so the agent must start the command
+itself; there is no network port.</p>
+<h3 id="options">Options</h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--mcp</code></td>
+<td>Serve the tools to an AI agent. The agent starts the command with this option.</td>
+</tr>
+<tr>
+<td><code>--project-path FOLDER</code></td>
+<td>The project folder, as an absolute path.</td>
+</tr>
+<tr>
+<td><code>--project NAME</code></td>
+<td>The project <code>projects/NAME</code> under the folder the command starts in (the command prints the folder it uses). Use <code>--project-path</code> with agents: they may start the command in any folder.</td>
+</tr>
+<tr>
+<td><code>--input-source SOURCE</code></td>
+<td>The input source the tools use when a question names none: its file name or its number in the FlexTool window. Without it, the agent names a source when the project has several.</td>
+</tr>
+<tr>
+<td><code>--scenario NAME</code></td>
+<td>The scenario the tools use when a question names none.</td>
+</tr>
+<tr>
+<td><code>--result-cap small\|medium\|large</code></td>
+<td>How much one tool result may hold (rows, characters). Default: <code>medium</code>. A smaller cap saves the agent's context; the agent can still ask for more in one call, up to a fixed limit.</td>
+</tr>
+<tr>
+<td><code>--tier basic\|standard\|advanced</code></td>
+<td>The assistant level (see below). <code>basic</code> offers only the eight basic tools, in their shorter basic form, and starts with the small result cap; <code>standard</code> starts with the medium one and <code>advanced</code> with the large one.</td>
+</tr>
+<tr>
+<td><code>--threads N</code></td>
+<td>Threads for FlexTool's own processing in the tools. Default: 1, so the tools never slow down a model that is running.</td>
+</tr>
+<tr>
+<td><code>--verbose</code></td>
+<td>More messages on the standard error stream (the agent usually shows them in its log).</td>
+</tr>
+<tr>
+<td><code>--call TOOL [ARGUMENTS]</code></td>
+<td>Run one tool from the terminal and print its result (see below).</td>
+</tr>
+</tbody>
+</table>
+<h3 id="levels-for-agents">Levels for agents</h3>
+<p>The tools offer three prompts, one per assistant level. A prompt gives the agent instructions for working at that
+level for the rest of the conversation:</p>
+<ul>
+<li><strong>basic</strong> — look up and explain values with a few tool calls; for small models;</li>
+<li><strong>standard</strong> — interpret results and compare scenarios;</li>
+<li><strong>advanced</strong> — trace slack and penalties to their cause, read the model's equations, explain investment
+  differences.</li>
+</ul>
+<p>In Claude Code they are <code>/mcp__flextool__basic</code>, <code>/mcp__flextool__standard</code> and <code>/mcp__flextool__advanced</code>, and you
+can add your question after the name. Without a prompt the agent works with the general instructions the tools
+send when they connect. <code>--tier basic</code> limits the tools to the basic set, for agents that run a small model: any
+other tool answers "The tool … is not part of the basic level. Restart the FlexTool connection without --tier basic
+to use it." With <code>--tier basic</code> the tools are listed in the same shorter form the basic chat sends (<code>list_runs</code>, for
+example, lists five of its arguments; the others still work when an agent sends them). Without <code>--tier</code>, and with
+<code>--tier standard</code> or <code>--tier advanced</code>, every tool is listed in its full form, also beside the <code>basic</code> prompt: an
+agent may pick any prompt, so it gets every tool. <code>--tier standard</code> and <code>--tier advanced</code> change only the default
+result cap. The
+tools do not know which model the agent uses, so they do not check the level against it: choose the level that suits
+the agent's model (see <a href="#assistant-levels">Assistant levels</a>).</p>
+<h2 id="assistant-levels">Assistant levels</h2>
+<p>The assistant works at one of three levels. The level changes what the model is asked to do, which tools it gets and
+how many steps it may take; it never changes what a tool returns.</p>
+<ul>
+<li><strong>Basic</strong> — look things up and explain them: one parameter, one result table or one documentation topic at a time,
+  with eight tools (<code>search_docs</code>, <code>read_doc</code>, <code>get_entity</code>, <code>get_parameter</code>, <code>list_sources</code>, <code>list_runs</code>,
+  <code>find_result_tables</code>, <code>query_result</code>) and at most six tool calls for each part of a question, three in one step
+  (see <a href="#budgets">Budgets</a>). A question
+  that needs more, such as why there is slack or why two scenarios differ, gets what was found so far and the advice
+  to use a higher level or a more capable model.</li>
+<li><strong>Standard</strong> — interpret results and compare scenarios, linking a result to the inputs that drive it; every tool.</li>
+<li><strong>Advanced</strong> — diagnose problems in several steps: trace slack and penalty costs to a limit and back to the inputs
+  behind it, read the model's equations, and explain investment differences between scenarios; every tool.</li>
+</ul>
+<p><strong>Which model for which question.</strong> Smaller models and free plans suit look-up questions. For diagnosis — why there
+is slack, why two scenarios differ — use a larger model or a paid plan. Free plans often limit how much text one
+request may carry (for example a small number of input tokens per minute), and a diagnosis builds up long requests
+as the assistant reads more results; such a request can then be refused however long you wait.</p>
+<h3 id="how-the-level-is-chosen">How the level is chosen</h3>
+<p>FlexTool places each model from its name and, once it has checked the model, its context size (how much text the
+model can read at once, counted in tokens, the pieces of text a service counts). The name rules are tried in order,
+and the first that matches decides:</p>
+<ol>
+<li>A small-model word in the name (<code>mini</code>, <code>nano</code>, <code>micro</code>, <code>tiny</code>, <code>lite</code>, <code>small</code>, <code>haiku</code>, <code>ministral</code>) → basic.</li>
+<li>The size: the number of parameters a model server on this computer reports, else a size in the name such as
+   <code>14b</code> or <code>8x7b</code>. Up to 34 billion → basic, up to 200 billion → standard, more → advanced. A count of only the
+   active parameters (<code>a3b</code>) is not a size.</li>
+<li>A fast or mid-range variant of a large family (<code>fast</code>, <code>maverick</code>, <code>scout</code>, <code>nova</code>, <code>sonar</code>, <code>deepseek-coder</code>)
+   → standard.</li>
+<li>The providers' largest families (<code>opus</code>, <code>sonnet</code>, <code>claude</code>, <code>large</code>, <code>max</code>, <code>grok</code>, <code>kimi</code>, <code>o3</code>, Gemini and GPT
+   <code>pro</code>, DeepSeek <code>r1</code> and <code>v3</code>, and others) → advanced.</li>
+<li>GPT with a major version of 5 or more → advanced.</li>
+<li>Another known family (<code>flash</code>, <code>medium</code>, <code>gpt</code>, <code>gemini</code>, <code>mistral</code>, <code>codestral</code>, <code>command</code>, <code>glm</code>, and others)
+   → standard.</li>
+<li>A name FlexTool does not recognise: basic for a model on this computer or your local network, standard for a
+   service on the internet. This is a guess.</li>
+</ol>
+<p>The context size then sets the highest level:</p>
+<table>
+<thead>
+<tr>
+<th>Context size (tokens)</th>
+<th>Highest level</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>below 12 288</td>
+<td>none: no question is sent, and the message says how to give the model a larger context</td>
+</tr>
+<tr>
+<td>12 288 to 32 767</td>
+<td>basic</td>
+</tr>
+<tr>
+<td>32 768 to 65 535</td>
+<td>standard</td>
+</tr>
+<tr>
+<td>65 536 or more</td>
+<td>advanced</td>
+</tr>
+</tbody>
+</table>
+<p>The automatic level is the lower of the two. You can choose a lower level, but not a higher one; for a model FlexTool
+does not recognise, the higher levels are offered too, at your own risk, up to what the context size allows. A level
+chosen before that is above the model's levels is lowered to the automatic level, with a notice. Until FlexTool has
+checked the model (before its first question), the level comes from the name alone, and the settings say that it
+may be lowered when FlexTool sees the model's context size.</p>
+<p>The name rules are reviewed when a FlexTool version is prepared. If a model is placed at a level that does not suit
+it, please report it.</p>
+<h3 id="budgets">Budgets</h3>
+<p>Each level has safety caps on the work for one question. They keep a question from running on and keep the
+requests within the model's context; they are not usage limits.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Basic</th>
+<th>Standard</th>
+<th>Advanced</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Steps for each question (one request to the service each)</td>
+<td>3</td>
+<td>8</td>
+<td>12</td>
+</tr>
+<tr>
+<td>Tool calls for each question</td>
+<td>6</td>
+<td>16</td>
+<td>30</td>
+</tr>
+<tr>
+<td>Tool calls in one step</td>
+<td>3</td>
+<td>8</td>
+<td>8</td>
+</tr>
+<tr>
+<td>Longest answer (tokens; at most a quarter of the context size)</td>
+<td>4 096</td>
+<td>8 000</td>
+<td>16 000</td>
+</tr>
+<tr>
+<td>Continuations with a fresh context</td>
+<td>2</td>
+<td>1</td>
+<td>none</td>
+</tr>
+<tr>
+<td>Steps / tool calls / continuations with the free plan</td>
+<td>3 / 6 / 1</td>
+<td>4 / 16 / none</td>
+<td>6 / 30 / none</td>
+</tr>
+</tbody>
+</table>
+<p>The model is asked to request only what the question needs, and to request lookups that do not depend on each
+other together, in one step: one call with lists (for example several parameters of several entities with
+<code>get_parameter</code>), or several calls in the same step. Each step is one request to the service, so this matters most
+with the free plan, which counts steps; a step may hold the level's tool calls with the free plan too. With a
+context size below 32 768 tokens a question part has only as many tool calls as their results fit the context
+(for example, at 16 384 tokens: three, with results of up to 2 000 characters; six from about 22 000 tokens).</p>
+<p>When a question reaches its limit of steps or tool calls and its level allows a continuation, the model writes a
+short note of what it found so far and the next step (the note is not shown), and the question goes on with a fresh
+context: the question, the note and the tool results the note needs, with new steps and tool calls. The fresh context
+also lists the tool calls already made whose results it does not carry, each with what it returned, so the model
+does not make them again. If a continued part still asks a tool for something the question already asked, the
+assistant stops there: the model answers with what it has, and the chat ends with "The assistant kept trying the
+same steps, so it stopped. A higher assistant level or a more capable model may get further." The chat shows
+one line, for example "Continuing with a fresh context (part 2 of 3)…"; Stop works as at any other time. Every
+request is counted in the usage. When no continuation is left, the model is asked to answer with what it has and to
+say what is still unknown.</p>
+<p>What each request carries of the earlier questions depends on the level, which keeps the requests of smaller models
+short and focused. The saved conversation keeps everything.</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Basic</th>
+<th>Standard</th>
+<th>Advanced</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Earlier questions in each request</td>
+<td>the last two, each with its final answer (text only)</td>
+<td>every one, with its final answer (text only)</td>
+<td>the whole conversation, with the tool calls and results</td>
+</tr>
+</tbody>
+</table>
+<p>The context block (your project, input source and scenario) is always sent. The context size also sets how much one
+tool result may hold and, at the advanced level, how often the tool results of earlier questions are replaced by a
+short note:</p>
+<table>
+<thead>
+<tr>
+<th>Context size (tokens)</th>
+<th>One tool result holds at most</th>
+<th>Earlier results shortened</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>12 288 to 32 767</td>
+<td>what fits the context (a few thousand characters)</td>
+<td>at every question</td>
+</tr>
+<tr>
+<td>32 768 to 65 535</td>
+<td>the small result cap</td>
+<td>every 4 questions, keeping the last 2</td>
+</tr>
+<tr>
+<td>65 536 to 199 999</td>
+<td>the level's result cap, at most the medium one</td>
+<td>every 6 questions, keeping the last 2</td>
+</tr>
+<tr>
+<td>200 000 or more</td>
+<td>the level's result cap (basic small, standard medium, advanced large)</td>
+<td>every 6 questions, keeping the last 2</td>
+</tr>
+</tbody>
+</table>
+<p>Before each request FlexTool estimates its size. A request that would not fit the context is first shortened (older
+tool results are replaced by a note, and the chat says so); a request that still does not fit is not sent. A model on
+this computer would otherwise silently drop the start of an over-long request.</p>
+<h3 id="the-free-plan">The free plan</h3>
+<p>Free plans limit how many requests you can send per minute and per day, and each step of a question is one request.
+With the free plan on, each question uses fewer steps (see <a href="#budgets">Budgets</a>), a tool result holds at most the
+medium result cap, and the FlexTool window sends one question at a time. The first question says so: "Free plan:
+the assistant uses at most 4 steps for each question to stay within the provider's request limits."</p>
+<p>Automatically the free plan is on only for an OpenRouter model whose name ends <code>:free</code>. For any other service it is
+off until you switch it on: in the window under Settings, "Free plan"; in the terminal with <code>--free-tier on</code> (<code>/save</code>
+keeps it). When a service's limit on requests per minute or per day ends a question while the free plan is off,
+the chat suggests switching it on, once for each service; nothing changes by itself.</p>
+<h3 id="how-fast-requests-are-sent">How fast requests are sent</h3>
+<p>One question may take several requests to the service: one for each round of tool calls, sent one after another.
+That is why a limit on requests per second matters even when you ask one question at a time. FlexTool spaces the
+requests to one service and model:</p>
+<ul>
+<li>When the service's answers say how many requests are left until a reset (OpenAI and Anthropic send this;
+  Mistral sends the requests left in the current minute), FlexTool spreads the remaining requests over that time,
+  and waits for the reset when none are left. This only ever makes the wait longer, never shorter than the waits
+  below. A refusal whose answer says none are left waits for that reset before trying again.</li>
+<li>When the service refuses a request as too fast without saying how long to wait, FlexTool waits 1.1 seconds
+  between requests from then on, doubling the wait after each further refusal (at most 20 seconds), and tries again
+  by itself: up to 3 times, or 6 with the free plan on, all within 90 seconds. Each answered request shortens the
+  wait again, down to 1.1 seconds. FlexTool remembers the wait for the next start. If the tries run out, the message
+  says so, for example "Mistral limits how many requests per second a free plan may send. FlexTool now waits between
+  requests; ask again."</li>
+<li>Mistral's requests are always at least 1.1 seconds apart, free plan or not (its free plan is limited per second;
+  a paid account loses about a second per round of tool calls). With the free plan on, OpenRouter's free models
+  start with 3 seconds (20 requests per minute). The learned wait never goes below these.</li>
+<li>A wait the service asks for is always kept.</li>
+<li>When the service says your account may send 0 requests per minute, nothing is tried again: the account's API
+  access is not active yet. The message says so, for example "Your Mistral account allows 0 requests per minute:
+  its API access is not active yet. Activate a plan in your Mistral account, then ask again." Test model in the
+  settings shows the same message.</li>
+</ul>
+<p>The chat shows the wait, for example "Mistral limits how fast requests may be sent. Sending the next one in 2
+seconds."; Stop works during it. All chats of the FlexTool window that use the same service and model share one
+wait.</p>
+<h2 id="units">Units</h2>
+<p>FlexTool does not check units. Its documented default units are MW for power, MWh for energy and CUR for the model's
+currency (see <a href="../reference/#units-of-measure">Units of measure</a>), and the result labels always use them. A model may
+use other units consistently, for example kg/h and kg for a hydrogen node. The tools therefore word every unit as the
+default convention ("MW (default convention)"), and the agent is told to ask, or to say that values are in the
+model's own units, when the description of a node, carrier or parameter suggests other units. Describing such
+entities (their <code>description</code> in the input data) helps the agent.</p>
+<h2 id="try-a-tool-from-the-terminal">Try a tool from the terminal</h2>
+<p><code>--call</code> runs one tool and prints its result as the agent would see it, which helps when something does not work as
+expected:</p>
+<div class="highlight"><pre><span></span><code>flextool-assistant<span class="w"> </span>--project-path<span class="w"> </span>/home/me/flextool/projects/MyProject<span class="w"> </span>--call<span class="w"> </span>list_runs
+flextool-assistant<span class="w"> </span>--project-path<span class="w"> </span>/home/me/flextool/projects/MyProject<span class="w"> </span>--call<span class="w"> </span>get_entity<span class="w"> </span><span class="s1">'{"name": ["coal_plant"], "scenario": "coal"}'</span>
+flextool-assistant<span class="w"> </span>--project-path<span class="w"> </span>/home/me/flextool/projects/MyProject<span class="w"> </span>--call<span class="w"> </span>get_parameter<span class="w"> </span><span class="s1">'{"entity_class": "unit", "parameters": ["existing", "invest_cost"], "entities": [["coal_plant"], ["wind_plant"]], "scenario": "coal"}'</span>
+</code></pre></div>
+<p>The arguments are a JSON object, or <code>@file.json</code> to read them from a file. <code>get_parameter</code> takes lists of
+parameters (up to 10) and entities (up to 20) and answers with one table: a row for each entity and parameter, with
+the value, its shape and the alternative it comes from (or the default), and the units and notes once for each
+parameter. A name it does not know is listed with the closest names, and the other rows are still answered. Its
+<code>provenance</code> lists the scenario's alternatives highest rank first (<code>alternatives_highest_first</code>: the first one that
+sets a value wins). <code>flextool-assistant --help</code> lists the options.</p>
+<p>Other tools keep their results short so that a project with many runs fits the agent's context:</p>
+<ul>
+<li><code>list_runs</code> lists the latest runs first: without filters the newest 8 (basic) or 20 (standard, advanced), with
+  the number of runs in each state and, in <code>older</code>, the counts of the runs not shown; <code>"all": true</code> lists every
+  run in the same order. A row is folder, state, <code>finished</code> (local time) and whether its results can be read. Runs
+  with a run record come first, by when they finished (a run that has not finished, by when it started). A folder
+  whose result files were written without a run record (by an older FlexTool) has the state <code>no_record</code>: its
+  success is not known. Such runs come after the others, by when their files were last written. Copying a project
+  changes those times, so the listing says that their order is uncertain; a page that lists none of them gives
+  only their count. A result read from such a run says
+  <code>"verified": false</code> (<code>compare_runs</code> lists such runs in <code>unverified</code>), and its run notes start with the same
+  warning. Named folders (<code>"folders": ["base_1"]</code>), a filtered list of up to five runs or <code>"detail": "full"</code> add
+  the verdict, times, FlexTool version and error; a value shared by every row is then given once
+  (<code>same_in_every_row</code>). Filter with <code>source</code>, <code>scenario</code>, <code>state</code>, <code>results_usable</code> and <code>folders</code> (names or <code>*</code>
+  patterns; a name or pattern that matches no folder is refused with the closest folder names); a filtered list
+  holds every match, newest first. A long list comes in pages, and <code>shown</code> names the <code>offset</code> of the next one. The
+  states are those of the run record (<code>succeeded</code>, <code>failed</code>, <code>killed</code>, <code>interrupted</code>, <code>crashed</code>, <code>running</code>,
+  <code>abandoned</code>, <code>unknown</code>, <code>unreadable</code>, <code>malformed</code>) and <code>no_record</code>.</li>
+<li><code>list_runs</code> with <code>"detail": "scan"</code> adds three numbers to each row: <code>total_cost</code> (the discounted cost over all
+  periods, as the model minimises it, from <code>costs_discounted_p_</code>), <code>penalty_cost</code> (its slack penalty categories)
+  and <code>largest_cost</code> (the category with the largest cost). Compare totals only between runs over the same periods.
+  A run whose results may not be used gets no numbers, and <code>no_cost_table</code> names the runs without the table.
+  <code>not_optimal_in</code> names the runs whose solve was not proven optimal (a time limit, a decomposition that did not
+  converge), each with its verdict: their costs may be higher than the optimum. A
+  given <code>detail</code> always wins: <code>"folders": ["a_1", "b_1"], "detail": "scan"</code> gives the costs of those two runs.</li>
+<li><code>list_runs</code> with <code>"detail": "overview"</code> and one folder (or a <code>scenario</code> alone, for its newest run) gives one run in
+  one call: its state and verdict, when it finished (local time, as in the rows), its costs by category (largest
+  first), its capacity per unit, connection and
+  storage (existing in the first period, invested added up over the periods, total in the last period; divested
+  and capacity in construction when there is any) and the slacks it used, each with its largest entry. Capacity is
+  never added up over periods or over entities. Entities with new, divested or in-construction capacity are listed
+  first. When the overview is too long for one result, it drops, in this order: the cost categories under 1 % of
+  the costs, entities beyond three per class, slacks beyond three, categories beyond three (of those of at least
+  1 %), then fewer entities. A cut never brings back what an earlier one dropped, and each says what it shows. A
+  request that selects no run says why: the folder is a run of another scenario, no run is of the scenario (with
+  the closest scenario names), or the other filters leave nothing. A run whose results may not be used gets its state and error, and no numbers.</li>
+<li><code>list_sources</code> with <code>"scenario": "coal_chp"</code> gives that scenario's alternatives, highest rank first, and its base
+  alternative.</li>
+<li><code>compare_runs</code> without <code>group_by</code>, <code>agg</code>, <code>sort</code> and <code>top_n</code> gives each run's totals per period and category
+  (entities added up where that is meaningful; prices are kept per node), with the totals per period in <code>totals</code>;
+  <code>"by_difference": true</code> gives each series, largest difference first. Energy and power are never added up over
+  nodes, since the nodes of a model can hold different carriers (electricity, heat, hydrogen): such a table is
+  totalled per node (units and connections added up into each node), and a table of units or connections without
+  a node level keeps each unit or connection. Costs, emissions and other quantities that are not energy or power
+  are added up over entities wherever a sum is meaningful. The first note says what was computed.</li>
+<li><code>compare_inputs</code> counts the differences by alternative and entity class first, then gives one row per parameter
+  and change with the entities it applies to (30 rows by default); <code>alternative</code> and <code>entity_class</code> narrow it. The
+  <code>alternative</code> of a row is the one that makes the two scenarios differ (when each scenario's value comes from an
+  alternative the other scenario does not have, <code>alternative</code> names b's, and the filter finds the row by either).
+  Entities share a row only when their values are exactly the same.</li>
+</ul>
+<h2 id="when-something-goes-wrong">When something goes wrong</h2>
+<ul>
+<li><strong>The agent says FlexTool could not start, and gives a command.</strong> On some older processors FlexTool needs the
+  compatible build of polars, its data library. The tools then start with only one tool, which gives the reason
+  and the command that installs it. Run the command (or "Update FlexTool"), then restart the agent.</li>
+<li><strong>"The connection for AI assistants could not load the package mcp"</strong> (in the agent's log). FlexTool was updated
+  without its new requirements. Run "Update FlexTool", or <code>pip install -e .</code> in a source checkout.</li>
+<li><strong>The agent says a run's results are not used.</strong> The tools read results only from a scenario whose latest run
+  succeeded; files left in the folder by an earlier run are not used. The agent can read the run log to help get
+  the scenario to run.</li>
+<li><strong>A spreadsheet input source is "not converted".</strong> The tools read a spreadsheet through the database FlexTool
+  makes from it when one of its scenarios runs. Run (or convert) a scenario of it first.</li>
+<li><strong>"No key found for …"</strong> (chat). Set the service's environment variable, or store the key with
+  <code>flextool-assistant --set-key --provider ID</code>.</li>
+<li><strong>"… is limiting how often requests can be sent"</strong> or <strong>"Your … quota is used up for now"</strong> (chat). Free plans
+  limit the requests per second, per minute and per day. The chat waits and tries again a few times by itself (see
+  <a href="#how-fast-requests-are-sent">How fast requests are sent</a>); after that, wait, or switch service or model with
+  <code>/provider</code> or <code>/model</code>. <code>/usage</code> shows what was used. On a free plan, switch on
+  the <a href="#the-free-plan">free plan</a> so each question uses fewer requests. For Google, the line after the message
+  names the quota that was hit (for example input tokens per minute, its limit and the model) and the wait Google
+  suggests; the chat waits that long when it is short enough.</li>
+<li><strong>"… the daily quota of this model is used up; try tomorrow or another model"</strong> (chat). Google's quota per day
+  for the model is used up; it resets the next day (midnight Pacific time), so the chat does not wait for it.</li>
+<li><strong>"The level … is not available for this model, so nothing was sent."</strong> (<code>-q</code>). The <code>--tier</code> asked for is above the
+  levels the model allows; the message says why and which levels it allows.</li>
+<li><strong>"Nothing answers at localhost:11434. Start Ollama and try again."</strong> Start the model server, then ask again.</li>
+<li><strong>"This model runs with a 2048-token context, too small …"</strong> Restart Ollama with <code>OLLAMA_CONTEXT_LENGTH=16384</code>, or
+  load the model in LM Studio with a larger context length.</li>
+<li><strong>"The model … does not support tool calls"</strong>. Pick a model that supports tools; without them the assistant cannot
+  read your data.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+    <div class="md-copyright__highlight">
+      IRENA
+    </div>
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["content.code.copy", "navigation.expand"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.a5f9d56c.min.js"></script>
+      
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.1/MathJax.js?config=TeX-AMS_HTML"></script>
+      
+        <script src="../assets/mathjaxhelper.js"></script>
+      
+    
+  </body>
+</html>
