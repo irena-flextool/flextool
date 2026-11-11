@@ -625,26 +625,6 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
     node_set = frozenset(_read_singles(input_dir / "node.csv", provider=provider))
     entity_set = _read_singles(input_dir / "entity.csv", provider=provider)
 
-    def _coeff_entities(kinds: tuple[str, ...]) -> frozenset[str]:
-        """Entities with a user-constraint coefficient of one of ``kinds`` (``p_<process|node>_constraint_<kind>
-        _coeff.csv``, written by ``input_derivation._specs``)."""
-        out: set[str] = set()
-        for cls in ("process", "node"):
-            for kind in kinds:
-                out.update(e for e, _ in _read_pairs(
-                    input_dir / f"p_{cls}_constraint_{kind}_coeff.csv", provider=provider))
-        return frozenset(out)
-
-    # Mirror of ``_derived._has_capacity_constraint_invest_set``: an invested, pre-built, capacity or
-    # in-construction coefficient links the investment variable; those and a retired-capacity coefficient link the
-    # retirement variable.
-    invest_kinds = ("invested_capacity", "cumulative_pre_built_capacity", "capacity", "in_construction_capacity")
-    has_capacity_constraint = _coeff_entities(invest_kinds)
-    has_retire_constraint = _coeff_entities((*invest_kinds, "retired_capacity"))
-
-    eea = _read_pdv(solve_data_dir / "ed_entity_annual.csv", provider=provider)
-    eead = _read_pdv(solve_data_dir / "ed_entity_annual_divest.csv", provider=provider)
-
     eim = _read_pairs(input_dir / "entity__invest_method.csv", provider=provider)
     methods_for_e: dict[str, set[str]] = {}
     for e, m in eim:
@@ -670,12 +650,9 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
     for g, m in gim:
         methods_for_g.setdefault(g, set()).add(m)
 
-    ed_invest_pairs: list[tuple[str, str]] = []
-    for e in entityInvest:
-        has_cap = e in has_capacity_constraint
-        for d in period_invest:
-            if eea.get((e, d), 0.0) != 0.0 or has_cap:
-                ed_invest_pairs.append((e, d))
+    # Every entity whose invest_method allows investing (retiring) is offered the variable in every investment
+    # period, also without an invest_cost (salvage_value): the capacity has no annuity, its fixed_cost counts.
+    ed_invest_pairs: list[tuple[str, str]] = [(e, d) for e in entityInvest for d in period_invest]
     _emit_tuples(provider, "solve_data/ed_invest.csv",
                  ("entity", "period"), ed_invest_pairs)
     ed_invest_set = frozenset(ed_invest_pairs)
@@ -685,12 +662,8 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
     pre_existing = {(str(e), str(d)) for e, d, v in _read_csv(solve_data_dir / "p_entity_pre_existing.csv",
                                                      ["entity", "period", "value"], provider=provider).iter_rows()
                     if v not in (None, "") and float(v) > 0.0}
-    ed_divest_pairs: list[tuple[str, str]] = []
-    for e in entityDivest:
-        has_cap = e in has_retire_constraint
-        for d in period_invest:
-            if (eead.get((e, d), 0.0) != 0.0 or has_cap) and (e, d) in pre_existing:
-                ed_divest_pairs.append((e, d))
+    ed_divest_pairs: list[tuple[str, str]] = [(e, d) for e in entityDivest for d in period_invest
+                                              if (e, d) in pre_existing]
     _emit_tuples(provider, "solve_data/ed_divest.csv",
                  ("entity", "period"), ed_divest_pairs)
     ed_divest_set = frozenset(ed_divest_pairs)
@@ -794,10 +767,9 @@ def emit_invest_divest_sets(input_dir: Path, solve_data_dir: Path,
     # own (looser) cap applies in the branches.  Flag-off, or no branches, is a no-op
     # (byte-parity); ``gd_invest.csv`` / ``gd_divest.csv`` above are untouched.
     #
-    # This stage has no per-entity, per-branch-period eligibility data of its own (``eea`` /
-    # ``ed_invest_set`` above are anchor-only: the annuity pass that builds them never visits a
-    # branch period, so a membership test against them here would always be false and silently
-    # drop every branch row again). Listing every branch here and no more is deliberate: whether
+    # This stage has no per-entity, per-branch-period eligibility data of its own (``ed_invest``
+    # above is anchor-only: this pass never visits a branch period, so a membership test against
+    # it here would always be false and silently drop every branch row again). Listing every branch here and no more is deliberate: whether
     # a given member actually has the variable at a given branch period is decided downstream,
     # where the real (branch-aware, zero-respecting) variable domain is known --
     # ``_eq_group_entity_period`` scopes its constraint rows to that, not to this listing alone

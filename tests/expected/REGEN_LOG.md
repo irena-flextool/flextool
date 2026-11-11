@@ -1468,3 +1468,22 @@ unweighted `wind` golden 0.0902 / 0.9325 / 0.0925 / 0.0675):
 
 The generated CSVs carry exactly these 4-dp values.  Generated with
 `pytest tests/test_scenarios.py --regenerate wind_weighted`.
+
+## 2026-11-11 — `network_coal_wind_battery_invest_cumulative/unit_capacity__d.csv` (item 218)
+
+**Context.** An `invest_method` now offers retirement in every investment period with pre-existing capacity, also
+without `salvage_value` (before: only with a non-zero salvage value or a user-constraint capacity coefficient).
+`coal_plant` (`cumulative_limits`, existing 500 MW, no salvage value) therefore gets `v_divest` in p2020-p2035.
+
+**Effect.** The optimum is unchanged: coal invests up to its cumulative cap in every period, and retiring existing
+coal would only mean reinvesting at 400 CUR/kW, so `v_divest` = 0.  The `divested` column of `coal_plant` goes from
+empty to `0.0` in the four periods (a retirement-eligible cell is a number, an ineligible one is empty); every other
+cell and every other CSV of the scenario is unchanged (objective unchanged).  The LP gains the four `v_divest_p`
+columns with their bound, `maxRetired_existing_p` and cumulative-capacity terms (`tools/lp_snapshot.py compare
+--canonical`: the only differences over all fixtures are this scenario and the `cumulative_capacity` fixture,
+same columns).  The lp_snapshot fixture `invest_total_no_var` relied on a missing `invest_cost` for its entity
+without `v_invest`; it now gives `x_unit` a 20-year `construction_lead_time` (start after the model horizon, so no
+decision is offered), and its LP is equivalent to the one before.
+
+Generated with `pytest tests/test_scenarios.py --regenerate network_coal_wind_battery_invest_cumulative`; the
+regeneration also rewrote `costs__dt.csv` (`0` → `0.0` number format), which was put back to its previous content.

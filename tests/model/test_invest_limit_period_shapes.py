@@ -177,7 +177,7 @@ def test_silent_x_index_map(tmp_path_factory, param, inv_method):
 
 # (id, invest_method, shape-independent values, (class, entity, parameter, value), checked field, field entity
 #  column, entity, group entities, group invest_method)
-# A divest variable needs existing capacity and a non-zero salvage_value (_eea_predicate).
+# A divest variable needs existing capacity (the salvage_value only sets its annuity).
 RETIRABLE = [["unit", "peaker", "existing", S(100)], ["unit", "peaker", "salvage_value", S(1.0)]]
 
 FAMILY = [

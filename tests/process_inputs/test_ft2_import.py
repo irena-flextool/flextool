@@ -816,8 +816,8 @@ def test_storage_max_invest_derived_through_the_kw_kwh_ratio(tmp_path: Path) -> 
     other one through the ratio (MW = ratio x MWh).  Ratio 0.25: max invest 10 MW
     alone gives 40 MWh; 40 MWh alone gives 10 MW (before: the side not given had no
     invest_method, so the storage link forced both to 0).  A storage with a
-    max invest (MWh), no cost per kWh and no ratio cannot invest in FT4 (FT2 adds
-    it for free): the report says so."""
+    max invest (MWh), no cost per kWh and no ratio invests in FT4 at no cost, as in
+    FT2 (#218): it gets its invest_method and limit, and the report has no item."""
     sheets = ft2_sheets()
     for name in ("bat_mw", "bat_mwh"):
         sheets["unit_type"].append(_unit_type(name, **{
@@ -858,8 +858,10 @@ def test_storage_max_invest_derived_through_the_kw_kwh_ratio(tmp_path: Path) -> 
         assert unit_max[((f"bat_mwh_nodeA_{part}",), "BigMWh")] == pytest.approx(20.0)
         assert unit_max[((f"bat_mw_nodeA_{part}",), "BigMW")] == pytest.approx(20.0)
     assert node_max[(("bat_mwh_nodeA_storage",), "BigMWh")] == pytest.approx(80.0)
+    assert node_method[(("bat_free_nodeA_storage",), "base")] == "invest_total"
+    assert node_max[(("bat_free_nodeA_storage",), "base")] == pytest.approx(40.0)
     found = {(u.sheet, u.column): u for u in report.unmapped}
-    assert found[("units", "max invest (MWh)")].entities == ["bat_free_nodeA"]
+    assert ("units", "max invest (MWh)") not in found
 
 
 def _write_sensitivity_master(path: Path) -> Path:

@@ -27,6 +27,23 @@
   years represented), not averages of the period shares; the "total" plots use them. Plot labels say what the
   numbers are: "(annualized)", "(horizon total)", costs in "M CUR/a (annualized)", "M CUR (horizon total,
   undiscounted)" and "M CUR (discounted)", CO2 in "Mt CO2 (horizon total)".
+- **Behaviour change (LP): an `invest_method` offers investment and retirement also without `invest_cost` /
+  `salvage_value`.** A unit, connection or node whose `invest_method` allows investing now has its investment
+  variable in every investment period of the solve, also where `invest_cost` is missing or 0; one that allows
+  retiring has its retirement variable in every period with existing capacity, also without `salvage_value`. Such
+  capacity has no annuity; its `fixed_cost` still counts (retiring saves it). Before, a period without a non-zero
+  cost had no variable unless a user constraint had a capacity coefficient on the entity, so an `invest_method`
+  without a cost silently offered nothing. **A 0 in an `invest_cost` map no longer blocks investment in that period
+  (also a stochastic branch's own 0): it is now free investment there. To forbid investment in a period, set
+  `invest_max_period` 0 for it (or `invest_method` `not_allowed`).** With neither `invest_cost` nor `fixed_cost`
+  the invested amount is arbitrary (any amount is optimal). A zero-cost investment needs a `lifetime` only with
+  `lifetime_method` `reinvest_choice` / `no_investment`. The FlexTool 2 importer no longer reports a storage with a
+  `max invest (MWh)` and no `inv.cost/kWh`: FlexTool 4 now adds it at no cost, as FlexTool 2 does. Fixed with it:
+  `invest_period_total` allowed retiring and `retire_period_total` investing (the method lists left them out), and
+  an `invest_period_total` entity with a `salvage_value` and no `lifetime` got a false lifetime error. The database
+  upgrade writes the marker `invest_without_cost_offered` on a database with an entity that can invest (retire)
+  without an `invest_cost` (`salvage_value`) or with a 0 in it; the run then names the entities and periods that
+  are newly offered. Schema: part of data version 79.
 - **Behaviour change: `discount_rate` 0 is 0 % (annuity = invest_cost / lifetime); before it was 5 %.** Any
   `discount_rate` of 0 or below used to be replaced by 0.05 in the annuity, and a missing or non-positive `lifetime`
   by 20 years. Now 0 gives the straight-line annuity (`salvage_value / lifetime` for a retirement) and a missing

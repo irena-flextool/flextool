@@ -159,7 +159,7 @@ def _recourse_invest_active(
 # (``apply_derived_c`` / ``apply_npv`` / ``apply_synthetic_invest_sets``)
 # to the recourse pairs, or ``None`` when the flag is off / deterministic.
 # Read by the explicit-per-period producers (_resolve_per_period_lf and
-# _ed_period_param_lf, which serves _per_entity_period_cost and
+# _ed_period_param_lf, which serves the zero-cost investment notice and
 # p_entity_max_units_from_source) to inherit each
 # anchor's per-(e,d) value onto its branch periods (§4.1).  ``None`` ==
 # no-op == flag-off byte-parity.  The set-at-boundary-top invariant means
@@ -3173,108 +3173,6 @@ def _entity_invest_filter(source: "InputSource",
                 .select("e").unique())
 
 
-#: User-constraint coefficients that give an entity its ``ed_invest`` pairs (the investment variable appears in
-#: the constraint) and its ``ed_divest`` pairs (the retirement variable appears).
-_CAPACITY_CONSTRAINT_INVEST_COEFFS: tuple[str, ...] = (
-    "constraint_invested_capacity_coeff",
-    "constraint_cumulative_pre_built_capacity_coeff",
-    "constraint_capacity_coeff",
-    "constraint_in_construction_capacity_coeff",
-)
-_CAPACITY_CONSTRAINT_DIVEST_COEFFS: tuple[str, ...] = (
-    *_CAPACITY_CONSTRAINT_INVEST_COEFFS,
-    "constraint_retired_capacity_coeff",
-)
-
-
-def _has_capacity_constraint_invest_set(source: "InputSource", *, divest: bool = False
-                                          ) -> pl.LazyFrame:
-    """Set of entities that a user-constraint coefficient links to their
-    investment variable (``divest=False``: invested, pre-built, capacity or
-    in-construction coefficient) or to their retirement variable (``divest=True``: those and
-    the retired-capacity coefficient).  Such an entity gets its invest /
-    divest pairs even when its annuity is zero.  Mirrors flextool's
-    ``_has_capacity_constraint_invest`` predicate.  Returns a lazy frame ``[e]``.
-    """
-    parts: list[pl.LazyFrame] = []
-    names = _CAPACITY_CONSTRAINT_DIVEST_COEFFS if divest else _CAPACITY_CONSTRAINT_INVEST_COEFFS
-    for ec in ("unit", "node", "connection"):
-        for pname in names:
-            df = _try_param(source, ec, pname)
-            if df is None:
-                continue
-            # Spine reader returns the entity name column as ``name``.
-            if "name" in df.columns:
-                parts.append(df.lazy().select(
-                    alias_to_axis("name", "e")).unique())
-    if not parts:
-        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e")}).lazy()
-    return pl.concat(parts).unique()
-
-
-def _eea_pairs(source: "InputSource",
-                entityInvest_lf: pl.LazyFrame,
-                period_invest: list[str]) -> pl.LazyFrame:
-    """Compute non-zero ``ed_entity_annual`` pairs (e, d).
-
-    Algorithm (audit §3.7.5/6, ``entity_annual_calc_params.py:177-198``):
-      annuity[e, d] = #methods_for_e * invest_value[e, d] * 1000
-                       * annuity_factor(discount_rate, lifetime)
-    (``preprocess/_annuity.py``).
-
-    For ``ed_invest`` we only need the *non-zero* predicate, so we can
-    short-circuit: a pair (e, d) has non-zero annuity iff
-    ``invest_cost[e] != 0`` AND ``methods_for_e ∩ INVEST_ALLOWED`` is
-    non-empty.  Same for ``ed_divest`` with ``salvage_value`` and the
-    divest-allowed method intersection.  This is an exact mirror of
-    flextool's predicate at ``invest_divest_sets.py:177-180``.
-    """
-    return _eea_predicate(source, entityInvest_lf, period_invest,
-                            cost_param="invest_cost",
-                            allowed=_INVEST_METHODS_INVEST_ALLOWED)
-
-
-def _eead_pairs(source: "InputSource",
-                  entityDivest_lf: pl.LazyFrame,
-                  period_invest: list[str]) -> pl.LazyFrame:
-    return _eea_predicate(source, entityDivest_lf, period_invest,
-                            cost_param="salvage_value",
-                            allowed=_INVEST_METHODS_DIVEST_ALLOWED)
-
-
-def _eea_predicate(source: "InputSource",
-                     entity_lf: pl.LazyFrame,
-                     period_invest: list[str],
-                     cost_param: str,
-                     allowed: frozenset[str]) -> pl.LazyFrame:
-    """Predicate frame ``[e, d]`` where the per-method annuity sum is
-    structurally non-zero, given:
-
-      * Some method m ∈ allowed exists for e (``entity__invest_method``).
-      * ``cost_param`` (per-(e[, d])) is non-zero.
-
-    Used as the ``eea != 0`` short-circuit in ``ed_invest``/``ed_divest``
-    composition.
-    """
-    if not period_invest:
-        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
-                                     "d": schema_dtype(_enums, "d")}).lazy()
-    eim = _entity_invest_method(source)
-    if eim is None:
-        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
-                                     "d": schema_dtype(_enums, "d")}).lazy()
-    has_method = (eim.filter(pl.col("method").is_in(list(allowed)))
-                       .select("e").unique())
-    cost_lf = _per_entity_period_cost(source, cost_param, period_invest)
-    if cost_lf is None:
-        return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
-                                     "d": schema_dtype(_enums, "d")}).lazy()
-    return (has_method.join(entity_lf, on="e", how="inner")
-                       .join(cost_lf, on="e", how="inner")
-                       .filter(pl.col("v") != 0.0)
-                       .select("e", "d").unique())
-
-
 def _ed_period_param_lf(source: "InputSource",
                         parameter_name: str,
                         periods: list[str]) -> pl.LazyFrame | None:
@@ -3290,7 +3188,8 @@ def _ed_period_param_lf(source: "InputSource",
     ``periods``.
 
     Zero values are kept (``filter_zero=False``) so that a branch-native explicit 0 wins over
-    its anchor's non-zero value in the expansion.  Anchor periods are added to the period
+    its anchor's non-zero value in the expansion (the value only: whether an investment or
+    retirement variable exists does not depend on the cost).  Anchor periods are added to the period
     filter so that their explicit rows survive the resolver's inner join until the expansion
     has used them.  ``None`` when no entity authors the parameter.
     """
@@ -3311,18 +3210,6 @@ def _ed_period_param_lf(source: "InputSource",
     if periods_d.collect_schema().get("d") != d_dtype:
         periods_d = periods_d.with_columns(pl.col("d").cast(d_dtype))
     return lf.join(periods_d, on="d", how="semi")
-
-
-def _per_entity_period_cost(source: "InputSource",
-                              parameter_name: str,
-                              period_invest: list[str]) -> pl.LazyFrame | None:
-    """``unit/node/connection.<parameter_name>`` as ``(e, d, v)`` over the solve's invest periods.
-
-    :func:`_ed_period_param_lf` restricted to ``period_invest``, value column named ``v``.
-    :func:`_eea_predicate` drops ``v == 0`` afterwards.
-    """
-    lf = _ed_period_param_lf(source, parameter_name, period_invest)
-    return None if lf is None else lf.rename({"value": "v"})
 
 
 # ---------------------------------------------------------------------------
@@ -3551,15 +3438,15 @@ def ed_invest_set_from_source(source: "InputSource",
                                 ) -> pl.DataFrame | None:
     """Compute the (entity, period) pairs where invest is allowed.
 
-    Algorithm (audit §3.7.1, ``invest_divest_sets.py:171-183``):
+    ::
 
-        ed_invest = { (e, d) :
-                       e ∈ entityInvest, d ∈ period_invest_of_solve,
-                       (eea[e, d] != 0  OR  e has capacity constraint) }
+        ed_invest = { (e, d) : e ∈ entityInvest, d ∈ period_invest_of_solve }
 
-    For the simple case (no per-entity-period invest_cost Maps, no
-    capacity constraints), this reduces to the cross-product of
-    entityInvest × period_invest, intersected with the eea-non-zero set.
+    Every entity whose ``invest_method`` allows investing gets its investment variable in every
+    investment period of the solve, also without an ``invest_cost`` (or with a 0 in a period):
+    such capacity has no annuity, its ``fixed_cost`` still counts.  (Before, a pair needed a
+    non-zero annuity or a user-constraint capacity coefficient; :func:`zero_cost_invest_notice`
+    names the pairs that rule left out.)
 
     Γ.6.D: ``ed_invest_forbidden_no_investment`` rows (entities with
     ``lifetime_method = no_investment`` whose lifetime window has
@@ -3575,17 +3462,9 @@ def ed_invest_set_from_source(source: "InputSource",
         return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
                                      "d": schema_dtype(_enums, "d")})
 
-    ei_lf = _entityInvest_set(source)
-    has_cc = _has_capacity_constraint_invest_set(source)
-    eea_pred = _eea_pairs(source, ei_lf, period_invest)
-
-    # Cross ei × period_invest, then keep where (eea != 0) OR (e in has_cc).
-    pi_lf = axis_lazyframe({"d": period_invest})
-    cross = ei_lf.join(pi_lf, how="cross")
-    has_cc_marked = (cross.join(has_cc, on="e", how="inner")
-                            .select("e", "d"))
-    out = (pl.concat([eea_pred.select("e", "d"),
-                       has_cc_marked])
+    out = (_entityInvest_set(source)
+              .join(axis_lazyframe({"d": period_invest}), how="cross")
+              .select("e", "d")
               .unique()
               .sort("e", "d")
               .collect())
@@ -3617,14 +3496,13 @@ def ed_divest_set_from_source(source: "InputSource",
                                 provider: "object | None" = None,
                                 existing_only: bool = True,
                                 ) -> pl.DataFrame | None:
-    """Mirror of ``ed_invest_set`` for divest.  Algorithm
-    (``invest_divest_sets.py:185-193``)::
+    """Mirror of ``ed_invest_set`` for divest::
 
         ed_divest = { (e, d) :
                        e ∈ entityDivest, d ∈ period_invest_of_solve,
-                       (eead[e, d] != 0  OR  e has capacity constraint),
                        pre_existing[e, d] > 0 }
 
+    Also without a ``salvage_value``: retiring still saves the ``fixed_cost`` of the capacity.
     Only capacity that existed before the run can be retired: a period where the entity has no pre-existing
     capacity (none given, or past its end of life) has no retirement (:func:`retirable_existing_pairs`).
     ``existing_only=False`` gives the retirement options before that filter.
@@ -3635,16 +3513,9 @@ def ed_divest_set_from_source(source: "InputSource",
     if not period_invest:
         return pl.DataFrame(schema={"e": schema_dtype(_enums, "e"),
                                      "d": schema_dtype(_enums, "d")})
-    ed_lf = _entityDivest_set(source)
-    has_cc = _has_capacity_constraint_invest_set(source, divest=True)
-    eead_pred = _eead_pairs(source, ed_lf, period_invest)
-
-    pi_lf = axis_lazyframe({"d": period_invest})
-    cross = ed_lf.join(pi_lf, how="cross")
-    has_cc_marked = (cross.join(has_cc, on="e", how="inner")
-                            .select("e", "d"))
-    out = (pl.concat([eead_pred.select("e", "d"),
-                       has_cc_marked])
+    out = (_entityDivest_set(source)
+              .join(axis_lazyframe({"d": period_invest}), how="cross")
+              .select("e", "d")
               .unique()
               .sort("e", "d")
               .collect())
@@ -5960,6 +5831,62 @@ def _retirement_notice(offered: pl.DataFrame, kept: pl.DataFrame) -> None:
     _behaviour_changes.notice("retirement_of_existing_capacity_only", "entities", names, detail)
 
 
+#: User-constraint coefficients that offered an entity's investment (retirement) variable before
+#: ``invest_without_cost_offered`` whatever its cost: such entities are not named by the notice.
+_OLD_RULE_INVEST_COEFFS: tuple[str, ...] = (
+    "constraint_invested_capacity_coeff",
+    "constraint_cumulative_pre_built_capacity_coeff",
+    "constraint_capacity_coeff",
+    "constraint_in_construction_capacity_coeff",
+)
+_OLD_RULE_DIVEST_COEFFS: tuple[str, ...] = (*_OLD_RULE_INVEST_COEFFS, "constraint_retired_capacity_coeff")
+
+
+def _zero_cost_pairs(source: "InputSource", pairs: "pl.DataFrame | None", cost_param: str,
+                     coeffs: tuple[str, ...]) -> dict[str, list[str]]:
+    """``{entity: [periods]}`` of the ``pairs`` (``[e, d]``) whose ``cost_param`` is missing or 0 in the period,
+    leaving out the entities a user-constraint capacity coefficient names (their variable existed before)."""
+    if pairs is None or pairs.height == 0:
+        return {}
+    rows = [(str(e), str(d)) for e, d in pairs.select("e", "d").iter_rows()]
+    coeff_entities: set[str] = set()
+    for cls in ("unit", "node", "connection"):
+        for pname in coeffs:
+            df = _try_param(source, cls, pname)
+            if df is not None and "name" in df.columns:
+                coeff_entities.update(df.get_column("name").cast(pl.Utf8).to_list())
+    periods = list(dict.fromkeys(d for _e, d in rows))
+    cost = _ed_period_value_map(source, cost_param, periods)
+    out: dict[str, list[str]] = {}
+    for e, d in rows:
+        if e not in coeff_entities and cost.get((e, d), 0.0) == 0.0:
+            out.setdefault(e, []).append(d)
+    return out
+
+
+def zero_cost_invest_notice(source: "InputSource", ed_invest: "pl.DataFrame | None",
+                            ed_divest: "pl.DataFrame | None") -> None:
+    """Behaviour-change notice ``invest_without_cost_offered``: names the entities that now get an investment
+    variable where their ``invest_cost`` is missing or 0, or a retirement variable where their ``salvage_value``
+    is (before, such a period had no variable unless a user-constraint capacity coefficient named the entity)."""
+    from flextool.engine import _behaviour_changes
+    if not _behaviour_changes.has_marker("invest_without_cost_offered"):
+        return
+    invest = _zero_cost_pairs(source, ed_invest, "invest_cost", _OLD_RULE_INVEST_COEFFS)
+    divest = _zero_cost_pairs(source, ed_divest, "salvage_value", _OLD_RULE_DIVEST_COEFFS)
+
+    def _listed(found: dict[str, list[str]]) -> str:
+        return ", ".join(f"{e} ({', '.join(ds)})" for e, ds in sorted(found.items()))
+
+    detail = []
+    if invest:
+        detail.append("Investment without invest_cost (entity, periods): " + _listed(invest) + ".")
+    if divest:
+        detail.append("Retirement without salvage_value (entity, periods): " + _listed(divest) + ".")
+    _behaviour_changes.notice("invest_without_cost_offered", "entities", sorted(set(invest) | set(divest)),
+                              " ".join(detail))
+
+
 def apply_derived_c(
     flex_data: object,
     source: "InputSource",
@@ -6112,6 +6039,7 @@ def apply_derived_c(
         if ed_div_db.height == 0:
             # The seeds of the retirement partitions describe the options before the filter.
             flex_data.pd_divest_set = flex_data.nd_divest_set = flex_data.ed_divest_period_set = None
+    zero_cost_invest_notice(source, ed_inv_db, ed_div_db)
 
     # Δ.17c Gap D — pd/nd_invest_set, pd/nd_divest_set, edd_invest_set:
     # partition the (e, d) frames to (process, d) / (node, d) by
@@ -9933,6 +9861,7 @@ def apply_synthetic_invest_sets(flex_data: object,
         source, active_solve, workdir, provider=provider)
     if ed_div is not None and ed_div.height > 0:
         flex_data.ed_divest_set = ed_div
+    zero_cost_invest_notice(source, ed_inv, ed_div)
 
     # ed_invest_forbidden_no_investment — derived from the lifetime
     # gate; consumed by apply_existing_chain.

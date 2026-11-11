@@ -21,9 +21,10 @@ Cluster B fields (per
 * ``e_invest_total`` / ``e_divest_total`` — projections of the above
   filtered by INVEST_TOTAL / RETIRE_TOTAL methods
   (``preprocessing/invest_total_sets.py``).
-* ``ed_invest_set`` / ``ed_divest_set`` — (e, d) cross-product gated
-  by entityInvest × period_invest, eea ≠ 0 OR capacity-constraint
-  membership, and the no_investment lifetime-expiry forbidden set.
+* ``ed_invest_set`` / ``ed_divest_set`` — (e, d) cross-product
+  entityInvest (entityDivest) × period_invest, minus the no_investment
+  lifetime-expiry forbidden set (retirement: only with pre-existing
+  capacity); the cost does not gate it (#218).
 * ``pd_invest_set`` / ``nd_invest_set`` / ``pd_divest_set`` /
   ``nd_divest_set`` — partitions of ``ed_invest_set`` / ``ed_divest_set``
   by entity-class (``unit ∪ connection`` → process-side; ``node`` →
@@ -801,9 +802,10 @@ def entity_invest_set_lf(source: "InputSource") -> pl.LazyFrame:
                                 AND m ∉ invest_method_not_allowed}
 
     The Δ.5 ``ed_*``-derivation trap: an entity may have an
-    ``invest_method`` row but no ``ed_invest_set`` row (e.g. eea == 0
-    AND no capacity constraint).  Such an entity is in ``entityInvest``
-    but not in any ``ed_invest`` (e, d) pair.  Cluster A's
+    ``invest_method`` row but no ``ed_invest_set`` row (e.g. its
+    no_investment window has ended, or the solve has no investment
+    period).  Such an entity is in ``entityInvest`` but not in any
+    ``ed_invest`` (e, d) pair.  Cluster A's
     ``ed_lifetime_fixed_cost_divest`` produces rows for these entities;
     deriving from ``ed_*`` would miss them.
     """

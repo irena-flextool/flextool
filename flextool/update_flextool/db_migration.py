@@ -6324,6 +6324,47 @@ def _v79_discount_rate_zero(db) -> None:
         _v77_set_marker(db, "discount_rate_zero_is_zero", json.dumps({"since": 79, "entities": sorted(entities)}))
 
 
+def _v79_method_allows(method: str, word: str) -> bool:
+    """Whether ``invest_method`` *method* allows investing (*word* ``invest``) or retiring (``retire``)."""
+    return method == "cumulative_limits" or word in method.split("_")
+
+
+def _v79_invest_without_cost(db) -> None:
+    """Investment (retirement) offered also without ``invest_cost`` (``salvage_value``) (part of v79).
+
+    Before v79 an entity got its investment variable in a period only when its ``invest_cost`` there was not 0
+    (retirement: ``salvage_value``), or a user constraint had a capacity coefficient on it; now every period of
+    an ``invest_method`` that allows it is offered.  No value is rewritten.  Behaviour-change marker
+    ``invest_without_cost_offered`` (``{"since": 79, "entities": [...]}``) only on a database where a unit /
+    connection / node whose ``invest_method`` allows investing has no ``invest_cost`` or one with a 0 element,
+    or one that allows retiring has no ``salvage_value`` or one with a 0 element (any alternative).  The run's
+    notice names only the (entity, period) pairs the old rule left out.  Idempotent: a rerun finds the marker.
+    """
+    entities: set[str] = set()
+    for cls in ("unit", "connection", "node"):
+        if not db.get_item("entity_class", name=cls):
+            continue
+        methods: dict[str, set[str]] = {}
+        for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name="invest_method"):
+            value = from_database(pv["value"], pv["type"])
+            if isinstance(value, str):
+                methods.setdefault(pv["entity_byname"][0], set()).add(value)
+        for word, cost in (("invest", "invest_cost"), ("retire", "salvage_value")):
+            allowed = {e for e, ms in methods.items() if any(_v79_method_allows(m, word) for m in ms)}
+            if not allowed:
+                continue
+            costed: set[str] = set()
+            zero: set[str] = set()
+            for pv in db.find_parameter_values(entity_class_name=cls, parameter_definition_name=cost):
+                name = pv["entity_byname"][0]
+                costed.add(name)
+                if any(v == 0.0 for v in _v79_numbers(from_database(pv["value"], pv["type"]))):
+                    zero.add(name)
+            entities |= {e for e in allowed if e not in costed or e in zero}
+    if entities:
+        _v77_set_marker(db, "invest_without_cost_offered", json.dumps({"since": 79, "entities": sorted(entities)}))
+
+
 #: v79: ``unit__inputNode.startup_input_method`` -- the input arc also, or only, supplies the energy a start-up uses.
 STARTUP_INPUT_METHODS: tuple[str, ...] = ("just_input", "startup_and_input", "startup_only")
 _V79_STARTUP_INPUT_DESCRIPTIONS: dict[str, str] = {
@@ -6402,6 +6443,9 @@ def _migrate_v79_schema_batch(db) -> None:
        descriptions and the behaviour-change marker ``discount_rate_zero_is_zero`` (:func:`_v79_discount_rate_zero`).
     9. ``unit__inputNode.startup_input_method`` (``just_input`` / ``startup_and_input`` / ``startup_only``) and
        ``startup_energy`` [MWh per MW started] (:func:`_v79_startup_input`).
+    10. An ``invest_method`` that allows investing (retiring) offers the variable also where ``invest_cost``
+        (``salvage_value``) is missing or 0: the behaviour-change marker ``invest_without_cost_offered``
+        (:func:`_v79_invest_without_cost`).
 
     No value is rewritten.  Each part is idempotent, so a rerun of the step changes nothing.
     """
@@ -6414,10 +6458,11 @@ def _migrate_v79_schema_batch(db) -> None:
     _v79_constraint_period_method(db)
     _v79_discount_rate_zero(db)
     _v79_startup_input(db)
+    _v79_invest_without_cost(db)
     _commit_step(db, "v79: constraint_online_coeff, ramp_cost, reduce_*_detail_method, time-varying group "
                      "limits, time series combined over a solve's new_stepduration step, capacity margin by "
                      "entity class and share_of_peak, constraint_period_method, discount_rate 0 is 0 %, "
-                     "startup_input_method and startup_energy")
+                     "startup_input_method and startup_energy, investment offered without invest_cost")
 
 
 def _v79_adder_has_value(value) -> bool:

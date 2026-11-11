@@ -62,5 +62,6 @@ def test_migration_markers_are_registered() -> None:
                                                               "unnamed_maps_read_per_depth",
                                                               "solve_step_series_combined",
                                                               "energy_margin_adder_per_original_step",
-                                                              "discount_rate_zero_is_zero"}
+                                                              "discount_rate_zero_is_zero",
+                                                              "invest_without_cost_offered"}
     assert written <= set(BEHAVIOUR_CHANGES)

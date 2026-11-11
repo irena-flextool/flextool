@@ -441,7 +441,6 @@ The importer writes the data at a fixed database version (56) and then migrates 
 | units `fueluse increase eq x output2` | FlexTool 2's fuel-use equation adds this fuel only when output2 is on the unit's own output node, so in a normal workbook it adds nothing in FlexTool 2 either; the import ignores it. |
 | gridNode `import (MWh)` | The import series is not added to the node. |
 | a generation-limit flag on a storage unit | Not carried over (the unit becomes a charger and a discharger). |
-| units `max invest (MWh)` of a storage with no unit_type `inv.cost/kWh` and no `fixed kW/kWh ratio` | FlexTool 2 adds that storage at no cost, up to the limit; FlexTool 4 invests in a storage node only when it has an investment cost (or a user-constraint coefficient on its investment), so it adds none. Give the storage node a small `invest_cost` if it should invest. |
 | any other non-zero column the importer does not read | Listed with a note to check whether it matters. |
 
 Sensitivity overrides that the sensitivity import does not translate are listed too, with their scenario (alternative), where the value can be set by hand.

@@ -251,6 +251,17 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "discount_rate_zero_is_zero"),
         ),
         BehaviourChange(
+            id="invest_without_cost_offered",
+            summary=("An invest_method that allows investing (retiring) now offers the investment (retirement) "
+                     "in every investment period, also where invest_cost (salvage_value) is missing or 0: that "
+                     "capacity has no annuity, its fixed_cost still counts. Before, such a period had no "
+                     "investment (retirement) variable unless a user constraint had a capacity coefficient on "
+                     "the entity, so a 0 in an invest_cost map blocked investment in that period (results "
+                     "change). To forbid investment in a period, set invest_max_period 0 there (or invest_method "
+                     "not_allowed). With neither invest_cost nor fixed_cost the invested amount is arbitrary."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "invest_without_cost_offered"),
+        ),
+        BehaviourChange(
             id="gui_solver_defaults",
             summary=("Runs started from the FlexTool GUI now use the same solver settings as terminal and Spine "
                      "Toolbox runs: presolve is on (before: choose), and the MIP gap of each solve comes from its "

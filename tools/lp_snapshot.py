@@ -389,9 +389,11 @@ def _patch_multi_year_reinvest_choice(data: dict) -> dict:
 def _patch_invest_total_no_var(data: dict) -> dict:
     """c16a #28/#43 probe (review's ``i28_skip2``): ``wind_plant`` and
     ``battery_inverter`` switched to ``invest_no_limit`` (no entity-total
-    row of their own), leaving ``x_unit`` (new, ``invest_total``, no
-    ``invest_cost`` -> no ``v_invest`` -> no ``maxInvest_entity_total`` row
-    under #43) and the storage node ``battery`` (``invest_total`` +
+    row of their own), leaving ``x_unit`` (new, ``invest_total``, a
+    ``construction_lead_time`` of 20 years: its capacity would start after
+    the model horizon 2030, so no decision is offered -> no ``v_invest`` ->
+    no ``maxInvest_entity_total`` row under #43; before #218 the missing
+    ``invest_cost`` did this) and the storage node ``battery`` (``invest_total`` +
     ``invest_min_total`` 5 -> the #28 ``minInvest_entity_total_path_n`` row
     that used to need the process-side ``edd_invest_set`` to avoid a
     ``break`` skipping the node side entirely)."""
@@ -405,6 +407,7 @@ def _patch_invest_total_no_var(data: dict) -> dict:
                 ["unit", "x_unit", "invest_method", "invest_total"],
                 ["unit", "x_unit", "invest_max_total", 10.0],
                 ["unit", "x_unit", "existing", 1.0],
+                ["unit", "x_unit", "construction_lead_time", 20.0],
                 ["node", "battery", "invest_min_total", 5.0]])
 
 

@@ -243,14 +243,12 @@ def test_capacity_only_row_without_a_variable(tmp_path_factory) -> None:
 
 
 def _invest(existing: float) -> list:
-    """gas investable at a fixed cost of 60 €/kW/yr, the capacity-factor row on gas, A's csp.  The token 1 €/kW
-    investment cost is for the control case (test_investment_without_the_row): without it and without a capacity
-    term an entity is not offered investment (github_issues item 218); the annuity, ~0.09 €/kW/yr, does not move
-    the oracle."""
+    """gas investable at a fixed cost of 60 €/kW/yr and no investment cost, the capacity-factor row on gas, A's
+    csp.  An invest_method offers investment also without invest_cost (#218), so the control case
+    (test_investment_without_the_row) has its investment variable too."""
     return _values(gas_existing=existing, terms={GAS_FLOW: 1.0, GAS_CAP: -0.3}, extra=[
         ["unit", "gas", "invest_method", _s("invest_no_limit")],
         ["unit", "gas", "fixed_cost", _f(60.0)],
-        ["unit", "gas", "invest_cost", _f(1.0)],
         ["unit", "gas", "lifetime", _f(30.0)],
         ["solve", SOLVE, "invest_periods",
          b64({"value_type": "str", "data": ["p2020"], "index_name": "period"}, "array")]])

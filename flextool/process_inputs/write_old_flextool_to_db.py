@@ -911,31 +911,6 @@ def _sensitivity_invested_capacity_items(
             for (sheet, column), names in found.items()]
 
 
-def _free_storage_investment_items(data: OldFlexToolData) -> list[UnmappedItem]:
-    """A storage that can invest in MWh with no ``inv.cost/kWh`` and no
-    ``fixed kW/kWh ratio``: FT2 adds that storage at no cost (up to its
-    limit); an FT4 node invests only with an investment cost or a
-    user-constraint coefficient on its investment."""
-    names = []
-    for unit in data.units:
-        if not _needs_charger_discharger(unit, data):
-            continue
-        ratio = _get_unit_type_param(data, unit, "fixed kw/kwh ratio")
-        _, max_mwh = _storage_max_invest(unit.max_invest_mw, unit.max_invest_mwh, ratio)
-        if (max_mwh > 0 and not _positive(ratio)
-                and not _positive(_get_unit_type_param(data, unit, "inv.cost/kwh"))):
-            names.append(_get_unit_name(unit))
-    if not names:
-        return []
-    return [UnmappedItem(
-        "units", "max invest (MWh)", names,
-        "the storage has no 'inv.cost/kWh' and no 'fixed kW/kWh ratio'. "
-        "FlexTool 2 adds that storage at no cost, up to 'max invest (MWh)'; "
-        "FlexTool 4 invests in a storage only when it has an investment "
-        "cost, so it adds none. To let it invest, give the storage node a "
-        "small 'invest_cost' (or the unit type an 'inv.cost/kWh').")]
-
-
 def _collect_unmapped(data: OldFlexToolData) -> list[UnmappedItem]:
     """Every non-empty FT2 input the importer does not translate, by entity."""
     found: dict[tuple[str, str], UnmappedItem] = {}
@@ -1007,7 +982,6 @@ def _collect_unmapped(data: OldFlexToolData) -> list[UnmappedItem]:
     items.extend(_profile_scaling_items(data))
     items.extend(_invested_capacity_items(data))
     items.extend(_annuity_mismatch_items(data))
-    items.extend(_free_storage_investment_items(data))
     # time_in_years first: it changes the balance of every cost.
     tiy = _time_in_years_item(data)
     return ([tiy] if tiy is not None else []) + items

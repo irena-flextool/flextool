@@ -349,7 +349,7 @@ PARAM_ALLOWED_SHAPES: dict[tuple[str, str], set[Shape]] = {
     ("node",       "cumulative_min_capacity"): {Shape.SCALAR, Shape.MAP_PERIOD},
     ("connection", "cumulative_min_capacity"): {Shape.SCALAR, Shape.MAP_PERIOD},
     # Investment cost / salvage value: constant or 1d_map(period) per the docs; read through
-    # _e_period_param_union by the ed_invest/ed_divest predicate (_per_entity_period_cost).
+    # _e_period_param_union (the annuities, and the notice of investment offered without a cost).
     ("unit",       "invest_cost"):   {Shape.SCALAR, Shape.MAP_PERIOD},
     ("node",       "invest_cost"):   {Shape.SCALAR, Shape.MAP_PERIOD},
     ("connection", "invest_cost"):   {Shape.SCALAR, Shape.MAP_PERIOD},

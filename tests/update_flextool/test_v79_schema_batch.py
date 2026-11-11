@@ -26,6 +26,8 @@ Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
 * rewrites the ``discount_rate`` / ``lifetime`` descriptions of unit / connection / node (0 is the
   straight-line annuity; lifetime required) and writes the marker ``discount_rate_zero_is_zero`` only on a
   database where an investing entity has an explicit ``discount_rate`` ≤ 0;
+* writes the marker ``invest_without_cost_offered`` only on a database where an entity that can invest
+  (retire) has no ``invest_cost`` (``salvage_value``) or a 0 in it;
 * adds the value list ``startup_input_methods`` (``just_input``, ``startup_and_input``, ``startup_only``),
   ``unit__inputNode.startup_input_method`` (``str``, default ``just_input``) and ``unit__inputNode.startup_energy``
   (float / 1d_map, no default), both in group ``tech_advanced``.
@@ -146,6 +148,10 @@ def _migrate(tmp_path_factory, tag: str, values: dict) -> dict:
         if "unit_disc" in values:
             _set(db, "unit", unit, "invest_method", "invest_no_limit", alt)
             _set(db, "unit", unit, "discount_rate", values["unit_disc"], alt)
+        if "unit_invest_cost" in values:
+            _set(db, "unit", unit, "invest_method", "invest_no_limit", alt)
+            if values["unit_invest_cost"] is not None:
+                _set(db, "unit", unit, "invest_cost", values["unit_invest_cost"], alt)
         if values:
             db.commit_session("test values")
         before, lists_before, markers_before = _defs(db), _lists(db), _markers(db)
@@ -354,6 +360,23 @@ def test_discount_rate_marker_only_for_an_explicit_zero(tmp_path_factory, plain,
         _rerun_changes_nothing(db, m._v79_discount_rate_zero, monkeypatch)
 
 
+# ─── investment offered without invest_cost ──────────────────────────────
+
+
+def test_invest_without_cost_marker_only_without_a_cost(tmp_path_factory, plain, monkeypatch) -> None:
+    """The marker names an entity that can invest without an invest_cost or with a 0 in it (a period map
+    counts by its elements); a non-zero cost, or no investment, writes none."""
+    assert "invest_without_cost_offered" not in plain["markers"]
+    costed = _migrate(tmp_path_factory, "v79_inv_cost", {"unit_invest_cost": 1000.0})
+    assert "invest_without_cost_offered" not in costed["markers"]
+    for tag, cost in (("v79_inv_none", None), ("v79_inv_zero", 0.0)):
+        free = _migrate(tmp_path_factory, tag, {"unit_invest_cost": cost})
+        assert json.loads(free["markers"]["invest_without_cost_offered"]) == {"since": 79,
+                                                                              "entities": [free["unit"]]}
+    with DatabaseMapping(free["url"]) as db:
+        _rerun_changes_nothing(db, m._v79_invest_without_cost, monkeypatch)
+
+
 # ─── startup_input_method / startup_energy ───────────────────────────────
 
 
@@ -391,7 +414,7 @@ def test_changes_nothing_else(plain) -> None:
 @pytest.mark.parametrize("part", [
     "_v79_constraint_online_coeff", "_v79_ramp_cost_descriptions", "_v79_reduce_detail_methods",
     "_v79_group_limits_by_time", "_v79_solve_step_series", "_v79_capacity_margin", "_v79_constraint_period_method",
-    "_v79_discount_rate_zero", "_v79_startup_input", "_migrate_v79_schema_batch"])
+    "_v79_discount_rate_zero", "_v79_startup_input", "_v79_invest_without_cost", "_migrate_v79_schema_batch"])
 def test_rerun_is_idempotent(plain, part: str, monkeypatch) -> None:
     with DatabaseMapping(plain["url"]) as db:
         _rerun_changes_nothing(db, getattr(m, part), monkeypatch)

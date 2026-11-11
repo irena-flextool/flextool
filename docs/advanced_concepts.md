@@ -81,6 +81,8 @@ annual_payment = invest_cost * discount_rate / (1 - (1 / (1 + discount_rate))^li
 
 A `discount_rate` of 0 gives the straight-line annuity `invest_cost / lifetime` (no interest). Without a value the rate is 0.05; a negative rate is an input error. The `lifetime` has no default: it is required when the entity invests or retires with a cost (`invest_cost`, `salvage_value`), and when its `lifetime_method` is `reinvest_choice` or `no_investment` (also for existing capacity without investment), since the capacity then ends after the lifetime.
 
+An `invest_method` other than `not_allowed` offers investment (retirement) in every investment period, also without an `invest_cost` (`salvage_value`) or where it is 0: that capacity has no annuity, and its `fixed_cost` still counts (a retirement saves it). A 0 in an `invest_cost` map therefore does not block investment in that period; to forbid investment in a period, set `invest_max_period` 0 for it. With neither `invest_cost` nor `fixed_cost` any invested amount is optimal, so the result is arbitrary. A zero-cost investment needs a `lifetime` only with `lifetime_method` `reinvest_choice` or `no_investment`.
+
 **Example**: A solar plant costs 800 EUR/kW with a 25-year lifetime and 5% discount rate:
 ```
 annual_payment = 800 * 0.05 / (1 - 1/1.05^25) = 800 * 0.0710 = 56.8 EUR/kW/year approximately

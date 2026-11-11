@@ -492,7 +492,8 @@ def _eq_group_entity_period(b: _Build) -> None:
                 continue
             # #82-adjacent: row domain is TERMS' (g, d), not the full gd_idx -- gd_idx may list a
             # branch period of a group's invest period (#67) that no member actually has the
-            # variable for (e.g. a branch-native 0 beating the anchor's invest_cost, #82). A row
+            # variable for (e.g. a member whose no_investment lifetime window has ended; before #218 also a
+            # branch-native 0 beating the anchor's invest_cost, #82). A row
             # there would be vacuous on the LHS (empty sum) while the RHS min/max still carries
             # the branch's (inherited-or-own) cap, turning an unconstrained branch into an
             # infeasible one for the ">=" (min) sense.
