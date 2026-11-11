@@ -87,7 +87,8 @@ def nodeGroup_indicators(par, s, v, r, debug):
     ratios of the energies ``Σ_d y[d]·Σ_t w[d,t]·X[d,t] / share[d]`` (``y``
     years represented, ``share`` the period's share of a year), not averages
     of the period shares; '5. Inflow (horizon total)' is that energy of the
-    inflow.
+    inflow.  In a stochastic fan every branch period counts with its years, so
+    the horizon total adds up all the paths (the known 'y' limitation).
     """
 
     results = []
