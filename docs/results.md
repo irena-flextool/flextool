@@ -213,9 +213,9 @@ Only for connections with a `startup_method`:
 For VRE units (units that use an `upper_limit` profile) the model also reports curtailment and potential generation against each output node:
 
 - table `unit_VRE_potential_outputNode_dt_ee` (not in the results database) — [MW] potential VRE generation at the timestep (`capacity × profile`)
-- table `unit_VRE_potential_outputNode_d_ee` (not in the results database) — [MWh] potential VRE generation summed over the period's time steps (with the timestep weights), not scaled to a full year
+- table `unit_VRE_potential_outputNode_d_ee` (not in the results database) — [MWh/a] potential VRE generation summed over the period's time steps (with the timestep weights) and scaled to a full year, like the flows
 - `unit__node` entity `curtailment_t` parameter — [MW] potential minus actual generation at the timestep
-- table `unit_curtailment_outputNode_d_ee` (not in the results database) — [MWh] curtailed energy summed over the period's time steps (with the timestep weights), not scaled to a full year
+- table `unit_curtailment_outputNode_d_ee` (not in the results database) — [MWh/a] curtailed energy summed over the period's time steps (with the timestep weights) and scaled to a full year, like the flows; the *total* plot multiplies each period by its years represented
 - table `unit_curtailment_share_outputNode_dt_ee` (not in the results database) — [0–1] timestep curtailment / potential
 - `unit__node` entity `curtailment_share` parameter — [0–1] period curtailment / period potential
 
@@ -230,9 +230,11 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
     - *Curtailed VRE of demand* — [≥ 0] curtailed VRE ÷ inflow over the period (can exceed 1 when the curtailment is larger than the demand)
     - *Annualized inflow* — [MWh] sum of `inflow` to member nodes scaled to a year
     - *Curtailed VRE of potential VRE* — [0–1] curtailed VRE ÷ potential VRE generation over the period, both on the arcs of the VRE units with an `upper_limit` profile into the member nodes (the group sum of `unit_curtailment_outputNode` and `unit_VRE_potential_outputNode`)
+- table `nodeGroup_g_p` (`group_node__horizon`, not in the results database) — the same indicators over the whole horizon: each share is the ratio of the energies over all periods, each period's weighted sum scaled to a year and multiplied by its years represented (`Σ_d y·Σ_t w·X / share_d ÷ Σ_d y·Σ_t w·Y / share_d`), not an average of the period shares; *Inflow (horizon total)* [MWh] replaces the annualized inflow
 - table `nodeGroup_gdt_p` (timestep table, not in the results database) — exposes the timestep-level building blocks of the above: *Loss of load* [MWh/step], *VRE generation* [MWh/step], *Excess load* [MWh/step], *Curtailed VRE* [MWh/step], *Timestep inflow* [MWh/step], *Curtailed VRE of potential VRE* [0–1], *Annualized inflow* [MWh], *VRE share of demand* [0–1]
 - `group` entity `VRE_share_t` parameter — [≥ 0] share of inflow served by VRE sources at each timestep (one column per node group; 0 at a time step without inflow)
 - table `nodeGroup_VRE_share_d_g` (not in the results database) — [≥ 0] VRE share of the period's inflow: VRE generation ÷ inflow, both summed over the period with the time-step weights (equals *VRE share of demand* above)
+- table `nodeGroup_VRE_share_g` (`group_node_VRE_share__horizon`, not in the results database) — [≥ 0] VRE share over the whole horizon: the total VRE energy ÷ the total inflow, each period scaled to a year and multiplied by its years represented
 - `group` entity `flow_annualized` parameter — [MWh] annualized sum of `inflow` to member nodes
 - `group` entity `flow_t` parameter — [MWh/step] timestep inflow to member nodes
 
@@ -246,8 +248,8 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
 `flowGroup` entities whose `flow_aggregator` is `standalone_aggregator_only` or `both` produce aggregate flow statistics over their member `(process, node)` legs (listed via `flowGroup__unit__node` / `flowGroup__connection__node`):
 
 - `group_flow__d.csv` — per-(flowGroup, period) totals:
-    - `cumulative_flow` parameter — [MWh] sum of |flow| over the period for all member legs
-    - `average_flow` parameter — [MW] average power equivalent (`cumulative_flow` / period hours)
+    - `cumulative_flow` parameter — [MWh/a] sum of |flow| over the period for all member legs, with the time-step weights, scaled to a full year
+    - `average_flow` parameter — [MW] average power (`cumulative_flow` / 8760 h)
 - `group_flow__dt.csv` — per-(flowGroup, period, time) **signed net flow** [MW] (sign convention: flow *into* the group's nodes is positive, flow *out of* them is negative). Intended for spreadsheet post-processing; because the values are signed they do not stack, so this series is not meant for stacked dispatch plots.
 
 (For member flows shown as aggregated bands inside a node group's dispatch table, set `flow_aggregator` to `dispatch_plots_only` or `both` instead — see [Node group results](#node-group-results) and the [reference](reference/flow_groups.md).)

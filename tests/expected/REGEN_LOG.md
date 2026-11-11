@@ -1423,3 +1423,21 @@ investment-marginal tables name the solve that realized the period's investments
 Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the three.  The regeneration also
 rewrote `costs__dt`, `node_state__dt` and `unit__outputNode__dt` with last-digit rounding differences (≤ 4e-4) and
 a 0 → 0.0 number format; those three files were restored to their previous content (not committed).
+
+## 2026-11-11 — curtailment / VRE potential `_d` and flowGroup `cumulative_flow` scaled to a full year
+
+**Context.** `unit_curtailment__outputNode__d`, `unit_outputNode_VRE_potential__d` and `group_flow__d`
+(`cumulative_flow`) were sums over the sampled time steps; the plot "total" multiplied them by the years
+represented, which is neither a total nor comparable with the other per-period energies.  They are now annualised
+like the flows (`× step_duration × timestep_weight`, Σ over the period, ÷ `complete_period_share_of_year`).  With a
+2-day period (share 48/8760) every value is the old one × 8760/48 = 182.5; `average_flow` is unchanged
+(cumulative / 8760 h = the old cumulative / 48 h).
+
+- `csp_existing`, `csp_fixed_design`, `csp_gas_backup` `unit_curtailment__outputNode__d`: 500 → 91 250 MWh/a.
+- `csp_existing/unit_outputNode_VRE_potential__d`: 8 400 → 1 533 000 MWh/a.
+- `aggregate_outputs_network_coal_wind_chp/group_flow__d` `cumulative_flow`: 25 930.444 → 4 732 306.1,
+  51 315.811 → 9 365 135.5, 52 587.889 → 9 597 289.7 (× 182.5 to the printed digits); `average_flow` unchanged.
+
+Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the four.  The regeneration also
+rewrote `summary_solve.csv` (time stamp) of the csp scenarios and `costs__dt.csv` of the aggregate scenario
+(`0` → `0.0` number format); those files were put back to their previous content.

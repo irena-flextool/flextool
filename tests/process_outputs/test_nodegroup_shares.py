@@ -18,13 +18,19 @@ import pytest
 from flextool.process_outputs.out_group import nodeGroup_indicators, nodeGroup_VRE_share
 
 
-def _case(steps, inflow, potential, flow, weight, *, extra_node=None):
+def _case(steps, inflow, potential, flow, weight, *, extra_node=None, periods=None, shares=None, years=None):
     """In-memory par / s / v / r for one group (no DB).
 
     ``extra_node`` = (node, flows) adds a member node without inflow that
-    receives wind from a second unit ``w2``.
+    receives wind from a second unit ``w2``.  ``periods`` (one per step,
+    default all ``d1``), ``shares`` / ``years`` ({period: value}) give
+    several periods with their share of a year and years represented.
     """
-    dt = pd.MultiIndex.from_tuples([("d1", t) for t in steps], names=["period", "time"])
+    periods = periods or ["d1"] * len(steps)
+    dt = pd.MultiIndex.from_tuples(list(zip(periods, steps)), names=["period", "time"])
+    period_index = pd.Index(list(dict.fromkeys(periods)), name="period")
+    shares = shares or {d: 1.0 for d in period_index}
+    years = years or {d: 1.0 for d in period_index}
     group_node = [("g", "n")]
     inflow_method = [("n", "use_original")]
     vre = [("w", "n")]
@@ -52,7 +58,8 @@ def _case(steps, inflow, potential, flow, weight, *, extra_node=None):
     par = types.SimpleNamespace(
         node_inflow=pd.DataFrame({"n": [-x for x in inflow]}, index=dt, dtype=float),
         timestep_weight=pd.Series(weight, index=dt, dtype=float),
-        complete_period_share_of_year=pd.Series([1.0], index=pd.Index(["d1"], name="period")),
+        complete_period_share_of_year=pd.Series([shares[d] for d in period_index], index=period_index),
+        years_represented_d=pd.Series([years[d] for d in period_index], index=period_index),
         step_duration=pd.Series(1.0, index=dt),
         node_capacity_for_scaling=pd.Series({"n": 1.0}),
     )
@@ -121,3 +128,22 @@ def test_realized_step_without_weight_raises():
         nodeGroup_indicators(par, s, v, r, False)
     with pytest.raises(ValueError, match=r"\(d1, t2\)"):
         nodeGroup_VRE_share(par, s, v, r, False)
+
+
+def test_horizon_shares_are_energy_ratios():
+    """Two periods: d1 (t1, t2) is half a year and represents 2 years, d2 (t3) a quarter of a year and 3 years.
+    Inflow 100, 50 | 40; VRE flow 80, 30 | 40; potential 90, 70 | 60; weights 1.  Horizon energies
+    Σ_d years·sum_d/share_d: inflow 2·150/0.5 + 3·40/0.25 = 600 + 480 = 1080; VRE 2·110/0.5 + 3·40/0.25 =
+    440 + 480 = 920; curtailed 2·50/0.5 + 3·20/0.25 = 200 + 240 = 440; potential 2·160/0.5 + 3·60/0.25 =
+    640 + 720 = 1360.  (The mean of the period VRE shares 110/150 and 40/40 weighted by years would be
+    (2·0.7333 + 3·1)/5 = 0.8933, not 920/1080 = 0.8519.)"""
+    case = _case(["t1", "t2", "t3"], [100, 50, 40], [90, 70, 60], [80, 30, 40], [1, 1, 1],
+                 periods=["d1", "d1", "d2"], shares={"d1": 0.5, "d2": 0.25}, years={"d1": 2.0, "d2": 3.0})
+    ind = {k: df for df, k in nodeGroup_indicators(*case, False)}
+    vre = {k: df for df, k in nodeGroup_VRE_share(*case, False)}
+    g = ind["nodeGroup_g_p"].loc["g"]
+    assert g["2. VRE share of demand"] == pytest.approx(920 / 1080)
+    assert g["4. Curtailed VRE of demand"] == pytest.approx(440 / 1080)
+    assert g["6. Curtailed VRE of potential VRE"] == pytest.approx(440 / 1360)
+    assert g["5. Inflow (horizon total)"] == pytest.approx(1080)
+    assert vre["nodeGroup_VRE_share_g"].loc["total", "g"] == pytest.approx(920 / 1080)

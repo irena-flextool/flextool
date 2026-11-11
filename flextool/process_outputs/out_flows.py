@@ -224,22 +224,16 @@ def unit_VRE_curtailment_and_potential(par, s, v, r, debug):
         curtail_share_dt = (curtail_dt / potential_dt).where(potential_dt != 0, 0)
         results.append((curtail_share_dt, 'unit_curtailment_share_outputNode_dt_ee'))
 
-        # Aggregate to period level.  curtail_dt / potential_dt are MW —
-        # multiply by step_duration to get MWh per step, then weight each
-        # (d, t) by par.timestep_weight (=1.0 with no/uniform timeset_weights
-        # → byte-identical) before summing.  Both numerator and denominator
-        # carry the same weight, so the curtailment-share ratio below is
-        # unchanged; only the absolute MWh outputs move.
-        curtail_period = (
-            curtail_dt.mul(par.step_duration, axis=0)
-            .mul(par.timestep_weight, axis=0)
-            .groupby(level='period').sum()
-        )
-        potential_period = (
-            potential_dt.mul(par.step_duration, axis=0)
-            .mul(par.timestep_weight, axis=0)
-            .groupby(level='period').sum()
-        )
+        # Aggregate to period level, annualised like the flows (MWh per
+        # year): curtail_dt / potential_dt are MW — × step_duration (MWh per
+        # step), × timestep_weight (1.0 with no/uniform timeset_weights), Σ
+        # over the period, ÷ complete_period_share_of_year.  Numerator and
+        # denominator share every factor, so the curtailment share is the
+        # ratio of the sample sums.
+        curtail_period = annualize_dt_to_d(
+            curtail_dt, par.timestep_weight, par.complete_period_share_of_year, par.step_duration)
+        potential_period = annualize_dt_to_d(
+            potential_dt, par.timestep_weight, par.complete_period_share_of_year, par.step_duration)
 
         # Calculate curtailment share at period level (ratio — step_duration cancels)
         curtail_share_period = (curtail_period / potential_period).where(potential_period != 0, 0)

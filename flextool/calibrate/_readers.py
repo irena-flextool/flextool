@@ -112,11 +112,13 @@ def read_residual_unserved_dt(assess_dir: Path) -> dict[str, "object"]:
 
 
 def read_curtailment_by_sink(assess_dir: Path) -> dict[str, float]:
-    """Return ``{sink_node: total_curtailment_MWh}`` or ``{}`` if absent.
+    """Return ``{sink_node: curtailment}`` (MWh/a summed over the periods) or ``{}`` if absent.
 
     Reads ``unit_curtailment_outputNode_d_ee`` (columns
-    ``(scenario, unit, sink)``), sums each column over periods and groups
-    the totals by ``sink`` node.  The file is OPTIONAL (no curtailment ⇒ no
+    ``(scenario, unit, sink)``; each period's curtailment scaled to a full
+    year, MWh/a), sums each column over periods and groups the totals by
+    ``sink`` node.  Informational (the ``curtailment_mwh`` column of the
+    calibration record), on the same annual basis as the other energies.  The file is OPTIONAL (no curtailment ⇒ no
     table); a missing file yields ``{}``.  Consumed by the over-build guard
     (C1c).
     """

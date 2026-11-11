@@ -267,7 +267,7 @@ plots:
         comparison_overrides:
           map_dimensions_for_plots: [d_seeg, b_essu]
           max_items_per_plot: 40
-          ylabel: MWh
+          ylabel: MWh (annualized)
       sum_periods:
         plot_name: 'Lack of reserves total'
         variant: a
@@ -429,7 +429,7 @@ plots:
         value_label: dynamic
         skip_data_with_only_zeroes: true
         axis_tick_format: '1,.0f'
-        xlabel: MWh (period total)
+        xlabel: MWh (annualized)
         comparison_overrides:
           map_dimensions_for_plots: [d_see, b_gee]
           max_items_per_plot: 40
@@ -443,7 +443,7 @@ plots:
         value_label: dynamic
         skip_data_with_only_zeroes: true
         axis_tick_format: '1,.0f'
-        xlabel: MWh (sum of the period totals)
+        xlabel: MWh (horizon total)
         scenario_rule: g
         comparison_overrides:
           max_items_per_plot: 40
@@ -917,7 +917,7 @@ plots:
         variant: p
         bar_orientation: vertical
         base_length: 6
-        ylabel: Currency
+        ylabel: M CUR/a (annualized)
         max_items_per_plot: 40
         max_subplots_per_file: 2
         subplots_per_row: 2
@@ -928,7 +928,7 @@ plots:
         comparison_overrides:
           base_length: 10
           max_subplots_per_file: 1
-          xlabel: Millions of Currency
+          xlabel: M CUR/a (annualized)
       sum_periods:
         plot_name: 'Costs total'
         variant: a
@@ -936,7 +936,7 @@ plots:
         base_length: 6
         map_dimensions_for_plots: [d_p, y_s]
         skip_data_with_only_zeroes: true
-        ylabel: Currency (horizon total)
+        ylabel: M CUR (horizon total, undiscounted)
         color_category: costs
         scenario_rule: b
         comparison_overrides:
@@ -944,7 +944,7 @@ plots:
           max_items_per_plot: 40
           max_subplots_per_file: 1
           legend: shared
-          xlabel: Millions of Currency (horizon total)
+          xlabel: M CUR (horizon total, undiscounted)
     costs_dt_p:
       default:
         plot_name: 'Costs stack'
@@ -1021,21 +1021,21 @@ plots:
         bar_orientation: vertical
         base_length: 6
         map_dimensions_for_plots: [d_p, b_s]
-        ylabel: Currency
+        ylabel: M CUR (discounted)
         skip_data_with_only_zeroes: true
         color_category: costs
         scenario_rule: e
         comparison_overrides:
           max_items_per_plot: 40
           base_length: 8
-          ylabel: Millions of Currency
+          ylabel: M CUR (discounted)
       sum_periods:
         plot_name: 'Costs discounted total'
         variant: a
         bar_orientation: vertical
         base_length: 6
         map_dimensions_for_plots: [d_p, m_s]
-        ylabel: Currency
+        ylabel: M CUR (discounted, horizon total)
         skip_data_with_only_zeroes: true
         color_category: costs
         scenario_rule: e
@@ -1051,7 +1051,7 @@ plots:
         bar_orientation: vertical
         base_length: 6
         map_dimensions_for_plots: [d_s, s_b]
-        ylabel: Currency
+        ylabel: M CUR (discounted, horizon total)
         xlabel: Cost category
         skip_data_with_only_zeroes: true
         color_category: costs
@@ -1336,7 +1336,7 @@ plots:
       default:
         variant: a
         map_dimensions_for_plots: [x_x, m_b]
-        xlabel: Mt CO2
+        xlabel: Mt CO2 (horizon total)
         # Single mode: one bar (model-wide CO2 for the chosen scenario).
         # Comparison: one coloured bar per scenario, all in the same plot.
         scenario_rule: g
@@ -1523,21 +1523,29 @@ plots:
         max_subplots_per_file: 8
         axis_bounds: [[0, 1], [0, 1], [0, 1], [0, 1], [], [0, 1]]
         axis_tick_format: ['.0%', '.0%', '.0%', '.0%', '1,.0f', '.0%']
-        xlabel: [percent, percent, percent, percent, MWh, percent]
+        xlabel: [percent, percent, percent, percent, MWh (annualized), percent]
         comparison_overrides:
           map_dimensions_for_plots: [gd_sp, fg_bu]
           max_items_per_plot: 40
           axis_tick_format: ['.0%', '.0%', '.0%', '.0%', dynamic, '.0%']
+    # Horizon totals: each share is the ratio of the energies over all periods
+    # (each period scaled to a year and times its years represented), computed
+    # in out_group, not an average of the period shares.
+    nodeGroup_g_p:
       sum_periods:
+        plot_name: 'NodeGroup indicators total'
         variant: a
-        map_dimensions_for_plots: [gd_p, fz_u]
+        map_dimensions_for_plots: [g_p, b_u]
+        color_entity_class: group
         max_items_per_plot: 10
         subplots_per_row: 2
         max_subplots_per_file: 8
         axis_bounds: [[0, 1], [0, 1], [0, 1], [0, 1], [], [0, 1]]
         axis_tick_format: ['.0%', '.0%', '.0%', '.0%', '1,.0f', '.0%']
-        xlabel: [percent, percent, percent, percent, MWh, percent]
-        scenario_rule: b
+        xlabel: [percent (horizon total, energy ratio), percent (horizon total, energy ratio),
+                 percent (horizon total, energy ratio), percent (horizon total, energy ratio), MWh (horizon total),
+                 percent (horizon total, energy ratio)]
+        scenario_rule: g
         comparison_overrides:
           max_items_per_plot: 40
           axis_tick_format: ['.0%', '.0%', '.0%', '.0%', dynamic, '.0%']
@@ -1560,10 +1568,13 @@ plots:
           max_subplots_per_file: 1
           base_length: 8
           skip_data_with_only_zeroes: true
+    # Horizon total: total VRE energy / total inflow over all periods (each
+    # period scaled to a year and times its years represented), from out_group.
+    nodeGroup_VRE_share_g:
       sum_periods:
-        plot_name: 'NodeGroup VRE share average'
+        plot_name: 'NodeGroup VRE share total'
         variant: a
-        map_dimensions_for_plots: [d_g, z_b]
+        map_dimensions_for_plots: [x_g, m_b]
         color_entity_class: group
         legend: shared
         subplots_per_row: 1
@@ -1572,7 +1583,7 @@ plots:
         base_length: 8
         skip_data_with_only_zeroes: true
         axis_tick_format: '.0%'
-        xlabel: percent (weighted average)
+        xlabel: percent (horizon total, energy ratio)
         scenario_rule: g
     nodeGroup_VRE_share_dt_g:
       default:
@@ -1688,7 +1699,7 @@ plots:
           subplots_per_row: 2
           max_subplots_per_file: 8
       sum_periods:
-        plot_name: 'NodeGroup inflow cumulative'
+        plot_name: 'NodeGroup inflow total'
         variant: a
         bar_orientation: vertical
         base_length: 8
@@ -1701,7 +1712,7 @@ plots:
           subplots_per_row: 2
           max_subplots_per_file: 8
           legend: shared
-          ylabel: MWh
+          ylabel: MWh (horizon total)
     nodeGroup_flows_dt_g:
       default:
         variant: h
@@ -2214,6 +2225,7 @@ plots:
         subplots_per_row: 2
         max_items_per_plot: 40
         max_subplots_per_file: 8
+        xlabel: MWh (annualized)
         scenario_rule: g
     unit_VRE_potential_outputNode_dt_ee:
       debug:
@@ -2317,9 +2329,11 @@ rename:
   nodeGroup_inertia_largest_flow_dt_g: [group_inertia_largest_flow__dt, true]
   nodeGroup_gdt_p: [group_node__dt, true]
   nodeGroup_gd_p: [group_node__d, true]
+  nodeGroup_g_p: [group_node__horizon, true]
   flowGroup_gd_p: [group_flow__d, true]
   flowGroup_gd_t: [group_flow__dt, true]
   nodeGroup_VRE_share_d_g: [group_node_VRE_share__d, true]
+  nodeGroup_VRE_share_g: [group_node_VRE_share__horizon, true]
   nodeGroup_VRE_share_dt_g: [group_node_VRE_share__dt, true]
   CO2_d_g: [group_CO2__d, true]
   co2_price_period_d_g: [group_CO2_price_period__d, true]

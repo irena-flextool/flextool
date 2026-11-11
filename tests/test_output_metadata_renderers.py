@@ -50,7 +50,7 @@ def test_datapackage_resource_mixed_unit_table():
         index_names=["group"], measure_columns=["cumulative_flow", "average_flow"],
     )
     fields = {f["name"]: f for f in res["schema"]["fields"]}
-    assert fields["cumulative_flow"]["unit"] == "MWh"
+    assert fields["cumulative_flow"]["unit"] == "MWh/a"
     assert fields["average_flow"]["unit"] == "MW"
     assert fields["average_flow"]["flextool:semantics"] == "average"
 

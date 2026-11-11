@@ -208,6 +208,11 @@ PRICE_ENERGY = Transform(
                 "(blended-weight) storage linking.",
     algebra="σ·dual(node_balance) / s / (timestep_weight · inflation / period_share · branch_weight)",
 )
+ENERGY_HORIZON = Transform(
+    "MWh", Semantics.HORIZON,
+    "Energy over the represented horizon: each period's energy per year times its years represented, summed.",
+    algebra="Σ_d years_represented · MWh_step · timestep_weight / period_share",
+)
 EMISSION_MT = Transform(
     "Mt", Semantics.HORIZON,
     "System CO2 emissions, total over the represented horizon (NOT per year).",
@@ -377,6 +382,14 @@ _NODEGROUP_GD_P = {
     '5. Annualized inflow': PREENERGY_ANNUAL,
     '6. Curtailed VRE of potential VRE': RATIO,
 }
+_NODEGROUP_G_P = {
+    '1. Loss of load share': RATIO,
+    '2. VRE share of demand': RATIO,
+    '3. Excess load share': RATIO,
+    '4. Curtailed VRE of demand': RATIO,
+    '5. Inflow (horizon total)': ENERGY_HORIZON,
+    '6. Curtailed VRE of potential VRE': RATIO,
+}
 _RESERVE_REQUIREMENT_D = {
     'requirement_avg': RESERVE_REQUIREMENT_AVG,
     'provided_avg': RESERVE_REQUIREMENT_AVG,
@@ -391,8 +404,8 @@ _CAPACITY_MARGIN_D_G = {
     'capacity_price': CAPACITY_MARGIN_PRICE,
 }
 _FLOWGROUP_GD_P = {
-    'cumulative_flow': ENERGY_PERIOD,   # MWh summed over the sample (not annualized)
-    'average_flow': AVERAGE_MW,         # MW time-average
+    'cumulative_flow': ENERGY_ANNUAL,   # MWh/a: the period's energy scaled to a full year
+    'average_flow': AVERAGE_MW,         # MW: the weighted time-average
 }
 
 
@@ -448,11 +461,12 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     # potential are SUM-ONLY over the sample (per_period), NOT annualized —
     # unlike unit_outputNode_d_ee (see Task #4 / Stage-1 finding).
     "nodeGroup_VRE_share_d_g": RATIO,
+    "nodeGroup_VRE_share_g": RATIO,
     "nodeGroup_VRE_share_dt_g": RATIO,
     "unit_VRE_potential_outputNode_dt_ee": RATE,
     "unit_curtailment_outputNode_dt_ee": RATE,
-    "unit_VRE_potential_outputNode_d_ee": ENERGY_PERIOD,
-    "unit_curtailment_outputNode_d_ee": ENERGY_PERIOD,
+    "unit_VRE_potential_outputNode_d_ee": ENERGY_ANNUAL,
+    "unit_curtailment_outputNode_d_ee": ENERGY_ANNUAL,
     "unit_curtailment_share_outputNode_dt_ee": RATIO,
     "unit_curtailment_share_outputNode_d_ee": RATIO,
     # Ramps
@@ -516,6 +530,7 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     # Mixed-unit tables — per-column transform maps.
     "nodeGroup_gdt_p": _NODEGROUP_GDT_P,
     "nodeGroup_gd_p": _NODEGROUP_GD_P,
+    "nodeGroup_g_p": _NODEGROUP_G_P,
     "flowGroup_gd_p": _FLOWGROUP_GD_P,
     # Pure membership / index sets (no measure columns)
     "group_node": DIMENSION_TABLE,
@@ -710,6 +725,13 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
                        "generation, excess load, curtailed VRE, inflow and VRE shares.",
     "nodeGroup_gd_p": "Indicators of each indicator group in each period: loss of load, excess load and "
                       "curtailment as shares of demand, the VRE share of demand and the annualized inflow.",
+    "nodeGroup_g_p": "Indicators of each indicator group over the whole horizon: loss of load, excess load and "
+                     "curtailment as shares of demand, the VRE share of demand and the curtailed share of the VRE "
+                     "potential, each a ratio of the energies over all periods (each period scaled to a year and "
+                     "times its years represented), and the inflow over the horizon.",
+    "nodeGroup_VRE_share_g": "Share of the inflow (demand) of each indicator group covered by VRE units over the "
+                             "whole horizon: the total VRE energy over the total inflow (each period scaled to a "
+                             "year and times its years represented).",
     "nodeGroup_VRE_share_dt_g": "Share of the inflow (demand) of each indicator group covered by VRE units in "
                                 "each time step.",
     "nodeGroup_VRE_share_d_g": "Share of the period's inflow (demand) of each indicator group covered by VRE "
@@ -717,12 +739,12 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
     # VRE curtailment and potential
     "unit_VRE_potential_outputNode_dt_ee": "Potential output of each VRE unit to each output node in each time "
                                            "step: capacity times the upper-limit profile.",
-    "unit_VRE_potential_outputNode_d_ee": "Potential output of each VRE unit to each output node summed over the "
-                                          "period with the timestep weights, not scaled to a full year.",
+    "unit_VRE_potential_outputNode_d_ee": "Potential output of each VRE unit to each output node in the period, "
+                                          "summed with the timestep weights and scaled to a full year (MWh/a).",
     "unit_curtailment_outputNode_dt_ee": "Curtailment of each VRE unit at each output node in each time step: "
                                          "the potential minus the actual output.",
-    "unit_curtailment_outputNode_d_ee": "Curtailment of each VRE unit at each output node summed over the period "
-                                        "with the timestep weights, not scaled to a full year.",
+    "unit_curtailment_outputNode_d_ee": "Curtailment of each VRE unit at each output node in the period, summed "
+                                        "with the timestep weights and scaled to a full year (MWh/a).",
     "unit_curtailment_share_outputNode_dt_ee": "Curtailment of each VRE unit as a share of its potential output "
                                                "in each time step.",
     "unit_curtailment_share_outputNode_d_ee": "Curtailment of each VRE unit as a share of its potential output "
@@ -804,8 +826,9 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
     "nodeGroup_slack_reserve_d_eeg": "Reserve shortfall of each reserve, direction and group summed over the "
                                      "period and scaled to a full year.",
     # Flow groups
-    "flowGroup_gd_p": "Sum of the absolute flows of the member legs of each flow group over the period "
-                      "(cumulative_flow) and its average power (average_flow).",
+    "flowGroup_gd_p": "Sum of the absolute flows of the member legs of each flow group in the period, summed "
+                      "with the timestep weights and scaled to a full year (cumulative_flow, MWh/a), and its "
+                      "average power (average_flow, MW).",
     "flowGroup_gd_t": "Signed net flow into the nodes of each flow group in each time step (into the group's "
                       "nodes positive).",
     # DC power flow
@@ -875,8 +898,10 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "nodeGroup_gdt_p": OutputDims(("group", "period", "time"), ("parameter",), "nodeGroup_gd_p",
                                    _PARAMETER_QUANTITY),
     "nodeGroup_gd_p": OutputDims(("group", "period"), ("parameter",), "nodeGroup_gdt_p", _PARAMETER_QUANTITY),
+    "nodeGroup_g_p": OutputDims(("group",), ("parameter",), kinds=_PARAMETER_QUANTITY),
     "nodeGroup_VRE_share_dt_g": OutputDims(_DT, ("group",), "nodeGroup_VRE_share_d_g"),
     "nodeGroup_VRE_share_d_g": OutputDims(_D, ("group",), "nodeGroup_VRE_share_dt_g"),
+    "nodeGroup_VRE_share_g": OutputDims(("horizon",), ("group",), kinds=(("horizon", "quantity"),)),
     "unit_VRE_potential_outputNode_dt_ee": OutputDims(_DT, ("unit", "sink"), "unit_VRE_potential_outputNode_d_ee"),
     "unit_VRE_potential_outputNode_d_ee": OutputDims(_D, ("unit", "sink"), "unit_VRE_potential_outputNode_dt_ee"),
     "unit_curtailment_outputNode_dt_ee": OutputDims(_DT, ("unit", "sink"), "unit_curtailment_outputNode_d_ee"),

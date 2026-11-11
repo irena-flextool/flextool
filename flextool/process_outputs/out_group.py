@@ -40,6 +40,29 @@ def _safe_ratio(num, den):
     return (num / den.where(den != 0)).fillna(0.0)
 
 
+def _horizon_weights(par, periods) -> pd.Series:
+    """``years_represented[d] / complete_period_share_of_year[d]`` per period: turns a weighted sample sum of
+    the period into its energy over the years the period represents."""
+    # No years_represented: every period represents one year (the model default).
+    years_d = getattr(par, 'years_represented_d', None)
+    years = (years_d.reindex(periods).fillna(1.0) if years_d is not None
+             else pd.Series(1.0, index=periods))
+    share = par.complete_period_share_of_year.reindex(periods)
+    return years.div(share.where(share != 0))
+
+
+def _horizon_sum(sums_d: pd.DataFrame | pd.Series, par, level: str = 'period'):
+    """``Σ_d years[d]·sums[d]/share[d]``: the horizon total of weighted per-period sample sums (rows: ``level``
+    is the period; the other row levels are kept)."""
+    periods = sums_d.index.get_level_values(level)
+    factor = _horizon_weights(par, periods.unique()).reindex(periods).fillna(0.0).to_numpy()
+    weighted = sums_d.mul(factor, axis=0)
+    others = [n for n in sums_d.index.names if n != level]
+    if others:
+        return weighted.groupby(level=others, sort=False).sum()
+    return weighted.sum(axis=0)
+
+
 def nodeGroup_indicators(par, s, v, r, debug):
     """Node group indicator results by period and time.
 
@@ -59,6 +82,12 @@ def nodeGroup_indicators(par, s, v, r, debug):
     each of these ratios (numerator and denominator are from the same
     period), so a share must not be annualised.  '5. Annualized inflow' is
     the sum of the dt column '7', which is already weighted.
+
+    Horizon table ``nodeGroup_g_p``: the same shares over all periods, as
+    ratios of the energies ``Σ_d y[d]·Σ_t w[d,t]·X[d,t] / share[d]`` (``y``
+    years represented, ``share`` the period's share of a year), not averages
+    of the period shares; '5. Inflow (horizon total)' is that energy of the
+    inflow.
     """
 
     results = []
@@ -220,6 +249,22 @@ def nodeGroup_indicators(par, s, v, r, debug):
 
     results.append((results_d_indexed, 'nodeGroup_gd_p'))
 
+    # Horizon: the same ratios of the energies over all periods, each period's
+    # weighted sum scaled to a year and times its years represented
+    # (Σ_d y_d·Σ_t w·X / share_d), and the inflow over the horizon.
+    sums_h = _horizon_sum(sums_d, par)
+    results_g = pd.DataFrame({
+        '1. Loss of load share': _safe_ratio(sums_h['lol'], sums_h['inflow']),
+        '2. VRE share of demand': _safe_ratio(sums_h['vre'], sums_h['inflow']),
+        '3. Excess load share': _safe_ratio(sums_h['excess'], sums_h['inflow']),
+        '4. Curtailed VRE of demand': _safe_ratio(sums_h['curt'], sums_h['inflow']),
+        '5. Inflow (horizon total)': sums_h['inflow'],
+        '6. Curtailed VRE of potential VRE': _safe_ratio(sums_h['curt'], sums_h['pot']),
+    })
+    results_g.index.name = 'group'
+    results_g.columns.name = "parameter"
+    results.append((results_g, 'nodeGroup_g_p'))
+
     return results
 
 
@@ -231,6 +276,9 @@ def nodeGroup_VRE_share(par, s, v, r, debug):
     ``w = par.timestep_weight`` — a share of the period's inflow, not a mean
     of the step shares.  The VRE energy comes from ``_group_vre_flow`` (as
     for the indicators), so the period value equals '2. VRE share of demand'.
+    Horizon (``nodeGroup_VRE_share_g``, one row ``total``): the total VRE
+    energy over the total inflow, ``Σ_d y[d]·vre[d]/share[d] ÷
+    Σ_d y[d]·inflow[d]/share[d]`` (equals '2.' of ``nodeGroup_g_p``).
     """
 
     results = []
@@ -279,6 +327,15 @@ def nodeGroup_VRE_share(par, s, v, r, debug):
     results_d = _safe_ratio(vre_d, inflow_d)
     results_d.columns.name = 'group'
     results.append((results_d, 'nodeGroup_VRE_share_d_g'))
+
+    # Horizon: total VRE energy over total inflow (each period's weighted sums
+    # scaled to a year and times its years represented).
+    vre_h = _horizon_sum(vre_d, par)
+    inflow_h = _horizon_sum(inflow_d, par)
+    results_g = _safe_ratio(vre_h, inflow_h).to_frame('total').T
+    results_g.index.name = 'horizon'
+    results_g.columns.name = 'group'
+    results.append((results_g, 'nodeGroup_VRE_share_g'))
 
     return results
 
