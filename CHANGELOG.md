@@ -329,6 +329,14 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   stored values (the file is opened read-only; a missing file is an error) and lists the parameters a database has
   but this FlexTool does not define. See *How to make a data dictionary for your model* in the how-to recipes.
 
+#### AI assistant
+
+- **Ask a question again, as it was or changed.** In the AI assistant window each question has two small buttons:
+  ↻ asks it again and ✎ puts it in the box to change (Enter sends it, Escape keeps the question as it was); R and E
+  on a question line and its right-click menu do the same. The answer, and the questions and answers after it, are
+  replaced; when later questions go too, the window asks first. In the terminal chat, `/retry` asks the last
+  question again and `/edit` changes it first. See "Ask" and "Commands" in "The AI assistant".
+
 ### Fixes
 
 #### Investment and discounting

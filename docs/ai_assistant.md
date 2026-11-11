@@ -77,6 +77,18 @@ Type in the box at the bottom and press Enter to send; Ctrl+Enter starts a new l
 and you can type the next one while the answer comes; Send is available again when the answer is done. Stop (or
 Escape) stops the answer; what arrived stays in the chat.
 
+Each question you sent has two small buttons after it: ↻ asks it again as it was, and ✎ puts it in the box to
+change it (where the symbols cannot be shown, on Windows without the Segoe UI Symbol font, they read "Ask again" and
+"Edit"). R or E on a question line, and its right-click menu, do the same. The question's answer, and every later
+question with its answer, are removed from the chat and from what the assistant is sent next; when later questions
+go too, the window asks first ("This also removes the 2 later questions and answers.", a question still being
+answered counted). During an answer, the answer stops once you confirm, and the question goes right after. With ✎
+the status line says "Editing question N: Enter sends it, Escape cancels."; nothing is removed until you press
+Enter, and Escape gives the box back what you had typed in it. Asking the first question again lets the chat take
+the model in the settings, as a new chat does. Results the assistant had already shortened to keep the
+conversation short stay shortened. The token line's "Whole chat" still counts the tokens of the removed answers:
+they were used.
+
 Each question also tells the assistant what you have selected in the FlexTool window: the input sources and
 scenarios checked and highlighted, the results checked and highlighted (with whether their latest run succeeded),
 and what the result viewer shows (mode, scenarios, plot and time range). The assistant uses the highlighted input
@@ -216,6 +228,8 @@ ever read from piped text.
 | `/help` | The list of commands. |
 | `/new` | Start a new conversation. |
 | `/new carry` | Start a new conversation whose first question carries a short summary of this one. |
+| `/retry` | Ask your last question again; its answer is replaced. |
+| `/edit` | Change your last question and ask it again; its answer is replaced. On a terminal with GNU readline the question is put on the input line to change; elsewhere it is printed for you to copy, with `\` line ends. An empty line keeps the question and its answer. |
 | `/model NAME` | Go on with another model of the same service; `/model` alone lists the models. |
 | `/provider` | Choose another service. |
 | `/privacy` | Where the data goes, the privacy settings sent with each request, and the settings only your account can change. |
