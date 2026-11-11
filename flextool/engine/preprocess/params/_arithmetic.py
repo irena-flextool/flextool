@@ -165,7 +165,7 @@ def p_unitsize_from_source(source: "InputSource",
 
     The Spine source for ``p_entity_unitsize`` is the cascade::
 
-        unitsize = virtual_unitsize (if explicitly set non-zero)
+        unitsize = virtual_unitsize (if explicitly set above 0)
                   OR existing       (if explicitly set non-zero)
                   OR 1000.0
 

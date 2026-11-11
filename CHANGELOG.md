@@ -535,6 +535,14 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   like percentages; capacity factors slightly above 1 are not reported), connection `efficiency` above 1 and
   `virtual_unitsize` at or below 0. *Model parameters → Parameter groups and conventions* has a new section *Input
   checks* listing them. Valid data runs as before.
+- **A negative `existing` ran without a word (#170).** A unit, connection or node with `existing` below 0 now
+  gets a warning naming it, the alternative and the period. Such a unit is a supported "anti-energy" unit (its
+  flows run the other way), so the run continues, but a negative value is more often a typing mistake, and with a
+  profile, `min_load` or invest / retire limits it can make the problem infeasible.
+- **A `virtual_unitsize` at or below 0 was not ignored, although the warning said so.** A negative value became
+  the unit size and multiplied `existing` (200 units of −5 MW: an anti-energy unit of −1000 MW). Now it is ignored
+  as the warning says: `existing` is the capacity itself and the entity is one unit of it. Results of valid data do
+  not change.
 - **A mistyped period key was dropped without a word.** A period map keyed *y2020* in a
   model whose period is *p2020* gave `existing` 0, an extra key such as *p2030x* was ignored, and `startup_cost`
   keyed by time steps or by 2020 vanished or crashed. Now a map key of a period parameter that is not a period of

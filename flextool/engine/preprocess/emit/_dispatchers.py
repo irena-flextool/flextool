@@ -625,7 +625,7 @@ def _compute_ed_fixed_cost(inp: dict) -> pl.DataFrame:
 
 def _compute_p_entity_unitsize(inp: dict) -> pl.DataFrame:
     """``solve_data/p_entity_unitsize.csv``: ``(entity, value)`` per entity, the
-    unitsize cascade (``virtual_unitsize`` non-zero, else ``existing`` non-zero,
+    unitsize cascade (``virtual_unitsize`` above 0, else ``existing`` non-zero,
     else 1000) of :func:`params._derived.unitsize_cascade` — the same function
     the DB-side ``_entity_unitsize_lf`` / ``_node_unitsize_lf`` use.  ``existing``
     is read from both ``p_<class>`` (a constant) and ``pd_<class>`` (a period

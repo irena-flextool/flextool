@@ -4,7 +4,8 @@
 cannot use sensibly and warns about values that are likely entered in the wrong unit.  Before the check:
 ``efficiency 0`` turned coal_plant off, ``efficiency -0.4`` paid it to run, ``capacity_max_coeff -1`` and a minimum
 above its maximum ended "infeasible on presolve" without a hint, and ``availability 95`` made more capacity than
-there is, all without a word.  (``existing`` as a time series or keyed by time steps or numbers is
+there is, all without a word; a negative ``virtual_unitsize`` (reported as ignored) still multiplied the
+capacity.  A negative ``existing`` is supported (anti-energy) but warned about.  (``existing`` as a time series or keyed by time steps or numbers is
 ``validate_period_keys``': ``test_period_key_checks.py``.)
 
 Databases: ``tests/fixtures/tests.json`` + one override alternative on ``init, west, coal`` (coal_plant: input
@@ -206,11 +207,64 @@ def test_likely_unit_mistakes_warn(tmp_path_factory, capsys, alt, values, chain,
     assert expected in capsys.readouterr().out
 
 
-def test_negative_existing_is_silent(tmp_path_factory, capsys) -> None:
-    """Anti-energy units are supported (the anti_energy_plant example)."""
-    _validate(*make_db(tmp_path_factory, alt="b170_anti", base_chain=PLANT_CHAIN,
-                       values=[["unit", "coal_plant", "existing", _f(-50.0)]]))
+_ANTI_UNIT = ("a negative capacity makes an anti-energy unit (its flows run the other way). If you did not mean "
+              "that, use 0 or more. Combined with a profile, min_load or invest / retire limits it can make the "
+              "problem infeasible.")
+
+
+def test_negative_existing_of_a_unit_warns_and_the_run_continues(tmp_path_factory, capsys) -> None:
+    """Anti-energy units are supported (the anti_energy_plant example), so a warning, not an error."""
+    run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_anti", base_chain=PLANT_CHAIN,
+                                   values=[["unit", "coal_plant", "existing", _f(-50.0)]]))
+    assert ("Warning: unit 'coal_plant' existing = -50 (alternative 'b170_anti'): " + _ANTI_UNIT
+            ) in capsys.readouterr().out
+
+
+def test_negative_existing_in_a_period_map_names_the_period(tmp_path_factory, capsys) -> None:
+    _validate(*make_db(tmp_path_factory, alt="b170_anti_map", base_chain=PLANT_CHAIN,
+                       values=[["unit", "coal_plant", "existing", _map([["p2020", -50.0]])]]))
+    assert ("Warning: unit 'coal_plant' existing = -50 (alternative 'b170_anti_map', at p2020): " + _ANTI_UNIT
+            ) in capsys.readouterr().out
+
+
+def test_negative_existing_of_a_node_warns(tmp_path_factory, capsys) -> None:
+    _validate(*make_db(tmp_path_factory, alt="b170_node_neg", base_chain=PLANT_CHAIN,
+                       values=[["node", "west", "existing", _f(-10.0)]]))
+    assert ("Warning: node 'west' existing = -10 (alternative 'b170_node_neg'): a negative capacity gives the node a "
+            "negative storage capacity. If you did not mean that, use 0 or more. Combined with storage state limits "
+            "or invest / retire limits it can make the problem infeasible.") in capsys.readouterr().out
+
+
+def test_negative_existing_of_a_connection_warns(tmp_path_factory, capsys) -> None:
+    _validate(*make_db(tmp_path_factory, alt="b170_conn_neg", base_chain=NETWORK_CHAIN,
+                       values=[["connection", "west_east", "existing", _f(-100.0)]]))
+    assert ("Warning: connection 'west_east' existing = -100 (alternative 'b170_conn_neg'): a negative capacity "
+            "gives the connection a negative transfer capacity. If you did not mean that, use 0 or more. Combined "
+            "with invest / retire limits it can make the problem infeasible.") in capsys.readouterr().out
+
+
+def test_zero_existing_is_silent(tmp_path_factory, capsys) -> None:
+    _validate(*make_db(tmp_path_factory, alt="b170_ex0", base_chain=PLANT_CHAIN, values=[
+        ["unit", "coal_plant", "existing", _f(0.0)], ["node", "west", "existing", _f(0.0)]]))
     assert "Warning" not in capsys.readouterr().out
+
+
+def test_negative_virtual_unitsize_is_ignored(tmp_path_factory, capsys) -> None:
+    """The warning says "ignored": the unit is one unit of its existing capacity (unitsize 200, capacity 200), not
+    200 units of -5 MW (an anti-energy unit of -1000 MW, which the cascade made of any non-zero value)."""
+    import polars as pl
+
+    from tests.engine._unit_db import utf8
+
+    steps = run(tmp_path_factory, *make_db(tmp_path_factory, alt="b170_vu_neg", base_chain=PLANT_CHAIN, values=[
+        ["unit", "coal_plant", "existing", _f(200.0)], ["unit", "coal_plant", "virtual_unitsize", _f(-5.0)]]))
+    assert ("Warning: unit 'coal_plant' virtual_unitsize = -5 (alternative 'b170_vu_neg'): virtual_unitsize must be "
+            "above 0; the value is ignored (the entity is one unit of its capacity).") in capsys.readouterr().out
+    fd = next(iter(steps.values())).flex_data
+    unitsize = utf8(fd.p_unitsize.frame).filter(pl.col("p") == "coal_plant")["value"].to_list()
+    capacity = utf8(fd.p_entity_all_existing.frame).filter(pl.col("e") == "coal_plant")["value"].to_list()
+    assert unitsize == [200.0]
+    assert capacity == [200.0]
 
 
 def test_profile_entered_as_percent_warns(tmp_path_factory, capsys) -> None:

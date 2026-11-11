@@ -1638,15 +1638,17 @@ def p_entity_pre_existing_lf(source: "InputSource",
                  else p_node[e, 'virtual_unitsize'] (if e ∈ node)
                  else 0
         if lifetime_method = reinvest_automatic →
-            v = v_existing * v_unit  if v_unit else v_existing
+            v = v_existing * v_unit  if v_unit > 0 else v_existing
         if lifetime_method ∈ {reinvest_choice, no_investment} →
-            v = (v_existing * v_unit if v_unit else v_existing)
+            v = (v_existing * v_unit if v_unit > 0 else v_existing)
                 while pdy[d] < life_sum(e); 0 thereafter.
         else → 0.
 
     The ``v_existing × v_unit`` term is the canonical capacity (a
     counted entity's ``existing`` is the count, not the capacity).
-    Only applied when ``v_unit > 0``.
+    Only applied when ``v_unit > 0``: a ``virtual_unitsize`` of 0 or below
+    is ignored (``validate_basic_sanity`` warns about it), so ``existing``
+    is then the capacity itself.
     """
     if not period_in_use:
         return pl.LazyFrame(schema={
@@ -1695,8 +1697,8 @@ def p_entity_pre_existing_lf(source: "InputSource",
         workdir=workdir, provider=provider)
     expired_marked = expired_lf.with_columns(_expired=pl.lit(True))
 
-    # Compose: value = ex × vu (or ex if vu=0) if alive; 0 else.
-    capacity_expr = (pl.when(pl.col("vu") != 0.0)
+    # Compose: value = ex × vu (or ex if vu ≤ 0: ignored) if alive; 0 else.
+    capacity_expr = (pl.when(pl.col("vu") > 0.0)
                           .then(pl.col("ex") * pl.col("vu"))
                           .otherwise(pl.col("ex")))
     return (grid_with_vu

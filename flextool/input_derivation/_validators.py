@@ -2233,6 +2233,18 @@ def _where(alt: str, key: str | None) -> str:
 _PERCENT_SUSPECT = 1.5
 
 
+# What a negative ``existing`` means, per class (validate_basic_sanity's warning).
+# ``{class: (what it makes, what it can clash with)}``.
+_NEGATIVE_EXISTING = {
+    "unit": ("a negative capacity makes an anti-energy unit (its flows run the other way)",
+             "a profile, min_load or invest / retire limits"),
+    "connection": ("a negative capacity gives the connection a negative transfer capacity",
+                   "invest / retire limits"),
+    "node": ("a negative capacity gives the node a negative storage capacity",
+             "storage state limits or invest / retire limits"),
+}
+
+
 # invest_method values that forbid investing / retiring: the one definition in preprocess/params/_existing.py.
 _NO_INVEST = INVEST_NOT_ALLOWED
 _NO_RETIRE = DIVEST_NOT_ALLOWED
@@ -2311,9 +2323,10 @@ def validate_basic_sanity(src) -> None:
     ``existing`` as a time series, keyed by time steps or by numbers is :func:`validate_period_keys`'.
 
     Warnings: ``availability`` above 1.5 (entered as percent?); connection ``efficiency`` > 1 (creates energy);
-    ``virtual_unitsize`` ≤ 0 (ignored).  Profiles above 1.5 are :func:`warn_profiles_as_percent`' (after the read).
-    Negative ``existing`` is not reported: it is the supported "anti-energy" unit.  The warnings are printed before
-    an error is raised.
+    ``virtual_unitsize`` ≤ 0 (ignored); ``existing`` < 0 (unit, connection, node; :data:`_NEGATIVE_EXISTING`):
+    supported (a unit with a negative capacity is an "anti-energy" unit), but more often a typing mistake, and with
+    a profile, min_load or invest / retire limits it can make the problem infeasible.  Profiles above 1.5 are
+    :func:`warn_profiles_as_percent`' (after the read).  The warnings are printed before an error is raised.
     """
     errors: list[str] = []
     warnings: list[str] = []
@@ -2354,6 +2367,10 @@ def validate_basic_sanity(src) -> None:
         scan(cls, "virtual_unitsize", [(lambda v: v <= 0.0,
              "virtual_unitsize must be above 0; the value is ignored (the entity is one unit of its capacity).",
              warnings)])
+    for cls, (what, clash) in _NEGATIVE_EXISTING.items():
+        scan(cls, "existing", [(lambda v: v < 0.0,
+             f"{what}. If you did not mean that, use 0 or more. Combined with {clash} it can make the problem "
+             "infeasible.", warnings)])
 
     methods: dict[str, dict[str, str]] = {
         cls: {k[0]: v for k, v in _str_values(src, cls, "invest_method").items()}

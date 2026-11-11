@@ -118,7 +118,12 @@ rerun fixes them all. A warning is printed once per scenario read in the run log
   like percentages (95 for 0.95). A capacity factor slightly above 1 (rounding, measured data) is not reported. The
   profile check runs right after the data is read.
 - Connection `efficiency` above 1 (creates energy).
-- `virtual_unitsize` at or below 0 (ignored).
+- `virtual_unitsize` at or below 0 (ignored: `existing` is then the capacity itself and the entity is one unit of
+  it).
+- A negative `existing` (unit, connection or node). It is allowed: a unit with a negative capacity is an
+  "anti-energy" unit whose flows run the other way, a node gets a negative storage capacity and a connection a
+  negative transfer capacity. It is more often a typing mistake, and combined with a profile, `min_load`, storage
+  limits or invest / retire limits it can make the problem infeasible.
 - A map of a period parameter that can also vary over time (`availability`, `other_operational_cost`, ...) without
   an index name whose keys are neither periods nor time steps but look like time steps, on a parameter the
   time-series check does not cover (the value is not used).
@@ -129,5 +134,5 @@ rerun fixes them all. A warning is printed once per scenario read in the run log
   coefficient 0 gets one warning (it uses no input). `capacity_max_coeff` / `capacity_min_coeff` on such an output
   has no effect.
 
-Negative `existing` is not reported: it is the supported "anti-energy" unit. Other checks (time series keys,
-timesets, input shares, minimum-load curves, ladders, group limits) are described with their parameters.
+Other checks (time series keys, timesets, input shares, minimum-load curves, ladders, group limits) are described
+with their parameters.

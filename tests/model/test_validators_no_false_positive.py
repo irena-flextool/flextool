@@ -5,10 +5,11 @@ Every scenario of ``tests/fixtures/tests.json``, of ``h2_trade_parity.json`` (re
 (``flextool/schemas/canonical_databases``) is read as ``input_derivation.run`` reads it (the profile alternatives from the whole database, then the scenario
 filter) and goes through ``validate_profile_links``, ``validate_basic_sanity``,
 ``validate_zero_conversion_coeff``, ``validate_period_keys`` (with the whole database's periods) and
-``validate_timeline_timestep_duration`` (no solve).  None may raise, and none may warn: every zero
-``conversion_flow_coeff`` of these files is tied by a user constraint, and the negative ``existing`` of the
-anti_energy_plant example is not reported, and the maps keyed by constraint names (``constraint_flow_coeff``)
-are not period maps.
+``validate_timeline_timestep_duration`` (no solve).  None may raise, and none may warn except as listed in
+``EXPECTED``: every zero ``conversion_flow_coeff`` of these files is tied by a user constraint, and the maps keyed
+by constraint names (``constraint_flow_coeff``) are not period maps.  The one expected warning is the deliberate
+negative ``existing`` of the anti_energy_plant example (scenario test_a_lot of ``tests.json`` and of the
+``templates_examples.json`` generated from it).
 """
 from __future__ import annotations
 
@@ -26,6 +27,17 @@ CANONICAL = sorted(Path(str(package_data_path("schemas/canonical_databases"))).g
 # h2_trade_parity: representative periods; stoch_two_period / stochastics: stochastic branch periods.
 SOURCES = [FLEXTOOL_ROOT / "tests" / "fixtures" / name
            for name in ("tests.json", "h2_trade_parity.json", "stoch_two_period.json", "stochastics.json")] + CANONICAL
+
+
+_ANTI_ENERGY = ("Warning: unit 'anti_energy_plant' existing = -50 (alternative 'anti_energy_plant'): a negative "
+                "capacity makes an anti-energy unit (its flows run the other way). If you did not mean that, use 0 "
+                "or more. Combined with a profile, min_load or invest / retire limits it can make the problem "
+                "infeasible.\n")
+# {source stem: {scenario: the whole printed text}}: the warnings the shipped data is meant to raise.
+EXPECTED = {
+    "tests": {"test_a_lot": _ANTI_ENERGY},
+    "templates_examples": {"test_a_lot": _ANTI_ENERGY},
+}
 
 
 def _build(json_path: Path, work: Path) -> str:
@@ -80,4 +92,4 @@ def test_shipped_scenarios_pass_the_input_checks(tmp_path_factory, source: Path)
         text = _check(url, scenario)
         if text:
             messages[scenario] = text
-    assert messages == {}, messages
+    assert messages == EXPECTED.get(source.stem, {}), messages

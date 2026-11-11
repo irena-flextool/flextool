@@ -290,7 +290,8 @@ def derive_p_entity_pre_existing(
         elif method ∈ {reinvest_choice, no_investment}
              and not (p_years_d[d] < p_years_d[d0] + edEntity_lifetime[e, d0]):
             0      (d0 = run_start_period(p_years_d): the end of life counts from the start of the run)
-        else: v_existing * v_unit  if v_unit  else  v_existing
+        else: v_existing * v_unit  if v_unit > 0  else  v_existing
+              (a virtual_unitsize of 0 or below is ignored; validate_basic_sanity warns)
 
     Output domain: ``entity × period_in_use``.  Reads pdProcess /
     pdNode / edEntity_lifetime CSVs that ``write_entity_period_calc_params``
@@ -361,7 +362,7 @@ def derive_p_entity_pre_existing(
                         pd_e = pd_existing_node.get((e, d), 0.0)
                     else:
                         pd_e = 0.0
-                    v = pd_e * v_unit if v_unit else pd_e
+                    v = pd_e * v_unit if v_unit > 0.0 else pd_e
             rows.append((e, d, v))
 
     return _ed_value_frame(rows)

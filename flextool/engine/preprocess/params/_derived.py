@@ -1318,8 +1318,9 @@ def _process_capacity_per_unit_lf(cap_lf: pl.LazyFrame, source: "InputSource") -
     """Lazy ``[p, d, value]``: the capacity ``[e, d, value]`` (MW / MWh) of each entity divided by its unitsize
     (:func:`_entity_unitsize_lf`; ``UNITSIZE_DEFAULT`` where absent).
 
-    capacity = existing × virtual_unitsize when virtual_unitsize is set, else existing, so the result is the existing
-    unit count: ``existing`` itself with virtual_unitsize, 1 without it (unitsize = existing).
+    capacity = existing × virtual_unitsize when virtual_unitsize is above 0, else existing, so the result is the
+    existing unit count: ``existing`` itself with virtual_unitsize, 1 without it (unitsize = existing; a
+    virtual_unitsize of 0 or below is ignored).
     """
     us_lf = _entity_unitsize_lf(source)
     return (cap_lf.pipe(rename_to_axis, {"e": "p"})
@@ -1365,12 +1366,12 @@ def p_process_existing_count_from_source(
     *,
     provider: "object | None" = None,
 ) -> Param | None:
-    """Per-(p, d) existing unit count = capacity / unitsize (= ``existing`` when virtual_unitsize is set).
+    """Per-(p, d) existing unit count = capacity / unitsize (= ``existing`` when virtual_unitsize is above 0).
 
-    capacity[p, d] = existing[p, d] × virtual_unitsize[p] when virtual_unitsize is set, else existing[p, d];
+    capacity[p, d] = existing[p, d] × virtual_unitsize[p] when virtual_unitsize is above 0, else existing[p, d];
     unitsize per the canonical cascade (:func:`_entity_unitsize_lf`)::
 
-        unitsize = virtual_unitsize (if explicitly set and non-zero)
+        unitsize = virtual_unitsize (if explicitly set and above 0)
                   OR existing       (if non-zero)
                   OR 1000.0
 
@@ -2251,10 +2252,10 @@ def p_flow_upper_existing_from_source(source: "InputSource",
                                          provider: "object | None" = None,
                                          ) -> "Param | None":
     """Per-arc structural existing bound: the existing unit count (capacity / unitsize per (p, d), =
-    ``existing`` when virtual_unitsize is set) cross-joined with ``pss``.
+    ``existing`` when virtual_unitsize is above 0) cross-joined with ``pss``.
 
-    capacity[p, d] = existing[p, d] × virtual_unitsize[p] when virtual_unitsize is set, else existing[p, d];
-    unitsize = virtual_unitsize, else existing, else 1000 (:func:`_entity_unitsize_lf`).  The capacity comes from
+    capacity[p, d] = existing[p, d] × virtual_unitsize[p] when virtual_unitsize is above 0, else existing[p, d];
+    unitsize = virtual_unitsize above 0, else existing, else 1000 (:func:`_entity_unitsize_lf`).  The capacity comes from
     the canonical chained ``p_entity_all_existing`` (multi-solve handoff and lifetime gate integrated) when the run
     has emitted it; otherwise from ``p_entity_pre_existing`` (the lifetime-gated existing × virtual_unitsize
     cascade) over ``period_in_use`` (:func:`_fallback_period_in_use`) for the units / connections with an explicit
@@ -3851,9 +3852,12 @@ def unitsize_cascade(base: pl.LazyFrame,
                      *, key: str) -> pl.LazyFrame:
     """The unitsize cascade, ``[key, us]`` for every row of ``base``::
 
-        unitsize = virtual_unitsize (if explicitly set non-zero)
+        unitsize = virtual_unitsize (if explicitly set above 0)
                   OR existing       (if explicitly set non-zero)
                   OR UNITSIZE_DEFAULT (1000.0)
+
+    A ``virtual_unitsize`` of 0 or below is ignored, as if it were not set
+    (``validate_basic_sanity`` warns about it).
 
     ``base`` is ``[key]`` (one row per entity); ``vu`` is ``[key, vu]``
     and ``ex`` is ``[key, ex]`` with only the explicitly set values
@@ -3880,7 +3884,7 @@ def unitsize_cascade(base: pl.LazyFrame,
                    .group_by(key).agg(pl.col(name).max()))
         out = out.join(reduced, on=key, how="left")
     return out.with_columns(
-        us=pl.when(pl.col("vu").fill_null(0.0) != 0.0)
+        us=pl.when(pl.col("vu").fill_null(0.0) > 0.0)
               .then(pl.col("vu"))
               .when(pl.col("ex").fill_null(0.0) != 0.0)
               .then(pl.col("ex"))
@@ -3892,7 +3896,7 @@ def _entity_unitsize_lf(source: "InputSource") -> pl.LazyFrame:
     """Per-entity unitsize cascade across unit + node + connection,
     mirroring ``entity_period_calc_params.py:159-202``::
 
-        unitsize = virtual_unitsize (if explicitly set non-zero)
+        unitsize = virtual_unitsize (if explicitly set above 0)
                   OR existing       (if explicitly set non-zero)
                   OR 1000.0
 
@@ -6238,7 +6242,7 @@ def p_entity_all_existing_from_source(source: "InputSource",
     where ``pre_existing[e, d]`` is the lifetime-gated existing
     capacity (:func:`._existing.p_entity_pre_existing_lf`), with
     capacity[e, d] = existing[e, d] × virtual_unitsize[e] when
-    virtual_unitsize is set, else existing[e, d]:
+    virtual_unitsize is above 0, else existing[e, d]:
 
       * ``reinvest_automatic`` → capacity[e, d].
       * ``reinvest_choice`` / ``no_investment`` → capacity[e, d]
