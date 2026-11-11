@@ -34,6 +34,12 @@ TESTS_JSON = REPO_ROOT / "tests" / "fixtures" / "tests.json"
 SCENARIO = "wind_weighted"
 CHAIN = ["init", "west", "wind", "weighted_2day"]
 
+# What this script adds to tests.json, for builders that start from tests.json and must not carry it
+# (see _augment_added.py).  The chain uses existing alternatives only.
+ADDED_ALTERNATIVES: tuple[str, ...] = ()
+ADDED_ENTITIES: tuple[tuple[str, tuple[str, ...]], ...] = ()
+ADDED_SCENARIOS: tuple[str, ...] = (SCENARIO,)
+
 
 def _import(db_path: Path) -> None:
     url = f"sqlite:///{db_path.resolve().as_posix()}"

@@ -1424,6 +1424,12 @@ Generated with `pytest tests/test_scenarios.py --regenerate <scenario>` for the 
 rewrote `costs__dt`, `node_state__dt` and `unit__outputNode__dt` with last-digit rounding differences (≤ 4e-4) and
 a 0 → 0.0 number format; those three files were restored to their previous content (not committed).
 
+Missed in that commit (gate 5): `5weeks_invest_fullYear_dispatch_coal_wind/unit_capacity__d` `solve`
+`y2020_fullYear_dispatch` → `invest_1year_5weeks` (the investment solve), 2 rows; a column-wise comparison shows
+only the `solve` column changed (the regenerated file prints `500` as `500.0`, same value).  Generated with
+`pytest tests/test_scenarios.py --regenerate 5weeks_invest_fullYear_dispatch_coal_wind`; the rewritten
+`costs__dt` and `unit__outputNode__dt` (number format only) were put back to their previous content.
+
 ## 2026-11-11 — curtailment / VRE potential `_d` and flowGroup `cumulative_flow` scaled to a full year
 
 **Context.** `unit_curtailment__outputNode__d`, `unit_outputNode_VRE_potential__d` and `group_flow__d`
