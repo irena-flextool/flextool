@@ -1,124 +1,89 @@
 ## Unreleased (4.4.0) — capacity margin, units of measure, start-up inputs, period-total constraints, FT2 import and many fixes (schema v79)
 
 Input databases move to data version 79. The FlexTool window, the Spine Toolbox workflow and `flextool-run
---migrate` migrate them; upgrading prints a notice for each behaviour change that affects the database.
+--migrate` migrate them; upgrading prints a notice for each behaviour change that affects the database. FlexTool now
+needs polar-high 3.12.4 or newer (installed with FlexTool).
 
 ### Behaviour changes — read before upgrading
 
-- **Capacity margin rewritten.** Firm units now count at capacity × `availability` × `capacity_max_coeff`, VRE by
-  its profile, and storage-fed units, imports, connections and consumption by their actual flow; exports add to the
-  requirement, and lines and lossy converters inside the group (e.g. an electric boiler) are left out. A new
-  *share_of_peak* method sets the margin as a share of the peak demand. An investment solve's shortfall is now
-  reported in an investment → dispatch chain and its penalty counts in the total cost. Results of models with a
-  capacity margin change: check the requirement and the new `capacity_margin__d` table.
-- **`discount_rate` 0 now means 0 %.** An explicit rate of 0 or below was replaced by 5 %; 0 now gives the
-  straight-line annuity and a negative rate is an error (a missing rate is still 5 %). An entity that invests or
-  retires now needs a `lifetime`. Set 0.05 to keep the old results; the upgrade marks the affected entities.
-- **A zero or missing `invest_cost` no longer blocks investment.** Where `invest_method` allows investing, the
-  investment is offered in every investment period, free where the cost is 0 or missing (retirement likewise without
-  `salvage_value`). To forbid investment in a period, set `invest_max_period` 0 (or `invest_method` *not_allowed*).
-- **A solve-level `new_stepduration` combines every time series by rule.** Before, most time series took the value
-  of the first original time step. Now prices, costs, limits, availability and profiles take the duration-weighted
-  mean, efficiency the harmonic mean (mean of 1/efficiency), `storage_state_reference_value` the last value, and
-  `inflow` (also stochastic branch inflow) and `energy_margin_adder` are summed. To keep the old
+Each line says what changes for a model that ran before and what to do; the details are in the sections below.
+
+- **Capacity margin rewritten.** Units count at capacity derated by `availability` (VRE by its profile), storage-fed
+  units, connections and consumption by their flow, exports add to the requirement; an investment solve's shortfall
+  and penalty are now reported in an investment → dispatch chain. Check the margin in the new `capacity_margin__d`.
+- **`discount_rate` 0 now means 0 %** (before: 5 %), a negative rate is an error, and an entity that invests or
+  retires with a cost needs a `lifetime`. Set 0.05 to keep the old results.
+- **A zero or missing `invest_cost` no longer blocks investment** (nor a missing `salvage_value` retirement) where
+  `invest_method` allows it. To forbid a period, use a *_period* method with `invest_max_period` 0, or *not_allowed*.
+- **A solve-level `new_stepduration` combines every time series by rule** (mean, harmonic mean for efficiency, sum
+  for `inflow` and `energy_margin_adder`); before, most took the first time step's value. To keep the old
   `energy_margin_adder` demand, divide it by the number of time steps a solve step combines.
-- **Annualised outputs.** VRE curtailment, VRE potential and a flowGroup's `cumulative_flow` per period are now MWh
-  per year like the flows (with a 2-day period, 182.5 times larger). Update scripts that read these tables.
-- **A period-map limit that leaves out a period of the solve is an error.** Before, the missing period silently got
-  a CO2 cap of 0, no inertia requirement, a capacity margin of 0, no investment limit, etc. Fill in the missing
-  periods.
-- **A time-map `inertia_limit` or `non_synchronous_limit` (new in this release) must cover every time step** of the
-  solve, look-ahead included; a missing time step is an error.
-- **A mistyped period key is an error** (e.g. *y2020* in a model with *p2020*, or numeric or time-step keys on a
-  period parameter); before, the value was dropped. The error suggests the closest period; data for extra years
-  goes in `model.periods_available`.
-- **A profile link without profile data is an error** (*upper_limit* or *fixed*); before, it held the flow at 0.
+- **VRE curtailment, VRE potential and a flowGroup's `cumulative_flow` per period are MWh per year** like the
+  flows (a 2-day period: 182.5 times larger). Update scripts that read these tables.
+- **A period-map limit that leaves out a period of the solve is an error** (before: a CO2 cap of 0, no inertia
+  requirement, no investment limit, ...). Fill in the missing periods.
+- **A mistyped period key is an error** (*y2020* for *p2020*, numeric or time-step keys on a period parameter;
+  before, the value was dropped). Correct the key; data for extra years goes in `model.periods_available`.
+- **A profile link without profile data is an error** (*upper_limit* or *fixed*; before, it held the flow at 0).
   Give the profile a value in the scenario's alternatives, or remove the link.
-- **Other new input checks stop the run:** `efficiency` ≤ 0, `min_load` outside [0, 1], negative `availability`
-  or `capacity_max_coeff`, an invest / retire minimum above its maximum, `lifetime` ≤ 0, `existing` as a time
-  series, a used timeline without `timestep_duration`, a time series with none of its time steps on a timeline, a
-  timeset block that starts off its timeline, a CO2 method without its value, a negative `ramp_cost`, a time-only
-  `energy_margin_adder` map, a `realized_invest_periods` period that is not in the solve's `invest_periods` (delete
-  a leftover value on a dispatch or rolling solve), a capacity-margin, inertia or non-synchronous group across
-  Benders regions, and a `balance_within_period` node in a capacity-margin group. Each error names what to fix.
-- **A reserve on a group without nodes is dropped with a warning.** Before, it crashed the run or could only be met
-  by shortfall at the penalty. Add the group's nodes if the reserve is meant.
-- **An explicit 0 in a flowGroup limit** (`max_cumulative_flow`, `min_cumulative_flow`, `max_instant_flow`,
-  `min_instant_flow`) is now a limit of 0; before, it meant no limit.
-- **`ramp_cost` is now charged.** A unit flow with `ramp_method` *ramp_cost* or *both* and a `ramp_cost` value now
-  pays it (new cost category *ramps*).
-- **The engine refuses a database that is not at the current version.** Migrate it with `flextool-run --migrate`
-  or `flextool-migrate-database`; the FlexTool window, the Spine Toolbox workflow and
-  `execute_flextool_workflow.py` migrate first.
-- **Per-period result tables of a rolling solve name the solve, not the roll.** The `solve` column of the `…__d`
-  tables now names the whole rolling solve, and the capacity tables name the solve that realized the investments.
-  Update scripts that filter on roll names.
-- **Excel sheet names and layout.** Sheet names over 31 characters keep their `__d` / `__dt` suffix and several
-  shipped tables have new sheet names (the CSV names do not change). A sheet with several header rows gains a
-  `unit of measure` header row; a sheet with one header row becomes an Excel Table with a unit block to its right.
-  The dispatch plot data and `dispatch_data.xlsx` have a new `period` column. Update Power Query and scripts.
-- **Storage annuity label.** A storage node's `entity_annuity_d_p` is per amount unit (`CUR/MWh`, was `CUR/MW`);
-  values are unchanged.
-- **FlexTool 2 import.** Re-convert FlexTool 2 workbooks to get the corrected translation: invested capacity
-  becomes `existing`; CHP output2 uses no fuel and its rows become user constraints; must-run and min / max
-  generation become profiles; `storage start` / `storage finish` set the start and end; `availability` no longer
-  derates dispatch; the `fixed kW/kWh ratio` is no longer inverted; `interest` 0 becomes `discount_rate` 0.
-- **Storage in stochastic solves follows each path.** Plain *bind_within_solve* now closes the cycle once per path:
-  every forecast branch ends at the level the solve's first step starts from (before, only the branch listed last
-  did and the others ended free), and when the forecasts open in the solve's first period each forecast continues
-  from the end of its own path (before, it looped within its first period). With *bind_forward_only* and nothing
-  fixing the start (no `fix_start`, no carried state) the forecasts of a fan in the solve's first period now start
-  from the same level (before, each chose its own). With `fix_start` / `fix_start_end` each forecast starts from
-  the `storage_state_start` share of its own storage capacity, so where the capacity differs by forecast
-  (investment or divestment per forecast) the starting energy differs although the share is the same; without a
-  fixed start all the forecasts start from the same level. Results of such stochastic models change; the upgrade
-  marks the databases and runs name the nodes.
-- **A forecast given at the fan's analysis time is read in every later period.** A stochastic solve fans once, at
-  its first stochastic step; a forecast branch period now reads the forecast authored at its own first step and,
-  for a time step that forecast does not cover, the one authored at the fan's analysis time. Before, the later
-  periods of a multi-period stochastic solve read 0 where the forecast was given only at the fan's analysis time
-  (profiles, availability, efficiency, costs, reservations, penalties, stochastic inflow; also the realization
-  dispatch). Results of such models change.
-- **A roll of a rolling stochastic solve no longer reads a later roll's forecasts.** Each period of a roll after its
-  fan's period reads the forecast given at the roll's own fan analysis time; a time step that forecast does not
-  cover but a later one does is an input error (see "Input checks").
-  Before, a look-ahead period that started at a later roll's analysis time read that later forecast. A single
-  (non-rolling) solve is unchanged: a forecast at a later period's own first step still overrides. Results of
-  rolling stochastic models with such forecasts change.
-- **`--solver-time-limit` and `--solver-mip-gap` now apply to Gurobi, CPLEX, Xpress and COPT** (the GUI's time
-  limit too), and win over the solve's `solver_mip_gap`, its `solver_arguments` and the solver's option file, as
-  they do for HiGHS. Before, they set only HiGHS options: a commercial solve used the database gap and ran without
-  a time limit, although the run header listed both flags (and the 4.3.0 notes said the time limit was passed to
-  Gurobi; it was not). Results of commercial-solver runs started with these flags can change. Their environment
-  variables are now `FLEXTOOL_SOLVER_TIME_LIMIT` and `FLEXTOOL_SOLVER_MIP_GAP`; the old names
-  `FLEXTOOL_HIGHS_TIME_LIMIT` and `FLEXTOOL_HIGHS_MIP_GAP` still work, for HiGHS only, so a setting made for HiGHS
-  never limits a commercial solver. Commercial solvers keep their thread count from their option file.
-- **A solve that stops at its time limit:** a MIP with a solution keeps it, with a warning (with the gap reached
-  when the solver reports it), and the run goes on; an LP, or a solve without a solution, stops the run. This is
-  the same for every solver (a Benders master or region solve stops the run at its limit, as before). Before,
-  HiGHS and CPLEX stopped the run at the limit even with a usable MIP solution, so such runs now finish; Gurobi,
-  COPT and Xpress reported a solve stopped at its time limit as optimal, without a word. A CPLEX, Gurobi or COPT
-  solve stopped by another limit (nodes, iterations, solutions, memory) or aborted was also reported optimal; it
-  now stops the run, naming the solver's status. So does a CPLEX solution "optimal with unscaled
-  infeasibilities" or with an "optimal face unbounded", which is not a certified optimum, and a COPT solve (or a
-  Gurobi one with a text result file) whose log is turned off, since how it ended cannot be read.
-- **Solver option files come from one `solver_config` folder chosen per run**, no longer from the folder
-  FlexTool is started from: `--solver-config-dir` (new) or `FLEXTOOL_SOLVER_CONFIG_DIR`, else `solver_config/`
-  next to the input database or in the workspace of a GUI project database, else the Spine Toolbox project
-  folder, else the current folder, else FlexTool's defaults with a warning. A Spine Toolbox run used FlexTool's
-  default `.opt` files instead of the workspace's, and a terminal run from another folder used the defaults and
-  left a copy there that later runs took for your file. The run header and log show the folder used
-  (`Solver config:`). Each run reads the files once at its start and copies them afresh to
-  `<work folder>/solve_data/solver_config/`. A `<work folder>/solver_config/` left by an earlier version is no
-  longer read as the work folder's copy (the run warns when it differs); when it is `solver_config/` in the
-  current folder and holds only unedited FlexTool templates, the run skips it, uses the next folder or the
-  defaults, and warns, naming it (not in the FlexTool folder itself, whose `solver_config/` is always used). The
-  GUI and the calibrator pass the workspace's folder to their runs.
+- **More input errors stop the run:** out-of-range `efficiency`, `min_load`, `availability`, `capacity_max_coeff`,
+  `lifetime`, `ramp_cost`, a minimum above its maximum, `existing` as a time series, a used timeline without
+  `timestep_duration`, a time series with no time step on a timeline, a timeset block that starts off its timeline,
+  a CO2 method without its value, a `realized_invest_periods` outside `invest_periods`, partial or ungrouped
+  stochastic inflow / reservation, a time-only `energy_margin_adder`, capacity-margin groups across Benders regions
+  or with a *balance_within_period* node (see "Input checks" and the entries below). Each error names what to fix.
+- **New warnings name data that ran silently:** nodes with nothing to balance them, untied zero
+  `conversion_flow_coeff` flows, negative `existing`, time-series keys off the timeline, a CO2 cap on a method
+  without one, an `invest_method` on a non-storage node, percent-like values. The model is unchanged; check them.
+- **Profile and time maps without `index_name` are read as written.** A profile keyed by periods, or a period × time
+  profile with an unnamed level, read 0 before; a node penalty, `availability` or `other_operational_cost` time map
+  without `index_name` no longer adds its time steps to the periods. Results of such models change; name the map's
+  levels where the run says so.
+- **A reserve on a group without nodes is dropped with a warning** (before, it crashed the run or was met only by
+  shortfall). Add the group's nodes if the reserve is meant.
+- **An explicit 0 in a flowGroup limit** (`max_` / `min_cumulative_flow`, `max_` / `min_instant_flow`) is now a
+  limit of 0; before, it meant no limit. Delete the value if no limit is meant.
+- **`ramp_cost` is now charged** on unit flows with `ramp_method` *ramp_cost* or *both* (new cost category *ramps*).
+- **The engine refuses a database that is not at the current version.** Migrate it with `flextool-run --migrate` or
+  `flextool-migrate-database`; the FlexTool window, the Spine Toolbox workflow and `execute_flextool_workflow.py`
+  migrate first.
+- **Per-period result tables of a rolling solve name the solve, not the roll**, and the capacity tables the solve
+  that realized the investments. Update scripts that filter on roll names.
+- **Excel sheet names and layout changed:** long names keep their `__d` / `__dt` suffix, several shipped sheets are
+  renamed, a `unit of measure` header row or a unit block is added, and dispatch data has a `period` column. Update
+  Power Query and scripts (CSV names do not change).
+- **Smaller output changes:** a storage node's `entity_annuity_d_p` is per MWh (was per MW; values unchanged),
+  *no_reserve* groups no longer have an empty reserve-shortfall column, and only groups whose `co2_method` caps
+  emissions are listed as CO2-limited.
+- **FlexTool 2 import corrected** (invested capacity becomes `existing`, CHP output2, must-run profiles, storage
+  start / finish, `availability`, the kW/kWh ratio, `interest` 0). Re-convert FlexTool 2 workbooks.
+- **Storage in stochastic solves follows each path.** *bind_within_solve* closes the cycle on every forecast branch
+  (before: only the one listed last), and forecasts opening in the solve's first period start from one level. The
+  upgrade marks such databases and the run names the nodes; check their results.
+- **Forecasts given at the fan's analysis time are read in later branch periods** (before, they read 0 there, so a
+  wind unit could not run). Results of multi-period stochastic models with such forecasts change.
+- **A roll of a rolling stochastic solve reads only its own forecast**, never a later roll's; a look-ahead time step
+  that only a later forecast covers is an error. Extend each roll-start forecast to the end of the roll's horizon.
+- **`--solver-time-limit` and `--solver-mip-gap` now reach Gurobi, CPLEX, Xpress and COPT** and win over the
+  database and option file; the environment variables are now `FLEXTOOL_SOLVER_TIME_LIMIT` / `_MIP_GAP` (the
+  `FLEXTOOL_HIGHS_*` names still work for HiGHS only). Commercial runs with these flags can give other results.
+- **At its time limit a MIP with a solution keeps it, with a warning; an LP or a solve without a solution stops the
+  run**, for every solver. A commercial solve stopped by another limit, or not certified optimal, now stops the run.
+- **Solver option files come from one `solver_config` folder per run** (`--solver-config-dir`, next to the
+  database, the workspace, ...), not from the folder FlexTool starts in. Check the `Solver config:` line of the run
+  log and move your `.opt` files there.
+- **Other commercial-solver fixes that can change results:** CPLEX now gets `solver_mip_gap`; one value per solver
+  parameter, whatever its case; Xpress refuses a MIP (it returned the LP relaxation); Gurobi file-writing parameters
+  are not passed on.
+- **The memory-saving solve (`--save-memory`, or warm start off) could put values on the wrong variables**; results
+  of such runs can change. FlexTool now needs polar-high 3.12.4 or newer (installed with FlexTool).
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another
   constraint had one (since 4.0); the reported fuel, CO2 and cost of a unit with a profile and an input were too
-  low; the period node-group indicators and VRE share are now ratios of the period energies; the `summary_solve.csv`
-  slack lines and the period reserve averages use the time-step weights; without `realized_invest_periods` a solve
-  realizes only the `realized_periods` that are also `invest_periods`. Details below.
+  low; the reported reserve penalty could be doubled; the period node-group indicators and VRE share are now ratios
+  of the period energies; the `summary_solve.csv` slack lines and the period reserve averages use the time-step
+  weights; without `realized_invest_periods` a solve realizes only the `realized_periods` that are also
+  `invest_periods`; `invest_period_total` could retire and `retire_period_total` invest; a `virtual_unitsize` ≤ 0
+  is now ignored. Details below.
 
 ### New features
 
@@ -426,6 +391,19 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   connection asks them to call it first. The units note no longer says that time steps are in hours. In the
   smallest context windows the basic level keeps 260 tokens free for the facts, so a tool result there holds a
   little less; an evaluation run asks its unfinished cells again. See "Ask" in "The AI assistant".
+- **The assistant's tools give plainer, more complete answers.** `find_result_tables` knows users' words (fuel,
+  built capacity, unserved energy or loss of load, excess load) and lists the main table first for capacity,
+  unserved energy, fuel and system-cost questions, the dual tables only when duals, marginal or shadow prices are
+  asked. Placeholder values that a model puts in optional arguments (an empty time range, `top_n` 0) are left out
+  instead of giving an empty or refused result; `list_runs` says how many runs its filters hide, `list_entities`
+  when nothing matches, and a value outside a tool's list is refused in plain words with the allowed values. An
+  entity the scenario does not use is said so first, with its values shown as stored, not used, and no default
+  as if it applied. A note that depends on another parameter gives the conclusion for the entity's own value
+  ("invest_method is invest_total, so invest_max_period is not used"), and `explain_entity` says first when a
+  limit is set that the `invest_method` does not use. Large values come with a rounded copy in a larger unit
+  (≈1.03 TWh/a, M CUR) beside the exact value, in the summaries and, for a table of one unit, in `query_result`
+  and `compare_runs`. The working notes a model keeps during a long answer stay its own: a leaked "Keep: 1, 3"
+  line is left out of the answer. An evaluation checkpoint made with the earlier tools is refused.
 - **Answers are written for a FlexTool user.** At every level the assistant gives demand as a positive number
   (FlexTool stores it as negative inflow) and, for an entity the scenario does not use, says that first. At the
   standard and advanced levels it uses plain words with the FlexTool term in parentheses ("demand that could not be
@@ -439,23 +417,24 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
 
 #### Investment and discounting
 
-- **An `invest_method` offers investment and retirement also without `invest_cost` /
-  `salvage_value`.** A unit, connection or node whose `invest_method` allows investing now has its investment
-  variable in every investment period of the solve, also where `invest_cost` is missing or 0; one that allows
-  retiring has its retirement variable in every period with existing capacity, also without `salvage_value`. Such
-  capacity has no annuity; its `fixed_cost` still counts (retiring saves it). Before, a period without a non-zero
-  cost had no variable unless a user constraint had a capacity coefficient on the entity, so an `invest_method`
-  without a cost silently offered nothing. **A 0 in an `invest_cost` map no longer blocks investment in that period
-  (also a stochastic branch's own 0): it is now free investment there. To forbid investment in a period, set
-  `invest_max_period` 0 for it (or `invest_method` `not_allowed`).** With neither `invest_cost` nor `fixed_cost`
-  the invested amount is arbitrary (any amount is optimal). A zero-cost investment needs a `lifetime` only with
-  `lifetime_method` `reinvest_choice` / `no_investment`. The FlexTool 2 importer no longer reports a storage with a
-  `max invest (MWh)` and no `inv.cost/kWh`: FlexTool 4 now adds it at no cost, as FlexTool 2 does. Fixed with it:
-  `invest_period_total` allowed retiring and `retire_period_total` investing (the method lists left them out), and
-  an `invest_period_total` entity with a `salvage_value` and no `lifetime` got a false lifetime error. The database
-  upgrade writes the marker `invest_without_cost_offered` on a database with an entity that can invest (retire)
-  without an `invest_cost` (`salvage_value`) or with a 0 in it; the run then names the entities and periods that
-  are newly offered.
+- **An `invest_method` offers investment and retirement also without `invest_cost` / `salvage_value`.** A unit,
+  connection or node whose `invest_method` allows investing now has its investment variable in every investment
+  period of the solve, also where `invest_cost` is missing or 0; one that allows retiring has its retirement
+  variable in every period with existing capacity, also without `salvage_value`. Such capacity has no annuity; its
+  `fixed_cost` still counts (retiring saves it). Before, a period without a non-zero cost had no variable unless a
+  user constraint had a capacity coefficient on the entity, so an `invest_method` without a cost silently offered
+  nothing. **A 0 in an `invest_cost` map no longer blocks investment in that period (also a stochastic branch's own
+  0): it is now free investment there. To forbid investment in a period, use a *_period* `invest_method`
+  (*invest_period*, *invest_period_total* and their *invest_retire_* forms) and set `invest_max_period` 0 for it, or
+  use *not_allowed*: the other methods do not read `invest_max_period`.** With neither `invest_cost` nor
+  `fixed_cost` the invested amount is arbitrary (any amount is optimal). A zero-cost investment needs a `lifetime`
+  only with `lifetime_method` `reinvest_choice` / `no_investment`. The FlexTool 2 importer no longer reports a
+  storage with a `max invest (MWh)` and no `inv.cost/kWh`: FlexTool 4 now adds it at no cost, as FlexTool 2 does.
+  Fixed with it: `invest_period_total` allowed retiring and `retire_period_total` investing (the method lists left
+  them out), and an `invest_period_total` entity with a `salvage_value` and no `lifetime` got a false lifetime
+  error. The database upgrade writes the marker `invest_without_cost_offered` on a database with an entity that can
+  invest (retire) without an `invest_cost` (`salvage_value`) or with a 0 in it; the run then names the entities and
+  periods that are newly offered.
 - **`discount_rate` 0 is 0 % (annuity = invest_cost / lifetime); before it was 5 %.** Any
   `discount_rate` of 0 or below used to be replaced by 0.05 in the annuity, and a missing or non-positive `lifetime`
   by 20 years. Now 0 gives the straight-line annuity (`salvage_value / lifetime` for a retirement) and a missing
@@ -567,6 +546,35 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
 
 #### Solving
 
+- **`--solver-time-limit` and `--solver-mip-gap` now apply to Gurobi, CPLEX, Xpress and COPT** (the GUI's time
+  limit too), and win over the solve's `solver_mip_gap`, its `solver_arguments` and the solver's option file, as
+  they do for HiGHS. Before, they set only HiGHS options: a commercial solve used the database gap and ran without
+  a time limit, although the run header listed both flags (and the 4.3.0 notes said the time limit was passed to
+  Gurobi; it was not). Results of commercial-solver runs started with these flags can change. Their environment
+  variables are now `FLEXTOOL_SOLVER_TIME_LIMIT` and `FLEXTOOL_SOLVER_MIP_GAP`; the old names
+  `FLEXTOOL_HIGHS_TIME_LIMIT` and `FLEXTOOL_HIGHS_MIP_GAP` still work, for HiGHS only, so a setting made for HiGHS
+  never limits a commercial solver. Commercial solvers keep their thread count from their option file.
+- **A solve that stops at its time limit:** a MIP with a solution keeps it, with a warning (with the gap reached
+  when the solver reports it), and the run goes on; an LP, or a solve without a solution, stops the run. This is
+  the same for every solver (a Benders master or region solve stops the run at its limit, as before). Before,
+  HiGHS and CPLEX stopped the run at the limit even with a usable MIP solution, so such runs now finish; Gurobi,
+  COPT and Xpress reported a solve stopped at its time limit as optimal, without a word. A CPLEX, Gurobi or COPT
+  solve stopped by another limit (nodes, iterations, solutions, memory) or aborted was also reported optimal; it
+  now stops the run, naming the solver's status. So does a CPLEX solution "optimal with unscaled
+  infeasibilities" or with an "optimal face unbounded", which is not a certified optimum, and a COPT solve (or a
+  Gurobi one with a text result file) whose log is turned off, since how it ended cannot be read.
+- **Solver option files come from one `solver_config` folder chosen per run**, no longer from the folder
+  FlexTool is started from: `--solver-config-dir` (new) or `FLEXTOOL_SOLVER_CONFIG_DIR`, else `solver_config/`
+  next to the input database or in the workspace of a GUI project database, else the Spine Toolbox project
+  folder, else the current folder, else FlexTool's defaults with a warning. A Spine Toolbox run used FlexTool's
+  default `.opt` files instead of the workspace's, and a terminal run from another folder used the defaults and
+  left a copy there that later runs took for your file. The run header and log show the folder used
+  (`Solver config:`). Each run reads the files once at its start and copies them afresh to
+  `<work folder>/solve_data/solver_config/`. A `<work folder>/solver_config/` left by an earlier version is no
+  longer read as the work folder's copy (the run warns when it differs); when it is `solver_config/` in the
+  current folder and holds only unedited FlexTool templates, the run skips it, uses the next folder or the
+  defaults, and warns, naming it (not in the FlexTool folder itself, whose `solver_config/` is always used). The
+  GUI and the calibrator pass the workspace's folder to their runs.
 - **CPLEX did not get `solver_mip_gap`.** It was sent with the Python-API name `mip.tolerances.mipgap`, which the
   CPLEX interactive optimizer that FlexTool runs does not know; it is now sent as `mip tolerances mipgap`. CPLEX
   results with a `solver_mip_gap` can change.
@@ -624,12 +632,31 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   roll to roll, with one warning per solve naming them (`storage_binding_method` is not applied in a rolling solve).
   The same holds when such a solve mixes periods with and without representative periods.
 
+#### Stochastic solves
+
+- **Storage in stochastic solves follows each path (results change).** Plain *bind_within_solve* now closes the
+  cycle once per path: every forecast branch ends at the level the solve's first step starts from (before, only the
+  branch listed last did and the others ended free), and when the forecasts open in the solve's first period each
+  forecast continues from the end of its own path (before, it looped within its first period). With
+  *bind_forward_only* and nothing fixing the start (no `fix_start`, no carried state) the forecasts of a fan in the
+  solve's first period now start from the same level (before, each chose its own). With `fix_start` /
+  `fix_start_end` each forecast starts from the `storage_state_start` share of its own storage capacity, so where
+  the capacity differs by forecast (investment or divestment per forecast) the starting energy differs although the
+  share is the same; without a fixed start all the forecasts start from the same level. Results of such stochastic
+  models change; the upgrade marks the databases and runs name the nodes.
 - **Stochastic values in the later periods of a stochastic solve.** A stochastic-time value (`branch` /
   `analysis_time` / `time` map) given only at the fan's analysis time read 0 in the forecast branch periods after
   the fan's period, in the realization dispatch of those periods and, for entities outside every
   `include_stochastics` group, in the realized-branch read: a wind profile was 0 there and the unit did not run.
-  Each value now comes from the forecast authored at the branch period's own first step, else from the one
-  authored at the fan's analysis time (per time step); a period before the reveal never reads the latter.
+  In a single solve each value now comes from the forecast authored at the branch period's own first step, else from
+  the one authored at the fan's analysis time (per time step); a period before the reveal never reads the latter.
+  A roll of a rolling solve decides at its fan's analysis time, so every period of the roll after its fan's
+  period (look-ahead periods and the later committed periods of a multi-period jump) reads the forecast given
+  at the roll's own fan analysis time, even where a later roll's forecast is given at that period's first step
+  (before, such a look-ahead period read the later roll's forecast); a time step that forecast does not cover
+  but a later one does is an input error (see "Input checks"). A single (non-rolling) solve still lets a
+  forecast at a later period's own first step override. The realization dispatch reads its branch the same
+  way.
 
 #### Input checks
 
@@ -698,6 +725,9 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   gets a warning naming it, the alternative and the period. Such a unit is a supported "anti-energy" unit (its
   flows run the other way), so the run continues, but a negative value is more often a typing mistake, and with a
   profile, `min_load` or invest / retire limits it can make the problem infeasible.
+- **An `invest_method` on a node that is not a storage node is reported.** Only storage nodes invest or
+  retire. Such a node got an investment variable that did nothing; it now gets none, and a warning names it.
+  Remove the `invest_method` or make the node a storage node.
 - **A `virtual_unitsize` at or below 0 was not ignored, although the warning said so.** A negative value became
   the unit size and multiplied `existing` (200 units of −5 MW: an anti-energy unit of −1000 MW). Now it is ignored
   as the warning says: `existing` is the capacity itself and the entity is one unit of it. Results of valid data do
@@ -796,6 +826,9 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   years represented), not averages of the period shares; the "total" plots use them. Plot labels say what the
   numbers are: "(annualized)", "(horizon total)", costs in "M CUR/a (annualized)", "M CUR (horizon total,
   undiscounted)" and "M CUR (discounted)", CO2 in "Mt CO2 (horizon total)".
+- **The inertia result tables were always empty.** `group_inertia__dt` and `group__unit__node_inertia__dt` had
+  no value column; they now hold the inertia of each group's units (flow × `inertia_constant`). The model was
+  right.
 - **The unit of a storage node's annuity.** `entity_annuity_d_p` holds units, connections and
   storage nodes in one table. A storage node's capacity is an amount (how much it holds), so its annuity is per
   amount unit: `CUR/MWh` (was `CUR/MW`), or `CUR/m3` for a node whose `unit_of_measure` is m3. A unit's or
@@ -876,6 +909,8 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   the FlexTool folder is older than this FlexTool (the old file is kept as `<name>.v<version>.bak`); before, an
   existing file was never refreshed, and the model run now refuses it. **Calibrate investments** migrates its
   scenarios' sources first, as a normal run does.
+- **The Excel export of an input database put a flowGroup's `max_cumulative_flow` / `min_cumulative_flow`
+  on the time-series sheets;** they are constant or per period and are now on the period sheets.
 - **The Solver options dialog said the `.opt` files are in the project's `solver_config` folder.** They are
   in the `solver_config` folder of the FlexTool workspace (or `$FLEXTOOL_SOLVER_CONFIG_DIR`).
 
@@ -897,6 +932,8 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   `inv.cost/kWh` sets the storage node's cost (before: the discharger's cost per kW). A storage that can invest in
   MWh with neither a cost per kWh nor a ratio is listed in the import report: FlexTool 2 adds it at no cost,
   FlexTool 4 does not invest in it.
+- **An annuity typed over the FlexTool 2 workbook's formula is listed in the import report.** FlexTool 4 computes
+  the annuity from `invest_cost`, `discount_rate` and `lifetime` and ignores that column.
 - **The FlexTool 2 `fixed kW/kWh ratio` was inverted.** FlexTool 2 sets invested MW = ratio × invested MWh;
   the import wrote ratio × MW = MWh (a ratio of 0.25 gave a 1/16 h storage instead of a 4 h one).
 - **The FlexTool 2 importer (`flextool-read-old`, GUI "Convert from FlexTool 2.0 input file") translates
