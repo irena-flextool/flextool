@@ -611,7 +611,11 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   counts as the time limit.
 - **The commercial solver option templates** described how options were passed before 4.3.0 (`ReadParams`, the
   `solver_options` map, `solver_time_limit` / `solver_threads`); their header now gives the actual mechanism and
-  precedence. Existing `solver_config/*.opt` copies keep their old comment until you replace them.
+  precedence. The FlexTool window (at start) and `flextool-update` replace a workspace
+  `solver_config/<solver>.opt` that is an unedited copy of an earlier FlexTool default with the current one; an
+  edited file is never touched. No solve changes: the option values are those FlexTool already used (one early
+  HiGHS default lacked `parallel=off`, which FlexTool sets anyway). A seeded `.opt` file no longer takes the
+  template's file permissions, so a read-only installation gives an editable file.
 - **Investment duals were wrong when autoscaling rescaled the model.** When autoscale's per-quantity scaling
   (Layer 2) rescaled an investment model solved in the FlexTool process (the default; not `--save-memory`), the
   reduced costs of the investment variables were read back in scaled units, so `v_dual_invest_unit`,

@@ -173,6 +173,12 @@ def _template_hashes(solver: str) -> frozenset[str]:
         return known
 
 
+def is_unedited_template(solver: str, data: bytes) -> bool:
+    """Whether *data* (a ``<solver>.opt``'s bytes) is byte for byte, CRLF read as LF, a shipped FlexTool template
+    of *solver*: an earlier one or the installed one."""
+    return _normalised_sha256(data) in _template_hashes(solver)
+
+
 def is_template_copy(folder: Path) -> bool:
     """Whether *folder* holds at least one ``<solver>.opt`` and each one is byte for byte (CRLF read as LF) a
     shipped FlexTool template: the copy an earlier FlexTool left, not files someone edited."""
@@ -182,10 +188,10 @@ def is_template_copy(folder: Path) -> bool:
         try:
             if not path.is_file():
                 continue
-            digest = _normalised_sha256(path.read_bytes())
+            data = path.read_bytes()
         except OSError:
             return False
-        if digest not in _template_hashes(solver):
+        if not is_unedited_template(solver, data):
             return False
         found = True
     return found

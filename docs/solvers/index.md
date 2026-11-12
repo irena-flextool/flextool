@@ -131,7 +131,10 @@ wheel as a `solver_config/<solver>.opt.template`, and `flextool-update` and
 the GUI seed the workspace's `solver_config/<solver>.opt` from its template
 (and re-seed any that are missing).  The runtime files are gitignored, so you can edit them —
 or delete one to reset it to the bundled default — with zero git-committed
-change.
+change. The FlexTool window (at start) and `flextool-update` replace a
+workspace `solver_config/<solver>.opt` that is an unedited copy of an earlier
+FlexTool default with the current one; an edited file is never touched. The
+option values are the same, so no solve changes.
 
 | Solver  | Baseline file                | Native format                                       |
 |---------|------------------------------|-----------------------------------------------------|
