@@ -246,7 +246,9 @@ pythonpath = ["."]
 # ``not axis_enums`` likewise deselects the opt-in axis-Enum mode LP parity run
 # (``tests/engine/axis_enums/``; ``pytest -m axis_enums tests/engine/axis_enums -n 8``),
 # skipped by ``tests/engine/axis_enums/conftest.py`` unless ``-m`` names ``axis_enums``.
-addopts = "--import-mode=importlib -n auto --dist loadfile -m 'not csv_reload and not axis_enums'"
+# ``not commercial_shim`` deselects the opt-in commercial-solver shim checks (``tests/engine/commercial_shim/``;
+# ``pytest -m commercial_shim tests/engine/commercial_shim -n 0``; they need the solvers' Python packages).
+addopts = "--import-mode=importlib -n auto --dist loadfile -m 'not csv_reload and not axis_enums and not commercial_shim'"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
     "nightly_heavy: the heaviest tests (~1 h of CI worker time); the PR Tests workflow deselects them and its nightly job runs them. Local runs include them",
@@ -255,6 +257,7 @@ markers = [
     "gui: opens a real interactive Tk window; opt-in via --run-gui (deselected by default)",
     "csv_reload: CSV reload contract tests in tests/csv_reload/; opt-in via -m csv_reload (deselected by default)",
     "axis_enums: axis-Enum mode LP parity run (tests/engine/axis_enums/); opt-in via -m axis_enums",
+    "commercial_shim: item 230 against the commercial solvers' Python packages through CLI shims (tests/engine/commercial_shim/); opt-in via -m commercial_shim",
 ]
 testpaths = ["tests"]
 # Hard per-test wallclock cap.  Used by ``pytest-timeout`` (installed
