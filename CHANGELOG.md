@@ -1,4 +1,4 @@
-## Release 4.4.0 (D.M.YYYY) — capacity margin, units of measure, start-up inputs, period-total constraints, FT2 import and many fixes (schema v79)
+## Unreleased (4.4.0) — capacity margin, units of measure, start-up inputs, period-total constraints, FT2 import and many fixes (schema v79)
 
 Input databases move to data version 79. The FlexTool window, the Spine Toolbox workflow and `flextool-run
 --migrate` migrate them; upgrading prints a notice for each behaviour change that affects the database.
