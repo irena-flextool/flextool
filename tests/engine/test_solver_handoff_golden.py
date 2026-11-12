@@ -214,6 +214,7 @@ def _all_cases(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, dic
 
 def test_solver_handoff_matches_the_golden_record(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
+    monkeypatch.chdir(tmp_path)  # HiGHS opens a log_file as soon as it is set
     cases = _all_cases(tmp_path, monkeypatch)
     if os.environ.get("FLEXTOOL_WRITE_SOLVER_HANDOFF_GOLDEN") == "1":
         GOLDEN.write_text(json.dumps(cases, indent=1, sort_keys=True) + "\n")
@@ -326,8 +327,10 @@ def test_commercial_pairs_equal_the_file_read_back(tmp_path: Path) -> None:
     assert compared > 1500
 
 
-def test_highs_pairs_set_one_by_one_equal_the_option_file_read(tmp_path: Path) -> None:
+def test_highs_pairs_set_one_by_one_equal_the_option_file_read(tmp_path: Path, monkeypatch) -> None:
     import random
+
+    monkeypatch.chdir(tmp_path)  # HiGHS opens a log_file as soon as it is set
 
     highspy = pytest.importorskip("highspy")
     from flextool.cli import cmd_solve_mps
