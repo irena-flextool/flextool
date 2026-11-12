@@ -666,7 +666,7 @@ def test_flags_reach_gurobi_and_set_the_watchdog(tmp_path, monkeypatch) -> None:
         solver_config_dir=tmp_path / "cfg",
     )
     (argv,) = _argv_of_calls(tmp_path)
-    assert argv[:-2] == ["Threads=0", "MIPGap=0.001", "TimeLimit=60.0"]
+    assert argv[:-2] == ["Threads=0", "MIPGap=0.001", "TimeLimit=60"]
     assert timeouts == [720.0]
 
 

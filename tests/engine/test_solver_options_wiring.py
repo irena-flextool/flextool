@@ -568,7 +568,7 @@ def test_cli_flags_reach_a_fake_gurobi_cl_through_the_whole_run(gurobi_db, tmp_p
 
     ``--solver-config-dir cfg`` holds ``Threads 5`` / ``MIPGap 0.002``; ``--solver-mip-gap 0.001`` replaces the
     file's gap in place and ``--solver-time-limit 60`` is added after it, so every call passes
-    ``Threads=5 MIPGap=0.001 TimeLimit=60.0`` before ``ResultFile=`` and the model.  The log names the folder
+    ``Threads=5 MIPGap=0.001 TimeLimit=60`` before ``ResultFile=`` and the model.  The log names the folder
     and why, and the run's snapshot holds the file as read."""
     import logging
 
@@ -596,7 +596,7 @@ def test_cli_flags_reach_a_fake_gurobi_cl_through_the_whole_run(gurobi_db, tmp_p
     calls = _argv_of_calls(stub_dir)
     assert calls
     for argv in calls:
-        assert argv[:3] == ["Threads=5", "MIPGap=0.001", "TimeLimit=60.0"], argv
+        assert argv[:3] == ["Threads=5", "MIPGap=0.001", "TimeLimit=60"], argv
         assert argv[3].startswith("ResultFile=") and len(argv) == 5, argv
     assert f"Solver config: {cfg} (--solver-config-dir)" in [r.getMessage() for r in caplog.records]
     assert (work / "solve_data" / "solver_config" / "gurobi.opt").read_text() == "Threads 5\nMIPGap 0.002\n"

@@ -569,6 +569,16 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   with integer variables now stops with a message instead of reporting the relaxation as the solution.
 - **The `Solver args` line of a commercial solve showed HiGHS options**; it is now
   `Solver args (<solver>): ...` with what the solver receives, under its own names.
+- **The log of a commercial solver is shown.** Gurobi, CPLEX, Xpress and COPT printed nothing on a successful
+  run (their log was read for the status and dropped), so the parameters they took, how the solve ended and the
+  gap a time-limit warning refers to could not be seen. The log now follows the `Solver args` line, as HiGHS'
+  does.
+- **Whole numbers in `solver_arguments` reach a commercial solver as integers** (`Threads=4`, not `Threads=4.0`;
+  the database stores every number as a decimal). An integer parameter can refuse `4.0`: the Xpress library
+  does.
+- **A COPT LP stopped at its time limit** without a solution was reported as a licence error under COPT's
+  size-limited licence, or as a missing solution file; it now says the solve stopped at its time limit. An LP
+  stopped with a solution file is no longer taken as optimal.
 - **The commercial solver option templates** described how options were passed before 4.3.0 (`ReadParams`, the
   `solver_options` map, `solver_time_limit` / `solver_threads`); their header now gives the actual mechanism and
   precedence. Existing `solver_config/*.opt` copies keep their old comment until you replace them.

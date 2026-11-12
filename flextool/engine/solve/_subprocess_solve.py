@@ -850,11 +850,24 @@ def _format_native_opt_value(v: object) -> str:
     """Render *v* for a native solver opt-file line.
 
     Booleans become ``1`` / ``0`` (Gurobi/COPT accept either word or
-    int; the int form is portable across CPLEX/Xpress too).
+    int; the int form is portable across CPLEX/Xpress too).  A whole number
+    is written without its ``.0`` (``Threads 1``, not ``Threads 1.0``), as a
+    float or as the text of one (``solver_arguments`` values arrive as
+    ``str(float)``): the database stores every number as a float, and an
+    integer parameter may refuse ``1.0`` (the Xpress library does), while a
+    float parameter reads ``1`` as 1.0.
     """
     if isinstance(v, bool):
         return "1" if v else "0"
+    if isinstance(v, float) and v.is_integer() and abs(v) < 1e15:
+        return str(int(v))
+    if isinstance(v, str) and _WHOLE_NUMBER_TEXT.match(v):
+        return v.strip().split(".", 1)[0]
     return str(v)
+
+
+#: The text of a whole number written as a float (``1.0``, ``-3.00``), as ``str(float)`` gives it.
+_WHOLE_NUMBER_TEXT = re.compile(r"^\s*-?\d{1,15}\.0+\s*$")
 
 
 def _write_commercial_opt_file(
@@ -913,7 +926,10 @@ _GUROBI_STOP_STATUS = {
     "solve interrupted": "INTERRUPTED",
 }
 _GUROBI_GAP = re.compile(r"^Best objective [^,]*, best bound [^,]*, gap ([-+\d.eE]+)%", re.MULTILINE)
-_COPT_TIME_LIMIT = re.compile(r"status\s*:\s*stopped\s*\(time limit", re.IGNORECASE)
+#: COPT's summary of a solve stopped by its time limit: ``MIP status : stopped (time limit reached)`` (MIP),
+#: ``Status: Timeout  Objective: ...`` (LP).
+_COPT_TIME_LIMIT = re.compile(r"status\s*:\s*stopped\s*\(time limit|^Status:\s*Timeout\b",
+                              re.IGNORECASE | re.MULTILINE)
 _COPT_GAP = re.compile(r"^Best gap\s*:\s*([-+\d.eE]+)%", re.MULTILINE)
 _CPLEX_GAP = re.compile(r"gap\s*=\s*[^,()]*,\s*([-+\d.eE]+)%")
 _XPRESS_TIME_LIMIT = re.compile(r"MAXTIME limit reached|\*\*\* Time limit reached \*\*\*|time limit hit",
@@ -1037,10 +1053,15 @@ def _parse_sol_text(
 
 def _parse_copt_sol(path: Path, stdout: str = "") -> _ParsedSolution:
     """COPT's ``.sol`` has Gurobi's text layout; the status comes from the
-    console (``MIP status : stopped (time limit reached)``)."""
+    console (``MIP status : stopped (time limit reached)``, an LP's ``Status: Timeout``).
+
+    A time limit is ``TIME_LIMIT`` with or without a solution file (COPT writes
+    none when it has no solution), so a run without one is told why.
+    """
     status, objective, primal = _parse_sol_text(path)
-    if primal and _COPT_TIME_LIMIT.search(stdout):
-        return _ParsedSolution("TIME_LIMIT", objective, primal, None, _percent(_COPT_GAP.search(stdout)))
+    if _COPT_TIME_LIMIT.search(stdout):
+        gap = _percent(_COPT_GAP.search(stdout)) if primal else None
+        return _ParsedSolution("TIME_LIMIT", objective if primal else None, primal, None, gap)
     return _ParsedSolution(status, objective, primal, None)
 
 
@@ -1970,23 +1991,33 @@ def _solve_commercial_subprocess(
         parsed = _PARSERS[solver_name](sol_path, stdout)
         status_str, objective, primal, dual = parsed.status, parsed.objective, parsed.primal, parsed.dual
         if primal is None:
-            if _looks_like_license_error(stdout, stderr):
-                raise RuntimeError(
-                    f"{solver_name!r} CLI for solve {solve_name!r} returned "
-                    f"no usable solution and its output reports a licence error.\n"
-                    f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
-                )
+            # A status the solver reported (infeasible, a limit) is the reason; the licence
+            # check reads free log text, and a size-limited licence's banner (COPT: "No license
+            # found. Starting COPT with size limitations") is not a failure.
             if status_str in _NO_SOLUTION_REASONS:
                 raise RuntimeError(
                     f"{solver_name!r} reports that solve {solve_name!r} "
                     f"{_NO_SOLUTION_REASONS[status_str]}; there is no solution "
                     f"to use.\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
                 )
+            if _looks_like_license_error(stdout, stderr):
+                raise RuntimeError(
+                    f"{solver_name!r} CLI for solve {solve_name!r} returned "
+                    f"no usable solution and its output reports a licence error.\n"
+                    f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+                )
             raise RuntimeError(
                 f"{solver_name!r} CLI produced no solution file we could "
                 f"parse at {sol_path} for solve {solve_name!r}.\n"
                 f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
             )
+
+        # The solver's own log, shown as HiGHS' is (after the ``Solver args`` line): the parameters it
+        # took, how the solve ended, and the remaining gap the time-limit warning points to.  The
+        # failure paths above carry it in their message instead.
+        for text in (stdout, stderr):
+            if text.strip():
+                print(text, end="" if text.endswith("\n") else "\n", flush=True)
 
         optimal = status_str == "OPTIMAL"
 

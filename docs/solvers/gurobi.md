@@ -123,7 +123,7 @@ solve_advanced.solver_arguments:
 flextool <input_db_url> --solver-time-limit 60 --solver-mip-gap 0.001
 ```
 
-`--solver-time-limit 60` reaches Gurobi as `TimeLimit=60.0` and
+`--solver-time-limit 60` reaches Gurobi as `TimeLimit=60` and
 `--solver-mip-gap 0.001` as `MIPGap=0.001`, over the solve's
 `solver_mip_gap` (0.005) and any `MIPGap` in `solver_arguments` or
 `gurobi.opt`. Without the flags, `solver_mip_gap` gives `MIPGap=0.005`, and a
@@ -133,7 +133,7 @@ flextool <input_db_url> --solver-time-limit 60 --solver-mip-gap 0.001
 prints what Gurobi receives, for example:
 
 ```text
-Solver args (gurobi): Threads=1, MIPGap=0.001, LogToConsole=1, Method=2, Presolve=2, MIPFocus=1, TimeLimit=60.0
+Solver args (gurobi): Threads=1, MIPGap=0.001, LogToConsole=1, Method=2, Presolve=2, MIPFocus=1, TimeLimit=60
 ```
 
 ---

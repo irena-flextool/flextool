@@ -110,7 +110,7 @@ def _passed(solver: str, tmp_path: Path, opt_text: str, cfg: SolverConfig, flags
 def test_gurobi_stack_flags_win_and_one_gap_entry(tmp_path: Path) -> None:
     cfg = SolverConfig(name="gurobi", mip_gap=0.01, options={"Presolve": 2, "mipgap": 0.005})
     params, _ = _passed("gurobi", tmp_path, "Threads 0\nMIPGap 0.002\n", cfg, _FLAGS)
-    assert params == ["Threads=0", "MIPGap=0.001", "Presolve=2", "TimeLimit=1800.0"]
+    assert params == ["Threads=0", "MIPGap=0.001", "Presolve=2", "TimeLimit=1800"]
 
 
 def test_gurobi_stack_without_flags_solver_arguments_win(tmp_path: Path) -> None:
@@ -122,9 +122,9 @@ def test_gurobi_stack_without_flags_solver_arguments_win(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize("solver, opt_text, gap_line, time_line", [
-    ("cplex", "threads 1\nmip tolerances mipgap 0.002\n", "set mip tolerances mipgap 0.001", "set timelimit 1800.0"),
+    ("cplex", "threads 1\nmip tolerances mipgap 0.002\n", "set mip tolerances mipgap 0.001", "set timelimit 1800"),
     ("xpress", "THREADS 1\nMIPRELSTOP 0.002\n", "setControl MIPRELSTOP 0.001", "setControl MAXTIME 1800"),
-    ("copt", "Threads 1\nRelGap 0.002\n", "set RelGap 0.001", "set TimeLimit 1800.0"),
+    ("copt", "Threads 1\nRelGap 0.002\n", "set RelGap 0.001", "set TimeLimit 1800"),
 ])
 def test_flags_reach_cplex_xpress_copt_under_native_names(solver, opt_text, gap_line, time_line, tmp_path) -> None:
     cfg = SolverConfig(name=solver, mip_gap=0.01)
@@ -150,7 +150,7 @@ def test_highs_environment_names_never_reach_a_commercial_solver() -> None:
     assert _operator_native_overrides("gurobi", highs_only) == []
     assert _operator_highs_overrides(highs_only) == {"time_limit": 120.0, "mip_rel_gap": 0.3}
     both = RunOptions.from_env({"FLEXTOOL_HIGHS_TIME_LIMIT": "120", "FLEXTOOL_SOLVER_TIME_LIMIT": "90"})
-    assert [(o.name, o.value) for o in _operator_native_overrides("gurobi", both)] == [("TimeLimit", "90.0")]
+    assert [(o.name, o.value) for o in _operator_native_overrides("gurobi", both)] == [("TimeLimit", "90")]
     assert _operator_highs_overrides(both) == {"time_limit": 90.0}
 
 
@@ -244,3 +244,38 @@ def test_native_names_are_known_to_the_solver(solver: str) -> None:
             if any(h in str(exc).lower() for h in ("licen", "size-limited")):
                 pytest.skip(f"{solver}: no usable licence ({exc})")
             raise AssertionError(f"{solver} does not know {name!r} ({knob}): {exc}") from exc
+
+
+def test_whole_number_database_values_are_written_as_integers(tmp_path: Path) -> None:
+    """The database stores every number as a float: ``solver_arguments`` ``Threads 4`` arrives as "4.0" and must
+    reach the solver as ``4`` (the Xpress library refuses ``1.0`` for an integer control); a fraction keeps its
+    digits, and a huge whole number keeps the float form."""
+    cfg = SolverConfig(name="gurobi", options={"Threads": "4.0", "Method": 2.0, "MIPGap": "0.0005",
+                                               "Cutoff": 1e20, "Seed": "-3.00"})
+    params, _ = _passed("gurobi", tmp_path, "", cfg, [])
+    assert params == ["Threads=4", "Method=2", "MIPGap=0.0005", "Cutoff=1e+20", "Seed=-3"]
+
+
+# COPT 8.0.4's summary of an LP stopped by its time limit (coptpy log; copt_cmd prints the library's log).
+_COPT_LP_TIMEOUT_LOG = """\
+Method   Iteration           Objective  Primal.NInf   Dual.NInf        Time
+Dual             0    1.0943977500e+03           12           0       0.00s
+
+Solving unfinished
+Status: Timeout  Objective: 1.0943977500e+03  Iterations: 0  Time: 0.00s
+"""
+
+
+def test_copt_lp_time_limit_is_read_with_and_without_a_solution_file(tmp_path: Path) -> None:
+    """An LP stopped by its COPT time limit says ``Status: Timeout`` (not the MIP's ``stopped (time limit
+    reached)``): ``TIME_LIMIT`` whether COPT wrote a solution file or not, so the acceptance check rejects the
+    LP iterate, and a run without a file is told it hit the limit."""
+    from flextool.engine.solve._subprocess_solve import _parse_copt_sol
+
+    missing = _parse_copt_sol(tmp_path / "none.sol", _COPT_LP_TIMEOUT_LOG)
+    assert (missing.status, missing.primal, missing.objective) == ("TIME_LIMIT", None, None)
+    sol = tmp_path / "lp.sol"
+    sol.write_text("# Objective value 1094.39775\nC0000001  1\nC0000002  0\n")
+    written = _parse_copt_sol(sol, _COPT_LP_TIMEOUT_LOG)
+    assert written.status == "TIME_LIMIT" and written.primal == {"C0000001": 1.0, "C0000002": 0.0}
+    assert _parse_copt_sol(sol, "Status: Optimal  Objective: 1.0943977500e+03\n").status == "OPTIMAL"

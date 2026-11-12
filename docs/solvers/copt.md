@@ -119,7 +119,7 @@ solve_advanced.solver_arguments:
 flextool <input_db_url> --solver-time-limit 60 --solver-mip-gap 0.001
 ```
 
-`--solver-time-limit` and `--solver-mip-gap` reach COPT as `TimeLimit 60.0` and
+`--solver-time-limit` and `--solver-mip-gap` reach COPT as `TimeLimit 60` and
 `RelGap 0.001`, over the solve's `solver_mip_gap`, its `solver_arguments` and
 `copt.opt` (precedence in [Solver selection](index.md)). Parameter names
 match without regard to case. The thread count comes from `Threads` in
