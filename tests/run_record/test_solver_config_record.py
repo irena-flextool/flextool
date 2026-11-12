@@ -74,12 +74,16 @@ def test_scrub_removes_the_workspace_path_and_keeps_the_names(tmp_path: Path) ->
     rec = _record(tmp_path, _HIGHS, folder=workspace / "solver_config")
     scrubbed = scrub_run_status({"state": "succeeded", "solver_config": rec}, project)["solver_config"]
     assert str(tmp_path.resolve()) not in json.dumps(scrubbed)
-    assert scrubbed["dir"].endswith("/solver_config")
-    assert scrubbed["dir"].startswith(("<path>/", "~/"))
-    assert scrubbed["files"]["highs.opt"]["source"].endswith("/highs.opt")
+    # A scrubbed path keeps the platform's separator (``<path>\\solver_config`` on Windows).
+    def posix(text: str) -> str:
+        return text.replace("\\", "/")
+
+    assert posix(scrubbed["dir"]).endswith("/solver_config")
+    assert posix(scrubbed["dir"]).startswith(("<path>/", "~/"))
+    assert posix(scrubbed["files"]["highs.opt"]["source"]).endswith("/highs.opt")
     assert scrubbed["files"]["highs.opt"]["sha256"] == hashlib.sha256(_HIGHS).hexdigest()
 
     # A folder inside the project becomes <project>/...
     rec_in = _record(tmp_path, _HIGHS, folder=project / "solver_config")
     scrubbed_in = scrub_run_status({"state": "succeeded", "solver_config": rec_in}, project.resolve())
-    assert scrubbed_in["solver_config"]["dir"] == "<project>/solver_config"
+    assert posix(scrubbed_in["solver_config"]["dir"]) == "<project>/solver_config"
