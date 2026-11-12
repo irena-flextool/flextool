@@ -100,9 +100,11 @@ the FlexTool log.
   as a warning naming where the parameter was set (the option file, or the
   `solver_arguments` of which solve). Fix the name. With console logging off
   (`LogToConsole 0`) Gurobi prints no such line, and there is no warning.
-- **File-writing parameters.** `ResultFile`, `LogFile`, `SolFiles` and
-  `NodefileDir` are not passed to Gurobi (with a warning): FlexTool reads the
-  solution from its own result file.
+- **File parameters.** Parameters that name a file or folder (`ResultFile`,
+  `LogFile`, `SolFiles`, `NodefileDir`, `InputFile`, the `.prm` / `.json` file
+  lists of tuning, concurrent and multi-objective runs) and `Record` are not
+  passed to Gurobi (with a warning): FlexTool reads the solution from its own
+  result file. See [Options that read or write files](index.md#the-parameters-in-detail).
 - **Time limit reached.** A MIP stopped at its time limit with a solution is
   kept with a warning that gives the gap reached; an LP, or a MIP without a
   solution, stops the run. See [Time limit](index.md#time-limit).

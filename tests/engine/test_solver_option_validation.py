@@ -109,7 +109,7 @@ def test_highs_solver_arguments_are_checked(args, where) -> None:
     assert where in str(err.value)
 
 
-def test_highs_option_file_line_is_named_and_paths_pass() -> None:
+def test_highs_option_file_line_is_named_and_file_options_are_dropped() -> None:
     with pytest.raises(FlexToolUserError, match=r"cfg/highs\.opt, line 2"):
         _resolve_effective_highs_options(
             solver_arguments_map=None, highs_opt_path=Path("cfg/highs.opt"), cli_overrides=None,
@@ -120,8 +120,8 @@ def test_highs_option_file_line_is_named_and_paths_pass() -> None:
         highs_opt_path=None, cli_overrides={"output_flag": False, "mip_rel_gap": 1e-4}, solve_name="invest",
         solver_config=SolverConfig(mip_gap=0.002),
     )
-    assert options == {"mip_rel_gap": 1e-4, "solution_file": "/tmp/run/a.sol", "time_limit": "inf",
-                       "threads": "-1", "output_flag": False}
+    # Item 236 A2: ``solution_file`` makes HiGHS write at a path, so it is dropped, not checked.
+    assert options == {"mip_rel_gap": 1e-4, "time_limit": "inf", "threads": "-1", "output_flag": False}
 
 
 def test_script_builders_refuse_a_line_break_that_got_through(monkeypatch) -> None:

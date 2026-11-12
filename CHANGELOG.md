@@ -88,8 +88,20 @@ Each line says what changes for a model that ran before and what to do; the deta
   option file from another person's project) could add commands to a CPLEX, Xpress or COPT run. FlexTool now
   refuses, for every solver including HiGHS, an option name or value with a line break, control character, space,
   quote, `;`, `#` or `=`; names are letters, digits, `_` and `.` (CPLEX: words separated by single spaces). The
-  error names the solve and parameter, or the option file and line. Numbers (`-1`, `1e-4`, `inf`) and paths without
-  spaces still pass; a value with a space, such as a file path, is now refused: use a path without spaces.
+  error names the solve and parameter, or the option file and line. Numbers (`-1`, `1e-4`, `inf`) and single words
+  still pass; a value with a space is now refused.
+- **Security: solver options that read or write files are not passed on.** Since 4.0, a database's
+  `solver_arguments` (or an option file from another person's project) could make the solver, HiGHS included, write
+  over or read files anywhere on your computer, for example with HiGHS `solution_file` or `log_file`, Gurobi
+  `LogFile`, CPLEX `workdir` or Xpress `TUNEROUTPUTPATH`. FlexTool now drops such options, with one warning per run
+  naming the option and where it was set; the full list is in the solver docs. Solves are not affected: FlexTool
+  reads the solution from its own result file. A solution file or log file asked for in `solver_arguments` is no
+  longer written; a commercial solver's log is still saved as `solve_data/subprocess/<solve>.log`.
+- **`solver_precommand` is not run, and a value now gives a warning.** FlexTool 3 ran it in front of CPLEX (for
+  example to reserve a floating licence); FlexTool 4 does not run commands stored in a database, for safety: a
+  database from someone else could otherwise run any program on your computer. The warning comes once per solve.
+  To hold a floating licence, use your solver's own licence server setup; a solver wrapper set on your computer is
+  planned for a later release.
 
 ### New features
 
