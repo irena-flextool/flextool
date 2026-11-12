@@ -1525,9 +1525,10 @@ def _run_solver_process(
     the raw text.  The pipes are decoded with the locale's encoding, as ``text=True`` did, and an undecodable byte
     becomes U+FFFD instead of an error.
 
-    The solver leads its own process group (POSIX).  It is stopped with everything it started when the
-    *watchdog* (seconds) runs out, when this thread is interrupted (Ctrl-C) or fails, and, after the solver has
-    exited, a process it started that still holds the output open is stopped after :data:`_READER_JOIN_S`.
+    The solver stays in FlexTool's process group (no session of its own), so a signal to that group (a closed
+    terminal, a dropped SSH session, ``kill -- -<pgid>``) ends it with FlexTool.  It is stopped with everything it
+    started when the *watchdog* (seconds) runs out, when this thread is interrupted (Ctrl-C) or fails, and when,
+    :data:`_READER_JOIN_S` after the solver exited, its output is still open (a process it started holds it).
     """
     import locale
     import threading
@@ -1535,54 +1536,25 @@ def _run_solver_process(
 
     import psutil
 
-    from flextool._process_tree import kill_process_group, own_group_popen_kwargs
+    from flextool._process_tree import kill_solver_tree, pipe_inode, processes_holding_pipes
 
     encoding = locale.getpreferredencoding(False)
-    proc = subprocess.Popen(
-        argv,
-        stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        cwd=cwd,
-        text=True,
-        encoding=encoding,
-        errors="replace",
-        bufsize=1,
-        **own_group_popen_kwargs(),
-    )
+    proc: subprocess.Popen | None = None
+    readers: list[threading.Thread] = []
+    inodes: tuple[int | None, ...] = ()
     lines_q: "queue.Queue[tuple[str, str | None]]" = queue.Queue()
-    threads = [
-        threading.Thread(target=_pipe_reader, args=("stdout", proc.stdout, lines_q), daemon=True),
-        threading.Thread(target=_pipe_reader, args=("stderr", proc.stderr, lines_q), daemon=True),
-    ]
-    if stdin_text is not None:
-        threads.append(threading.Thread(target=_stdin_writer, args=(proc.stdin, stdin_text), daemon=True))
-    for th in threads:
-        th.start()
-
     buffers: dict[str, list[str]] = {"stdout": [], "stderr": []}
     lines: list[str] = []
-    open_streams = {"stdout", "stderr"}
     out = sys.stdout if echo else None
     log_fh = None
-    if log_path is not None:
-        try:
-            log_fh = open(log_path, "w", encoding="utf-8", newline="")
-        except OSError as exc:
-            if logger is not None:
-                logger.warning("Could not write the %s log to %s: %s", label, log_path, exc)
     known_children: dict[int, psutil.Process] = {}
     timed_out = False
     finished = False
-    start = time.monotonic()
-    deadline = start + watchdog if watchdog is not None else None
-    last_snapshot = start - _CHILD_SNAPSHOT_S
 
     def _take(item: tuple[str, str | None]) -> None:
         nonlocal out, log_fh
         name, line = item
         if line is None:
-            open_streams.discard(name)
             return
         buffers[name].append(line)
         lines.append(line)
@@ -1608,7 +1580,54 @@ def _run_solver_process(
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             pass
 
+    def _leftovers() -> list[psutil.Process]:
+        """The solver's children seen while it ran, and whatever holds its output open now."""
+        return [*known_children.values(), *processes_holding_pipes(inodes)]
+
+    def _reading() -> bool:
+        return any(th.is_alive() for th in readers)
+
+    def _take_until(deadline_at: float) -> None:
+        """Show the log while a reader still runs (its pipe is open), until *deadline_at*."""
+        while _reading() and time.monotonic() < deadline_at:
+            try:
+                _take(lines_q.get(timeout=0.2))
+            except queue.Empty:
+                pass
+
     try:
+        # Inside the ``try``: an interrupt from here on stops the solver.
+        proc = subprocess.Popen(
+            argv,
+            stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            cwd=cwd,
+            text=True,
+            encoding=encoding,
+            errors="replace",
+            bufsize=1,
+        )
+        inodes = (pipe_inode(proc.stdout), pipe_inode(proc.stderr))
+        readers = [
+            threading.Thread(target=_pipe_reader, args=("stdout", proc.stdout, lines_q), daemon=True),
+            threading.Thread(target=_pipe_reader, args=("stderr", proc.stderr, lines_q), daemon=True),
+        ]
+        threads = list(readers)
+        if stdin_text is not None:
+            threads.append(threading.Thread(target=_stdin_writer, args=(proc.stdin, stdin_text), daemon=True))
+        for th in threads:
+            th.start()
+        if log_path is not None:
+            try:
+                log_fh = open(log_path, "w", encoding="utf-8", newline="")
+            except OSError as exc:
+                if logger is not None:
+                    logger.warning("Could not write the %s log to %s: %s", label, log_path, exc)
+        start = time.monotonic()
+        deadline = start + watchdog if watchdog is not None else None
+        last_snapshot = start - _CHILD_SNAPSHOT_S
+
         # While the solver runs.
         while proc.poll() is None:
             try:
@@ -1621,31 +1640,20 @@ def _run_solver_process(
                 _snapshot_children()
             if deadline is not None and now > deadline and proc.poll() is None:
                 timed_out = True
-                kill_process_group(proc, known_children.values())
+                kill_solver_tree(proc, known_children.values())
                 break
-        # After it exited (or was stopped): the rest of the log, for a bounded time.
-        drain_until = time.monotonic() + _READER_JOIN_S
-        while open_streams and time.monotonic() < drain_until:
-            try:
-                _take(lines_q.get(timeout=0.2))
-            except queue.Empty:
-                pass
-        if open_streams:
+        # After it exited (or was stopped): the readers end when nothing holds the output open any more.  The
+        # bound is on them, not on the queue: a slow console still has lines to show of a closed output.
+        _take_until(time.monotonic() + _READER_JOIN_S)
+        if _reading():
             msg = (
                 f"The output of {label} stayed open after it exited: a process it started is still running. "
                 "FlexTool stopped it and stops reading the log there."
             )
-            if logger is not None:
-                logger.warning(msg)
-            else:
-                logging.getLogger(__name__).warning(msg)
-            kill_process_group(proc, known_children.values())
-            drain_until = time.monotonic() + 2.0
-            while open_streams and time.monotonic() < drain_until:
-                try:
-                    _take(lines_q.get(timeout=0.2))
-                except queue.Empty:
-                    pass
+            (logger or logging.getLogger(__name__)).warning(msg)
+            kill_solver_tree(proc, _leftovers())
+            _take_until(time.monotonic() + 2.0)
+        # The rest of what was read, without a time limit (it is all on the queue).
         while True:
             try:
                 _take(lines_q.get_nowait())
@@ -1657,15 +1665,16 @@ def _run_solver_process(
             pass
         finished = True
     finally:
-        if not finished:
+        if not finished and proc is not None:
             # Interrupted (Ctrl-C) or failed here: never leave the solver running.
-            kill_process_group(proc, known_children.values())
+            kill_solver_tree(proc, _leftovers())
         if log_fh is not None:
             try:
                 log_fh.close()
             except OSError:
                 pass
 
+    assert proc is not None
     return _SolverRun(
         returncode=None if timed_out else proc.returncode,
         stdout="".join(buffers["stdout"]),

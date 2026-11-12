@@ -156,7 +156,13 @@ def test_watchdog_stops_solver_and_its_child_and_keeps_the_log(tmp_path: Path, m
     assert _wait_gone(solver_pid) and _wait_gone(child_pid)
 
 
-def test_orphan_holding_the_log_open_is_stopped(tmp_path: Path, monkeypatch, caplog) -> None:
+@pytest.mark.parametrize("linger", [
+    # The solver exits at once: the sleeper is found by the pipe it holds open (Linux ``/proc``).
+    pytest.param(0.0, marks=pytest.mark.skipif(not sys.platform.startswith("linux"), reason="Linux /proc only")),
+    # The solver runs past a child snapshot: the sleeper is found as its child (every platform).
+    1.5,
+])
+def test_orphan_holding_the_log_open_is_stopped(tmp_path: Path, monkeypatch, caplog, linger: float) -> None:
     """The solver starts a sleeper that inherits its output and exits 0: the solve returns after the bounded
     wait, warns once, parses the status and stops the sleeper."""
     monkeypatch.setattr(sps, "_READER_JOIN_S", 1.0)
@@ -167,6 +173,8 @@ def test_orphan_holding_the_log_open_is_stopped(tmp_path: Path, monkeypatch, cap
         with open({str(pid_file)!r}, "w") as fh:
             fh.write(str(child.pid))
         print("ORPHAN-TEST", flush=True)
+        import time
+        time.sleep({linger})
         """)
     t0 = time.monotonic()
     with caplog.at_level(logging.WARNING):
@@ -222,3 +230,72 @@ def test_no_work_folder_means_no_log_file(tmp_path: Path, monkeypatch, capsys) -
     assert sol.shim_status == "OPTIMAL"
     assert "TEMP-LOG" in capsys.readouterr().out
     assert not (tmp_path / "work").exists()
+
+
+_REPO = Path(__file__).resolve().parents[2]
+
+
+def test_solver_dies_with_the_engine_on_a_group_hangup(tmp_path: Path) -> None:
+    """A closed terminal or a dropped SSH session sends SIGHUP to the foreground process group; Python's default
+    action ends the engine without its ``finally``.  The solver shares the engine's group, so it gets the signal
+    too and is gone afterwards (it must not keep its licence, memory and threads)."""
+    import os
+    import signal
+    import subprocess
+
+    pid_file = tmp_path / "solver.pid"
+    solver = _stub(tmp_path, f"""\
+        import os, time
+        with open({str(pid_file)!r}, "w") as fh:
+            fh.write(str(os.getpid()))
+        time.sleep(60)
+        """)
+    engine = _stub(tmp_path, f"""\
+        from pathlib import Path
+        from flextool.engine.solve import _subprocess_solve as sps
+        sps._run_solver_process([{str(solver)!r}], stdin_text=None, cwd=Path({str(tmp_path)!r}), watchdog=None,
+                                echo=True, log_path=None)
+        """, name="engine_stub")
+    env = {**os.environ, "PYTHONPATH": str(_REPO)}
+    proc = subprocess.Popen([str(engine)], env=env, start_new_session=True,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    solver_pid = None
+    try:
+        end = time.monotonic() + 30.0
+        while time.monotonic() < end and not (pid_file.exists() and pid_file.read_text()):
+            assert proc.poll() is None, "the engine stub ended before it started the solver"
+            time.sleep(0.05)
+        solver_pid = int(pid_file.read_text())
+        os.killpg(proc.pid, signal.SIGHUP)
+        proc.wait(timeout=10.0)
+        assert _wait_gone(solver_pid), "the solver outlived the engine after a SIGHUP to the process group"
+    finally:
+        for pid in (proc.pid, solver_pid):
+            if pid is not None:
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                except (ProcessLookupError, PermissionError):
+                    pass
+
+
+class _SlowSink(io.StringIO):
+    """A console that takes 1 ms per write (a full GUI pipe, Spine Toolbox's console)."""
+
+    def write(self, text: str) -> int:
+        time.sleep(0.001)
+        return super().write(text)
+
+
+def test_slow_console_is_no_leftover_process(tmp_path: Path, monkeypatch, caplog) -> None:
+    """The solver writes its log faster than the console shows it and exits.  Its output is closed, so the
+    bounded wait must not report (or stop) a process that keeps it open, and every line is still shown."""
+    monkeypatch.setattr(sps, "_READER_JOIN_S", 0.5)
+    stub = _stub(tmp_path, 'import sys\nsys.stdout.write("".join(f"line {i}\\n" for i in range(2000)))\n')
+    sink = _SlowSink()
+    monkeypatch.setattr(sys, "stdout", sink)
+    with caplog.at_level(logging.WARNING):
+        run = sps._run_solver_process([str(stub)], stdin_text=None, cwd=tmp_path, watchdog=None, echo=True,
+                                      log_path=None, logger=logging.getLogger("t"))
+    assert run.returncode == 0 and len(run.lines) == 2000
+    assert sink.getvalue().count("\n") == 2000
+    assert not [r for r in caplog.records if "stayed open" in r.getMessage()]
