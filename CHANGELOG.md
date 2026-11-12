@@ -80,8 +80,8 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   (profiles, availability, efficiency, costs, reservations, penalties, stochastic inflow; also the realization
   dispatch). Results of such models change.
 - **A roll of a rolling stochastic solve no longer reads a later roll's forecasts.** Each period of a roll after its
-  fan's period reads the forecast given at the roll's own fan analysis time first, and a forecast given at the
-  period's own first step (a later roll's analysis time) only for a time step the roll's forecast does not cover.
+  fan's period reads the forecast given at the roll's own fan analysis time; a time step that forecast does not
+  cover but a later one does is an input error (see "Input checks").
   Before, a look-ahead period that started at a later roll's analysis time read that later forecast. A single
   (non-rolling) solve is unchanged: a forecast at a later period's own first step still overrides. Results of
   rolling stochastic models with such forecasts change.
@@ -547,6 +547,11 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
 - **A stochastic inflow or reservation that gives a value to only some of a fan's forecast branches is an
   error,** as for the other stochastic-time parameters (it read 0 in the branches left out). The check also covers
   values given at the fan's analysis time that later periods read.
+- **A roll's forecast must cover the roll's whole horizon.** In a rolling stochastic solve, a look-ahead period
+  whose time step has no value in the forecast given at the roll's start, but has one in a forecast given later (at
+  the period's own first step, a later roll's analysis time), is an error naming the entity, the parameter, the roll
+  and the uncovered time steps, raised before the roll is solved. Extend the forecasts at each roll start to the end
+  of the roll's horizon. Single solves keep reading the forecast at a period's own first step.
 - **A `co2_max_period` or `co2_max_total` on a group whose `co2_method` has no such cap is reported.** The
   value is ignored (for example `co2_max_period` with `co2_method` *price*); the run now warns, naming the group,
   the alternative and its method. Before, such a group with `co2_max_period` was also listed as CO2-limited in

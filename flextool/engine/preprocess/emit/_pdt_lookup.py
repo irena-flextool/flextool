@@ -310,9 +310,12 @@ def _read_singles(path: Path,
 #   one at the period's own first step.  A roll decides at its fan's analysis time and must not see a forecast
 #   made later, so its look-ahead periods -- every period whose own first step is later than the roll's fan
 #   start, i.e. every row except the fan's own period, whose first step is the fan start -- read the roll's
-#   forecast before a later roll's (a later roll starts, and fans, at its own analysis time).  The own step is
-#   kept as a fallback for a cell the fan-start forecast does not author, so such a cell reads a value rather
-#   than 0.  The realization sibling of a rolling solve is itself rolling and follows the same rule.
+#   forecast before a later roll's (a later roll starts, and fans, at its own analysis time).  A cell the
+#   fan-start forecast does not author but the own-step (later) forecast does is an input error, raised once per
+#   reader before its value loop (:func:`_check_roll_forecast_covers_lookahead`): the roll's forecast must cover
+#   its whole horizon.  The own tier therefore never supplies a value there; it stays in the tiers only so the
+#   check and the folds share one tier order.  The realization sibling of a rolling solve is itself rolling and
+#   follows the same rule.
 #
 # Non-stochastic (plain time-series) data has no analysis time and is not read through these tiers: unchanged.
 # See docs/how_to/stochastics.md "Stochastics over multiple periods" and "Rolling horizon stochastics".
@@ -561,6 +564,113 @@ def _check_ungrouped_reads_have_realized_branch(
             )
 
 
+def _tier_has_value(pbt: dict, prefix: tuple, tb_groups: "list[Iterable[str]]", tier: "list[str]",
+                    t: str) -> bool:
+    """Whether *tier* authors a value for the cell ``(prefix, t)`` on any branch of *tb_groups* (the hit test
+    of :func:`fold_over_tiers`)."""
+    return any((*prefix, tb, ts, t) in pbt for tbs in tb_groups for tb in tbs for ts in tier)
+
+
+_UNCOVERED_SHOWN = 5
+
+
+def _check_roll_forecast_covers_lookahead(
+    pbt: dict[tuple, float],
+    n_ent: int,
+    stochastic_entities: "set[str] | frozenset[str]",
+    tb_for_d: dict[str, list[str]],
+    ts_for_d: dict[str, list[str]],
+    pe_for_d: dict[str, list[str]],
+    fan_for_d: "dict[str, list[str]]",
+    solve_data_dir: Path,
+    *,
+    provider: "object | None" = None,
+    member_pos: int = 0,
+    kind: str,
+) -> None:
+    """Raise when a roll of a rolling solve would read, in a look-ahead period, a forecast made later than the
+    roll's own start (owner decision 2026-11-12, item 228).
+
+    A look-ahead period of a roll (``read_first`` = ``fan``, :func:`ts_tiers` ``[fan, own]``) reads the
+    forecast made at the roll's fan start.  A value cell that forecast does not cover would otherwise fall back
+    to the forecast made at the period's own first step -- a later roll's analysis time -- so the roll would
+    decide on information it does not have yet.  That fallback is an input error: the roll's forecast must
+    cover its whole horizon.  A cell neither forecast covers reads the plain value as before, and single solves
+    and ``read_first`` = ``own`` periods keep the own-step fallback (nothing to check: the function returns at
+    once without a ``fan_first`` period).
+
+    The check mirrors the readers' folds exactly (branch 1, the stochastic fold over ``tb_for_d[d]``, when
+    ``key[member_pos]`` is in *stochastic_entities*; then branch 2, the parent-period fold over the parents'
+    branches) on every ``(d, t)`` of ``solve_data/steps_in_use``, so it runs once per reader, before the
+    reader's value loop.  *pbt* keys are ``(*entity, param, branch, ts, time)`` (``n_ent`` entity-key
+    columns); *kind* (as for :func:`_check_pbt_branch_coverage`) names the entity in the message.
+    """
+    fan_first = getattr(fan_for_d, "fan_first", frozenset())
+    if not fan_first or not pbt:
+        return
+    times_by_d = _read_pairs_to_dict(solve_data_dir / "steps_in_use.csv", key_col=0, provider=provider)
+    tiers_by_d: dict[str, list[list[str]]] = {}
+    for d in times_by_d:
+        if d in fan_first:
+            tiers = ts_tiers(d, ts_for_d, fan_for_d)
+            if len(tiers) == 2:
+                tiers_by_d[d] = tiers
+    if not tiers_by_d:
+        return
+    # Own (later) analysis time -> the look-ahead periods that would fall back to it.
+    d_by_own_ts: dict[str, list[str]] = {}
+    for d, (_fan, own) in tiers_by_d.items():
+        for ts in dict.fromkeys(own):
+            d_by_own_ts.setdefault(ts, []).append(d)
+    time_sets = {d: set(times_by_d[d]) for d in tiers_by_d}
+    candidates: dict[tuple, set[tuple[str, str]]] = {}
+    for key in pbt:
+        ts, t = key[n_ent + 2], key[n_ent + 3]
+        for d in d_by_own_ts.get(ts, ()):
+            if t in time_sets[d]:
+                candidates.setdefault(key[:n_ent + 1], set()).add((d, t))
+    uncovered: dict[tuple, list[tuple[str, str]]] = {}
+    for prefix, cells in candidates.items():
+        stochastic = prefix[member_pos] in stochastic_entities
+        for d, t in cells:
+            fan, own = tiers_by_d[d]
+            folds = [[tb_for_d.get(d, ())]] if stochastic else []
+            pe_list = pe_for_d.get(d, ())
+            if pe_list:
+                folds.append([tb_for_d.get(pe, ()) for pe in pe_list])
+            for tb_groups in folds:
+                if _tier_has_value(pbt, prefix, tb_groups, fan, t):
+                    break
+                if _tier_has_value(pbt, prefix, tb_groups, own, t):
+                    uncovered.setdefault(prefix, []).append((d, t))
+                    break
+    if not uncovered:
+        return
+    prefix = min(uncovered)
+    ent, param = prefix[:n_ent], prefix[n_ent]
+    order = {dt: i for i, dt in enumerate((d, t) for d, ts_list in times_by_d.items() for t in ts_list)}
+    cells = sorted(uncovered[prefix], key=order.__getitem__)
+    steps = list(dict.fromkeys(t for _d, t in cells))
+    periods = list(dict.fromkeys(d for d, _t in cells))
+    shown = ", ".join(f"'{t}'" for t in steps[:_UNCOVERED_SHOWN])
+    if len(steps) > _UNCOVERED_SHOWN:
+        shown += f" and {len(steps) - _UNCOVERED_SHOWN} more"
+    fan_steps = ", ".join(f"'{ts}'" for ts in dict.fromkeys(ts for d in periods for ts in tiers_by_d[d][0]))
+    own_steps = ", ".join(f"'{ts}'" for ts in dict.fromkeys(ts for d in periods for ts in tiers_by_d[d][1]))
+    solve = next(iter(_read_singles(solve_data_dir / "solve_current.csv", provider=provider)), None)
+    roll = f"roll '{solve}'" if solve else "this roll"
+    period_names = ", ".join(f"'{d}'" for d in periods)
+    raise FlexToolConfigError(
+        f"{_subject(kind, ent)}, parameter '{param}': {roll} of a rolling solve starts at time step "
+        f"{fan_steps} and reads the forecasts made then over its whole horizon, but those forecasts have no "
+        f"value at time step{'s' if len(steps) > 1 else ''} {shown} (period{'s' if len(periods) > 1 else ''} "
+        f"{period_names}).  Only the forecasts made later, at "
+        f"{own_steps}, have values there, and a roll must not use a forecast made after it starts.  Give "
+        f"the forecasts that start at {fan_steps} values for the whole horizon of the roll, look-ahead "
+        "included.  Check which alternative of the scenario gives this value."
+    )
+
+
 # ---------------------------------------------------------------------------
 # Branch periods inherit the anchor period's ``pd`` rows.
 # ---------------------------------------------------------------------------
@@ -783,6 +893,9 @@ class PdtLookup:
         _check_ungrouped_reads_have_realized_branch(self._pbt, 1, self._stoch_entity, anchor_members,
                                                     self._tb_for_d, self._ts_for_d, fan_for_d=self._fan_for_d,
                                                     kind=kind)
+        _check_roll_forecast_covers_lookahead(self._pbt, 1, self._stoch_entity, self._tb_for_d, self._ts_for_d,
+                                              self._pe_for_d, self._fan_for_d, Path(period_time_first_csv).parent,
+                                              provider=provider, kind=kind)
         self._param_def1 = param_def1
         self._time_first = time_first_priority
         self._class_defaults = class_default_values or {}
@@ -891,6 +1004,9 @@ class PdtLookupPerSide:
         _check_ungrouped_reads_have_realized_branch(self._pbt, 2, self._stoch_process, anchor_members,
                                                     self._tb_for_d, self._ts_for_d, fan_for_d=self._fan_for_d,
                                                     kind="process_side")
+        _check_roll_forecast_covers_lookahead(self._pbt, 2, self._stoch_process, self._tb_for_d, self._ts_for_d,
+                                              self._pe_for_d, self._fan_for_d, Path(period_time_first_csv).parent,
+                                              provider=provider, kind="process_side")
 
     def get(self, p: str, side: str, param: str, d: str, t: str) -> float:
         tiers = self._tiers.get(d, ())

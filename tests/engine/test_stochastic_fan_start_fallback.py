@@ -6,9 +6,11 @@ Every fold reads, per value cell, the forecast authored at the branch
 period's own first step, else the forecast authored at the fan start, so a
 model that authors its forecasts only at the fan's analysis time reads them
 in every later period too (before: 0 there).  In a roll of a rolling solve
-the order flips: the roll's fan-start forecast first, so a look-ahead
-period never reads a later roll's forecast.  A pre-reveal trunk period
-never reads the fan start.
+a look-ahead period reads the roll's fan-start forecast only: a cell that
+forecast does not cover, where a forecast made later (at the period's own
+first step) has a value, is an input error -- the roll's forecast must
+cover its whole horizon.  A pre-reveal trunk period never reads the fan
+start.
 
 Fixture (built from the schema JSON, never a checked-in sqlite): one node
 ``s`` (constant demand 1 per step unless the case sets a stochastic inflow),
@@ -272,6 +274,28 @@ def test_rolling_lookahead_reads_roll_fan_start(tmp_path_factory, monkeypatch) -
                                                                                 (["t0009"], True)]
 
 
+# ── 4b: rolling — a roll's forecast must cover its look-ahead ──────────
+def test_rolling_lookahead_not_covered_by_roll_forecast_is_an_error(tmp_path_factory) -> None:
+    """Test 4's rolling solve, but the t0001 forecast covers only t0001..t0008: roll 1's look-ahead p3
+    (t0009..t0012) has no value in roll 1's forecast, and only the t0009 forecast (made at roll 2's start)
+    has values there.  Roll 1 must not read it: an input error naming the profile, roll 1 (``sol_roll_0``:
+    rolls count from 0), the four steps of p3 in both forecast copies and the two analysis times -- raised
+    while the roll's inputs are prepared, before it is solved (no result is returned)."""
+    per = {b: {"t0001": {t: v * _FACTOR[b] for t, v in _series(8).items()},
+               "t0009": {t: v * _FACTOR[b] for t, v in _series(12, 0.01, offset=8).items()}}
+           for b in ("high", "low")}
+    fans = [*_two_forecasts("p1", "t0001"), *_two_forecasts("p3", "t0009")]
+    with pytest.raises(FlexToolConfigError) as err:
+        _run(tmp_path_factory, n_periods=3, fans=fans, profile=_stochastic(per), rolling=(8.0, 12.0))
+    assert str(err.value) == (
+        "profile 'prof', parameter 'profile': roll 'sol_roll_0' of a rolling solve starts at time step 't0001' "
+        "and reads the forecasts made then over its whole horizon, but those forecasts have no value at time "
+        "steps 't0009', 't0010', 't0011', 't0012' (periods 'p3_high', 'p3_low').  Only the forecasts made "
+        "later, at 't0009', have values there, and a roll must not use a forecast made after it starts.  Give "
+        "the forecasts that start at 't0001' values for the whole horizon of the roll, look-ahead included.  "
+        "Check which alternative of the scenario gives this value.")
+
+
 # ── 5: realized: yes — the realization sibling and ungrouped users ─────
 def test_realized_branch_read_in_later_periods(tmp_path_factory) -> None:
     """Fan p1/t0001 with ``real`` (×0.8) designated realized: yes, data at t0001 only, unit ungrouped: the
@@ -306,8 +330,10 @@ def test_ungrouped_stochastic_inflow_without_realized_is_an_error(tmp_path_facto
 
 
 # ── coverage checks (own ∪ fan; inflow and reservation) ────────────────
-def _fan_provider(pbt_name: str, pbt: pl.DataFrame, extra: "dict[str, pl.DataFrame]") -> FlexDataProvider:
-    """A synthetic solve: fan p1/t1 into high/low, continuation p2 (first step t5)."""
+def _fan_provider(pbt_name: str, pbt: pl.DataFrame, extra: "dict[str, pl.DataFrame]",
+                  *, rolling: bool = False) -> FlexDataProvider:
+    """A synthetic solve: fan p1/t1 into high/low, continuation p2 (first step t5); *rolling*: the solve is
+    roll ``sol_roll_1`` of a rolling solve (``read_first`` = ``fan``)."""
     provider = FlexDataProvider()
 
     def put(key: str, df: pl.DataFrame) -> None:
@@ -322,7 +348,10 @@ def _fan_provider(pbt_name: str, pbt: pl.DataFrame, extra: "dict[str, pl.DataFra
         "period": ["p1", "p1", "p1", "p2", "p2", "p2"],
         "branch": ["p1", "p1_high", "p1_low", "p2", "p2_high", "p2_low"]}))
     put("solve_data/branch_time_start", pl.DataFrame({
-        "period": ["p1", "p1_high", "p1_low", "p2", "p2_high", "p2_low"], "step": ["t1"] * 6}))
+        "period": ["p1", "p1_high", "p1_low", "p2", "p2_high", "p2_low"], "step": ["t1"] * 6,
+        "read_first": ["fan" if rolling else "own"] * 6}))
+    if rolling:
+        put("solve_data/solve_current", pl.DataFrame({"solve": ["sol_roll_1"]}))
     put("solve_data/steps_in_use", pl.DataFrame({
         "period": ["p1_high", "p1_low", "p2_high", "p2_low"], "time": ["t1", "t1", "t5", "t5"]}))
     for k, v in extra.items():
@@ -365,15 +394,16 @@ def test_inflow_fan_start_fold_in_both_twins(tmp_path) -> None:
                    ("p2_low", "t5"): -1.0}
 
 
-def _reserve_provider(branches: list[str], values: list[float]) -> FlexDataProvider:
+def _reserve_provider(branches: list[str], values: list[float], *, time_starts: "list[str] | None" = None,
+                      times: "list[str] | None" = None, rolling: bool = False) -> FlexDataProvider:
     n = len(branches)
     pbt = pl.DataFrame({"reserve": ["r"] * n, "upDown": ["up"] * n, "group": ["g"] * n,
-                        "param": ["reservation"] * n, "branch": branches, "time_start": ["t1"] * n,
-                        "time": ["t5"] * n, "value": values})
+                        "param": ["reservation"] * n, "branch": branches, "time_start": time_starts or ["t1"] * n,
+                        "time": times or ["t5"] * n, "value": values})
     return _fan_provider("pbt_reserve__upDown__group", pbt, {
         "solve_data/reserve__upDown__group": pl.DataFrame({"reserve": ["r"], "upDown": ["up"], "group": ["g"]}),
         "input/groupIncludeStochastics": pl.DataFrame({"group": ["g"]}),
-    })
+    }, rolling=rolling)
 
 
 def test_reservation_partial_branch_coverage_is_an_error(tmp_path) -> None:
@@ -387,6 +417,46 @@ def test_reservation_partial_branch_coverage_is_an_error(tmp_path) -> None:
 def test_reservation_reads_fan_start(tmp_path) -> None:
     """A reservation forecast authored at the fan start t1 is read in p2 (own first step t5): 3.0 / 1.5."""
     provider = _reserve_provider(["high", "low"], [3.0, 1.5])
+    df = derive_pdtReserve_upDown_group(tmp_path / "input", tmp_path / "solve_data", provider=provider)
+    got = {(r[4], r[5]): float(r[6]) for r in df.iter_rows()}
+    assert got[("p2_high", "t5")] == 3.0
+    assert got[("p2_low", "t5")] == 1.5
+
+
+# A reservation forecast made at the fan start t1 (for t1 only) and one made at p2's own first step t5 (for t5).
+_LATER_ONLY = dict(branches=["high", "low", "high", "low"], values=[1.0, 0.5, 3.0, 1.5],
+                   time_starts=["t1", "t1", "t5", "t5"], times=["t1", "t1", "t5", "t5"])
+
+
+def test_reservation_roll_forecast_must_cover_lookahead(tmp_path) -> None:
+    """A roll of a rolling solve: p2's step t5 has a value only in the forecast made at t5, later than the
+    roll's start t1, so the roll may not read it -- an input error, worded for the user (hand-written)."""
+    provider = _reserve_provider(**_LATER_ONLY, rolling=True)
+    with pytest.raises(FlexToolConfigError) as err:
+        derive_pdtReserve_upDown_group(tmp_path / "input", tmp_path / "solve_data", provider=provider)
+    assert str(err.value) == (
+        "reserve 'r' (up) of group 'g', parameter 'reservation': roll 'sol_roll_1' of a rolling solve starts at "
+        "time step 't1' and reads the forecasts made then over its whole horizon, but those forecasts have no "
+        "value at time step 't5' (periods 'p2_high', 'p2_low').  Only the forecasts made later, at 't5', have "
+        "values there, and a roll must not use a forecast made after it starts.  Give the forecasts that start "
+        "at 't1' values for the whole horizon of the roll, look-ahead included.  Check which alternative of the "
+        "scenario gives this value.")
+
+
+def test_reservation_single_solve_keeps_own_step_fallback(tmp_path) -> None:
+    """The same data in a single solve is fine: p2 reads its own first step's forecast, 3.0 / 1.5."""
+    df = derive_pdtReserve_upDown_group(tmp_path / "input", tmp_path / "solve_data",
+                                        provider=_reserve_provider(**_LATER_ONLY))
+    got = {(r[4], r[5]): float(r[6]) for r in df.iter_rows()}
+    assert got[("p2_high", "t5")] == 3.0
+    assert got[("p2_low", "t5")] == 1.5
+
+
+def test_reservation_roll_forecast_covering_lookahead_is_read(tmp_path) -> None:
+    """A roll whose forecast made at t1 also covers t5 (3.0 / 1.5) is silent and reads it there, not the t5
+    forecast (30.0 / 15.0)."""
+    provider = _reserve_provider(["high", "low", "high", "low"], [3.0, 1.5, 30.0, 15.0],
+                                 time_starts=["t1", "t1", "t5", "t5"], times=["t5"] * 4, rolling=True)
     df = derive_pdtReserve_upDown_group(tmp_path / "input", tmp_path / "solve_data", provider=provider)
     got = {(r[4], r[5]): float(r[6]) for r in df.iter_rows()}
     assert got[("p2_high", "t5")] == 3.0

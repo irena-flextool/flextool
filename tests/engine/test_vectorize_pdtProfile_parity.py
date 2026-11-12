@@ -30,6 +30,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess.emit._period_params import (
     derive_pdtProfile,
     derive_pdtProfile_vectorized,
@@ -359,14 +360,16 @@ def test_vectorized_pdtProfile_synthetic_fold_and_cascade(tmp_path):
     print(f"\n[pdtProfile parity] synthetic fold+UNION: Tier {tier}")
 
 
-@pytest.mark.parametrize("rolling", [False, True], ids=["single", "rolling_lookahead"])
-def test_vectorized_pdtProfile_fan_start_fallback(rolling, tmp_path):
+@pytest.mark.parametrize("case", ["single", "rolling_lookahead", "rolling_uncovered"])
+def test_vectorized_pdtProfile_fan_start_fallback(case, tmp_path):
     """Item 228: a non-empty ``fan_for_d`` (``branch_time_start``) -- each fold cell reads the forecast at its
-    period's own first step, else at the fan start (a roll's look-ahead period: the fan start first) --
-    byte-identical in both twins, values hand-derived in
+    period's own first step, else at the fan start (a roll's look-ahead period: the fan start only; a cell it
+    does not cover that a later forecast does is an input error in both twins) -- byte-identical in both twins,
+    values hand-derived in
     :mod:`tests.engine._fan_fold_fixture` (profile ``X`` is stochastic through its process ``px``)."""
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-    from tests.engine._fan_fold_fixture import STEPS, expected_fold, pbt_frame, put_fan_scaffold
+    from tests.engine._fan_fold_fixture import (
+        STEPS, expected_fold, fan_case, pbt_frame, put_fan_scaffold, uncovered_error)
 
     provider = FlexDataProvider()
 
@@ -374,14 +377,20 @@ def test_vectorized_pdtProfile_fan_start_fallback(rolling, tmp_path):
         provider.put(f"{parent}/{stem}", df)
         provider.put(stem, df)
 
+    rolling, rows = fan_case(case)
     put_fan_scaffold(put, rolling=rolling)
-    put("solve_data", "pbt_profile", pbt_frame({"profile": "entity"}))
+    put("solve_data", "pbt_profile", pbt_frame({"profile": "entity"}, rows=rows))
     put("input", "profile", pl.DataFrame({"profile": ["X", "Y"]}))
     put("input", "group__process", pl.DataFrame({"group": ["g"], "process": ["px"]}))
     put("input", "process__profile__profile_method", pl.DataFrame({
         "process": ["px", "py"], "profile": ["X", "Y"], "method": ["upper_limit", "upper_limit"]}))
 
     inp, sdd = tmp_path / "input", tmp_path / "solve_data"
+    if case == "rolling_uncovered":
+        for derive in (derive_pdtProfile, derive_pdtProfile_vectorized):
+            with pytest.raises(FlexToolConfigError, match=uncovered_error("profile 'Y'", "profile")):
+                derive(inp, sdd, provider=provider)
+        return
     df_legacy = derive_pdtProfile(inp, sdd, provider=provider)
     df_vec = derive_pdtProfile_vectorized(inp, sdd, provider=provider)
     leg = {(r[0], r[1], r[2]): r[3] for r in df_legacy.iter_rows()}

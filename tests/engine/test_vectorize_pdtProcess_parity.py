@@ -22,6 +22,7 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from flextool.engine.input._solve_state import FlexToolConfigError
 from flextool.engine.preprocess.emit._pdt_params import (
     derive_pdtProcess,
     derive_pdtProcess_vectorized,
@@ -286,14 +287,16 @@ def test_vectorized_pdtProcess_branch_period_inherits_anchor_pd(tmp_path):
         f"legacy:\n{df_legacy}\nvec:\n{df_vec}")
 
 
-@pytest.mark.parametrize("rolling", [False, True], ids=["single", "rolling_lookahead"])
-def test_vectorized_pdtProcess_fan_start_fallback(rolling, tmp_path):
+@pytest.mark.parametrize("case", ["single", "rolling_lookahead", "rolling_uncovered"])
+def test_vectorized_pdtProcess_fan_start_fallback(case, tmp_path):
     """Item 228: a non-empty ``fan_for_d`` (``branch_time_start``) -- each fold cell reads the forecast at its
-    period's own first step, else at the fan start (a roll's look-ahead period: the fan start first) --
-    byte-identical in both twins, values hand-derived in
+    period's own first step, else at the fan start (a roll's look-ahead period: the fan start only; a cell it
+    does not cover that a later forecast does is an input error in both twins) -- byte-identical in both twins,
+    values hand-derived in
     :mod:`tests.engine._fan_fold_fixture`."""
     from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
-    from tests.engine._fan_fold_fixture import STEPS, expected_fold, pbt_frame, put_fan_scaffold
+    from tests.engine._fan_fold_fixture import (
+        STEPS, expected_fold, fan_case, pbt_frame, put_fan_scaffold, uncovered_error)
 
     provider = FlexDataProvider()
 
@@ -301,8 +304,9 @@ def test_vectorized_pdtProcess_fan_start_fallback(rolling, tmp_path):
         provider.put(f"{parent}/{stem}", df)
         provider.put(stem, df)
 
+    rolling, rows = fan_case(case)
     put_fan_scaffold(put, rolling=rolling)
-    put("solve_data", "pbt_process", pbt_frame({"process": "entity", "param": "cap"}))
+    put("solve_data", "pbt_process", pbt_frame({"process": "entity", "param": "cap"}, rows=rows))
     put("input", "pd_process", pl.DataFrame(schema={
         "process": pl.Utf8, "param": pl.Utf8, "period": pl.Utf8, "value": pl.Float64}))
     put("solve_data", "pt_process", pl.DataFrame(schema={
@@ -314,6 +318,11 @@ def test_vectorized_pdtProcess_fan_start_fallback(rolling, tmp_path):
         "process": ["X", "Y"], "param": ["cap", "cap"]}))
 
     inp, sdd = tmp_path / "input", tmp_path / "solve_data"
+    if case == "rolling_uncovered":
+        for derive in (derive_pdtProcess, derive_pdtProcess_vectorized):
+            with pytest.raises(FlexToolConfigError, match=uncovered_error("unit or connection 'Y'", "cap")):
+                derive(inp, sdd, provider=provider)
+        return
     df_legacy = derive_pdtProcess(inp, sdd, provider=provider)
     df_vec = derive_pdtProcess_vectorized(inp, sdd, provider=provider)
     leg = {(r[0], r[2], r[3]): r[4] for r in df_legacy.iter_rows()}
