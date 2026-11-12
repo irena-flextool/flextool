@@ -681,6 +681,25 @@ Other tools keep their results short so that a project with many runs fits the a
   1 %), then fewer entities. A cut never brings back what an earlier one dropped, and each says what it shows. A
   request that selects no run says why: the folder is a run of another scenario, no run is of the scenario (with
   the closest scenario names), or the other filters leave nothing. A run whose results may not be used gets its state and error, and no numbers.
+- `explain_entity` (standard and advanced levels) gives one unit, connection or node of one run in one call:
+  `{"entity": "coal_plant", "run": "multi_year_1"}`, or a `scenario` alone for its newest run (a scenario whose
+  latest run did not succeed is refused, as `query_result` refuses it). It lists the entity's inputs in the run's
+  scenario as `get_entity` does (`invest_method` and `existing` also when no alternative sets them: `default` or
+  `not set`), its flow and profile links with their parameters and its group, reserve and flowGroup memberships;
+  then, per period and each with its table and unit: its capacity (existing, invested, divested, in construction,
+  total; never added up over periods), its flows to and from each connected node (annualized; never added up over
+  nodes), capacity factor, curtailment (VRE units), storage state, the prices at its nodes (mean, minimum and maximum
+  over each period's time steps, unweighted), its non-zero discounted cost categories (their total over the periods
+  first) and its investment value. A node gets its prices, slacks, costs and, for a storage, its capacity and
+  state; the units and connections that feed it are not listed. `hints` say when a result is consistent with an
+  input: what was invested equals `invest_max_total`, or `invest_max_period` in a period (only when the
+  `invest_method` uses that limit), a minimum or a retirement limit; `invest_method` allows no investment; or the
+  investment value is positive (an upper limit holds the investment back) or negative (more capacity does not pay
+  off). `not_in_run` names the tables the run has no values of the entity in. `entity_class` is needed only for a
+  name that is a unit, a connection or a node at once. A long result is shortened in this order: the costs per
+  period (totals kept), cost categories under 1 % of the entity's costs, maps summarised, the inputs that do not
+  concern investment, the periods between the first and the last; at the end only the capacity and the hints are
+  kept, and the notes say what was left out.
 - `list_sources` with `"scenario": "coal_chp"` gives that scenario's alternatives, highest rank first, and its base
   alternative.
 - `compare_runs` without `group_by`, `agg`, `sort` and `top_n` gives each run's totals per period and category

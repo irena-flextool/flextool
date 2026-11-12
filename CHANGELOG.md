@@ -344,6 +344,14 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
 
 #### AI assistant
 
+- **New tool `explain_entity`: one unit, connection or node of one run in one call.** At the standard and advanced
+  levels (and for agents connected with `flextool-assistant --mcp`) the assistant can read an entity's inputs and
+  its results side by side: capacity per period, the flows to and from each connected node, capacity factor,
+  curtailment, storage state, the prices at its nodes, its non-zero costs and its investment value, with hints that
+  name the input a result is consistent with (an investment limit that binds, an `invest_method` that allows no
+  investment). The tool descriptions of the standard and advanced levels changed, so a chat resumed at those levels
+  starts a fresh history with the AI service (its reasoning data from before is not sent again), and an evaluation
+  run asks its unfinished cells again. See `explain_entity` in "The AI assistant".
 - **Ask a question again, as it was or changed.** In the AI assistant window each question has two small buttons:
   ↻ asks it again and ✎ puts it in the box to change (Enter sends it, Escape keeps the question as it was); R and E
   on a question line and its right-click menu do the same. The answer, and the questions and answers after it, are
@@ -846,7 +854,8 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   (set `inflation_rate` to the social discount rate in a real-terms model). **Fix (docs):** the fixed cost of new
   capacity counts only within the model horizon, not over its full lifetime as *Advanced concepts* said, and the
   solve-sequence how-to used old names for `rolling_solve_jump`, `rolling_solve_horizon`, `contains_solves` and
-  `fix_storage_periods`.
+  `fix_storage_periods`. *Results* and *Reading results* now give `invest_marginal` in CUR/kW (CUR/kWh for a
+  storage), the unit of `invest_cost` and of the result files; they said per MW.
 - **How-to "How to make a unit run all the time (must-run)"** (Thermal, CHP and reserves). Six ways to make
   a unit or a fleet run (profile lower limit, a user constraint on a flow or on a fleet's output, a flowGroup
   `min_instant_flow`, a demand that needs the unit's other product, a user constraint on the units online) with

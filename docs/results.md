@@ -308,7 +308,7 @@ For VRE units (units that use an `upper_limit` profile) the model also reports c
 
     Period axis covers every period in which an investment **or** a divestment decision occurs (both the invest-eligible and divest-eligible periods feed into `d_realize_invest`), so divest-only periods are visible even when no new capacity is added.
 
-- `unit`, `connection`, `node` entities `invest_marginal` parameter — [CUR/MW or MWh] effective dual of the investment decision: zero means the model is at the unconstrained optimum; positive means an active upper bound (per-entity, per-group, period, total or cumulative caps are summed automatically); negative means the entity is not built and is unprofitable to build (the v_invest column's own reduced cost) — this is the ordinary reading for an unbuilt entity, not an artefact; a numerical artefact instead looks like a non-zero value on a *built* (or at-bound) entity, or an inconsistent sign across these regimes, and is worth investigating
+- `unit`, `connection`, `node` entities `invest_marginal` parameter — [CUR/kW, CUR/kWh for storage nodes, as `invest_cost`] effective dual of the investment decision: zero means the model is at the unconstrained optimum; positive means an active upper bound (per-entity, per-group, period, total or cumulative caps are summed automatically); negative means the entity is not built and is unprofitable to build (the v_invest column's own reduced cost) — this is the ordinary reading for an unbuilt entity, not an artefact; a numerical artefact instead looks like a non-zero value on a *built* (or at-bound) entity, or an inconsistent sign across these regimes, and is worth investigating
 
 ## CO2 emissions
 

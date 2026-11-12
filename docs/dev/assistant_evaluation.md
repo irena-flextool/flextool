@@ -75,7 +75,9 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
   and the hashes of the instructions and tools, `system_hash` and `tools_hash`). `summary` and `grade-ai` warn when
   the cells of one model at one level were asked with more than one `tools_hash` or `system_hash` (a record written
   before the key was recorded counts as `unknown`, which warns only beside a known one): their grades are not of
-  one setting.
+  one setting. A new or changed tool changes the `tools_hash` of the levels that list it (`explain_entity`,
+  2026-11-12: standard and advanced): their kept checkpoints start again from the start, and their cells are asked
+  again for grades of one setting; basic keeps its hash.
 - **Local models (Ollama).** Make one variant of the model for each context size. For example, write a Modelfile
   with `FROM <model>` (a model you have pulled) and `PARAMETER num_ctx 32768`, then run
   `ollama create <model>-32k -f Modelfile`.

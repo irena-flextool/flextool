@@ -41,7 +41,7 @@ See [Costs](results.md#costs) and [Discounting between milestone years](advanced
 ### 4. What capacity is there?
 
 - `unit_capacity__d` and `connection_capacity__d` [MW], `node_capacity__d` [MWh, storages]: the *existing* capacity, the capacity *invested* (coming online in the period), *divested* and the *total* in service.
-- `invest_marginal`: the value of one more MW of capacity. Negative for a technology the model does not build: it does not pay off.
+- `invest_marginal`: the value of one more kW of capacity (CUR/kW; CUR/kWh for a storage), in the units of `invest_cost`. Negative for a technology the model does not build: it does not pay off.
 
 See [Capacity and investment results](results.md#capacity-and-investment-results).
 
