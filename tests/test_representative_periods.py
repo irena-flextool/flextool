@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from flextool.update_flextool.db_handle import open_database_mapping
 from flextool.representative_periods.clustering import greedy_convex_hull_clustering
 from flextool.representative_periods.weights import (
     compute_weight_matrix,
@@ -149,7 +150,7 @@ class TestReadTimeSeriesScalarFiltering:
     """
 
     def test_drops_scalar_inflows_keeps_map_inflows(self, tmp_path):
-        from spinedb_api import DatabaseMapping, Map, import_data
+        from spinedb_api import Map, import_data
         from flextool.representative_periods.preprocess import (
             _read_time_series,
         )
@@ -157,7 +158,7 @@ class TestReadTimeSeriesScalarFiltering:
         db_path = tmp_path / "scalars.sqlite"
         url = f"sqlite:///{db_path}"
 
-        with DatabaseMapping(url, create=True) as db:
+        with open_database_mapping(url, create=True) as db:
             inflow_map = Map(["t1", "t2", "t3"], [1.0, 2.0, 3.0])
             _, errors = import_data(
                 db,
@@ -182,7 +183,7 @@ class TestReadTimeSeriesScalarFiltering:
                 raise RuntimeError(f"import errors: {errors[:5]}")
             db.commit_session("scalar-inflow regression fixture")
 
-        with DatabaseMapping(url) as db:
+        with open_database_mapping(url) as db:
             db.fetch_all("parameter_value")
             profiles, inflows, demand_scalars = _read_time_series(db)
 
@@ -250,13 +251,13 @@ def _setup_rp_scenario(db_url: str, n_rp: int, period_length: int, storage_nodes
     period_timeset override in the hull_* alternative. We only need to add
     the storage_binding_method overrides and wire up the scenario.
     """
-    from spinedb_api import DatabaseMapping, import_data
+    from spinedb_api import import_data
     from flextool.representative_periods.preprocess import preprocess_representative_periods
 
     preprocess_representative_periods(db_url, "generated_scenario", n_rp, period_length)
     hull_alt = f"hull_{n_rp}rp_{period_length}h"
 
-    with DatabaseMapping(db_url) as db:
+    with open_database_mapping(db_url) as db:
         rp_alt = "rp_override"
         param_values = []
         for node_name in storage_nodes:

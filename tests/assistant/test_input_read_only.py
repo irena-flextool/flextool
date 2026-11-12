@@ -8,6 +8,7 @@ FlexTool gives ``stored: false`` with the note on older parameter names.
 """
 from __future__ import annotations
 
+import gc
 import hashlib
 import json
 import os
@@ -20,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from flextool.assistant.context import make_context
-from flextool.assistant.errors import MESSAGES
+from flextool.assistant.errors import MESSAGES, ToolError
 from flextool.assistant.inputs import _db
 from flextool.assistant.registry import call_tool
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
@@ -96,6 +97,30 @@ def test_every_fetched_item_type_answers_on_the_closed_mapping(assistant_project
         list(mapping.get_items("metadata"))
     if _HAS_PROC:
         assert _open_files_under(assistant_project) == []
+
+
+def _live_sqlite_connections() -> int:
+    """Connections the garbage collector tracks, garbage not yet collected included."""
+    return sum(isinstance(obj, sqlite3.Connection) for obj in gc.get_objects())
+
+
+@pytest.mark.filterwarnings("error::ResourceWarning")
+def test_a_file_it_cannot_read_leaves_no_connection_open(tmp_path: Path, tests_db: Path) -> None:
+    """``spinedb_api`` connects before it finds the file is no database and drops that connection without closing
+    it.  Before: the connection stayed open (Windows locks the file) until a garbage collection in some later test
+    finalised it, which Python 3.13+ reports as an unclosed-database ResourceWarning there."""
+    project = make_project(tmp_path, tests_db)
+    path = project / "input_sources" / "tests.sqlite"
+    path.write_bytes(b"not a database" * 100)
+    gc.collect()
+    before = _live_sqlite_connections()
+    with pytest.raises(ToolError) as info:
+        _db.closed_mapping(path)
+    assert info.value.key == "not_flextool"
+    assert _live_sqlite_connections() == before
+    if _HAS_PROC:
+        assert _open_files_under(project) == []
+    gc.collect()                                          # a connection left behind would warn here
 
 
 def test_uri_is_read_only_and_percent_encoded() -> None:
