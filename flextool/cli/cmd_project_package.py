@@ -40,9 +40,11 @@ def build_parser() -> argparse.ArgumentParser:
                              "folder paths, user name and host name (default: replace them in the record and leave "
                              "the log out)")
     export.add_argument("--force", action="store_true", help="Replace the package file when it exists")
-    export.add_argument("--solver-config-dir",
-                        help="The folder of the solver .opt files (default: $FLEXTOOL_SOLVER_CONFIG_DIR, else "
-                             "./solver_config)")
+    export.add_argument("--solver-config-dir", action="append",
+                        help="A folder of the solver .opt files; repeat for several folders, highest first (per "
+                             "solver the first folder's file is shipped). Default: the project's solver_config, then "
+                             "$FLEXTOOL_SOLVER_CONFIG_DIR or ./solver_config, as a FlexTool window run of the project "
+                             "reads them")
 
     imp = sub.add_parser("import", help="Unpack a project package into the projects folder")
     imp.add_argument("file", help="The .flextool.zip file")
@@ -89,7 +91,7 @@ def _export(args: argparse.Namespace) -> int:
     try:
         manifest = pp.export_project(
             project_dir, output, runs, include_external=not args.no_external,
-            solver_config_dir=Path(args.solver_config_dir) if args.solver_config_dir else None,
+            solver_config_dir=[Path(folder) for folder in args.solver_config_dir] if args.solver_config_dir else None,
             overwrite=args.force, scrub_run_records=not args.keep_run_records,
         )
     except pp.PackageExistsError as exc:
@@ -147,8 +149,8 @@ def _verify(args: argparse.Namespace) -> int:
         print("Result runs: " + (", ".join(manifest.results) if manifest.results else "none"))
         if manifest.solver_config:
             print("Solver options: " + ", ".join(manifest.solver_config)
-                  + f" (unpacked to {pp.IMPORTED_SOLVER_CONFIG_DIR}/; copy them to the workspace's solver_config "
-                    f"folder or set FLEXTOOL_SOLVER_CONFIG_DIR to use them)")
+                  + f" (unpacked to {pp.SOLVER_CONFIG_DIR}/ of the project; its runs use them ahead of the "
+                    "workspace's)")
         line = pp.pip_line(manifest)
         if line:
             print(f"To run with the same FlexTool and solver libraries: {line}")

@@ -1962,6 +1962,12 @@ class MainWindow(tk.Tk):
         # Load project settings
         projects_dir = get_projects_dir()
         project_path = projects_dir / name
+        # A project imported with FlexTool 4.3 has its shipped solver options in imported_solver_config/, which no
+        # run reads: rename it to solver_config/ (screened) before any job of the project is built.
+        from flextool.project_package import adopt_imported_solver_config
+        for line in adopt_imported_solver_config(project_path):
+            logger.info(line)
+            print(line, flush=True)
         solver_defaults_reset = False
 
         def _on_solver_defaults_reset() -> None:
@@ -6076,8 +6082,9 @@ class MainWindow(tk.Tk):
             text=(
                 "These are the common knobs. The full set of solver "
                 "options can be set\nthrough the .opt files (e.g. "
-                "highs.opt) in the solver_config folder of the FlexTool\n"
-                "workspace (or $FLEXTOOL_SOLVER_CONFIG_DIR);\n"
+                "highs.opt) in the solver_config folder of the project,\n"
+                "then of the FlexTool workspace (or $FLEXTOOL_SOLVER_CONFIG_DIR),\n"
+                "file by file;\n"
                 "the MIP gap is set per solve (solver_mip_gap) or in "
                 "highs.opt."
             ),
