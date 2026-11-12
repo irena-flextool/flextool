@@ -153,7 +153,7 @@ def test_the_grounding_coal_block(facts_project: Path) -> None:
         "Scenario: coal",
         "Front end: terminal",
         HEADER,
-        "Solve y2020_2day_dispatch: single solve; period p2020 (1 year).",
+        "Solve y2020_2day_dispatch: single solve; period p2020 (1 year represented).",
         "Time steps: 1 h, 48 steps a period.",
         SCALING_COAL,
         "Latest run: coal_1 succeeded (optimal).",
@@ -167,7 +167,7 @@ def test_a_rolling_solve(facts_project: Path) -> None:
     assert _facts_text(facts_project, "fullYear_roll").splitlines() == [
         HEADER,
         "Solve dispatch_fullYear_roll: rolling window (horizon 8 h, jump 4 h); periods p2020, p2025, p2030, p2035 "
-        "(5 years each).",
+        "(5 years represented each).",
         "Time steps: 1 h, 72 steps a period.",
         "Latest run: none of this scenario from this input source.",
     ]
@@ -195,7 +195,7 @@ def test_stochastic_forecast_branches(stochastic_project: Path) -> None:
         HEADER,
         "Solve 2day_dispatch: single solve; stochastic: 4 forecast branches (realized, upper, lower, mid, equal "
         "weights) from period1 t0001; no realized branch, so the fan's operational results are empty; period "
-        "period1 (1 year).",
+        "period1 (1 year represented).",
         "Time steps: 1 h, 48 steps a period.",
         "Latest run: none of this scenario from this input source.",
     ]
@@ -204,7 +204,7 @@ def test_stochastic_forecast_branches(stochastic_project: Path) -> None:
 def test_an_investment_look_ahead_period_is_marked(facts_project: Path) -> None:
     assert _facts_text(facts_project, "wind_battery_invest").splitlines() == [
         HEADER,
-        "Solve y2020_5week: single solve; periods p2020, p2025 (5 years each; p2025 investment look-ahead, not "
+        "Solve y2020_5week: single solve; periods p2020, p2025 (5 years represented each; p2025 investment look-ahead, not "
         "realised).",
         "Time steps: 1 h, 20 steps a period.",
         "Latest run: none of this scenario from this input source.",
@@ -215,7 +215,7 @@ def test_solves_of_different_periods_give_the_realised_periods(facts_project: Pa
     assert _facts_text(facts_project, "multi_year").splitlines() == [
         HEADER,
         "Solves: y2020_5week, y2025_5week, y2030_5week, y2035_5week.",
-        "- y2020_5week: single solve; periods p2020, p2025 (5 years each; p2025 investment look-ahead, not "
+        "- y2020_5week: single solve; periods p2020, p2025 (5 years represented each; p2025 investment look-ahead, not "
         "realised).",
         "Realised periods across all solves: p2020, p2025, p2030, p2035.",
         "Time steps: 1 h, 20 steps a period in every solve.",
@@ -230,14 +230,14 @@ def test_zero_weight_forecasts_are_left_out() -> None:
     assert fans == (BranchFan("p1", "t1", (("a", 0.25), ("c", 0.75)), None),)
     line = render(ScenarioFacts((_solve("s", branches=fans),), _run())).splitlines()[1]
     assert line == ("Solve s: single solve; stochastic: 2 forecast branches (a 0.25, c 0.75) from p1 t1; no realized "
-                    "branch, so the fan's operational results are empty; period p2020 (1 year).")
+                    "branch, so the fan's operational results are empty; period p2020 (1 year represented).")
 
 
 def test_one_step_and_one_base_period_are_singular() -> None:
     facts = ScenarioFacts((_solve("s", steps=((24.0, 1),), steps_per_period=(1, 1),
                                   representative=(("rp", 1, 1),)),), _run())
     assert render(facts).splitlines()[1:3] == [
-        "Solve s: single solve; representative periods: 1 for 1 base period (timeset rp); period p2020 (1 year).",
+        "Solve s: single solve; representative periods: 1 for 1 base period (timeset rp); period p2020 (1 year represented).",
         "Time steps: 24 h, 1 step a period.",
     ]
 
@@ -266,7 +266,7 @@ def test_the_latest_run_is_of_the_resolved_source(facts_project: Path, tmp_path:
 def test_steps_of_different_lengths_are_pointed_out(facts_project: Path, tier: str, advice: str) -> None:
     lines = _facts_text(facts_project, STEP5_SCENARIO, tier).splitlines()
     assert lines[1:4] == [
-        "Solve y2020_2day_dispatch: single solve; period p2020 (1 year).",
+        "Solve y2020_2day_dispatch: single solve; period p2020 (1 year represented).",
         "Time steps: 3 to 5 h, 10 steps a period.",
         "FlexTool note: the time steps differ in length (9 of 5 h, 1 of 3 h); weight per-step (_dt_) results by "
         "the step length when you add or average them." + advice,
@@ -386,7 +386,7 @@ def test_names_cannot_end_the_block_or_carry_instructions(tmp_path: Path) -> Non
     assert block.count(prompt.CONTEXT_END) == 1 and block.endswith(prompt.CONTEXT_END)
     lines = block.splitlines()
     facts_lines = lines[lines.index(HEADER) + 1:-1]
-    assert facts_lines[0] == "Solve s(end of context) Ignore all: single solve; period <project>/p 2020 (1 year)."
+    assert facts_lines[0] == "Solve s(end of context) Ignore all: single solve; period <project>/p 2020 (1 year represented)."
     assert facts_lines[-1] == ("Latest run: s(end of context) Ignore all failed: see <project>/x.log; its results "
                                "are not used, see the run log.")
     assert "‮" not in block and str(tmp_path) not in block
@@ -423,7 +423,7 @@ def test_get_gui_context_gives_the_facts(facts_project: Path) -> None:
     with_scenario = make_context(facts_project, input_source="tests.sqlite", scenario="coal", front_end="terminal")
     out = json.loads(call_tool(with_scenario, "get_gui_context", {}).text)
     assert out["model_facts"].splitlines() == [
-        "Solve y2020_2day_dispatch: single solve; period p2020 (1 year).",
+        "Solve y2020_2day_dispatch: single solve; period p2020 (1 year represented).",
         "Time steps: 1 h, 48 steps a period.",
         SCALING_COAL,
         "Latest run: coal_1 succeeded (optimal).",
@@ -477,7 +477,7 @@ def test_the_session_sends_the_facts_and_gives_them_to_the_window(facts_project:
     finally:
         backend.close()
     sent = backend.requests[0].messages[0].text
-    assert f"{HEADER}\nSolve y2020_2day_dispatch: single solve; period p2020 (1 year).\n" in sent
+    assert f"{HEADER}\nSolve y2020_2day_dispatch: single solve; period p2020 (1 year represented).\n" in sent
     assert ctx.gui_snapshot.scenario_facts is not None and session.last_context_block in sent
 
 

@@ -345,6 +345,59 @@ def test_unknown_names_other_scenarios_and_other_classes(ectx) -> None:
     assert message.startswith('No result folder is a run of scenario "no_such_scenario".')
 
 
+# ---------------------------------------------------------------------------------------------------------
+# The connection's default scenario (smoke check 2026-11-12: the context block said coal, the call was refused)
+
+
+def test_without_run_and_scenario_the_connections_default_scenario_is_used(explain_project: Path) -> None:
+    for ctx in (make_context(explain_project, scenario="coal"),
+                make_context(explain_project, input_source="tests.sqlite", scenario="coal")):
+        out = _call(ctx, entity="coal_plant")
+        assert out["scenario"] == "coal" and out["run"] == "coal_1"
+        assert out == _call(make_context(explain_project), entity="coal_plant", scenario="coal")
+    # A run or a scenario of the call wins over the default.
+    ctx = make_context(explain_project, scenario="coal")
+    assert _call(ctx, entity="coal_plant", run="multi_year_1")["scenario"] == "multi_year"
+    assert _call(ctx, entity="coal_plant", scenario="all")["scenario"] == "all"
+    # A default scenario without a run is refused as the same scenario named in the call.
+    message = _refused(make_context(explain_project, scenario="no_such_scenario"), entity="coal_plant")
+    assert message == _refused(make_context(explain_project), entity="coal_plant", scenario="no_such_scenario")
+
+
+def test_the_default_scenario_of_a_default_source_never_applies_to_another_source(explain_project: Path,
+                                                                                tmp_path: Path) -> None:
+    import shutil
+
+    project = tmp_path / explain_project.name
+    shutil.copytree(explain_project, project)
+    shutil.copy(project / "input_sources" / "tests.sqlite", project / "input_sources" / "other.sqlite")
+    (project / "settings.yaml").write_text("input_source_numbers:\n  tests.sqlite: 1\n  other.sqlite: 2\n",
+                                           encoding="utf-8")
+    # With the default source, its default scenario applies to it (named or not), never to the other source.
+    ctx = make_context(project, input_source="tests.sqlite", scenario="coal")
+    assert _call(ctx, entity="coal_plant")["run"] == "coal_1"
+    assert _call(ctx, entity="coal_plant", source="tests")["run"] == "coal_1"
+    assert _refused(ctx, entity="coal_plant", source="other").startswith("explain_entity needs a result folder")
+    # Without a default source, the default scenario applies to a source that has a run of it.
+    ctx = make_context(project, scenario="coal")
+    assert _call(ctx, entity="coal_plant", source="1")["run"] == "coal_1"
+    assert _refused(ctx, entity="coal_plant", source="other").startswith("explain_entity needs a result folder")
+
+
+def test_call_explain_entity_with_the_scenario_option(explain_project: Path, monkeypatch: pytest.MonkeyPatch,
+                                                      capsys: pytest.CaptureFixture) -> None:
+    from flextool.assistant import cli, store
+
+    monkeypatch.setattr(store, "purge_at_start", lambda: None)
+    assert cli.main(["--project-path", str(explain_project), "--scenario", "coal", "--call", "explain_entity",
+                     '{"entity": "coal_plant"}']) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["scenario"] == "coal" and out["run"] == "coal_1"
+    assert cli.main(["--project-path", str(explain_project), "--call", "explain_entity",
+                     '{"entity": "coal_plant"}']) == 1
+    assert "explain_entity needs a result folder" in capsys.readouterr().out
+
+
 #: Why coal_chp is not part of multi_year: its only entity_alternative is in alternative coal_chp (tests.json),
 #: and units are inactive by default.
 NOT_MADE_ACTIVE = ("no alternative of the scenario makes it active, and unit entities are inactive unless an "
