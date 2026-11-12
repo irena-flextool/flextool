@@ -64,6 +64,7 @@ import json
 import logging
 import mmap
 import os
+import queue
 import re
 import shutil
 import subprocess
@@ -1441,6 +1442,254 @@ def resolve_basis_cache_dir(work_folder: Path | str | None, run_options: "RunOpt
     return cache_dir
 
 
+# ---------------------------------------------------------------------------
+# Commercial solver process: live log, watchdog, process-tree stop (item 238)
+# ---------------------------------------------------------------------------
+
+#: How the solver is named in the ``Running <Solver> (<program>)`` line that opens its log block (the FlexTool
+#: window greys the block from that line: ``gui/execution_window._SOLVER_BLOCK_STARTS``, pinned by a test).
+_DISPLAY_NAMES: dict[str, str] = {
+    "gurobi": "Gurobi",
+    "cplex": "CPLEX",
+    "xpress": "Xpress",
+    "copt": "COPT",
+}
+
+#: After the solver exits, how long its log readers may still take: a process the solver started (a licence
+#: heartbeat) can hold the output pipes open for ever.
+_READER_JOIN_S = 10.0
+#: How often the solver's child processes are listed while it runs (for the stop of an orphan).
+_CHILD_SNAPSHOT_S = 1.0
+#: Lines of the solver log a failure message carries when the log was not shown (``--solver-log-level silent``).
+_LOG_TAIL_LINES = 20
+
+
+class _SolverRun(NamedTuple):
+    """What the solver process gave: exit code (``None`` when FlexTool stopped it), its output streams (the same
+    text ``capture_output`` gave), every line in arrival order, and whether the watchdog stopped it."""
+
+    returncode: int | None
+    stdout: str
+    stderr: str
+    lines: list[str]
+    timed_out: bool
+
+
+def _pipe_reader(name: str, pipe: Any, out: "queue.Queue[tuple[str, str | None]]") -> None:
+    """Put each line of *pipe* on *out* as ``(name, line)``, then ``(name, None)``.  Nothing else: every write to
+    the console happens on the main thread."""
+    try:
+        for line in iter(pipe.readline, ""):
+            out.put((name, line))
+    except (OSError, ValueError):
+        pass
+    finally:
+        out.put((name, None))
+        try:
+            pipe.close()
+        except OSError:
+            pass
+
+
+def _stdin_writer(pipe: Any, text: str) -> None:
+    """Write the command script to the solver and close its stdin.  A solver that exits without reading it
+    (``BrokenPipeError``) is told by its exit code."""
+    try:
+        pipe.write(text)
+    except (OSError, ValueError):
+        pass
+    finally:
+        try:
+            pipe.close()
+        except (OSError, ValueError):
+            pass
+
+
+def _run_solver_process(
+    argv: list[str],
+    *,
+    stdin_text: str | None,
+    cwd: Path,
+    watchdog: float | None,
+    echo: bool,
+    log_path: Path | None,
+    logger: logging.Logger | None = None,
+    label: str = "solver",
+) -> _SolverRun:
+    """Run a commercial solver's program and show its log as it writes it.
+
+    Two reader threads put the stdout and stderr lines on one queue; this (main) thread takes them in arrival
+    order, writes them to ``sys.stdout`` when *echo* (one whole line per write, flushed, so the run log copy and
+    the FlexTool window read whole lines), to *log_path* (UTF-8) and to the buffers the parsers read.  A last line
+    without a newline (a solver prompt, a killed solver) gets one on the console and in the file; the buffers keep
+    the raw text.  The pipes are decoded with the locale's encoding, as ``text=True`` did, and an undecodable byte
+    becomes U+FFFD instead of an error.
+
+    The solver leads its own process group (POSIX).  It is stopped with everything it started when the
+    *watchdog* (seconds) runs out, when this thread is interrupted (Ctrl-C) or fails, and, after the solver has
+    exited, a process it started that still holds the output open is stopped after :data:`_READER_JOIN_S`.
+    """
+    import locale
+    import threading
+    import time
+
+    import psutil
+
+    from flextool._process_tree import kill_process_group, own_group_popen_kwargs
+
+    encoding = locale.getpreferredencoding(False)
+    proc = subprocess.Popen(
+        argv,
+        stdin=subprocess.PIPE if stdin_text is not None else subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=cwd,
+        text=True,
+        encoding=encoding,
+        errors="replace",
+        bufsize=1,
+        **own_group_popen_kwargs(),
+    )
+    lines_q: "queue.Queue[tuple[str, str | None]]" = queue.Queue()
+    threads = [
+        threading.Thread(target=_pipe_reader, args=("stdout", proc.stdout, lines_q), daemon=True),
+        threading.Thread(target=_pipe_reader, args=("stderr", proc.stderr, lines_q), daemon=True),
+    ]
+    if stdin_text is not None:
+        threads.append(threading.Thread(target=_stdin_writer, args=(proc.stdin, stdin_text), daemon=True))
+    for th in threads:
+        th.start()
+
+    buffers: dict[str, list[str]] = {"stdout": [], "stderr": []}
+    lines: list[str] = []
+    open_streams = {"stdout", "stderr"}
+    out = sys.stdout if echo else None
+    log_fh = None
+    if log_path is not None:
+        try:
+            log_fh = open(log_path, "w", encoding="utf-8", newline="")
+        except OSError as exc:
+            if logger is not None:
+                logger.warning("Could not write the %s log to %s: %s", label, log_path, exc)
+    known_children: dict[int, psutil.Process] = {}
+    timed_out = False
+    finished = False
+    start = time.monotonic()
+    deadline = start + watchdog if watchdog is not None else None
+    last_snapshot = start - _CHILD_SNAPSHOT_S
+
+    def _take(item: tuple[str, str | None]) -> None:
+        nonlocal out, log_fh
+        name, line = item
+        if line is None:
+            open_streams.discard(name)
+            return
+        buffers[name].append(line)
+        lines.append(line)
+        shown = line if line.endswith("\n") else line + "\n"
+        if log_fh is not None:
+            try:
+                log_fh.write(shown)
+                log_fh.flush()
+            except (OSError, ValueError):
+                log_fh = None
+        if out is not None:
+            try:
+                out.write(shown)
+                out.flush()
+            except (OSError, ValueError, AttributeError):
+                # A closed console (the FlexTool window was closed, ``pythonw``): keep reading for the parsers.
+                out = None
+
+    def _snapshot_children() -> None:
+        try:
+            for child in psutil.Process(proc.pid).children(recursive=True):
+                known_children.setdefault(child.pid, child)
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            pass
+
+    try:
+        # While the solver runs.
+        while proc.poll() is None:
+            try:
+                _take(lines_q.get(timeout=0.2))
+            except queue.Empty:
+                pass
+            now = time.monotonic()
+            if now - last_snapshot >= _CHILD_SNAPSHOT_S:
+                last_snapshot = now
+                _snapshot_children()
+            if deadline is not None and now > deadline and proc.poll() is None:
+                timed_out = True
+                kill_process_group(proc, known_children.values())
+                break
+        # After it exited (or was stopped): the rest of the log, for a bounded time.
+        drain_until = time.monotonic() + _READER_JOIN_S
+        while open_streams and time.monotonic() < drain_until:
+            try:
+                _take(lines_q.get(timeout=0.2))
+            except queue.Empty:
+                pass
+        if open_streams:
+            msg = (
+                f"The output of {label} stayed open after it exited: a process it started is still running. "
+                "FlexTool stopped it and stops reading the log there."
+            )
+            if logger is not None:
+                logger.warning(msg)
+            else:
+                logging.getLogger(__name__).warning(msg)
+            kill_process_group(proc, known_children.values())
+            drain_until = time.monotonic() + 2.0
+            while open_streams and time.monotonic() < drain_until:
+                try:
+                    _take(lines_q.get(timeout=0.2))
+                except queue.Empty:
+                    pass
+        while True:
+            try:
+                _take(lines_q.get_nowait())
+            except queue.Empty:
+                break
+        try:
+            proc.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            pass
+        finished = True
+    finally:
+        if not finished:
+            # Interrupted (Ctrl-C) or failed here: never leave the solver running.
+            kill_process_group(proc, known_children.values())
+        if log_fh is not None:
+            try:
+                log_fh.close()
+            except OSError:
+                pass
+
+    return _SolverRun(
+        returncode=None if timed_out else proc.returncode,
+        stdout="".join(buffers["stdout"]),
+        stderr="".join(buffers["stderr"]),
+        lines=lines,
+        timed_out=timed_out,
+    )
+
+
+def _solver_log_reference(run: _SolverRun, *, echoed: bool, log_path: Path | None) -> str:
+    """The end of a failure message: where the solver's log is (shown above when it was echoed; else its last
+    lines)."""
+    where = f" and in {log_path}" if log_path is not None else ""
+    if echoed:
+        return f"Its log is above{where}." if run.lines else "It wrote no log."
+    if not run.lines:
+        return "It wrote no log."
+    tail = "".join(run.lines[-_LOG_TAIL_LINES:])
+    if not tail.endswith("\n"):
+        tail += "\n"
+    saved = f"\n(The whole log is in {log_path}.)" if log_path is not None else ""
+    return f"The end of its log:\n{tail.rstrip(chr(10))}{saved}"
+
+
 def solve_via_subprocess(
     problem: "Problem",
     solver_name: str,
@@ -1482,7 +1731,9 @@ def solve_via_subprocess(
         ``None`` uses a self-cleaning temp dir.
     run_options
         The run's operator options; the HiGHS path reads ``warm_start`` and
-        ``basis_cache_dir`` from them.  ``None`` reads the environment.
+        ``basis_cache_dir`` from them, the commercial path
+        ``solver_log_level`` (``silent`` hides the solver's log).  ``None``
+        reads the environment.
     option_layers
         Commercial solvers: parameter name -> the layer that set it (option
         file path, ``solver_arguments of solve X``, a flag), named in the
@@ -1505,6 +1756,7 @@ def solve_via_subprocess(
         return _solve_commercial_subprocess(
             problem, solver_name, options, solve_name=solve_name,
             logger=logger, work_folder=work_folder, option_layers=option_layers,
+            run_options=run_options,
         )
     raise ValueError(
         f"solve_via_subprocess: unknown solver_name={solver_name!r}; "
@@ -1932,6 +2184,7 @@ def _solve_commercial_subprocess(
     logger: logging.Logger | None,
     work_folder: Path | None,
     option_layers: Mapping[str, str] | None = None,
+    run_options: "RunOptions | None" = None,
 ) -> "Solution":
     """Solve via a commercial solver's CLI binary.
 
@@ -1947,7 +2200,12 @@ def _solve_commercial_subprocess(
     3. Spawn the binary in the output folder with the per-solver argv +
        stdin script and bare file names (no path, so no console quoting
        rule matters); the stdin script is also written there as
-       ``<solve>.script`` for a replay by hand.
+       ``<solve>.script`` for a replay by hand.  After a
+       ``Running <Solver> (<program>)`` line, the solver's log streams to
+       ``sys.stdout`` as it writes it and is saved as ``<solve>.log``
+       (:func:`_run_solver_process`); ``--solver-log-level silent`` hides
+       it (no line, no echo) but it is still read and saved.  A failure
+       message points to the log instead of repeating it.
     4. Parse the .sol with the per-solver parser; map its generic-named
        primal (and duals, for :data:`_DUAL_CAPABLE_SOLVERS`) back by
        *index* onto the real ``col_id`` / ``row_id`` names rebuilt from
@@ -2058,34 +2316,37 @@ def _solve_commercial_subprocess(
                 "subprocess[%s]: spawning %s for %r",
                 solver_name, binary, solve_name,
             )
-        try:
-            cp = subprocess.run(
-                argv,
-                input=stdin_text,
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=watchdog,
-                cwd=out_dir,
-            )
-        except subprocess.TimeoutExpired as exc:
+        from flextool.run_options import RunOptions
+
+        opts = run_options if run_options is not None else RunOptions.from_env()
+        echo = opts.value("solver_log_level") != "silent"
+        log_path = None if cleanup else out_dir / f"{safe_name}.log"
+        display = _DISPLAY_NAMES.get(solver_name, solver_name)
+        if echo:
+            print(f"Running {display} ({binary})", flush=True)
+        run = _run_solver_process(
+            argv, stdin_text=stdin_text, cwd=out_dir, watchdog=watchdog, echo=echo,
+            log_path=log_path, logger=logger, label=f"{display} ({binary})",
+        )
+        log_ref = _solver_log_reference(run, echoed=echo, log_path=log_path)
+        if run.timed_out:
+            from flextool.engine.solve._solver_dispatch import _WATCHDOG_FACTOR, _WATCHDOG_GRACE_S
+
             raise RuntimeError(
                 f"{solver_name!r} did not stop at its own time limit of "
                 f"{time_limit:g} s for solve {solve_name!r}: FlexTool stopped it "
-                f"after {watchdog:g} s (2 x the limit + 600 s); captured "
-                f"stderr: {exc.stderr!r}"
-            ) from exc
+                f"after {watchdog:g} s ({_WATCHDOG_FACTOR:g} x the limit + {_WATCHDOG_GRACE_S:g} s). {log_ref}"
+            )
 
-        stdout = cp.stdout or ""
-        stderr = cp.stderr or ""
+        stdout = run.stdout
+        stderr = run.stderr
         if solver_name == "gurobi":
             _warn_unknown_gurobi_parameters(stdout + "\n" + stderr, option_layers, solve_name, logger)
 
-        if cp.returncode != 0:
+        if run.returncode != 0:
             msg = (
                 f"{solver_name!r} CLI for solve {solve_name!r} exited with "
-                f"returncode={cp.returncode}.\n"
-                f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+                f"returncode={run.returncode}. {log_ref}"
             )
             # MPS+sol preserved when work_folder was given; otherwise
             # the finally-block has already cleaned them up.
@@ -2103,26 +2364,17 @@ def _solve_commercial_subprocess(
                 raise RuntimeError(
                     f"{solver_name!r} reports that solve {solve_name!r} "
                     f"{_NO_SOLUTION_REASONS[status_str]}; there is no solution "
-                    f"to use.\n--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+                    f"to use. {log_ref}"
                 )
             if _looks_like_license_error(stdout, stderr):
                 raise RuntimeError(
                     f"{solver_name!r} CLI for solve {solve_name!r} returned "
-                    f"no usable solution and its output reports a licence error.\n"
-                    f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+                    f"no usable solution and its output reports a licence error. {log_ref}"
                 )
             raise RuntimeError(
                 f"{solver_name!r} CLI produced no solution file we could "
-                f"parse at {sol_path} for solve {solve_name!r}.\n"
-                f"--- stdout ---\n{stdout}\n--- stderr ---\n{stderr}"
+                f"parse at {sol_path} for solve {solve_name!r}. {log_ref}"
             )
-
-        # The solver's own log, shown as HiGHS' is (after the ``Solver args`` line): the parameters it
-        # took, how the solve ended, and the remaining gap the time-limit warning points to.  The
-        # failure paths above carry it in their message instead.
-        for text in (stdout, stderr):
-            if text.strip():
-                print(text, end="" if text.endswith("\n") else "\n", flush=True)
 
         optimal = status_str == "OPTIMAL"
 

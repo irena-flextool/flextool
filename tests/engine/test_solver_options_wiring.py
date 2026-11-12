@@ -485,7 +485,8 @@ def test_second_run_in_a_process_uses_its_own_solver_config(gurobi_db, tmp_path,
     monkeypatch.chdir(cwd)
     built: list[str] = []
 
-    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None):
+    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None,
+                   run_options=None):
         opt = _subprocess_solve._write_commercial_opt_file(options, Path(work_folder) / f"{solve_name}.gurobi.opt")
         built.append(opt.read_text() if opt is not None else "")
         return problem.solve(keep_solver=True)
@@ -512,7 +513,8 @@ def test_cli_gap_reaches_the_commercial_solver_and_its_args_line(gurobi_db, tmp_
     (cfg / "gurobi.opt").write_text("Threads 0\nMIPGap 0.002\n")
     passed: list[dict] = []
 
-    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None):
+    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None,
+                   run_options=None):
         passed.append(dict(options))
         return problem.solve(keep_solver=True)
 
@@ -548,7 +550,8 @@ def test_option_files_are_read_once_per_run(gurobi_db, tmp_path, monkeypatch) ->
     monkeypatch.setattr(Path, "read_text", counting_read_text)
     passed: list[dict] = []
 
-    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None):
+    def commercial(problem, solver_name, options, *, solve_name, logger, work_folder, option_layers=None,
+                   run_options=None):
         (cfg / "gurobi.opt").write_text("Threads 9\n")
         passed.append(dict(options))
         return problem.solve(keep_solver=True)

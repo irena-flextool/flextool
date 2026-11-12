@@ -780,15 +780,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument('--solver-log-level',
                         choices=['silent', 'normal', 'verbose'],
                         default=None,
-                        help='HiGHS log verbosity.  ``silent`` sets '
-                             '``output_flag=false`` (suppress HiGHS '
-                             'console output).  ``normal`` (default) '
-                             'and ``verbose`` both set '
-                             '``output_flag=true``; ``verbose`` also '
-                             'bumps ``log_dev_level=2`` for per-'
-                             'iteration solver telemetry.  Environment '
-                             'variable: FLEXTOOL_SOLVER_LOG_LEVEL; the '
-                             'flag wins.')
+                        help='Solver log on the screen and in the run '
+                             'log.  ``silent`` hides the log of every '
+                             'solver (HiGHS ``output_flag=false``; a '
+                             'commercial solver\'s log is still read and '
+                             'saved as solve_data/subprocess/<solve>.log).  '
+                             '``normal`` (default) shows it.  ``verbose`` '
+                             '(HiGHS only) also sets ``log_dev_level=2`` '
+                             'for per-iteration solver telemetry.  '
+                             'Environment variable: '
+                             'FLEXTOOL_SOLVER_LOG_LEVEL; the flag wins.')
     parser.add_argument('--solver-time-limit', type=float, default=None,
                         metavar='SECONDS',
                         help='Time limit of each solve in seconds, on every '

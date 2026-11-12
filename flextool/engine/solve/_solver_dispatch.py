@@ -336,7 +336,7 @@ _FILE_WRITING_OPTIONS: dict[str, frozenset[str]] = {
 #: Flags / environment variables that only HiGHS reads.  Given on a run whose
 #: solve goes to a commercial solver, they are named once in a warning.
 _HIGHS_ONLY_OPTIONS = (
-    "highs_threads", "presolve", "solver_log_level", "user_bound_scale",
+    "highs_threads", "presolve", "user_bound_scale",
     "highs_time_limit", "highs_mip_gap",
 )
 
@@ -566,6 +566,13 @@ def warn_highs_only_options(solver: str, run_options: "RunOptions | None", logge
             continue
         spec = OPTIONS[key]
         given.append(spec.flag if resolved.source == "cli" and spec.flag else spec.env)
+    # ``silent`` hides a commercial solver's log too and ``normal`` is the default; only ``verbose`` (HiGHS'
+    # developer log level) has no commercial meaning.
+    level = opts.resolved.get("solver_log_level")
+    if level is not None and level.source in ("cli", "env") and level.value == "verbose":
+        spec = OPTIONS["solver_log_level"]
+        name = spec.flag if level.source == "cli" and spec.flag else spec.env
+        given.append(f"{name} verbose" if level.source == "cli" else f"{name}=verbose")
     if not given:
         return
     warn_key = (solver, *given)
@@ -620,8 +627,8 @@ def run_one_solve(
     The commercial path (gurobi / cplex / xpress / copt) routes through
     :func:`flextool.engine.solve._subprocess_solve.solve_via_subprocess`,
     which spawns the solver's CLI binary against an MPS written by
-    ``Problem.write_mps`` and reads the .sol back through a read-only
-    ``highspy.Highs`` populated via ``setSolution``.  Downstream consumers
+    ``Problem.write_mps``, streams its log and reads the result file back
+    into a duck-typed ``_SolHighsShim`` handle.  Downstream consumers
     (``flex_data.py``, ``_co2_accumulators.py``,
     ``process_outputs/read_parameters.py``) see a uniform
     :class:`polar_high.Solution` shape regardless of which solver ran.
@@ -634,8 +641,9 @@ def run_one_solve(
         Resolved per-solve configuration (defaults to HiGHS/direct when
         no ``solver_*`` parameter is authored on the solve).
     logger
-        Optional logger.  When provided, the commercial-path error
-        messages are also logged at ERROR level before being raised.
+        Optional logger (subprocess progress, option warnings).  Errors are
+        raised as :class:`FlexToolUserError` and logged once by the caller
+        (``cmd_run_flextool``), not here.
     save_memory
         When True on the HiGHS path, divert to
         :func:`flextool.engine.solve._subprocess_solve.solve_via_subprocess`:
@@ -677,10 +685,10 @@ def run_one_solve(
     Returns
     -------
     polar_high.Solution
-        The native polar-high Solution.  On the cold/subprocess paths
-        the contained ``highs`` instance is a read-only
-        ``highspy.Highs`` reconstructed from the MPS with the primal /
-        dual injected via ``setSolution``.
+        The native polar-high Solution.  On the subprocess paths the
+        contained ``highs`` is a :class:`_SolHighsShim` holding the parsed
+        primal / duals and the real column / row names (no
+        ``highspy.Highs`` is built in the parent).
 
     Raises
     ------
@@ -739,8 +747,6 @@ def run_one_solve(
             f"highs, gurobi, cplex, xpress, copt.  Installed wrappers: "
             f"{available_solvers}."
         )
-        if logger is not None:
-            logger.error(msg)
         raise FlexToolUserError(msg)
     if solver_config.name == "xpress" and problem_is_mip(getattr(problem, "_vars", None)):
         # The Xpress console script runs ``lpoptimize``, which on a MIP solves
@@ -750,8 +756,6 @@ def run_one_solve(
             "linear problems (it would return the LP relaxation, not an integer solution). Use another solver "
             "for this solve, or remove its integer variables."
         )
-        if logger is not None:
-            logger.error(msg)
         raise FlexToolUserError(msg)
     if commercial_options is None:
         opt_text, opt_label = commercial_opt_file_layer(
@@ -792,8 +796,6 @@ def run_one_solve(
                 f"See docs/solvers/{solver_config.name}.md#licensing "
                 f"for help."
             )
-            if logger is not None:
-                logger.error(user_msg)
             raise FlexToolUserError(user_msg) from e
         if "was not found on $PATH" in msg:
             user_msg = (
@@ -802,15 +804,9 @@ def run_one_solve(
                 f"docs/solvers/{solver_config.name}.md for installation "
                 f"instructions."
             )
-            if logger is not None:
-                logger.error(user_msg)
             raise FlexToolUserError(user_msg) from e
-        if logger is not None:
-            logger.error(msg)
         raise FlexToolUserError(
-            f"Solver {solver_config.name!r} subprocess returned an "
-            f"error: {msg}.  This is usually a model issue (numerics, "
-            f"scaling, infeasibility) or a CLI invocation problem."
+            f"Solver {solver_config.name!r} failed for solve {solve_name or 'solve'!r}: {msg}"
         ) from e
 
 
