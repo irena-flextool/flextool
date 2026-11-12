@@ -264,7 +264,10 @@ def add_dispatch_constraints(b: "_Build") -> None:
     # is a decision taken before the forecast is known, so it is the same in
     # every forecast (the net-flow tie fixes only the shape of the state within
     # the block).  A block whose first step already has a
-    # non_anticipativity_storage_state_first row is left out.  The base-period
+    # non_anticipativity_storage_state_first row is left out: there v_state at
+    # t_first (the end of the block's first step) is tied, so its start is tied
+    # up to the forecasts' difference in balance slack (and inflow) over that
+    # step; the net flows of the step are tied already.  The base-period
     # levels v_state_inter need no tie of their own: inside the window they
     # follow from the tied net flows, these block starts and the shared chain
     # start (the trunk period's end level, or rp_inter_period_fan_start).

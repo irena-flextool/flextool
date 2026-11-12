@@ -60,11 +60,13 @@ def _rp_weights(weights: dict) -> api.Map:
 
 
 def _tiny(tmp_path_factory, *, n_steps: int, timesets: dict, period_timeset: dict, fan: tuple,
-          profile: dict, s: dict, K: float, D: float, s_in_group: bool = False) -> dict:
+          profile: dict, s: dict, K: float, D: float, s_in_group: bool = False,
+          inflow: dict | None = None) -> dict:
     """Build, solve and return the steps of the tiny model.
 
     ``timesets`` = {name: (timeset_duration, representative_period_weights)}; ``fan`` = (period, start step);
-    ``profile`` = {branch: {analysis_time: {step: p}}}; ``s`` = extra parameters of node ``s``."""
+    ``profile`` = {branch: {analysis_time: {step: p}}}; ``s`` = extra parameters of node ``s``; ``inflow`` (same
+    nesting as ``profile``) replaces the constant inflow −D of ``s`` by a stochastic one."""
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_handle import open_database_mapping
     from flextool.update_flextool.initialize_database import initialize_database
@@ -90,7 +92,9 @@ def _tiny(tmp_path_factory, *, n_steps: int, timesets: dict, period_timeset: dic
         ("timeline", "tl", "timestep_duration", _m({t: 1.0 for t in _steps(n_steps)}, "time")),
         ("node", "s", "node_type", "storage"),
         ("node", "s", "virtual_unitsize", 1.0),
-        ("node", "s", "inflow", -D),
+        ("node", "s", "inflow", -D if inflow is None else
+         _m({b: _m({at: _m(series, "time") for at, series in windows.items()}, "analysis_time")
+             for b, windows in inflow.items()}, "branch")),
         ("unit", "src", "existing", K),
         ("unit", "src", "virtual_unitsize", 1.0),
         ("unit", "src", "efficiency", 1.0),
@@ -212,6 +216,49 @@ def test_h4_block_starts_tied_in_the_tie_window(tmp_path_factory):
     assert float(step.solution.obj) == pytest.approx(0.0, abs=TOL)
 
 
+def test_h4_tied_block_start_costs_a_spill(tmp_path_factory):
+    """H4 (values): the block-start tie decides the objective, not only the row list.
+
+    H4's timeline, timeset (blocks A = t0001-2, B = t0003-4; base b1 ← A, b2 ← B; tsw = 1) and first-period fan
+    p1 @ t0001 (0.5 / 0.5); s: fo_blended, fix_nothing, C = 3, in the include_stochastics group, penalty_down
+    P_d = 100, penalty_up P_u = 1000.  src delivers K·p = 2 · 0.5 = 1 MW in both forecasts (the net-flow tie
+    non_anticipativity_storage_use holds; it leaves inflow and slacks out), and s's inflow differs per forecast,
+    so the step change is c = 1 + inflow:
+      high inflow −1, −1, +1, −3 ⇒ c = 0, 0, +2, −2;   low inflow −1, −1, −3, +1 ⇒ c = 0, 0, −2, +2.
+    Block B from its start S_x = v_state_rp_start[s,p1_x,t0003]: high levels S_high + 2, S_high (S_high ≤ 1 for
+    C = 3); low S_low − 2, S_low (S_low ≥ 2).  Every block nets 0, so every drift is 0 and the base chain
+    (v_inter[b2] = v_inter[b1], one fan start) binds nothing.
+    - Untied (non_anticipativity_rp_block_start removed): S_high ∈ [0, 1], S_low ∈ [2, 3], no slack, objective 0.
+    - Tied (S_high = S_low = S): S + 2 − spill ≤ 3 and S − 2 + up ≥ 0 ⇒ spill + up ≥ 1 MWh.  Spill is the
+      cheaper (P_d < P_u at the same weight) ⇒ S = 2, spill 1 MWh at (p1_high, t0003), up 0; v_state high
+      t0003 = 3, t0004 = 1; low t0003 = 0, t0004 = 2.
+    op_factor[p1_high, t0003] = Δt (1 h) · tsw (1) · inflation_op[p1] / period_share[p1] · branch weight:
+    inflation_rate 0 and years_represented 1 ⇒ inflation_op = 1; p1 represents b1 + b2 = 4 h ⇒ period_share =
+    4 / 8760; weight 0.5 ⇒ op_factor = 8760 / 4 · 0.5 = 1095.  **Objective = P_d · 1 MWh · 1095 = 109 500.**
+    """
+    st = _steps(4)
+    flat = {t: 0.5 for t in st}
+    steps = _tiny(tmp_path_factory, n_steps=4, timesets=_FIRST_FAN_TS, period_timeset={"p1": "rp"},
+                  fan=("p1", "t0001"), K=2.0, D=1.0, s_in_group=True,
+                  s={"existing": 3.0, "storage_binding_method": FO_B, "storage_start_end_method": "fix_nothing",
+                     "penalty_down": 100.0, "penalty_up": 1000.0},
+                  profile={"high": {"t0001": flat}, "low": {"t0001": flat}},
+                  inflow={"high": {"t0001": dict(zip(st, [-1.0, -1.0, 1.0, -3.0]))},
+                          "low": {"t0001": dict(zip(st, [-1.0, -1.0, -3.0, 1.0]))}})
+    step = steps["sol"]
+    # Values first: removing the tie leaves an objective of 0 and different block-B starts.
+    assert float(step.solution.obj) == pytest.approx(100.0 * 1095.0, rel=1e-9)
+    start = _values(step, "v_state_rp_start")
+    assert start[("s", "p1_high", "t0003")] == pytest.approx(2.0, abs=TOL)
+    assert start[("s", "p1_low", "t0003")] == pytest.approx(2.0, abs=TOL)
+    state = _values(step, "v_state")
+    assert [state[("s", "p1_high", t)] for t in ("t0003", "t0004")] == pytest.approx([3.0, 1.0], abs=TOL)
+    assert [state[("s", "p1_low", t)] for t in ("t0003", "t0004")] == pytest.approx([0.0, 2.0], abs=TOL)
+    spill = {k: v for k, v in _values(step, "vq_state_down").items() if abs(v) > TOL}
+    assert spill == pytest.approx({("s", "p1_high", "t0003"): 1.0}, abs=TOL)
+    assert len(_rows(build(step.flex_data), "non_anticipativity_rp_block_start")) == 2
+
+
 # ---------------------------------------------------------------------------
 # H3 / H5: a fan after the trunk period, bind_forward_only_blended_weights
 # ---------------------------------------------------------------------------
@@ -262,7 +309,11 @@ def test_h3_forward_only_blended_trunk_to_branch_chain(tmp_path_factory):
 def test_h2b_within_solve_blended_every_branch_closes_on_the_trunk_start(tmp_path_factory):
     """H2b (H5 domains): ws_blended, fan after the trunk period: balance 2 (each branch from the trunk), cyclic 2
     (d_first × d_last = p1 × {p2_high, p2_low}); drift[p1] = +2 ⇒ drift of every branch = −2, so the high block
-    spills 1 MWh (its flows net −1); v_inter p1 = 2, p2_high = p2_low = 0."""
+    spills 1 MWh (its flows net −1); v_inter p1 = 2, p2_high = p2_low = 0.
+    Objective = P_d (100) · 1 MWh · op_factor[p2_high, t]; op_factor = Δt (1 h) · tsw (1) · inflation_op[p2] /
+    period_share[p2] · branch weight: inflation_rate 0 and years_represented 1 ⇒ inflation_op = 1; p2 (and its
+    branch periods) represents one 2-h base period ⇒ period_share = 2 / 8760; weight 0.5 ⇒ op_factor = 8760 / 2 ·
+    0.5 = 2190 ⇒ **objective = 219 000**."""
     K, D = 2.0, 1.0
     trunk = _series(["t0001", "t0002"], [1.0, 1.0], K, D)
     steps = _tiny(
@@ -285,7 +336,7 @@ def test_h2b_within_solve_blended_every_branch_closes_on_the_trunk_start(tmp_pat
     assert len(_rows(pb, "rp_inter_period_balance")) == 2
     assert _rows(pb, "rp_inter_period_cyclic") == [
         "rp_inter_period_cyclic[s,p1,t0001,p2_high,t0003]", "rp_inter_period_cyclic[s,p1,t0001,p2_low,t0003]"]
-    assert float(step.solution.obj) > 0.0
+    assert float(step.solution.obj) == pytest.approx(100.0 * 2190.0, rel=1e-9)
 
 
 # ---------------------------------------------------------------------------
@@ -363,6 +414,22 @@ _ROLLING = [["solve", LH2_SOLVE, "solve_mode", "rolling_window"],
             ["solve", LH2_SOLVE, "rolling_solve_jump", 36.0],
             ["group", "daily_group", "new_stepduration", 12.0]]
 _NO_INVEST = ("invest_periods", "realized_invest_periods")
+
+
+def test_o6_day_long_coarse_step_cut_by_the_roll_names_the_jump(tmp_path_factory):
+    """daily_group's own 24-h coarse step divides the 24-h representative blocks, but roll 0 (jump 36 h) realizes
+    up to t0036, 12 h into the block t0025-t0048: the error names the roll's realized end, not the
+    representative-period length."""
+    from flextool.engine.input._solve_state import FlexToolConfigError
+
+    rolling = [r for r in _ROLLING if r[1] != "daily_group"] + [["group", "daily_group", "new_stepduration", 24.0]]
+    with pytest.raises(FlexToolConfigError) as exc:
+        _lh2_run(tmp_path_factory, rolling, drop=_NO_INVEST)
+    msg = str(exc.value)
+    assert ("the realized part of this roll ends at step 't0036' (rolling_solve_jump), inside a representative "
+            "period and inside the coarse step starting 't0025' (period 'y2030')") in msg
+    assert "'daily_group'" in msg
+    assert "does not evenly divide" not in msg
 
 
 def _rolling(tmp_path_factory, method: str) -> dict:

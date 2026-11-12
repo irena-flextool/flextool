@@ -422,7 +422,8 @@ def _apply_coarse_frames(flex_data: "FlexData", sd: Path, *, provider: "object |
         solve_step=float(layout.block_step_duration["default"]), dt=flex_data.dt,
         step_duration=None if psd is None else psd.frame, dtttdt=flex_data.dtttdt,
         rp_block_first=flex_data.rp_block_first, realized=realized, balance_nodes=flex_data.nodeBalance,
-        state_nodes=flex_data.nodeState, block_nodes=flex_data.nodeStateBlock)
+        state_nodes=flex_data.nodeState, block_nodes=flex_data.nodeStateBlock,
+        rolling=bool(getattr(flex_data, "solve_is_rolling", False)))
     if frames is None:
         return
     flex_data.nodeCoarse = frames.nodeCoarse

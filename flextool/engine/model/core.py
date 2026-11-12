@@ -1293,7 +1293,8 @@ def _eq_rp_storage_chain(b: _Build) -> None:
     #   − v_state_inter[n,d″,b_first(d″)] + drift[n,d″,b_first(d″)] = 0
     #   ∀ n ∈ bind_forward_only_blended_weights, d = the first root (sorted), d″ ∈ the other roots
     #   roots = the rp periods of period_first_of_solve (the forecast branch periods of a fan in the solve's
-    #     first period; one root without a fan: no rows)
+    #     first period; one root without a fan: no rows), read as the periods of nodeState_first_dt, which is
+    #     built from period_first_of_solve
     # Every forecast of a fan in the solve's first period starts its base-period
     # chain from the same level: the chain start v_state_inter − drift of the
     # first base period, which no other row binds in a forward-only chain.  A
