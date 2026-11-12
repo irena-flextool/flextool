@@ -103,6 +103,11 @@ EXECUTABLE_SUFFIXES = frozenset({
     ".bat", ".cmd", ".ps1", ".psm1", ".vbs", ".vbe", ".js", ".jse", ".wsf", ".wsh", ".msi", ".msp", ".scr",
     ".cpl", ".lnk", ".url", ".desktop", ".sh", ".command", ".app", ".jar", ".reg", ".hta",
 })
+#: Folder names a solver option folder goes by (compared without case: Windows and macOS file systems ignore it).  A
+#: package holds solver options only in its top-level ``solver_config/``, which import unpacks to
+#: ``imported_solver_config/``, never read by itself.  A folder of such a name deeper in a project (next to an
+#: input database in ``input_sources/``) is one FlexTool looks in for option files, so a package must not plant one.
+_SOLVER_CONFIG_FOLDER_KEYS = frozenset({SOLVER_CONFIG_DIR.casefold(), IMPORTED_SOLVER_CONFIG_DIR.casefold()})
 #: The largest modification time a package may record: the end of year 9999, in ns.
 _MAX_MTIME_NS = 253_402_300_799 * 10**9
 #: Free space kept on the disk on top of the unpacked size of a package.
@@ -749,6 +754,12 @@ def _export(
             # Import refuses a package holding one (_content_problem): leave it out.
             warnings.append(f"{path.name} is a program or script: it is not in the package.")
             continue
+        rel_input = f"{INPUT_DIR}/{path.relative_to(project_dir / INPUT_DIR).as_posix()}"
+        if _in_nested_solver_config(rel_input):
+            # Import refuses it too: solver options travel only in the package's own solver_config/.
+            warnings.append(f"{rel_input} is in a solver option folder inside the project: it is not in the "
+                            f"package (the package carries the workspace's {SOLVER_CONFIG_DIR}/ files).")
+            continue
         entries.append(_Entry(f"{INPUT_DIR}/{path.relative_to(project_dir / INPUT_DIR).as_posix()}", path))
         if path.with_name("~$" + path.name).exists():
             warnings.append(f"{path.name} is open in Excel: the package holds its last saved version.")
@@ -791,6 +802,9 @@ def _export(
                 arcname = f"{RESULTS_DIR}/{path.relative_to(base).as_posix()}"
                 if path.suffix.lower() in EXECUTABLE_SUFFIXES:
                     warnings.append(f"{arcname} is a program or script: it is not in the package.")
+                    continue
+                if _in_nested_solver_config(arcname):
+                    warnings.append(f"{arcname} is in a solver option folder: it is not in the package.")
                     continue
                 if scrub_run_records and path.parent == base / run and path.name == RUN_LOG_NAME:
                     continue
@@ -939,12 +953,26 @@ def _dest_rel(rel: str) -> str:
     return rel
 
 
+def _in_nested_solver_config(rel: str) -> bool:
+    """Whether the project file *rel* (relative POSIX path) lies in a solver option folder other than the top-level
+    ``solver_config/`` (any folder named ``solver_config`` or ``imported_solver_config``, in any case)."""
+    folders = rel.split("/")[:-1]
+    return any(
+        name.casefold() in _SOLVER_CONFIG_FOLDER_KEYS and not (depth == 0 and name == SOLVER_CONFIG_DIR)
+        for depth, name in enumerate(folders)
+    )
+
+
 def _content_problem(rel: str) -> str | None:
     """Why the project file *rel* (relative POSIX path under ``<Name>/``) is not one a package may hold: outside the
-    entries of :data:`PACKAGE_TOP_LEVEL`, a program or script (:data:`EXECUTABLE_SUFFIXES`), or a solver option
-    file that is not ``solver_config/<name>.opt``."""
+    entries of :data:`PACKAGE_TOP_LEVEL`, a program or script (:data:`EXECUTABLE_SUFFIXES`), a solver option
+    file that is not ``solver_config/<name>.opt``, or a file in a solver option folder elsewhere
+    (:func:`_in_nested_solver_config`)."""
     parts = rel.split("/")
     top = parts[0]
+    if _in_nested_solver_config(rel):
+        return (f"'{rel}': a package may carry solver options only in its top-level {SOLVER_CONFIG_DIR}/ folder "
+                "(spelled in lower case).")
     if top not in PACKAGE_TOP_LEVEL or (top in (SETTINGS_FILE, PLOT_SETTINGS_FILE)) != (len(parts) == 1):
         return (f"'{rel}' is not part of a FlexTool project (a package holds only {', '.join(PACKAGE_TOP_LEVEL)}).")
     if PurePosixPath(parts[-1]).suffix.lower() in EXECUTABLE_SUFFIXES:

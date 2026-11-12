@@ -444,6 +444,14 @@ def test_disk_space_external_left_out_and_partial_hidden(workspace: dict, monkey
     ("Proj/solver_config/highs.sh", "program or script"),
     ("Proj/solver_config/sub/highs.opt", "holds only .opt files"),
     ("Proj/notes.txt", "not part of a FlexTool project"),
+    # G3: solver option folders FlexTool would read by itself (next to an input database), in any case.
+    ("Proj/input_sources/solver_config/gurobi.opt", "only in its top-level solver_config/"),
+    ("Proj/input_sources/Solver_Config/gurobi.opt", "only in its top-level solver_config/"),
+    ("Proj/input_sources/sub/SOLVER_CONFIG/highs.opt", "only in its top-level solver_config/"),
+    ("Proj/input_sources/imported_solver_config/cplex.opt", "only in its top-level solver_config/"),
+    ("Proj/output_parquet/A_1/solver_config/xpress.opt", "only in its top-level solver_config/"),
+    ("Proj/Solver_Config/gurobi.opt", "only in its top-level solver_config/"),
+    ("Proj/imported_solver_config/gurobi.opt", "only in its top-level solver_config/"),
 ])
 def test_code_and_unknown_files_in_a_package_are_refused(tmp_path: Path, member: str, message: str) -> None:
     """A package holds only what export writes; code never unpacks into the project (it could replace FlexTool)."""
@@ -463,6 +471,22 @@ def test_export_leaves_out_programs_and_the_package_imports(workspace: dict) -> 
     assert any("helper.py is a program or script" in w for w in manifest.export_warnings)
     report = pp.import_project(out, workspace["projects"], "Recv")
     assert not (report.project_path / "input_sources" / "helper.py").exists()
+
+
+def test_export_leaves_out_a_solver_option_folder_inside_the_project(workspace: dict) -> None:
+    """A user's own solver_config/ next to a project database stays on their computer (import would refuse it);
+    the package still carries the workspace's solver_config/ files and imports them as imported_solver_config/."""
+    nested = workspace["project"] / "input_sources" / "solver_config"
+    nested.mkdir()
+    (nested / "gurobi.opt").write_text("Threads 2\n")
+    out, manifest = _export(workspace, ["A_1"])
+    assert not any("input_sources/solver_config" in name for name in manifest.files)
+    assert any("input_sources/solver_config/gurobi.opt is in a solver option folder" in w
+               for w in manifest.export_warnings)
+    assert "solver_config/highs.opt" in {name.split("/", 1)[1] for name in manifest.files}
+    report = pp.import_project(out, workspace["projects"], "Recv")
+    assert not (report.project_path / "input_sources" / "solver_config").exists()
+    assert (report.project_path / "imported_solver_config" / "highs.opt").is_file()
 
 
 def test_import_drops_input_files_outside_the_project(tmp_path: Path) -> None:

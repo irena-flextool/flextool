@@ -120,7 +120,10 @@ Each line says what changes for a model that ran before and what to do; the deta
   Importing a project package refuses one that holds programs or scripts (`.py`, `.exe`, `.dll`, `.bat`, `.sh`
   and the like) or files outside `input_sources/`, `output_parquet/`, `solver_config/` (`.opt` files),
   `settings.yaml` and `plot_settings.yaml`; an export leaves such files out of `input_sources/` and the result
-  runs, with a note.
+  runs, with a note. Solver option files travel only in the package's top-level `solver_config/`: a package with
+  a `solver_config` or `imported_solver_config` folder anywhere else (for example next to an input database, in
+  any spelling of the name) is refused, because FlexTool reads such a folder by itself; an export leaves such a
+  folder inside the project out, with a note.
 - **Scenario names must be usable as folder names.** A scenario name names its result folders, so a run (FlexTool
   window, `flextool-run`, Spine Toolbox, calibration, comparison) now stops with a message, before writing
   anything, when the name is empty, is `.` or `..`, holds `/`, `\` or a control character (a line break, a tab, an
