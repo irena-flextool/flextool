@@ -27,8 +27,9 @@ The window and the terminal share the settings, the keys, the accepted data noti
 
 ## Where your data goes
 
-Your questions and everything the tools return — input data, results, run logs and documentation, and the names of
-your project and scenarios — are sent to the AI service that answers. FlexTool cannot say how that service stores
+Your questions and everything the tools return — input data, results, run logs and documentation, the names of
+your project and scenarios, and the model facts of the chosen scenario (its solves, periods, time steps and latest
+run, see "Ask") — are sent to the AI service that answers. FlexTool cannot say how that service stores
 or uses the data: it may be kept, reviewed or used for training, depending on the service, your account and your
 plan. Free plans often let the provider use your data for training. Check the provider's current policies yourself
 before you use a project with data you may not share. FlexTool takes local folder paths, your user name and the
@@ -97,6 +98,17 @@ Each question also tells the assistant what you have selected in the FlexTool wi
 scenarios checked and highlighted, the results checked and highlighted (with whether their latest run succeeded),
 and what the result viewer shows (mode, scenarios, plot and time range). The assistant uses the highlighted input
 source and scenario when your question names none.
+
+When a scenario is chosen (the highlighted one in the window, `--scenario` in the terminal), each question also
+gives the assistant the scenario's **model facts**, read from the input data and the scenario's latest run, so it
+does not have to guess them: the solves in their order (nested ones too) and how each solves (one solve, a rolling
+window with its horizon and jump, stochastic forecast branches with their weights, representative periods), the
+periods with the years each represents, the length of the time steps each solve really uses (with
+`new_stepduration`, the aggregated steps), the share of a year each realised period covers (from the result table
+`period_share_of_year__d`: the per-period results are the period's sums divided by it), and whether the latest run
+succeeded, with its error when it did not. When the time steps are not all of the same length, the facts say so
+and how to deal with it. Without a chosen scenario there are no model facts. The facts are short (at most about
+200 tokens) and are sent again only when they change.
 
 Each tool call is one line in the chat; click it (or press Enter on it) to see the arguments and the first 4 000
 characters of what was sent to the service. Under the buttons, always in view, a line gives the tokens of the last
@@ -238,7 +250,7 @@ ever read from piped text.
 | `/provider` | Choose another service. |
 | `/privacy` | Where the data goes, the privacy settings sent with each request, and the settings only your account can change. |
 | `/usage` | The tokens used today and this month for each service, then by month, service and model. |
-| `/context` | What the assistant is told about your choices (project, input source, scenario); after the first question also the model's context size, how much one tool result may hold and how often earlier results are shortened. |
+| `/context` | What the assistant is told about your choices (project, input source, scenario) and, with a scenario, its model facts; after the first question also the model's context size, how much one tool result may hold and how often earlier results are shortened. |
 | `/welcome` | The text on how the assistant works. |
 | `/save` | Keep this service, model and level for the next start, and the free plan when `--free-tier` was given. |
 | `/quit` | Leave the chat. |
@@ -403,7 +415,9 @@ While the project is open in the FlexTool window, the agent's `get_gui_context` 
 ask about "the selected run". The window keeps these names and selections in a small file in the assistant folder
 (no paths, no data values, nothing from your chats) and deletes it when the project closes; the agent's service
 gets them only when the agent calls the tool. Without the window, the tool says so and gives the options the tools
-were started with.
+were started with. The tool also gives the model facts of the scenario it names (`model_facts`, as in "Ask"; read
+by the connection itself, not from the window's file), and the connection asks the agent to call it first; a
+connection with `--tier basic` has no such tool, so its agent gets no model facts.
 
 To connect another project, add it under another name (`claude mcp add flextool-other -- …`), or remove the first
 one (`claude mcp remove flextool`).
@@ -560,7 +574,9 @@ short and focused. The saved conversation keeps everything.
 |---|---|---|---|
 | Earlier questions in each request | the last two, each with its final answer (text only) | every one, with its final answer (text only) | the whole conversation, with the tool calls and results |
 
-The context block (your project, input source and scenario) is always sent. The context size also sets how much one
+The context block (your project, input source and scenario, and with a scenario its model facts) is always sent; the
+model facts, too, go to the AI service: the names of the scenario's solves and periods, its time steps and the
+state of its latest run with that run's error message. The context size also sets how much one
 tool result may hold and, at the advanced level, how often the tool results of earlier questions are replaced by a
 short note:
 

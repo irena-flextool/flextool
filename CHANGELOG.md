@@ -410,6 +410,18 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   replaced; when later questions go too, or with the R key, the window asks first. A question asked again goes to
   the chat's own model. In the terminal chat, `/retry` asks the last
   question again and `/edit` changes it first. See "Ask" and "Commands" in "The AI assistant".
+- **The assistant knows the scenario's time steps, periods and latest run.** With a chosen scenario (highlighted in
+  the window, `--scenario` in the terminal), each question carries the scenario's model facts, read from the input
+  data and its latest run: the solves in their order (nested ones too) and how each solves (rolling window horizon
+  and jump, stochastic forecast branches and weights, representative periods), the periods and the years each
+  represents, the length of the time steps each solve really uses (the aggregated steps with `new_stepduration`),
+  the share of a year of each realised period (from `period_share_of_year__d`, for runs saved with it) and whether
+  the latest run succeeded, with its error when not. Steps of different lengths are pointed out, with how to treat
+  per-step results. The facts are at most about 200 tokens, are sent only when they change, and go to the AI
+  service like the rest of the context block. Agents get them in `get_gui_context` (`model_facts`), and the
+  connection asks them to call it first. The units note no longer says that time steps are in hours. In the
+  smallest context windows the basic level keeps 260 tokens free for the facts, so a tool result there holds a
+  little less; an evaluation run asks its unfinished cells again. See "Ask" in "The AI assistant".
 - **Answers are written for a FlexTool user.** At every level the assistant gives demand as a positive number
   (FlexTool stores it as negative inflow) and, for an entity the scenario does not use, says that first. At the
   standard and advanced levels it uses plain words with the FlexTool term in parentheses ("demand that could not be
