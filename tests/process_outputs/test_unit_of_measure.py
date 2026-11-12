@@ -297,9 +297,11 @@ def test_capacity_rows_in_footer_csv_and_excel(case) -> None:
 
 
 def test_results_database_gets_the_node_units(case) -> None:
-    from spinedb_api import DatabaseMapping, from_database
+    from spinedb_api import from_database
 
-    with DatabaseMapping("sqlite:///" + str(case["work"] / "results.sqlite")) as db:
+    from flextool.update_flextool.db_handle import open_database_mapping
+
+    with open_database_mapping("sqlite:///" + str(case["work"] / "results.sqlite")) as db:
         values = {tuple(v["entity_byname"]): from_database(v["value"], v["type"])
                   for v in db.find_parameter_values(entity_class_name="node",
                                                     parameter_definition_name="unit_of_measure")}
@@ -369,7 +371,9 @@ def test_comparison_keeps_each_scenarios_units(tmp_path) -> None:
 def test_replay_reads_the_footers(case, tmp_path) -> None:
     """WP2 review 3: a replay takes the units the run wrote into the footers (here without _unit_context.json),
     and the results database defines node.unit_of_measure with the default MWh (review 2)."""
-    from spinedb_api import DatabaseMapping, from_database
+    from spinedb_api import from_database
+
+    from flextool.update_flextool.db_handle import open_database_mapping
     from flextool.process_outputs.write_outputs import write_outputs
 
     replay = tmp_path / "replay"
@@ -385,7 +389,7 @@ def test_replay_reads_the_footers(case, tmp_path) -> None:
     capacity = [r["unit"] for r in units if r["row"] == "med_desal" and r["file"].startswith("unit_capacity")
                 and r["header_1"] == "total"]
     assert capacity == ["m3/h"]
-    with DatabaseMapping("sqlite:///" + str(case["work"] / "results.sqlite")) as db:
+    with open_database_mapping("sqlite:///" + str(case["work"] / "results.sqlite")) as db:
         definition = db.find_parameter_definitions(entity_class_name="node", name="unit_of_measure")[0]
         assert from_database(definition["default_value"], definition["default_type"]) == "MWh"
 

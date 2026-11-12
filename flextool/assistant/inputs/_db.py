@@ -392,6 +392,24 @@ def _read_markers(db: Any) -> dict[str, str]:
     return out
 
 
+def _release_abandoned_connections() -> None:
+    """Close the SQLite connection a failed ``DatabaseMapping(...)`` leaves open.
+
+    ``spinedb_api`` connects before it checks the file (``create_engine`` runs ``engine.begin()`` and the
+    revision check), and when that check raises, the engine and its pooled connection are dropped without
+    ``dispose()``.  The connection then holds the file open until the garbage collector finds it: on Windows
+    the user cannot delete or replace the unreadable file meanwhile, and Python 3.13+ reports the finalised
+    connection as an unclosed-database ``ResourceWarning`` wherever the collection happens to run.  Called
+    after the ``except`` blocks, so the exception's traceback no longer keeps the engine alive; the warning
+    is silenced because the release here is the intended close."""
+    import gc
+    import warnings
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", ResourceWarning)
+        gc.collect()
+
+
 def closed_mapping(path: Path) -> tuple[Any, Any, dict[str, str]]:
     """Open *path* read-only, read ``model.version`` and the behaviour-change markers, fetch :data:`FETCHED` and
     close the mapping.  Returns ``(closed mapping, raw version, markers)``; raises :class:`ToolError`."""
@@ -399,22 +417,28 @@ def closed_mapping(path: Path) -> tuple[Any, Any, dict[str, str]]:
     from spinedb_api.exception import SpineDBAPIError, SpineDBVersionError
 
     name = Path(path).name
+    refusal: ToolError | None = None
     try:
         db = DatabaseMapping(db_uri(path), create=False, upgrade=False, sqlite_timeout=SQLITE_TIMEOUT_S)
     except SpineDBVersionError:
-        raise ToolError("old_spine_format") from None
+        refusal = ToolError("old_spine_format")
     except SpineDBAPIError as exc:
         if _is_locked(exc):
-            raise ToolError("busy") from None
-        if "revision" in str(exc) or "not a database" in str(exc):
-            raise ToolError("not_flextool", name=name) from None
-        raise ToolError("unreadable", name=name, reason=_first_line(exc)) from None
+            refusal = ToolError("busy")
+        elif "revision" in str(exc) or "not a database" in str(exc):
+            refusal = ToolError("not_flextool", name=name)
+        else:
+            refusal = ToolError("unreadable", name=name, reason=_first_line(exc))
     except Exception as exc:  # noqa: BLE001 — SQLAlchemy errors of a damaged or locked file
         if _is_locked(exc):
-            raise ToolError("busy") from None
-        if "not a database" in str(exc):
-            raise ToolError("not_flextool", name=name) from None
-        raise ToolError("unreadable", name=name, reason=_first_line(exc)) from None
+            refusal = ToolError("busy")
+        elif "not a database" in str(exc):
+            refusal = ToolError("not_flextool", name=name)
+        else:
+            refusal = ToolError("unreadable", name=name, reason=_first_line(exc))
+    if refusal is not None:
+        _release_abandoned_connections()
+        raise refusal
     try:
         try:
             db.__enter__()
