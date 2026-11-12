@@ -5,12 +5,12 @@ Older ``highs.opt.template`` versions carried the GLPK-era lines
 ``write_solution_style=2`` (glpsol format), so every solve wrote an unused
 ``flextool.sol`` and HiGHS warned "The cost row for the Glpsol solution file
 is reported last".  Projects created earlier still have that ``highs.opt``;
-the engine drops those keys from the ``highs.opt`` layer.  A ``solution_file``
-in the solve's ``solver_arguments`` is dropped too (item 236 A2: no solver
-option may make the solver write at a path).  ``write_solution_to_file`` there
-is still passed, and then HiGHS' writer mangles spaces in the live LP's names —
-so the ``_restore_space_mangled_names`` repair must keep entity names with
-spaces intact in the outputs.
+the engine drops those keys from the ``highs.opt`` layer.  A solution file
+requested through the solve's ``solver_arguments`` (a plain file name, written
+in the solve's work folder) is still honoured, and
+then HiGHS' writer mangles spaces in the live LP's names — so the
+``_restore_space_mangled_names`` repair must keep entity names with spaces
+intact in the outputs.
 
 Fixture: ``tests.json`` (built from JSON, never a checked-in DB) with the
 unit ``coal_chp`` renamed to ``coal chp`` (a space in an entity name).
@@ -130,20 +130,15 @@ def test_customised_solution_file_lines_dropped_with_one_warning(
     assert "write_solution_style=0" in warnings[0].getMessage()
 
 
-def test_solution_file_via_solver_arguments_is_dropped(tmp_path, caplog) -> None:
-    _solver_dispatch.reset_run_warnings()
+def test_solution_file_via_solver_arguments_is_kept(tmp_path) -> None:
     opt = tmp_path / "highs.opt"
     opt.write_text(LEGACY_LINES)
-    with caplog.at_level(logging.WARNING):
-        opts = _resolve_effective_highs_options(
-            solver_arguments_map={"write_solution_to_file": "true",
-                                  "solution_file": "mine.sol"},
-            highs_opt_path=opt, cli_overrides=None, solve_name="dispatch",
-        )
-    assert opts == {"write_solution_to_file": "true"}
-    warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
-    assert len(warnings) == 1, warnings
-    assert "solution_file" in warnings[0] and "solver_arguments of solve dispatch" in warnings[0]
+    opts = _resolve_effective_highs_options(
+        solver_arguments_map={"write_solution_to_file": "true",
+                              "solution_file": "mine.sol"},
+        highs_opt_path=opt, cli_overrides=None,
+    )
+    assert opts == {"write_solution_to_file": "true", "solution_file": "mine.sol"}
 
 
 # ---------------------------------------------------------------------------
@@ -173,29 +168,33 @@ def test_legacy_highs_opt_solve_writes_no_solution_file(
 @pytest.mark.solver
 def test_requested_solution_file_keeps_space_names(
         tmp_path, tmp_path_factory, monkeypatch) -> None:
-    """``solver_arguments`` asking for a solution file: ``solution_file`` (a
-    path) is not passed on, so no file is written there; HiGHS still writes the
-    solution (``write_solution_to_file``) and mangles the live LP's space
-    names, which are repaired, so the outputs still carry ``coal chp``."""
+    """A deliberately requested solution file is written, and HiGHS'
+    space→underscore mangling of the live LP names is repaired, so the
+    outputs still carry ``coal chp``.  The database gives a plain file
+    name (a path is refused there), written in the solve's work folder."""
     from flextool.engine import run_chain_from_db
 
-    sol_file = tmp_path / "requested.sol"
+    work = tmp_path / "work"
+    sol_file = work / "solve_data" / "subprocess" / "requested.sol"
     args_map = {
         "type": "map", "index_type": "str",
         "data": [["write_solution_to_file", "true"],
-                 ["solution_file", str(sol_file)],
+                 ["solution_file", "requested.sol"],
                  ["write_solution_style", "0"]],
     }
     url = _build_db(tmp_path_factory, "requested_sol", [
         ["solve", SOLVE, "solver_arguments", _b64(args_map, "map"), "init"],
     ])
     monkeypatch.chdir(tmp_path)
-    work = tmp_path / "work"
     run_chain_from_db(
         url, SCENARIO, work_folder=work,
         solver_config_dir=_legacy_solver_config(tmp_path),
     )
-    assert not sol_file.exists()
+    assert sol_file.is_file()
+    assert not (tmp_path / "requested.sol").exists()
+    # The file itself carries HiGHS' mangled names ...
+    assert "coal_chp" in sol_file.read_text()
+    # ... but the outputs keep the real entity name.
     columns = _flow_columns(work)
     assert f"'{NEW_NAME}'" in columns
     assert "coal_chp" not in columns

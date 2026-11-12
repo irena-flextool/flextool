@@ -309,44 +309,54 @@ def test_unknown_gurobi_parameter_is_named_with_its_layer(solver, shim, db, tmp_
 
 
 #: A parameter that makes the solver read or write at a path, for the option file (each solver's parameter
-#: reference; COPT has none).  ``workd`` is CPLEX's abbreviation of ``workdir``; ``Nodefile_Dir`` is Gurobi's
-#: ``NodefileDir`` (Gurobi ignores ``_`` in names).
+#: reference; COPT's library has none).  ``workd`` is CPLEX's abbreviation of ``workdir``; ``Nodefile_Dir`` is
+#: Gurobi's ``NodefileDir`` (Gurobi ignores ``_`` in names).
 FILE_PATH_OPTION = {"gurobi": "Nodefile_Dir", "cplex": "workd", "xpress": "TUNERMETHODFILE"}
 
 
-def test_path_options_and_precommand_are_not_used(solver, shim, db, highs_objective, tmp_path, caplog) -> None:
-    """Item 236 A2 / A3, the whole run through the solver's program: a path parameter in the option file and
-    one in ``solver_arguments`` (``paths_<s>``) are dropped with one warning each naming the parameter and where
-    it was set, the solver never sees them and nothing is written at their paths; FlexTool's own result file is
-    still used (the LP's objective is HiGHS'); the solve's ``solver_precommand`` is not run (its marker file is
-    never created) and a warning says so once."""
+def test_path_options_follow_the_source_and_precommand_is_not_used(
+        solver, shim, db, highs_objective, tmp_path, caplog) -> None:
+    """Item 236, the whole run through the solver's program.  A path parameter in ``solver_arguments`` (the input
+    database, ``paths_<s>``) is refused before the solver starts, naming the parameter and the solve, and nothing
+    is written at its path; the solve's ``solver_precommand`` is never run (its marker file is never created; COPT,
+    with no database path, solves and warns once).  The same kind of parameter with a full path in the option file
+    (trusted) reaches the solver, and FlexTool's own result file is still used (the LP's objective is HiGHS')."""
+    from flextool.engine.solve._solver_dispatch import FlexToolUserError
+
     check_db = _check_db_module()
     folder = Path(db.removeprefix("sqlite:///")).parent
     marker = check_db.precommand_marker(folder, solver)
-    file_target = tmp_path / "file_option_target"
-    file_line = f"{FILE_PATH_OPTION[solver]} {file_target}\n" if solver in FILE_PATH_OPTION else ""
-    cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 2\n{file_line}")
+    cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 2\n")
     with caplog.at_level(logging.WARNING):
-        steps = _run(db, f"paths_{solver}", tmp_path / "w", cfg)
+        if solver in check_db.ARG_PATH:
+            with pytest.raises(FlexToolUserError) as err:
+                _run(db, f"paths_{solver}", tmp_path / "w", cfg)
+            message = str(err.value)
+            assert repr(check_db.ARG_PATH[solver]) in message and f"solver_arguments of solve {SOLVE}" in message
+            assert "input database" in message
+            assert not _calls(shim), "the solver program was called"
+        else:
+            steps = _run(db, f"paths_{solver}", tmp_path / "w", cfg)
+            assert steps[SOLVE].optimal
+            precommand = [r.getMessage() for r in caplog.records
+                          if r.levelno == logging.WARNING and r.getMessage().startswith("solver_precommand")]
+            assert len(precommand) == 1 and f"solve {SOLVE}" in precommand[0] and "is not run" in precommand[0]
+    assert not check_db.path_option_target(folder, solver).exists()
+    assert not marker.exists(), "solver_precommand was run"
+    if solver not in FILE_PATH_OPTION:
+        return
+    trusted = tmp_path / "solver_files"
+    trusted.mkdir()
+    cfg = _cfg(tmp_path, solver, f"{THREADS[solver]} 2\n{FILE_PATH_OPTION[solver]} {trusted}\n")
+    steps = _run(db, f"lp_{solver}", tmp_path / "w2", cfg)
     assert steps[SOLVE].optimal
     assert steps[SOLVE].obj == pytest.approx(highs_objective["lp"], rel=1e-6)
     calls = _calls(shim)
-    assert calls and all(c["params"] == {THREADS[solver]: 2} for c in calls), calls
+    assert calls and all(c["params"][THREADS[solver]] == 2 for c in calls), calls
     if solver == "gurobi":
         assert all(c["result_file"].endswith(f"{SOLVE}.json") for c in calls), calls
     sent = json.dumps([c.get("argv", []) for c in calls]) + "".join(c.get("stdin", "") for c in calls)
-    assert str(file_target) not in sent and str(check_db.path_option_target(folder, solver)) not in sent, sent
-    assert not file_target.exists() and not check_db.path_option_target(folder, solver).exists()
-    assert not marker.exists(), "solver_precommand was run"
-    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    if solver in FILE_PATH_OPTION:
-        dropped = [w for w in warnings if w.startswith(f"Ignoring {solver} option")]
-        assert len(dropped) == 2, dropped
-        assert any(FILE_PATH_OPTION[solver] in w and str(cfg / f"{solver}.opt") in w for w in dropped), dropped
-        assert any(check_db.ARG_PATH[solver] in w and f"solver_arguments of solve {SOLVE}" in w
-                   for w in dropped), dropped
-    precommand = [w for w in warnings if w.startswith("solver_precommand")]
-    assert len(precommand) == 1 and f"solve {SOLVE}" in precommand[0] and "is not run" in precommand[0], warnings
+    assert str(trusted) in sent, sent
 
 
 # ---------------------------------------------------------------------------

@@ -105,7 +105,8 @@ is the authoritative inventory):
   `--solver-time-limit`, `solver_io_api` → `--matrix-file-format` (since removed: it had no effect), and
   `use_row_scaling` → the `--scaling` CLI flag (env `FLEXTOOL_SCALING`).
   The surviving `solve_advanced` DB parameters are `solver`,
-  `solver_arguments`, `solver_mip_gap`, and `solver_precommand` (read but never run; item 236). See
+  `solver_arguments`, `solver_mip_gap`, and `solver_precommand` (not used: never run, kept only so that
+  older databases still read; item 236). See
   [Solver selection](../solvers/index.md).
 
 A separate hand-coded step (independent of the numbered chain)

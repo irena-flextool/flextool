@@ -782,16 +782,17 @@ _LINE_BREAKS = frozenset("\n\r\x0b\x0c\x1c\x1d\x1e\x85\u2028\u2029")
 
 def _check_command_lines(solver: str, kind: str, lines: list[str], expected: int) -> None:
     """Last check before a solver starts (item 236 A4): *lines* (the command script's lines, or Gurobi's
-    arguments) are one per parameter plus the fixed ones, and none holds a line break.  The options were
+    arguments) are one per parameter plus the fixed ones, and none holds a line break or ends with a backslash
+    (a Tcl console joins such a line with the next).  The options were
     checked when they were read (``_solver_dispatch.validate_solver_option``), so a failure here is an
     internal error; the solver is not started."""
     from flextool.engine.solve._solver_dispatch import FlexToolUserError
 
-    bad = next((line for line in lines if _LINE_BREAKS.intersection(line)), None)
+    bad = next((line for line in lines if _LINE_BREAKS.intersection(line) or line.endswith("\\")), None)
     if bad is None and len(lines) == expected:
         return
     detail = (
-        f"the {kind} {bad[:80]!r} holds a line break" if bad is not None
+        f"the {kind} {bad[:80]!r} holds a line break or ends with a backslash" if bad is not None
         else f"it has {len(lines)} {kind}s, not {expected}"
     )
     raise FlexToolUserError(

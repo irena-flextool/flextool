@@ -49,7 +49,11 @@ single-machine path:
      variable to that path.
 
 WLS and Compute Server users set up the licence the way `gurobi_cl` reads it
-(a `gurobi.lic` with the WLS credentials, or `GRB_LICENSE_FILE`).
+(a `gurobi.lic` with the WLS credentials, or `GRB_LICENSE_FILE`). Server,
+cloud and licence parameters (`ComputeServer`, `CS...`, `Cloud...`, `WLS...`,
+`TokenServer`, ...) are taken from `solver_config/gurobi.opt` only: the
+input database's `solver_arguments` may not set them (see
+[What the database may set](index.md#what-the-database-may-set)).
 
 ## Verification
 
@@ -100,11 +104,14 @@ the FlexTool log.
   as a warning naming where the parameter was set (the option file, or the
   `solver_arguments` of which solve). Fix the name. With console logging off
   (`LogToConsole 0`) Gurobi prints no such line, and there is no warning.
-- **File parameters.** Parameters that name a file or folder (`ResultFile`,
-  `LogFile`, `SolFiles`, `NodefileDir`, `InputFile`, the `.prm` / `.json` file
-  lists of tuning, concurrent and multi-objective runs) and `Record` are not
-  passed to Gurobi (with a warning): FlexTool reads the solution from its own
-  result file. See [Options that read or write files](index.md#the-parameters-in-detail).
+- **File parameters.** Parameters that name a file or folder (`LogFile`,
+  `SolFiles`, `NodefileDir`, `InputFile`, the `.prm` / `.json` file lists of
+  tuning, concurrent and multi-objective runs) take a full path in
+  `gurobi.opt`; in the database's `solver_arguments` they take only a plain
+  file name, written in the solve's work folder, and a path is refused. See
+  [What the database may set](index.md#what-the-database-may-set).
+  `ResultFile` is ignored everywhere (with a warning): FlexTool names its own
+  result file and reads the solution from it.
 - **Time limit reached.** A MIP stopped at its time limit with a solution is
   kept with a warning that gives the gap reached; an LP, or a MIP without a
   solution, stops the run. See [Time limit](index.md#time-limit).

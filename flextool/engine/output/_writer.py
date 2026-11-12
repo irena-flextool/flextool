@@ -355,8 +355,9 @@ def write_outputs_for_solve(
     # Undo HiGHS' space→underscore name mangling.  When the in-process
     # solve writes a solution file (``write_solution_to_file=true`` — no
     # longer in highs.opt, whose layer drops it, but still honoured when a
-    # user requests it via the solve's ``solver_arguments``; ``solution_file``
-    # itself is never passed on, see _solver_dispatch.drop_file_path_option), HiGHS'
+    # user requests it via the solve's ``solver_arguments`` (``solution_file``
+    # a plain name there, in the solve's work folder) or the CLI;
+    # see _solver_dispatch._drop_solution_file_options), HiGHS'
     # ``writeSolution`` permanently rewrites
     # spaces to underscores in the live LP's column/row names (it happens
     # for every solution style — the GLPSOL/pretty writers are whitespace-

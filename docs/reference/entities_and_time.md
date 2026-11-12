@@ -109,8 +109,8 @@ Timesets pick one or more sections from the `timeline` to form a `timeset`. Each
 
   - For commercial solvers:
 
-    - *solver_precommand* is not run: FlexTool does not run commands stored in a database (FlexTool 3 ran it in front of CPLEX). A value gives a warning; to hold a floating licence, use the solver's own licence server setup.
-    - *solver_arguments* Map of the solver's own parameters (name → value), see [Solvers](../solvers/index.md). Parameters that make the solver read or write files at a path are not passed on.
+    - *solver_precommand* is not used: FlexTool never runs commands stored in a database (FlexTool 3 ran it in front of CPLEX). It is kept only so that older databases still read, and a value gives a warning; to hold a floating licence, use the solver's own licence server setup.
+    - *solver_arguments* Map of the solver's own parameters (name → value), see [Solvers](../solvers/index.md). From the database, a parameter that names a file or folder takes only a plain file name (written in the solve's work folder), and Gurobi server, cloud and licence parameters are refused; set those in the solver option file instead.
 
 - `timeset`: timesets are sets of time with a start (from timeline) and a duration (number of time steps)
 

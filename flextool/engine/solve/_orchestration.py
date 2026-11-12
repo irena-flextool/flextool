@@ -328,7 +328,9 @@ def _solve_highs_options(
     "Solver args" line and for Benders) < ``solver_config/highs.opt`` <
     the solve's convenience knobs (``solve.solver_mip_gap``) < the solve's
     ``solver_arguments`` < the operator's flags / environment variables
-    (:func:`_operator_highs_overrides`, from ``state.run_options``).
+    (:func:`_operator_highs_overrides`, from ``state.run_options``).  The two
+    database layers take no paths or server options
+    (:func:`~flextool.engine.solve._solver_dispatch.check_database_solver_option`).
     ``run_chain_from_db`` reads the run's option files once at its start
     (``state.paths.solver_option_files``); a bare ``PathConfig`` reads
     ``<solver_config_dir>/highs.opt``, or has no highs.opt layer when that is
@@ -337,6 +339,7 @@ def _solve_highs_options(
     from flextool.engine.input._solve_config import SolverConfig
     from flextool.engine.solve._solver_dispatch import (
         _resolve_effective_highs_options,
+        solver_workspace,
     )
 
     files = state.paths.solver_option_files
@@ -359,6 +362,8 @@ def _solve_highs_options(
             complete_solve_name, SolverConfig()
         ),
         solve_name=complete_solve_name,
+        # A plain file name the database gives a HiGHS file option lands in the solve's work folder.
+        workspace=solver_workspace(state.paths.work_folder),
     )
 
 

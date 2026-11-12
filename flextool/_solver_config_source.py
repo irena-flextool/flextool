@@ -85,6 +85,7 @@ SHIPPED_TEMPLATE_SHA256: Mapping[str, frozenset[str]] = {
         "04353fb0e11360d9bc4adeaeb30318f082e1379d8ba44b4f44f2a953c9a90dcb",
         "245ffff3fcf99e0d79eb03fd8a95b73c9433c59f92f08d08f5f27f8ab723cc6a",
         "7911b914b4c8f1dc4eb335be410251111c12d762dcecb18d4ac19cb2a912c690",
+        "6f9b0366041a5d8310477f6275e6e9d2abac17e73c8bbdde6f0d9c70692c8c0e",
         "9d6548f8e598f688106e8dfe452fceb3dd11d73d15df4dffeb9e0ccdcee28c09",
     }),
     "cplex": frozenset({

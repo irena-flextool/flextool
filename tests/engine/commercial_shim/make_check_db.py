@@ -14,8 +14,9 @@ with these scenarios for each solver ``<s>`` in gurobi, cplex, xpress, copt (sol
 * ``smg_<s>``: the LP with ``solver_mip_gap`` 0.2;
 
 * ``paths_<s>``: the LP with a ``solver_precommand`` that would create ``<folder>/precommand_ran_<s>`` and, for
-  each solver but COPT (it has no such parameter), a ``solver_arguments`` parameter that would make the solver
-  write at ``<folder>/path_option_<s>`` (item 236: neither may happen);
+  each solver but COPT, a ``solver_arguments`` parameter that would make the solver write at
+  ``<folder>/path_option_<s>`` (item 236: the precommand is never run, and a path from the input database is
+  refused before the solver starts);
 
 plus ``unknown_gurobi`` (``solver_arguments`` ``NoSuchParameter`` 1) and ``iterlimit_xpress`` (``LPITERLIMIT``
 1, ``PRESOLVE`` 0).  The scenarios ``coal`` and ``coal_min_load_MIP_wind`` themselves solve with HiGHS.
