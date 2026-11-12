@@ -606,6 +606,12 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
 - **The commercial solver option templates** described how options were passed before 4.3.0 (`ReadParams`, the
   `solver_options` map, `solver_time_limit` / `solver_threads`); their header now gives the actual mechanism and
   precedence. Existing `solver_config/*.opt` copies keep their old comment until you replace them.
+- **Investment duals were wrong when autoscaling rescaled the model.** When autoscale's per-quantity scaling
+  (Layer 2) rescaled an investment model solved in the FlexTool process (the default; not `--save-memory`), the
+  reduced costs of the investment variables were read back in scaled units, so `v_dual_invest_unit`,
+  `v_dual_invest_connection`, `v_dual_invest_node` and the `dual_invest_effective_*` outputs built from them were
+  wrong without a message. They are now in the model's own units; other results are unchanged. The solver also
+  keeps a valid starting basis after the unscale (no effect on current runs).
 - **The memory-saving solve could put solution values on the wrong variables.** With `--save-memory`, or with
   warm start off, HiGHS solves the model from an MPS file in a separate process. When the model had a variable
   that no constraint and no cost used, the values read back after it were shifted onto the next variables, so

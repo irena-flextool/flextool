@@ -715,6 +715,30 @@ def empty_variable_frame(
     return pd.DataFrame(index=rows, columns=empty_cols, dtype=float)
 
 
+def handle_col_dual(h: "object", solution: "object | None" = None) -> "object":
+    """The reduced costs of the solve on ``h``, in the model's own units.
+
+    After an autoscale Layer-2 unscale, HiGHS's ``getSolution().col_dual``
+    is in scaled coordinates (``setSolution`` recomputes it from the
+    handle's scaled cost and matrix), so the unscale keeps the true values
+    on the handle as ``_flextool_unscaled_col_dual`` (item 239).  They are
+    used while the handle has not been solved again since (model status
+    ``kNotset``, which ``setSolution`` leaves and a ``run`` replaces).
+    ``solution`` is an already fetched ``h.getSolution()``.
+    """
+    sol = solution if solution is not None else h.getSolution()
+    stashed = getattr(h, "_flextool_unscaled_col_dual", None)
+    if stashed is not None:
+        try:
+            import highspy
+
+            if h.getModelStatus() == highspy.HighsModelStatus.kNotset and len(stashed) == len(sol.col_dual):
+                return stashed
+        except Exception:  # pragma: no cover — duck-typed handle without a model status
+            pass
+    return sol.col_dual
+
+
 def extract_variable(
     h: "highspy.Highs",
     name: str,
@@ -784,7 +808,7 @@ def extract_variable(
         values = row_dual if row_dual is not None else h.getSolution().row_dual
     elif source == "col_dual":
         names = col_names_cache if col_names_cache is not None else h.allVariableNames()
-        values = col_dual if col_dual is not None else h.getSolution().col_dual
+        values = col_dual if col_dual is not None else handle_col_dual(h)
     elif source == "col_value":
         names = col_names_cache if col_names_cache is not None else h.allVariableNames()
         values = col_value if col_value is not None else h.getSolution().col_value
@@ -1836,7 +1860,7 @@ def write_all_variables(
             col_names_cache = h.allVariableNames()
             _sol = h.getSolution()
             col_value = _sol.col_value
-            col_dual = _sol.col_dual
+            col_dual = handle_col_dual(h, _sol)
             row_dual = _sol.row_dual
             row_names_cache = h.getLp().row_names_
         except Exception as exc:  # pragma: no cover - defensive fallback
