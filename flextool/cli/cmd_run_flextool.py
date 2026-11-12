@@ -602,18 +602,22 @@ def build_parser() -> argparse.ArgumentParser:
              'FLEXTOOL_BASIS_CACHE_DIR; the flag wins.',
     )
     parser.add_argument(
-        '--solver-config-dir', metavar='PATH', default=None,
-        help='Folder of the solver option files (highs.opt, gurobi.opt, '
-             'cplex.opt, xpress.opt, copt.opt).  Unset: solver_config/ next '
-             'to the input database, then in the workspace of a GUI project '
-             'database (<workspace>/projects/<project>/input_sources/), then '
-             'in the Spine Toolbox project folder (--project-folder-file), '
-             'then in the current folder; when none has an option file, '
-             'FlexTool\'s defaults are used with a warning.  A solver whose '
-             'file is missing in the folder uses FlexTool\'s default.  The run '
-             'copies the files it used to <work folder>/solve_data/'
-             'solver_config/.  Environment variable: '
-             'FLEXTOOL_SOLVER_CONFIG_DIR; the flag wins.',
+        '--solver-config-dir', metavar='PATH', default=None, action='append',
+        help='A folder of the solver option files (highs.opt, gurobi.opt, '
+             'cplex.opt, xpress.opt, copt.opt).  Repeat the flag for '
+             'several folders, highest first: each solver\'s file comes '
+             'from the first folder that has it, else FlexTool\'s default '
+             '(only the folders given are read).  Unset: solver_config/ '
+             'next to the input database; else, for a GUI project database '
+             '(<workspace>/projects/<project>/input_sources/), the '
+             'project\'s solver_config/, then the workspace\'s, file by '
+             'file; else the Spine Toolbox project folder '
+             '(--project-folder-file), then the current folder; when none '
+             'has an option file, FlexTool\'s defaults are used with a '
+             'warning.  The run copies the files it used to <work folder>/'
+             'solve_data/solver_config/.  Environment variable: '
+             'FLEXTOOL_SOLVER_CONFIG_DIR (several folders separated by '
+             '\':\', on Windows \';\'); the flag wins.',
     )
     parser.add_argument('--output-spreadsheet', metavar='PATH', help='Save results to spreadsheet file')
     parser.add_argument('--write-methods', type=str, nargs='+', default=None,

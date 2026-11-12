@@ -21,6 +21,9 @@ from __future__ import annotations
 
 import shlex
 from collections.abc import Sequence
+from pathlib import Path
+
+from flextool._solver_config_source import solver_config_dir_flags, split_solver_config_dirs
 
 RP_MODULE = "flextool.representative_periods.preprocess"
 CALIBRATE_MODULE = "flextool.calibrate"
@@ -126,7 +129,7 @@ def build_calibrate_command(
     debug: bool,
     final_write_methods: list[str] | None = None,
     threads: int | None = None,
-    solver_config_dir: str | None = None,
+    solver_config_dir: str | Path | Sequence[str | Path] | None = None,
 ) -> list[str]:
     """Build the argv for the calibrate CLI.
 
@@ -146,9 +149,10 @@ def build_calibrate_command(
 
     ``threads`` (the Execution jobs window's "Threads per run") is emitted as
     ``--threads N`` when given; the calibrator passes it to each solve.
-    ``solver_config_dir`` (the workspace's solver option folder) is emitted as
-    ``--solver-config-dir PATH`` when given; the calibrator passes it to each
-    solve, so its solves use the same option files as a GUI run.
+    ``solver_config_dir`` (the project's and the workspace's solver option
+    folders, highest first) is emitted as ``--solver-config-dir PATH`` once per
+    folder; the calibrator passes them to each solve, so its solves use the
+    same option files as a GUI run.
     """
     argv: list[str] = [
         python_exe,
@@ -181,8 +185,7 @@ def build_calibrate_command(
         argv.append("--debug")
     if threads is not None:
         argv += ["--threads", str(max(1, int(threads)))]
-    if solver_config_dir:
-        argv += ["--solver-config-dir", str(solver_config_dir)]
+    argv += solver_config_dir_flags(split_solver_config_dirs(solver_config_dir))
     return argv
 
 

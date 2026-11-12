@@ -25,6 +25,16 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping, NamedTuple
 
+from flextool._solver_option_rules import _PATH_OPTIONS as _PATH_OPTIONS
+from flextool._solver_option_rules import _SERVER_OPTION_PREFIXES as _SERVER_OPTION_PREFIXES
+from flextool._solver_option_rules import _SERVER_OPTIONS as _SERVER_OPTIONS
+from flextool._solver_option_rules import _is_number
+from flextool._solver_option_rules import _option_key as _option_key
+from flextool._solver_option_rules import commercial_option_key as commercial_option_key
+from flextool._solver_option_rules import highs_opt_lines as _highs_opt_lines
+from flextool._solver_option_rules import is_path_option as is_path_option
+from flextool._solver_option_rules import is_plain_file_name
+from flextool._solver_option_rules import is_server_option as is_server_option
 from flextool.engine.input._solve_config import SolverConfig
 
 if TYPE_CHECKING:
@@ -60,20 +70,6 @@ def _parse_highs_opt_file(path: Path | None) -> dict[str, str]:
     if path is None or not path.is_file():
         return {}
     return _parse_highs_opt_text(path.read_text(encoding="utf-8"))
-
-
-def _highs_opt_lines(text: str) -> list[tuple[int, str, str]]:
-    """``(line number, key, value)`` of every option line of a ``highs.opt`` text, in file order."""
-    out: list[tuple[int, str, str]] = []
-    for lineno, line in enumerate(text.splitlines(), start=1):
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#"):
-            continue
-        if "=" not in stripped:
-            continue
-        key, _, val = stripped.partition("=")
-        out.append((lineno, key.strip(), val.strip()))
-    return out
 
 
 def _parse_highs_opt_text(text: str) -> dict[str, str]:
@@ -189,119 +185,15 @@ def validate_solver_option(solver: str, name: object, value: object, where: str)
 # passes options only as ``set`` / ``setControl`` lines or ``Name=value``
 # arguments, so the server options are the only other way out.  Both kinds are
 # refused, never cleaned up; the general check (:func:`validate_solver_option`)
-# applies to every source.
-
-#: Words in an option name that mark a file, folder or path option (``LogFile``, ``workdir``, ``TUNEROUTPUTPATH``).
-_PATH_NAME_WORDS = ("file", "dir", "path")
-
-#: The file, folder and path options of each solver, as :func:`commercial_option_key` forms (HiGHS: lower case).
-#: Many are also found by the name rule above; the list adds the rest and is the set FlexTool places in the
-#: solve's work folder for HiGHS (the in-process HiGHS solve runs in the run's current folder).  A block list: a
-#: parameter a later solver version adds is caught only by the name rule (item 240 has the allow-list).
-_PATH_OPTIONS: dict[str, frozenset[str]] = {
-    # highspy 1.15.1: every string option of ``Highs().writeOptions(<file>)`` whose description is a file
-    # ("Log file", "Read solution file", "Read basis file", "Write model file", "Write solution file", "Write
-    # basis file", "Write presolved model file", "Write IIS model file", "File for reporting improving MIP
-    # solutions").  The other string options (presolve, solver, parallel, run_crossover, ranging, ...) are words.
-    "highs": frozenset({
-        "log_file", "solution_file", "write_model_file", "write_presolved_model_file", "write_iis_model_file",
-        "write_basis_file", "read_basis_file", "read_solution_file", "mip_improving_solution_file",
-    }),
-    # gurobipy 13.0.2 ``_paramdetails.py`` (Gurobi's parameter reference): the parameters whose value is a file
-    # or folder name (ResultFile, LogFile, SolFiles, NodefileDir, InputFile; the .prm / .json file lists
-    # ConcurrentSettings, MultiObjSettings, TuneBaseSettings, TuneIgnoreSettings, TuneParams) and Record (writes
-    # API-call recording files; an integer, so the database may set it: the files land in the work folder).
-    # InputFile and the five setting-file lists are ``gurobi_cl`` parameters, not library ones.
-    "gurobi": frozenset({
-        "resultfile", "logfile", "solfiles", "nodefiledir", "inputfile", "concurrentsettings",
-        "multiobjsettings", "tunebasesettings", "tuneignoresettings", "tuneparams", "record",
-    }),
-    # cplex 22.1.2.0: the string parameters of ``Cplex().parameters`` that name a file or folder (``workdir``,
-    # ``output.intsolfileprefix``; ``read.fileencoding`` is a code page), plus the Interactive Optimizer's own
-    # ``set logfile <file>`` (IBM CPLEX Interactive Optimizer commands reference; not in the Python API).  The
-    # Interactive Optimizer takes any unique abbreviation of each word, so an abbreviation is matched too
-    # (:func:`is_path_option`); a name whose first word is ``read`` / ``write`` is one as well.
-    "cplex": frozenset({"workdir", "output intsolfileprefix", "logfile"}),
-    # xpress 46.01.02: the string controls of ``problem().getControl()`` that name a file or folder
-    # (TUNERMETHODFILE read, TUNEROUTPUTPATH written, TUNERSESSIONNAME the name of the tuner's output under it).
-    # The others are MPS section names, masks and formats.  Compared without case or an ``XPRS_`` prefix.
-    "xpress": frozenset({"tunermethodfile", "tuneroutputpath", "tunersessionname"}),
-    # coptpy 8.0.4 (COPT 8.0.4): every parameter of ``COPT.Param`` is an integer or a float
-    # (``Model.getParamInfo``); ``LogFile`` (the ``copt_cmd`` console's log setting) is listed in case.
-    "copt": frozenset({"logfile"}),
-}
-#: CPLEX: a name whose first word is one of these is a path option too (``read`` / ``write`` commands).
-_CPLEX_PATH_FIRST_WORDS = frozenset({"read", "write"})
-
-#: Gurobi options that connect to another machine or carry its credentials: Compute Server, Cluster Manager,
-#: Instant Cloud, Web License Service, token server and distributed workers (Gurobi 12 parameter list), as
-#: :func:`commercial_option_key` forms (so ``Compute_Server`` is ``ComputeServer``, as Gurobi reads it).
-_SERVER_OPTIONS: dict[str, frozenset[str]] = {
-    "gurobi": frozenset({
-        "computeserver", "serverpassword", "servertimeout",
-        "csmanager", "csapiaccessid", "csapisecret", "csappname", "csauthtoken", "csbatchmode", "csclientlog",
-        "csgroup", "csidletimeout", "cspriority", "csqueuetimeout", "csrouter", "cstlsinsecure",
-        "cloudaccessid", "cloudsecretkey", "cloudpool", "cloudhost",
-        "wlsaccessid", "wlssecret", "wlstoken", "wlstokenduration", "wlstokenrefresh", "wlsproxy", "wlsconfig",
-        "licenseid", "username", "tokenserver", "tokenport", "tsport",
-        "workerpool", "workerpassword", "workerport",
-    }),
-}
-#: Gurobi: a name with one of these prefixes is a server option too (a later Gurobi version's new ones).
-_SERVER_OPTION_PREFIXES: dict[str, tuple[str, ...]] = {
-    "gurobi": ("computeserver", "server", "cs", "cloud", "wls", "token", "worker"),
-}
-
-#: A plain file name: ASCII letters, digits, ``_ . + -``, starting with a letter, digit or ``_``.
-_PLAIN_FILE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+\-]*")
+# applies to every source.  The option tables and the name rules are in
+# :mod:`flextool._solver_option_rules` (no engine import: project import screens
+# a shipped option file with them).
 
 
 def solver_workspace(work_folder: "Path | str | None") -> Path | None:
     """The solve's work folder for solver files: ``<work_folder>/solve_data/subprocess`` (where a commercial
     solver and the ``--save-memory`` HiGHS run), or ``None`` without a work folder."""
     return Path(work_folder) / "solve_data" / "subprocess" if work_folder is not None else None
-
-
-def _option_key(solver: str, name: str) -> str:
-    """The name as *solver* reads it: :func:`commercial_option_key`; HiGHS lower case (a superset of its exact
-    names, so that no spelling slips past the database check)."""
-    return str(name).strip().casefold() if solver == "highs" else commercial_option_key(solver, name)
-
-
-def is_path_option(solver: str, name: object) -> bool:
-    """Whether *name* is an option of *solver* that takes a file, folder or path.
-
-    Names are compared as the solver reads them (:func:`_option_key`).  CPLEX: a name each of whose words
-    abbreviates the listed name's word (``set log`` for ``set logfile``) is one too, since the Interactive
-    Optimizer accepts any unique abbreviation.
-    """
-    key = _option_key(solver, str(name))
-    listed = _PATH_OPTIONS.get(solver, frozenset())
-    if key in listed or any(word in key for word in _PATH_NAME_WORDS):
-        return True
-    if solver != "cplex" or not key:
-        return False
-    words = key.split(" ")
-    if words[0] in _CPLEX_PATH_FIRST_WORDS:
-        return True
-    return any(
-        len(words) == len(full.split(" ")) and all(f.startswith(w) for w, f in zip(words, full.split(" ")))
-        for full in listed
-    )
-
-
-def is_server_option(solver: str, name: object) -> bool:
-    """Whether *name* is an option of *solver* that connects to another machine or carries its credentials."""
-    key = _option_key(solver, str(name))
-    return key in _SERVER_OPTIONS.get(solver, frozenset()) or key.startswith(_SERVER_OPTION_PREFIXES.get(solver, ()))
-
-
-def _is_number(text: str) -> bool:
-    try:
-        float(text)
-    except ValueError:
-        return False
-    return True
 
 
 def check_database_solver_option(solver: str, name: object, value: object, where: str) -> None:
@@ -329,9 +221,7 @@ def check_database_solver_option(solver: str, name: object, value: object, where
         )
     if not value_text or not is_path_option(solver, name_text) or _is_number(value_text):
         return
-    if (
-        not value_text.isascii() or _PLAIN_FILE_NAME.fullmatch(value_text) is None or ".." in value_text
-    ):
+    if not is_plain_file_name(value_text):
         raise FlexToolUserError(
             f"Refusing {solver} option {_short(name_text)} (value {_short(value_text)}) from {where}: it comes "
             "from the input database, where an option that names a file or folder takes only a plain file name "
@@ -693,28 +583,6 @@ class CommercialOption(NamedTuple):
     name: str
     value: str
     layer: str
-
-
-def commercial_option_key(solver: str, name: str) -> str:
-    """The comparison key of a commercial parameter name: one key for every spelling the solver reads as the
-    same parameter, so that the file-path filter and the merge of the layers match what the solver does.
-
-    Every solver: case-folded, runs of whitespace collapsed.  CPLEX: ``.`` read as a space.  Gurobi: ``_``
-    after the first character removed (the Gurobi library (``GRBsetparam``, 13.0.2) reads ``Log_File``,
-    ``LOG_FILE`` and ``M_I_P_Gap`` as ``LogFile`` / ``MIPGap``, but refuses a leading ``_``; it ignores no
-    other character).  Xpress: one leading ``xprs_`` removed (the library's control lookup, xpress 46.01.02,
-    reads ``XPRS_MAXTIME`` / ``xprs_maxtime`` as ``MAXTIME``, but not ``XPRS_XPRS_MAXTIME`` or ``XPRSMAXTIME``).
-    COPT (coptpy 8.0.4) only ignores case; HiGHS names are exact.
-    """
-    key = str(name).strip()
-    if solver == "cplex":
-        key = key.replace(".", " ")
-    key = " ".join(key.split()).casefold()
-    if solver == "gurobi":
-        key = key[:1] + key[1:].replace("_", "")
-    elif solver == "xpress" and key.startswith("xprs_"):
-        key = key[len("xprs_"):]
-    return key
 
 
 def _native_value(solver: str, knob: str, value: object) -> str:

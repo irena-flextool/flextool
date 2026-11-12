@@ -60,9 +60,31 @@ def test_the_workspace_option_folder_is_sent_explicitly(tmp_path: Path, monkeypa
     workspace.mkdir()
     monkeypatch.chdir(workspace)
     monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
-    assert _run_options(_cmd_for(tmp_path)).value("solver_config_dir") == str(workspace / "solver_config")
+    assert _run_options(_cmd_for(tmp_path)).value("solver_config_dir") == (str(workspace / "solver_config"),)
     monkeypatch.setenv("FLEXTOOL_SOLVER_CONFIG_DIR", str(tmp_path / "chosen"))
-    assert _run_options(_cmd_for(tmp_path)).value("solver_config_dir") == str(tmp_path / "chosen")
+    assert _run_options(_cmd_for(tmp_path)).value("solver_config_dir") == (str(tmp_path / "chosen"),)
+
+
+def test_the_project_option_folder_comes_first(tmp_path: Path, monkeypatch):
+    """A project with its own ``solver_config`` gets it ahead of the workspace's, one flag per folder;
+    ``FLEXTOOL_SOLVER_CONFIG_DIR`` replaces only the workspace's folder (several, separated by os.pathsep)."""
+    import os
+
+    workspace = tmp_path / "ws"
+    project = workspace / "projects" / "P"
+    (project / "solver_config").mkdir(parents=True)
+    monkeypatch.chdir(workspace)
+    monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
+    mgr = ExecutionManager(project_path=project, settings=ProjectSettings())
+    job = ExecutionJob(job_id=0, scenario_name="scen", output_subdir="scen", input_db_url="sqlite:///input.sqlite")
+    cmd = mgr._build_run_command(job, tmp_path / "work")
+    assert _run_options(cmd).value("solver_config_dir") == (
+        str(project / "solver_config"), str(workspace / "solver_config"))
+    monkeypatch.setenv("FLEXTOOL_SOLVER_CONFIG_DIR", os.pathsep.join([str(tmp_path / "a"), str(tmp_path / "b")]))
+    cmd = mgr._build_run_command(job, tmp_path / "work")
+    assert cmd.count("--solver-config-dir") == 3
+    assert _run_options(cmd).value("solver_config_dir") == (
+        str(project / "solver_config"), str(tmp_path / "a"), str(tmp_path / "b"))
 
 
 @pytest.mark.parametrize(
@@ -117,7 +139,7 @@ def test_calibration_sends_threads_per_run(tmp_path: Path):
     )
     assert argv[1:3] == ["-m", "flextool.calibrate"]
     parsed = calibrate_parser().parse_args(argv[3:])
-    assert parsed.threads == 3 and parsed.solver_config_dir == Path("/ws/solver_config")
+    assert parsed.threads == 3 and parsed.solver_config_dir == [Path("/ws/solver_config")]
 
 
 def test_calibrator_solves_get_the_option_folder(tmp_path: Path):
@@ -129,7 +151,7 @@ def test_calibrator_solves_get_the_option_folder(tmp_path: Path):
     assert argv[1:3] == ["-m", "flextool_run_supervisor"]
     options = RunOptions.from_cli(build_parser().parse_args(argv[3:]), environ={})
     assert (options.value("solver_config_dir"), options.source("solver_config_dir")) == (
-        str(Path("/ws/solver_config")), "cli")
+        (str(Path("/ws/solver_config")),), "cli")
 
 
 def test_the_gui_never_sends_a_mip_gap(tmp_path: Path):

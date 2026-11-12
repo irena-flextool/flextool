@@ -36,7 +36,9 @@ import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Sequence
 
+from flextool._solver_config_source import split_solver_config_dirs
 from flextool.run_options import Resolved, RunOptions
 
 # Repo root = <root>/flextool/calibrate/_solve.py → parents[2].
@@ -71,7 +73,7 @@ def run_solve(
     cache_dir: Path,
     threads: int | None = None,
     launcher: str = "calibrator",
-    solver_config_dir: Path | None = None,
+    solver_config_dir: Path | Sequence[Path] | None = None,
 ) -> SolveRun:
     """Run one calibrator solve and return its raw :class:`SolveRun`.
 
@@ -99,8 +101,9 @@ def run_solve(
         Who runs the solve, recorded in the run's ``_run_status.json`` (``--run-launcher``): ``calibrator``, or
         ``netload`` for the representative-period iteration.
     solver_config_dir:
-        Folder of the solver option files (``--solver-config-dir``); ``None`` sends no flag (the child resolves
-        the folder itself: ``FLEXTOOL_SOLVER_CONFIG_DIR``, else from the input database's location).
+        Folder, or folders highest first, of the solver option files (``--solver-config-dir`` once per folder);
+        ``None`` sends no flag (the child resolves the folders itself: ``FLEXTOOL_SOLVER_CONFIG_DIR``, else from
+        the input database's location).
 
     The solve runs under the ``flextool-run`` supervisor, which writes the run's ``_run.log``; its output still
     comes back here in ``stdout``.  No environment is passed: the child inherits this process's.
@@ -137,7 +140,7 @@ def solve_argv(
     cache_dir: Path,
     threads: int | None = None,
     launcher: str = "calibrator",
-    solver_config_dir: Path | None = None,
+    solver_config_dir: Path | Sequence[Path] | None = None,
 ) -> list[str]:
     """The command line of one calibrator iteration (parameters as :func:`run_solve`).
 
@@ -151,8 +154,9 @@ def solve_argv(
     }
     if threads is not None:
         chosen["threads"] = Resolved(int(threads), "cli")
-    if solver_config_dir is not None:
-        chosen["solver_config_dir"] = Resolved(str(solver_config_dir), "cli")
+    folders = split_solver_config_dirs(solver_config_dir)
+    if folders:
+        chosen["solver_config_dir"] = Resolved(tuple(str(folder) for folder in folders), "cli")
     warm = RunOptions(resolved=chosen)
     return [
         sys.executable,

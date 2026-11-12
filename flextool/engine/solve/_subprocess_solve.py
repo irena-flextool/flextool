@@ -76,6 +76,8 @@ from typing import TYPE_CHECKING, Any, Mapping, NamedTuple
 
 import numpy as np
 
+from flextool._solver_option_rules import native_opt_lines as _native_opt_lines
+
 if TYPE_CHECKING:
     from polar_high import Problem, Solution
 
@@ -868,21 +870,6 @@ def _read_native_opt_text(path: Path) -> str | None:
         return path.read_text()
     except OSError:
         return None
-
-
-def _native_opt_lines(text: str) -> list[tuple[int, str, str]]:
-    """``(line number, name, value)`` of every parameter line of a native ``.opt`` text, in file order (rules of
-    :func:`_parse_native_opt_file`)."""
-    out: list[tuple[int, str, str]] = []
-    for lineno, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        if " " not in line and "\t" not in line:
-            continue
-        name, value = line.rsplit(maxsplit=1)
-        out.append((lineno, name.strip(), value.strip()))
-    return out
 
 
 def _parse_native_opt_text(text: str) -> dict[str, str]:

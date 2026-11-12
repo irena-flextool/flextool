@@ -240,9 +240,10 @@ def build_parser() -> argparse.ArgumentParser:
         "--solver-config-dir",
         type=Path,
         default=None,
+        action="append",
         metavar="PATH",
         help=(
-            "Folder of the solver option files (highs.opt, gurobi.opt, ...) for each solve (passed on as --solver-config-dir). Default: each solve finds the folder itself (FLEXTOOL_SOLVER_CONFIG_DIR, next to the input database, its workspace)."
+            "A folder of the solver option files (highs.opt, gurobi.opt, ...) for each solve (passed on as --solver-config-dir); repeat the flag for several folders, highest first (each solver's file comes from the first folder that has it). Default: each solve finds the folders itself (FLEXTOOL_SOLVER_CONFIG_DIR, next to the input database, its project and workspace)."
         ),
     )
     return parser
@@ -276,7 +277,7 @@ def _config_from_args(args: argparse.Namespace) -> CalibConfig:
         stall_fraction=args.stall_fraction,
         final_write_methods=final_write_methods,
         threads=args.threads if args.threads is not None and args.threads >= 1 else None,
-        solver_config_dir=args.solver_config_dir,
+        solver_config_dir=tuple(args.solver_config_dir) if args.solver_config_dir else None,
     )
 
 

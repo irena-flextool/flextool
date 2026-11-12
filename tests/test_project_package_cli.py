@@ -135,7 +135,7 @@ def test_round_trip_keeps_files_times_numbers_and_frozen(workspace: dict) -> Non
     pairs = {f"input_sources/{p.name}": p for p in (project / "input_sources").iterdir()}
     pairs["input_sources/ext.sqlite"] = workspace["external"]
     pairs["plot_settings.yaml"] = project / "plot_settings.yaml"
-    pairs["imported_solver_config/highs.opt"] = workspace["config"] / "highs.opt"
+    pairs["solver_config/highs.opt"] = workspace["config"] / "highs.opt"
     for path in (project / "output_parquet").rglob("*"):
         if path.is_file() and path.name not in ("_run_status.json", "_run.log", "_axis_bounds.json"):
             pairs[path.relative_to(project).as_posix()] = path
@@ -147,7 +147,7 @@ def test_round_trip_keeps_files_times_numbers_and_frozen(workspace: dict) -> Non
         assert imported.read_bytes() == original.read_bytes(), rel
         assert imported.stat().st_mtime_ns == original.stat().st_mtime_ns, rel
     for arcname, facts in manifest.files.items():
-        rel = arcname.removeprefix("Proj/").replace("solver_config/", "imported_solver_config/", 1)
+        rel = arcname.removeprefix("Proj/")
         assert pp._hash_file(copy / rel) == facts["sha256"], rel
     assert fz.read_frozen(copy / "input_sources" / "ext.sqlite").label == "Reference 1.0"
 
@@ -167,6 +167,7 @@ def test_round_trip_keeps_files_times_numbers_and_frozen(workspace: dict) -> Non
     assert {s.name: s.number for s in sources if not s.retired} == {"model.sqlite": 1, "ext.sqlite": 2}
     assert (workspace["config"] / "highs.opt").read_text() == "mip_rel_gap = 0.01\n"
     assert report.solver_config == [("highs.opt", "same")]
+    assert not (copy / "imported_solver_config").exists()
 
 
 def test_results_exclusion_and_regenerated_parts(workspace: dict) -> None:
@@ -286,8 +287,10 @@ def test_cli_export_results_and_solver_hint(workspace: dict, capsys: pytest.Capt
     assert report.solver_config == [("highs.opt", "different")]
     assert "-mip_rel_gap = 0.05" in report.solver_config_diffs["highs.opt"]
     assert "+mip_rel_gap = 0.01" in "\n".join(pp.describe_import(report))
-    assert "FLEXTOOL_SOLVER_CONFIG_DIR=" in report.solver_config_hint
-    assert "imported_solver_config" in report.solver_config_hint
+    assert report.solver_config_hint == (
+        f"The shipped solver options are in {workspace['projects'] / 'Other' / 'solver_config'}. Runs of this project "
+        f"use them ahead of the workspace's ({workspace['config']}), file by file; delete a file there to use the "
+        "workspace's.")
 
 
 def _status_in(zip_path: Path, run: str) -> dict:
@@ -434,3 +437,95 @@ def test_disk_space_external_left_out_and_partial_hidden(workspace: dict, monkey
     (projects / ".Stopped.partial").mkdir()
     monkeypatch.chdir(workspace["root"])
     assert project_utils.list_projects() == ["Proj", "Recv"]
+
+
+# --- Item 231: the project's own solver_config, file by file ------------------------------------------------------
+
+
+def _template_text(solver: str) -> str:
+    from flextool._resources import package_data_path
+
+    return Path(package_data_path(f"solver_config/{solver}.opt.template")).read_text(encoding="utf-8")
+
+
+def _add_member(zip_path: Path, arcname: str, data: bytes) -> None:
+    """Add *arcname* to the package and its manifest (a package as FlexTool 4.3 made it: templates shipped too)."""
+    import hashlib
+
+    tmp = zip_path.with_name("tmp.zip")
+    with zipfile.ZipFile(zip_path) as zin, zipfile.ZipFile(tmp, "w") as zout:
+        manifest = json.loads(zin.read(pp.MANIFEST_NAME))
+        for info in zin.infolist():
+            if info.filename != pp.MANIFEST_NAME:
+                zout.writestr(info, zin.read(info))
+        manifest["files"][arcname] = {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data),
+                                      "mtime_ns": T_OLD}
+        zout.writestr(arcname, data)
+        zout.writestr(pp.MANIFEST_NAME, json.dumps(manifest))
+    tmp.replace(zip_path)
+
+
+def test_export_ships_the_files_the_project_runs_use(workspace: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Project gurobi.opt over the workspace's; the workspace's highs.opt; the workspace's unedited cplex
+    template is not shipped (it equals the default)."""
+    monkeypatch.chdir(workspace["root"])
+    monkeypatch.delenv("FLEXTOOL_SOLVER_CONFIG_DIR", raising=False)
+    own = workspace["project"] / "solver_config"
+    own.mkdir()
+    (own / "gurobi.opt").write_text("Threads 2\n")
+    (workspace["config"] / "gurobi.opt").write_text("Threads 4\n")
+    (workspace["config"] / "cplex.opt").write_text(_template_text("cplex"))
+    (workspace["config"] / "notes.opt").write_text("not a solver file\n")
+    out = workspace["root"] / "out" / "eff.flextool.zip"
+    manifest = pp.export_project(workspace["project"], out, [])
+    assert sorted(manifest.solver_config) == ["gurobi.opt", "highs.opt"]
+    with zipfile.ZipFile(out) as zf:
+        assert zf.read("Proj/solver_config/gurobi.opt") == b"Threads 2\n"
+        assert zf.read("Proj/solver_config/highs.opt") == b"mip_rel_gap = 0.01\n"
+        assert not [n for n in zf.namelist() if n.endswith(("cplex.opt", "notes.opt"))]
+
+
+def test_import_activates_clean_files_and_holds_back_path_options(workspace: dict) -> None:
+    own = workspace["project"] / "solver_config"
+    own.mkdir()
+    (own / "gurobi.opt").write_text("Threads 2\n")
+    (own / "cplex.opt").write_text("logfile /tmp/x\n")
+    out = workspace["root"] / "out" / "held.flextool.zip"
+    pp.export_project(workspace["project"], out, [], solver_config_dir=[own, workspace["config"]])
+    _add_member(out, "Proj/solver_config/xpress.opt", _template_text("xpress").encode("utf-8"))
+    report = pp.import_project(out, workspace["projects"], "Held", solver_config_dir=workspace["config"])
+    target = workspace["projects"] / "Held" / "solver_config"
+    assert (target / "gurobi.opt").read_text() == "Threads 2\n"
+    assert not (target / "cplex.opt").exists()
+    assert (target / "cplex.opt.review").read_text() == "logfile /tmp/x\n"
+    assert not (target / "xpress.opt").exists()            # an unedited template is not unpacked
+    assert not (workspace["projects"] / "Held" / "imported_solver_config").exists()
+    assert list(report.solver_config_held) == ["cplex.opt"]
+    assert report.solver_config_held["cplex.opt"][0].startswith("line 1: logfile /tmp/x")
+    assert report.solver_config_defaults == ["xpress.opt"]
+    text = "\n".join(pp.describe_import(report))
+    assert "cplex.opt: kept as solver_config/cplex.opt.review and not used" in text
+    assert "rename it to cplex.opt to use it" in text
+
+
+def test_first_open_renames_a_43_import(tmp_path: Path) -> None:
+    project = tmp_path / "projects" / "Old"
+    imported = project / "imported_solver_config"
+    imported.mkdir(parents=True)
+    (imported / "highs.opt").write_text("mip_rel_gap = 0.03\n")
+    (imported / "gurobi.opt").write_text("Threads 2\nComputeServer srv.example\n")
+    lines = pp.adopt_imported_solver_config(project)
+    own = project / "solver_config"
+    assert not imported.exists() and (own / "highs.opt").read_text() == "mip_rel_gap = 0.03\n"
+    assert not (own / "gurobi.opt").exists() and (own / "gurobi.opt.review").is_file()
+    assert lines[0] == ("Project Old: renamed imported_solver_config/ to solver_config/. This project's runs now "
+                        "use its solver option files (highs.opt) ahead of the workspace's.")
+    assert len(lines) == 2 and "gurobi.opt.review" in lines[1] and "line 2: ComputeServer" in lines[1]
+    assert pp.adopt_imported_solver_config(project) == []
+    # Both folders: nothing is touched, one line says which one runs read.
+    imported.mkdir()
+    (imported / "copt.opt").write_text("Threads 1\n")
+    assert pp.adopt_imported_solver_config(project) == [
+        "Project Old: imported_solver_config/ is not read; this project's runs use solver_config/ (move any file "
+        "you need from it and delete imported_solver_config/)."]
+    assert (imported / "copt.opt").is_file() and not (own / "copt.opt").exists()

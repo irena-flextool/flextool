@@ -135,8 +135,9 @@ class NetloadIterConfig:
             basis cache (safe — the grid changes across iterations); ``True``
             shares one cache for the whole run (faster, only safe on a stable
             grid).
-        solver_config_dir: Folder of the solver option files of each solve
-            (``--solver-config-dir``); ``None`` sends no flag.
+        solver_config_dir: Folders of the solver option files of each solve,
+            highest first (``--solver-config-dir`` once per folder); ``None``
+            sends no flag.
     """
 
     n_rp: int
@@ -151,7 +152,7 @@ class NetloadIterConfig:
     vre_penetration: float = 1.0
     keep_best: bool = False
     warm_start: bool = False
-    solver_config_dir: Path | None = None
+    solver_config_dir: Path | tuple[Path, ...] | None = None
 
 
 @dataclass
@@ -643,9 +644,9 @@ def build_parser() -> argparse.ArgumentParser:
                         dest="alternative_name",
                         help="Override the pinned output alternative name "
                              "(default: netload_<n_rp>rp_<PL>h).")
-    parser.add_argument("--solver-config-dir", type=Path, default=None,
+    parser.add_argument("--solver-config-dir", type=Path, default=None, action="append",
                         dest="solver_config_dir", metavar="PATH",
-                        help="Folder of the solver option files (highs.opt, gurobi.opt, ...) for each solve (passed on as --solver-config-dir). Default: each solve finds the folder itself (FLEXTOOL_SOLVER_CONFIG_DIR, next to the input database, its workspace).")
+                        help="A folder of the solver option files (highs.opt, gurobi.opt, ...) for each solve (passed on as --solver-config-dir); repeat the flag for several folders, highest first (each solver's file comes from the first folder that has it). Default: each solve finds the folders itself (FLEXTOOL_SOLVER_CONFIG_DIR, next to the input database, its project and workspace).")
     return parser
 
 
@@ -691,7 +692,7 @@ def main(argv: list[str] | None = None) -> int:
         vre_penetration=args.vre_penetration,
         keep_best=args.keep_best,
         warm_start=args.warm_start,
-        solver_config_dir=args.solver_config_dir,
+        solver_config_dir=tuple(args.solver_config_dir) if args.solver_config_dir else None,
     )
 
     try:

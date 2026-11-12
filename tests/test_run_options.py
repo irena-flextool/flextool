@@ -26,7 +26,7 @@ SAMPLES: dict[str, tuple[object, str, object, object]] = {
     "save_memory": (True, "1", True, True),
     "warm_start": (True, "1", True, True),
     "basis_cache_dir": ("/flag/cache", "/env/cache", "/env/cache", "/db/cache"),
-    "solver_config_dir": ("/flag/cfg", "/env/cfg", "/env/cfg", "/db/cfg"),
+    "solver_config_dir": (("/flag/cfg",), "/env/cfg", ("/env/cfg",), ("/db/cfg",)),
     "benders_workers": (3, "5", 5, 2),
     "benders_in_out_weight": (0.5, "0.3", 0.3, 0.7),
 }
@@ -207,7 +207,7 @@ def test_to_argv_round_trips_through_the_run_parser():
         "threads": 5, "highs_threads": 3, "presolve": "off", "solver_log_level": "silent", "solver_time_limit": 12.5,
         "solver_mip_gap": 0.0005, "scaling": "basic", "user_bound_scale": -3,
         "save_memory": True, "warm_start": True, "basis_cache_dir": "/tmp/cache", "benders_workers": 2,
-        "solver_config_dir": "/tmp/solver_config",
+        "solver_config_dir": ("/tmp/project/solver_config", "/tmp/solver_config"),
     }
     flagged = {key for key, spec in OPTIONS.items() if spec.flag}
     assert set(given) == flagged
@@ -226,3 +226,16 @@ def test_registry_flags_default_to_unset_on_the_run_parser():
     for spec in OPTIONS.values():
         if spec.flag:
             assert getattr(args, spec.dest) is None, spec.flag
+
+
+def test_solver_config_dir_lists_several_folders():
+    """The environment twin separates folders with the platform's path separator (empty parts dropped); the
+    flag is repeated, one folder per flag, and a child process gets the same repeated flags."""
+    from flextool.cli.cmd_run_flextool import build_parser
+
+    env = RunOptions.from_env({"FLEXTOOL_SOLVER_CONFIG_DIR": os.pathsep.join(["/p/solver_config", "", "/ws/cfg"])})
+    assert (env.value("solver_config_dir"), env.source("solver_config_dir")) == (("/p/solver_config", "/ws/cfg"), "env")
+    args = build_parser().parse_args(["x.sqlite", "--solver-config-dir", "/a", "--solver-config-dir", "/b"])
+    flagged = RunOptions.from_cli(args, environ={"FLEXTOOL_SOLVER_CONFIG_DIR": "/env"})
+    assert flagged.value("solver_config_dir") == ("/a", "/b")
+    assert flagged.to_argv() == ["--solver-config-dir", "/a", "--solver-config-dir", "/b"]

@@ -98,6 +98,17 @@ def _path_text(text: str) -> str:
     return text.strip()
 
 
+def split_path_list(text: str) -> tuple[str, ...]:
+    """The folders of an environment value that lists several (``FLEXTOOL_SOLVER_CONFIG_DIR``): split at
+    :data:`os.pathsep` (``:`` on Linux and macOS, ``;`` on Windows, as ``PATH``), each stripped, empty parts
+    dropped."""
+    return tuple(part.strip() for part in text.split(os.pathsep) if part.strip())
+
+
+def _path_list(text: str) -> tuple[str, ...] | None:
+    return split_path_list(text) or None
+
+
 def _workers(text: str) -> int | None:
     value = int(text.strip())
     # 0 or a negative count is the documented "automatic" setting.
@@ -202,9 +213,12 @@ OPTIONS: dict[str, OptionSpec] = {
         ),
         _spec(
             key="solver_config_dir", flag="--solver-config-dir", env="FLEXTOOL_SOLVER_CONFIG_DIR", db=None,
-            parse=_path_text, default=None, audience="user",
-            help="folder of the solver option files (highs.opt, gurobi.opt, ...); unset looks next to the input "
-                 "database, in its workspace, the Spine Toolbox project folder and the current folder",
+            parse=_path_list, default=None, audience="user",
+            help="folders of the solver option files (highs.opt, gurobi.opt, ...), highest first: each solver's "
+                 "file comes from the first folder that has it, else FlexTool's default; repeat the flag for "
+                 "several folders (the environment variable separates them with os.pathsep, ':' or on Windows "
+                 "';'); unset looks next to the input database, in its project and workspace, the Spine Toolbox "
+                 "project folder and the current folder",
         ),
         _spec(
             key="scaling", flag="--scaling", env="FLEXTOOL_SCALING", db="solve.scaling",
@@ -438,7 +452,7 @@ class RunOptions:
         """Options of a ``cmd_run_flextool`` run: the parsed flags of *args* over the environment."""
         env = os.environ if environ is None else environ
         resolved = {
-            key: resolve(spec, cli=getattr(args, spec.dest, None) if spec.flag else None, environ=env)
+            key: resolve(spec, cli=_cli_value(spec, getattr(args, spec.dest, None)) if spec.flag else None, environ=env)
             for key, spec in OPTIONS.items()
         }
         return cls(resolved=resolved)
@@ -483,6 +497,10 @@ class RunOptions:
                 if r.value:
                     argv.append(spec.flag)
                 continue
+            if isinstance(r.value, (tuple, list)):  # a repeatable flag: once per value
+                for item in r.value:
+                    argv.extend([spec.flag, _format_value(item)])
+                continue
             argv.extend([spec.flag, _format_value(r.value)])
         return argv
 
@@ -498,10 +516,22 @@ class RunOptions:
         return lines
 
 
+def _cli_value(spec: OptionSpec, value: Any) -> Any:
+    """A parsed flag value as the registry holds it: a repeatable flag's list (``action="append"``) as a tuple, an
+    empty one as unset; one folder of a folder-list option as a 1-tuple."""
+    if isinstance(value, list):
+        return tuple(str(v) for v in value) or None
+    if spec.parse is _path_list and isinstance(value, (str, os.PathLike)):
+        return (str(value),) if str(value).strip() else None
+    return value
+
+
 def _format_value(value: Any) -> str:
     # ``repr`` of a float is the shortest text that parses back to the same float.
     if isinstance(value, float):
         return repr(value)
+    if isinstance(value, (tuple, list)):  # several folders: shown as an environment value lists them
+        return os.pathsep.join(str(item) for item in value)
     return str(value)
 
 
@@ -515,4 +545,5 @@ __all__ = [
     "RunOptions",
     "Source",
     "resolve",
+    "split_path_list",
 ]
