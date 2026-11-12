@@ -63,6 +63,13 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   becomes `existing`; CHP output2 uses no fuel and its rows become user constraints; must-run and min / max
   generation become profiles; `storage start` / `storage finish` set the start and end; `availability` no longer
   derates dispatch; the `fixed kW/kWh ratio` is no longer inverted; `interest` 0 becomes `discount_rate` 0.
+- **Storage in stochastic solves follows each path.** Plain *bind_within_solve* now closes the cycle once per path:
+  every forecast branch ends at the level the solve's first step starts from (before, only the branch listed last
+  did and the others ended free), and when the forecasts open in the solve's first period each forecast continues
+  from the end of its own path (before, it looped within its first period). With *bind_forward_only* and nothing
+  fixing the start (no `fix_start`, no carried state) the forecasts of a fan in the solve's first period now start
+  from the same level (before, each chose its own). Results of such stochastic models change; the upgrade marks
+  the databases and runs name the nodes.
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another
   constraint had one (since 4.0); the reported fuel, CO2 and cost of a unit with a profile and an input were too
   low; the period node-group indicators and VRE share are now ratios of the period energies; the `summary_solve.csv`

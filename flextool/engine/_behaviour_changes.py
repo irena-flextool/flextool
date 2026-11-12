@@ -262,6 +262,18 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "invest_without_cost_offered"),
         ),
         BehaviourChange(
+            id="stochastic_storage_paths_tied",
+            summary=("In a stochastic solve, bind_within_solve now closes one loop per path: the last step of "
+                     "every forecast branch ends at the level the solve's first step starts from, and with "
+                     "forecasts opening in the solve's first period each forecast's first step continues from the "
+                     "end of its own path. Before, only the branch listed last closed the loop and the others "
+                     "ended free (a fan in the first period looped each forecast within its first period). With "
+                     "bind_forward_only and a free start (no fix_start, no carried state), the forecasts opening "
+                     "in the solve's first period now start at the same level; before, each chose its own "
+                     "(results change)."),
+            silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "stochastic_storage_paths_tied"),
+        ),
+        BehaviourChange(
             id="gui_solver_defaults",
             summary=("Runs started from the FlexTool GUI now use the same solver settings as terminal and Spine "
                      "Toolbox runs: presolve is on (before: choose), and the MIP gap of each solve comes from its "

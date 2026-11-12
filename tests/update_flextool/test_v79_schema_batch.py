@@ -35,6 +35,8 @@ Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
   explains the per-kW cost rule.
 * rewrites the ``node.storage_binding_method`` / ``timeset.representative_period_weights`` descriptions
   (representative periods work in stochastic solves; blended methods bind forward only in a rolling solve).
+* writes the marker ``stochastic_storage_paths_tied`` only on a database with a stochastic solve and a storage
+  node on plain ``bind_within_solve`` / ``bind_forward_only`` (stored or the default).
 
 It changes no other definition and no value, and a rerun commits nothing.
 """
@@ -154,6 +156,10 @@ def _migrate(tmp_path_factory, tag: str, values: dict) -> dict:
         if "unit_disc" in values:
             _set(db, "unit", unit, "invest_method", "invest_no_limit", alt)
             _set(db, "unit", unit, "discount_rate", values["unit_disc"], alt)
+        if "storage_method" in values:
+            _set(db, "node", node, "node_type", "storage", alt)
+            if values["storage_method"] is not None:
+                _set(db, "node", node, "storage_binding_method", values["storage_method"], alt)
         if "unit_invest_cost" in values:
             _set(db, "unit", unit, "invest_method", "invest_no_limit", alt)
             if values["unit_invest_cost"] is not None:
@@ -383,6 +389,23 @@ def test_invest_without_cost_marker_only_without_a_cost(tmp_path_factory, plain,
         _rerun_changes_nothing(db, m._v79_invest_without_cost, monkeypatch)
 
 
+# ─── storage along each stochastic path ──────────────────────────────────
+
+
+def test_stochastic_storage_marker_only_with_plain_storage(tmp_path_factory, plain, monkeypatch) -> None:
+    """The seed's solve is stochastic: the marker comes with a storage node on the default (bind_forward_only) or
+    bind_within_solve, not with a blended method or without a storage node."""
+    assert "stochastic_storage_paths_tied" not in plain["markers"]
+    blended = _migrate(tmp_path_factory, "v79_ssp_blended", {"storage_method": "bind_within_period_blended_weights"})
+    assert "stochastic_storage_paths_tied" not in blended["markers"]
+    for tag, method in (("v79_ssp_default", None), ("v79_ssp_ws", "bind_within_solve")):
+        tied = _migrate(tmp_path_factory, tag, {"storage_method": method})
+        assert json.loads(tied["markers"]["stochastic_storage_paths_tied"]) == {"since": 79,
+                                                                                "solves": [tied["solve"]]}
+    with DatabaseMapping(tied["url"]) as db:
+        _rerun_changes_nothing(db, m._v79_stochastic_storage_paths, monkeypatch)
+
+
 # ─── startup_input_method / startup_energy ───────────────────────────────
 
 
@@ -447,7 +470,7 @@ def test_changes_nothing_else(plain) -> None:
     "_v79_constraint_online_coeff", "_v79_ramp_cost_descriptions", "_v79_reduce_detail_methods",
     "_v79_group_limits_by_time", "_v79_solve_step_series", "_v79_capacity_margin", "_v79_constraint_period_method",
     "_v79_discount_rate_zero", "_v79_startup_input", "_v79_invest_without_cost", "_v79_node_unit_of_measure",
-    "_v79_rp_stochastic_descriptions", "_migrate_v79_schema_batch"])
+    "_v79_rp_stochastic_descriptions", "_v79_stochastic_storage_paths", "_migrate_v79_schema_batch"])
 def test_rerun_is_idempotent(plain, part: str, monkeypatch) -> None:
     with DatabaseMapping(plain["url"]) as db:
         _rerun_changes_nothing(db, getattr(m, part), monkeypatch)

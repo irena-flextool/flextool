@@ -63,5 +63,6 @@ def test_migration_markers_are_registered() -> None:
                                                               "solve_step_series_combined",
                                                               "energy_margin_adder_per_original_step",
                                                               "discount_rate_zero_is_zero",
-                                                              "invest_without_cost_offered"}
+                                                              "invest_without_cost_offered",
+                                                              "stochastic_storage_paths_tied"}
     assert written <= set(BEHAVIOUR_CHANGES)

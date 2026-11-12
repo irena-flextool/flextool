@@ -6490,6 +6490,33 @@ def _v79_rp_stochastic_descriptions(db) -> None:
             db.update_parameter_definition(id=pdef["id"], description=text)
 
 
+def _v79_stochastic_storage_paths(db) -> None:
+    """Storage in stochastic solves follows each path (part of v79): plain ``bind_within_solve`` closes one loop
+    per path (every forecast branch ends at the level the solve starts from) and ``bind_forward_only`` with a free
+    start starts all the forecasts of a fan in the solve's first period at the same level.  No value is rewritten.
+    Behaviour-change marker ``stochastic_storage_paths_tied`` (``{"since": 79, "solves": [...]}``) only on a
+    database with a ``stochastic_branches`` value on some solve and a storage node whose
+    ``storage_binding_method`` is ``bind_within_solve`` or ``bind_forward_only`` (stored or the default): its
+    results can change (the run names the nodes).  Idempotent: a rerun finds the marker written.
+    """
+    if not (db.get_item("entity_class", name="solve") and db.get_item("entity_class", name="node")):
+        return
+    solves = sorted({pv["entity_byname"][0] for pv in db.find_parameter_values(
+        entity_class_name="solve", parameter_definition_name="stochastic_branches")
+        if from_database(pv["value"], pv["type"]) is not None})
+    if not solves:
+        return
+    storage = {pv["entity_byname"][0] for pv in db.find_parameter_values(
+        entity_class_name="node", parameter_definition_name="node_type")
+        if from_database(pv["value"], pv["type"]) == "storage"}
+    methods: dict[str, set] = {}
+    for pv in db.find_parameter_values(entity_class_name="node", parameter_definition_name="storage_binding_method"):
+        methods.setdefault(pv["entity_byname"][0], set()).add(from_database(pv["value"], pv["type"]))
+    plain = {"bind_within_solve", "bind_forward_only", None}
+    if any(n not in methods or methods[n] & plain for n in storage):
+        _v77_set_marker(db, "stochastic_storage_paths_tied", json.dumps({"since": 79, "solves": solves}))
+
+
 def _migrate_v79_schema_batch(db) -> None:
     """All schema changes of database version 79 (v78 -> v79), in one step.
 
@@ -6517,6 +6544,9 @@ def _migrate_v79_schema_batch(db) -> None:
     12. Representative periods work in stochastic solves and bind forward only in rolling solves: the
         ``node.storage_binding_method`` / ``timeset.representative_period_weights`` descriptions
         (:func:`_v79_rp_stochastic_descriptions`).
+    13. Storage in stochastic solves follows each path (plain ``bind_within_solve`` closes one loop per path, a
+        free-start ``bind_forward_only`` fan in the first period starts at one level): the behaviour-change marker
+        ``stochastic_storage_paths_tied`` (:func:`_v79_stochastic_storage_paths`).
 
     No value is rewritten.  Each part is idempotent, so a rerun of the step changes nothing.
     """
@@ -6532,11 +6562,13 @@ def _migrate_v79_schema_batch(db) -> None:
     _v79_invest_without_cost(db)
     _v79_node_unit_of_measure(db)
     _v79_rp_stochastic_descriptions(db)
+    _v79_stochastic_storage_paths(db)
     _commit_step(db, "v79: constraint_online_coeff, ramp_cost, reduce_*_detail_method, time-varying group "
                      "limits, time series combined over a solve's new_stepduration step, capacity margin by "
                      "entity class and share_of_peak, constraint_period_method, discount_rate 0 is 0 %, "
                      "startup_input_method and startup_energy, investment offered without invest_cost, "
-                     "node.unit_of_measure, representative periods in stochastic and rolling solves")
+                     "node.unit_of_measure, representative periods in stochastic and rolling solves, storage "
+                     "along each stochastic path")
 
 
 def _v79_adder_has_value(value) -> bool:
