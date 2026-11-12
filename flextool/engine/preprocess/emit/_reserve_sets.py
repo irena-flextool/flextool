@@ -56,7 +56,11 @@ from flextool.engine.preprocess._provider_io import (
 from flextool.engine.preprocess._reserve_methods import demanded_reserves
 from flextool.engine.preprocess.emit._pdt_lookup import (
     _anchor_fan_members,
+    _check_pbt_branch_coverage,
     _check_ungrouped_reads_have_realized_branch,
+    fold_over_tiers,
+    read_fan_for_d,
+    ts_tiers,
 )
 
 
@@ -280,43 +284,28 @@ def _resolve_pdtReserve(
     tb_for_d: dict[str, list[str]],
     pe_for_d: dict[str, list[str]],
     g_stoch: bool,
+    fan_for_d: "dict[str, list[str]] | None" = None,
 ) -> float:
     """4-branch fallback mirroring ``pdtReserve_upDown_group``'s mod body.
 
     Branches mirror ``pdtProcess``'s branches 1, 2, 4, 5 (no period axis,
     no def1 — and the scalar branch returns the table's default of 0
-    for ``reservation`` when the (r, ud, g) row is missing).
+    for ``reservation`` when the (r, ud, g) row is missing).  *fan_for_d*
+    (``branch_time_start``) is the fan start a fold cell falls back to.
     """
-    # Branch 1: stochastic + outer-d's ts/tb.
+    fan_for_d = fan_for_d or {}
+    # Branch 1: stochastic + outer-d's tb; ts = d's own first step, else the fan start (per value cell).
+    tiers = ts_tiers(d, ts_for_d, fan_for_d)
     if g_stoch:
-        ts_list = ts_for_d.get(d, ())
-        tb_list = tb_for_d.get(d, ())
-        total = 0.0
-        hit = False
-        for tb in tb_list:
-            for ts in ts_list:
-                v = pbt.get((r, ud, g, param, tb, ts, t))
-                if v is not None:
-                    total += v
-                    hit = True
-        if hit:
-            return total
-    # Branch 2: parent period pe of d, tb from solve_branch[pe], ts from
-    # period__time_first[d].
-    ts_list = ts_for_d.get(d, ())
+        v = fold_over_tiers(pbt, (r, ud, g, param), [tb_for_d.get(d, ())], tiers, t)
+        if v is not None:
+            return v
+    # Branch 2: parent period pe of d, tb from solve_branch[pe], same ts tiers.
     pe_list = pe_for_d.get(d, ())
-    if pe_list and ts_list:
-        total = 0.0
-        hit = False
-        for pe in pe_list:
-            for tb in tb_for_d.get(pe, ()):
-                for ts in ts_list:
-                    v = pbt.get((r, ud, g, param, tb, ts, t))
-                    if v is not None:
-                        total += v
-                        hit = True
-        if hit:
-            return total
+    if pe_list:
+        v = fold_over_tiers(pbt, (r, ud, g, param), [tb_for_d.get(pe, ()) for pe in pe_list], tiers, t)
+        if v is not None:
+            return v
     # Branch 3: time axis.
     v = pt.get((r, ud, g, param, t))
     if v is not None:
@@ -375,12 +364,16 @@ def derive_pdtReserve_upDown_group(
     # A reserve group outside every include_stochastics group reads the realized branch's value
     # (branch 2 below); a forecasts-only fan has none, so its stochastic-time reservation is an
     # input error rather than a silent fall-through to the default 0.
+    # A reservation that authors only some of a fan's forecasts is an input error as well.
     rug_set = set(rug)
+    fan_for_d = read_fan_for_d(solve_data_dir, provider=provider)
+    anchor_members = _anchor_fan_members(solve_data_dir / "period__branch.csv", provider=provider)
+    pbt_in_use = {k: v for k, v in pbt.items() if k[:3] in rug_set}
     _check_ungrouped_reads_have_realized_branch(
-        {k: v for k, v in pbt.items() if k[:3] in rug_set}, 3, groups_stoch,
-        _anchor_fan_members(solve_data_dir / "period__branch.csv", provider=provider),
-        tb_for_d, ts_for_d, member_pos=2,
+        pbt_in_use, 3, groups_stoch, anchor_members,
+        tb_for_d, ts_for_d, member_pos=2, fan_for_d=fan_for_d,
     )
+    _check_pbt_branch_coverage(pbt_in_use, 3, anchor_members, tb_for_d, ts_for_d, fan_for_d)
 
     rows: list[tuple] = []
     for (r, ud, g) in rug:
@@ -394,6 +387,7 @@ def derive_pdtReserve_upDown_group(
                     tb_for_d=tb_for_d,
                     pe_for_d=pe_for_d,
                     g_stoch=g_stoch,
+                    fan_for_d=fan_for_d,
                 )
                 rows.append((r, ud, g, param, d, t, repr(float(val))))
     return _to_utf8_frame(

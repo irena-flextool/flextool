@@ -77,6 +77,7 @@ from flextool.engine.preprocess.emit._pdt_lookup import (
     _anchor_fan_members,
     _check_pbt_branch_coverage,
     _check_ungrouped_reads_have_realized_branch,
+    ts_tiers,
 )
 from flextool.engine.input._axis_enums import (
     alias_to_axis,
@@ -614,6 +615,10 @@ def _profile_stochastic_lf(workdir: Path | None,
                                     "period", "branch", provider=provider)
     ts_for_d = _read_pairs(sd / "first_timesteps.csv", "period", "step",
                              provider=provider)
+    # The fan start a branch period's cell falls back to when its own first
+    # step authors no value for it (``branch_time_start``; empty without a fan).
+    fan_for_d = _read_pairs(sd / "branch_time_start.csv", "period", "step",
+                            provider=provider)
 
     # Stochastic UNION gate per profile.
     stoch_set = _read_stoch_profiles(inp, provider=provider)
@@ -643,63 +648,64 @@ def _profile_stochastic_lf(workdir: Path | None,
         for row in pbt.iter_rows(named=True)
     }
     _check_ungrouped_reads_have_realized_branch(pbt_dict, 1, frozenset(stoch_set), anchor_members, tb_for_d,
-                                                ts_for_d)
+                                                ts_for_d, fan_for_d=fan_for_d)
     if stoch_active:
         _check_pbt_branch_coverage({k: v for k, v in pbt_dict.items() if k[0] in stoch_active}, 1, anchor_members,
-                                   tb_for_d, ts_for_d)
+                                   tb_for_d, ts_for_d, fan_for_d)
+
+    # Each fold reads, per value cell, the first analysis-time tier with a
+    # value: d's own first step, else the fan start (``ts_tiers``).  The tier
+    # rides along as ``tier``; a part is summed per (f, d, t, tier) and the
+    # priority ``branch * 2 + tier`` keeps branch order first, tier second.
+    def _fold_frame(rows: list[tuple[str, str, str, int]]) -> pl.LazyFrame:
+        return (pl.LazyFrame(
+            {"d": [r[0] for r in rows],
+             "tb": [r[1] for r in rows],
+             "ts": [r[2] for r in rows],
+             "tier": [r[3] for r in rows]},
+            schema={"d": pl.Utf8, "tb": pl.Utf8, "ts": pl.Utf8, "tier": pl.Int8})
+            .with_columns(alias_to_axis("d", "d")))
+
+    def _sum_by_tier(lf: pl.LazyFrame, branch: int) -> pl.LazyFrame:
+        return (lf.group_by(["f", "d", "t", "tier"])
+                  .agg(pl.col("value").sum())
+                  .with_columns(branch_priority=(pl.lit(2 * branch, dtype=pl.Int8) + pl.col("tier"))
+                                .cast(pl.Int8))
+                  .drop("tier"))
 
     # Branch 1: stochastic UNION fold.
     # For each (p, d, t): sum pbt[p, tb, ts, t] over (tb, ts) ∈
-    #     tb_for_d[d] × ts_for_d[d], iff p ∈ stoch_active.
+    #     tb_for_d[d] × tier(d), iff p ∈ stoch_active.
     parts: list[pl.LazyFrame] = []
     if stoch_active and tb_for_d and ts_for_d:
-        # Build a join frame: (d, tb, ts) tuples.
+        # Build a join frame: (d, tb, ts, tier) tuples.
         d_tb_ts = []
         for d, tbs in tb_for_d.items():
-            tss = ts_for_d.get(d, [])
-            for tb in tbs:
-                for ts in tss:
-                    d_tb_ts.append((d, tb, ts))
+            for tier, tss in enumerate(ts_tiers(d, ts_for_d, fan_for_d)):
+                for tb in tbs:
+                    for ts in tss:
+                        d_tb_ts.append((d, tb, ts, tier))
         if d_tb_ts:
-            d_tb_ts_lf = (pl.LazyFrame(
-                {"d": [r[0] for r in d_tb_ts],
-                 "tb": [r[1] for r in d_tb_ts],
-                 "ts": [r[2] for r in d_tb_ts]})
-                .with_columns(alias_to_axis("d", "d")))
-            stoch_lf = (pbt_lf
-                          .filter(pl.col("f").is_in(stoch_active))
-                          .join(d_tb_ts_lf, on=["tb", "ts"], how="inner")
-                          .group_by(["f", "d", "t"])
-                          .agg(pl.col("value").sum())
-                          .with_columns(branch_priority=pl.lit(1, dtype=pl.Int8))
-                       )
+            stoch_lf = _sum_by_tier(pbt_lf
+                                    .filter(pl.col("f").is_in(stoch_active))
+                                    .join(_fold_frame(d_tb_ts), on=["tb", "ts"], how="inner"), 1)
             parts.append(stoch_lf)
 
     # Branch 2: parent-period fold.
     # For each (p, d, t): sum pbt[p, tb, ts, t] over (tb, ts) ∈
-    #     tb_for_d[pe] × ts_for_d[d] for each pe ∈ pe_for_d[d].
+    #     tb_for_d[pe] × tier(d) for each pe ∈ pe_for_d[d].
     if pe_for_d and tb_for_d and ts_for_d:
-        # Build (d, tb, ts) where tb is from each parent's tb_for_d.
+        # Build (d, tb, ts, tier) where tb is from each parent's tb_for_d.
         d_tb_ts_pp = []
         for d, parents in pe_for_d.items():
-            tss = ts_for_d.get(d, [])
-            for pe in parents:
-                tbs = tb_for_d.get(pe, [])
-                for tb in tbs:
-                    for ts in tss:
-                        d_tb_ts_pp.append((d, tb, ts))
+            for tier, tss in enumerate(ts_tiers(d, ts_for_d, fan_for_d)):
+                for pe in parents:
+                    tbs = tb_for_d.get(pe, [])
+                    for tb in tbs:
+                        for ts in tss:
+                            d_tb_ts_pp.append((d, tb, ts, tier))
         if d_tb_ts_pp:
-            d_tb_ts_pp_lf = (pl.LazyFrame(
-                {"d": [r[0] for r in d_tb_ts_pp],
-                 "tb": [r[1] for r in d_tb_ts_pp],
-                 "ts": [r[2] for r in d_tb_ts_pp]})
-                .with_columns(alias_to_axis("d", "d")))
-            pp_lf = (pbt_lf
-                       .join(d_tb_ts_pp_lf, on=["tb", "ts"], how="inner")
-                       .group_by(["f", "d", "t"])
-                       .agg(pl.col("value").sum())
-                       .with_columns(branch_priority=pl.lit(2, dtype=pl.Int8))
-                     )
+            pp_lf = _sum_by_tier(pbt_lf.join(_fold_frame(d_tb_ts_pp), on=["tb", "ts"], how="inner"), 2)
             parts.append(pp_lf)
 
     if not parts:

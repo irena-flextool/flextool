@@ -29,6 +29,8 @@ from __future__ import annotations
 
 import polars as pl
 
+from flextool.engine.preprocess.emit._pdt_lookup import ts_tiers
+
 __all__ = [
     "build_entity_dt_grid",
     "build_entity_period_grid",
@@ -224,6 +226,7 @@ def build_fold_frame(
     stoch_entities: set[str],
     stoch_filter_cols: list[str],
     periods: list[str],
+    fan_for_d: "dict[str, list[str]] | None" = None,
 ) -> pl.DataFrame | None:
     """Vectorize the stochastic + parent-period fold (branches 1 & 2).
 
@@ -252,6 +255,14 @@ def build_fold_frame(
       ``.unique()``-d — production (``_read_pairs_to_dict``) does not
       dedup, so it sums once per duplicate ``(tb)``/``(ts)``/``(pe)``
       occurrence; matching that requires preserving duplicates here.
+
+    **Fan-start fallback (item 228):** each branch reads, per value cell,
+    the steps of the first :func:`~._pdt_lookup.ts_tiers` tier that has a
+    pbt row for the cell: ``ts_for_d[d]`` (the period's own first step),
+    else ``fan_for_d[d]`` (``branch_time_start``, the solve's fan start).
+    The expansion carries the tier as ``__rank``; each branch is summed
+    per ``(output key, __rank)`` and keeps the lowest rank.  An empty
+    *fan_for_d* (the default; no fan) leaves one tier, as before.
 
     *pbt_key_cols* names the pbt entity-key columns (``["process",
     "param"]`` for pdtProcess/pdtNode, ``["process", "side", "param"]``
@@ -308,28 +319,33 @@ def build_fold_frame(
         if d not in seen:
             seen.add(d)
             uniq_periods.append(d)
+    fan_for_d = fan_for_d or {}
     stoch_period: list[str] = []
     stoch_tb: list[str] = []
     stoch_ts: list[str] = []
+    stoch_rank: list[int] = []
     par_period: list[str] = []
     par_pe: list[str] = []
     par_tb: list[str] = []
     par_ts: list[str] = []
+    par_rank: list[int] = []
     for d in uniq_periods:
-        ts_list = ts_for_d.get(d, ())
         tb_list = tb_for_d.get(d, ())
         pe_list = pe_for_d.get(d, ())
-        for ts in ts_list:
-            for tb in tb_list:
-                stoch_period.append(d)
-                stoch_tb.append(tb)
-                stoch_ts.append(ts)
-            for pe in pe_list:
-                for tb in tb_for_d.get(pe, ()):
-                    par_period.append(d)
-                    par_pe.append(pe)
-                    par_tb.append(tb)
-                    par_ts.append(ts)
+        for rank, ts_list in enumerate(ts_tiers(d, ts_for_d, fan_for_d)):
+            for ts in ts_list:
+                for tb in tb_list:
+                    stoch_period.append(d)
+                    stoch_tb.append(tb)
+                    stoch_ts.append(ts)
+                    stoch_rank.append(rank)
+                for pe in pe_list:
+                    for tb in tb_for_d.get(pe, ()):
+                        par_period.append(d)
+                        par_pe.append(pe)
+                        par_tb.append(tb)
+                        par_ts.append(ts)
+                        par_rank.append(rank)
 
     stoch_list = list(stoch_entities)
 
@@ -337,8 +353,10 @@ def build_fold_frame(
     v_stoch = None
     if stoch_period and stoch_list:
         stoch_exp = pl.DataFrame(
-            {"period": stoch_period, "tb": stoch_tb, "ts": stoch_ts},
-            schema={"period": pl.Utf8, "tb": pl.Utf8, "ts": pl.Utf8},
+            {"period": stoch_period, "tb": stoch_tb, "ts": stoch_ts,
+             "__rank": stoch_rank},
+            schema={"period": pl.Utf8, "tb": pl.Utf8, "ts": pl.Utf8,
+                    "__rank": pl.Int64},
         )
         j = pbt_df.join(stoch_exp, on=["tb", "ts"], how="inner")
         # Stoch membership keys on stoch_filter_cols (process alone for
@@ -351,10 +369,7 @@ def build_fold_frame(
             mask = stoch_struct.is_in(stoch_list)
         j = j.filter(mask)
         if j.height > 0:
-            v_stoch = (
-                j.group_by(out_key_cols)
-                 .agg(pl.col("v_pbt").sum().alias("v_stoch"))
-            )
+            v_stoch = _sum_lowest_rank(j, out_key_cols, "v_stoch")
 
     # --- branch 2: parent-period fold (NO stoch filter — fall-through) -----
     v_parent = None
@@ -365,20 +380,19 @@ def build_fold_frame(
                 "pe": par_pe,
                 "tb": par_tb,
                 "ts": par_ts,
+                "__rank": par_rank,
             },
             schema={
                 "period": pl.Utf8,
                 "pe": pl.Utf8,
                 "tb": pl.Utf8,
                 "ts": pl.Utf8,
+                "__rank": pl.Int64,
             },
         )
         j = pbt_df.join(par_exp, on=["tb", "ts"], how="inner")
         if j.height > 0:
-            v_parent = (
-                j.group_by(out_key_cols)
-                 .agg(pl.col("v_pbt").sum().alias("v_parent"))
-            )
+            v_parent = _sum_lowest_rank(j, out_key_cols, "v_parent")
 
     # --- coalesce stoch-first ---------------------------------------------
     if v_stoch is not None and v_parent is not None:
@@ -399,6 +413,16 @@ def build_fold_frame(
     else:
         return None
     return fold
+
+
+def _sum_lowest_rank(j: pl.DataFrame, out_key_cols: list[str], alias: str) -> pl.DataFrame:
+    """Sum ``v_pbt`` per ``(output key, __rank)`` and keep, per output key, the lowest rank's sum (the first
+    analysis-time tier with a value for the cell)."""
+    summed = (j.group_by([*out_key_cols, "__rank"])
+               .agg(pl.col("v_pbt").sum().alias(alias)))
+    return (summed
+            .filter(pl.col("__rank") == pl.col("__rank").min().over(out_key_cols))
+            .select([*out_key_cols, alias]))
 
 
 # ---------------------------------------------------------------------------

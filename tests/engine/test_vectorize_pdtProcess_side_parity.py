@@ -335,3 +335,35 @@ def test_vectorized_pdtProcess_side_branch_period_inherits_anchor_pd(
     assert df_vec.equals(df_legacy), (
         f"{side_col}: branch-period pd: vectorized != legacy.\n"
         f"legacy:\n{df_legacy}\nvec:\n{df_vec}")
+
+
+@pytest.mark.parametrize("side_col", ["source", "sink"])
+def test_vectorized_pdtProcess_side_fan_start_fallback(side_col, tmp_path):
+    """Item 228: a non-empty ``fan_for_d`` (``branch_time_start``) -- each fold cell reads the forecast at its
+    period's own first step, else at the fan start -- byte-identical in both twins, values hand-derived in
+    :mod:`tests.engine._fan_fold_fixture`."""
+    from flextool.engine.preprocess._flex_data_provider import FlexDataProvider
+    from tests.engine._fan_fold_fixture import EXPECTED_FOLD, STEPS, pbt_frame, put_fan_scaffold
+
+    provider = FlexDataProvider()
+    put = _put_factory(provider)
+    put_fan_scaffold(put)
+    put("input", f"pbt_process_{side_col}", pbt_frame({"process": "entity", side_col: "nA", "param": "cap"}))
+    put("input", f"pd_process_{side_col}", pl.DataFrame(schema={
+        "process": pl.Utf8, side_col: pl.Utf8, "param": pl.Utf8, "period": pl.Utf8, "value": pl.Float64}))
+    put("input", f"pt_process_{side_col}", pl.DataFrame(schema={
+        "process": pl.Utf8, side_col: pl.Utf8, "param": pl.Utf8, "time": pl.Utf8, "value": pl.Float64}))
+    put("input", f"p_process_{side_col}", pl.DataFrame(schema={
+        "process": pl.Utf8, side_col: pl.Utf8, "param": pl.Utf8, "value": pl.Float64}))
+    put("input", "group__process", pl.DataFrame({"group": ["g"], "process": ["X"]}))
+    put("solve_data", f"process_{side_col}_sourceSinkTimeParam_in_use", pl.DataFrame({
+        "process": ["X", "Y"], side_col: ["nA", "nA"], "param": ["cap", "cap"]}))
+
+    inp, sdd = tmp_path / "input", tmp_path / "solve_data"
+    df_legacy = _legacy_side(inp, sdd, side_col=side_col, provider=provider)
+    df_vec = _vec_side(inp, sdd, side_col=side_col, provider=provider)
+    leg = {(r[0], r[3], r[4]): r[5] for r in df_legacy.iter_rows()}
+    for e in ("X", "Y"):
+        for d, t in STEPS:
+            assert leg[(e, d, t)] == repr(EXPECTED_FOLD.get((e, d, t), 0.0)), (e, d, t, leg)
+    assert df_vec.equals(df_legacy), f"fan fallback: vectorized != legacy.\nlegacy:\n{df_legacy}\nvec:\n{df_vec}"

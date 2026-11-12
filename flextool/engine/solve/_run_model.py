@@ -867,6 +867,22 @@ def native_run_model(state, solver) -> int:
             )
         )
 
+    # The fan start of each solve (``solve_data/branch_time_start``): a branch
+    # period whose own first step authors no stochastic-time value for a cell
+    # reads the forecast authored at the fan start.  A realization-dispatch
+    # sibling reads the parent's realized branch, so it takes the parent's
+    # rows of the real period names.
+    branch_time_start_lists: dict[str, list[tuple[str, str]]] = {
+        s: solve_writers.branch_time_start_rows(
+            period__branch_lists[s], branch_start_time_lists.get(s))
+        for s in period__branch_lists
+    }
+    for sibling, parent in realized_dispatch_parent.items():
+        if sibling not in branch_time_start_lists or parent not in branch_time_start_lists:
+            continue
+        branch_time_start_lists[sibling] = solve_writers.project_branch_time_start_rows(
+            branch_time_start_lists[parent], period__branch_lists[parent])
+
     for solve in active_time_lists.keys():
         for period in active_time_lists[solve]:
             if (period, period) in period__branch_lists[solve] and not any(
@@ -1367,6 +1383,10 @@ def native_run_model(state, solver) -> int:
             branch_start_time_lists[solve],
             period__branch_lists[solve],
             state.solve.stochastic_branches,
+            provider=sub_solve_provider,
+        )
+        solve_writers.emit_branch_time_start(
+            branch_time_start_lists.get(solve, []),
             provider=sub_solve_provider,
         )
         solve_writers.emit_first_and_last_periods(

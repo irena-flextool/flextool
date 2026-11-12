@@ -260,6 +260,7 @@ _THIN_WRAPPER_BASENAMES: tuple[str, ...] = (
     "period__branch.csv",
     "solve_branch_weight.csv",
     "solve_branch__time_branch.csv",
+    "branch_time_start.csv",
     "p_entity_invested.csv",
     "p_entity_divested.csv",
     "p_entity_period_existing_capacity.csv",

@@ -28,7 +28,15 @@ from flextool.engine.preprocess._provider_io import (
     _provider_key,
 )
 from flextool.engine.preprocess.emit._base_steps import read_new_step_base_steps
-from flextool.engine.preprocess.emit._pdt_lookup import inherit_pd_branch_periods
+from flextool.engine.preprocess.emit._pdt_lookup import (
+    _anchor_fan_members,
+    _check_pbt_branch_coverage,
+    _check_ungrouped_reads_have_realized_branch,
+    fold_over_tiers,
+    inherit_pd_branch_periods,
+    read_fan_for_d,
+    ts_tiers,
+)
 from flextool.engine.preprocess.emit._vectorize import (
     build_entity_dt_grid,
     build_entity_period_grid,
@@ -143,6 +151,30 @@ def _read_stochastic_entities(group_entity_csv: Path,
 # ---------------------------------------------------------------------------
 # write_pdtNodeInflow — flextool.mod L1325 (3-branch).
 # ---------------------------------------------------------------------------
+
+
+def _check_stochastic_inflow(pbt_inflow: dict[tuple[str, str, str, str], float],
+                             stoch_node: set[str],
+                             eligible_nodes: list[str],
+                             solve_data_dir: Path,
+                             tb_for_d: dict[str, list[str]],
+                             ts_for_d: dict[str, list[str]],
+                             fan_for_d: dict[str, list[str]],
+                             *, provider: "object | None" = None) -> None:
+    """The input checks of the other stochastic-time readers, for a node's stochastic ``inflow``.
+
+    A node outside every ``include_stochastics`` group reads the realized branch's inflow on a fan's branch
+    periods, so a forecasts-only fan cannot serve it; and a node must author every active forecast of a fan, or
+    none.  Shared by :func:`derive_pdtNodeInflow` and :func:`derive_pdtNodeInflow_vectorized`.
+    """
+    eligible = set(eligible_nodes)
+    keyed = {(n, "inflow", tb, ts, t): v for (n, tb, ts, t), v in pbt_inflow.items() if n in eligible}
+    if not keyed:
+        return
+    anchor_members = _anchor_fan_members(solve_data_dir / "period__branch.csv", provider=provider)
+    _check_ungrouped_reads_have_realized_branch(keyed, 1, stoch_node, anchor_members, tb_for_d, ts_for_d,
+                                                fan_for_d=fan_for_d)
+    _check_pbt_branch_coverage(keyed, 1, anchor_members, tb_for_d, ts_for_d, fan_for_d)
 
 
 def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
@@ -286,6 +318,9 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
     eligible_nodes = [
         n for n in nodes if (n, "no_inflow") not in inflow_method_pairs
     ]
+    fan_for_d = read_fan_for_d(solve_data_dir, provider=provider)
+    _check_stochastic_inflow(pbt_inflow, stoch_node, eligible_nodes, solve_data_dir,
+                             tb_for_d, ts_for_d, fan_for_d, provider=provider)
 
     nodes_col: list[str] = []
     periods_col: list[str] = []
@@ -300,34 +335,17 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
         has_use_original = (n, "use_original") in inflow_method_pairs
         for (d, t) in dt:
             emit_v: float | None = None
+            # ts tiers: d's own first step, else the fan start (per value cell).
+            tiers = ts_tiers(d, ts_for_d, fan_for_d)
             # Branch 1: stochastic fold-in.
             if is_stoch:
-                total = 0.0
-                hit = False
-                for tb in tb_for_d.get(d, ()):
-                    for ts in ts_for_d.get(d, ()):
-                        v = pbt_inflow.get((n, tb, ts, t))
-                        if v is not None:
-                            total += v
-                            hit = True
-                if hit:
-                    emit_v = total
+                emit_v = fold_over_tiers(pbt_inflow, (n,), [tb_for_d.get(d, ())], tiers, t)
             # Branch 2: parent-period fold-in.
             if emit_v is None:
                 pe_list = pe_for_d.get(d, ())
-                ts_list = ts_for_d.get(d, ())
-                if pe_list and ts_list:
-                    total = 0.0
-                    hit = False
-                    for pe in pe_list:
-                        for tb in tb_for_d.get(pe, ()):
-                            for ts in ts_list:
-                                v = pbt_inflow.get((n, tb, ts, t))
-                                if v is not None:
-                                    total += v
-                                    hit = True
-                    if hit:
-                        emit_v = total
+                if pe_list:
+                    emit_v = fold_over_tiers(pbt_inflow, (n,), [tb_for_d.get(pe, ()) for pe in pe_list],
+                                             tiers, t)
             # Branch 3: deterministic additive sum.
             if emit_v is None:
                 value = 0.0
@@ -525,6 +543,9 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
     eligible_nodes = [
         n for n in nodes if (n, "no_inflow") not in inflow_method_pairs
     ]
+    fan_for_d = read_fan_for_d(solve_data_dir, provider=provider)
+    _check_stochastic_inflow(pbt_inflow, stoch_node, eligible_nodes, solve_data_dir,
+                             tb_for_d, ts_for_d, fan_for_d, provider=provider)
 
     # --- Step 2: grid + fold (branches 1 & 2), pdtProfile-shaped ----------
     key_cols = ["node"]
@@ -544,6 +565,7 @@ def derive_pdtNodeInflow_vectorized(input_dir: Path, solve_data_dir: Path,
         stoch_entities=stoch_node,
         stoch_filter_cols=["node"],
         periods=periods,
+        fan_for_d=fan_for_d,
     )
 
     # --- Step 3: branch 3 — deterministic gated additive sum --------------
@@ -746,6 +768,7 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
         solve_data_dir / "period__branch.csv", key_col=1,
         provider=provider,
     )
+    fan_for_d = read_fan_for_d(solve_data_dir, provider=provider)
 
     # Stochastic profile UNION: any profile referenced via a stochastic
     # process / node / process_node binding.
@@ -796,34 +819,20 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
         is_stoch = p in stoch_profile
         for (d, t) in dt:
             cell: str | None = None
+            # ts tiers: d's own first step, else the fan start (per value cell).
+            tiers = ts_tiers(d, ts_for_d, fan_for_d)
             # Branch 1: stochastic fold-in.
             if is_stoch:
-                total = 0.0
-                hit = False
-                for tb in tb_for_d.get(d, ()):
-                    for ts in ts_for_d.get(d, ()):
-                        v = pbt_profile.get((p, tb, ts, t))
-                        if v is not None:
-                            total += v
-                            hit = True
-                if hit:
-                    cell = repr(total)
+                v = fold_over_tiers(pbt_profile, (p,), [tb_for_d.get(d, ())], tiers, t)
+                if v is not None:
+                    cell = repr(v)
             # Branch 2: parent-period fold-in.
             if cell is None:
                 pe_list = pe_for_d.get(d, ())
-                ts_list = ts_for_d.get(d, ())
-                if pe_list and ts_list:
-                    total = 0.0
-                    hit = False
-                    for pe in pe_list:
-                        for tb in tb_for_d.get(pe, ()):
-                            for ts in ts_list:
-                                v = pbt_profile.get((p, tb, ts, t))
-                                if v is not None:
-                                    total += v
-                                    hit = True
-                    if hit:
-                        cell = repr(total)
+                if pe_list:
+                    v = fold_over_tiers(pbt_profile, (p,), [tb_for_d.get(pe, ()) for pe in pe_list], tiers, t)
+                    if v is not None:
+                        cell = repr(v)
             # Branch 3: time axis.
             if cell is None:
                 v = pt_profile.get((p, t))
@@ -934,6 +943,7 @@ def derive_pdtProfile_vectorized(input_dir: Path, solve_data_dir: Path,
         solve_data_dir / "period__branch.csv", key_col=1,
         provider=provider,
     )
+    fan_for_d = read_fan_for_d(solve_data_dir, provider=provider)
 
     # Stochastic profile UNION: any profile referenced via a stochastic
     # process / node / process_node binding.
@@ -997,6 +1007,7 @@ def derive_pdtProfile_vectorized(input_dir: Path, solve_data_dir: Path,
         stoch_entities=stoch_profile,
         stoch_filter_cols=["profile"],
         periods=periods,
+        fan_for_d=fan_for_d,
     )
 
     out = (
