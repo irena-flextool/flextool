@@ -212,6 +212,19 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   empty cell in a time step without a requirement. The Excel export puts both limits also on the time sheets.
   Databases are migrated automatically; constant and period values are unchanged and give the same model.
 
+- **Representative periods in stochastic solves (#125).** A stochastic solve can now use a timeset with
+  `representative_period_weights` (before: an error). Each forecast branch period uses the representative periods of
+  the period it branches from, and the `*_blended_weights` storage methods work per branch: a branch's first period
+  continues from the last base period of the trunk period (the shared period before the split), a later one from
+  the previous period of the same branch; *bind_within_solve_blended_weights* closes once per path (every branch
+  ends at the level the trunk period starts from); *bind_within_period_blended_weights* closes each branch period on
+  itself. When the forecasts open in the solve's first period they start from the same level
+  (*bind_forward_only_blended_weights* gets the new row `rp_inter_period_fan_start`, also with `fix_start`). For a
+  storage node in an `include_stochastics` group the start levels of the representative blocks are tied across the
+  forecasts inside the non-anticipativity window (`non_anticipativity_rp_block_start`). Two identical forecasts give
+  the deterministic result. Databases are migrated automatically (new descriptions of `storage_binding_method` and
+  `representative_period_weights` only); models that ran before are unchanged.
+
 #### Faster solves: leaving out detail
 
 - **A solve can leave out unit detail (`reduce_unit_detail_method`).** Set it on a
@@ -483,6 +496,10 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   (`python -m flextool.env_check`) read a signal number with Linux's numbering, so on macOS a bus error (SIGBUS,
   signal 10 there) was recorded as a kill by SIGUSR1, and signal 7 as a bus error. Signals are now named by the
   computer's own numbering.
+- **A rolling solve on representative periods with `*_blended_weights` storage nodes runs (#126).** It stopped with
+  an error; now those nodes bind forward only (*bind_forward_only*) and the storage state is passed directly from
+  roll to roll, with one warning per solve naming them (`storage_binding_method` is not applied in a rolling solve).
+  The same holds when such a solve mixes periods with and without representative periods.
 
 #### Input checks
 
