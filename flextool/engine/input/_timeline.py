@@ -79,6 +79,7 @@ from flextool.engine.preprocess.emit._base_steps import NEW_STEP_BASE_STEPS, NEW
 from flextool.engine.preprocess._provider_io import (
     _provider_key,
 )
+from flextool.timeline_pieces import aggregate_timeline_pieces, group_step_solves, timeline_pieces_of_group
 
 if TYPE_CHECKING:
     from spinedb_api import DatabaseMapping
@@ -375,39 +376,17 @@ class TimelineConfig:
 
         # Solves sharing a timeset (same Δ by the check above) share its
         # aggregated timeline: group them, first solve names the timeline.
-        groups: list[tuple[str, float, list[str]]] = []
-        group_of_timeset: dict[str, int] = {}
-        for solve_name, sd in step_solves.items():
-            timesets = [ts for ts in _timesets_of(solve_name) if raw_durations.get(ts)]
-            hit = sorted({group_of_timeset[ts] for ts in timesets if ts in group_of_timeset})
-            if not hit:
-                groups.append((solve_name, sd, []))
-                gi = len(groups) - 1
-            else:
-                gi = hit[0]
-                for other in hit[1:]:
-                    groups[gi][2].extend(groups[other][2])
-                    for ts in groups[other][2]:
-                        group_of_timeset[ts] = gi
-                    groups[other] = (groups[other][0], groups[other][1], [])
-            for ts in timesets:
-                if ts not in groups[gi][2]:
-                    groups[gi][2].append(ts)
-                group_of_timeset[ts] = gi
+        # The grouping and the chunking live in flextool.timeline_pieces (also
+        # used outside the engine, by the assistant's model facts).
+        groups = group_step_solves(step_solves, _timesets_of, lambda ts: bool(raw_durations.get(ts)))
 
         for first_solve, step_duration, timesets in groups:
-            by_timeline: dict[str, list[str]] = {}
-            for ts in timesets:
-                by_timeline.setdefault(raw_timeline_of[ts], []).append(ts)
-            for timeline_name, tl_timesets in by_timeline.items():
+            # Representative-period base starts are cut too, so every base
+            # period starts at a step of the aggregated timeline (the rp
+            # base chain is ordered by timeline position).
+            pieces = timeline_pieces_of_group(timesets, raw_timeline_of, self.rp_weights)
+            for timeline_name, (tl_timesets, base_cuts) in pieces.items():
                 old_steps = self.timelines[timeline_name]
-                # Representative-period base starts are cut too, so every base
-                # period starts at a step of the aggregated timeline (the rp
-                # base chain is ordered by timeline position).
-                base_cuts = {
-                    f"{ts} (representative_period_weights)": [str(b) for b in self.rp_weights[ts]]
-                    for ts in tl_timesets if self.rp_weights.get(ts)
-                }
                 # The fit of the new step is checked only for solves the model
                 # runs: an unused solve must not stop the run.
                 used_by = [step_solve_in_model_of[ts] for ts in tl_timesets if ts in step_solve_in_model_of]
@@ -1191,129 +1170,14 @@ def _aggregate_timeline_pieces(
     timeline_name: str,
     check_fit: bool = True,
 ) -> tuple[list[tuple[str, str]], dict[str, list[tuple[str, int]]]]:
-    """Aggregate a whole timeline to ``step_duration`` hours, piece by piece.
-
-    ``old_steps`` is the original ``[(step, duration), ...]``; the pieces are
-    the runs between the block starts and block ends of ``timeset_blocks``
-    (``{timeset: [(start, count), ...]}``) and the steps in ``extra_cuts``
-    (``{owner: [step, ...]}``, e.g. representative base-period starts).  Each piece is aggregated from its
-    first step: a chunk closes as soon as its steps add up to ``step_duration`` hours (within a relative
-    tolerance of 1e-4, so steps entered with rounded fractions still fit), and a chunk always holds at least
-    one step.  The steps may have any length (0.5 h, 2 h, mixed).  The
-    tolerance is capped at half the shortest step, so a long new step still
-    closes at the right step.
-    Returns the chunks ``[(first step, str(hours)), ...]`` in timeline order and
-    per timeset ``[(block start, number of chunks in the block), ...]`` (a block
-    whose start is not on the timeline is kept as given; ``get_active_time``
-    skips it).  Logs a warning when a block ends with a shorter chunk, naming
-    the other timeset when its boundary is what cut the chunk short.
-
-    Raises :class:`FlexToolConfigError` (only with ``check_fit``, i.e. for a
-    solve the model runs) when a chunk that starts inside a block
-    would be longer than ``step_duration``: the new step is not a whole multiple
-    of the timeline's steps, or (steps of different lengths) it would end inside
-    a step.  A gap chunk (outside every block, never active) may be longer, e.g.
-    one long filler step between two blocks.
-    """
-    index_of = {step[0]: i for i, step in enumerate(old_steps)}
-    n_steps = len(old_steps)
-    # Block index ranges [first, end) per timeset, and who owns each cut.
-    ranges: dict[str, list[tuple[str, int, int] | None]] = {}
-    cut_owners: dict[int, set[str]] = {0: set()}
-    for ts, blocks in timeset_blocks.items():
-        ranges[ts] = []
-        for start, count in blocks:
-            first = index_of.get(start)
-            if first is None:
-                ranges[ts].append(None)
-                continue
-            end = min(first + int(float(count)), n_steps)
-            ranges[ts].append((start, first, end))
-            cut_owners.setdefault(first, set()).add(ts)
-            cut_owners.setdefault(end, set()).add(ts)
-    for owner, labels in (extra_cuts or {}).items():
-        for label in labels:
-            if label in index_of:
-                cut_owners.setdefault(index_of[label], set()).add(owner)
-    cuts = sorted(c for c in cut_owners if c < n_steps) + [n_steps]
-    block_ranges = [(rng[1], rng[2]) for rngs in ranges.values() for rng in rngs if rng is not None]
-    # Relative to the new step (rounded fractions like 0.333333 h still add
-    # up), but below half a base step, so a long new step never closes one
-    # base step early.
-    positive = [float(step[1]) for step in old_steps if float(step[1]) > 0]
-    tol = min(1e-4 * step_duration, 0.5 * min(positive)) if positive else 0.0
-
-    chunks: list[tuple[str, str]] = []
-    chunk_first: list[int] = []
-    short_chunks: list[tuple[int, int, float]] = []   # (first, end, hours)
-    for piece_first, piece_end in zip(cuts, cuts[1:]):
-        i = piece_first
-        while i < piece_end:
-            first = i
-            hours = 0.0
-            while i < piece_end and (hours < step_duration - tol or i == first):
-                hours += float(old_steps[i][1])
-                i += 1
-            label = old_steps[first][0]
-            if (check_fit and hours > step_duration + tol
-                    and any(b_first <= first < b_end for b_first, b_end in block_ranges)):
-                ds = [float(step[1]) for step in old_steps[first:i]]
-                if all(d == ds[0] for d in ds):
-                    message = (
-                        f"Solve '{solve_name}': new_stepduration {step_duration:g} h is not a whole multiple of "
-                        f"the {ds[0]:g} h time steps of timeline '{timeline_name}' (the new time step starting "
-                        f"at '{label}' would be {hours:g} h long). Give a new_stepduration that is a whole "
-                        f"multiple of the timeline's time steps."
-                    )
-                else:
-                    message = (
-                        f"Solve '{solve_name}': new_stepduration {step_duration:g} h does not fit the time steps "
-                        f"of timeline '{timeline_name}': the new time step starting at '{label}' would end inside "
-                        f"base time step '{old_steps[i - 1][0]}' ({hours:g} h in total). On a timeline with time "
-                        f"steps of different lengths, every new time step must end where a time step of the "
-                        f"timeline ends."
-                    )
-                logger.error(message)
-                raise FlexToolConfigError(message)
-            chunks.append((label, str(hours)))
-            chunk_first.append(first)
-            if hours < step_duration - tol:
-                short_chunks.append((first, i, hours))
-
-    block_chunks: dict[str, list[tuple[str, int]]] = {}
-    for ts, blocks in timeset_blocks.items():
-        out: list[tuple[str, int]] = []
-        for (start, count), rng in zip(blocks, ranges[ts]):
-            if rng is None:
-                out.append((start, count))
-                continue
-            _start, first, end = rng
-            out.append((start, sum(1 for c in chunk_first if first <= c < end)))
-        block_chunks[ts] = out
-
-    warned: set[tuple[str, str]] = set()
-    for first, end, hours in short_chunks:
-        for ts, rngs in ranges.items():
-            for rng in rngs:
-                if rng is None or not (rng[1] <= first < rng[2]) or (ts, rng[0]) in warned:
-                    continue
-                warned.add((ts, rng[0]))
-                label = old_steps[first][0]
-                others = sorted(cut_owners.get(end, set()) - {ts}) if end < rng[2] else []
-                if others:
-                    logger.warning(
-                        f"new_stepduration {step_duration} h: step {label!r} of timeset {ts!r} "
-                        f"(block starting {rng[0]!r}) is only {hours} h long, because a block "
-                        f"or base period of {', '.join(repr(o) for o in others)} on the same "
-                        f"timeline starts or ends inside it."
-                    )
-                else:
-                    logger.warning(
-                        f"new_stepduration {step_duration} h: the block of timeset {ts!r} "
-                        f"starting {rng[0]!r} is not a multiple of the step; its last step "
-                        f"{label!r} is {hours} h long."
-                    )
-    return chunks, block_chunks
+    """Aggregate a whole timeline to ``step_duration`` hours, piece by piece: :func:`flextool.timeline_pieces.
+    aggregate_timeline_pieces` (see there), raising :class:`FlexToolConfigError` when a new step does not fit
+    (only with ``check_fit``, i.e. for a solve the model runs)."""
+    return aggregate_timeline_pieces(
+        old_steps, timeset_blocks, step_duration, logger, extra_cuts,
+        solve_name=solve_name, timeline_name=timeline_name, check_fit=check_fit,
+        error_cls=FlexToolConfigError,
+    )
 
 
 def _provider_get_or_read(
