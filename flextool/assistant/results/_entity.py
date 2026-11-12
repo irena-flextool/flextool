@@ -66,20 +66,20 @@ CUMULATIVE = frozenset({"cumulative_limits"})
 TEXTS: dict[str, str] = {
     "hint_not_allowed": "Nothing was invested: invest_method is {method}, which allows no investment.",
     "hint_retire_only": "Nothing was invested: invest_method is {method}, which allows retirement only.",
-    "hint_total": ("Invested {invested} {unit} over the periods, equal to invest_max_total ({limit}): consistent "
+    "hint_total": ("Invested {invested}{unit} over the periods, equal to invest_max_total ({limit}): consistent "
                    "with the total investment limit binding."),
-    "hint_period": ("In {period} invested {invested} {unit}, equal to invest_max_period ({limit}): consistent "
+    "hint_period": ("In {period} invested {invested}{unit}, equal to invest_max_period ({limit}): consistent "
                     "with the period investment limit binding."),
     "hint_period_zero": "In {period} invest_max_period is 0: investment is not allowed in that period.",
-    "hint_cumulative": ("In {period} the total capacity is {total} {unit}, equal to cumulative_max_capacity "
+    "hint_cumulative": ("In {period} the total capacity is {total}{unit}, equal to cumulative_max_capacity "
                         "({limit}): consistent with the cumulative capacity limit binding."),
-    "hint_min_total": ("Invested {invested} {unit} over the periods, equal to invest_min_total ({limit}): "
+    "hint_min_total": ("Invested {invested}{unit} over the periods, equal to invest_min_total ({limit}): "
                        "consistent with the minimum investment forcing it."),
-    "hint_min_period": ("In {period} invested {invested} {unit}, equal to invest_min_period ({limit}): consistent "
+    "hint_min_period": ("In {period} invested {invested}{unit}, equal to invest_min_period ({limit}): consistent "
                         "with the minimum investment forcing it."),
-    "hint_retire_total": ("Retired {divested} {unit} over the periods, equal to retire_max_total ({limit}): "
+    "hint_retire_total": ("Retired {divested}{unit} over the periods, equal to retire_max_total ({limit}): "
                           "consistent with the total retirement limit binding."),
-    "hint_retire_period": ("In {period} retired {divested} {unit}, equal to retire_max_period ({limit}): "
+    "hint_retire_period": ("In {period} retired {divested}{unit}, equal to retire_max_period ({limit}): "
                            "consistent with the period retirement limit binding."),
     "hint_value_positive": ("The investment value is positive in {periods} ({table}): consistent with an upper "
                             "limit holding the investment back (the entity's own, a group's{groups} or a "
@@ -98,7 +98,12 @@ TEXTS: dict[str, str] = {
                    "others."),
     "final_cut": ("The result was shortened to fit: {blocks} left out. Ask with a larger max_chars; get_entity "
                   "gives the inputs and query_result each table."),
+    "final_cut_short": ("The result was shortened to fit: {n} parts left out. Ask with a larger max_chars; "
+                        "get_entity gives the inputs and query_result each table."),
+    "hints_cut": "{n} more hints; a larger max_chars shows them.",
     "no_values": "not_in_run: tables of this run without values of {entity}.",
+    "too_large": ("too_large: tables of this run with too many values to summarise in one call; query_result on "
+                  "each, filtered to a period, gives them."),
     "several_runs": ("The scenario also has the result folders {folders}; this is the newest. Name one in run to "
                      "explain the entity there."),
 }
@@ -307,22 +312,49 @@ def read_costs(folder: Path, block: Block, name: str) -> dict | None:
     return {"table": block.table, "unit": unit, "columns": ["category", "total", *periods], "rows": rows}
 
 
-def _step_stats(table: _query.Table, columns: list[str]) -> dict[str, list[list]]:
+@dataclass(frozen=True)
+class TooLarge:
+    """A time-step block left out: summarising it would read *cells* values, more than query_result reads in one
+    call (:data:`~flextool.assistant.results._query.LONG_CELLS_MAX`)."""
+
+    table: str
+    cells: int
+
+
+def _step_stats(table: _query.Table, columns: list[str]) -> dict[str, list[list]] | TooLarge:
     """``{physical column: [[period, mean, min, max], …]}`` over each period's time steps (every solve), empty
-    cells left out."""
+    cells left out; :class:`TooLarge` when the columns hold more values than query_result reads.
+
+    Read lazily (critique: a large project's ``_dt_`` tables): only the period and the entity's columns are
+    scanned and reduced to one row per period before anything is collected, so neither the table nor its other
+    row levels (solve, time) are held in memory."""
     import polars as pl
 
-    wide = _query.read_wide(table, columns)
+    cells = table.layout.num_rows * len(columns)
+    if cells > _query.LONG_CELLS_MAX:
+        return TooLarge(table.stem, cells)
+    period = table.layout.index_physical[table.layout.idx.index("period")]
+    values = [pl.col(c).cast(pl.Float64, strict=False).fill_nan(None).alias(f"v{i}") for i, c in enumerate(columns)]
+    try:
+        reduced = (pl.scan_parquet(table.path)
+                   .select(pl.col(period).cast(pl.String).alias("period"), *values)
+                   .group_by("period", maintain_order=True)
+                   .agg(*(agg for i in range(len(columns)) for agg in (
+                       pl.col(f"v{i}").mean().alias(f"mean{i}"), pl.col(f"v{i}").min().alias(f"min{i}"),
+                       pl.col(f"v{i}").max().alias(f"max{i}"))))
+                   .collect())
+    except OSError:
+        raise _query._damaged() from None
+    except pl.exceptions.PolarsError:
+        raise _query._damaged() from None
     out: dict[str, list[list]] = {}
-    for c in columns:
-        stats = (wide.filter(pl.col(c).is_not_null())
-                 .group_by("period", maintain_order=True)
-                 .agg(pl.col(c).mean().alias("mean"), pl.col(c).min().alias("min"), pl.col(c).max().alias("max")))
-        out[c] = [[str(p), _query._number(a), _query._number(b), _query._number(m)] for p, a, b, m in stats.iter_rows()]
+    for i, c in enumerate(columns):
+        rows = reduced.select("period", f"mean{i}", f"min{i}", f"max{i}").filter(pl.col(f"mean{i}").is_not_null())
+        out[c] = [[str(p), _query._number(a), _query._number(b), _query._number(m)] for p, a, b, m in rows.iter_rows()]
     return out
 
 
-def read_steps(folder: Path, block: Block, name: str) -> dict | None:
+def read_steps(folder: Path, block: Block, name: str) -> dict | TooLarge | None:
     """The entity's mean, minimum and maximum over each period's time steps (storage state)."""
     table = _open(folder, block.table)
     if table is None or "period" not in table.row_levels:
@@ -331,14 +363,17 @@ def read_steps(folder: Path, block: Block, name: str) -> dict | None:
     if not found:
         return None
     physical = found[0][0]
-    rows = _step_stats(table, [physical])[physical]
+    stats = _step_stats(table, [physical])
+    if isinstance(stats, TooLarge):
+        return stats
+    rows = stats[physical]
     if not rows:
         return None
     return {"table": block.table, "unit": _unit_of(table, physical), "columns": ["period", "mean", "min", "max"],
             "rows": rows, "note": TEXTS["state_note"]}
 
 
-def read_prices(folder: Path, nodes: list[str]) -> dict | None:
+def read_prices(folder: Path, nodes: list[str]) -> dict | TooLarge | None:
     """The prices at *nodes*, per node and period: ``[node, period, mean, min, max]``."""
     table = _open(folder, PRICES_TABLE)
     if table is None or "period" not in table.row_levels or not nodes:
@@ -347,6 +382,8 @@ def read_prices(folder: Path, nodes: list[str]) -> dict | None:
     if not found:
         return None
     stats = _step_stats(table, [p for _, p in found])
+    if isinstance(stats, TooLarge):
+        return stats
     rows, units = [], []
     for node, physical in found:
         for period, mean, low, high in stats[physical]:
@@ -385,18 +422,24 @@ def classes_in_results(folder: Path, name: str) -> list[str]:
     return out
 
 
-def read_results(folder: Path, entity_class: str, name: str) -> tuple[dict[str, dict], list[str]]:
-    """``({block key: block}, tables without values of the entity)`` of the entity's class."""
+def read_results(folder: Path, entity_class: str, name: str
+                 ) -> tuple[dict[str, dict], list[str], list[TooLarge]]:
+    """``({block key: block}, tables without values of the entity, blocks too large to summarise)`` of the
+    entity's class."""
     blocks: dict[str, dict] = {}
     missing: list[str] = []
+    large: list[TooLarge] = []
     for block in BLOCKS[entity_class]:
         read = READERS[block.kind](folder, block, name)
+        if isinstance(read, TooLarge):
+            large.append(read)
+            continue
         if read is None:
             if not block.optional:
                 missing.append(block.table)
             continue
         blocks[block.key] = read
-    return blocks, missing
+    return blocks, missing, large
 
 
 def related_tables(folder: Path, entity_class: str) -> list[str]:
@@ -456,7 +499,8 @@ def hints(inputs: dict[str, Any], blocks: dict[str, dict], groups: list[str]) ->
     out: list[str] = []
     capacity = blocks.get("capacity")
     periods, cells = _capacity_cells(capacity)
-    unit = (capacity or {}).get("unit") or ""
+    unit = (capacity or {}).get("unit")
+    unit = f" {unit}" if unit else ""          # the hint texts put the unit right after the number
     method = inputs.get("invest_method")
     method = method if isinstance(method, str) else None
     invested = _summed(cells, "invested")
@@ -469,7 +513,7 @@ def hints(inputs: dict[str, Any], blocks: dict[str, dict], groups: list[str]) ->
     def total_hint(key: str, part_sum: float | None, limit_name: str, applies: bool, word: str) -> None:
         limit = _num(inputs.get(limit_name))
         if (applies and limit is not None and part_sum is not None and part_sum > ZERO
-                and _close(part_sum, limit) and not constructing):
+                and _close(part_sum, limit)):
             out.append(TEXTS[key].format(**{word: _shown_number(part_sum)}, unit=unit,
                                          limit=_shown_number(limit)))
 
@@ -488,7 +532,8 @@ def hints(inputs: dict[str, Any], blocks: dict[str, dict], groups: list[str]) ->
                 out.append(TEXTS[key].format(period=period, **{word: _shown_number(value)}, unit=unit,
                                              limit=_shown_number(limit)))
 
-    total_hint("hint_total", invested, "invest_max_total", method in INVEST_TOTAL, "invested")
+    # Capacity in construction is not yet in "invested" but counts towards invest_max_total: no total hint then.
+    total_hint("hint_total", invested, "invest_max_total", method in INVEST_TOTAL and not constructing, "invested")
     period_hints("hint_period", "invested", "invest_max_period", method in INVEST_PERIOD, "invested", zero=True)
     if method in CUMULATIVE:
         limits = _by_period(inputs.get("cumulative_max_capacity"), periods)
@@ -497,10 +542,12 @@ def hints(inputs: dict[str, Any], blocks: dict[str, dict], groups: list[str]) ->
             if total is not None and limit is not None and limit > ZERO and _close(total, limit):
                 out.append(TEXTS["hint_cumulative"].format(period=period, total=_shown_number(total), unit=unit,
                                                            limit=_shown_number(limit)))
-    # A minimum applies wherever the method allows investing (critique 9: forced builds).
-    investing = method is not None and method not in NO_INVEST
-    total_hint("hint_min_total", invested, "invest_min_total", investing, "invested")
-    period_hints("hint_min_period", "invested", "invest_min_period", investing, "invested", zero=False)
+    # A minimum binds under the methods that use the limit of its kind, as the engine builds them
+    # (engine/model/_cumulative_invest.py: minInvest_entity_total over e_invest_total, minInvest_entity_period
+    # over ed_invest_period_set; the method sets in engine/preprocess/params/_derived.py): never under *_no_limit.
+    total_hint("hint_min_total", invested, "invest_min_total", method in INVEST_TOTAL, "invested")
+    period_hints("hint_min_period", "invested", "invest_min_period", method in INVEST_PERIOD, "invested",
+                 zero=False)
     total_hint("hint_retire_total", divested, "retire_max_total", method in RETIRE_TOTAL, "divested")
     period_hints("hint_retire_period", "divested", "retire_max_period", method in RETIRE_PERIOD, "divested",
                  zero=False)
@@ -508,7 +555,10 @@ def hints(inputs: dict[str, Any], blocks: dict[str, dict], groups: list[str]) ->
     value = blocks.get("investment_value")
     if value is not None:
         positive = [r[0] for r in value["rows"] if r[1] is not None and r[1] > ZERO]
-        negative = [r[0] for r in value["rows"] if r[1] is not None and r[1] < -ZERO]
+        # Negative is the ordinary reading only where nothing is built (docs/results.md, invest_marginal): a
+        # non-zero value on a built entity may be a numerical artefact, so no hint there.
+        negative = [r[0] for r in value["rows"] if r[1] is not None and r[1] < -ZERO
+                    and r[0] in cells and (cells[r[0]].get("invested") or 0) <= ZERO]
         if positive:
             named = f" ({', '.join(groups)})" if groups else ""
             out.append(TEXTS["hint_value_positive"].format(periods=", ".join(positive), table=value["table"],
@@ -523,9 +573,29 @@ def hints(inputs: dict[str, Any], blocks: dict[str, dict], groups: list[str]) ->
 
 #: The cut, in this order, until the result fits (each step keeps the earlier ones' cuts): drop related_tables;
 #: costs as totals only (no columns per period); cost categories under 1 % of the entity's costs dropped; maps
-#: summarised; investment-relevant inputs only; the first and last periods only; then the final step that always
-#: fits (header, notes, capacity, hints).
-CUT_STEPS = ("full", "related", "cost_totals", "cost_1%", "maps", "inputs", "periods", "final")
+#: summarised; investment-relevant inputs only; the first and last periods only.  Then the final steps, which
+#: shrink themselves until the result fits: header, notes, capacity and hints (``final``); the capacity's total
+#: only, with only the note on what was left out (``final_total``); the hints capped, saying how many more there
+#: are (``final_hints``, tried with one hint fewer at a time); the header with only that note (``final_note``);
+#: and last that note counting the parts instead of naming them (``final_count``).
+FINAL_STEPS = ("final", "final_total", "final_hints", "final_note", "final_count")
+CUT_STEPS = ("full", "related", "cost_totals", "cost_1%", "maps", "inputs", "periods", *FINAL_STEPS)
+
+
+def capped_hints(hints: list[str], keep: int | None) -> list[str]:
+    """The first *keep* of *hints* and how many more there are (all of them when *keep* is ``None``)."""
+    if keep is None or keep >= len(hints):
+        return list(hints)
+    return [*hints[:keep], TEXTS["hints_cut"].format(n=len(hints) - keep)]
+
+
+def capacity_total(capacity: dict) -> dict:
+    """*capacity* with its ``period`` and ``total`` columns only (the final step ``final_total``)."""
+    columns = capacity["columns"]
+    if "total" not in columns:
+        return capacity
+    at = columns.index("total")
+    return {**capacity, "columns": ["period", "total"], "rows": [[r[0], r[at]] for r in capacity["rows"]]}
 
 
 def _cost_totals(costs: dict) -> dict:
@@ -569,15 +639,18 @@ def _cap_rows(block: dict, max_rows: int) -> dict:
             "shown": TEXTS["rows_cut"].format(shown=max_rows, total=len(rows), table=block["table"])}
 
 
-def fitted(build, max_chars: int, redact) -> dict:
-    """The payload of the first :data:`CUT_STEPS` step whose sent text fits *max_chars* (``build(step)``); the
-    final step's when none does."""
+def fitted(build, n_hints: int, max_chars: int, redact) -> tuple[dict, str]:
+    """``(payload, step)``: the sent payload of the first :data:`CUT_STEPS` step whose text fits *max_chars*
+    (``build(step, keep)``, *keep* the hints kept: ``None`` for all, at ``final_hints`` one fewer each try); the
+    last try's when none does."""
     last: dict = {}
     for step in CUT_STEPS:
-        last = sent_payload(build(step), redact)
-        if len(dumps(last)) <= max_chars:
-            return last
-    return last
+        tries: list[int | None] = list(range(n_hints - 1, -1, -1)) if step == "final_hints" else [None]
+        for keep in tries:
+            last = sent_payload(build(step, keep), redact)
+            if len(dumps(last)) <= max_chars:
+                return last, step
+    return last, CUT_STEPS[-1]
 
 
 def steps_from(step: str) -> set[str]:

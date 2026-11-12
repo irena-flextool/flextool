@@ -11,17 +11,18 @@ from __future__ import annotations
 from typing import Any
 
 from flextool.assistant import project
-from flextool.assistant.caps import CapArg
+from flextool.assistant.caps import CapArg, dumps
 from flextool.assistant.context import AssistantContext
 from flextool.assistant.errors import ToolError, close_names, name_list, render, similar_text
 from flextool.assistant.inputs import _values
-from flextool.assistant.registry import make_tool
+from flextool.assistant.registry import Fit, make_tool
 from flextool.assistant.results import _entity, _runs
 from flextool.assistant.tools.inputs import entity_value, match_names, unit_of
 from flextool.assistant.unit_wording import (
     STORED_VALUES,
     UNITS_CONVENTION,
     add_session_notes,
+    delivered_notes,
     is_convention_unit,
 )
 
@@ -29,6 +30,8 @@ from flextool.assistant.unit_wording import (
 LATEST = 5
 NAMES_MAX = 10
 INPUT_COLUMNS = ["parameter", "value", "unit", "from_alternative"]
+#: The advice of a result call_tool still has to cut (a max_chars below the last cut step's text).
+FIT_HINT = "ask with a larger max_chars"
 #: The input parameters the hints read (the scenario's value, or the default).
 HINT_PARAMETERS = ("invest_method", "invest_max_total", "invest_max_period", "invest_min_total", "invest_min_period",
                    "retire_max_total", "retire_max_period", "cumulative_max_capacity")
@@ -40,8 +43,9 @@ HINT_PARAMETERS = ("invest_method", "invest_max_total", "invest_max_period", "in
 
 def _select_run(ctx: AssistantContext, args: dict) -> tuple[_runs.ResolvedRun, list[str]]:
     run, scenario, source = args.get("run"), args.get("scenario"), args.get("source")
+    every = _runs.runs(ctx)             # one scan of the run folders for the whole call
     if run is not None:
-        rr = _runs.resolve_run(ctx, str(run))
+        rr = _runs.resolve_run(ctx, str(run), every)
         own = rr.entry["db_scenario"]
         if scenario is not None and own != scenario:
             raise ToolError("explain_other_scenario", run=rr.folder.name, value=str(own), scenario=scenario)
@@ -51,13 +55,12 @@ def _select_run(ctx: AssistantContext, args: dict) -> tuple[_runs.ResolvedRun, l
                 raise ToolError("explain_other_source", run=rr.folder.name, source=wanted.name)
         return rr, []
     if scenario is None:
-        latest = [r.folder.name for r in _runs.newest_first(_runs.runs(ctx))][:LATEST]
+        latest = [r.folder.name for r in _runs.newest_first(every)][:LATEST]
         if not latest:
             raise ToolError("no_runs")
         raise ToolError("explain_run_or_scenario", runs=latest)
-    selected = _runs.select_runs(ctx, source=source, scenario=str(scenario))
+    selected = _runs.select_runs(ctx, source=source, scenario=str(scenario), all_runs=every)
     if not selected:
-        every = _runs.runs(ctx)
         known = sorted({r.entry["db_scenario"] for r in every if r.entry["db_scenario"] is not None})
         if scenario not in known:
             raise ToolError("overview_no_scenario_run", scenario=scenario,
@@ -66,7 +69,7 @@ def _select_run(ctx: AssistantContext, args: dict) -> tuple[_runs.ResolvedRun, l
         raise ToolError("explain_no_source_run", scenario=scenario, source=project.resolve_source(ctx, source).name,
                         runs=name_list(folders, NAMES_MAX))
     # The newest folder of the scenario, refused word for word as query_result refuses it (O1: never an older run).
-    rr = _runs.resolve_run(ctx, selected[0].folder.name)
+    rr = _runs.resolve_run(ctx, selected[0].folder.name, every)
     notes = []
     if len(selected) > 1:
         others = name_list([r.folder.name for r in selected[1:]], NAMES_MAX)
@@ -93,6 +96,14 @@ def _entity_class(rr: _runs.ResolvedRun, db, source: str, name: str, wanted: str
             return found[0]
         if found:
             raise ToolError("explain_several_classes", entity=name, names=found, source=source)
+        if rr.entry.get("stale_vs_input"):
+            # The input data changed after the run and no longer has the entity: the run's results tell its
+            # class (the "input data changed" note of run_inputs says the inputs are the current data's).
+            in_results = _entity.classes_in_results(rr.folder, name)
+            if len(in_results) == 1:
+                return in_results[0]
+            if in_results:
+                raise ToolError("explain_several_classes", entity=name, names=in_results, source=source)
         other = sorted({e.entity_class for e in match_names(db, name)})
         if other:
             raise ToolError("explain_not_explained", entity=name, names=other, source=source)
@@ -208,7 +219,7 @@ class _Inputs:
 # The tool
 
 
-def explain_entity(ctx: AssistantContext, args: dict) -> dict:
+def explain_entity(ctx: AssistantContext, args: dict) -> Fit:
     rr, notes = _select_run(ctx, args)
     db, view, input_note = _runs.run_inputs(ctx, rr, not_shown="its inputs are not shown",
                                             current="the inputs are those of the current data")
@@ -229,7 +240,7 @@ def explain_entity(ctx: AssistantContext, args: dict) -> dict:
                                 ctx.redact))
         inputs = _Inputs(db, view, cls, name)
 
-    blocks, missing = _entity.read_results(rr.folder, cls, name)
+    blocks, missing, large = _entity.read_results(rr.folder, cls, name)
     nodes = list(inputs.nodes) if inputs is not None else []
     if cls == "node":
         nodes = [name]
@@ -237,7 +248,9 @@ def explain_entity(ctx: AssistantContext, args: dict) -> dict:
         if key in blocks:
             nodes += [row[1] for row in blocks[key]["rows"]]
     prices = _entity.read_prices(rr.folder, list(dict.fromkeys(nodes)))
-    if prices is not None:
+    if isinstance(prices, _entity.TooLarge):
+        large.append(prices)
+    elif prices is not None:
         blocks["prices"] = prices
     elif nodes:
         missing.append(_entity.PRICES_TABLE)
@@ -249,6 +262,9 @@ def explain_entity(ctx: AssistantContext, args: dict) -> dict:
         notes.append(_entity.TEXTS["annualized_note"])
     if missing:
         notes.append(_entity.TEXTS["no_values"].format(entity=name))
+    too_large = [t.table for t in large]
+    if too_large:
+        notes.append(_entity.TEXTS["too_large"])
     related = _entity.related_tables(rr.folder, cls)
 
     units = [b.get("unit") for b in blocks.values() if b.get("unit")]
@@ -256,8 +272,8 @@ def explain_entity(ctx: AssistantContext, args: dict) -> dict:
     units += inputs.units if inputs is not None else []
     keys = ([UNITS_CONVENTION] if any(is_convention_unit(u) for u in units) else [])
     keys += [STORED_VALUES] if inputs is not None else []
-    # Once for every cut step: the session notes are recorded as in flight when first added.
-    session_notes = add_session_notes({}, keys, ctx.notes_sent, ctx.notes_in_flight)["notes"]
+    # Worded against a copy of the notes in flight: only the payload that is sent records its notes (below).
+    session_notes = add_session_notes({}, keys, ctx.notes_sent, set(ctx.notes_in_flight))["notes"]
 
     head: dict[str, Any] = {"run": rr.folder.name, "entity": name, "entity_class": cls, "source": source_name,
                             "scenario": rr.entry["db_scenario"]}
@@ -266,24 +282,41 @@ def explain_entity(ctx: AssistantContext, args: dict) -> dict:
     if not rr.verified:
         head["verified"] = False
     max_rows = int(args["max_rows"])
+    left_out = (["inputs and links"] if inputs is not None else []) + [
+        f"{key} ({block['table']})" for key, block in blocks.items() if key != "capacity"]
+    left_out += [f"too_large ({', '.join(too_large)})"] if too_large else []
+    left_out += [f"not_in_run ({', '.join(missing)})"] if missing else []
 
-    def build(step: str) -> dict:
+    def build(step: str, keep: int | None) -> dict:
         cuts = _entity.steps_from(step)
         out = dict(head)
         shown = _entity.cut_blocks(blocks, cuts, max_rows)
         step_notes = list(notes)
         if "periods" in cuts:
             step_notes.append(_entity.TEXTS["periods_cut"])
-        if step == "final":
-            left = (["inputs and links"] if inputs is not None else []) + [
-                f"{key} ({block['table']})" for key, block in blocks.items() if key != "capacity"]
-            step_notes.append(_entity.TEXTS["final_cut"].format(blocks=", ".join(left) or "nothing"))
-            if "capacity" in shown:
-                out["capacity"] = shown["capacity"]
-            out["hints"] = hints
-            out["notes"] = step_notes + session_notes
-            if rr.run_notes:
-                out["run_notes"] = rr.run_notes
+        if step in _entity.FINAL_STEPS:
+            if step == "final":
+                step_notes.append(_entity.TEXTS["final_cut"].format(blocks=", ".join(left_out) or "nothing"))
+                if "capacity" in shown:
+                    out["capacity"] = shown["capacity"]
+                out["hints"] = hints
+                out["notes"] = step_notes + session_notes
+                if rr.run_notes:
+                    out["run_notes"] = rr.run_notes
+                return out
+            # The later final steps send only the note on what was left out (the other notes named in it).
+            parts = list(left_out)
+            if step_notes or session_notes or rr.run_notes:
+                parts.append("the other notes")
+            if step in ("final_total", "final_hints"):
+                if "capacity" in shown:
+                    out["capacity"] = _entity.capacity_total(shown["capacity"])
+                out["hints"] = _entity.capped_hints(hints, keep)
+            else:
+                parts += ([f"capacity ({blocks['capacity']['table']})"] if "capacity" in blocks else []) + (
+                    ["hints"] if hints else [])
+            out["notes"] = [_entity.TEXTS["final_cut_short"].format(n=len(parts)) if step == "final_count"
+                            else _entity.TEXTS["final_cut"].format(blocks=", ".join(parts) or "nothing")]
             return out
         out["hints"] = hints
         if inputs is not None:
@@ -293,6 +326,8 @@ def explain_entity(ctx: AssistantContext, args: dict) -> dict:
         out.update(shown)
         if missing:
             out["not_in_run"] = missing
+        if too_large:
+            out["too_large"] = too_large
         if related and "related" not in cuts:
             out["related_tables"] = related
         out["notes"] = step_notes + session_notes
@@ -300,7 +335,12 @@ def explain_entity(ctx: AssistantContext, args: dict) -> dict:
             out["run_notes"] = rr.run_notes
         return out
 
-    return _entity.fitted(build, int(args["max_chars"]), ctx.redact)
+    payload, _step = _entity.fitted(build, len(hints), int(args["max_chars"]), ctx.redact)
+    # The session notes the sent payload carries in full are in flight for the rest of the request.
+    ctx.notes_in_flight |= delivered_notes([dumps(payload)], ctx.redact) & set(keys)
+    # The payload fits (the final steps shrink until it does); a limit below even the last step's is cut by
+    # call_tool, whose note then says to ask for more characters (never query_result's filters advice).
+    return Fit(payload, hint=FIT_HINT)
 
 
 TOOLS = [

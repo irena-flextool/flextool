@@ -445,3 +445,199 @@ def test_not_offered_at_basic(explain_project: Path) -> None:
     assert "explain_entity" not in {t.name for t in registry.tools_for_tier("small")}
     assert "explain_entity" in {t.name for t in registry.tools_for_tier("medium")}
     assert "explain_entity" in {t.name for t in registry.tools_for_tier("large")}
+
+
+# ---------------------------------------------------------------------------------------------------------
+# Fix pass (review of item 209)
+
+
+_CAPACITY = {"unit": "MW", "columns": ["period", "existing", "invested", "divested", "in_construction", "total"],
+             "rows": [["p1", 100.0, 40.0, None, 0.0, 140.0], ["p2", 100.0, 60.0, None, 0.0, 200.0]]}
+
+
+def test_a_minimum_hints_only_under_the_methods_that_use_it() -> None:
+    """The engine builds minInvest_entity_total over the INVEST_TOTAL methods and minInvest_entity_period over
+    the INVEST_PERIOD ones (engine/model/_cumulative_invest.py): invested 40 + 60 = 100 equals the stored
+    invest_min_total, and p1's 40 the stored invest_min_period."""
+    stored = {"invest_min_total": 100.0, "invest_min_period": 40.0}
+    assert _entity.hints({"invest_method": "invest_no_limit", **stored}, {"capacity": _CAPACITY}, []) == []
+    period_only = _entity.hints({"invest_method": "invest_period", **stored}, {"capacity": _CAPACITY}, [])
+    assert period_only == ["In p1 invested 40 MW, equal to invest_min_period (40): consistent with the minimum "
+                           "investment forcing it."]
+    total_only = _entity.hints({"invest_method": "invest_total", **stored}, {"capacity": _CAPACITY}, [])
+    assert total_only == ["Invested 100 MW over the periods, equal to invest_min_total (100): consistent with the "
+                          "minimum investment forcing it."]
+
+
+def test_construction_only_holds_back_the_investment_total_hint() -> None:
+    # 5 MW in construction in p1: the invest_max_total hint is left out, the minimum and retirement ones are not.
+    building = {**_CAPACITY, "rows": [["p1", 100.0, 40.0, 30.0, 5.0, 110.0], ["p2", 100.0, 60.0, None, 0.0, 170.0]]}
+    got = _entity.hints({"invest_method": "invest_retire_total", "invest_max_total": 100.0, "invest_min_total": 100.0,
+                         "retire_max_total": 30.0}, {"capacity": building}, [])
+    assert got == ["Invested 100 MW over the periods, equal to invest_min_total (100): consistent with the minimum "
+                   "investment forcing it.",
+                   "Retired 30 MW over the periods, equal to retire_max_total (30): consistent with the total "
+                   "retirement limit binding."]
+
+
+def test_a_capacity_without_a_unit_has_no_double_space() -> None:
+    got = _entity.hints({"invest_method": "invest_total", "invest_max_total": 100.0},
+                        {"capacity": {**_CAPACITY, "unit": None}}, [])
+    assert got == ["Invested 100 over the periods, equal to invest_max_total (100): consistent with the total "
+                   "investment limit binding."]
+
+
+def test_a_negative_investment_value_hints_only_where_nothing_was_invested() -> None:
+    # p1 invested 40 (built: a non-zero value there may be an artefact), p2 nothing (None), p3 0.
+    capacity = {**_CAPACITY, "rows": [["p1", 100.0, 40.0, None, 0.0, 140.0], ["p2", 100.0, None, None, 0.0, 140.0],
+                                      ["p3", 100.0, 0.0, None, 0.0, 140.0]]}
+    value = {"table": "dual_invest_effective_unit_d_e", "rows": [["p1", -2.0], ["p2", -2.0], ["p3", -2.0]]}
+    got = _entity.hints({"invest_method": "invest_no_limit"}, {"capacity": capacity, "investment_value": value}, [])
+    assert got == ["The investment value is negative in p2, p3 (dual_invest_effective_unit_d_e): consistent with "
+                   "more capacity not paying off (or a minimum investment forcing more than pays off)."]
+
+
+@pytest.mark.parametrize("max_chars", [1000, 600])
+def test_the_final_steps_shrink_until_the_result_fits(explain_project: Path, max_chars: int) -> None:
+    from flextool.assistant.unit_wording import SESSION_NOTES, STORED_VALUES
+
+    ctx = make_context(explain_project)
+    out = call_tool(ctx, "explain_entity", {"entity": "coal_plant", "run": "multi_year_1", "max_chars": max_chars})
+    assert out.ok and len(out.text) <= max_chars
+    payload = json.loads(out.text)
+    assert "truncated" not in payload and "group_by" not in out.text and "top_n" not in out.text
+    final = [n for n in payload["notes"] if n.startswith("The result was shortened to fit")]
+    assert len(final) == 1
+    assert payload["run"] == "multi_year_1" and payload["entity"] == "coal_plant"
+    # The session note on stored values is in flight only when the sent payload carries it in full.
+    carried = SESSION_NOTES[STORED_VALUES] in payload["notes"]
+    assert (STORED_VALUES in ctx.notes_in_flight) is carried
+    if max_chars == 1000:
+        # The capacity's total of the first and last periods, the hints capped (of 4), only the note on what was
+        # left out.
+        assert payload["capacity"]["columns"] == ["period", "total"]
+        assert payload["capacity"]["rows"] == [["p2020", 750.0], ["p2030", 1200.0]]
+        assert payload["hints"][-1].endswith("more hints; a larger max_chars shows them.")
+        assert "costs (cost_unit_discounted_d_ec)" in final[0] and "the other notes" in final[0]
+        assert payload["notes"] == final
+    else:
+        # Only the note on what was left out, naming the capacity and the hints too.
+        assert payload["notes"] == final and "capacity" not in payload and "hints" not in payload
+        assert "capacity (unit_capacity_ed_p)" in final[0] and "hints" in final[0]
+        assert not carried
+
+
+def test_a_tiny_limit_never_gives_query_advice(explain_project: Path) -> None:
+    out = call_tool(make_context(explain_project), "explain_entity",
+                    {"entity": "coal_plant", "run": "multi_year_1", "max_chars": 120})
+    assert out.ok and len(out.text) <= 120
+    assert "group_by" not in out.text and "top_n" not in out.text
+    json.loads(out.text)
+
+
+def test_the_whole_result_records_its_session_notes(explain_project: Path) -> None:
+    from flextool.assistant.unit_wording import SESSION_NOTES, STORED_VALUES
+
+    ctx = make_context(explain_project)
+    payload = _call(ctx, entity="coal_plant", run="multi_year_1")
+    assert SESSION_NOTES[STORED_VALUES] in payload["notes"] and STORED_VALUES in ctx.notes_in_flight
+
+
+def _large_prices(folder: Path, n_steps: int) -> pd.DataFrame:
+    """node_prices_dt_e of two periods with *n_steps* time steps each, nodes west and east (deterministic)."""
+    times = [f"t{i:06d}" for i in range(n_steps)]
+    index = pd.MultiIndex.from_tuples([("y2020", p, t) for p in ("p2020", "p2025") for t in times],
+                                      names=["solve", "period", "time"])
+    steps = np.arange(2 * n_steps, dtype=float)
+    frame = pd.DataFrame({"west": (steps * 7.0) % 101.0, "east": (steps * 3.0) % 53.0 + 1.0}, index=index)
+    frame.columns.name = "node"
+    write_result(folder, "node_prices_dt_e", frame, "multi_year")
+    return frame
+
+
+def test_prices_of_a_large_table_are_reduced_lazily(tmp_path: Path, monkeypatch) -> None:
+    """200 000 rows: the prices read through a lazy scan (read_wide, which loads the row levels whole, is never
+    called) and equal pandas' own per-period mean, minimum and maximum of the frame written."""
+    from flextool.assistant.results import _query
+
+    frame = _large_prices(tmp_path, 100_000)
+
+    def no_eager(*_a, **_k):
+        raise AssertionError("read_wide called: the table was loaded whole")
+
+    monkeypatch.setattr(_query, "read_wide", no_eager)
+    got = _entity.read_prices(tmp_path, ["west"])
+    by_period = frame["west"].groupby(level="period", sort=False)
+    expected = [["west", p, float(m), float(lo), float(hi)]
+                for p, m, lo, hi in zip(by_period.mean().index, by_period.mean(), by_period.min(), by_period.max())]
+    assert [r[:2] for r in got["rows"]] == [["west", "p2020"], ["west", "p2025"]]
+    for row, want in zip(got["rows"], expected):
+        assert row[2:] == pytest.approx(want[2:], rel=1e-12)
+
+
+def test_the_lazy_reduction_equals_the_eager_one_on_a_small_table(tmp_path: Path) -> None:
+    """The same numbers as the eager reduction (read_wide, then polars per period) on a small table."""
+    import polars as pl
+
+    from flextool.assistant.results import _query
+
+    _large_prices(tmp_path, 50)
+    got = _entity.read_prices(tmp_path, ["west", "east"])
+    table = _query.open_table(tmp_path, "node_prices_dt_e", where="t")
+    want = []
+    for node in ("west", "east"):
+        physical = _entity._entity_columns(table, "node", node)[0][0]
+        wide = _query.read_wide(table, [physical])
+        stats = wide.group_by("period", maintain_order=True).agg(
+            pl.col(physical).mean(), pl.col(physical).min().alias("lo"), pl.col(physical).max().alias("hi"))
+        want += [[node, *row] for row in stats.iter_rows()]
+    assert got["rows"] == want
+
+
+def test_a_table_over_the_cell_limit_is_left_out_with_a_note(ectx, monkeypatch) -> None:
+    from flextool.assistant.results import _query
+
+    # multi_year_1's node_prices_dt_e has 6 rows; a limit of 5 cells puts west's column (6 cells) over it.
+    monkeypatch.setattr(_query, "LONG_CELLS_MAX", 5)
+    out = _call(ectx, entity="west", entity_class="node", run="multi_year_1")
+    assert "prices" not in out and out["too_large"] == ["node_prices_dt_e"]
+    assert "node_prices_dt_e" not in out["not_in_run"]
+    assert _entity.TEXTS["too_large"] in out["notes"]
+
+
+def test_an_entity_gone_from_changed_inputs_is_explained_from_the_results(explain_project: Path,
+                                                                          tmp_path: Path) -> None:
+    """The input data changed after the run and no longer has the unit: its class comes from the run's results,
+    with the "input data changed" note, instead of entity_not_found."""
+    import os
+    import time
+
+    project = make_project(tmp_path / "p", explain_project / "input_sources" / "tests.sqlite")
+
+    def tables(folder: Path) -> None:
+        _capacity(folder, "multi_year", {"gone_unit": [(10.0, NAN, 0.0, NAN, 10.0)] * 3})
+
+    record_run(project, "multi_year_1", "multi_year", succeed_writing(tables))
+    db = project / "input_sources" / "tests.sqlite"
+    later = time.time() + 3600
+    os.utime(db, (later, later))
+    out = _call(make_context(project), entity="gone_unit", run="multi_year_1")
+    assert out["entity_class"] == "unit" and out["capacity"]["rows"][0] == ["p2020", 10.0, None, None, 0.0, 10.0]
+    assert any(n.startswith("The input data changed after this run") for n in out["notes"])
+    assert "inputs" not in out
+    # Without the change, a name the input data does not have is refused as before.
+    os.utime(db, (time.time() - 7200, time.time() - 7200))
+    assert "No entity named" in _refused(make_context(project), entity="gone_unit", run="multi_year_1")
+
+
+def test_one_scan_of_the_runs_per_call(ectx, monkeypatch) -> None:
+    from flextool.assistant.results import _runs
+
+    calls = []
+    real = _runs.runs
+    monkeypatch.setattr(_runs, "runs", lambda ctx: calls.append(1) or real(ctx))
+    _call(ectx, entity="coal_plant", scenario="all")
+    assert len(calls) == 1
+    calls.clear()
+    _call(ectx, entity="coal_plant", run="multi_year_1")
+    assert len(calls) == 1

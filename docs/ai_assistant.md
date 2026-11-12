@@ -692,14 +692,18 @@ Other tools keep their results short so that a project with many runs fits the a
   over each period's time steps, unweighted), its non-zero discounted cost categories (their total over the periods
   first) and its investment value. A node gets its prices, slacks, costs and, for a storage, its capacity and
   state; the units and connections that feed it are not listed. `hints` say when a result is consistent with an
-  input: what was invested equals `invest_max_total`, or `invest_max_period` in a period (only when the
-  `invest_method` uses that limit), a minimum or a retirement limit; `invest_method` allows no investment; or the
-  investment value is positive (an upper limit holds the investment back) or negative (more capacity does not pay
-  off). `not_in_run` names the tables the run has no values of the entity in. `entity_class` is needed only for a
+  input: what was invested equals `invest_max_total`, or `invest_max_period` in a period, a minimum or a
+  retirement limit (each only when the `invest_method` uses that limit); `invest_method` allows no investment; or
+  the investment value is positive (an upper limit holds the investment back) or negative in a period where
+  nothing was invested (more capacity does not pay off). `not_in_run` names the tables the run has no values of
+  the entity in, `too_large` those with too many values to summarise in one call (read them with `query_result`
+  filtered to a period). When the input data changed after the run and no longer has the entity, its class is
+  taken from the run's results. `entity_class` is needed only for a
   name that is a unit, a connection or a node at once. A long result is shortened in this order: the costs per
   period (totals kept), cost categories under 1 % of the entity's costs, maps summarised, the inputs that do not
-  concern investment, the periods between the first and the last; at the end only the capacity and the hints are
-  kept, and the notes say what was left out.
+  concern investment, the periods between the first and the last; then only the capacity and the hints are kept,
+  then the capacity's total and fewer hints ("2 more hints") with only the note on what was left out, and last
+  that note alone: the result always fits `max_chars`.
 - `list_sources` with `"scenario": "coal_chp"` gives that scenario's alternatives, highest rank first, and its base
   alternative.
 - `compare_runs` without `group_by`, `agg`, `sort` and `top_n` gives each run's totals per period and category

@@ -392,14 +392,15 @@ def check_state(state: str, all_runs: list[Run]) -> None:
 
 def select_runs(ctx: AssistantContext, *, source: str | None = None, scenario: str | None = None,
                 state: str | None = None, results_usable: bool | None = None,
-                folders: list[str] | None = None) -> list[Run]:
+                folders: list[str] | None = None, all_runs: list[Run] | None = None) -> list[Run]:
     """The runs that pass every filter given (AND), newest first (:func:`newest_first`: a page offset counts in
     that order).  *folders* holds names and ``*`` patterns; an exact name that
     is no run folder, or a pattern that matches none, is refused with the close names; a *state* that is neither
-    a known state nor one a run has, with the states there are."""
+    a known state nor one a run has, with the states there are.  *all_runs*: a scan of :func:`runs` the caller
+    made already (one scan per call)."""
     from flextool.assistant.results._query import _matching
 
-    all_runs = runs(ctx)
+    all_runs = runs(ctx) if all_runs is None else all_runs
     selected = all_runs
     if source is not None:
         wanted = project.resolve_source(ctx, source)
@@ -440,11 +441,12 @@ class ResolvedRun:
         return self.run.verified
 
 
-def find_run(ctx: AssistantContext, run: str) -> Run:
-    """The run folder *run*, a name :func:`list_runs` gives, whatever its latest run did."""
+def find_run(ctx: AssistantContext, run: str, all_runs: list[Run] | None = None) -> Run:
+    """The run folder *run*, a name :func:`list_runs` gives, whatever its latest run did (*all_runs*: a scan of
+    :func:`runs` the caller made already)."""
     if not run or any(part in run for part in ("/", "\\", "..")):
         raise ToolError("bad_run_name", run=run)
-    all_runs = runs(ctx)
+    all_runs = runs(ctx) if all_runs is None else all_runs
     found = next((r for r in all_runs if r.folder.name == run), None)
     if found is None:
         names = [r.folder.name for r in all_runs]
@@ -454,10 +456,10 @@ def find_run(ctx: AssistantContext, run: str) -> Run:
     return found
 
 
-def resolve_run(ctx: AssistantContext, run: str) -> ResolvedRun:
+def resolve_run(ctx: AssistantContext, run: str, all_runs: list[Run] | None = None) -> ResolvedRun:
     """The run folder *run* (a name from :func:`list_runs`) when its results may be read; else the message of its
-    ``unusable_code`` (O1: never an earlier run's files)."""
-    found = find_run(ctx, run)
+    ``unusable_code`` (O1: never an earlier run's files).  *all_runs*: as :func:`find_run`."""
+    found = find_run(ctx, run, all_runs)
     status = found.status
     if not found.entry["results_usable"]:
         code = found.entry["unusable_code"] or "failed"
