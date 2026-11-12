@@ -105,6 +105,8 @@ The stochastic data should be given so that it can serve the rolling structure: 
 
 For the *solve* parameter `stochastic_branches` this means an `analysis_time` at each roll start (here t0001, t0025, t0049, t0073, t0097, t0121 and t0145).
 
+**Look-ahead periods (current behaviour).** A look-ahead period of a roll whose first time step is the `analysis_time` of a later roll reads that later forecast where one is given; otherwise it reads the forecast given at the roll's own fan start.
+
 Each roll fans at its first step, so its committed jump lies inside the fan. In this example branch *realized* is designated `realized: yes` at every roll start: FlexTool runs a realization dispatch after each stochastic roll over that roll's jump, with the designated branch's data, and the next roll continues from the realization dispatch's end state (storage, units online, ramps). Without a designation the jump is realized only for the families tied across the forecasts (units online and reserves); a model with storage (as here), ramp limits or cumulative caps then stops with a configuration error (see "Stochastics over multiple periods"). A fan that opens only in a roll's look-ahead needs no designation: the next roll continues from the committed steps before the reveal. The `solve` parameter `dispatch_realization_method` sets how the realization runs:
 
 - `within_solve` (default): no second solve unless a branch is designated `realized: yes`, which adds the realization dispatch as described above (with `stochastic_invest_method = none`; under `recourse` a warning says that no realization dispatch is added).

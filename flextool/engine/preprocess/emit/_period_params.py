@@ -173,8 +173,8 @@ def _check_stochastic_inflow(pbt_inflow: dict[tuple[str, str, str, str], float],
         return
     anchor_members = _anchor_fan_members(solve_data_dir / "period__branch.csv", provider=provider)
     _check_ungrouped_reads_have_realized_branch(keyed, 1, stoch_node, anchor_members, tb_for_d, ts_for_d,
-                                                fan_for_d=fan_for_d)
-    _check_pbt_branch_coverage(keyed, 1, anchor_members, tb_for_d, ts_for_d, fan_for_d)
+                                                fan_for_d=fan_for_d, kind="node")
+    _check_pbt_branch_coverage(keyed, 1, anchor_members, tb_for_d, ts_for_d, fan_for_d, kind="node")
 
 
 def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
@@ -322,6 +322,8 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
     _check_stochastic_inflow(pbt_inflow, stoch_node, eligible_nodes, solve_data_dir,
                              tb_for_d, ts_for_d, fan_for_d, provider=provider)
 
+    # ts tiers per period: d's own first step, else the fan start (per value cell).
+    tiers_by_d = {d: ts_tiers(d, ts_for_d, fan_for_d) for d in dict.fromkeys(d for d, _t in dt)}
     nodes_col: list[str] = []
     periods_col: list[str] = []
     times_col: list[str] = []
@@ -335,8 +337,7 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
         has_use_original = (n, "use_original") in inflow_method_pairs
         for (d, t) in dt:
             emit_v: float | None = None
-            # ts tiers: d's own first step, else the fan start (per value cell).
-            tiers = ts_tiers(d, ts_for_d, fan_for_d)
+            tiers = tiers_by_d[d]
             # Branch 1: stochastic fold-in.
             if is_stoch:
                 emit_v = fold_over_tiers(pbt_inflow, (n,), [tb_for_d.get(d, ())], tiers, t)
@@ -811,6 +812,8 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
             if c0 in stoch_processes and c2:
                 stoch_profile.add(c2)
 
+    # ts tiers per period: d's own first step, else the fan start (per value cell).
+    tiers_by_d = {d: ts_tiers(d, ts_for_d, fan_for_d) for d in dict.fromkeys(d for d, _t in dt)}
     profiles_col: list[str] = []
     periods_col: list[str] = []
     times_col: list[str] = []
@@ -819,8 +822,7 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
         is_stoch = p in stoch_profile
         for (d, t) in dt:
             cell: str | None = None
-            # ts tiers: d's own first step, else the fan start (per value cell).
-            tiers = ts_tiers(d, ts_for_d, fan_for_d)
+            tiers = tiers_by_d[d]
             # Branch 1: stochastic fold-in.
             if is_stoch:
                 v = fold_over_tiers(pbt_profile, (p,), [tb_for_d.get(d, ())], tiers, t)

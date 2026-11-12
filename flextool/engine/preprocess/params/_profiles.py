@@ -648,10 +648,10 @@ def _profile_stochastic_lf(workdir: Path | None,
         for row in pbt.iter_rows(named=True)
     }
     _check_ungrouped_reads_have_realized_branch(pbt_dict, 1, frozenset(stoch_set), anchor_members, tb_for_d,
-                                                ts_for_d, fan_for_d=fan_for_d)
+                                                ts_for_d, fan_for_d=fan_for_d, kind="profile")
     if stoch_active:
         _check_pbt_branch_coverage({k: v for k, v in pbt_dict.items() if k[0] in stoch_active}, 1, anchor_members,
-                                   tb_for_d, ts_for_d, fan_for_d)
+                                   tb_for_d, ts_for_d, fan_for_d, kind="profile")
 
     # Each fold reads, per value cell, the first analysis-time tier with a
     # value: d's own first step, else the fan start (``ts_tiers``).  The tier

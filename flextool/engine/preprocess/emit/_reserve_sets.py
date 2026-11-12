@@ -285,17 +285,20 @@ def _resolve_pdtReserve(
     pe_for_d: dict[str, list[str]],
     g_stoch: bool,
     fan_for_d: "dict[str, list[str]] | None" = None,
+    tiers_by_d: "dict[str, list[list[str]]] | None" = None,
 ) -> float:
     """4-branch fallback mirroring ``pdtReserve_upDown_group``'s mod body.
 
     Branches mirror ``pdtProcess``'s branches 1, 2, 4, 5 (no period axis,
     no def1 — and the scalar branch returns the table's default of 0
     for ``reservation`` when the (r, ud, g) row is missing).  *fan_for_d*
-    (``branch_time_start``) is the fan start a fold cell falls back to.
+    (``branch_time_start``) is the fan start a fold cell falls back to; *tiers_by_d* (period ->
+    :func:`ts_tiers`) lets a caller compute the tiers once per period instead of once per cell.
     """
-    fan_for_d = fan_for_d or {}
     # Branch 1: stochastic + outer-d's tb; ts = d's own first step, else the fan start (per value cell).
-    tiers = ts_tiers(d, ts_for_d, fan_for_d)
+    tiers = tiers_by_d.get(d) if tiers_by_d is not None else None
+    if tiers is None:
+        tiers = ts_tiers(d, ts_for_d, fan_for_d or {})
     if g_stoch:
         v = fold_over_tiers(pbt, (r, ud, g, param), [tb_for_d.get(d, ())], tiers, t)
         if v is not None:
@@ -371,10 +374,11 @@ def derive_pdtReserve_upDown_group(
     pbt_in_use = {k: v for k, v in pbt.items() if k[:3] in rug_set}
     _check_ungrouped_reads_have_realized_branch(
         pbt_in_use, 3, groups_stoch, anchor_members,
-        tb_for_d, ts_for_d, member_pos=2, fan_for_d=fan_for_d,
+        tb_for_d, ts_for_d, member_pos=2, fan_for_d=fan_for_d, kind="reserve",
     )
-    _check_pbt_branch_coverage(pbt_in_use, 3, anchor_members, tb_for_d, ts_for_d, fan_for_d)
+    _check_pbt_branch_coverage(pbt_in_use, 3, anchor_members, tb_for_d, ts_for_d, fan_for_d, kind="reserve")
 
+    tiers_by_d = {d: ts_tiers(d, ts_for_d, fan_for_d) for d in dict.fromkeys(d for d, _t in dt)}
     rows: list[tuple] = []
     for (r, ud, g) in rug:
         g_stoch = g in groups_stoch
@@ -388,6 +392,7 @@ def derive_pdtReserve_upDown_group(
                     pe_for_d=pe_for_d,
                     g_stoch=g_stoch,
                     fan_for_d=fan_for_d,
+                    tiers_by_d=tiers_by_d,
                 )
                 rows.append((r, ud, g, param, d, t, repr(float(val))))
     return _to_utf8_frame(

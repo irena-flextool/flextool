@@ -377,6 +377,38 @@ def _anchor_fan_members(period_branch_csv: Path,
     return out
 
 
+# The entity kinds of the stochastic-time input checks below (``kind=``): how a message names the entity
+# and how the user puts it in a group with ``include_stochastics``.
+def _subject(kind: str, ent: tuple) -> str:
+    if kind == "reserve":
+        reserve, up_down, group = ent
+        return f"reserve '{reserve}' ({up_down}) of group '{group}'"
+    if kind == "process_side":
+        process, side = ent
+        return f"unit or connection '{process}' ({side})"
+    return f"{_KIND_NAME[kind]} '{ent[0]}'"
+
+
+_KIND_NAME = {"node": "node", "process": "unit or connection", "profile": "profile"}
+
+_NOT_GROUPED = {
+    "node": "The node is not in a group with include_stochastics",
+    "process": "The unit or connection is not in a group with include_stochastics",
+    "process_side": "The unit or connection is not in a group with include_stochastics",
+    "profile": "No unit, connection or node that uses this profile is in a group with include_stochastics",
+    "reserve": "The group of this reserve does not have include_stochastics",
+}
+
+_GROUP_FIX = {
+    "node": lambda ent: f"Add node '{ent[0]}' to a group that has include_stochastics",
+    "process": lambda ent: f"Add '{ent[0]}' to a group that has include_stochastics",
+    "process_side": lambda ent: f"Add '{ent[0]}' to a group that has include_stochastics",
+    "profile": lambda ent: (f"Add a unit, connection or node that uses profile '{ent[0]}' to a group that has "
+                            "include_stochastics"),
+    "reserve": lambda ent: f"Set include_stochastics on group '{ent[2]}'",
+}
+
+
 def _check_pbt_branch_coverage(
     pbt: dict[tuple, float],
     n_ent: int,
@@ -384,6 +416,8 @@ def _check_pbt_branch_coverage(
     tb_for_d: dict[str, list[str]],
     ts_for_d: dict[str, list[str]],
     fan_for_d: "dict[str, list[str]] | None" = None,
+    *,
+    kind: str,
 ) -> None:
     """Raise when a pbt entity/param authors SOME of a reveal cohort's active branches but not ALL
     of them -- the engine must never silently fall back to the class default for a branch an entity
@@ -393,7 +427,8 @@ def _check_pbt_branch_coverage(
     active-branch roster is the fan members' own tokens (*anchor_members* / *tb_for_d*); a roster of 0 or
     1 members can never be "partial", so those cohorts are skipped.  The cohort's time starts are its
     members' first steps (the period label has no steps of its own) and the fan start they fall back to
-    (*fan_for_d*, ``branch_time_start``).
+    (*fan_for_d*, ``branch_time_start``).  *kind* (``node`` / ``process`` / ``process_side`` / ``profile`` /
+    ``reserve``) names the entity in the message.
     """
     fan_for_d = fan_for_d or {}
     roster_by_ts: dict[str, frozenset[str]] = {}
@@ -419,10 +454,10 @@ def _check_pbt_branch_coverage(
         if branches & tokens and branches < tokens:
             missing = sorted(tokens - branches)
             raise FlexToolConfigError(
-                f"{'/'.join(ent)}.{param}: a stochastic-time value authors branch(es) "
-                f"{sorted(branches & tokens)} of this reveal but is missing {missing} -- give every "
-                "active forecast branch a value, or none; the engine never silently substitutes the "
-                "class default for a branch left out."
+                f"{_subject(kind, ent)}, parameter '{param}': the forecasts that start at time step '{ts}' "
+                f"have values for {sorted(branches & tokens)} but are missing {missing}.  Give a value for "
+                "every forecast of the solve, or for none of them: FlexTool does not fill a missing forecast "
+                "with the default value.  Check which alternative of the scenario gives this value."
             )
 
 
@@ -436,6 +471,7 @@ def _check_ungrouped_reads_have_realized_branch(
     *,
     member_pos: int = 0,
     fan_for_d: "dict[str, list[str]] | None" = None,
+    kind: str,
 ) -> None:
     """Raise when an entity outside every ``include_stochastics`` group authors a stochastic-time value
     that a forecasts-only fan of this solve would read.
@@ -449,7 +485,8 @@ def _check_ungrouped_reads_have_realized_branch(
     is tested on ``key[member_pos]``: the process (``0``) for the per-side tables, the group (``2``) for the
     ``(reserve, upDown, group)`` reservation table.  The fan's analysis times are its
     members' first steps (the period label has no steps of its own) and the fan start they fall back to
-    (*fan_for_d*, ``branch_time_start``).
+    (*fan_for_d*, ``branch_time_start``).  *kind* (as for :func:`_check_pbt_branch_coverage`) names the entity
+    and the way to put it in a group with ``include_stochastics`` in the message.
     """
     fan_for_d = fan_for_d or {}
     for anchor, members in anchor_members.items():
@@ -463,12 +500,12 @@ def _check_ungrouped_reads_have_realized_branch(
         if ungrouped:
             ent, param = ungrouped[0]
             raise FlexToolConfigError(
-                f"{'/'.join(ent)}.{param}: a stochastic-time (rank-3) value of an entity in no "
-                f"include_stochastics group, read in the forecasts-only fan of period {anchor!r}.  Outside "
-                "such a group the value of the realized branch is read on every branch period, and no branch "
-                "of this fan is designated realized: yes.  Add the entity to an include_stochastics group (for a "
-                "reservation, set include_stochastics on its reserve group; each forecast then reads its own "
-                "branch), designate a realized: yes branch, or give the parameter a non-stochastic value."
+                f"{_subject(kind, ent)}, parameter '{param}': the value has forecasts, and the solve reads it "
+                f"in the forecasts that start in period '{anchor}'.  {_NOT_GROUPED[kind]}, so every forecast "
+                "reads the value of the forecast marked realized: yes, but no forecast of this solve is marked "
+                f"realized: yes.  {_GROUP_FIX[kind](ent)} (then each forecast reads its own value), mark one "
+                f"forecast realized: yes in the solve's stochastic_branches, or give '{param}' a value without "
+                "forecasts.  Check which alternative of the scenario gives this value."
             )
 
 
@@ -674,8 +711,9 @@ class PdtLookup:
         self._tiers = {d: ts_tiers(d, self._ts_for_d, self._fan_for_d)
                        for d in dict.fromkeys([*self._ts_for_d, *self._fan_for_d])}
         anchor_members = _anchor_fan_members(period_branch_csv, provider=provider)
+        kind = "node" if Path(group_entity_csv).name == "group__node.csv" else "process"
         _check_pbt_branch_coverage(self._pbt, 1, anchor_members, self._tb_for_d, self._ts_for_d,
-                                   self._fan_for_d)
+                                   self._fan_for_d, kind=kind)
         self._pd = inherit_pd_branch_periods(self._pd, self._pe_for_d, key_cols=["e", "param", "d"],
                                              period_pos=2, periods=list(self._ts_for_d))
         self._pdt = inherit_pd_branch_periods(self._pdt, self._pe_for_d, key_cols=["e", "param", "d", "t"],
@@ -691,7 +729,8 @@ class PdtLookup:
                 if c0 in groups_stoch and c1:
                     self._stoch_entity.add(c1)
         _check_ungrouped_reads_have_realized_branch(self._pbt, 1, self._stoch_entity, anchor_members,
-                                                    self._tb_for_d, self._ts_for_d, fan_for_d=self._fan_for_d)
+                                                    self._tb_for_d, self._ts_for_d, fan_for_d=self._fan_for_d,
+                                                    kind=kind)
         self._param_def1 = param_def1
         self._time_first = time_first_priority
         self._class_defaults = class_default_values or {}
@@ -783,7 +822,7 @@ class PdtLookupPerSide:
                        for d in dict.fromkeys([*self._ts_for_d, *self._fan_for_d])}
         anchor_members = _anchor_fan_members(period_branch_csv, provider=provider)
         _check_pbt_branch_coverage(self._pbt, 2, anchor_members, self._tb_for_d, self._ts_for_d,
-                                   self._fan_for_d)
+                                   self._fan_for_d, kind="process_side")
         self._pd = inherit_pd_branch_periods(self._pd, self._pe_for_d,
                                              key_cols=["p", "side", "param", "d"], period_pos=3,
                                              periods=list(self._ts_for_d))
@@ -798,7 +837,8 @@ class PdtLookupPerSide:
                 if c0 in groups_stoch and c1:
                     self._stoch_process.add(c1)
         _check_ungrouped_reads_have_realized_branch(self._pbt, 2, self._stoch_process, anchor_members,
-                                                    self._tb_for_d, self._ts_for_d, fan_for_d=self._fan_for_d)
+                                                    self._tb_for_d, self._ts_for_d, fan_for_d=self._fan_for_d,
+                                                    kind="process_side")
 
     def get(self, p: str, side: str, param: str, d: str, t: str) -> float:
         tiers = self._tiers.get(d, ())

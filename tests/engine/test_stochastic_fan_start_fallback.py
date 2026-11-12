@@ -222,7 +222,12 @@ def test_rolling_lookahead_reads_roll_fan_start(tmp_path_factory, monkeypatch) -
     """Rolling, jump 8 h, horizon 12 h, NP=3: roll 1 = p1..p3 fanning at t0001, roll 2 = p3 fanning at
     t0009.  The t0001 forecast (0.1·i) covers t0001..t0012, the t0009 forecast (0.01·i) t0009..t0012.
     Roll 1's look-ahead p2 has no forecast at its own first step t0005, so it reads the roll's fan start
-    t0001 (high 0.5..0.8, low 0.25..0.40); roll 2's p3 reads its own t0009 forecast (0.09..0.12)."""
+    t0001 (high 0.5..0.8, low 0.25..0.40); roll 2's p3 reads its own t0009 forecast (0.09..0.12).  Roll 1's
+    look-ahead p3 starts at t0009, roll 2's analysis time, so it reads the t0009 forecast too (high 0.09..0.12,
+    low 0.045..0.06), not the t0001 one.
+
+    The recorder is set with ``raising=False`` and the values are checked before the recorded rows, so on code
+    without ``emit_branch_time_start`` the test fails on the values (p2 read 0), not on the patch."""
     n = 12
     per = {b: {"t0001": {t: v * _FACTOR[b] for t, v in _series(n).items()},
                "t0009": {t: v * _FACTOR[b] for t, v in _series(n, 0.01, offset=8).items()}}
@@ -230,13 +235,13 @@ def test_rolling_lookahead_reads_roll_fan_start(tmp_path_factory, monkeypatch) -
     fans = [*_two_forecasts("p1", "t0001"), *_two_forecasts("p3", "t0009")]
     from flextool.engine.preprocess.emit import _solve_writers
     emitted: list[list[tuple[str, str]]] = []
-    real_emit = _solve_writers.emit_branch_time_start
+    real_emit = getattr(_solve_writers, "emit_branch_time_start", None)
 
     def _record(rows, *, provider):
         emitted.append(list(rows))
         real_emit(rows, provider=provider)
 
-    monkeypatch.setattr(_solve_writers, "emit_branch_time_start", _record)
+    monkeypatch.setattr(_solve_writers, "emit_branch_time_start", _record, raising=False)
     steps = _run(tmp_path_factory, n_periods=3, fans=fans, profile=_stochastic(per), rolling=(8.0, 12.0))
     names = list(steps)
     assert len(names) == 2, names
@@ -246,6 +251,10 @@ def test_rolling_lookahead_reads_roll_fan_start(tmp_path_factory, monkeypatch) -
     assert _period(c1, "p2_high") == pytest.approx([0.5, 0.6, 0.7, 0.8])
     assert _period(c1, "p2_low") == pytest.approx([0.25, 0.30, 0.35, 0.40])
     assert _period(c2, "p3_high") == pytest.approx([0.09, 0.10, 0.11, 0.12])
+    # Current behaviour, pending an owner decision on the precedence: roll 1's look-ahead p3 reads the
+    # forecast authored at its own first step t0009 (roll 2's analysis time), not roll 1's fan start t0001.
+    assert _period(c1, "p3_high") == pytest.approx([0.09, 0.10, 0.11, 0.12])
+    assert _period(c1, "p3_low") == pytest.approx([0.045, 0.05, 0.055, 0.06])
     assert [sorted({step for _d, step in rows}) for rows in emitted] == [["t0001"], ["t0009"]]
 
 
@@ -276,8 +285,11 @@ def test_ungrouped_stochastic_inflow_without_realized_is_an_error(tmp_path_facto
     """Node ``s`` is in no include_stochastics group, its inflow is stochastic and the fan has no
     realized: yes branch: a configuration error naming the node and inflow (was 0 even in p1)."""
     infl = _forecast({"t0001": {t: -0.5 for t in _steps(8)}})
-    with pytest.raises(FlexToolConfigError, match=r"s\.inflow"):
+    with pytest.raises(FlexToolConfigError, match=r"node 's', parameter 'inflow'.*include_stochastics") as err:
         _run(tmp_path_factory, n_periods=2, fans=_two_forecasts("p1", "t0001"), inflow=infl)
+    message = str(err.value)
+    assert "Add node 's' to a group that has include_stochastics" in message
+    assert "reserv" not in message  # the hint fits the parameter: no reservation advice for an inflow
 
 
 # ── coverage checks (own ∪ fan; inflow and reservation) ────────────────
@@ -316,7 +328,7 @@ def test_inflow_partial_branch_coverage_is_an_error(tmp_path) -> None:
         "solve_data/node__inflow_method": pl.DataFrame({"node": ["s"], "method": ["use_original"]}),
     })
     for derive in (derive_pdtNodeInflow, derive_pdtNodeInflow_vectorized):
-        with pytest.raises(FlexToolConfigError, match=r"s\.inflow.*missing \['low'\]"):
+        with pytest.raises(FlexToolConfigError, match=r"node 's', parameter 'inflow'.*missing \['low'\]"):
             derive(tmp_path / "input", tmp_path / "solve_data", provider=provider)
 
 
@@ -354,7 +366,8 @@ def _reserve_provider(branches: list[str], values: list[float]) -> FlexDataProvi
 def test_reservation_partial_branch_coverage_is_an_error(tmp_path) -> None:
     """A stochastic reservation authoring only branch high of the fan is an input error."""
     provider = _reserve_provider(["high"], [3.0])
-    with pytest.raises(FlexToolConfigError, match=r"r/up/g\.reservation.*missing \['low'\]"):
+    with pytest.raises(FlexToolConfigError,
+                       match=r"reserve 'r' \(up\) of group 'g', parameter 'reservation'.*missing \['low'\]"):
         derive_pdtReserve_upDown_group(tmp_path / "input", tmp_path / "solve_data", provider=provider)
 
 

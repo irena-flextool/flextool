@@ -758,10 +758,12 @@ def branch_time_start_rows(
     """``(period, fan start step)`` rows of a solve's fan.
 
     *branch_start_time* is the solve's ``(fan period, fan step)`` (one fan per solve, roll and nested
-    inner solve; ``None`` without one).  Every anchor period from the fan's period onwards (the order of
-    their ``(period, period)`` self rows in *period__branch*) and each of its ``<period>_<branch>`` copies
-    gets one row; a pre-reveal trunk period gets none.  A branch period whose own first step authors no
-    stochastic-time value for a cell reads the forecast authored at this step.
+    inner solve; ``None`` without one).  Every anchor period from the fan's period onwards and each of its
+    ``<period>_<branch>`` copies gets one row; a pre-reveal trunk period gets none.  Row order: the anchors in
+    the order they first appear in the period column of *period__branch*, each anchor followed by its copies
+    in their *period__branch* row order (the anchor's own ``(period, period)`` row, if any, adds no second
+    row).  A branch period whose own first step authors no stochastic-time value for a cell reads the
+    forecast authored at this step.
     """
     if branch_start_time is None:
         return []
