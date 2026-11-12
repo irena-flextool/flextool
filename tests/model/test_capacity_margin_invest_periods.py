@@ -27,7 +27,7 @@ FIXTURES = REPO / "tests" / "fixtures"
 TESTS_JSON = FIXTURES / "tests.json"
 STOCHASTICS_JSON = FIXTURES / "stochastics.json"
 RECOURSE_JSON = FIXTURES / "stoch_two_period_invest.json"
-OUTPUT_CONFIG = str(REPO / "templates" / "default_plots.yaml")
+OUTPUT_CONFIG = str(REPO / "flextool" / "schemas" / "default_plots.yaml")
 BIG = 100000.0
 
 

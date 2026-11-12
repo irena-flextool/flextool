@@ -80,7 +80,7 @@ done
 2. Re-export the JSON fixture:
    `python tests/db_utils.py export tests/tests.sqlite tests/fixtures/tests.json`
 3. Add an entry to `tests/scenarios.yaml` (2-3 CSVs from
-   `templates/default_plots.yaml` that exercise the feature).
+   `flextool/schemas/default_plots.yaml` that exercise the feature).
 4. Generate goldens: `pytest tests/test_scenarios.py --regenerate my_new_scenario`
 5. Inspect `tests/expected/my_new_scenario/` and commit `tests.json`
    and the new goldens together.

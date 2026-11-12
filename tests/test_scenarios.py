@@ -34,7 +34,7 @@ import yaml
 TEST_DIR = Path(__file__).parent
 EXPECTED_DIR = TEST_DIR / "expected"
 REPO_ROOT = TEST_DIR.parent
-OUTPUT_CONFIG = str(REPO_ROOT / "templates" / "default_plots.yaml")
+OUTPUT_CONFIG = str(REPO_ROOT / "flextool" / "schemas" / "default_plots.yaml")
 
 if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
@@ -362,7 +362,7 @@ def test_scenario(
             actual_path = workdir / "output_csv" / scenario / csv_name
             assert actual_path.exists(), (
                 f"Expected output not found: {actual_path}\n"
-                f"Check that '{csv_name}' is a valid filename from templates/default_plots.yaml"
+                f"Check that '{csv_name}' is a valid filename from flextool/schemas/default_plots.yaml"
             )
             expected_path = EXPECTED_DIR / scenario / csv_name
             expected_path.parent.mkdir(parents=True, exist_ok=True)
@@ -378,7 +378,7 @@ def test_scenario(
 
             assert actual_path.exists(), (
                 f"Expected output not found: {actual_path}\n"
-                f"Check that '{csv_name}' is a valid filename from templates/default_plots.yaml"
+                f"Check that '{csv_name}' is a valid filename from flextool/schemas/default_plots.yaml"
             )
             assert expected_path.exists(), (
                 f"No golden file at {expected_path.relative_to(REPO_ROOT)}\n"

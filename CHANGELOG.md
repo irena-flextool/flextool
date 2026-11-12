@@ -617,11 +617,13 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   HiGHS default lacked `parallel=off`, which FlexTool sets anyway). A seeded `.opt` file no longer takes the
   template's file permissions, so a read-only installation gives an editable file.
 - **Investment duals were wrong when autoscaling rescaled the model.** When autoscale's per-quantity scaling
-  (Layer 2) rescaled an investment model solved in the FlexTool process (the default; not `--save-memory`), the
-  reduced costs of the investment variables were read back in scaled units, so `v_dual_invest_unit`,
+  (Layer 2) rescaled an investment model that HiGHS solved inside the FlexTool process (the default), the reduced
+  costs of the investment variables were read in the rescaled units, so `v_dual_invest_unit`,
   `v_dual_invest_connection`, `v_dual_invest_node` and the `dual_invest_effective_*` outputs built from them were
-  wrong without a message. They are now in the model's own units; other results are unchanged. The solver also
-  keeps a valid starting basis after the unscale (no effect on current runs).
+  wrong without a message. They are now in the model's own units; other results are unchanged. Runs where HiGHS
+  solves in a separate process (`--save-memory`, or warm start off) and commercial solvers were not affected.
+  A re-solve of the same model after a data change now starts from the previous solution's basis (no effect on
+  current runs).
 - **The memory-saving solve could put solution values on the wrong variables.** With `--save-memory`, or with
   warm start off, HiGHS solves the model from an MPS file in a separate process. When the model had a variable
   that no constraint and no cost used, the values read back after it were shifted onto the next variables, so

@@ -219,7 +219,7 @@ def _solve_and_write(db_url, scenario, work, solver_dir, *, subdir, write_method
                               solver_config_dir=solver_dir, warm=True, keep_solutions=True)
     last = next(reversed(steps.values()))
     write_outputs(scenario_name=scenario, output_location=str(work), subdir=subdir,
-                  output_config_path=str(REPO / "templates" / "default_plots.yaml"), write_methods=write_methods,
+                  output_config_path=str(REPO / "flextool" / "schemas" / "default_plots.yaml"), write_methods=write_methods,
                   fallback_output_location=str(work), raw_output_dir=str(work / "output_raw"),
                   solution=last.solution, solve_name=last.solve_name,
                   solve_steps=[(s.solve_name, s.flex_data, s.effective_solution) for s in steps.values()],
@@ -314,7 +314,7 @@ def test_replay_gives_the_same_units(case, tmp_path) -> None:
     replay = tmp_path / "replay"
     shutil.copytree(case["work"] / "output_parquet", replay / "output_parquet")
     write_outputs(scenario_name=SCENARIO, output_location=str(replay), subdir=SCENARIO,
-                  output_config_path=str(REPO / "templates" / "default_plots.yaml"), write_methods=["csv"],
+                  output_config_path=str(REPO / "flextool" / "schemas" / "default_plots.yaml"), write_methods=["csv"],
                   fallback_output_location=str(replay), read_parquet_dir=True)
     replayed = {(r["file"], r["row"], r["header_1"], r["header_2"]): r["unit"]
                 for r in _units_csv(replay / "output_csv" / SCENARIO)}
@@ -376,7 +376,7 @@ def test_replay_reads_the_footers(case, tmp_path) -> None:
     shutil.copytree(case["work"] / "output_parquet", replay / "output_parquet")
     (replay / "output_parquet" / SCENARIO / UNIT_CONTEXT_FILE).unlink(missing_ok=True)
     write_outputs(scenario_name=SCENARIO, output_location=str(replay), subdir=SCENARIO,
-                  output_config_path=str(REPO / "templates" / "default_plots.yaml"), write_methods=["csv"],
+                  output_config_path=str(REPO / "flextool" / "schemas" / "default_plots.yaml"), write_methods=["csv"],
                   fallback_output_location=str(replay), read_parquet_dir=True)
     units = _units_csv(replay / "output_csv" / SCENARIO)
     desal = [r["unit"] for r in units if r["file"] == "unit__outputNode__dt.csv" and r["header_1"] == "med_desal"

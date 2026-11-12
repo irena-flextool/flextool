@@ -64,7 +64,7 @@ import pytest
 
 TEST_DIR = Path(__file__).parent
 REPO_ROOT = TEST_DIR.parent
-OUTPUT_CONFIG = str(REPO_ROOT / "templates" / "default_plots.yaml")
+OUTPUT_CONFIG = str(REPO_ROOT / "flextool" / "schemas" / "default_plots.yaml")
 
 if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))

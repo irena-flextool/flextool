@@ -27,7 +27,7 @@ import pytest
 
 from tests.engine._unit_db import FLEXTOOL_ROOT, b64, make_db
 
-OUTPUT_CONFIG = FLEXTOOL_ROOT / "templates" / "default_plots.yaml"
+OUTPUT_CONFIG = FLEXTOOL_ROOT / "flextool" / "schemas" / "default_plots.yaml"
 LH2_FIXTURE_JSON = FLEXTOOL_ROOT / "tests" / "fixtures" / "lh2_three_region.json"
 FLAG_ON = ["model", "flexTool", "output_horizon", b64("yes", "str")]
 

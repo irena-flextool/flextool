@@ -137,7 +137,7 @@ def test_scenario_csv_sidecars(test_db_url: str, test_solver_config_dir: Path, t
     last = next(reversed(steps.values()))
     write_outputs(
         scenario_name=SCENARIO, output_location=str(tmp_path), subdir=SCENARIO,
-        output_config_path=str(REPO_ROOT / "templates" / "default_plots.yaml"),
+        output_config_path=str(REPO_ROOT / "flextool" / "schemas" / "default_plots.yaml"),
         fallback_output_location=str(tmp_path), raw_output_dir=str(tmp_path / "output_raw"),
         write_methods=["csv"], solution=last.solution, solve_name=last.solve_name,
         solve_steps=[(s.solve_name, s.flex_data, s.effective_solution) for s in steps.values()],

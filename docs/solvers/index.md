@@ -50,7 +50,7 @@ A handful of options that used to be DB parameters are now controlled by
 **CLI flags** on `flextool` (they apply to the whole run rather than per
 solve):
 
-| CLI flag               | Replaces former DB param | Values / notes                                  |
+| CLI flag               | Former DB param (removed in v56; a stored value was dropped) | Values / notes |
 |------------------------|--------------------------|-------------------------------------------------|
 | `--solver-time-limit`  | `solver_time_limit`      | Seconds per solve, on every solver (HiGHS `time_limit`, Gurobi `TimeLimit`, CPLEX `timelimit`, Xpress `MAXTIME`, COPT `TimeLimit`); unset means no limit. See [Time limit](#time-limit). |
 | `--solver-mip-gap`     |                          | Relative MIP gap of every solve, on every solver (HiGHS `mip_rel_gap`, Gurobi `MIPGap`, CPLEX `mip tolerances mipgap`, Xpress `MIPRELSTOP`, COPT `RelGap`); wins over the solve's `solver_mip_gap` |

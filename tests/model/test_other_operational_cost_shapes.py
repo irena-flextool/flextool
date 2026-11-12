@@ -46,7 +46,7 @@ from tests.model.test_rolling_period_maps import (
 
 REPO = Path(__file__).resolve().parents[2]
 STOCHASTICS_JSON = REPO / "tests" / "fixtures" / "stochastics.json"
-OUTPUT_CONFIG = str(REPO / "templates" / "default_plots.yaml")
+OUTPUT_CONFIG = str(REPO / "flextool" / "schemas" / "default_plots.yaml")
 PERIOD = "period1"
 T48 = [f"t{i:04d}" for i in range(1, 49)]
 T8760 = [f"t{i:04d}" for i in range(1, 8761)]
