@@ -526,6 +526,16 @@ def _highs_sol_status(sol_path: Path) -> str:
     return "OTHER"
 
 
+def _read_highs_mip_gap(gap_path: Path) -> float | None:
+    """The relative MIP gap the HiGHS child wrote (``--mip-gap``), else ``None`` when the file is missing or
+    unreadable.  A non-finite value (an LP, or no incumbent) is returned as is; the acceptance check treats it
+    as "no gap"."""
+    try:
+        return float(gap_path.read_text().strip())
+    except (OSError, ValueError):
+        return None
+
+
 class _SolHighsShim:
     """Duck-typed stand-in for ``highspy.Highs`` for the cold-path writers.
 
@@ -1889,6 +1899,7 @@ def _solve_highs_subprocess(
     mps_path = out_dir / f"{safe_name}.mps"
     sol_path = out_dir / f"{safe_name}.sol"
     opts_path = out_dir / f"{safe_name}.opt"
+    gap_path = out_dir / f"{safe_name}.mipgap"
 
     # Warm-start basis-cache slots (populated only with warm start on;
     # declared here so the ``finally`` cleanup can reference them safely).
@@ -1940,6 +1951,7 @@ def _solve_highs_subprocess(
             "--mps", str(mps_path),
             "--solution", str(sol_path),
             "--options", str(opts_path),
+            "--mip-gap", str(gap_path),
             # The run's thread budget sizes the child's polars pool (read before polars is imported); the
             # child's HiGHS threads come from the options file.
             "--threads", str(child_threads),
@@ -2190,10 +2202,12 @@ def _solve_highs_subprocess(
         # limit with a feasible primal is ``TIME_LIMIT``).  The acceptance
         # check records it as the solve's model status.
         sol.shim_status = "OPTIMAL" if optimal else _highs_sol_status(sol_path)
+        # The gap HiGHS stopped at, named in the time-limit warning.
+        sol.shim_mip_gap = _read_highs_mip_gap(gap_path) if sol.shim_status == "TIME_LIMIT" else None
         return sol
     finally:
         if cleanup:
-            paths = [mps_path, sol_path, opts_path]
+            paths = [mps_path, sol_path, opts_path, gap_path]
             # The warm-start stats sidecar and A/B probe throwaways live
             # inside ``out_dir`` — sweep them too so the ``rmdir`` below
             # succeeds.  The cache itself (``warm_cached`` / ``warm_tmp_bas``)

@@ -358,3 +358,57 @@ def test_save_memory_time_limit_status_mip_kept_lp_rejected(tmp_path: Path, monk
     np.testing.assert_allclose(lp.col_value, [0.0, 0.0])
     rejected = classify_acceptance(lp, ranges_post=None, solve_name="s")
     assert not rejected.accepted and "linear problem" in rejected.message
+
+
+def test_save_memory_time_limit_names_the_gap_the_child_wrote(tmp_path: Path, monkeypatch) -> None:
+    """``--save-memory``: the HiGHS child writes ``info.mip_gap`` to the ``--mip-gap`` file and the parent
+    names it in the time-limit warning.  The child is the time-limit stub of the test above; it writes the gap
+    0.002286 (printed ``0.2286%``).  When the child writes no gap file the warning points to the solver log."""
+    import highspy
+
+    from flextool.engine.solve._acceptance import classify_acceptance
+
+    def fake_child(gap_text: str | None):
+        def run(cmd, *args, **kwargs):
+            mps, sol_path = cmd[cmd.index("--mps") + 1], cmd[cmd.index("--solution") + 1]
+            h = highspy.Highs()
+            h.setOptionValue("output_flag", False)
+            h.readModel(mps)
+            h.setOptionValue("time_limit", 0.0)
+            incumbent = highspy.HighsSolution()
+            incumbent.col_value = [1.0, 1.0]
+            h.setSolution(incumbent)
+            h.run()
+            h.writeSolution(sol_path, 0)
+            if gap_text is not None:
+                Path(cmd[cmd.index("--mip-gap") + 1]).write_text(gap_text)
+            return subprocess.CompletedProcess(cmd, 1)
+        return run
+
+    monkeypatch.setattr(sps.subprocess, "run", fake_child("0.002286"))
+    sol = _solve_highs_subprocess(_small_knapsack(True), {}, solve_name="s", logger=None,
+                                  work_folder=tmp_path / "gap")
+    assert sol.shim_status == "TIME_LIMIT" and sol.shim_mip_gap == 0.002286
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="s")
+    assert acc.accepted and "relative MIP gap 0.2286%" in acc.message
+
+    monkeypatch.setattr(sps.subprocess, "run", fake_child(None))
+    sol = _solve_highs_subprocess(_small_knapsack(True), {}, solve_name="s", logger=None,
+                                  work_folder=tmp_path / "nogap")
+    assert sol.shim_mip_gap is None
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="s")
+    assert acc.accepted and "(the remaining gap is in the solver log above)" in acc.message
+
+
+@pytest.mark.parametrize(("integer", "gap"), [
+    (True, 0.0),          # integer optimum x = 4, y = 0 (objective -20; 6*4 = 24 <= 24, 4 <= 6), proven: gap 0
+    (False, math.inf),    # an LP has no MIP gap: HiGHS reports inf
+])
+def test_child_writes_the_mip_gap(tmp_path: Path, integer: bool, gap: float) -> None:
+    """The real ``cmd_solve_mps`` child writes HiGHS's ``info.mip_gap`` to ``--mip-gap``."""
+    mps, sol, gap_file = tmp_path / "m.mps", tmp_path / "m.sol", tmp_path / "m.mipgap"
+    _small_knapsack(integer).write_mps(str(mps))
+    cp = subprocess.run([sys.executable, "-m", "flextool.cli.cmd_solve_mps", "--mps", str(mps),
+                         "--solution", str(sol), "--mip-gap", str(gap_file)], capture_output=True)
+    assert cp.returncode == 0, cp.stderr
+    assert float(gap_file.read_text()) == gap

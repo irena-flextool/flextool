@@ -40,6 +40,10 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional output JSON file with solve measurement fields",
     )
     parser.add_argument(
+        "--mip-gap", type=Path, default=None,
+        help="Optional output text file with HiGHS' relative MIP gap (info.mip_gap; inf for an LP)",
+    )
+    parser.add_argument(
         "--options", type=Path, default=None,
         help="Optional HiGHS options file (key=value per line)",
     )
@@ -125,6 +129,14 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 5
+
+    if args.mip_gap is not None:
+        # The relative MIP gap the solve stopped at, for the parent's time-limit warning.  Best-effort: the
+        # parent falls back to pointing at the solver log when the file is missing.
+        try:
+            args.mip_gap.write_text(repr(float(h.getInfo().mip_gap)))
+        except Exception as exc:
+            print(f"WARNING: mip-gap write failed: {exc}", file=sys.stderr)
 
     if args.basis is not None:
         # Best-effort: basis write isn't critical for the parent's

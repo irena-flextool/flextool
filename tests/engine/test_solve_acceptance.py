@@ -10,7 +10,9 @@ scaling hint.
 
 from __future__ import annotations
 
+import dataclasses
 import math
+import types
 
 import pytest
 
@@ -544,6 +546,47 @@ def test_time_limited_lp_stops_the_run(source: str) -> None:
     acc = classify_acceptance(_time_limited(mip=False, diagnostics=diagnostics), ranges_post=None, solve_name="s")
     assert not acc.accepted and not acc.time_limited and acc.model_status == "kTimeLimit"
     assert "time limit" in acc.message
+
+
+def _highs_time_limit_diag(**mip_gap: float) -> types.SimpleNamespace:
+    """kTimeLimit diagnostics with a feasible incumbent, with ``mip_gap`` set to the given value or absent.
+
+    Built from a dict so it works both with a polar-high whose ``SolveDiagnostics`` has the ``mip_gap`` field
+    and with the released 3.12.4 that has not."""
+    d = dataclasses.asdict(_diag(status_name="kTimeLimit", primal_feasible=True))
+    d.pop("mip_gap", None)
+    d.update(mip_gap)
+    return types.SimpleNamespace(**d)
+
+
+def test_time_limited_highs_mip_names_the_gap() -> None:
+    acc = classify_acceptance(
+        _time_limited(mip=True, diagnostics=_highs_time_limit_diag(mip_gap=0.002286)),
+        ranges_post=None, solve_name="invest_2030",
+    )
+    assert acc.accepted and acc.time_limited
+    assert "not proven optimal (relative MIP gap 0.2286%)." in acc.message
+
+
+@pytest.mark.parametrize("gap", ["absent", math.inf, math.nan])
+def test_time_limited_highs_mip_without_a_gap_points_to_the_log(gap) -> None:
+    diagnostics = _highs_time_limit_diag() if gap == "absent" else _highs_time_limit_diag(mip_gap=gap)
+    acc = classify_acceptance(_time_limited(mip=True, diagnostics=diagnostics), ranges_post=None, solve_name="s")
+    assert acc.accepted and acc.time_limited
+    assert "(the remaining gap is in the solver log above)" in acc.message
+
+
+def test_time_limited_highs_mip_reads_the_gap_from_the_pre_unscale_snapshot() -> None:
+    """The Layer-2 unscale resets the live HiGHS info; the gap comes from the snapshot taken before it."""
+    sol = _time_limited(mip=True, diagnostics=_highs_time_limit_diag())   # live handle: no gap
+    sol.pre_unscale_diagnostics = _highs_time_limit_diag(mip_gap=0.002286)
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="s")
+    assert acc.accepted and "relative MIP gap 0.2286%" in acc.message
+
+
+def test_time_limited_result_file_with_a_non_finite_gap_points_to_the_log() -> None:
+    acc = classify_acceptance(_time_limited(mip=True, shim_gap=math.inf), ranges_post=None, solve_name="s")
+    assert acc.accepted and "(the remaining gap is in the solver log above)" in acc.message
 
 
 def test_time_limited_mip_without_a_solution_stops_the_run() -> None:
