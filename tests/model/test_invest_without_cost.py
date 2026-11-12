@@ -35,7 +35,7 @@ from flextool.engine.input._solve_state import FlexToolConfigError
 from tests.engine._unit_db import b64, make_db, run, utf8
 
 REPO = Path(__file__).resolve().parents[2]
-OUTPUT_CONFIG = str(REPO / "templates" / "default_plots.yaml")
+OUTPUT_CONFIG = str(REPO / "flextool" / "schemas" / "default_plots.yaml")
 CHAIN = ["init", "west"]
 SOLVE = "y2020_2day_dispatch"
 

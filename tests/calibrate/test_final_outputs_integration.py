@@ -60,7 +60,7 @@ def test_write_final_outputs_replays_real_parquet(
         scenario_name=SCENARIO,
         output_location=str(tmp_path),
         subdir=SCENARIO,
-        output_config_path=str(REPO_ROOT / "templates" / "default_plots.yaml"),
+        output_config_path=str(REPO_ROOT / "flextool" / "schemas" / "default_plots.yaml"),
         fallback_output_location=str(tmp_path),
         raw_output_dir=str(tmp_path / "output_raw"),
         write_methods=["parquet"],

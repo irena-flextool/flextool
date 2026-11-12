@@ -62,7 +62,7 @@ import pandas as pd
 
 TEST_DIR = Path(__file__).parent
 REPO_ROOT = TEST_DIR.parent
-OUTPUT_CONFIG = str(REPO_ROOT / "templates" / "default_plots.yaml")
+OUTPUT_CONFIG = str(REPO_ROOT / "flextool" / "schemas" / "default_plots.yaml")
 
 if str(TEST_DIR) not in sys.path:
     sys.path.insert(0, str(TEST_DIR))
@@ -136,12 +136,12 @@ def test_process_online_dt_has_uc_unit_columns(
             # Belt-and-braces — verify the actual output file carries
             # the UC unit.  ``unit_online_dt_e`` is the table produced
             # by ``unit_online_and_startup``; ``unit_online__dt.csv`` is
-            # its user-facing CSV name (templates/default_plots.yaml).
+            # its user-facing CSV name (flextool/schemas/default_plots.yaml).
             csv_path = workdir / "output_csv" / scenario / "unit_online__dt.csv"
             assert csv_path.exists(), (
                 f"unit_online__dt.csv was not written for '{scenario}' — "
                 f"unit_online_and_startup either returned empty or "
-                f"templates/default_plots.yaml has drifted from the "
+                f"flextool/schemas/default_plots.yaml has drifted from the "
                 f"out_flows output_name."
             )
             df = pd.read_csv(csv_path)

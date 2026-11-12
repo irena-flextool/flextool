@@ -638,7 +638,7 @@ def well_formed(status: Any) -> bool:
     ``unreadable`` / ``malformed`` answer).
 
     ``state`` a text; ``input`` / ``output`` / ``versions`` / ``process`` / ``outputs`` / ``options_resolved`` /
-    ``error`` objects (or absent / null); ``solves`` / ``warnings`` lists of objects (or absent).
+    ``solver_config`` / ``error`` objects (or absent / null); ``solves`` / ``warnings`` lists of objects (or absent).
     """
     if not isinstance(status, Mapping):
         return False
@@ -646,7 +646,8 @@ def well_formed(status: Any) -> bool:
     if not isinstance(state, str) or state in (UNREADABLE_STATE, MALFORMED_STATE):
         return False
     if not all(_is_dict_or_none(status.get(key))
-               for key in ("input", "output", "versions", "process", "outputs", "options_resolved", "error")):
+               for key in ("input", "output", "versions", "process", "outputs", "options_resolved", "solver_config",
+                           "error")):
         return False
     return _is_list_of_dicts(status.get("solves")) and _is_list_of_dicts(status.get("warnings"))
 

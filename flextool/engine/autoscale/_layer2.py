@@ -1223,9 +1223,26 @@ def _push_unscaled_to_highs(
 
     * The duck-typed ``_SolHighsShim`` (cold HiGHS subprocess path) —
       direct attribute assignment on its ``_SolutionView``.
-    * A real :class:`highspy.Highs` (warm path; commercial-solver cold
-      path that injected primal via ``setSolution``) — round-trip through
-      a fresh ``HighsSolution`` pushed via ``setSolution``.
+    * A real :class:`highspy.Highs` (in-process warm path) — round-trip
+      through a fresh ``HighsSolution`` pushed via ``setSolution``.
+
+    On a real handle three things need care (items 194, 239):
+
+    * ``setSolution`` clears the basis-valid flag (the statuses stay).  A
+      later re-run of the handle after a data change would then start
+      cold.  The basis is put back with ``setBasis``: the handle still
+      holds the scaled LP the statuses belong to, and a positive diagonal
+      row/column scaling keeps every status (basic, at-lower, at-upper).
+    * HiGHS recomputes ``col_dual`` (and ``row_value``) from the pushed
+      ``row_dual`` with the handle's *scaled* cost and matrix, whatever
+      ``col_dual`` the pushed solution carries, so
+      ``h.getSolution().col_dual`` is wrong after the push.  The unscaled
+      reduced costs are kept on the handle as
+      ``_flextool_unscaled_col_dual``; the output readers take them via
+      :func:`flextool.process_outputs.read_highs_solution.handle_col_dual`
+      while the handle is unsolved since the push (model status
+      ``kNotset``).  ``row_value`` is not read by any writer.
+    * ``setSolution`` zeroes ``getObjectiveValue()`` (see below).
     """
     h = getattr(sol, "highs", None)
     if h is None:
@@ -1252,8 +1269,9 @@ def _push_unscaled_to_highs(
 
     # Real highspy.Highs path: round-trip through HighsSolution +
     # setSolution.  ``setSolution`` after ``run`` overwrites the solver's
-    # stored solution — verified by the inline unit test in
-    # ``tests/test_autoscale_unscale_highs_pushback.py``.
+    # stored solution — pinned by
+    # ``tests/engine/autoscale/test_layer2_roundtrip.py``
+    # (``test_layer2_unscale_handle_*``).
     #
     # BUG (fixed): ``setSolution`` AFTER ``run`` also resets HiGHS's cached
     # ``getObjectiveValue()`` to 0.0 (verified empirically against highspy
@@ -1288,6 +1306,14 @@ def _push_unscaled_to_highs(
                 sol.pre_unscale_diagnostics = _diag_fn()
             except Exception:  # pragma: no cover — Solution may forbid setattr
                 pass
+        # The basis of the solve that ran (statuses of the scaled LP on the
+        # handle).  Only a valid one is restored: a crossover-off IPM solve
+        # has none worth keeping.
+        try:
+            basis = h.getBasis()
+            basis_valid = bool(basis.valid)
+        except Exception:  # pragma: no cover — handle without a basis API
+            basis, basis_valid = None, False
         hs = highspy.HighsSolution()
         cv_push = new_col_value if new_col_value is not None else sol.col_value
         hs.col_value = np.asarray(cv_push, dtype=np.float64).tolist()
@@ -1297,6 +1323,22 @@ def _push_unscaled_to_highs(
             hs.row_dual = np.asarray(rd_push, dtype=np.float64).tolist()
             hs.dual_valid = True
         h.setSolution(hs)
+        if basis is not None and basis_valid:
+            try:
+                basis.valid = True
+                h.setBasis(basis)
+            except Exception as exc:  # pragma: no cover — version-specific
+                _logger.debug("Layer 2 unscale: basis not restored on the handle: %s", exc)
+        # The unscaled reduced costs, which HiGHS cannot hold (it recomputed
+        # ``col_dual`` in scaled coordinates inside ``setSolution``).
+        cd_push = new_col_dual if new_col_dual is not None else getattr(sol, "col_dual", None)
+        if cd_push is not None:
+            cd_arr = np.asarray(cd_push, dtype=np.float64)
+            if cd_arr.shape[0] == len(hs.col_value):
+                try:
+                    h._flextool_unscaled_col_dual = cd_arr  # type: ignore[attr-defined]
+                except Exception:  # pragma: no cover — handle may forbid setattr
+                    pass
         # Re-attach the captured objective so writers (see
         # ``process_outputs.read_highs_solution.write_v_obj``) can
         # bypass the zeroed ``getObjectiveValue()`` cache.

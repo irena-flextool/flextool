@@ -6,7 +6,8 @@ Invocation, as FlexTool builds it (``_gurobi_script``)::
 
 What it does, in ``gurobi_cl``'s order:
 
-1. Every ``Name=value`` argument before the model file is a parameter (any case, as in Gurobi).  Its type
+1. Every ``Name=value`` argument before the model file is a parameter (any case, ``_`` ignored, as in
+   Gurobi).  Its type
    comes from Gurobi's own parameter table (``Model.getParamInfo``); an integer parameter refuses ``1.0``
    (strict: whether ``gurobi_cl`` accepts that is not known here).  It is set on the environment before the model is read, which
    prints Gurobi's ``Set parameter <Name> to value <v>`` line.  A name Gurobi does not know prints
@@ -49,8 +50,12 @@ def main(argv: list[str]) -> int:
         probe_env.setParam("OutputFlag", 0)
         probe_env.start()
         probe = gp.Model(env=probe_env)
-        # Gurobi's names are case-insensitive; record each by its canonical spelling (``GRB.Param``).
-        canonical = {n.casefold(): n for n in dir(gp.GRB.Param) if not n.startswith("_")}
+        # Gurobi reads names without case and without ``_`` after the first character (``Mip_Gap`` is
+        # ``MIPGap``); record each by its canonical spelling (``GRB.Param``).
+        def fold(n: str) -> str:
+            return n[:1].casefold() + n[1:].replace("_", "").casefold()
+
+        canonical = {fold(n): n for n in dir(gp.GRB.Param) if not n.startswith("_")}
         env = gp.Env(empty=True)
         passed: list[str] = []
         for token in raw_params:
@@ -68,7 +73,7 @@ def main(argv: list[str]) -> int:
             except ValueError:
                 print(f"Error: invalid value '{text}' for parameter {info[0]}", flush=True)
                 return 1
-            name = canonical.get(name.casefold(), info[0])
+            name = canonical.get(fold(name), info[0])
             env.setParam(name, value)
             passed.append(name)
         probe.dispose()

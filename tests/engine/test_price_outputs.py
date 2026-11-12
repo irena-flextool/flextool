@@ -494,7 +494,7 @@ def test_null_prices_reach_output_writers(tmp_path_factory) -> None:
     db_url = "sqlite:///" + str(wf / "results.sqlite")
     write_outputs(
         scenario_name="pr_null_test", output_location=str(wf), subdir="pr_null_test",
-        output_config_path=str(FLEXTOOL_ROOT / "templates" / "default_plots.yaml"),
+        output_config_path=str(FLEXTOOL_ROOT / "flextool" / "schemas" / "default_plots.yaml"),
         fallback_output_location=str(wf), raw_output_dir=str(wf / "output_raw"),
         write_methods=["parquet", "csv", "excel", "spinedb"], results_db_url=db_url,
         solution=last.solution, solve_name=last.solve_name,

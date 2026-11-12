@@ -358,6 +358,7 @@ def _solve_highs_options(
         solver_config=state.solve.solver_configs.get(
             complete_solve_name, SolverConfig()
         ),
+        solve_name=complete_solve_name,
     )
 
 
@@ -5007,6 +5008,9 @@ def run_chain_from_db(
     from flextool.engine.solve._solver_dispatch import reset_run_warnings
     reset_run_warnings()
     solver_option_files = snapshot_solver_option_files(solver_config_source, work_folder, logger)
+    # Item 234: the run record names the folder and a hash of each option file, so two runs can be compared
+    # without their logs.
+    run_record.active().note_solver_config(solver_option_files.record())
     solver_config_dir_resolved = (
         solver_option_files.snapshot_dir or solver_config_source.dir
     )
@@ -5114,6 +5118,9 @@ def run_chain_from_db(
         from flextool.engine.input._timeline import TimelineConfig
 
         sc = SolveConfig.load_from_db_url(db_url, scenario_name, logger=logger)
+        # Item 236 A3: a solve's solver_precommand is never run; say so once per solve in this run.
+        from flextool.engine.solve._solver_dispatch import warn_solver_precommands
+        warn_solver_precommands(sc.solver_settings.precommand, logger)
         _memrec.checkpoint("solve_config_loaded", logger,
                            user_label="SolveConfig loaded (from DB)")
         tc = TimelineConfig.load_from_db_url(db_url, scenario_name, logger=logger)

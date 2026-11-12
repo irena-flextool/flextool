@@ -107,7 +107,7 @@ class ProjectSettings:
     # the rare advanced-user case where the autoscaler is bypassed in
     # favour of a hand-set bound scale via ``solver_arguments``.
 
-    # HiGHS log verbosity (``--solver-log-level``).  One of
+    # Solver log verbosity (``--solver-log-level``; ``silent`` also hides a commercial solver's log).  One of
     # ``"silent"`` | ``"normal"`` | ``"verbose"``.  Default "normal";
     # only appended when non-default.
     solver_log_level: str = "normal"

@@ -2,8 +2,7 @@
     "name": "FlexTool3",
     "tooltype": "python",
     "includes": [
-        "cmd_run_flextool.py",
-        "bin/highs.opt"
+        "cmd_run_flextool.py"
     ],
     "description": "",
     "inputfiles": [],

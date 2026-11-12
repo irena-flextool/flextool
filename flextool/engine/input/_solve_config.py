@@ -167,6 +167,10 @@ class SolverSettings:
     :func:`flextool.engine.solve._solver_dispatch._resolve_effective_highs_options`
     where it is overlaid on top of ``solver_config/highs.opt`` and
     below the CLI overrides.  Empty when no solve authored an entry.
+
+    *precommand* is ``solver_precommand`` per database solve, kept only to
+    warn that it is not run (item 236 A3: FlexTool never runs a command stored
+    in a database).
     """
 
     solvers: dict[str, str]
@@ -964,9 +968,9 @@ class SolveConfig:
         """Duplicate every solve-level dict entry from *old_solve* under
         *new_name*.
 
-        Mutates 21 sibling dicts (and ``model_solve`` when
-        *update_model_solves* is set) so downstream readers can address
-        the duplicated solve transparently.  One of the 21 —
+        Mutates the sibling dicts of ``dup_map_list`` (and ``model_solve``
+        when *update_model_solves* is set) so downstream readers can address
+        the duplicated solve transparently.  One of them —
         ``non_anticipativity_periods`` — is a plain tri-state dict, not a
         defaultdict; the ``if old_solve in dup_map.keys()`` guard copies
         it the same way (an unset parent solve simply has no key to
@@ -988,7 +992,8 @@ class SolveConfig:
                 self.highs.parallel,
                 self.solve_period_years_represented,
                 self.solver_settings.solvers,
-                self.solver_settings.precommand,
+                # ``solver_settings.precommand`` is not copied: it is never run, only named once per database
+                # solve in a warning (``_solver_dispatch.warn_solver_precommands``).
                 self.solver_settings.arguments,
                 self.contains_solves,
                 self.rolling_times,

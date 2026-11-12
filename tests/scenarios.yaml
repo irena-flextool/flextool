@@ -3,7 +3,7 @@
 # Each entry defines a scenario name and the CSV files to compare against
 # golden files in test/expected/<scenario>/.
 #
-# CSV filenames come from the filenames: section of templates/default_plots.yaml.
+# CSV filenames come from the filenames: section of flextool/schemas/default_plots.yaml.
 #
 # To add a new scenario:
 #   1. Add an entry here

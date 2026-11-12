@@ -18,6 +18,7 @@ from typing import Callable
 
 import psutil
 
+from flextool._process_tree import kill_process_tree
 from flextool.gui.cli_format import format_cmd_for_log, terminal_command
 from flextool.gui.data_models import TIMESTAMP_FORMAT, GlobalSettings, ProjectSettings, ScenarioInfo
 from flextool.gui.scenario_key import choose_output_subdir_for_write
@@ -49,27 +50,6 @@ CLEANUP_WAIT_S = 15.0
 #: How long the ``flextool-run`` supervisors of a stopped auxiliary job get to stop their engines and record the
 #: runs as killed, before what is left of the job's processes is killed.
 AUX_STOP_GRACE_S = 10.0
-
-
-def kill_process_tree(proc: subprocess.Popen) -> None:
-    """Kill *proc* and every process it started (a ``--save-memory`` solve child, a calibrator's engine run).
-
-    Killing only *proc* would leave such a child running and holding the output pipe, so the job's reader would
-    wait for it.  The children are listed before *proc* dies (afterwards they are no longer its children).
-    """
-    try:
-        children = psutil.Process(proc.pid).children(recursive=True)
-    except (psutil.NoSuchProcess, psutil.AccessDenied):
-        children = []
-    try:
-        proc.kill()
-    except OSError:
-        pass
-    for child in children:
-        try:
-            child.kill()
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
 
 
 def _is_run_supervisor(process: psutil.Process) -> bool:

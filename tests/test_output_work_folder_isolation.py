@@ -46,7 +46,7 @@ from flextool.update_flextool.db_migration import migrate_database  # noqa: E402
 from output_snapshot import _build_fixture_db, _fixture_by_name  # noqa: E402
 
 TESTS_JSON = TEST_DIR / "fixtures" / "tests.json"
-OUTPUT_CONFIG = TEST_DIR.parent / "templates" / "default_plots.yaml"
+OUTPUT_CONFIG = TEST_DIR.parent / "flextool" / "schemas" / "default_plots.yaml"
 
 
 @pytest.fixture(scope="module")

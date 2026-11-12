@@ -25,7 +25,7 @@ from tests.engine._unit_db import b64, make_db, utf8
 
 pytestmark = pytest.mark.solver
 
-OUTPUT_CONFIG = str(Path(__file__).resolve().parents[2] / "templates" / "default_plots.yaml")
+OUTPUT_CONFIG = str(Path(__file__).resolve().parents[2] / "flextool" / "schemas" / "default_plots.yaml")
 
 
 @pytest.fixture(autouse=True)

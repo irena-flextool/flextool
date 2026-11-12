@@ -75,6 +75,11 @@ def test_successful_run_writes_both_files(base_db, tmp_path):
     assert [s["name"] for s in status["solves"]] == [SOLVE]
     assert [(s["state"], s["acceptance"]) for s in status["solves"]] == [("accepted", "optimal")]
     assert status["outputs"]["parquet_state"] == "written"
+    # Item 234: the option files the run read, with a hash of each (the snapshot is in the work folder).
+    solver_config = status["solver_config"]
+    assert solver_config["snapshot_dir"] == str((tmp_path / "work" / "solve_data" / "solver_config").resolve())
+    assert set(solver_config["files"]) == {"highs.opt", "gurobi.opt", "cplex.opt", "xpress.opt", "copt.opt"}
+    assert all(len(f["sha256"]) == 64 for f in solver_config["files"].values())
     # write_outputs emptied the folder before writing the parquet; the run record stayed.
     assert list(folder.glob("*.parquet"))
     assert (folder / RUN_LOG_FILE).is_file()

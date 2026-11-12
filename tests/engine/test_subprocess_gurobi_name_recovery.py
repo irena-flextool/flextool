@@ -724,13 +724,13 @@ def test_flags_reach_gurobi_and_set_the_watchdog(tmp_path, monkeypatch) -> None:
     (tmp_path / "cfg").mkdir()
     (tmp_path / "cfg" / "gurobi.opt").write_text("Threads 0\nMIPGap 0.002\n")
     timeouts: list = []
-    real_run = sps.subprocess.run
+    real_run = sps._run_solver_process
 
     def spy(*args, **kwargs):
-        timeouts.append(kwargs.get("timeout"))
+        timeouts.append(kwargs.get("watchdog"))
         return real_run(*args, **kwargs)
 
-    monkeypatch.setattr(sps.subprocess, "run", spy)
+    monkeypatch.setattr(sps, "_run_solver_process", spy)
     flags = ["sqlite:///x.sqlite", "--solver-time-limit", "60", "--solver-mip-gap", "0.001"]
     run_one_solve(
         _cost_lp(["A", "B", "C"]), SolverConfig(name="gurobi"), solve_name="unit",

@@ -405,7 +405,7 @@ def test_output_node_dt_column(tmp_path_factory):
     shutil.copytree(shared_wf, wf)
     step = steps[-1]
     write_outputs(scenario_name=scen, output_location=str(wf), subdir=scen,
-                  output_config_path=str(REPO / "templates" / "default_plots.yaml"), write_methods=["csv"],
+                  output_config_path=str(REPO / "flextool" / "schemas" / "default_plots.yaml"), write_methods=["csv"],
                   fallback_output_location=str(wf), raw_output_dir=str(wf / "output_raw"),
                   solution=step.solution, solve_name=step.solve_name,
                   solve_steps=[(s.solve_name, s.flex_data, s.effective_solution) for s in steps],

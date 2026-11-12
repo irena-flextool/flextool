@@ -84,6 +84,27 @@ Each line says what changes for a model that ran before and what to do; the deta
   weights; without `realized_invest_periods` a solve realizes only the `realized_periods` that are also
   `invest_periods`; `invest_period_total` could retire and `retire_period_total` invest; a `virtual_unitsize` ≤ 0
   is now ignored. Details below.
+- **Security: solver options are checked before a solve.** Since 4.0, a database's `solver_arguments` (or an
+  option file from another person's project) could add commands to a CPLEX, Xpress or COPT run. FlexTool now
+  refuses, for every solver including HiGHS, an option name or value with a line break, control character, space,
+  quote, `;`, `#` or `=`; names are letters, digits, `_` and `.` (CPLEX: words separated by single spaces). The
+  error names the solve and parameter, or the option file and line. Numbers (`-1`, `1e-4`, `inf`) and single words
+  still pass; a value with a space is now refused.
+- **Security: solver options that read or write files are not passed on.** Since 4.0, a database's
+  `solver_arguments` (or an option file from another person's project) could make the solver, HiGHS included, write
+  over or read files anywhere on your computer, for example with HiGHS `solution_file` or `log_file`, Gurobi
+  `LogFile`, CPLEX `workdir` or Xpress `TUNEROUTPUTPATH`. FlexTool now drops such options, with one warning per run
+  naming the option and where it was set; the full list is in the solver docs. Solves are not affected: FlexTool
+  reads the solution from its own result file. A solution file or log file asked for in `solver_arguments` is no
+  longer written. FlexTool's results are in `output_parquet/<scenario>/` as before; a commercial solver's log is
+  still saved as `<work folder>/solve_data/subprocess/<solve>.log`, next to its result file; HiGHS' log is in the
+  run's log, `output_parquet/<scenario>/_run.log` (with `flextool-run` or the FlexTool window). A way to ask for
+  a solver's own log or solution file from this computer (not from a database) is planned.
+- **`solver_precommand` is not run, and a value now gives a warning.** FlexTool 3 ran it in front of CPLEX (for
+  example to reserve a floating licence); FlexTool 4 does not run commands stored in a database, for safety: a
+  database from someone else could otherwise run any program on your computer. The warning comes once per solve.
+  To hold a floating licence, use your solver's own licence server setup; a solver wrapper set on your computer is
+  planned for a later release.
 
 ### New features
 
@@ -574,7 +595,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   longer read as the work folder's copy (the run warns when it differs); when it is `solver_config/` in the
   current folder and holds only unedited FlexTool templates, the run skips it, uses the next folder or the
   defaults, and warns, naming it (not in the FlexTool folder itself, whose `solver_config/` is always used). The
-  GUI and the calibrator pass the workspace's folder to their runs.
+  GUI and the calibrator pass the workspace's folder to their runs. The run record (`_run_status.json`) names the
+  folder and gives a SHA-256 of each file the run used, and whether it is FlexTool's unedited default, so two
+  runs' options can be compared without their logs.
 - **CPLEX did not get `solver_mip_gap`.** It was sent with the Python-API name `mip.tolerances.mipgap`, which the
   CPLEX interactive optimizer that FlexTool runs does not know; it is now sent as `mip tolerances mipgap`. CPLEX
   results with a `solver_mip_gap` can change.
@@ -593,10 +616,14 @@ Each line says what changes for a model that ran before and what to do; the deta
   with integer variables now stops with a message instead of reporting the relaxation as the solution.
 - **The `Solver args` line of a commercial solve showed HiGHS options**; it is now
   `Solver args (<solver>): ...` with what the solver receives, under its own names.
-- **The log of a commercial solver is shown.** Gurobi, CPLEX, Xpress and COPT printed nothing on a successful
-  run (their log was read for the status and dropped), so the parameters they took, how the solve ended and the
-  gap a time-limit warning refers to could not be seen. The log is now printed when the solve ends, after the
-  `Solver args` line.
+- **The log of a commercial solver is shown as the solver writes it.** Gurobi, CPLEX, Xpress and COPT printed
+  nothing on a successful run (their log was read for the status and dropped), so the parameters they took, how
+  the solve ended and the gap a time-limit warning refers to could not be seen. The log now streams to the
+  console, the FlexTool window (greyed, like HiGHS') and the run log, after a `Running <solver>` line, and is
+  saved as `solve_data/subprocess/<solve>.log`. A failed solve no longer prints the log a second time inside its
+  error message (nor the error twice), and a solve stopped by FlexTool's watchdog keeps its log. When FlexTool
+  stops a solver (watchdog, Ctrl-C), the processes it started are stopped too. `--solver-log-level silent` now
+  also hides a commercial solver's log (FlexTool still reads and saves it); `verbose` remains HiGHS-only.
 - **Whole numbers reach a commercial solver as integers** (`Threads=4`, `TimeLimit=60`, not `Threads=4.0`), from
   `solver_arguments`, `solver_mip_gap` and the flags alike (the database stores every number as a decimal). An
   integer parameter can refuse `4.0`: the Xpress library does.
@@ -613,7 +640,19 @@ Each line says what changes for a model that ran before and what to do; the deta
   counts as the time limit.
 - **The commercial solver option templates** described how options were passed before 4.3.0 (`ReadParams`, the
   `solver_options` map, `solver_time_limit` / `solver_threads`); their header now gives the actual mechanism and
-  precedence. Existing `solver_config/*.opt` copies keep their old comment until you replace them.
+  precedence. The FlexTool window (at start) and `flextool-update` replace a workspace
+  `solver_config/<solver>.opt` that is an unedited copy of an earlier FlexTool default with the current one; an
+  edited file is never touched. No solve changes: the option values are those FlexTool already used (one early
+  HiGHS default lacked `parallel=off`, which FlexTool sets anyway). A seeded `.opt` file no longer takes the
+  template's file permissions, so a read-only installation gives an editable file.
+- **Investment duals were wrong when autoscaling rescaled the model.** When autoscale's per-quantity scaling
+  (Layer 2) rescaled an investment model that HiGHS solved inside the FlexTool process (the default), the reduced
+  costs of the investment variables were read in the rescaled units, so `v_dual_invest_unit`,
+  `v_dual_invest_connection`, `v_dual_invest_node` and the `dual_invest_effective_*` outputs built from them were
+  wrong without a message. They are now in the model's own units; other results are unchanged. Runs where HiGHS
+  solves in a separate process (`--save-memory`, or warm start off) and commercial solvers were not affected.
+  A re-solve of the same model after a data change now starts from the previous solution's basis (no effect on
+  current runs).
 - **The memory-saving solve could put solution values on the wrong variables.** With `--save-memory`, or with
   warm start off, HiGHS solves the model from an MPS file in a separate process. When the model had a variable
   that no constraint and no cost used, the values read back after it were shifted onto the next variables, so
@@ -913,6 +952,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   on the time-series sheets;** they are constant or per period and are now on the period sheets.
 - **The Solver options dialog said the `.opt` files are in the project's `solver_config` folder.** They are
   in the `solver_config` folder of the FlexTool workspace (or `$FLEXTOOL_SOLVER_CONFIG_DIR`).
+- **The Spine Toolbox tool specifications** listed files that no longer exist (`bin/highs.opt` of the FlexTool
+  tool, old modules of *Process outputs* and *scenario comparison*). Toolbox skipped them without a word; they
+  are removed.
 
 #### FlexTool 2 import
 
