@@ -30,8 +30,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   `lifetime`, `ramp_cost`, a minimum above its maximum, `existing` as a time series, a used timeline without
   `timestep_duration`, a time series with no time step on a timeline, a timeset block that starts off its timeline,
   a CO2 method without its value, a `realized_invest_periods` outside `invest_periods`, partial or ungrouped
-  stochastic inflow / reservation, a time-only `energy_margin_adder`, capacity-margin groups across Benders regions
-  or with a *balance_within_period* node (see "Input checks" and the entries below). Each error names what to fix.
+  stochastic inflow / reservation, a forecast fan declared after a solve's first one, a time-only
+  `energy_margin_adder`, capacity-margin groups across Benders regions or with a *balance_within_period* node (see
+  "Input checks" and the entries below). Each error names what to fix.
 - **New warnings name data that ran silently:** nodes with nothing to balance them, untied zero
   `conversion_flow_coeff` flows, negative `existing`, time-series keys off the timeline, a CO2 cap on a method
   without one, an `invest_method` on a non-storage node, percent-like values. The model is unchanged; check them.
@@ -747,6 +748,10 @@ Each line says what changes for a model that ran before and what to do; the deta
 
 #### Input checks
 
+- **A forecast fan declared later in a solve that already fans out is an error.** A solve or a roll fans out once,
+  at its first reveal; forecast branches declared at a later period (or, in a roll, at a later time step where no
+  roll fans out) were ignored without a message. The run now stops before solving, naming the solve or roll, the
+  period, the analysis time and the branches. Remove the rows or put the later fan in its own solve or roll.
 - **A stochastic node `inflow` outside every `include_stochastics` group needs a realized branch.** In a fan
   without a `realized: yes` branch such a node read an inflow of 0 in every branch period without a message; it is
   now a configuration error naming the node, as for the other stochastic-time parameters. Add the node to an

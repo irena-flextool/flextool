@@ -296,6 +296,42 @@ def test_rolling_lookahead_not_covered_by_roll_forecast_is_an_error(tmp_path_fac
         "Check which alternative of the scenario gives this value.")
 
 
+# ── 4c: a later forecast cohort that no solve or roll fans out at (item 229) ──
+_LATER_COHORT_HEAD = (
+    "opens its stochastic fan at period 'p1' (analysis_time 't0001'). A solve or roll fans out only once, "
+    "but its stochastic_branches also declare forecast branches later in its horizon: period 'p2' at "
+    "analysis_time 't0005' (forecast branches ")
+
+
+@pytest.mark.parametrize(("rolling", "fans", "expected"), [
+    pytest.param(
+        None,
+        [*_two_forecasts("p1", "t0001"), ("p2", "x", "t0005", "no", 0.5), ("p2", "mid", "t0005", "no", 0.5)],
+        "Solve 'sol' " + _LATER_COHORT_HEAD + "'mid', 'x'). They would be ignored without a message. The "
+        "branches opened at 'p1' continue through every later period, and a forecast series given at a later "
+        "period's first time step is read without these rows. Remove these rows, or put the later fan in a "
+        "separate solve. Check stochastic_branches.",
+        id="single"),
+    pytest.param(
+        (8.0, 12.0),
+        [*_two_forecasts("p1", "t0001"), *_two_forecasts("p2", "t0005")],
+        "Roll 'sol_roll_0' of rolling solve 'sol' " + _LATER_COHORT_HEAD + "'high', 'low'). They would be "
+        "ignored without a message. Each roll fans out at the first reveal in its horizon, and no roll fans "
+        "out at these. Remove these rows, or make a roll start there (rolling_solve_jump). Check "
+        "stochastic_branches.",
+        id="rolling"),
+])
+def test_later_forecast_cohort_no_solve_fans_at_is_an_error(tmp_path_factory, rolling, fans, expected) -> None:
+    """A solve or roll fans out once, at its first reveal.  Single solve, NP=3: fan p1/t0001 (high/low) and
+    forecasts x, mid declared at p2/t0005 -- before, they were dropped silently.  Rolling 8/12, NP=3: rolls
+    start at t0001 and t0009; roll 0's horizon reaches p2/t0005, where no roll fans out.  Both stop before
+    solving with a message naming the solve (roll), its fan point, the later cohort and its branches.  The
+    valid case -- a later cohort that another roll fans out at -- is test 4 / 4b."""
+    with pytest.raises(FlexToolConfigError) as err:
+        _run(tmp_path_factory, n_periods=3, fans=fans, rolling=rolling)
+    assert str(err.value) == expected
+
+
 # ── 5: realized: yes — the realization sibling and ungrouped users ─────
 def test_realized_branch_read_in_later_periods(tmp_path_factory) -> None:
     """Fan p1/t0001 with ``real`` (×0.8) designated realized: yes, data at t0001 only, unit ungrouped: the
