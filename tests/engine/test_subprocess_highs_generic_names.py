@@ -399,6 +399,14 @@ def test_save_memory_time_limit_names_the_gap_the_child_wrote(tmp_path: Path, mo
     acc = classify_acceptance(sol, ranges_post=None, solve_name="s")
     assert acc.accepted and "(the remaining gap is in the solver log above)" in acc.message
 
+    # A later solve in the same work folder whose child writes no gap: the earlier run's file is not named.
+    assert (tmp_path / "gap" / "solve_data" / "subprocess" / "s.mipgap").exists()
+    sol = _solve_highs_subprocess(_small_knapsack(True), {}, solve_name="s", logger=None,
+                                  work_folder=tmp_path / "gap")
+    assert sol.shim_mip_gap is None
+    acc = classify_acceptance(sol, ranges_post=None, solve_name="s")
+    assert acc.accepted and "(the remaining gap is in the solver log above)" in acc.message
+
 
 @pytest.mark.parametrize(("integer", "gap"), [
     (True, 0.0),          # integer optimum x = 4, y = 0 (objective -20; 6*4 = 24 <= 24, 4 <= 6), proven: gap 0

@@ -568,6 +568,17 @@ def test_time_limited_highs_mip_names_the_gap() -> None:
     assert "not proven optimal (relative MIP gap 0.2286%)." in acc.message
 
 
+@pytest.mark.parametrize(("gap", "text"), [
+    (3.2e-7, "3.2e-05%"),     # below 0.01 %: significant digits, not "0.0000%" next to "not proven optimal"
+    (5e-5, "0.005%"),
+    (1e-4, "0.0100%"),        # from 0.01 % up: four decimals
+    (0.0, "0.0000%"),
+])
+def test_time_limited_mip_gap_formatting(gap: float, text: str) -> None:
+    acc = classify_acceptance(_time_limited(mip=True, shim_gap=gap), ranges_post=None, solve_name="s")
+    assert acc.accepted and f"not proven optimal (relative MIP gap {text})." in acc.message
+
+
 @pytest.mark.parametrize("gap", ["absent", math.inf, math.nan])
 def test_time_limited_highs_mip_without_a_gap_points_to_the_log(gap) -> None:
     diagnostics = _highs_time_limit_diag() if gap == "absent" else _highs_time_limit_diag(mip_gap=gap)

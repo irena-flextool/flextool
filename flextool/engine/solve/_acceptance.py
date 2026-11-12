@@ -300,7 +300,7 @@ def _time_limit_verdict(
         )
     # HiGHS reports ``inf`` (or ``NaN``) when it has no gap to give; that reads as "no gap" here.
     gap_text = (
-        f" (relative MIP gap {gap:.4%})" if gap is not None and math.isfinite(gap)
+        f" (relative MIP gap {_format_gap(gap)})" if gap is not None and math.isfinite(gap)
         else " (the remaining gap is in the solver log above)"
     )
     return Acceptance(
@@ -315,6 +315,14 @@ def _time_limit_verdict(
         model_status="kTimeLimit",
         time_limited=True,
     )
+
+
+def _format_gap(gap: float) -> str:
+    """A relative MIP gap as a percentage: four decimals (``0.2286%``), or three significant digits below 0.01 %
+    (``3.2e-05%``) so a small nonzero gap does not print as ``0.0000%`` next to "not proven optimal"."""
+    if 0.0 < abs(gap) < 1e-4:
+        return f"{gap * 100:.3g}%"
+    return f"{gap:.4%}"
 
 
 def _scaling_hint_for_reject(

@@ -612,8 +612,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   infeasibilities" or with an "optimal face unbounded", which is not a certified optimum, and a COPT solve (or a
   Gurobi one with a text result file) whose log is turned off, since how it ended cannot be read.
 - **HiGHS's time-limit warning names the MIP gap** with `--save-memory`, as the commercial solvers' does; before,
-  it pointed to the solver log. An in-process HiGHS solve names it too once the installed polar-high reports the
-  gap (`SolveDiagnostics.mip_gap`, after polar-high 3.12.4); until then it points to the solver log.
+  it pointed to the solver log. An in-process HiGHS solve names it too once a polar-high release newer than 3.12.4
+  is installed (one whose `SolveDiagnostics` has `mip_gap`); with 3.12.4 it still points to the solver log. A gap
+  below 0.01 % is printed with significant digits instead of as `0.0000%`.
 - **Solver option files come from one `solver_config` folder chosen per run**, no longer from the folder
   FlexTool is started from: `--solver-config-dir` (new) or `FLEXTOOL_SOLVER_CONFIG_DIR`, else `solver_config/`
   next to the input database or in the workspace of a GUI project database, else the Spine Toolbox project

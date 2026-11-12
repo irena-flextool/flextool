@@ -2050,6 +2050,9 @@ def _solve_highs_subprocess(
             logger.info(
                 "save_memory: spawning subprocess HiGHS for %r", solve_name,
             )
+        # The work folder persists across runs and same-named solves: a gap file left by an earlier one must
+        # not be named as this solve's gap when the child writes none (its write is best-effort).
+        gap_path.unlink(missing_ok=True)
         cp = subprocess.run(cmd)
         optimal = cp.returncode == 0
 
