@@ -221,7 +221,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--debug",
         action="store_true",
         help=(
-            "Archive each iteration's outputs to out_iter_<k>/ instead of "
+            "Archive each iteration's outputs to out_iter_<k>/<scenario>/ instead of "
             "clearing them between iterations."
         ),
     )
