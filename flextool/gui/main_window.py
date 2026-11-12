@@ -5298,6 +5298,24 @@ class MainWindow(tk.Tk):
             if not result:
                 return
 
+        # A scenario name becomes its result folder names and a command argument: one that cannot be a plain
+        # folder name does not run (flextool.safe_names).
+        from flextool.safe_names import describe_name, output_name_problem
+        unsafe = [(s, output_name_problem(s.name)) for s in checked]
+        unsafe = [(s, why) for s, why in unsafe if why is not None]
+        if unsafe:
+            messagebox.showwarning(
+                "Scenario names that cannot be used",
+                "These scenarios will not run, because their names cannot be used as folder names. "
+                "Rename them in the input data:\n\n"
+                + "\n".join(f"  {describe_name(s.name)} {why}" for s, why in unsafe),
+                parent=self,
+            )
+            refused = {id(s) for s, _why in unsafe}
+            checked = [s for s in checked if id(s) not in refused]
+            if not checked:
+                return
+
         # Filter out scenarios already in the execution queue (pending or running)
         self._ensure_execution_mgr()
         assert self.execution_mgr is not None

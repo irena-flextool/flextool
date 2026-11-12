@@ -1009,6 +1009,16 @@ def main():
     # write_outputs applies) so the run record, write_outputs, timings.csv
     # and the output-info DB all name the same folder.
     output_subdir = args.output_subdir or scenario_name
+    # The scenario name and the output folder name become folder names (output_parquet/<subdir>/, ...): refuse a
+    # name that is not one plain folder name before anything is written or cleaned up.
+    from flextool.safe_names import UnsafeNameError, check_output_name
+    try:
+        check_output_name(scenario_name, "scenario name")
+        if args.output_subdir:
+            check_output_name(args.output_subdir, "--output-subdir name")
+    except UnsafeNameError as exc:
+        logging.error("%s", exc)
+        sys.exit(1)
     output_location, write_methods = resolve_output_settings(
         write_methods=args.write_methods,
         output_location=args.output_location,

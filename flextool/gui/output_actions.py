@@ -17,6 +17,7 @@ from flextool.gui.platform_utils import open_file_in_default_app
 from flextool.gui.project_utils import get_projects_dir
 from flextool.gui.scenario_key import resolve_subdir_for_read
 from flextool.gui.scenario_lists import folder_results_usable
+from flextool.safe_names import output_name_problem
 
 if TYPE_CHECKING:
     from flextool.gui.execution_manager import ExecutionManager
@@ -252,7 +253,8 @@ class OutputActionManager:
                 resolve_subdir_for_read(settings.bare_output_owners, sn, name)
                 for sn, name in scenario_ids
             )
-            if folder_results_usable(parquet_base / subdir)
+            # A folder name that is not a plain name (flextool.safe_names) is never passed to the command.
+            if output_name_problem(subdir) is None and folder_results_usable(parquet_base / subdir)
         ]
 
         cmd: list[str] = [

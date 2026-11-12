@@ -356,6 +356,22 @@ def _run_aux_subprocess(
 # Public entry points
 # --------------------------------------------------------------------------- #
 
+def _refuse_unsafe_name(mgr: ExecutionManager, kind: str, scenario: str) -> bool:
+    """Whether *scenario* cannot be a folder name or a command argument (``flextool.safe_names``); if so, an
+    already-failed job in the execution window says why, and nothing is started."""
+    from flextool.safe_names import UnsafeNameError, check_output_name, describe_name
+
+    try:
+        check_output_name(scenario, "scenario name")
+    except UnsafeNameError as exc:
+        job = mgr.add_auxiliary_job(JobType.OUTPUT_ACTION, f"{kind}: {describe_name(scenario)}",
+                                    f"{kind.lower()}:refused")
+        mgr.append_stdout(job.job_id, str(exc))
+        mgr.finish_job(job.job_id, False)
+        return True
+    return False
+
+
 def _workspace_cwd() -> str:
     """The folder the RP and calibration processes run in: the workspace the GUI was started from, like the
     other jobs (never the project folder, which may come from someone else)."""
@@ -379,6 +395,8 @@ def launch_rp_jobs(
     run = runner if runner is not None else _RP_RUNNER
     cwd = _workspace_cwd()
     for spec in jobs:
+        if _refuse_unsafe_name(mgr, "RP", spec.scenario):
+            continue
         argv = build_rp_command(
             python_exe,
             spec.db_url,
@@ -431,6 +449,8 @@ def launch_calibration_jobs(
     run = runner if runner is not None else _CALIBRATE_RUNNER
     cwd = _workspace_cwd()
     for spec in jobs:
+        if _refuse_unsafe_name(mgr, "Calibrate", spec.scenario):
+            continue
         warm_start, work_dir, output_location = _calib_dirs(
             project_path, spec.scenario
         )

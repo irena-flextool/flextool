@@ -292,6 +292,13 @@ def main(argv: list[str] | None = None) -> int:
     """
     parser = build_parser()
     args = parser.parse_args(argv)
+    # The scenario name becomes folder names (output_parquet/<scenario>/, calibration_reports/<scenario>/).
+    from flextool.safe_names import UnsafeNameError, check_output_name
+    try:
+        check_output_name(args.scenario, "scenario name")
+    except UnsafeNameError as exc:
+        print(f"calibration failed: {exc}", file=sys.stderr)
+        return 1
     config = _config_from_args(args)
 
     try:

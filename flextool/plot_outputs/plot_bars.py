@@ -2,6 +2,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.figure import Figure
 from matplotlib.ticker import MaxNLocator, FixedLocator, FixedFormatter
+from flextool.safe_names import safe_file_component
 from flextool.plot_outputs.format_helpers import _get_value_formatter, format_value_label
 from flextool.plot_outputs.legend_helpers import (
     estimate_legend_width, estimate_legend_height,
@@ -1177,7 +1178,7 @@ def _render_bar_figure(
     )
     if fig is None:
         return
-    filepath = output_filepath or f'{plot_dir}/{key_name}_d.png'
+    filepath = output_filepath or f'{plot_dir}/{safe_file_component(key_name)}_d.png'
     fig.savefig(filepath)
     plt.close(fig)
 

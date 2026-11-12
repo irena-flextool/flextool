@@ -109,6 +109,26 @@ Each line says what changes for a model that ran before and what to do; the deta
   database from someone else could otherwise run any program on your computer. The parameter is kept only so that
   older databases still read; the warning comes once per solve. To hold a floating licence, use your solver's own
   licence server setup; a solver wrapper set on your computer is planned for a later release.
+- **Security: FlexTool runs only its own installed code.** The Python processes FlexTool starts (runs, representative
+  periods, calibration, conversions, comparisons, the database editor, updates) no longer look for Python code in
+  the folder they start from, so a project folder from someone else cannot replace part of FlexTool. "Build
+  representative periods" and "Calibrate investments" now run from the workspace folder like the other jobs.
+  Importing a project package refuses one that holds programs or scripts (`.py`, `.exe`, `.dll`, `.bat`, `.sh`
+  and the like) or files outside `input_sources/`, `output_parquet/`, `solver_config/` (`.opt` files),
+  `settings.yaml` and `plot_settings.yaml`; an export leaves such files out of `input_sources/` and the result
+  runs, with a note.
+- **Scenario names must be usable as folder names.** A scenario name names its result folders, so a run (FlexTool
+  window, `flextool-run`, Spine Toolbox, calibration, comparison) now stops with a message, before writing
+  anything, when the name is empty, is `.` or `..`, holds `/`, `\` or a control character (a line break, a tab, an
+  escape character), starts with `-` or with a drive letter and `:` (`C:x`), or is a name Windows reserves for
+  devices (`CON`, `PRN`, `AUX`, `NUL`, `COM1`–`COM9`, `LPT1`–`LPT9`, also with an extension). On Windows also
+  `< > : " | ? *` and a trailing dot or space are refused, as Windows does not allow them in file names. Rename
+  such a scenario in the input database. Letters of any language, spaces and other punctuation work as before, and
+  the result folders keep their names. FlexTool now also checks that every folder it empties or removes for a
+  run is that run's own folder.
+- **An imported project's input sources stay inside the project.** Importing a package leaves out the input
+  sources that its settings point at files outside the project folder, and says which ones; add such a file
+  again in the FlexTool window if you need it.
 
 ### New features
 
@@ -876,6 +896,17 @@ Each line says what changes for a model that ran before and what to do; the deta
 
 #### Outputs and plots
 
+- **Names in Excel workbooks stay text.** A name that starts with `=` (an entity, scenario or alternative, a
+  description) is written to the result workbooks, the comparison and dispatch workbooks and the input export as
+  text, never as a formula or a link; the input export now reads such a name back unchanged (before, it came back
+  empty). The CSV files keep the names exactly as they are; `docs/results.md` says how to open a CSV file from
+  someone else safely in a spreadsheet program.
+- **Plot file names stay in the plot folder.** A `/` or `\` in a plot name from the plot settings, or in a node,
+  group or scenario name of a dispatch plot, becomes `_` in the file name (on Windows also `< > : " | ? *`).
+- **Control characters in names are shown, not acted on.** A name from the input data with an escape character or
+  another control character is shown with that character as `\x1b` (and so on) in `flextool-run`'s console output
+  and `_run.log`, in a model run's own console output (also in the Spine Toolbox console), and in the FlexTool
+  window's logs, instead of reaching the terminal as a command.
 - **VRE curtailment, VRE potential and flow-group energies per period are scaled to
   a full year.** `unit_curtailment__outputNode__d`, `unit_outputNode_VRE_potential__d` and the `cumulative_flow` of
   `group_flow__d` were sums over the sampled time steps (the flow group's also without the timestep weights); they

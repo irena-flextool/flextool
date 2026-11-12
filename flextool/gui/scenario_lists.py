@@ -8,6 +8,7 @@ from tkinter import ttk
 
 from flextool import run_record
 from flextool.gui.data_models import TIMESTAMP_FORMAT, ExecutedScenarioInfo, ProjectSettings, ScenarioInfo
+from flextool.safe_names import require_strictly_inside
 from flextool.gui.scenario_key import (
     format_key,
     parse_key,
@@ -392,13 +393,16 @@ class ExecutedScenarioManager:
                 )
             was_bare_owner = subdir == name
 
+            # Each folder removed is a scenario's own folder under its output folder (flextool.safe_names).
             parquet_dir = self.project_path / "output_parquet" / subdir
             if parquet_dir.is_dir():
+                require_strictly_inside(parquet_dir, self.project_path / "output_parquet")
                 shutil.rmtree(parquet_dir, ignore_errors=True)
                 logger.info("Deleted %s", parquet_dir)
 
             plots_dir = self.project_path / "output_plots" / subdir
             if plots_dir.is_dir():
+                require_strictly_inside(plots_dir, self.project_path / "output_plots")
                 shutil.rmtree(plots_dir, ignore_errors=True)
                 logger.info("Deleted %s", plots_dir)
 
@@ -414,6 +418,7 @@ class ExecutedScenarioManager:
 
             csv_dir = self.project_path / "output_csv" / subdir
             if csv_dir.is_dir():
+                require_strictly_inside(csv_dir, self.project_path / "output_csv")
                 shutil.rmtree(csv_dir, ignore_errors=True)
                 logger.info("Deleted %s", csv_dir)
 

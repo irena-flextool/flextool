@@ -18,6 +18,7 @@ from flextool import run_record
 from flextool.lean_parquet import read_lean_parquet, read_lean_parquet_solve_labels, write_lean_parquet
 from flextool.process_outputs._sheet_names import excel_sheet_name
 from flextool.process_outputs._excel_writer import reserved_sheet_names, write_excel_with_metadata
+from flextool.safe_names import check_output_name, require_inside
 from flextool.process_outputs.solve_order import INVESTMENT_PERIOD_TABLES, period_solve_labels
 from flextool.process_outputs._output_meta import (
     datapackage_resource,
@@ -936,6 +937,11 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
             the processed parquet (``build_replay_s``, with ``par=None`` —
             the two discount/inflation params are dropped on the replay path).
     """
+    # The scenario name and the subdir become folder and file names: refuse one that is not a plain folder name
+    # (UnsafeNameError) before anything is written or cleaned up.
+    check_output_name(scenario_name, "scenario name")
+    if subdir:
+        check_output_name(subdir, "output folder name")
     write_methods, output_config_path, active_configs, plot_rows, output_location, plot_file_format, results_db_url = _resolve_settings(
         write_methods, output_config_path, active_configs, plot_rows,
         output_location, plot_file_format, settings_db_url, fallback_output_location,
@@ -1103,6 +1109,8 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         # The run record (``_run_status.json``, ``_run.log``) stays.
         if not single_result:
             _note_parquet(parquet_dir, written=False)
+            # Only ever the scenario's own folder under output_parquet/.
+            require_inside(parquet_dir, os.path.join(output_location, 'output_parquet'))
             for filename in os.listdir(parquet_dir):
                 if _is_run_record_file(filename):
                     continue
@@ -1263,6 +1271,8 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
 
         # Only empty csv dir when not processing single result
         if not single_result:
+            # Only ever the scenario's own folder under output_csv/.
+            require_inside(csv_dir, os.path.join(output_location, 'output_csv'))
             for filename in os.listdir(csv_dir):
                 file_path = os.path.join(csv_dir, filename)
                 if os.path.isfile(file_path):

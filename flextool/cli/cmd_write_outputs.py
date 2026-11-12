@@ -80,6 +80,14 @@ def main():
                     scenario_names = alternative_names
                 read_parquet_dir = True
 
+            from flextool.safe_names import UnsafeNameError, check_output_name
+            try:
+                for _name in [*scenario_names, *([args.subdir] if args.subdir else [])]:
+                    check_output_name(_name, "scenario name" if _name in scenario_names else "--subdir name")
+            except UnsafeNameError as exc:
+                logging.error("%s", exc)
+                sys.exit(1)
+
             if not scenario_names:
                 logging.critical("No scenario provided through any of the arguments: scenario-name or output-locations-db-url (or input-db-url by run_flextool.py)")
                 sys.exit(1)

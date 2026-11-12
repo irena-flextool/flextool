@@ -20,6 +20,7 @@ import psutil
 
 from flextool._child_python import SAFE_PATH_FLAG, child_env
 from flextool._safe_text import printable
+from flextool.safe_names import describe_name, output_name_problem, require_inside
 from flextool._process_tree import kill_process_tree
 from flextool.gui.cli_format import format_cmd_for_log, terminal_command
 from flextool.gui.data_models import TIMESTAMP_FORMAT, GlobalSettings, ProjectSettings, ScenarioInfo
@@ -772,6 +773,12 @@ class ExecutionManager:
         ownership_changed = False
         with self._lock:
             for scenario in scenarios:
+                # The name becomes work/, output_parquet/... folder names: never queue one that is not a plain
+                # folder name (the main window tells the user before it gets here).
+                reason = output_name_problem(scenario.name)
+                if reason is not None:
+                    logger.warning("Scenario %s is not run: its name %s.", describe_name(scenario.name), reason)
+                    continue
                 is_xlsx = scenario.source_name.lower().endswith(
                     (".xlsx", ".xls", ".ods")
                 )
@@ -1215,6 +1222,7 @@ class ExecutionManager:
 
                 # Clean work folder so re-executions start fresh (only ever a folder under <project>/work/)
                 if work_folder.exists():
+                    require_inside(work_folder, self.project_path / "work")
                     shutil.rmtree(work_folder, ignore_errors=True)
                 work_folder.mkdir(parents=True, exist_ok=True)
 
@@ -1606,6 +1614,10 @@ class ExecutionManager:
         left_out: list[tuple[str, str]] = []
         usable: list[str] = []
         for subdir in all_scenarios:
+            if (why := output_name_problem(subdir)) is not None:
+                # Never passed to the command: it would not be one plain argument (flextool.safe_names).
+                left_out.append((describe_name(subdir), f"its folder name {why}"))
+                continue
             status = read_status_settled(self.project_path / "output_parquet" / subdir)
             if results_usable(status):
                 usable.append(subdir)
