@@ -5992,11 +5992,14 @@ class MainWindow(tk.Tk):
         )
         tl_entry.grid(row=row, column=1, sticky="w", pady=4)
         _attach_tip(tl_entry, (
-            "HiGHS wall-clock time limit in whole seconds\n"
-            "(--solver-time-limit SECONDS). 0 means no limit\n"
-            "(the CLI's unset default). Routed through the\n"
-            "effective-options resolver as a CLI override\n"
-            "(highest precedence)."
+            "Time limit of each solve in whole seconds, on every\n"
+            "solver: HiGHS, Gurobi, CPLEX, Xpress and COPT\n"
+            "(--solver-time-limit SECONDS). 0 means no limit.\n"
+            "It overrides a time limit in the solver's option file\n"
+            "and in a solve's solver_arguments. A MIP solve that\n"
+            "stops at the limit keeps its best solution, with a\n"
+            "warning; a linear solve, or one without a solution,\n"
+            "stops the run."
         ))
         row += 1
 

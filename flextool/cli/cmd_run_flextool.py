@@ -790,26 +790,35 @@ def build_parser() -> argparse.ArgumentParser:
                              'flag wins.')
     parser.add_argument('--solver-time-limit', type=float, default=None,
                         metavar='SECONDS',
-                        help='HiGHS wall-clock time limit '
-                             '(``time_limit`` option, seconds).  '
-                             'Unset (default) means no limit; 0 or a '
-                             'negative value is ignored with a warning.  It '
-                             'overrides a time_limit in highs.opt or a '
-                             'solve\'s solver_arguments.  Environment '
-                             'variable: FLEXTOOL_HIGHS_TIME_LIMIT; the '
-                             'flag wins.')
+                        help='Time limit of each solve in seconds, on every '
+                             'solver (HiGHS time_limit, Gurobi TimeLimit, '
+                             'CPLEX timelimit, Xpress MAXTIME, COPT '
+                             'TimeLimit).  Unset (default) means no limit; 0 '
+                             'or a negative value is ignored with a warning.  '
+                             'It overrides a time limit in the solver\'s '
+                             'option file (solver_config/<solver>.opt) or a '
+                             'solve\'s solver_arguments.  A MIP solve stopped '
+                             'at the limit keeps its best solution with a '
+                             'warning; an LP, or a solve without a solution, '
+                             'stops the run.  Environment variable: '
+                             'FLEXTOOL_SOLVER_TIME_LIMIT; the flag wins.  '
+                             '(FLEXTOOL_HIGHS_TIME_LIMIT still works for HiGHS '
+                             'only.)')
     parser.add_argument('--solver-mip-gap', type=float, default=None,
                         metavar='GAP',
-                        help='HiGHS MIP relative optimality gap '
-                             '(``mip_rel_gap`` option) for every solve of '
-                             'the run.  Unset (default): each solve uses its '
-                             '``solver_mip_gap`` in the database, else '
-                             '``mip_rel_gap`` in solver_config/highs.opt.  '
-                             'Only affects MIP solves (integer investments, '
-                             'unit-commitment / online variables); '
-                             'pure-LP solves ignore it.  Environment '
-                             'variable: FLEXTOOL_HIGHS_MIP_GAP; the flag '
-                             'wins.')
+                        help='Relative MIP optimality gap of every solve of the '
+                             'run, on every solver (HiGHS mip_rel_gap, Gurobi '
+                             'MIPGap, CPLEX mip tolerances mipgap, Xpress '
+                             'MIPRELSTOP, COPT RelGap).  Unset (default): each '
+                             'solve uses its ``solver_mip_gap`` in the '
+                             'database, else the gap in the solver\'s option '
+                             'file.  It overrides both, and a gap in a solve\'s '
+                             'solver_arguments.  Only affects MIP solves '
+                             '(integer investments, unit-commitment / online '
+                             'variables); pure-LP solves ignore it.  '
+                             'Environment variable: FLEXTOOL_SOLVER_MIP_GAP; '
+                             'the flag wins.  (FLEXTOOL_HIGHS_MIP_GAP still '
+                             'works for HiGHS only.)')
     parser.add_argument('--csv-dump', action='store_true',
                         default=False,
                         help='Debug visibility for cascade-internal '
