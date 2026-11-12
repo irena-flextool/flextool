@@ -20,8 +20,9 @@ An option that has more than one of these forms is resolved here, always in the 
    inherits the parent's environment untouched, so a variable set in the shell reaches the child as set.
 4. Process-level variables (``MALLOC_ARENA_MAX``, ``_RJEM_MALLOC_CONF``, ``POLARS_*``) keep ``setdefault``
    semantics and are listed in :data:`ENV_KNOBS`, not in :data:`OPTIONS`.
-5. HiGHS keys keep their own stack (baseline < ``highs.opt`` < ``solve.solver_mip_gap`` <
-   ``solve.solver_arguments`` < operator layer); this registry supplies only the operator layer.
+5. Solver options keep their own stack, the same for every solver (HiGHS: baseline < ``highs.opt``; a
+   commercial solver: ``<solver>.opt``; then ``solve.solver_mip_gap`` < ``solve.solver_arguments`` < operator
+   layer); this registry supplies only the operator layer.
 
 The database tier is not read here: the caller passes the database value (``db=``) because only it knows
 which solve is active.
@@ -171,14 +172,31 @@ OPTIONS: dict[str, OptionSpec] = {
             help="HiGHS log verbosity (silent / normal / verbose)",
         ),
         _spec(
-            key="solver_time_limit", flag="--solver-time-limit", env="FLEXTOOL_HIGHS_TIME_LIMIT", db=None,
+            key="solver_time_limit", flag="--solver-time-limit", env="FLEXTOOL_SOLVER_TIME_LIMIT", db=None,
             parse=_positive_float, default=None, audience="user",
-            help="HiGHS wall-clock time limit in seconds; unset means no limit",
+            help="time limit of each solve in seconds, on every solver (HiGHS time_limit, Gurobi TimeLimit, CPLEX "
+                 "timelimit, Xpress MAXTIME, COPT TimeLimit); unset means no limit",
         ),
         _spec(
-            key="solver_mip_gap", flag="--solver-mip-gap", env="FLEXTOOL_HIGHS_MIP_GAP", db="solve.solver_mip_gap",
+            key="solver_mip_gap", flag="--solver-mip-gap", env="FLEXTOOL_SOLVER_MIP_GAP", db="solve.solver_mip_gap",
             parse=_non_negative_float, default=None, audience="user",
-            help="HiGHS MIP relative gap for every solve; unset keeps the solve's solver_mip_gap, else highs.opt",
+            help="relative MIP gap of every solve, on every solver (HiGHS mip_rel_gap, Gurobi MIPGap, CPLEX mip "
+                 "tolerances mipgap, Xpress MIPRELSTOP, COPT RelGap); unset keeps the solve's solver_mip_gap, else "
+                 "the solver's option file",
+        ),
+        # The former environment names of the two options above, kept for HiGHS only: a shell or CI setting made
+        # for HiGHS must not start limiting a commercial solver.  The flag and the FLEXTOOL_SOLVER_* twin win.
+        _spec(
+            key="highs_time_limit", flag=None, env="FLEXTOOL_HIGHS_TIME_LIMIT", db=None,
+            parse=_positive_float, default=None, audience="user",
+            help="HiGHS-only time limit of each solve in seconds; --solver-time-limit and "
+                 "FLEXTOOL_SOLVER_TIME_LIMIT win over it",
+        ),
+        _spec(
+            key="highs_mip_gap", flag=None, env="FLEXTOOL_HIGHS_MIP_GAP", db=None,
+            parse=_non_negative_float, default=None, audience="user",
+            help="HiGHS-only relative MIP gap of every solve; --solver-mip-gap and FLEXTOOL_SOLVER_MIP_GAP win "
+                 "over it",
         ),
         _spec(
             key="scaling", flag="--scaling", env="FLEXTOOL_SCALING", db="solve.scaling",

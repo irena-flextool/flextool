@@ -253,9 +253,10 @@ def _operator_highs_overrides(run_options: "RunOptions | None" = None) -> dict[s
     contribute; a registry default adds nothing, so an unset option leaves the lower layers in charge.  ``None``
     reads the environment (:meth:`RunOptions.from_env`).
 
-    * ``--solver-time-limit S`` (``FLEXTOOL_HIGHS_TIME_LIMIT``) → ``time_limit``
-    * ``--solver-mip-gap GAP`` (``FLEXTOOL_HIGHS_MIP_GAP``) → ``mip_rel_gap``
-      (only bites MIP solves)
+    * ``--solver-time-limit S`` (``FLEXTOOL_SOLVER_TIME_LIMIT``, else the HiGHS-only
+      ``FLEXTOOL_HIGHS_TIME_LIMIT``) → ``time_limit``
+    * ``--solver-mip-gap GAP`` (``FLEXTOOL_SOLVER_MIP_GAP``, else the HiGHS-only
+      ``FLEXTOOL_HIGHS_MIP_GAP``) → ``mip_rel_gap`` (only bites MIP solves)
     * ``--presolve {on,off,choose}`` (``FLEXTOOL_HIGHS_PRESOLVE``) → ``presolve``
     * ``--threads B`` (``FLEXTOOL_THREADS``) and ``--highs-threads N``
       (``FLEXTOOL_HIGHS_THREADS``), by
@@ -280,9 +281,13 @@ def _operator_highs_overrides(run_options: "RunOptions | None" = None) -> dict[s
 
     cli: dict[str, object] = {}
     tlim = given("solver_time_limit")
+    if tlim is None:
+        tlim = given("highs_time_limit")
     if tlim is not None:
         cli["time_limit"] = float(tlim)
     mip_gap = given("solver_mip_gap")
+    if mip_gap is None:
+        mip_gap = given("highs_mip_gap")
     if mip_gap is not None:
         cli["mip_rel_gap"] = float(mip_gap)
     presolve = given("presolve")
