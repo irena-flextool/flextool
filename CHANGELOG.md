@@ -878,6 +878,9 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   scenarios' sources first, as a normal run does.
 - **The Solver options dialog said the `.opt` files are in the project's `solver_config` folder.** They are
   in the `solver_config` folder of the FlexTool workspace (or `$FLEXTOOL_SOLVER_CONFIG_DIR`).
+- **The Spine Toolbox tool specifications** listed files that no longer exist (`bin/highs.opt` of the FlexTool
+  tool, old modules of *Process outputs* and *scenario comparison*). Toolbox skipped them without a word; they
+  are removed.
 
 #### FlexTool 2 import
 

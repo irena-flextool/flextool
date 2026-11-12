@@ -30,8 +30,9 @@ test fails if any value in the selected CSVs drifts.
 - **Source DB:** `tests/fixtures/tests.json` → `tests.sqlite` via
   `tests/db_utils.py:json_to_db` (rebuilt fresh per session by the
   `test_db_url` fixture in `conftest.py`)
-- **Solver:** real glpsol + HiGHS, with `tests/highs.opt` overriding
-  `bin/highs.opt` for tighter tolerances and `threads=1` (deterministic)
+- **Solver:** HiGHS, with `tests/highs.opt` in place of the shipped
+  `flextool/solver_config/highs.opt.template` (a workspace's `solver_config/highs.opt`)
+  for tighter tolerances and `threads=1` (deterministic)
 
 ### Running
 
@@ -361,7 +362,9 @@ already large.
 
 ## Solver precision
 
-`tests/highs.opt` overrides `bin/highs.opt` during test runs:
+`tests/highs.opt` replaces FlexTool's default HiGHS options
+(`flextool/solver_config/highs.opt.template`) during test runs; the `test_solver_config_dir`
+fixture in `conftest.py` copies it into the run's solver option folder:
 
 - `threads=1` for deterministic results
 - `primal/dual_feasibility_tolerance=1e-8` (tighter than production)
