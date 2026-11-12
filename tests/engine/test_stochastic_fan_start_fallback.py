@@ -299,37 +299,65 @@ def test_rolling_lookahead_not_covered_by_roll_forecast_is_an_error(tmp_path_fac
 # ── 4c: a later forecast cohort that no solve or roll fans out at (item 229) ──
 _LATER_COHORT_HEAD = (
     "opens its stochastic fan at period 'p1' (analysis_time 't0001'). A solve or roll fans out only once, "
-    "but its stochastic_branches also declare forecast branches later in its horizon: period 'p2' at "
-    "analysis_time 't0005' (forecast branches ")
+    "but the stochastic_branches of solve 'sol' also declare forecast branches later in its horizon: period "
+    "'p2' at analysis_time 't0005' (forecast branches ")
+_ROLL_0_P2_ERROR = (
+    "Roll 'sol_roll_0' of rolling solve 'sol' " + _LATER_COHORT_HEAD + "'high', 'low'). FlexTool would ignore "
+    "them. Each roll fans out at the first reveal in its horizon, and no roll fans out at these. Remove these "
+    "rows, or make a roll start there (rolling_solve_jump). Check stochastic_branches.")
 
 
 @pytest.mark.parametrize(("rolling", "fans", "expected"), [
     pytest.param(
         None,
         [*_two_forecasts("p1", "t0001"), ("p2", "x", "t0005", "no", 0.5), ("p2", "mid", "t0005", "no", 0.5)],
-        "Solve 'sol' " + _LATER_COHORT_HEAD + "'mid', 'x'). They would be ignored without a message. The "
-        "branches opened at 'p1' continue through every later period, and a forecast series given at a later "
-        "period's first time step is read without these rows. Remove these rows, or put the later fan in a "
-        "separate solve. Check stochastic_branches.",
+        "Solve 'sol' " + _LATER_COHORT_HEAD + "'mid', 'x'). FlexTool would ignore them. The branches opened "
+        "at 'p1' continue through every later period, and a forecast series given at a later period's first "
+        "time step is read without these rows. Remove these rows, or put the later fan in a separate solve. "
+        "Check stochastic_branches.",
         id="single"),
     pytest.param(
         (8.0, 12.0),
         [*_two_forecasts("p1", "t0001"), *_two_forecasts("p2", "t0005")],
-        "Roll 'sol_roll_0' of rolling solve 'sol' " + _LATER_COHORT_HEAD + "'high', 'low'). They would be "
-        "ignored without a message. Each roll fans out at the first reveal in its horizon, and no roll fans "
-        "out at these. Remove these rows, or make a roll start there (rolling_solve_jump). Check "
-        "stochastic_branches.",
+        _ROLL_0_P2_ERROR,
         id="rolling"),
+    pytest.param(
+        (6.0, 12.0),
+        [*_two_forecasts("p1", "t0001"), *_two_forecasts("p2", "t0005"), *_two_forecasts("p3", "t0009")],
+        _ROLL_0_P2_ERROR,
+        id="rolling-fan-after-roll-start"),
 ])
 def test_later_forecast_cohort_no_solve_fans_at_is_an_error(tmp_path_factory, rolling, fans, expected) -> None:
     """A solve or roll fans out once, at its first reveal.  Single solve, NP=3: fan p1/t0001 (high/low) and
     forecasts x, mid declared at p2/t0005 -- before, they were dropped silently.  Rolling 8/12, NP=3: rolls
-    start at t0001 and t0009; roll 0's horizon reaches p2/t0005, where no roll fans out.  Both stop before
+    start at t0001 and t0009; roll 0's horizon reaches p2/t0005, where no roll fans out.  Rolling 6/12, NP=3,
+    cohorts t0001/t0005/t0009: roll 1 starts at t0007 (inside p2) and fans at its first reveal p3/t0009, so
+    roll 0's look-ahead p3/t0009 is a fan point (no error) and only p2/t0005 is named.  All stop before
     solving with a message naming the solve (roll), its fan point, the later cohort and its branches.  The
-    valid case -- a later cohort that another roll fans out at -- is test 4 / 4b."""
+    valid cases -- a later cohort that another roll fans out at -- are test 4 / 4b and the next test."""
     with pytest.raises(FlexToolConfigError) as err:
         _run(tmp_path_factory, n_periods=3, fans=fans, rolling=rolling)
     assert str(err.value) == expected
+
+
+def test_later_cohort_at_another_rolls_fan_point_not_its_start(tmp_path_factory, monkeypatch) -> None:
+    """Rolling 6/12, NP=3, cohorts t0001 and t0009 only: roll 0 (t0001..t0012) fans at p1/t0001 and its
+    look-ahead reaches p3/t0009; roll 1 starts at t0007 but fans at p3/t0009 (a later period's first step,
+    not the roll's own start).  The exemption is a roll's fan point, so the run goes through: two rolls, roll 0
+    fanning at t0001 and roll 1 at t0009 (the fan steps recorded per roll, as in test 4)."""
+    fans = [*_two_forecasts("p1", "t0001"), *_two_forecasts("p3", "t0009")]
+    from flextool.engine.preprocess.emit import _solve_writers
+    emitted: list = []
+    real_emit = _solve_writers.emit_branch_time_start
+
+    def _record(rows, *, provider, fan_first=False):
+        emitted.append(sorted({step for _d, step in rows}))
+        real_emit(rows, provider=provider, fan_first=fan_first)
+
+    monkeypatch.setattr(_solve_writers, "emit_branch_time_start", _record)
+    steps = _run(tmp_path_factory, n_periods=3, fans=fans, rolling=(6.0, 12.0))
+    assert list(steps) == ["sol_roll_0", "sol_roll_1"]
+    assert emitted == [["t0001"], ["t0009"]]
 
 
 # ── 5: realized: yes — the realization sibling and ungrouped users ─────

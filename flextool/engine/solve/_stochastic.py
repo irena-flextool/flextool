@@ -498,9 +498,9 @@ class StochasticSolver:
             message = (
                 f"{who} opens its stochastic fan at period {trig_period!r} "
                 f"(analysis_time {trig_step!r}). A solve or roll fans out only "
-                "once, but its stochastic_branches also declare forecast "
-                f"branches later in its horizon: {items}. They would be "
-                f"ignored without a message. {hint} Check stochastic_branches."
+                f"once, but the stochastic_branches of solve {c!r} also "
+                f"declare forecast branches later in its horizon: {items}. "
+                f"FlexTool would ignore them. {hint} Check stochastic_branches."
             )
             self.logger.error(message)
             raise FlexToolConfigError(message)
@@ -591,6 +591,12 @@ class StochasticSolver:
         # Later forecast cohorts reachable in each fanned sub-solve; checked
         # after the loop, once every sub-solve's fan point is known.
         unfanned: dict[str, tuple[str, str, bool, list]] = dict()
+        # Per complete solve: the stochastic_branches rows grouped by cohort
+        # (period, start_step), and the sorted forecast branches of each
+        # cohort reached so far.  Built once per complete solve, so a roll
+        # walks only its own horizon, not every roll's rows.
+        cohort_rows: dict[str, dict[tuple[str, str], list]] = dict()
+        cohort_forecasts: dict[str, dict[tuple[str, str], list[str]]] = dict()
 
         for solve in solves:
             new_realized_time_list: dict = dict()
@@ -622,6 +628,9 @@ class StochasticSolver:
             # in the roll where it triggers — a clean cross-roll pre-pass is
             # infeasible, since a mid-horizon reveal is a PERIOD boundary, not
             # a roll boundary, so it can't be told from a garbage step here).
+            # The later forecast cohorts in this solve's horizon are checked
+            # after the loop (``_check_unfanned_cohorts``): one that no
+            # sub-solve of the same complete solve fans out at is an error.
             # Checks: (i) the trigger step must be its period's FIRST step
             # (reveals are period-granular boundaries); (ii) the cohort
             # {rows sharing that (period, start_step)} must carry ≤1
@@ -732,26 +741,38 @@ class StochasticSolver:
                 trig_index = order.index(trig_period)
                 trig_steps = [e.timestep for e in active_time_list[trig_period]]
                 trig_step_index = trig_steps.index(trig_step)
-                cohorts = {(row[0], row[2]) for row in info}
+                complete = complete_solves[solve]
+                if complete not in cohort_rows:
+                    rows_by_cohort: defaultdict[tuple[str, str], list] = (
+                        defaultdict(list)
+                    )
+                    for row in info:
+                        rows_by_cohort[(row[0], row[2])].append(row)
+                    cohort_rows[complete] = dict(rows_by_cohort)
+                    cohort_forecasts[complete] = dict()
+                rows_by_cohort_c = cohort_rows[complete]
+                forecasts_by_cohort = cohort_forecasts[complete]
                 candidates = []
                 for period_c in order[trig_index:]:
                     steps_c = [e.timestep for e in active_time_list[period_c]]
                     for idx_c, step_c in enumerate(steps_c):
-                        if (period_c, step_c) not in cohorts:
+                        cohort = (period_c, step_c)
+                        if cohort not in rows_by_cohort_c:
                             continue
                         if period_c == trig_period and idx_c <= trig_step_index:
                             continue
-                        forecasts = sorted(
-                            {
-                                r[1]
-                                for r in info
-                                if r[0] == period_c
-                                and r[2] == step_c
-                                and r[3] != "yes"
-                                and float(r[4]) != 0.0
-                                and r[1] != period_c
-                            }
-                        )
+                        forecasts = forecasts_by_cohort.get(cohort)
+                        if forecasts is None:
+                            forecasts = sorted(
+                                {
+                                    r[1]
+                                    for r in rows_by_cohort_c[cohort]
+                                    if r[3] != "yes"
+                                    and float(r[4]) != 0.0
+                                    and r[1] != period_c
+                                }
+                            )
+                            forecasts_by_cohort[cohort] = forecasts
                         if forecasts:
                             candidates.append((period_c, step_c, forecasts))
                 if candidates:
