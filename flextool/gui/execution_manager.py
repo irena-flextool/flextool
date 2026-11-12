@@ -20,7 +20,7 @@ import psutil
 
 from flextool._child_python import SAFE_PATH_FLAG, child_env
 from flextool._safe_text import printable
-from flextool.safe_names import describe_name, output_name_problem, require_inside
+from flextool.safe_names import describe_name, output_name_problem, require_strictly_inside
 from flextool._process_tree import kill_process_tree
 from flextool.gui.cli_format import format_cmd_for_log, terminal_command
 from flextool.gui.data_models import TIMESTAMP_FORMAT, GlobalSettings, ProjectSettings, ScenarioInfo
@@ -1222,7 +1222,7 @@ class ExecutionManager:
 
                 # Clean work folder so re-executions start fresh (only ever a folder under <project>/work/)
                 if work_folder.exists():
-                    require_inside(work_folder, self.project_path / "work")
+                    require_strictly_inside(work_folder, self.project_path / "work")
                     shutil.rmtree(work_folder, ignore_errors=True)
                 work_folder.mkdir(parents=True, exist_ok=True)
 

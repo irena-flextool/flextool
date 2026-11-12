@@ -10,7 +10,7 @@ try:
 except ModuleNotFoundError:
     exit("Cannot find the required Spine-Toolbox module. Check that the environment is activated and the toolbox is installed")
 from spinedb_api.exception import NothingToCommit
-from flextool._child_python import python_module_argv
+from flextool._child_python import pip_env, python_module_argv
 from flextool._resources import package_data_path
 from flextool.update_flextool.db_migration import migrate_database
 from flextool.update_flextool.initialize_database import initialize_database
@@ -55,7 +55,7 @@ def _reinstall_if_needed():
 
     result = subprocess.run(
         python_module_argv("pip", "show", "flextool"),
-        capture_output=True, text=True,
+        capture_output=True, text=True, env=pip_env(),
     )
     is_editable = "Editable project location" in result.stdout
 
@@ -65,9 +65,10 @@ def _reinstall_if_needed():
     )
     target = ["-e", repo_root] if is_editable else [repo_root]
     completed = subprocess.run(
-        # -P only, no PYTHONSAFEPATH: pip runs the setup scripts of the packages it builds, which may need
+        # -P only, no PYTHONSAFEPATH (pip_env): pip runs the setup scripts of the packages it builds, which may need
         # their own folder on sys.path.
         python_module_argv("pip", "install", "--upgrade", *target),
+        env=pip_env(),
     )
     if completed.returncode != 0:
         flag = "-e " if is_editable else ""
@@ -100,7 +101,7 @@ def _run_fix_steps(steps) -> bool:
     """Run pip *steps* in order, echoing each; stop at the first failure."""
     for step in steps:
         print("\n$ " + " ".join(step))
-        completed = subprocess.run(step)
+        completed = subprocess.run(step, env=pip_env())
         if completed.returncode != 0:
             print(
                 f"Warning: '{' '.join(step)}' exited {completed.returncode}. "

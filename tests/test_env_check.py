@@ -523,6 +523,19 @@ class _Ran:
         return subprocess.CompletedProcess(argv, self.returncode)
 
 
+def test_pip_does_not_inherit_the_safe_path_variable(monkeypatch):
+    """A FlexTool child carries PYTHONSAFEPATH=1; pip must not (it runs setup scripts that import from their folder)."""
+    monkeypatch.setenv("PYTHONSAFEPATH", "1")
+    envs = []
+
+    def run(argv, **kwargs):
+        envs.append(kwargs.get("env"))
+        return subprocess.CompletedProcess(argv, 0)
+
+    assert env_check._run_steps([_COMPAT_STEP], run) == 0
+    assert envs[0] is not None and "PYTHONSAFEPATH" not in envs[0] and envs[0]["PATH"] == os.environ["PATH"]
+
+
 def _no_polars_imported(monkeypatch):
     for name in [m for m in sys.modules if m == "polars" or m.startswith("polars.")]:
         monkeypatch.delitem(sys.modules, name)

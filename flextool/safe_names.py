@@ -66,10 +66,9 @@ def output_name_problem(name: object, *, windows: bool | None = None) -> str | N
 
 
 def describe_name(name: object) -> str:
-    """*name* for a message: quoted, with control characters shown as ``\\xNN``."""
-    from flextool._safe_text import printable
-
-    return repr(printable(name)) if isinstance(name, str) else repr(name)
+    """*name* for a message: quoted, with control characters shown as ``\\xNN`` (Python's ``repr``, which also shows
+    other characters that do not print, such as bidi controls, as ``\\uNNNN``, and keeps letters of any script)."""
+    return repr(name)
 
 
 def check_output_name(name: object, what: str = "scenario name") -> str:

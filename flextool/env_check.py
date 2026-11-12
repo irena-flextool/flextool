@@ -59,6 +59,11 @@ def _safe_path_env() -> dict[str, str]:
     """This process's environment with ``PYTHONSAFEPATH=1`` (see ``flextool._child_python.child_env``)."""
     return {**os.environ, "PYTHONSAFEPATH": "1"}
 
+
+def _pip_env() -> dict[str, str]:
+    """This process's environment without ``PYTHONSAFEPATH``, for pip (see ``flextool._child_python.pip_env``)."""
+    return {k: v for k, v in os.environ.items() if k != "PYTHONSAFEPATH"}
+
 # Probe program: import each native extension in turn and print a *flushed*
 # marker after each one survives.  On a native crash the already-flushed
 # markers remain in the captured pipe, so the last marker tells us how far
@@ -914,7 +919,7 @@ def _run_steps(steps: list[list[str]], run) -> int | str:
     for step in steps:
         _stderr("$ " + format_command(step))
         try:
-            returncode = run(step).returncode
+            returncode = run(step, env=_pip_env()).returncode
         except OSError as exc:
             returncode = f"not started ({exc})"
         if returncode != 0:
@@ -978,8 +983,8 @@ def compat_install_dialog(message: str, steps: list[list[str]], run=subprocess.r
             return "declined"
         outcome: dict = {}
 
-        def _run_quietly(argv):
-            done = run(argv, capture_output=True, text=True, **_no_console_window())
+        def _run_quietly(argv, **kwargs):
+            done = run(argv, capture_output=True, text=True, **kwargs, **_no_console_window())
             outcome["output"] = (getattr(done, "stdout", "") or "") + (getattr(done, "stderr", "") or "")
             return done
 

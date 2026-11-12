@@ -7,6 +7,8 @@ The critical contract: under ``-i`` ``run_tool`` must NEVER call ``sys.exit()``
 it signals success by returning and failure by raising.  Standalone, it
 preserves normal exit-code semantics.
 """
+import io
+import logging
 import sys
 import types
 
@@ -105,3 +107,25 @@ def test_interactive_lets_other_exceptions_propagate(monkeypatch):
     # A genuine exception must propagate unchanged (Toolbox marks Tool failed).
     with pytest.raises(ValueError, match="real bug"):
         _console.run_tool(entry)
+
+
+def test_the_tool_output_shows_control_characters(monkeypatch):
+    """What a Tool prints and logs reaches the terminal or the Toolbox console with its control characters shown."""
+    _force_interactive(monkeypatch, 1)
+    out, err, log = io.StringIO(), io.StringIO(), io.StringIO()
+    monkeypatch.setattr(sys, "stdout", out)
+    monkeypatch.setattr(sys, "stderr", err)
+    handler = logging.StreamHandler(log)  # made before the Tool runs, so it holds the stream itself
+    logging.getLogger().addHandler(handler)
+    try:
+        def tool():
+            print("scenario a\x1b[2Jb", "done")
+            print("node \u202eevil", file=sys.stderr)
+            logging.getLogger("flextool.test").warning("unit a\x1b]0;x\x07b")
+        _console.run_tool(tool)
+    finally:
+        logging.getLogger().removeHandler(handler)
+    assert out.getvalue() == "scenario a\\x1b[2Jb done\n"
+    assert err.getvalue() == "node \\u202eevil\n"
+    assert log.getvalue() == "unit a\\x1b]0;x\\x07b\n"
+    assert sys.stdout is out and sys.stderr is err and handler.formatter is None

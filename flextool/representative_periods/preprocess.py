@@ -946,4 +946,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    from flextool.cli._console import run_tool
+
+    run_tool(main)

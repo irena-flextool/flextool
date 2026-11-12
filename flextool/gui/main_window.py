@@ -15,7 +15,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from flextool import run_record
-from flextool._child_python import SAFE_PATH_FLAG, child_env
+from flextool._child_python import SAFE_PATH_FLAG, child_env, pip_env
 from flextool._resources import package_data_path
 from flextool.gui.project_utils import (
     get_projects_dir,
@@ -4407,9 +4407,10 @@ class MainWindow(tk.Tk):
             success = True
             collected: list[str] = []
             try:
-                # pip / git steps: the pip steps carry -P themselves; no PYTHONSAFEPATH here, because pip runs
-                # the setup scripts of packages it builds, and those may need their own folder on sys.path.
-                env = {**os.environ, "PYTHONUNBUFFERED": "1"}
+                # pip / git steps: the pip steps carry -P themselves; no PYTHONSAFEPATH here (removed if this
+                # process has it), because pip runs the setup scripts of packages it builds, and those may need
+                # their own folder on sys.path.
+                env = pip_env(PYTHONUNBUFFERED="1")
                 for step in steps:
                     mgr.append_stdout(job.job_id, "$ " + " ".join(step))
                     proc = subprocess.Popen(

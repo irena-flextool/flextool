@@ -19,7 +19,7 @@ import sys
 import threading
 from typing import Any, Callable
 
-from flextool._safe_text import printable
+from flextool._safe_text import PrintableText
 from flextool.run_record._owner import RunLogWriter
 
 _logger = logging.getLogger(__name__)
@@ -34,6 +34,7 @@ class TeeStream:
         self._lock = threading.Lock()
         self._partial: dict[int, list[str]] = {}
         self._broken = False
+        self._printable = PrintableText()
 
     @property
     def inner(self) -> Any:
@@ -42,7 +43,7 @@ class TeeStream:
     def write(self, text: str) -> int:
         size = len(text)
         if text:
-            text = printable(text, keep_newlines=True)
+            text = self._printable(text)
         self._inner.write(text)
         if text and not self._broken:
             self._copy(text)

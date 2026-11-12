@@ -9,7 +9,7 @@ import logging
 import sys
 
 import flextool_run_supervisor as supervisor
-from flextool._safe_text import PrintableFormatter, make_printable, printable
+from flextool._safe_text import PrintableFormatter, PrintableText, make_printable, printable
 from flextool.run_record import RunLogWriter, install_tee
 from flextool.run_record._owner import write_log_header
 
@@ -21,6 +21,17 @@ def test_printable_shows_control_characters_and_keeps_text() -> None:
     assert printable("a\tb ä 風") == "a\tb ä 風"
     assert printable("a\nb") == "a\\x0ab"
     assert printable("a\r\nb\rc\n", keep_newlines=True) == "a\nb\\x0dc\n"
+
+
+def test_bidi_controls_are_shown_and_joiners_kept() -> None:
+    assert printable("ok\u202eevil\u2066x\u2069\u2028") == "ok\\u202eevil\\u2066x\\u2069\\u2028"
+    assert printable("\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645") == "\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645"
+
+
+def test_a_windows_line_end_split_across_writes_stays_a_line_end() -> None:
+    shown = PrintableText()
+    assert shown("x\r") + shown("\n") == "x\n"
+    assert shown("a\r") + shown("b\n") == "a\\x0db\n"  # a carriage return that is not a line end is shown
 
 
 def test_the_console_log_handler_shows_them(tmp_path) -> None:

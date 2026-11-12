@@ -5,8 +5,9 @@
 package, and its code would run.  Every Python child FlexTool starts therefore runs with ``-P`` (Python 3.11+: do
 not add the current folder or the script's folder to ``sys.path``), and its environment carries
 ``PYTHONSAFEPATH=1`` as a second guard, which also covers the Python processes that child starts in turn.
-``PYTHONPATH`` keeps working.  The pip steps (updates, solver library repairs) get ``-P`` but not the variable:
-pip runs the setup scripts of the packages it builds, and those may import from their own folder.
+``PYTHONPATH`` keeps working.  The pip steps (updates, solver library repairs) get ``-P`` but not the variable, also
+when FlexTool itself runs with it (:func:`pip_env`): pip runs the setup scripts of the packages it builds, and those
+may import from their own folder.
 
 This module uses the standard library only.  Two files cannot import it and spell the flag themselves:
 ``flextool_run_supervisor.py`` and ``flextool/env_check.py`` (both stdlib-only, loaded without importing the
@@ -42,4 +43,12 @@ def child_env(base: Mapping[str, str] | None = None, **extra: str) -> dict[str, 
     return env
 
 
-__all__ = ["SAFE_PATH_ENV", "SAFE_PATH_FLAG", "child_env", "python_argv", "python_module_argv"]
+def pip_env(base: Mapping[str, str] | None = None, **extra: str) -> dict[str, str]:
+    """A copy of *base* (default :data:`os.environ`) with the *extra* variables and without ``PYTHONSAFEPATH``, for
+    the pip steps (see the module docstring)."""
+    env = {k: v for k, v in (os.environ if base is None else base).items() if k != SAFE_PATH_ENV}
+    env.update(extra)
+    return env
+
+
+__all__ = ["SAFE_PATH_ENV", "SAFE_PATH_FLAG", "child_env", "pip_env", "python_argv", "python_module_argv"]

@@ -48,7 +48,7 @@ def test_windows_file_name_rules_apply_on_windows(name: str) -> None:
 def test_the_message_shows_control_characters_visibly() -> None:
     with pytest.raises(UnsafeNameError) as exc:
         check_output_name("a\x1b[2Jb")
-    assert "\x1b" not in str(exc.value) and "\\x1b" in str(exc.value)
+    assert "'a\\x1b[2Jb'" in str(exc.value)  # one backslash, as Python writes it
 
 
 def test_the_folder_guards(tmp_path: Path) -> None:

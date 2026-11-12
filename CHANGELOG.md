@@ -925,9 +925,13 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **Plot file names stay in the plot folder.** A `/` or `\` in a plot name from the plot settings, or in a node,
   group or scenario name of a dispatch plot, becomes `_` in the file name (on Windows also `< > : " | ? *`).
 - **Control characters in names are shown, not acted on.** A name from the input data with an escape character or
-  another control character is shown with that character as `\x1b` (and so on) in `flextool-run`'s console output
-  and `_run.log`, in a model run's own console output (also in the Spine Toolbox console), and in the FlexTool
-  window's logs, instead of reaching the terminal as a command.
+  another control character is shown with that character as `\x1b` (and so on), and with a character that reverses
+  the direction of text as `\u202e` (and so on), instead of reaching the terminal as a command or reordering the
+  line. This holds in `flextool-run`'s console output and `_run.log`, in a model run's own console output, in
+  `flextool-write-outputs`, `flextool-scenario-results`, `flextool-execute-workflow`, the calibration and
+  representative-period command lines, in the Spine Toolbox console for the FlexTool, *Process outputs* and
+  *scenario comparison* tools, and in the FlexTool window's logs. Other command-line tools (for example
+  `flextool-time-runs` and the database tools) print such characters as they are.
 - **VRE curtailment, VRE potential and flow-group energies per period are scaled to
   a full year.** `unit_curtailment__outputNode__d`, `unit_outputNode_VRE_potential__d` and the `cumulative_flow` of
   `group_flow__d` were sums over the sampled time steps (the flow group's also without the timestep weights); they
