@@ -156,6 +156,9 @@ def validate_solver_option(solver: str, name: object, value: object, where: str)
     elif _OPTION_VALUE.fullmatch(value_text) is None:
         bad = next(ch for ch in value_text if not re.fullmatch(r"[A-Za-z0-9_.+\-/\\:]", ch))
         problem = f"the value contains {_describe_character(bad)}"
+    elif value_text.endswith("\\"):
+        # A console that reads Tcl (Xpress) joins a line ending in a backslash with the next command.
+        problem = "the value ends with a backslash"
     if problem is None:
         return
     name_rule_text = (
@@ -165,7 +168,8 @@ def validate_solver_option(solver: str, name: object, value: object, where: str)
     raise FlexToolUserError(
         f"Refusing {solver} option {_short(name_text)} (value {_short(value_text)}) from {where}: {problem}. "
         f"A solver option name is {name_rule_text}; a value is a number or one word of letters, digits and "
-        "'_ . + - / \\ :' (no spaces, quotes, ';', '#', '=' or line breaks). Correct the option there and run again."
+        "'_ . + - / \\ :' (no spaces, quotes, ';', '#', '=', line breaks or a backslash at the end). "
+        "Correct the option there and run again."
     )
 
 

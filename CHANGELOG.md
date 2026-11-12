@@ -89,7 +89,8 @@ Each line says what changes for a model that ran before and what to do; the deta
   refuses, for every solver including HiGHS, an option name or value with a line break, control character, space,
   quote, `;`, `#` or `=`; names are letters, digits, `_` and `.` (CPLEX: words separated by single spaces). The
   error names the solve and parameter, or the option file and line. Numbers (`-1`, `1e-4`, `inf`) and paths without
-  spaces still pass; a value with a space, such as a file path, is now refused: use a path without spaces.
+  spaces still pass; a value with a space, such as a file path, or ending in a backslash is now refused: use a path
+  without spaces.
 
 ### New features
 
@@ -552,6 +553,11 @@ Each line says what changes for a model that ran before and what to do; the deta
 
 #### Solving
 
+- **Solver options can no longer add commands to a solver run** (since 4.0). A `solver_arguments` entry or an
+  option-file line with a line break, `;`, a quote or a space could add a command to the script piped to CPLEX,
+  Xpress or COPT, or address another Gurobi or HiGHS option. Every option of every solver is now checked before the
+  solve; a refused one stops the run with a message naming the solve and parameter, or the option file and line,
+  and the option. The solver's command script and arguments are checked again just before it starts.
 - **`--solver-time-limit` and `--solver-mip-gap` now apply to Gurobi, CPLEX, Xpress and COPT** (the GUI's time
   limit too), and win over the solve's `solver_mip_gap`, its `solver_arguments` and the solver's option file, as
   they do for HiGHS. Before, they set only HiGHS options: a commercial solve used the database gap and ran without

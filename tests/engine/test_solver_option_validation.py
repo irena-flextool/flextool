@@ -38,6 +38,11 @@ _BAD = [
     ("Threads", "1\x1b", "control character"),
     ("Thr;eads", "1", "';'"),
     ("Thr=eads", "1", "'='"),
+    ("Threads", "1\u2028quit", "line break"),
+    ("Threads", "\uff11", "the character"),
+    ("Threads", "1$x", "'$'"),
+    ("Threads", "[exec x]", "'['"),
+    ("Threads", "1\\", "ends with a backslash"),
 ]
 
 
@@ -68,6 +73,15 @@ def test_bad_option_file_lines_are_refused_naming_file_and_line(solver, line, wo
     with pytest.raises(FlexToolUserError) as err:
         _resolve(solver, opt_text=text)
     assert "cfg/x.opt, line 4" in str(err.value) and words in str(err.value)
+
+
+@pytest.mark.parametrize("solver", _COMMERCIAL)
+def test_option_file_value_ending_in_a_backslash_is_refused(solver) -> None:
+    """A Tcl console (Xpress) joins a line ending in a backslash with the next command (``readprob``)."""
+    with pytest.raises(FlexToolUserError, match="ends with a backslash") as err:
+        _resolve(solver, opt_text="Threads 1\nTUNEROUTPUTPATH C:\\out\\\n")
+    assert "cfg/x.opt, line 2" in str(err.value)
+    assert [o.value for o in _resolve(solver, options={"A": "C:\\out\\x"})] == ["C:\\out\\x"]
 
 
 def test_space_in_a_name_is_refused_except_cplex_single_spaces() -> None:
@@ -128,6 +142,8 @@ def test_script_builders_refuse_a_line_break_that_got_through(monkeypatch) -> No
     """A4: the last check before the solver starts, independent of the option check."""
     with pytest.raises(FlexToolUserError, match="line break"):
         _join_script("cplex", ["set threads 1\nquit"], ["read m.mps", "optimize", "quit"])
+    with pytest.raises(FlexToolUserError, match="backslash"):
+        _join_script("xpress", ["setControl THREADS 1\\"], ["readprob m.mps", "lpoptimize", "quit"])
     monkeypatch.setattr(_subprocess_solve, "_parse_native_opt_file", lambda path: {"Threads": "1\nX=2"})
     for solver in _COMMERCIAL:
         with pytest.raises(FlexToolUserError, match="line break"):
