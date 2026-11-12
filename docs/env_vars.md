@@ -33,13 +33,13 @@ read (for example `FLEXTOOL_HIGHS_THREADS=many`) is ignored with one warning tha
 | `FLEXTOOL_SAVE_MEMORY` | `--save-memory` | `1` | Solve each LP in a separate process to lower peak memory (slower). |
 | `FLEXTOOL_WARM_START` | `--warm-start` | `1` | Reuse a cached HiGHS basis for solves of the same model structure, both in-process and with `--save-memory` (not for Benders solves). |
 | `FLEXTOOL_BASIS_CACHE_DIR` | `--basis-cache-dir` | folder | Where the warm-start basis cache is kept (default `<work folder>/basis_cache`). Share one folder to reuse bases between runs. |
+| `FLEXTOOL_SOLVER_CONFIG_DIR` | `--solver-config-dir` | folder | Where a run takes its solver option files (`highs.opt`, `gurobi.opt`, ...) from. Wins over the search of a run without it: `solver_config/` next to the input database, in the workspace of a GUI project database, in the Spine Toolbox project folder, in the current folder. The run copies the files it used to `<work folder>/solve_data/solver_config/`. See [Where the option files come from](solvers/index.md#where-the-option-files-come-from). |
 | `FLEXTOOL_BENDERS_WORKERS` | `--benders-workers` | positive integer | Threads for the region solves of a Benders solve. Unset or `0`: the number of regions, at most the number of cores minus one. |
 
 ## Process and GUI settings
 
 | Variable | Set to | What it does |
 |---|---|---|
-| `FLEXTOOL_SOLVER_CONFIG_DIR` | folder | Where a run takes its solver option files (`highs.opt`, `gurobi.opt`, ...) from, instead of `solver_config/` in the current folder. The run copies them into its work folder. See [Solver selection](solvers/index.md). |
 | `FLEXTOOL_NO_ENV_CHECK` | `1` | Skip FlexTool's start-up checks of the native libraries: the processor check at `import flextool` (which offers to install the compatible polars build on a processor without AVX2) and the GUI's start-up probe. With the checks skipped, polars may crash on such a processor. |
 | `FLEXTOOL_NO_UPDATE_CHECK` | `1` | The GUI does not look for a newer FlexTool at start. |
 | `FLEXTOOL_DPI` | DPI value, e.g. `144` | GUI screen resolution, when the automatic detection is wrong. |

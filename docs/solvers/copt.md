@@ -4,9 +4,10 @@
 
 COPT (Cardinal Optimizer) from Cardinal Operations is a newer commercial
 linear, mixed-integer, second-order cone, and semidefinite programming
-solver. Its Python API is intentionally Gurobi-shaped, so polar-high's COPT
-adapter mirrors the Gurobi adapter closely. FlexTool dispatches through
-polar-high; it never imports `coptpy` directly.
+solver. FlexTool writes each solve's model to an MPS file and runs COPT's
+command-line solver `copt_cmd` (found on `PATH` or in `~/copt/bin`) on it in
+a separate process, giving every parameter as a `set <ParamName> <value>`
+command. FlexTool never imports `coptpy` directly.
 
 Official site: <https://www.copt.de/> (Cardinal Operations product portal).
 Also <https://www.shanshu.ai/> offers licensing options.
@@ -28,13 +29,6 @@ Install the Python wrapper:
 
 ```bash
 pip install coptpy
-```
-
-polar-high's COPT adapter also requires `scipy` for the vectorised matrix
-load (same dependency as the Gurobi adapter); install it if missing:
-
-```bash
-pip install scipy
 ```
 
 For licensing:
@@ -101,10 +95,9 @@ documented as Gurobi's).
   `copt.lic` or setting `COPT_LICENSE_DIR`.
 - **Licence expired.** Same FlexTool message family with the vendor's
   expiry text. Renew through the Cardinal Operations licence portal.
-- **`scipy` missing.** FlexTool surfaces: *"Solver 'copt' is not
-  installed on this system. ..."* with the cause *"scipy is not installed
-  (required by the COPT adapter for vectorized matrix load)"*. Install
-  scipy with `pip install scipy`.
+- **Time limit reached.** A MIP stopped at its time limit with a solution is
+  kept with a warning; an LP, or a MIP without a solution, stops the run. See
+  [Time limit](index.md#time-limit).
 - **`copt_cmd` not on `PATH` (HiGHS-coexistence fallback).** FlexTool
   shows: *"Solver 'copt' returned an error: ..."* with the cause naming
   the missing binary. Add the COPT distribution's `bin` directory to
@@ -123,11 +116,16 @@ solve_advanced.solver_arguments:
   LpMethod   = 2
 ```
 ```bash
-flextool <input_db_url> --solver-time-limit 60 --highs-threads 8
+flextool <input_db_url> --solver-time-limit 60 --solver-mip-gap 0.001
 ```
 
-The convenience knobs translate to COPT's `TimeLimit`, `RelGap`, and
-`Threads`. Raw `solver_arguments` win on key collision.
+`--solver-time-limit` and `--solver-mip-gap` reach COPT as `TimeLimit 60.0` and
+`RelGap 0.001`, over the solve's `solver_mip_gap`, its `solver_arguments` and
+`copt.opt` (precedence in [Solver selection](index.md)). Parameter names
+match without regard to case. The thread count comes from `Threads` in
+`copt.opt`; `--threads` and `--highs-threads` do not change it. The run
+prints what COPT receives in a `Solver args (copt):` line before each
+solve.
 
 ---
 

@@ -1,14 +1,21 @@
-# Gurobi baseline parameter file (FlexTool default).
+# Gurobi baseline parameters (FlexTool default).
 #
-# Format: Gurobi .prm — one "<ParamName> <value>" per line.
-# Lines starting with "#" are comments.  This file is consumed via
-#     gurobi_cl ReadParams=<this-file> ResultFile=<sol> <mps>
-# by FlexTool's commercial-solver subprocess driver
+# Format: one "<ParamName> <value>" per line; "#" starts a comment.
+# FlexTool passes each line to gurobi_cl as a Name=value argument
 # (flextool/engine/solve/_subprocess_solve.py).
 #
-# Any value set here is overridden line-by-line by the scenario's
-# ``solver_options`` Map (and by the translated convenience knobs
-# ``solver_time_limit`` / ``solver_mip_gap`` / ``solver_threads``).
+# Precedence (later wins): this file < the solve's solver_mip_gap < the solve's
+# solver_arguments < the run's --solver-mip-gap / --solver-time-limit (or
+# FLEXTOOL_SOLVER_MIP_GAP / FLEXTOOL_SOLVER_TIME_LIMIT; the GUI's time limit).
+# Names match without regard to case; one value per parameter is passed.
+#
+# FlexTool reads this file from the run's solver_config folder (see
+# docs/solvers/index.md, "Where the option files come from") and copies it to
+# <work folder>/solve_data/solver_config/ as the record of the run.
+#
+# Gurobi ignores an unknown parameter name with a message; FlexTool repeats it
+# as a warning.  Parameters that make Gurobi write files (ResultFile, LogFile,
+# SolFiles, NodefileDir) are not passed on: FlexTool reads its own result file.
 #
 # Reference: https://docs.gurobi.com/projects/optimizer/en/current/reference/parameters.html
 #

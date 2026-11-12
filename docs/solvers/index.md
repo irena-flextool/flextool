@@ -52,12 +52,26 @@ solve):
 
 | CLI flag               | Replaces former DB param | Values / notes                                  |
 |------------------------|--------------------------|-------------------------------------------------|
-| `--solver-time-limit`  | `solver_time_limit`      | Wall-clock seconds (HiGHS `time_limit`); unset means no limit |
-| `--highs-threads`      | `solver_threads`         | Integer thread count (default 1); `>1` enables HiGHS parallel mode |
-| `--solver-log-level`   | `solver_log_level`       | `silent` / `normal` / `verbose`                 |
+| `--solver-time-limit`  | `solver_time_limit`      | Seconds per solve, on every solver (HiGHS `time_limit`, Gurobi `TimeLimit`, CPLEX `timelimit`, Xpress `MAXTIME`, COPT `TimeLimit`); unset means no limit. See [Time limit](#time-limit). |
+| `--solver-mip-gap`     |                          | Relative MIP gap of every solve, on every solver (HiGHS `mip_rel_gap`, Gurobi `MIPGap`, CPLEX `mip tolerances mipgap`, Xpress `MIPRELSTOP`, COPT `RelGap`); wins over the solve's `solver_mip_gap` |
+| `--solver-config-dir`  |                          | The folder of the solver option files; see [Where the option files come from](#where-the-option-files-come-from) |
+| `--highs-threads`      | `solver_threads`         | HiGHS only: integer thread count (default 1); `>1` enables HiGHS parallel mode |
+| `--solver-log-level`   | `solver_log_level`       | HiGHS only: `silent` / `normal` / `verbose`     |
 
-Example — set Gurobi on a single solve, with a 60-second wall-clock cap for
-the whole run:
+`--presolve`, `--highs-threads`, `--solver-log-level` and `--user-bound-scale`
+are HiGHS options. When one of them is given and a solve runs on a commercial
+solver, the run warns once: set the solver's own parameter in the solve's
+`solver_arguments` or in its option file instead. Commercial solvers take
+their thread count from their option file (for example `Threads` in
+`gurobi.opt`); `--threads` does not change it.
+
+The environment variables `FLEXTOOL_SOLVER_TIME_LIMIT` and
+`FLEXTOOL_SOLVER_MIP_GAP` are the twins of the two flags (the flag wins). The
+older names `FLEXTOOL_HIGHS_TIME_LIMIT` and `FLEXTOOL_HIGHS_MIP_GAP` still
+work, for HiGHS only. See [Environment variables](../env_vars.md).
+
+Example — set Gurobi on a single solve, with a 60-second time limit on each
+solve of the run:
 
 ```text
 solve entity:  yearly_dispatch
@@ -77,11 +91,11 @@ entering the values above. Unspecified parameters take their defaults.
 |----------------------|--------|-------------|----------------------------------------------------------------------------------------------------------|
 | `solver`             | str    | `"highs"`   | Solver name. Must be one of `highs`, `gurobi`, `cplex`, `xpress`, `copt`.                                |
 | `solver_arguments`   | map    | empty       | Map of option name → value passed verbatim to the underlying solver. Use this for any solver-native option that is not one of the convenience knobs below. Raw options always override the convenience knobs on key collision. |
-| `solver_mip_gap`     | float  | unset       | Relative MIP optimality gap (e.g. `0.01` for 1 %). Translated to each solver's native parameter (`MIPGap` / `mip.tolerances.mipgap` / `miprelstop` / `RelGap` / `mip_rel_gap`). |
+| `solver_mip_gap`     | float  | unset       | Relative MIP optimality gap (e.g. `0.01` for 1 %). Translated to each solver's native parameter (`MIPGap` / `mip tolerances mipgap` / `MIPRELSTOP` / `RelGap` / `mip_rel_gap`). `--solver-mip-gap` wins over it. |
 | `solver_precommand`  | str    | unset       | Shell command run before the solver subprocess (advanced; e.g. to source a licence environment). |
 
-The corresponding CLI flags (`--solver-time-limit`, `--highs-threads`,
-`--solver-log-level`) are documented in the table above.
+The corresponding CLI flags (`--solver-time-limit`, `--solver-mip-gap`,
+`--highs-threads`, `--solver-log-level`) are documented in the table above.
 
 ### Authoring `solver_arguments` in Spine
 
@@ -98,16 +112,24 @@ solver_arguments:
   Heuristics = 0.1
 ```
 
-These are passed through untouched; misspelt keys raise a solver error which
-FlexTool surfaces as a `FlexToolUserError` with the vendor's text.
+These are passed through untouched. Parameter names match without regard to
+case (`mipgap` and `MIPGap` are one parameter; for CPLEX a dotted name such as
+`mip.tolerances.mipgap` is the same as `mip tolerances mipgap`; write CPLEX
+names in full, an abbreviation is not matched). What a solver does with a
+misspelt name is the solver's own: Gurobi ignores it with a message, and
+FlexTool repeats that message as a warning naming where the name was set.
+Gurobi parameters that make it write files (`ResultFile`, `LogFile`,
+`SolFiles`, `NodefileDir`) are not passed on, with a warning: FlexTool reads
+the solution from its own result file.
 
 ### Per-solver baseline `.opt` files
 
-Every solver gets a baseline parameter file under `solver_config/`.  These
-are **user-local files, not committed to the repo**: each ships in the wheel
-as a `solver_config/<solver>.opt.template`, and FlexTool seeds the runtime
-`solver_config/<solver>.opt` from its template on first run (and re-seeds any
-that are missing).  The runtime files are gitignored, so you can edit them —
+Every solver gets a baseline parameter file in a `solver_config/` folder
+(which folder: see [Where the option files come from](#where-the-option-files-come-from)).
+These are **user-local files, not committed to the repo**: each ships in the
+wheel as a `solver_config/<solver>.opt.template`, and `flextool-update` and
+the GUI seed the workspace's `solver_config/<solver>.opt` from its template
+(and re-seed any that are missing).  The runtime files are gitignored, so you can edit them —
 or delete one to reset it to the bundled default — with zero git-committed
 change.
 
@@ -125,12 +147,11 @@ are ignored in `highs.opt` (older templates set them; projects created then
 still have the lines). To have HiGHS write a solution file anyway, set these
 options in the solve's `solver_arguments`.
 
-FlexTool reads each solver's baseline at
-solve time, overlays the scenario's `solver_arguments` Map (plus the
-convenience-knob translations from the `--solver-time-limit` /
-`solver_mip_gap` / `--highs-threads` knobs) **line-by-line**, writes the
-merged result to a temp file alongside the MPS, and feeds it to the solver
-via the per-solver mechanism:
+FlexTool reads each solver's baseline once at the start of the run, overlays
+the solve's `solver_mip_gap`, its `solver_arguments` Map and the run's flags
+**parameter by parameter** (one value per parameter, the highest layer wins),
+writes the merged result next to the MPS file (the record of what the solver
+received) and feeds it to the solver via the per-solver mechanism:
 
 | Solver  | How FlexTool feeds the merged file to the CLI                                                  |
 |---------|------------------------------------------------------------------------------------------------|
@@ -140,20 +161,80 @@ via the per-solver mechanism:
 | Xpress  | Each line emitted as `setControl <NAME> <value>` on the optimizer console's stdin before `readprob` |
 | COPT    | Each line emitted as `set <ParamName> <value>` on `copt_cmd`'s stdin before `read`             |
 
-**Override precedence** (highest wins):
+**Override precedence** (highest wins), the same for every solver:
 
-1. CLI flags (`--solver-time-limit`, `--highs-threads`, …).
-2. Raw `solver_arguments` entries on the scenario / solve.
+1. The run's flags: `--solver-time-limit` and `--solver-mip-gap` (or
+   `FLEXTOOL_SOLVER_TIME_LIMIT` / `FLEXTOOL_SOLVER_MIP_GAP`; the GUI's time
+   limit is sent as the flag). HiGHS also takes `--highs-threads`,
+   `--presolve`, `--solver-log-level` and `--threads` here.
+2. Raw `solver_arguments` entries on the solve.
 3. Translated convenience knobs (`solver_mip_gap`).
-4. The baseline file under `solver_config/<solver>.opt`.
+4. The baseline file `<solver>.opt`.
 
 For HiGHS every solve receives this one layered set: warm and cold solves,
 `--save-memory` and the subprocess solve of `warm=False` alike. FlexTool's own
 determinism defaults sit below the baseline file.
 
-Override `solver_config/` location with the `FLEXTOOL_SOLVER_CONFIG_DIR`
-environment variable when running outside the standard project layout
-(for example in CI).
+Before each solve the run prints what the solver receives: `Solver args:` for
+HiGHS (the options set above FlexTool's defaults), and for a commercial solver
+`Solver args (<solver>):` with every parameter under its native name, for
+example `Solver args (gurobi): Threads=1, MIPGap=0.001, TimeLimit=1800.0`.
+
+### Where the option files come from
+
+A run takes all its `<solver>.opt` files from one `solver_config` folder, the
+first of:
+
+1. `--solver-config-dir PATH` (the GUI always sends it: the workspace's
+   `solver_config`, or the folder of `FLEXTOOL_SOLVER_CONFIG_DIR` when that
+   variable is set for the GUI);
+2. the `FLEXTOOL_SOLVER_CONFIG_DIR` environment variable;
+3. `solver_config/` next to the input database, then, for a database in a GUI
+   project (`<workspace>/projects/<project>/input_sources/`), the workspace's
+   `solver_config/`. The search goes no further up, so a `solver_config`
+   folder somewhere above an unrelated database is never picked up;
+4. for a Spine Toolbox run with `--project-folder-file`, the `solver_config/`
+   of that Toolbox project;
+5. `solver_config/` in the current folder;
+6. none found: FlexTool's defaults (the shipped templates), with a warning
+   that lists the folders tried.
+
+Tiers 3 to 5 count a folder only when it holds at least one `<solver>.opt`.
+In the chosen folder, a solver whose file is missing uses its shipped default.
+A Spine Toolbox run (whose Data Store is the workspace's `input_data.sqlite`)
+therefore uses the workspace's `solver_config`, even though Toolbox runs the
+tool in a temporary folder.
+
+The run header and the log say which folder was used and why, for example:
+
+```text
+Solver config:  /home/me/flextool/solver_config (next to the input database)
+```
+
+The run reads the files once at its start: every roll and solve of the run
+uses them as they were then, and an edit during the run reaches only the next
+run. The files the run used are copied to
+`<work folder>/solve_data/solver_config/` as its record; the copy is written
+afresh every run and never read back. Up to FlexTool 4.3 runs read a copy in
+`<work folder>/solver_config/`; such a folder is no longer read, and when it
+differs from the files the run uses the run warns and names it. To run with
+the files of a particular folder, pass `--solver-config-dir <folder>`.
+
+### Time limit
+
+`--solver-time-limit` (and the GUI's time limit) applies to each solve
+separately: each roll of a rolling solve, and each master and region solve of
+a Benders decomposition, gets the full limit. The solver enforces it. When a
+solve stops at its time limit:
+
+- a MIP with a solution found keeps that solution, with a warning naming the
+  solve and, when the solver reports it, the gap reached; the run goes on;
+- an LP, or a MIP without a solution, stops the run with an error.
+
+FlexTool also stops a solver that has not finished well after its limit
+(after twice the limit plus 10 minutes), which only guards against a solver
+that hangs: reading the model and writing the result are not counted in the
+solver's own limit.
 
 ## Warm-start caveat
 
@@ -231,7 +312,12 @@ per-solver page for the licence setup.
   given the model as an MPS file and run in its own process. The trade-off is bounded peak RSS (the
   `Problem.write_mps` writer caps ~2-3 GB on the largest LPs) at the cost
   of file I/O plus a fresh solver process per sub-solve.
-- **Hand-writing `solver_arguments` and the convenience knobs together.** Raw
-  options win on key collisions. If you pass `--solver-time-limit 60` and
-  also set `solver_arguments = {TimeLimit: 30}` on a Gurobi solve, Gurobi
-  sees `TimeLimit = 30`.
+- **Setting the same parameter in several places.** One value reaches the
+  solver, from the highest layer of the precedence list above. If you pass
+  `--solver-time-limit 60` and also set `solver_arguments = {TimeLimit: 30}`
+  on a Gurobi solve, Gurobi sees `TimeLimit = 60`; without the flag it sees
+  `30`. A `solver_arguments` entry wins over `solver_mip_gap` and over the
+  option file.
+- **Xpress and integer variables.** FlexTool's Xpress driver solves linear
+  problems only; a solve with integer variables (integer investments, unit
+  online variables) stops with a message. Use another solver for such solves.

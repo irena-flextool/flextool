@@ -1,22 +1,22 @@
-# Xpress baseline controls file (FlexTool default).
+# Xpress baseline controls (FlexTool default).
 #
-# Format: one "<CONTROL> <value>" per line.  Lines starting with "#"
-# are comments.  Consumed by FlexTool's commercial-solver subprocess
-# driver (flextool/engine/solve/_subprocess_solve.py): each non-comment
-# line is translated to ``setControl <CONTROL> <value>`` and piped on
-# stdin to the ``optimizer`` console before ``readprob <mps>`` /
-# ``lpoptimize``.
+# Format: one "<CONTROL> <value>" per line; "#" starts a comment.
+# FlexTool turns each line into ``setControl <CONTROL> <value>`` and pipes it
+# to the ``optimizer`` console before ``readprob <mps>`` / ``lpoptimize``
+# (flextool/engine/solve/_subprocess_solve.py).  Xpress' own ``.ctl`` /
+# ``readcontrols`` is not used: it differs between Xpress versions.
 #
-# Why not Xpress' native ``.ctl`` / ``readcontrols``?  ``readcontrols``
-# has been on-and-off across Xpress 8.x / 9.x and the file syntax
-# (binary vs ASCII, locale handling for floats) varies between
-# versions.  ``setControl`` from the optimizer console is the portable
-# escape hatch and matches what the rest of the per-solver dispatchers
-# in this driver do (Gurobi uses ReadParams, CPLEX uses inline ``set``,
-# COPT uses inline param-set commands).
+# FlexTool's Xpress driver solves linear problems only: a solve with integer
+# variables stops with a message.  MAXTIME is whole seconds.
 #
-# Any value set here is overridden line-by-line by the scenario's
-# ``solver_options`` Map (and by the translated convenience knobs).
+# Precedence (later wins): this file < the solve's solver_mip_gap < the solve's
+# solver_arguments < the run's --solver-mip-gap / --solver-time-limit (or
+# FLEXTOOL_SOLVER_MIP_GAP / FLEXTOOL_SOLVER_TIME_LIMIT; the GUI's time limit).
+# Names match without regard to case; one value per parameter is passed.
+#
+# FlexTool reads this file from the run's solver_config folder (see
+# docs/solvers/index.md, "Where the option files come from") and copies it to
+# <work folder>/solve_data/solver_config/ as the record of the run.
 #
 # Reference: https://www.fico.com/fico-xpress-optimization/docs/dms2024-01/solver/optimizer/HTML/chapter6.html
 #

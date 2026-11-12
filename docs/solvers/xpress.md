@@ -3,10 +3,15 @@
 ## What it is
 
 FICO Xpress is a commercial linear, mixed-integer, and nonlinear programming
-solver. Its Python API uses a column-oriented `loadproblem` entry point,
-which polar-high's adapter feeds directly with the CSC arrays already
-produced by the engine. FlexTool dispatches through polar-high; it never
-imports `xpress` directly.
+solver. FlexTool writes each solve's model to an MPS file and runs the Xpress
+`optimizer` console (found on `PATH` or in `~/xpressmp/bin`) on it in a
+separate process, giving every control as a `setControl <NAME> <value>`
+command. FlexTool never imports `xpress` directly.
+
+FlexTool's Xpress driver solves **linear problems only**: it runs
+`lpoptimize`, which for a problem with integer variables would return the LP
+relaxation. A solve with integer variables (integer investments, unit online
+variables) therefore stops with a message; use another solver for it.
 
 Official site: <https://www.fico.com/en/products/fico-xpress-optimization>
 
@@ -92,10 +97,11 @@ than code; the keyword set is `license`, `licence`, `oem`, `expired`,
   surfaces this as the licence-error family. The fix is either to shrink
   the model or to upgrade to a full licence — Community Edition is
   unsuitable for production FlexTool scenarios.
-- **Unknown Xpress control.** Typing a wrong `solver_arguments` key raises a
-  vendor exception from `p.setControl(name, value)`; FlexTool shows
-  *"Solver 'xpress' returned an error: ..."*. The control names are in the
-  Xpress reference manual ([FIXME: confirm URL]).
+- **Unknown Xpress control.** A `setControl` the console does not know is
+  reported in the solver output; FlexTool does not check Xpress' names. The
+  control names are in the Xpress Optimizer reference manual.
+- **Time limit reached.** An LP stopped at its time limit stops the run. See
+  [Time limit](index.md#time-limit).
 
 ## How to set it in FlexTool
 
@@ -109,12 +115,16 @@ solve_advanced.solver_arguments:
   presolve   = 1
 ```
 ```bash
-flextool <input_db_url> --solver-time-limit 60 --highs-threads 8
+flextool <input_db_url> --solver-time-limit 60
 ```
 
-The convenience knobs translate to Xpress's `maxtime`, `miprelstop`, and
-`threads`. Raw `solver_arguments` are passed verbatim to `setControl` and
-win on key collision.
+`--solver-time-limit` and `--solver-mip-gap` reach Xpress as `MAXTIME 60` (whole seconds, rounded up) and
+`MIPRELSTOP`, over the solve's `solver_mip_gap`, its `solver_arguments` and
+`xpress.opt` (precedence in [Solver selection](index.md)). Parameter names
+match without regard to case. The thread count comes from `THREADS` in
+`xpress.opt`; `--threads` and `--highs-threads` do not change it. The run
+prints what Xpress receives in a `Solver args (xpress):` line before each
+solve.
 
 ---
 

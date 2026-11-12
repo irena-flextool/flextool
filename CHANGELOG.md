@@ -85,6 +85,29 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   Before, a look-ahead period that started at a later roll's analysis time read that later forecast. A single
   (non-rolling) solve is unchanged: a forecast at a later period's own first step still overrides. Results of
   rolling stochastic models with such forecasts change.
+- **`--solver-time-limit` and `--solver-mip-gap` now apply to Gurobi, CPLEX, Xpress and COPT** (the GUI's time
+  limit too), and win over the solve's `solver_mip_gap`, its `solver_arguments` and the solver's option file, as
+  they do for HiGHS. Before, they set only HiGHS options: a commercial solve used the database gap and ran without
+  a time limit, although the run header listed both flags (and the 4.3.0 notes said the time limit was passed to
+  Gurobi; it was not). Results of commercial-solver runs started with these flags can change. Their environment
+  variables are now `FLEXTOOL_SOLVER_TIME_LIMIT` and `FLEXTOOL_SOLVER_MIP_GAP`; the old names
+  `FLEXTOOL_HIGHS_TIME_LIMIT` and `FLEXTOOL_HIGHS_MIP_GAP` still work, for HiGHS only, so a setting made for HiGHS
+  never limits a commercial solver. Commercial solvers keep their thread count from their option file.
+- **A solve that stops at its time limit:** a MIP with a solution keeps it, with a warning (with the gap reached
+  when the solver reports it), and the run goes on; an LP, or a solve without a solution, stops the run. This is
+  the same for every solver. Before, HiGHS and CPLEX stopped the run at the limit even with a usable MIP solution,
+  so such runs now finish; Gurobi, COPT and Xpress reported a solve stopped at its time limit as optimal, without a
+  word.
+- **Solver option files come from one `solver_config` folder chosen per run**, no longer from the folder
+  FlexTool is started from: `--solver-config-dir` (new) or `FLEXTOOL_SOLVER_CONFIG_DIR`, else `solver_config/`
+  next to the input database or in the workspace of a GUI project database, else the Spine Toolbox project
+  folder, else the current folder, else FlexTool's defaults with a warning. A Spine Toolbox run used FlexTool's
+  default `.opt` files instead of the workspace's, and a terminal run from another folder used the defaults and
+  left a copy there that later runs took for your file. The run header and log show the folder used
+  (`Solver config:`). Each run reads the files once at its start and copies them afresh to
+  `<work folder>/solve_data/solver_config/`; a `<work folder>/solver_config/` left by an earlier version is no
+  longer read (the run warns when it differs). The GUI and the calibrator pass the workspace's folder to their
+  runs.
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another
   constraint had one (since 4.0); the reported fuel, CO2 and cost of a unit with a profile and an input were too
   low; the period node-group indicators and VRE share are now ratios of the period energies; the `summary_solve.csv`
@@ -521,6 +544,27 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
 
 #### Solving
 
+- **CPLEX did not get `solver_mip_gap`.** It was sent with the Python-API name `mip.tolerances.mipgap`, which the
+  CPLEX interactive optimizer that FlexTool runs does not know; it is now sent as `mip tolerances mipgap`. CPLEX
+  results with a `solver_mip_gap` can change.
+- **One value per solver parameter.** Parameter names from the option file, `solver_arguments` and the flags are
+  now matched without regard to case (`mipgap` and `MIPGap` are one parameter; for CPLEX a dot is read as a
+  space), and the highest layer's value is the only one passed. Before, both spellings reached the solver and the
+  result depended on its argument order.
+- **A time-limited commercial solve could fail with a solution in hand.** With a `TimeLimit` in
+  `solver_arguments`, FlexTool stopped the solver after exactly that time, possibly while it was writing its
+  result. The solver now enforces its own limit, and FlexTool stops it only after twice the limit plus
+  10 minutes.
+- **An unknown Gurobi parameter is reported.** Gurobi ignores a misspelt name with a message; FlexTool now repeats
+  it as a warning naming where it was set. Gurobi parameters that make it write files (`ResultFile`, `LogFile`,
+  `SolFiles`, `NodefileDir`) are not passed on, with a warning.
+- **Xpress returned the LP relaxation of a MIP.** FlexTool's Xpress driver solves linear problems only; a solve
+  with integer variables now stops with a message instead of reporting the relaxation as the solution.
+- **The `Solver args` line of a commercial solve showed HiGHS options**; it is now
+  `Solver args (<solver>): ...` with what the solver receives, under its own names.
+- **The commercial solver option templates** described how options were passed before 4.3.0 (`ReadParams`, the
+  `solver_options` map, `solver_time_limit` / `solver_threads`); their header now gives the actual mechanism and
+  precedence. Existing `solver_config/*.opt` copies keep their old comment until you replace them.
 - **The memory-saving solve could put solution values on the wrong variables.** With `--save-memory`, or with
   warm start off, HiGHS solves the model from an MPS file in a separate process. When the model had a variable
   that no constraint and no cost used, the values read back after it were shifted onto the next variables, so
@@ -934,6 +978,12 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
 - **The user-constraint capacity coefficients** (`constraint_capacity_coeff`, `..._invested_capacity_coeff`,
   and the other `constraint_*capacity_coeff` of unit, node and connection) say in their description that they are a
   map of coefficients indexed by constraint name (description only).
+- **Solver pages.** *Solver selection* gives the one option precedence for every solver, where the option files
+  come from (new section) and what happens at a time limit; the Gurobi, CPLEX, Xpress and COPT pages describe the
+  command-line solvers FlexTool runs, not the retired Python adapters, and give the native names the flags
+  reach. **Fix (docs):** the 4.3.0 notes and the Gurobi page said `--solver-time-limit` (and `--highs-threads`)
+  reached Gurobi; neither did before this release (`--highs-threads` still does not), and a misspelt Gurobi
+  parameter does not raise an error (see above).
 
 ## Release 4.3.0 (11.11.2026) — AI assistant
 

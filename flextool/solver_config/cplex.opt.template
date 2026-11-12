@@ -1,22 +1,24 @@
-# CPLEX baseline parameter file (FlexTool default).
+# CPLEX baseline parameters (FlexTool default).
 #
-# Format: one "<name> <value>" per line using CPLEX' interactive ``set``
-# command names (e.g. ``threads``, ``timelimit``, ``mip tolerances mipgap``).
-# Lines starting with "#" are comments.
+# Format: one "<name> <value>" per line using the names of the CPLEX
+# interactive optimizer's ``set`` command (e.g. ``threads``, ``timelimit``,
+# ``mip tolerances mipgap``); "#" starts a comment.  Write the full names: a
+# dotted name (mip.tolerances.mipgap) is read as the spaced one, but an
+# abbreviation (mip tol mipg) is not matched with the full name.
 #
-# Consumed by FlexTool's commercial-solver subprocess driver
-# (flextool/engine/solve/_subprocess_solve.py): each non-comment line is
-# translated to ``set <name> <value>`` and piped on stdin to the
-# ``cplex`` interactive optimizer before ``read <mps>`` / ``optimize``.
+# FlexTool turns each line into ``set <name> <value>`` and pipes it to the
+# ``cplex`` interactive optimizer before ``read <mps>`` / ``optimize``
+# (flextool/engine/solve/_subprocess_solve.py).  A .prm file is not used: its
+# version header must match the installed CPLEX exactly.
 #
-# Why not a real CPLEX .prm file?  The CPLEX PRM format requires a
-# version header (e.g. ``CPLEX Parameter File Version 22.1.0.0``) that
-# the optimizer rejects when it doesn't match the installed binary's
-# version exactly.  Piping ``set`` commands is portable across CPLEX
-# 12.x / 20.x / 22.x.
+# Precedence (later wins): this file < the solve's solver_mip_gap < the solve's
+# solver_arguments < the run's --solver-mip-gap / --solver-time-limit (or
+# FLEXTOOL_SOLVER_MIP_GAP / FLEXTOOL_SOLVER_TIME_LIMIT; the GUI's time limit).
+# Names match without regard to case; one value per parameter is passed.
 #
-# Any value set here is overridden line-by-line by the scenario's
-# ``solver_options`` Map (and by the translated convenience knobs).
+# FlexTool reads this file from the run's solver_config folder (see
+# docs/solvers/index.md, "Where the option files come from") and copies it to
+# <work folder>/solve_data/solver_config/ as the record of the run.
 #
 # Reference: https://www.ibm.com/docs/en/icos/22.1.0?topic=cplex-list-parameters
 #

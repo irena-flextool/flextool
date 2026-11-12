@@ -123,8 +123,18 @@ The contract:
 5. Process-level variables (`MALLOC_ARENA_MAX`, `_RJEM_MALLOC_CONF`, `POLARS_*`) keep `setdefault` semantics: a
    value already in the environment wins.  The exception is `POLARS_MAX_THREADS` while `flextool/__init__.py`
    imports polars: see "Thread budget" below.
-6. HiGHS keys keep their own stack (baseline < `highs.opt` < `solve.solver_mip_gap` < `solve.solver_arguments` <
-   operator layer); the registry supplies only the operator layer.
+6. Solver options keep their own stack, the same for every solver (HiGHS: baseline < `highs.opt`; a commercial
+   solver: `<solver>.opt`; then `solve.solver_mip_gap` < `solve.solver_arguments` < operator layer); the registry
+   supplies only the operator layer (`_operator_highs_overrides`; `_solver_dispatch._operator_native_overrides`
+   maps `--solver-time-limit` / `--solver-mip-gap` to the native names of `_PARAM_MAP`).
+   The option files come from one folder per run, `flextool/_solver_config_source.py` (engine-free; not
+   `flextool/solver_config.py`, which would shadow the template data folder):
+   `resolve_solver_config_source` — explicit argument > `--solver-config-dir` > `FLEXTOOL_SOLVER_CONFIG_DIR` >
+   the bounded database layout (next to the database; `<workspace>` of a `projects/<P>/input_sources/` database)
+   > the Toolbox project folder > cwd > packaged templates. `snapshot_solver_option_files` reads them once at run
+   start into `PathConfig.solver_option_files` (every solve reads its layer from there, never from disk) and
+   writes the record `<work_folder>/solve_data/solver_config/`. The GUI and the calibrator pass the folder
+   explicitly.
 7. The run header prints `RunOptions.summary_lines()` — each option set by a flag or an environment variable,
    with its source — and the thread budget (`Threads:`), with polars' and HiGHS' thread counts.
 
@@ -974,10 +984,12 @@ options file:
 | `solver_config/highs.opt` | No (gitignored) | User-editable runtime copy; seeded from the template on first run. |
 
 `flextool._resources.package_data_path("solver_config/highs.opt.template")`
-returns the template; the runtime layer copies it to
-`solver_config/highs.opt` on first run if absent. Users edit the runtime
-copy; `_orchestration._finalise_highs_options` reads it and applies any
-CLI overrides (`--user-bound-scale`, `--presolve`, `--highs-threads`).
+returns the template; `ensure_runtime_files` (GUI start, `flextool-update`)
+copies it to the workspace's `solver_config/highs.opt` if absent. Users edit
+the runtime copy; a run reads it once (see "Runtime options" item 6) and
+`_solve_highs_options` layers the solve's settings and the CLI overrides on
+it. The commercial templates (`gurobi`, `cplex`, `xpress`, `copt`) follow the
+same pattern.
 
 `--save-memory` (or `FLEXTOOL_SAVE_MEMORY=1`) is an opt-in peak-RSS
 strategy that disables warm-start and round-trips each sub-solve through
