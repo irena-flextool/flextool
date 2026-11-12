@@ -67,6 +67,11 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **`--solver-time-limit` and `--solver-mip-gap` now reach Gurobi, CPLEX, Xpress and COPT** and win over the
   database and option file; the environment variables are now `FLEXTOOL_SOLVER_TIME_LIMIT` / `_MIP_GAP` (the
   `FLEXTOOL_HIGHS_*` names still work for HiGHS only). Commercial runs with these flags can give other results.
+- **`--threads` now sets the thread count of Gurobi, CPLEX, Xpress and COPT too** (the FlexTool window always sends
+  its Threads per run, default 1), over the option file and `solver_arguments`, as for HiGHS, also a value meaning
+  all cores; the run prints a line when it replaces a value. A GUI run with `Threads 0` in `gurobi.opt` now uses 1
+  thread: raise Threads per run. Without `--threads` and `FLEXTOOL_THREADS` the option file keeps it; per-algorithm
+  thread controls (Xpress `BARTHREADS`, COPT `BarThreads`, ...) are not changed.
 - **At its time limit a MIP with a solution keeps it, with a warning; an LP or a solve without a solution stops the
   run**, for every solver. A commercial solve stopped by another limit, or not certified optimal, now stops the run.
 - **Solver option files come from one `solver_config` folder per run** (`--solver-config-dir`, next to the
@@ -596,7 +601,7 @@ Each line says what changes for a model that ran before and what to do; the deta
   Gurobi; it was not). Results of commercial-solver runs started with these flags can change. Their environment
   variables are now `FLEXTOOL_SOLVER_TIME_LIMIT` and `FLEXTOOL_SOLVER_MIP_GAP`; the old names
   `FLEXTOOL_HIGHS_TIME_LIMIT` and `FLEXTOOL_HIGHS_MIP_GAP` still work, for HiGHS only, so a setting made for HiGHS
-  never limits a commercial solver. Commercial solvers keep their thread count from their option file.
+  never limits a commercial solver. `--threads` sets their thread count (see Behaviour changes).
 - **A solve that stops at its time limit:** a MIP with a solution keeps it, with a warning (with the gap reached
   when the solver reports it), and the run goes on; an LP, or a solve without a solution, stops the run. This is
   the same for every solver (a Benders master or region solve stops the run at its limit, as before). Before,

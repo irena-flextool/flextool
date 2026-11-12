@@ -197,6 +197,123 @@ def test_result_file_warning_is_once_per_run_not_per_solve(tmp_path: Path, caplo
 
 
 # ---------------------------------------------------------------------------
+# The run's thread budget replaces the commercial thread count (item 232). Oracle: critique_232 (a)-(d).
+# ---------------------------------------------------------------------------
+
+def _thread_lines(solver: str, stdin: str) -> list[str]:
+    word = {"cplex": "threads", "xpress": "THREADS", "copt": "Threads"}[solver]
+    return [line for line in stdin.splitlines() if line.split()[-2:-1] == [word]]
+
+
+def test_threads_flag_replaces_the_all_cores_gurobi_thread_count(tmp_path: Path, capsys) -> None:
+    """(a) gurobi.opt ``Threads 0`` + ``--threads 4``: ``Threads=4`` at the file line's position, one line
+    printed with the all-cores advice."""
+    reset_run_warnings()
+    params, _ = _passed("gurobi", tmp_path, "Threads 0\nMIPGap 0.002\n", SolverConfig(name="gurobi"),
+                        ["--threads", "4"])
+    assert params == ["Threads=4", "MIPGap=0.002"]
+    out = capsys.readouterr().out.splitlines()
+    assert out == [
+        f"gurobi Threads 0 (all cores) in {tmp_path / 'gurobi.opt'} is replaced by 4, the run's thread budget "
+        "(flag --threads). For more solver threads raise --threads (Threads per run in the FlexTool window)."
+    ]
+
+
+@pytest.mark.parametrize("solver, opt_text, expected", [
+    ("cplex", "threads 0\n", "set threads 2"),
+    ("xpress", "THREADS -1\n", "setControl THREADS 2"),
+    ("copt", "Threads -1\n", "set Threads 2"),
+])
+def test_threads_flag_replaces_the_cplex_xpress_copt_thread_count(solver, opt_text, expected, tmp_path,
+                                                                   capsys) -> None:
+    reset_run_warnings()
+    _, stdin = _passed(solver, tmp_path, opt_text, SolverConfig(name=solver), ["--threads", "2"])
+    assert _thread_lines(solver, stdin) == [expected]
+    out = capsys.readouterr().out.splitlines()
+    assert len(out) == 1 and "is replaced by 2" in out[0] and "(all cores)" in out[0], out
+    assert out[0].endswith("(Threads per run in the FlexTool window).")
+
+
+def test_thread_budget_from_the_environment_replaces_xpress_all_cores(tmp_path: Path, capsys) -> None:
+    """(b) xpress.opt ``THREADS -1``, ``FLEXTOOL_THREADS=2``, no flag: ``setControl THREADS 2`` at the file
+    line's position; the line names the environment variable."""
+    reset_run_warnings()
+    opt_file = tmp_path / "xpress.opt"
+    opt_file.write_text("THREADS -1\nMIPRELSTOP 0.002\n")
+    resolved = resolve_commercial_options("xpress", opt_file=opt_file, solver_config=SolverConfig(name="xpress"),
+                                          run_options=_options([], {"FLEXTOOL_THREADS": "2"}))
+    assert [(o.name, o.value) for o in resolved] == [("THREADS", "2"), ("MIPRELSTOP", "0.002")]
+    out = capsys.readouterr().out.splitlines()
+    assert out == [
+        f"xpress THREADS -1 (all cores) in {opt_file} is replaced by 2, the run's thread budget (environment "
+        "variable FLEXTOOL_THREADS). For more solver threads raise --threads (Threads per run in the FlexTool "
+        "window)."
+    ]
+
+
+def test_thread_budget_is_appended_when_no_layer_sets_threads(tmp_path: Path, capsys) -> None:
+    """(c) cplex, no thread line anywhere, ``--threads 3``: ``set threads 3`` after the file entries; nothing
+    printed."""
+    reset_run_warnings()
+    _, stdin = _passed("cplex", tmp_path, "mip tolerances mipgap 0.002\n", SolverConfig(name="cplex"),
+                       ["--threads", "3"])
+    assert [line for line in stdin.splitlines() if line.startswith("set ")][-2:] == [
+        "set mip tolerances mipgap 0.002", "set threads 3"]
+    assert capsys.readouterr().out == ""
+
+
+def test_thread_budget_beats_solver_arguments_alias(tmp_path: Path, capsys) -> None:
+    """A ``solver_arguments`` alias (Gurobi ``threads``) is the same parameter: one entry with the operator's
+    spelling; the line names the database layer and the environment variable, with the advice (8 -> 3 lowers
+    the thread count)."""
+    reset_run_warnings()
+    cfg = SolverConfig(name="gurobi", options={"threads": 8})
+    resolved = resolve_commercial_options("gurobi", opt_file=None, solver_config=cfg,
+                                          run_options=_options([], {"FLEXTOOL_THREADS": "3"}), solve_name="invest")
+    assert [(o.name, o.value) for o in resolved] == [("Threads", "3")]
+    out = capsys.readouterr().out.splitlines()
+    assert out == [
+        "gurobi threads 8 in solver_arguments of solve invest is replaced by 3, the run's thread budget "
+        "(environment variable FLEXTOOL_THREADS). For more solver threads raise --threads (Threads per run in "
+        "the FlexTool window)."
+    ]
+
+
+def test_no_budget_keeps_the_option_file_thread_count(tmp_path: Path, capsys) -> None:
+    """(d) gurobi.opt ``Threads 8``, no flag, no FLEXTOOL_THREADS: ``Threads=8`` as in 4.3; nothing printed."""
+    reset_run_warnings()
+    params, _ = _passed("gurobi", tmp_path, "Threads 8\n", SolverConfig(name="gurobi"), [])
+    assert params == ["Threads=8"]
+    assert capsys.readouterr().out == ""
+
+
+def test_thread_override_line_is_once_per_run_and_without_advice_when_raising(tmp_path: Path, capsys) -> None:
+    """Equal values print nothing; a raise (``Threads 1`` -> 4) prints without the advice; a lower budget
+    prints once over two solves of a run and again after the next run's reset."""
+    reset_run_warnings()
+    opt_file = tmp_path / "gurobi.opt"
+
+    def resolve(text: str, threads: str, solve: str) -> list[tuple[str, str]]:
+        opt_file.write_text(text)
+        resolved = resolve_commercial_options("gurobi", opt_file=opt_file, solver_config=None,
+                                              run_options=_options(["--threads", threads]), solve_name=solve)
+        return [(o.name, o.value) for o in resolved]
+
+    assert resolve("Threads 1\n", "1", "a") == [("Threads", "1")]
+    assert resolve("Threads 1.0\n", "1", "a") == [("Threads", "1")]
+    assert capsys.readouterr().out == ""
+    assert resolve("Threads 1\n", "4", "a") == [("Threads", "4")]
+    assert capsys.readouterr().out.splitlines() == [
+        f"gurobi Threads 1 in {opt_file} is replaced by 4, the run's thread budget (flag --threads)."]
+    assert resolve("Threads 4\n", "1", "dispatch") == [("Threads", "1")]
+    assert resolve("Threads 4\n", "1", "invest") == [("Threads", "1")]
+    assert len(capsys.readouterr().out.splitlines()) == 1
+    reset_run_warnings()
+    resolve("Threads 4\n", "1", "invest")
+    assert len(capsys.readouterr().out.splitlines()) == 1
+
+
+# ---------------------------------------------------------------------------
 # The native names are real parameter names (checked against the installed wheels; skipped where absent)
 # ---------------------------------------------------------------------------
 

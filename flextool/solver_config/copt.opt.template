@@ -17,6 +17,7 @@
 # Reference: https://guide.coap.online/copt/en-doc/parameter.html
 #
 # Conservative defaults — edit to suit your model.
+# Replaced by the run's --threads (Threads per run in the FlexTool window) when it is given.
 Threads 1
 RelGap 0.002
 Logging 1

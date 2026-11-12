@@ -1493,7 +1493,8 @@ class ExecutionManager:
             cmd.append("--write-plot-data")
 
         # "Threads per run" (Execution jobs window): FlexTool's data processing and the solver of this run.
-        # ``--threads`` gives HiGHS ``threads=N`` with its parallel simplex left off.
+        # ``--threads`` gives HiGHS ``threads=N`` (parallel simplex off) and replaces a commercial solver's
+        # thread count.
         cmd.extend(["--threads", str(max(1, int(self.execution_limits.max_cores_per_job)))])
 
         # The solver option files of the workspace (``FLEXTOOL_SOLVER_CONFIG_DIR`` when set, else

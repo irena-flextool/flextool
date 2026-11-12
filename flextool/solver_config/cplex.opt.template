@@ -23,5 +23,6 @@
 # Reference: https://www.ibm.com/docs/en/icos/22.1.0?topic=cplex-list-parameters
 #
 # Conservative defaults — edit to suit your model.
+# Replaced by the run's --threads (Threads per run in the FlexTool window) when it is given.
 threads 1
 mip tolerances mipgap 0.002

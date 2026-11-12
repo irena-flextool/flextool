@@ -121,8 +121,10 @@ flextool <input_db_url> --solver-time-limit 60
 `--solver-time-limit` and `--solver-mip-gap` reach Xpress as `MAXTIME 60` (whole seconds, rounded up) and
 `MIPRELSTOP`, over the solve's `solver_mip_gap`, its `solver_arguments` and
 `xpress.opt` (precedence in [Solver selection](index.md)). Parameter names
-match without regard to case. The thread count comes from `THREADS` in
-`xpress.opt`; `--threads` and `--highs-threads` do not change it. The run
+match without regard to case. `--threads` (Threads per run in the FlexTool window) sets `THREADS`;
+without it, `THREADS` in `xpress.opt` or `solver_arguments` applies. `--highs-threads`
+does not change it. `MIPTHREADS`, `BARTHREADS` and `CONCURRENTTHREADS` are
+used as given. The run
 prints what Xpress receives in a `Solver args (xpress):` line before each
 solve.
 

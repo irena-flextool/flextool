@@ -86,6 +86,7 @@ SHIPPED_TEMPLATE_SHA256: Mapping[str, frozenset[str]] = {
         "245ffff3fcf99e0d79eb03fd8a95b73c9433c59f92f08d08f5f27f8ab723cc6a",
         "7911b914b4c8f1dc4eb335be410251111c12d762dcecb18d4ac19cb2a912c690",
         "6f9b0366041a5d8310477f6275e6e9d2abac17e73c8bbdde6f0d9c70692c8c0e",
+        "8a6870c450976813fbef15099368709edfba7eb30e7c8da29a961bca9d57ae5e",
         "9d6548f8e598f688106e8dfe452fceb3dd11d73d15df4dffeb9e0ccdcee28c09",
     }),
     "cplex": frozenset({
@@ -93,17 +94,20 @@ SHIPPED_TEMPLATE_SHA256: Mapping[str, frozenset[str]] = {
         "59629b91d5aadc35ea3f17a6ae62c5c67fc5641a1022d2a3381bf78550c8205e",
         "a90f70f4ea8c7daf201f0678584ff7b2d7225236972f43a0aa114e3a95d1ec33",
         "deea8744ce329573e540129d74cbf85cc86d7a09569d309a3badf16c2334d436",
+        "fc228498eaca1e262817f531736c261d5f93cf6d076a74ace0059c4df805de47",
     }),
     "xpress": frozenset({
         "049e374d011e7b592581c14e47cfe809941fd69f2e17ec438ce28a4b3c8ce228",
         "c12c35af12b782fa811c3ad8f2f71362c4c1776ec857f8d82b2cb2af5d2a3413",
         "da4d04664f020fc5b3b0501f3a7e63fdeb6a3e32bc4f6cfc270667de366827c2",
+        "f2eb353b652e6ad66ba38cca065a8427cb71f11fde4d03ef19cfa5c895776c7d",
         "fa3929c9f1428595390d6673559a13c2c5dc33ccb1e4456950331a1e1de31a6e",
     }),
     "copt": frozenset({
         "38ce93bb6bde7fdcf707324df888533f0a375c9fce24bbf9e1554e28e3ce527f",
         "666de1c91d1f64a6bad0006c2bb4b3535d84589f010d8b27a744a9f0be3f3d16",
         "bc876c81c0b5fc89c26aef2fff370e37bb78d9e2edd2c0f50afa2f773a52e276",
+        "4527f2fe84191f8e7ae54b55c987521c43e3653214de549de2b25c0b62496cb5",
         "d3f27615d136a9185ba2cbf097a60112d6418db27d89b1701e894818d0ad2bbc",
     }),
 }

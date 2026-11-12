@@ -55,15 +55,32 @@ solve):
 | `--solver-time-limit`  | `solver_time_limit`      | Seconds per solve, on every solver (HiGHS `time_limit`, Gurobi `TimeLimit`, CPLEX `timelimit`, Xpress `MAXTIME`, COPT `TimeLimit`); unset means no limit. See [Time limit](#time-limit). |
 | `--solver-mip-gap`     |                          | Relative MIP gap of every solve, on every solver (HiGHS `mip_rel_gap`, Gurobi `MIPGap`, CPLEX `mip tolerances mipgap`, Xpress `MIPRELSTOP`, COPT `RelGap`); wins over the solve's `solver_mip_gap` |
 | `--solver-config-dir`  |                          | The folder of the solver option files; see [Where the option files come from](#where-the-option-files-come-from) |
+| `--threads`            |                          | Threads of the run (the FlexTool window sends its Threads per run); sets every solver's thread count (HiGHS `threads`, Gurobi `Threads`, CPLEX `threads`, Xpress `THREADS`, COPT `Threads`). See below |
 | `--highs-threads`      | `solver_threads`         | HiGHS only: integer thread count (default 1); `>1` enables HiGHS parallel mode |
 | `--solver-log-level`   | `solver_log_level`       | `silent` hides the log of every solver; `normal` (default) shows it; `verbose` is HiGHS only |
 
 `--presolve`, `--highs-threads`, `--user-bound-scale` and
 `--solver-log-level verbose` are HiGHS options. When one of them is given and a solve runs on a commercial
 solver, the run warns once: set the solver's own parameter in the solve's
-`solver_arguments` or in its option file instead. Commercial solvers take
-their thread count from their option file (for example `Threads` in
-`gurobi.opt`); `--threads` does not change it.
+`solver_arguments` or in its option file instead.
+
+`--threads` (and `FLEXTOOL_THREADS`; the FlexTool window always sends its
+Threads per run, default 1) sets the thread count of every solver: HiGHS
+`threads`, Gurobi `Threads`, CPLEX `threads`, Xpress `THREADS`, COPT
+`Threads`. It replaces the value of the option file and of
+`solver_arguments`, also a value meaning all cores (`0`; Xpress and COPT
+`-1`). FlexTool splits the computer's cores between the runs it executes in
+parallel, so the run's thread budget wins. The run prints one line when it
+replaces a different value, for example `gurobi Threads 0 (all cores) in
+<folder>/gurobi.opt is replaced by 1, the run's thread budget (flag
+--threads).` For more solver threads raise `--threads` (Threads per run in
+the FlexTool window). Without `--threads` and `FLEXTOOL_THREADS` (a terminal
+or Spine Toolbox run that gives neither) the option file and
+`solver_arguments` keep the thread count. Per-algorithm thread controls
+(Xpress `BARTHREADS` / `MIPTHREADS` / `CONCURRENTTHREADS`, COPT `BarThreads` /
+`SimplexThreads` / `CrossoverThreads` / `MipTasks`, Gurobi `ConcurrentJobs`)
+are not changed: a value set there is used as given, even when it is larger
+than the run's threads.
 
 The environment variables `FLEXTOOL_SOLVER_TIME_LIMIT` and
 `FLEXTOOL_SOLVER_MIP_GAP` are the twins of the two flags (the flag wins). The
@@ -236,10 +253,11 @@ received) and feeds it to the solver via the per-solver mechanism:
 
 1. The run's flags: `--solver-time-limit` and `--solver-mip-gap` (or
    `FLEXTOOL_SOLVER_TIME_LIMIT` / `FLEXTOOL_SOLVER_MIP_GAP`; the GUI's time
-   limit is sent as the flag). HiGHS also takes `--highs-threads`,
-   `--presolve`, `--solver-log-level` and `--threads` here (a commercial
-   solver's log is hidden by `--solver-log-level silent` too, but that is not
-   one of its parameters).
+   limit is sent as the flag), and the run's `--threads` (or
+   `FLEXTOOL_THREADS`; the GUI's Threads per run is sent as the flag) as the
+   solver's thread count. HiGHS also takes `--highs-threads`, `--presolve` and
+   `--solver-log-level` here (a commercial solver's log is hidden by
+   `--solver-log-level silent` too, but that is not one of its parameters).
 2. Raw `solver_arguments` entries on the solve.
 3. Translated convenience knobs (`solver_mip_gap`).
 4. The baseline file `<solver>.opt`.

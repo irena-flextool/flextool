@@ -30,8 +30,9 @@ import os
 os.environ.setdefault("FLEXTOOL_SKIP_SOLVER_PROBE", "1")
 # The suite runs single-threaded: each xdist worker and every FlexTool run a
 # test starts as a subprocess (it inherits this environment) uses one thread
-# for polars and HiGHS.  The workers already fill the cores, so more threads
-# per worker only oversubscribe the machine (subprocess timeouts on CI).
+# for polars and the solver (HiGHS, and a commercial solver's thread count).
+# The workers already fill the cores, so more threads per worker only
+# oversubscribe the machine (subprocess timeouts on CI).
 # polars reads POLARS_MAX_THREADS only when it is imported, and the first
 # import in a worker is the constraints conftest loaded below, so this must
 # stay above it.  setdefault: a developer may set other values.  Tests of

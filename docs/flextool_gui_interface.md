@@ -165,7 +165,7 @@ The top row of the window holds five spinboxes; each is a per-project setting pe
 | Control | Default | Meaning |
 | --- | --- | --- |
 | Max. parallel executions | **1** | Number of scenario subprocesses that may run concurrently. |
-| Threads per run | **1** | Threads of each run: FlexTool's data processing and the solver. Passed to each subprocess as `--threads`; runs executed in parallel each use this many. |
+| Threads per run | **1** | Threads of each run: FlexTool's data processing and the solver (every solver's thread count: HiGHS, Gurobi, CPLEX, Xpress, COPT; it replaces the value in the solver's option file). Passed to each subprocess as `--threads`; runs executed in parallel each use this many. |
 | Memory budget/job (GB, 0=auto) | **0.0** (auto) | Soft target. Jobs are allowed to exceed it when memory is available. Only enforced when free RAM drops below the reserve **and** swap growth reaches the allowance — the watchdog then kills whichever running job is most over its budget. In **auto** mode, every successful run records its measured peak × 1.5 as the budget for the next run, persisted under `scenario_resource_history`. First-run fallback is `(system memory − reserve) ÷ max parallel jobs`. |
 | Min free RAM (GB) | **0.5** | Floor for system free memory. The watchdog acts only when this floor is breached **and** the swap allowance is exhausted. |
 | Allow swap (GB) | **0.0** | How much swap **growth** to tolerate, measured since FlexTool started (pre-existing swap is ignored). 0 means kill as soon as free RAM dips below the reserve. |

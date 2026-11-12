@@ -363,6 +363,9 @@ def test_solver_options_passthrough(
         "LogToConsole 1\n"
     )
     monkeypatch.setenv("FLEXTOOL_SOLVER_CONFIG_DIR", str(config_dir))
+    # This test is about the option file and database layers: no thread budget, so the file's thread count
+    # stands (the suite's FLEXTOOL_THREADS=1 would replace it, item 232).
+    monkeypatch.delenv("FLEXTOOL_THREADS", raising=False)
 
     # Scenario overrides: bump Threads to 4 and forward a non-baseline
     # knob.  ``build_solver_options`` will merge in ``MIPGap=0.005``

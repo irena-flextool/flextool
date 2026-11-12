@@ -617,7 +617,10 @@ def build_solver_options(solver_config: SolverConfig) -> dict[str, Any]:
 #   2. the solve's ``solver_mip_gap`` (translated through :data:`_PARAM_MAP`);
 #   3. the solve's ``solver_arguments`` (raw native names);
 #   4. the operator layer: ``--solver-time-limit`` / ``--solver-mip-gap``, else
-#      ``FLEXTOOL_SOLVER_TIME_LIMIT`` / ``FLEXTOOL_SOLVER_MIP_GAP``.
+#      ``FLEXTOOL_SOLVER_TIME_LIMIT`` / ``FLEXTOOL_SOLVER_MIP_GAP``, and the thread
+#      budget (``--threads`` / ``FLEXTOOL_THREADS``; item 232): it replaces the
+#      solver's thread count, also a value meaning all cores, with one printed
+#      line per run (:func:`_note_thread_override`).
 # Names are compared as the solver reads them (:func:`commercial_option_key`:
 # without case; CPLEX ``.`` read as a space; Gurobi without ``_``; Xpress
 # without an ``XPRS_`` prefix), so ``MIPGap`` in the file and ``mip_gap`` in
@@ -651,6 +654,7 @@ _WATCHDOG_GRACE_S = 600.0
 _warned_dropped_options: set[tuple[str, str, str]] = set()
 _warned_highs_only: set[tuple[str, ...]] = set()
 _warned_precommands: set[str] = set()
+_warned_thread_overrides: set[tuple[str, str, str]] = set()
 
 
 def reset_run_warnings() -> None:
@@ -659,6 +663,7 @@ def reset_run_warnings() -> None:
     _warned_dropped_options.clear()
     _warned_highs_only.clear()
     _warned_precommands.clear()
+    _warned_thread_overrides.clear()
 
 
 def warn_solver_precommands(precommands: Mapping[str, Any] | None, logger: logging.Logger | None = None) -> None:
@@ -726,18 +731,23 @@ def _operator_native_overrides(
     solver: str, run_options: "RunOptions | None",
 ) -> list[CommercialOption]:
     """The operator layer of a commercial solve: the time limit and the MIP gap
-    given by flag or by ``FLEXTOOL_SOLVER_*``, under *solver*'s native names.
+    given by flag or by ``FLEXTOOL_SOLVER_*``, and the run's thread budget, under
+    *solver*'s native names.
 
-    The HiGHS-only ``FLEXTOOL_HIGHS_TIME_LIMIT`` / ``FLEXTOOL_HIGHS_MIP_GAP``
-    do not apply, and threads stay with the option file (``--threads`` is the
-    run's FlexTool budget only).  A registry default adds nothing.
+    threads: the run's budget (``--threads`` / ``FLEXTOOL_THREADS``) replaces the
+    solver's thread count; without them the option file and ``solver_arguments``
+    keep it (as for HiGHS).  The HiGHS-only ``FLEXTOOL_HIGHS_TIME_LIMIT`` /
+    ``FLEXTOOL_HIGHS_MIP_GAP`` / ``--highs-threads`` do not apply.  A registry
+    default (and an unset budget, which is the available cores) adds nothing.
     """
     from flextool.run_options import OPTIONS, RunOptions
 
     opts = run_options if run_options is not None else RunOptions.from_env()
     names = _PARAM_MAP[solver]
     out: list[CommercialOption] = []
-    for knob, key in (("time_limit", "solver_time_limit"), ("mip_gap", "solver_mip_gap")):
+    for knob, key in (
+        ("time_limit", "solver_time_limit"), ("mip_gap", "solver_mip_gap"), ("threads", "threads"),
+    ):
         resolved = opts.resolved.get(key)
         if resolved is None or resolved.source not in ("cli", "env") or resolved.value is None:
             continue
@@ -814,7 +824,16 @@ def resolve_commercial_options(
         validate_solver_option(solver, option.name, option.value, option.layer)
         check_database_solver_option(solver, option.name, option.value, option.layer)
     n_checked = len(entries)
-    entries += _operator_native_overrides(solver, run_options)
+    thread_key = commercial_option_key(solver, _PARAM_MAP[solver]["threads"])
+    replaced_threads = None  # the lower layers' winning thread count, which the run's budget replaces
+    for option in entries:
+        if commercial_option_key(solver, option.name) == thread_key:
+            replaced_threads = option
+    operator = _operator_native_overrides(solver, run_options)
+    entries += operator
+    budget = next((o for o in operator if commercial_option_key(solver, o.name) == thread_key), None)
+    if budget is not None and replaced_threads is not None:
+        _note_thread_override(solver, replaced_threads, budget)
 
     merged: dict[str, CommercialOption] = {}
     for position, option in enumerate(entries):
@@ -835,6 +854,41 @@ def resolve_commercial_options(
             validate_solver_option(solver, option.name, option.value, option.layer)
         merged[key] = option._replace(name=key) if solver == "cplex" else option
     return list(merged.values())
+
+
+def _thread_number(value: str) -> float | None:
+    try:
+        number = float(value)
+    except ValueError:
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _note_thread_override(solver: str, old: CommercialOption, new: CommercialOption) -> None:
+    """One printed line per run when the run's thread budget *new* replaces a different thread count *old*
+    of the option file or the input database (item 232).
+
+    Printed, not logged: it sits just before the solve's printed ``Solver args`` line, where ``logger.info``
+    does not reach the console.  Once per solver, kind of layer and old value, so rolls and repeated solves
+    print it once.  The advice to raise ``--threads`` is added only when the budget lowers the thread count
+    (an "all cores" value: Gurobi / CPLEX ``0``, Xpress / COPT ``<= 0``, or a larger number).
+    """
+    old_number, new_number = _thread_number(old.value), _thread_number(new.value)
+    if old_number is not None and old_number == new_number:
+        return
+    warn_key = (solver, old.layer.split(" of solve ", 1)[0], old.value)
+    if warn_key in _warned_thread_overrides:
+        return
+    _warned_thread_overrides.add(warn_key)
+    all_cores = old_number is not None and (old_number == 0 or (solver in ("xpress", "copt") and old_number < 0))
+    lowers = all_cores or (old_number is not None and new_number is not None and old_number > new_number)
+    tail = (" For more solver threads raise --threads (Threads per run in the FlexTool window)."
+            if lowers else "")
+    print(
+        f"{solver} {old.name} {old.value}{' (all cores)' if all_cores else ''} in {old.layer} is replaced by "
+        f"{new.value}, the run's thread budget ({new.layer}).{tail}",
+        flush=True,
+    )
 
 
 def commercial_opt_file_layer(

@@ -21,6 +21,7 @@
 # Reference: https://docs.gurobi.com/projects/optimizer/en/current/reference/parameters.html
 #
 # Conservative defaults — edit to suit your model.
+# Replaced by the run's --threads (Threads per run in the FlexTool window) when it is given.
 Threads 1
 MIPGap 0.002
 LogToConsole 1

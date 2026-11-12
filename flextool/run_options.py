@@ -154,7 +154,8 @@ OPTIONS: dict[str, OptionSpec] = {
             key="threads", flag="--threads", env="FLEXTOOL_THREADS", db=None,
             parse=_positive_int, default=None, audience="user",
             help="threads for one FlexTool run: FlexTool's data processing (at most 8 unless POLARS_MAX_THREADS) "
-                 "and the solver; unset uses the available cores",
+                 "and the solver (HiGHS and the commercial solvers' thread count); unset uses the available cores "
+                 "and leaves the solvers' thread settings as they are",
         ),
         _spec(
             key="highs_threads", flag="--highs-threads", env="FLEXTOOL_HIGHS_THREADS", db=None,
