@@ -770,7 +770,7 @@ After running the workflow, outputs are organized as follows:
   output_plots/<scenario>/          # PNG plot files
   output_parquet/<scenario>/        # Parquet data files
   output_csv/<scenario>/            # CSV data files
-  output_excel/output_<scenario>.xlsx  # Excel workbook, one per scenario
+  output_excel/output_<scenario>.xlsx  # Excel workbook, one per result folder
   output_plot_comparisons/          # Cross-scenario comparison plots
   solve_data/                       # Solver progress and timing
 ```

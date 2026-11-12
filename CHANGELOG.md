@@ -52,6 +52,9 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **Excel sheet names and layout changed:** long names keep their `__d` / `__dt` suffix, several shipped sheets are
   renamed, a `unit of measure` header row or a unit block is added, and dispatch data has a `period` column. Update
   Power Query and scripts (CSV names do not change).
+- **The FlexTool window names a scenario's Excel workbook after its result folder,**
+  `output_excel/output_<scenario>_<source number>.xlsx` (before, `output_<scenario>.xlsx`). Update scripts that open
+  it; the command line and Spine Toolbox keep `output_<scenario>.xlsx`.
 - **Smaller output changes:** a storage node's `entity_annuity_d_p` is per MWh (was per MW; values unchanged),
   *no_reserve* groups no longer have an empty reserve-shortfall column, and only groups whose `co2_method` caps
   emissions are listed as CO2-limited.
@@ -1000,6 +1003,13 @@ Each line says what changes for a model that ran before and what to do; the deta
 
 #### Databases and the FlexTool window
 
+- **Fixed: deleting a scenario's results in the FlexTool window removed the wrong Excel workbooks.** It removed
+  every workbook whose name contained the result folder's name (deleting `base_1` also removed `base_10`'s) and
+  kept the scenario's own one, and the window showed an Excel export where there was none. The workbook is now named
+  after the result folder, `output_<scenario>_<source number>.xlsx` (before, `output_<scenario>.xlsx`, which every
+  source of the scenario overwrote), and the window matches it by its exact name. A workbook with the old name is
+  deleted with the last result folder of its scenario, since until then it may hold another folder's results. The
+  command line and Spine Toolbox name it `output_<scenario>.xlsx` as before.
 - **Fixed: Calibrate investments in the FlexTool window deleted the results of every scenario in the project.**
   Each calibration round emptied the project's whole `output_parquet` folder, so the result files of the other
   scenarios were lost (the run records too; their CSV, Excel and plot files stayed). A calibration now clears only

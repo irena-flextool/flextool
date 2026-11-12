@@ -13,6 +13,7 @@ and solver-config fixtures from ``tests/conftest.py``.
 
 from __future__ import annotations
 
+import shutil
 import sys
 from pathlib import Path
 
@@ -87,3 +88,12 @@ def test_write_final_outputs_replays_real_parquet(
 
     excel_file = tmp_path / "output_excel" / f"output_{SCENARIO}.xlsx"
     assert excel_file.is_file(), "excel replay produced no workbook"
+
+    # 5. The workbook is named after the result folder, not the scenario: the window's folders are
+    #    <scenario>_<source number>, and each has its own workbook.
+    shutil.copytree(parquet_dir, tmp_path / "output_parquet" / f"{SCENARIO}_1")
+    write_outputs(
+        scenario_name=SCENARIO, output_location=str(tmp_path), subdir=f"{SCENARIO}_1",
+        read_parquet_dir=True, write_methods=["excel"], fallback_output_location=str(tmp_path),
+    )
+    assert (tmp_path / "output_excel" / f"output_{SCENARIO}_1.xlsx").is_file()

@@ -258,7 +258,7 @@ The **Result viewer** reads parquet directly, so it is always live: changing sce
 For static output:
 
 - **Output actions → Re-plot scenarios** writes PNGs into `output_plots/<scenario>/`.
-- **Output actions → Scenarios to Excel** dumps the parquet to `output_excel/<scenario>.xlsx`.
+- **Output actions → Scenarios to Excel** dumps the parquet to `output_excel/output_<scenario>_<source number>.xlsx`.
 - **Output actions → Comparison to Excel** writes a cross-scenario workbook into `output_plot_comparisons/`.
 - The same generators run automatically after each execution if their **Auto-generate** checkboxes are ticked.
 

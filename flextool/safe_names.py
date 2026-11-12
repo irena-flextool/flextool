@@ -115,7 +115,16 @@ def safe_file_component(text: str, *, windows: bool | None = None) -> str:
     return out
 
 
+def result_workbook_name(folder: str) -> str:
+    """File name of the Excel workbook of the results in ``output_parquet/<folder>/``: ``output_<folder>.xlsx``.
+
+    Named after the result folder, not the scenario: the window's folders are ``<scenario>_<source number>``, so
+    two input sources, or a scenario and one whose name extends it (``base_1``, ``base_10``), each get their own.
+    """
+    return f"output_{folder}.xlsx"
+
+
 __all__ = [
     "UnsafeNameError", "UnsafePathError", "check_output_name", "describe_name", "output_name_problem",
-    "require_inside", "require_strictly_inside", "safe_file_component",
+    "require_inside", "require_strictly_inside", "result_workbook_name", "safe_file_component",
 ]

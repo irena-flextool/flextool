@@ -250,7 +250,7 @@ The shipped solver options are unpacked to `imported_solver_config/` in the proj
 - `solver_config/` in the FlexTool workspace (the folder FlexTool is started from) — the solver option files (`highs.opt`…) that every run and calibration started from the GUI uses (the GUI passes the folder to each run as `--solver-config-dir`, so it does not matter where a project's input database is); `$FLEXTOOL_SOLVER_CONFIG_DIR`, set before the GUI starts, points runs at another folder. Each run copies the files it used to `projects/<project>/work/<run>/solve_data/solver_config/`. An imported project keeps the options it was shipped with in `projects/<project>/imported_solver_config/`.
 - `output_parquet/<scenario>_<src#>/` — canonical results, always written. New writes always carry the `_<src#>` suffix so the folder name itself records which source produced it. Pre-existing bare-name folders from older projects are still readable via `bare_output_owners`; the GUI flags rows whose source no longer exists as **orphan**.
 - `output_plots/<scenario>_<src#>/` — PNGs from scenario plots.
-- `output_excel/<scenario>_<src#>.xlsx` — Excel export of one scenario.
+- `output_excel/output_<scenario>_<src#>.xlsx` — Excel export of one scenario, named after its result folder (before FlexTool 4.4, `output_<scenario>.xlsx`, shared by all sources of the scenario).
 - `output_csv/<scenario>_<src#>/` — CSV export of one scenario.
 - `output_plot_comparisons/` — comparison plots and Excel workbook.
 - `output_parquet_comparison/` — parquet feeding the comparison plots and viewer.

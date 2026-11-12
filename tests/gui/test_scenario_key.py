@@ -210,6 +210,35 @@ class TestExecutedScenarioManager:
         assert (tmp_path / "output_parquet" / "base").is_dir()
         assert not (tmp_path / "output_parquet" / "base_2").exists()
 
+    def test_delete_removes_only_the_folders_own_workbook(self, tmp_path):
+        """Folder base_1's workbook is output_base_1.xlsx; base_10's and the scenario-named one are not its."""
+        for folder in ("base_1", "base_10", "base_2"):
+            _touch_parquet(tmp_path / "output_parquet" / folder)
+        excel = tmp_path / "output_excel"
+        excel.mkdir()
+        for name in ("output_base.xlsx", "output_base_1.xlsx", "output_base_10.xlsx"):
+            (excel / name).write_bytes(b"")
+        mgr = ExecutedScenarioManager(tmp_path, ProjectSettings())
+        assert mgr.check_outputs([(2, "base")])["2|base"]["has_excel"] is False
+        mgr.delete_results([(1, "base")])
+        # output_base.xlsx (named the old way) may hold base_2's results, so it stays while base_2 is there.
+        assert sorted(f.name for f in excel.iterdir()) == ["output_base.xlsx", "output_base_10.xlsx"]
+
+    def test_delete_of_the_last_folder_removes_the_old_named_workbook(self, tmp_path):
+        """A workbook named the old way (output_<scenario>.xlsx) goes with the last result folder of its scenario."""
+        for folder in ("base_1", "base_2", "basement_1"):
+            _touch_parquet(tmp_path / "output_parquet" / folder)
+        excel = tmp_path / "output_excel"
+        excel.mkdir()
+        (excel / "output_base.xlsx").write_bytes(b"")
+        (excel / "output_basement.xlsx").write_bytes(b"")
+        mgr = ExecutedScenarioManager(tmp_path, ProjectSettings())
+        mgr.delete_results([(1, "base")])
+        assert (excel / "output_base.xlsx").is_file()
+        assert mgr.check_outputs([(2, "base")])["2|base"]["has_excel"] is True
+        mgr.delete_results([(2, "base")])
+        assert sorted(f.name for f in excel.iterdir()) == ["output_basement.xlsx"]
+
 
 # ---------------------------------------------------------------------------
 # ExecutionManager — compound identity through the pipeline

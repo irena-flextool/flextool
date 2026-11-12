@@ -18,7 +18,7 @@ from flextool import run_record
 from flextool.lean_parquet import read_lean_parquet, read_lean_parquet_solve_labels, write_lean_parquet
 from flextool.process_outputs._sheet_names import excel_sheet_name
 from flextool.process_outputs._excel_writer import reserved_sheet_names, write_excel_with_metadata
-from flextool.safe_names import check_output_name, require_inside
+from flextool.safe_names import check_output_name, require_inside, result_workbook_name
 from flextool.process_outputs.solve_order import INVESTMENT_PERIOD_TABLES, period_solve_labels
 from flextool.process_outputs._output_meta import (
     datapackage_resource,
@@ -1382,7 +1382,9 @@ def write_outputs(scenario_name, output_config_path=None, active_configs=None, o
         rename_raw = settings.get('rename', {})
         excel_dir = os.path.join(output_location, 'output_excel')
         os.makedirs(excel_dir, exist_ok=True)
-        excel_path = os.path.join(excel_dir, 'output_' + scenario_name + '.xlsx')
+        # Named after the result folder (the window's are <scenario>_<source number>), so that each folder has
+        # its own workbook; the command line and Spine Toolbox write subdir == scenario_name.
+        excel_path = os.path.join(excel_dir, result_workbook_name(subdir or scenario_name))
         # Build list of (sheet_name, raw_key, df) sorted alphabetically.  The
         # raw key is kept so unit/semantics metadata can be derived per sheet.
         sheets: list[tuple[str, str, pd.DataFrame]] = []

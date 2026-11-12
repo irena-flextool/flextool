@@ -8,7 +8,7 @@ The result tables are stored as **parquet** (the canonical store) and a configur
 | --- | --- | --- | --- |
 | `output_parquet/<scenario>/*.parquet` | parquet | always (canonical) | one file per result table; read by the GUI, the scenario-comparison tools, and `read_parquet_dir=True` re-runs |
 | `output_csv/<scenario>/*.csv` | CSV | when `output-csv` is enabled | one CSV per parquet, plus `summary_solve.csv` (diagnostic overview), `units.csv` and `datapackage.json` (see [Units in the files](#units-in-the-files)) |
-| `output_excel/output_<scenario>.xlsx` | Excel | when `output-excel` is enabled | one workbook per scenario: the `Units` and `_output_metadata` sheets, then the result sheets in alphabetical order |
+| `output_excel/output_<scenario>.xlsx` | Excel | when `output-excel` is enabled | one workbook per result folder (in the FlexTool window `output_<scenario>_<source number>.xlsx`): the `Units` and `_output_metadata` sheets, then the result sheets in alphabetical order |
 | `output_plots/<scenario>/*.png` (or svg/pdf) | image | when `output-plot` is enabled | driven by the bundled `flextool/schemas/default_plots.yaml` |
 | `<output-location>/results.sqlite` (or `--results-db-url`) | SpineDB | when `output-spinedb` is enabled (`--write-methods spinedb`) | the processed result tables written into a SpineDB using the FlexTool results schema (`flextool/schemas/spinedb_results_schema.json`); one Spine **alternative** per run (named after the scenario) so multiple runs coexist in one file. Time series land as nested Spine `Map` values on the model entity classes (node / unit / connection / group / model). |
 
