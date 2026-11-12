@@ -322,7 +322,7 @@ def derive_pdtNodeInflow(input_dir: Path, solve_data_dir: Path,
     _check_stochastic_inflow(pbt_inflow, stoch_node, eligible_nodes, solve_data_dir,
                              tb_for_d, ts_for_d, fan_for_d, provider=provider)
 
-    # ts tiers per period: d's own first step, else the fan start (per value cell).
+    # ts tiers per period: d's own first step and the fan start, in ts_tiers order (per value cell).
     tiers_by_d = {d: ts_tiers(d, ts_for_d, fan_for_d) for d in dict.fromkeys(d for d, _t in dt)}
     nodes_col: list[str] = []
     periods_col: list[str] = []
@@ -812,7 +812,7 @@ def derive_pdtProfile(input_dir: Path, solve_data_dir: Path,
             if c0 in stoch_processes and c2:
                 stoch_profile.add(c2)
 
-    # ts tiers per period: d's own first step, else the fan start (per value cell).
+    # ts tiers per period: d's own first step and the fan start, in ts_tiers order (per value cell).
     tiers_by_d = {d: ts_tiers(d, ts_for_d, fan_for_d) for d in dict.fromkeys(d for d, _t in dt)}
     profiles_col: list[str] = []
     periods_col: list[str] = []

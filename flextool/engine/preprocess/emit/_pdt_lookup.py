@@ -298,34 +298,86 @@ def _read_singles(path: Path,
 
 
 # ---------------------------------------------------------------------------
-# Which forecast a branch period reads.  Each fold first reads the forecast authored at the period's own first
-# step (``first_timesteps``); a value cell it does not cover takes the forecast authored at the solve's fan start
-# (``branch_time_start``: one row per period from the fan's period onwards, none for a pre-reveal trunk period
-# and none in a solve without a fan).  See docs/how_to/stochastics.md "Stochastics over multiple periods".
+# Which forecast a branch period reads.  ``branch_time_start`` (period, step, read_first) has one row per period
+# from the fan's period onwards (none for a pre-reveal trunk period, none in a solve without a fan); ``step`` is
+# the solve's fan start, its analysis time.  Each fold reads, per value cell, the first analysis-time tier that
+# authors a value for the cell:
+#
+# * a single (non-rolling) solve (``read_first`` = ``own``): the forecast authored at the period's own first step
+#   (``first_timesteps``), else the one authored at the fan start.  A value authored at a later period's own
+#   first step overrides the fan-start forecast there.
+# * a roll of a rolling solve (``read_first`` = ``fan``): the forecast authored at the roll's fan start, else the
+#   one at the period's own first step.  A roll decides at its fan's analysis time and must not see a forecast
+#   made later, so its look-ahead periods -- every period whose own first step is later than the roll's fan
+#   start, i.e. every row except the fan's own period, whose first step is the fan start -- read the roll's
+#   forecast before a later roll's (a later roll starts, and fans, at its own analysis time).  The own step is
+#   kept as a fallback for a cell the fan-start forecast does not author, so such a cell reads a value rather
+#   than 0.  The realization sibling of a rolling solve is itself rolling and follows the same rule.
+#
+# Non-stochastic (plain time-series) data has no analysis time and is not read through these tiers: unchanged.
+# See docs/how_to/stochastics.md "Stochastics over multiple periods" and "Rolling horizon stochastics".
 # ---------------------------------------------------------------------------
 
 BRANCH_TIME_START_CSV = "branch_time_start.csv"
+READ_FIRST_OWN = "own"
+READ_FIRST_FAN = "fan"
+
+
+class FanStarts(dict):
+    """``period -> [fan start step]`` of ``branch_time_start``, plus :attr:`fan_first`: the periods whose fold
+    reads the fan-start forecast before the forecast at its own first step (``read_first`` = ``fan``, the
+    rolls of a rolling solve).  A plain dict works wherever a :class:`FanStarts` is taken (no fan-first
+    periods)."""
+
+    def __init__(self, *args, fan_first: "frozenset[str]" = frozenset(), **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.fan_first = frozenset(fan_first)
+
+
+def read_fan_starts(path: Path, *, provider: "object | None" = None) -> FanStarts:
+    """Read a ``branch_time_start`` frame at *path* into a :class:`FanStarts`; empty when absent or without a
+    fan.  A frame without the ``read_first`` column reads as own-first."""
+    out = FanStarts()
+    df = provider.get(_provider_key(path))
+    if df is None:
+        return out
+    fan_first: set[str] = set()
+    has_read_first = "read_first" in df.columns
+    for row in df.iter_rows():
+        if len(row) < 2:
+            continue
+        d, step = _cell_str(row[0]), _cell_str(row[1])
+        if d and step:
+            out.setdefault(d, []).append(step)
+            if has_read_first and _cell_str(row[2]) == READ_FIRST_FAN:
+                fan_first.add(d)
+    out.fan_first = frozenset(fan_first)
+    return out
 
 
 def read_fan_for_d(solve_data_dir: Path,
-                   *, provider: "object | None" = None) -> dict[str, list[str]]:
-    """``solve_data/branch_time_start`` (period, step) as period -> [fan start step]; empty without a fan."""
-    return _read_pairs_to_dict(solve_data_dir / BRANCH_TIME_START_CSV, key_col=0, provider=provider)
+                   *, provider: "object | None" = None) -> FanStarts:
+    """``solve_data/branch_time_start`` as a :class:`FanStarts`; empty without a fan."""
+    return read_fan_starts(solve_data_dir / BRANCH_TIME_START_CSV, provider=provider)
 
 
 def ts_tiers(d: str, ts_for_d: "dict[str, list[str]]",
              fan_for_d: "dict[str, list[str]]") -> list[list[str]]:
     """The analysis-time tiers a fold of period *d* reads, in priority order.
 
-    ``[own]`` (the period's own first steps, duplicates kept) plus ``[fan]`` (the fan start steps that are not
-    among the own steps) when there are any.  A fold reads the first tier that has a value for the cell.  A
-    period without steps of its own (a period label: no dispatch) reads nothing, not the fan start.
+    ``own`` (the period's own first steps, duplicates kept) and ``fan`` (the fan start steps that are not among
+    the own steps), when there are any: ``[own, fan]``, or ``[fan, own]`` for a period in
+    ``fan_for_d.fan_first`` (a look-ahead period of a roll, see the section comment above).  A fold reads the
+    first tier that has a value for the cell.  A period without steps of its own (a period label: no dispatch)
+    reads nothing, not the fan start.
     """
     own = list(ts_for_d.get(d, ()))
     if not own:
         return [own]
     fan = [ts for ts in fan_for_d.get(d, ()) if ts not in own]
-    return [own, fan] if fan else [own]
+    if not fan:
+        return [own]
+    return [fan, own] if d in getattr(fan_for_d, "fan_first", ()) else [own, fan]
 
 
 def fold_over_tiers(pbt: dict, prefix: tuple, tb_groups: "Iterable[Iterable[str]]",
@@ -657,8 +709,8 @@ class PdtLookup:
 
       1. stochastic-fold: e ∈ groupStochastic-flagged group — sum pbt rows
          over ts ∈ first_timesteps[d], tb ∈ solve_branch[d]; a cell with no
-         such row takes ts ∈ branch_time_start[d] (the fan start,
-         :func:`ts_tiers`).
+         such row takes ts ∈ branch_time_start[d] (the fan start; in a roll
+         of a rolling solve the fan start is read first, :func:`ts_tiers`).
       2. parent-period-fold: for each pe with (pe, d) ∈ period__branch,
          sum pbt rows over ts ∈ first_timesteps[d], tb ∈ solve_branch[pe]
          (same fan-start fallback per cell).
@@ -705,9 +757,9 @@ class PdtLookup:
         self._ts_for_d = _read_pairs_to_dict(period_time_first_csv, key_col=0, provider=provider)
         self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0, provider=provider)
         self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
-        self._fan_for_d = _read_pairs_to_dict(
+        self._fan_for_d = read_fan_starts(
             branch_time_start_csv if branch_time_start_csv is not None
-            else period_time_first_csv.parent / BRANCH_TIME_START_CSV, key_col=0, provider=provider)
+            else period_time_first_csv.parent / BRANCH_TIME_START_CSV, provider=provider)
         self._tiers = {d: ts_tiers(d, self._ts_for_d, self._fan_for_d)
                        for d in dict.fromkeys([*self._ts_for_d, *self._fan_for_d])}
         anchor_members = _anchor_fan_members(period_branch_csv, provider=provider)
@@ -737,7 +789,7 @@ class PdtLookup:
 
     def get(self, e: str, param: str, d: str, t: str) -> float:
         tiers = self._tiers.get(d, ())
-        # Branch 1: stochastic fold-in (own first step, else the fan start -- per value cell).
+        # Branch 1: stochastic fold-in (the ts_tiers tiers: own first step and fan start -- per value cell).
         if e in self._stoch_entity:
             v = fold_over_tiers(self._pbt, (e, param), [self._tb_for_d.get(d, ())], tiers, t)
             if v is not None:
@@ -815,9 +867,9 @@ class PdtLookupPerSide:
         self._ts_for_d = _read_pairs_to_dict(period_time_first_csv, key_col=0, provider=provider)
         self._tb_for_d = _read_pairs_to_dict(solve_branch_csv, key_col=0, provider=provider)
         self._pe_for_d = _read_pairs_to_dict(period_branch_csv, key_col=1, provider=provider)
-        self._fan_for_d = _read_pairs_to_dict(
+        self._fan_for_d = read_fan_starts(
             branch_time_start_csv if branch_time_start_csv is not None
-            else period_time_first_csv.parent / BRANCH_TIME_START_CSV, key_col=0, provider=provider)
+            else period_time_first_csv.parent / BRANCH_TIME_START_CSV, provider=provider)
         self._tiers = {d: ts_tiers(d, self._ts_for_d, self._fan_for_d)
                        for d in dict.fromkeys([*self._ts_for_d, *self._fan_for_d])}
         anchor_members = _anchor_fan_members(period_branch_csv, provider=provider)

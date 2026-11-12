@@ -79,6 +79,12 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   periods of a multi-period stochastic solve read 0 where the forecast was given only at the fan's analysis time
   (profiles, availability, efficiency, costs, reservations, penalties, stochastic inflow; also the realization
   dispatch). Results of such models change.
+- **A roll of a rolling stochastic solve no longer reads a later roll's forecasts.** Each period of a roll after its
+  fan's period reads the forecast given at the roll's own fan analysis time first, and a forecast given at the
+  period's own first step (a later roll's analysis time) only for a time step the roll's forecast does not cover.
+  Before, a look-ahead period that started at a later roll's analysis time read that later forecast. A single
+  (non-rolling) solve is unchanged: a forecast at a later period's own first step still overrides. Results of
+  rolling stochastic models with such forecasts change.
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another
   constraint had one (since 4.0); the reported fuel, CO2 and cost of a unit with a profile and an input were too
   low; the period node-group indicators and VRE share are now ratios of the period energies; the `summary_solve.csv`

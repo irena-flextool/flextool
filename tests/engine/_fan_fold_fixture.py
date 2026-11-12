@@ -14,6 +14,13 @@ rule "own first step, else the fan start, per value cell"):
   ``d2_c/t3`` 3000 (own), ``d2_c/t4`` 40 (fan).
 * ``Y`` (branch 2 over the anchor's ``r``): ``d2_*/t3`` 5 (fan; ``s2`` authors only ``t4``),
   ``d2_*/t4`` 60 (own); ``d1_*/t1`` no fold value.
+
+Rolling look-ahead variant (``rolling=True``: ``read_first`` = ``fan``, a roll of a rolling solve reads the fan
+start first, then its own first step):
+
+* ``X``: ``d1_*`` unchanged (own step = fan start); ``d2_b/t3`` 2·3 = 6 (fan, ``b`` twice), ``d2_b/t4`` 2·4 = 8,
+  ``d2_c/t3`` 30, ``d2_c/t4`` 40 (all fan; the ``s2`` values 300 / 3000 are not read).
+* ``Y``: ``d2_*/t3`` 5 (fan), ``d2_*/t4`` 60 (own: ``s1`` authors no ``t4`` for ``Y``, so the cell falls back).
 """
 from __future__ import annotations
 
@@ -24,7 +31,7 @@ PBT_ROWS: list[tuple[str, str, str, str, float]] = [
     ("X", "b", "s1", "t1", 1.0), ("X", "b", "s1", "t3", 3.0), ("X", "b", "s1", "t4", 4.0),
     ("X", "c", "s1", "t1", 10.0), ("X", "c", "s1", "t3", 30.0), ("X", "c", "s1", "t4", 40.0),
     ("X", "b", "s2", "t3", 300.0), ("X", "c", "s2", "t3", 3000.0),
-    ("Y", "r", "s1", "t3", 5.0), ("Y", "r", "s1", "t4", 6.0), ("Y", "r", "s2", "t4", 60.0),
+    ("Y", "r", "s1", "t3", 5.0), ("Y", "r", "s2", "t4", 60.0),
 ]
 
 # (entity, period, time) -> the fold value; a cell not listed has no fold value.
@@ -36,16 +43,32 @@ EXPECTED_FOLD: dict[tuple[str, str, str], float] = {
     ("Y", "d2_c", "t3"): 5.0, ("Y", "d2_c", "t4"): 60.0,
 }
 
+EXPECTED_FOLD_ROLLING: dict[tuple[str, str, str], float] = {
+    ("X", "d1_b", "t1"): 1.0, ("X", "d1_c", "t1"): 10.0,
+    ("X", "d2_b", "t3"): 6.0, ("X", "d2_b", "t4"): 8.0,
+    ("X", "d2_c", "t3"): 30.0, ("X", "d2_c", "t4"): 40.0,
+    ("Y", "d2_b", "t3"): 5.0, ("Y", "d2_b", "t4"): 60.0,
+    ("Y", "d2_c", "t3"): 5.0, ("Y", "d2_c", "t4"): 60.0,
+}
+
+
+def expected_fold(rolling: bool) -> dict[tuple[str, str, str], float]:
+    """The hand-derived fold values: single solve (own first) or a roll's look-ahead (fan first)."""
+    return EXPECTED_FOLD_ROLLING if rolling else EXPECTED_FOLD
+
+
 STEPS: list[tuple[str, str]] = [("d1_b", "t1"), ("d1_c", "t1"), ("d2_b", "t3"), ("d2_b", "t4"),
                                 ("d2_c", "t3"), ("d2_c", "t4")]
 
 
-def put_fan_scaffold(put) -> None:
-    """Register the fan's period / branch / step frames through ``put(parent, stem, frame)``."""
+def put_fan_scaffold(put, *, rolling: bool = False) -> None:
+    """Register the fan's period / branch / step frames through ``put(parent, stem, frame)``; *rolling* marks
+    every ``branch_time_start`` row ``read_first`` = ``fan`` (a roll of a rolling solve)."""
     put("solve_data", "first_timesteps", pl.DataFrame({
         "period": ["d1_b", "d1_c", "d2_b", "d2_c"], "step": ["s1", "s1", "s2", "s2"]}))
     put("solve_data", "branch_time_start", pl.DataFrame({
-        "period": ["d1", "d1_b", "d1_c", "d2", "d2_b", "d2_c"], "step": ["s1"] * 6}))
+        "period": ["d1", "d1_b", "d1_c", "d2", "d2_b", "d2_c"], "step": ["s1"] * 6,
+        "read_first": ["fan" if rolling else "own"] * 6}))
     put("solve_data", "solve_branch__time_branch", pl.DataFrame({
         "period": ["d1_b", "d1_c", "d2_b", "d2_b", "d2_c", "d1", "d2"],
         "branch": ["b", "c", "b", "b", "c", "r", "r"]}))

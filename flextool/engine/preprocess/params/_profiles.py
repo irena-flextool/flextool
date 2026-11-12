@@ -77,6 +77,7 @@ from flextool.engine.preprocess.emit._pdt_lookup import (
     _anchor_fan_members,
     _check_pbt_branch_coverage,
     _check_ungrouped_reads_have_realized_branch,
+    read_fan_for_d,
     ts_tiers,
 )
 from flextool.engine.input._axis_enums import (
@@ -615,10 +616,9 @@ def _profile_stochastic_lf(workdir: Path | None,
                                     "period", "branch", provider=provider)
     ts_for_d = _read_pairs(sd / "first_timesteps.csv", "period", "step",
                              provider=provider)
-    # The fan start a branch period's cell falls back to when its own first
-    # step authors no value for it (``branch_time_start``; empty without a fan).
-    fan_for_d = _read_pairs(sd / "branch_time_start.csv", "period", "step",
-                            provider=provider)
+    # The fan start of each branch period (``branch_time_start``; empty without
+    # a fan), and the roll look-ahead periods that read it first (``ts_tiers``).
+    fan_for_d = read_fan_for_d(sd, provider=provider)
 
     # Stochastic UNION gate per profile.
     stoch_set = _read_stoch_profiles(inp, provider=provider)
@@ -626,7 +626,7 @@ def _profile_stochastic_lf(workdir: Path | None,
 
     # The same input checks as the non-profile pbt_* params (one definition of
     # "realized branch"): a solve without stochastic branches needs a realized
-    # branch for a rank-3 profile; a profile outside every include_stochastics
+    # branch for a stochastic profile; a profile outside every include_stochastics
     # group reads the realized branch on a fan's branch periods, so a
     # forecasts-only fan cannot serve it; and a profile must author every active
     # branch of a fan or none of them.
@@ -634,13 +634,15 @@ def _profile_stochastic_lf(workdir: Path | None,
         # This solve has no branch assignment of its own and none projected onto it
         # from a parent (``_StochasticTimeSource.has_realized_branch_rows`` -- same
         # csv, same rule): a solve without stochastic branches still needs a
-        # realized branch to take a rank-3 profile value from (owner decision #82).
+        # realized branch to take a stochastic profile value from (owner decision #82).
+        names = ", ".join(f"'{p}'" for p in stoch_active)
         raise FlexToolConfigError(
-            f"profile.profile: {', '.join(stoch_active)} authors a stochastic-time (rank-3) value, "
-            "but this solve has no realized branch to take the value from: no stochastic_branches "
-            "row anywhere designates one realized: yes, and no sibling solve projected one onto it "
-            "(#82). Either add a realized: yes row to this solve's stochastic_branches, or give the "
-            "profile a non-stochastic value."
+            f"profile {names}, parameter 'profile': the value is a stochastic forecast (a map over "
+            "branch, analysis time and time), but this solve has no realized branch to take the value "
+            "from: no row of its stochastic_branches says realized: yes, and no other solve hands its "
+            "realized branch to this one. Either mark one branch realized: yes in this solve's "
+            "stochastic_branches, or give the profile a plain value instead of a forecast map. Check "
+            "also which alternative of the scenario gives the value."
         )
     anchor_members = _anchor_fan_members(sd / "period__branch.csv", provider=provider)
     pbt_dict = {
@@ -654,7 +656,7 @@ def _profile_stochastic_lf(workdir: Path | None,
                                    tb_for_d, ts_for_d, fan_for_d, kind="profile")
 
     # Each fold reads, per value cell, the first analysis-time tier with a
-    # value: d's own first step, else the fan start (``ts_tiers``).  The tier
+    # value: d's own first step and the fan start, in ``ts_tiers`` order.  The tier
     # rides along as ``tier``; a part is summed per (f, d, t, tier) and the
     # priority ``branch * 2 + tier`` keeps branch order first, tier second.
     def _fold_frame(rows: list[tuple[str, str, str, int]]) -> pl.LazyFrame:

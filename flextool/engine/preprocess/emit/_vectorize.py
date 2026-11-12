@@ -259,7 +259,9 @@ def build_fold_frame(
     **Fan-start fallback (item 228):** each branch reads, per value cell,
     the steps of the first :func:`~._pdt_lookup.ts_tiers` tier that has a
     pbt row for the cell: ``ts_for_d[d]`` (the period's own first step),
-    else ``fan_for_d[d]`` (``branch_time_start``, the solve's fan start).
+    else ``fan_for_d[d]`` (``branch_time_start``, the solve's fan start),
+    or fan start first for a period in ``fan_for_d.fan_first`` (a roll's
+    look-ahead period).
     The expansion carries the tier as ``__rank``; each branch is summed
     per ``(output key, __rank)`` and keeps the lowest rank.  An empty
     *fan_for_d* (the default; no fan) leaves one tier, as before.

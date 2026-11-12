@@ -1444,12 +1444,14 @@ def stochastic_time_values(
     from flextool.engine.preprocess.params._branch import active_branch_anchor_pairs
 
     if active_branch_anchor_pairs() is None and not scope.has_realized_branch_rows():
-        names = ", ".join("/".join(e) for e in sorted(entities))
+        names = ", ".join("'" + "/".join(e) + "'" for e in sorted(entities))
         raise FlexToolConfigError(
-            f"{key[0]}.{key[1]}: {names} authors a stochastic-time (rank-3) value, but this solve has no "
-            "realized branch to take the value from: no stochastic_branches row anywhere designates one "
-            "realized: yes, and no sibling solve projected one onto it (#82). Either add a realized: yes "
-            "row to this solve's stochastic_branches, or give the parameter a non-stochastic value.")
+            f"{key[0]} {names}, parameter '{key[1]}': the value is a stochastic forecast (a map over branch, "
+            "analysis time and time), but this solve has no realized branch to take the value from: no row of "
+            "its stochastic_branches says realized: yes, and no other solve hands its realized branch to this "
+            "one. Either mark one branch realized: yes in this solve's stochastic_branches, or give the "
+            "parameter a plain value instead of a forecast map. Check also which alternative of the scenario "
+            "gives the value.")
     emit_cols = list(STOCHASTIC_TIME_PARAMS[key][1])
     dim_cols = list(entity_dim_columns)
     ents = pl.DataFrame([list(e) for e in sorted(entities)], schema={c: pl.Utf8 for c in emit_cols},

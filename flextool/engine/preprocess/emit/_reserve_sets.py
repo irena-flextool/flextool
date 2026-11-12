@@ -292,10 +292,11 @@ def _resolve_pdtReserve(
     Branches mirror ``pdtProcess``'s branches 1, 2, 4, 5 (no period axis,
     no def1 — and the scalar branch returns the table's default of 0
     for ``reservation`` when the (r, ud, g) row is missing).  *fan_for_d*
-    (``branch_time_start``) is the fan start a fold cell falls back to; *tiers_by_d* (period ->
+    (``branch_time_start``) is the fan start of a fold cell's second (in a roll: first) tier; *tiers_by_d* (period ->
     :func:`ts_tiers`) lets a caller compute the tiers once per period instead of once per cell.
     """
-    # Branch 1: stochastic + outer-d's tb; ts = d's own first step, else the fan start (per value cell).
+    # Branch 1: stochastic + outer-d's tb; ts = d's own first step and the fan start in ts_tiers order
+    # (per value cell).
     tiers = tiers_by_d.get(d) if tiers_by_d is not None else None
     if tiers is None:
         tiers = ts_tiers(d, ts_for_d, fan_for_d or {})

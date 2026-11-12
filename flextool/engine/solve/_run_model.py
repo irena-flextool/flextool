@@ -1385,9 +1385,14 @@ def native_run_model(state, solver) -> int:
             state.solve.stochastic_branches,
             provider=sub_solve_provider,
         )
+        # A roll of a rolling solve (its realization sibling mirrors the
+        # parent's mode) reads its own fan-start forecast before a later
+        # roll's (``_pdt_lookup`` "Which forecast a branch period reads").
         solve_writers.emit_branch_time_start(
             branch_time_start_lists.get(solve, []),
             provider=sub_solve_provider,
+            fan_first=state.solve.solve_modes.get(
+                complete_solve[solve], "single_solve") == "rolling_window",
         )
         solve_writers.emit_first_and_last_periods(
             active_time_lists[solve],
