@@ -42,6 +42,20 @@ def _build_tab_color_map(navigate_groups: list[dict[str, Any]]) -> dict[str, str
     return color_map
 
 
+def _cells_as_text(wb: Workbook) -> None:
+    """Keep every string a string: openpyxl stores a string that starts with ``=`` as a formula.
+
+    The export writes no formulas of its own (its links are cell hyperlinks), and names and descriptions come
+    from the input data, so a formula cell would run in Excel on opening, and read back with ``data_only=True``
+    it would have no value (the name would be lost).  The value stays exactly as it was.
+    """
+    for ws in wb.worksheets:
+        # ``_cells`` holds only the cells that were written (iter_rows would create the empty ones).
+        for cell in ws._cells.values():
+            if cell.data_type == "f" and isinstance(cell.value, str):
+                cell.data_type = "s"
+
+
 def export_to_excel(
     db_url: str,
     output_path: str,
@@ -214,6 +228,7 @@ def export_to_excel(
     output_dir = Path(output_path).parent
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    _cells_as_text(wb)
     wb.save(output_path)
 
     # 7. Print summary

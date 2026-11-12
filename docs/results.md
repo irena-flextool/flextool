@@ -20,6 +20,8 @@ Excel limits a sheet name to 31 characters. The longer table names get short she
 
 Every result table, with its parquet and CSV file names, its index and column levels, the unit of each column and its name in the results database, is listed in the [Results catalogue](results_catalogue.md), generated from the code. Below, a result is named by its results-database parameter (`class` entity `parameter`) where it is written to the results database, else by its table name.
 
+The Excel workbooks hold names (entities, scenarios, alternatives) as text: a name that starts with `=` stays that text and never becomes a formula or a link. The CSV files hold the names exactly as they are, for the programs that read them. A spreadsheet program that opens a CSV file can take a name that starts with `=`, `+`, `-` or `@` for a formula; open the CSV files of a model from someone else as data (an import that sets the columns to text), or use the Excel workbook.
+
 The CSV / Excel / plot files are **derived** from the parquets, so deleting or regenerating them is safe. `summary_solve.csv` is a diagnostic file aimed at a quick overview of a solve — it lists objective decomposition, period weighting, CO2 total, and any non-zero slack uses.
 
 

@@ -38,6 +38,7 @@ try:
 except (AttributeError, ValueError, OSError):
     # stderr may be unavailable (e.g. detached / redirected to a closed fd).
     pass
+from flextool._safe_text import make_printable
 from flextool._mem_sampler import start_mem_sampler
 from flextool.process_outputs.write_outputs import resolve_output_settings, write_outputs
 from flextool import run_record
@@ -913,7 +914,8 @@ def main():
             '%(levelname)s:%(filename)s:%(lineno)d:%(message)s'
             if DEBUG else '%(message)s'
         ),
-        handlers=[logging.StreamHandler(sys.stdout)]
+        # Control characters from names in the input data are shown as \xNN, not sent to the terminal.
+        handlers=[make_printable(logging.StreamHandler(sys.stdout))]
     )
     if not DEBUG:
         # Silence routine "wrote …" / "Wrote N output variables" INFO

@@ -17,8 +17,11 @@ has the terminal, before the child starts; ``_owner`` classifies exits with the 
 The engine's command line passes through unchanged (``--threads`` too: the child reads it from its own command
 line), plus ``--run-launcher flextool-run`` when it names no launcher.  The child's environment is this
 process's, plus three variables that describe the pipe (``FLEXTOOL_RUN_LOG_OWNER=1``, ``PYTHONIOENCODING=utf-8``,
-``PYTHONUNBUFFERED=1``); ``os.environ`` itself is not changed for them.  ``FLEXTOOL_RUN_STOP_FILE`` is left out
-of it.
+``PYTHONUNBUFFERED=1``) and ``PYTHONSAFEPATH=1``; ``os.environ`` itself is not changed for them.
+``FLEXTOOL_RUN_STOP_FILE`` is left out of it.  The child runs with ``python -P`` (and ``PYTHONSAFEPATH``), so the
+folder ``flextool-run`` is started from is not on its ``sys.path``: a project folder holding a ``flextool/`` folder
+cannot replace the installed FlexTool.  The console and ``_run.log`` get the child's lines with control characters
+(terminal escape sequences) shown as ``\\xNN`` (``flextool/_safe_text.py``, loaded by path).
 
 Stop file.  When ``FLEXTOOL_RUN_STOP_FILE`` names a file (the GUI sets it for an auxiliary job's process, and this
 process inherits it), its appearance asks for a stop: before the child starts, nothing starts (exit 1, no run
@@ -62,6 +65,7 @@ STOP_FILE_CHECK_TICKS = 5
 
 _PRIVATE_NAME = "flextool_run_supervisor"
 _owner_module: ModuleType | None = None
+_safe_text_module: ModuleType | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -107,6 +111,14 @@ def load_owner() -> ModuleType:
         )
         _owner_module = owner
     return _owner_module
+
+
+def load_safe_text() -> ModuleType:
+    """``flextool/_safe_text.py`` (control characters shown as ``\\xNN``), loaded once by path."""
+    global _safe_text_module
+    if _safe_text_module is None:
+        _safe_text_module = _load_file(f"{_PRIVATE_NAME}._safe_text", _flextool_dir() / "_safe_text.py")
+    return _safe_text_module
 
 
 def load_env_check() -> ModuleType:
@@ -193,12 +205,18 @@ class _Echo:
 
 
 def _relay(pipe: IO[bytes], owner, echo: _Echo) -> None:
-    """Read the child's output to its end: every line to the owner, the visible ones to the console."""
+    """Read the child's output to its end: every line to the owner, the visible ones to the console.
+
+    A control character inside a line (an escape sequence from a name in the input data) is shown as ``\\xNN``
+    in both: the line end itself is kept.
+    """
+    printable = load_safe_text().printable
     for raw in iter(pipe.readline, b""):
         text = raw.decode("utf-8", errors="replace")
         body = text.rstrip("\r\n")
-        if owner.feed(body):
-            echo.write(text)
+        safe = printable(body)
+        if owner.feed(safe):
+            echo.write(safe + text[len(body):] if safe != body else text)
     pipe.close()
 
 

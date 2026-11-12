@@ -19,6 +19,7 @@ from typing import Callable
 import psutil
 
 from flextool._child_python import SAFE_PATH_FLAG, child_env
+from flextool._safe_text import printable
 from flextool._process_tree import kill_process_tree
 from flextool.gui.cli_format import format_cmd_for_log, terminal_command
 from flextool.gui.data_models import TIMESTAMP_FORMAT, GlobalSettings, ProjectSettings, ScenarioInfo
@@ -919,7 +920,8 @@ class ExecutionManager:
         return job
 
     def append_stdout(self, job_id: int, line: str) -> None:
-        """Thread-safe append of a stdout line to a job."""
+        """Thread-safe append of a stdout line to a job (control characters shown as ``\\xNN``)."""
+        line = printable(line, keep_newlines=True)
         with self._lock:
             job = self._get_job(job_id)
             if job is not None:
@@ -1275,7 +1277,8 @@ class ExecutionManager:
                 # Read stdout line by line
                 assert proc.stdout is not None
                 for line in proc.stdout:
-                    stripped = line.rstrip("\n")
+                    # Control characters inside a line are shown as \xNN in the log window and _run.log.
+                    stripped = printable(line.rstrip("\r\n"))
                     if not owner.feed(stripped):
                         # The engine's run-record marker: its record now says "running".
                         with self._lock:
