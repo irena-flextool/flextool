@@ -54,7 +54,8 @@ Equation families, in emit order (module in brackets when not model/core.py):
   Conversion          conversion_indirect (delayed inputs from [_delay]); minInputShare
   Emissions & user    co2_max_period, co2_max_total; process_constraint_{equal,less_than,greater_than}[_period]
   Storage state       maxState; profile_state_{upper_limit,lower_limit,fixed};
-                      storage_state_start_binding[_cyclic_period]; storage_state_end_binding;
+                      storage_state_start_binding[_cyclic_period]; storage_within_solve_path_end,
+                      storage_state_fan_start (stochastic fans); storage_state_end_binding;
                       storage_state_solve_horizon_reference_value
   Profiles            profile_flow_{upper_limit,lower_limit,fixed}
   Objective           balance slack penalty, commodity cost and sales, CO2 price, variable cost, startup cost,
@@ -477,6 +478,8 @@ def build_flextool(m, d, *, include_existing_fixed_cost: bool = False,
         _eq_state_profiles,
         _eq_storage_start_binding,
         _eq_storage_start_binding_cyclic,
+        _eq_storage_within_solve_path_end,
+        _eq_storage_state_fan_start,
         _eq_storage_end_binding,
         _eq_storage_reference_value,
         _eq_profiles,
@@ -1630,7 +1633,8 @@ def _state_change_terms(b: _Build) -> dict:
     inflow.  The branches and their lags are _self_discharge.state_links (each node is in one binding set only,
     _validate_storage_binding_disjoint): bind_within_timeblock wraps within the timeblock, bind_forward_only crosses
     period boundaries and has no state change at the solve's first step, bind_within_solve wraps the solve's first
-    step to its last, bind_within_period wraps each period's first step to the period's own last step,
+    step to its last (with a stochastic fan in the first period, each root forecast's first step to the last step of
+    its own path: dtttdt_within_solve), bind_within_period wraps each period's first step to the period's own last step,
     bind_intraperiod_blocks (nodeStateBlock) follows dtttdt_block_lag (these terms reach nodeBalanceBlock_eq only,
     which sums them over each block), and the blended-weights nodes chain inside each representative block whose
     first step starts from the free state v_state_rp_start.
@@ -4457,6 +4461,166 @@ def _eq_storage_start_binding_cyclic(b: _Build) -> None:
         lhs_terms = lhs,
         rhs_terms = {"target": (d.p_state_start * d.p_state_existing_capacity) / d.p_state_unitsize},
     )
+
+
+def _utf8_cells(frame: "pl.DataFrame | None", cols=("n", "d", "t")) -> pl.DataFrame:
+    """``frame``'s ``cols`` as Utf8 (an empty frame for None)."""
+    if frame is None:
+        return pl.DataFrame(schema={c: pl.Utf8 for c in cols})
+    return frame.select([pl.col(c).cast(pl.Utf8) for c in cols])
+
+
+def _state_cells_typed(b: _Build, frame: pl.DataFrame, rename: dict) -> pl.DataFrame:
+    """Utf8 ``frame`` cast onto v_state's dtypes; the columns of ``rename`` ({column: v_state dim}) take that dim's
+    dtype."""
+    schema = b.v_state.frame.schema
+    return frame.with_columns([pl.col(c).cast(schema[rename.get(c, c)], strict=False) for c in frame.columns])
+
+
+def _notice_stochastic_storage_paths(names) -> None:
+    from flextool.engine import _behaviour_changes
+    _behaviour_changes.notice("stochastic_storage_paths_tied", "nodes", sorted(set(str(n) for n in names)))
+
+
+def _eq_storage_within_solve_path_end(b: _Build) -> None:
+    """bind_within_solve in a stochastic solve: the last step of every path ends at the same level."""
+    d = b.d
+    if not (b.has_storage
+            and _has_rows(d.storage_bind_within_solve)
+            and _has_rows(d.period_last)
+            and _has_rows(d.nodeState_first_dt)
+            and _has_rows(d.nodeState_last_dt)):
+        return
+    last_periods = sorted(set(str(x) for x in d.period_last["d"].to_list()))
+    if len(last_periods) < 2:
+        return
+    m = b.m
+
+    # ─── EQ. ─── storage_within_solve_path_end ───────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d,t_last(d)] − v_state[n,d*,t_last(d*)] = 0
+    #   ∀ n ∈ bind_within_solve, d ∈ period_last, d ≠ d*, (n,d,t_last(d)) and (n,d*,t_last(d*)) ∈ nodeState_last_dt,
+    #     unless both ends are already set (each is a step storage_state_start_binding_cyclic_period pins or
+    #     node_balance_fix_quantity_eq_lower fixes)
+    #   d* = the last period the solve's first steps wrap to (the state-change lag of bind_within_solve,
+    #     _self_discharge.state_links): the last period key of the solve, the trunk's wrap target
+    # bind_within_solve closes one loop per path of a stochastic solve.  The first step of the solve continues from
+    # the last step of d* only, so this row ends every other path (period_last: the solve's last period and its
+    # forecast branch siblings) at the same level: every branch's end is the level the trunk starts from.  With a
+    # fan in the solve's first period each root forecast's first step continues from the last step of its own path
+    # (dtttdt_within_solve), so equal ends also give all the forecasts the same start.  A deterministic solve has
+    # one last period and no rows.  A fix_start node keeps the rows where only one end is pinned (a fan after the
+    # trunk period: the pin sits at d*'s end); with both ends pinned or fixed the row would only repeat (or
+    # contradict) those values.
+    ws_links = [link for link in _self_discharge.state_links(d, has_rp=b.has_rp, has_nsb=b.has_nsb)
+                if link.key == "state_change_ws"]
+    if not ws_links:
+        return
+    wraps = (_utf8_cells(d.nodeState_first_dt)
+             .join(_self_discharge.previous_steps(ws_links), on=["n", "d", "t"], how="inner"))
+    targets = sorted(set(wraps["d_prev"].to_list()) & set(last_periods))
+    if not targets:
+        return
+    d_star = targets[-1]
+    ends = (_utf8_cells(d.nodeState_last_dt)
+            .join(_utf8_cells(d.storage_bind_within_solve, ("n",)), on="n", how="semi")
+            .filter(pl.col("d").is_in(last_periods)))
+    star_ends = ends.filter(pl.col("d") == d_star).select("n", d_end="d", t_end="t")
+    over = (ends.filter(pl.col("d") != d_star)
+            .join(star_ends, on="n", how="inner")
+            .select("n", "d", "t", "d_end", "t_end"))
+    set_parts = [_utf8_cells(f) for f in (_cyclic_start_pin_steps(b), _fix_quantity_target(b)) if f is not None]
+    if set_parts and over.height > 0:
+        already = pl.concat(set_parts, how="vertical").unique()
+        both = (over.join(already, on=["n", "d", "t"], how="semi")
+                .join(already.rename({"d": "d_end", "t": "t_end"}), on=["n", "d_end", "t_end"], how="semi"))
+        over = over.join(both, on=list(over.columns), how="anti")
+    if over.height == 0:
+        return
+    over = _state_cells_typed(b, over.sort("n", "d"), {"d_end": "d", "t_end": "t"})
+    m.add_cstr(
+        "storage_within_solve_path_end",
+        over      = over,
+        sense     = "==",
+        lhs_terms = {"state": b.v_state,
+                     "state_end": -_var_view(b.v_state, "__path_end", {"d": "d_end", "t": "t_end"})},
+        rhs_terms = {},
+    )
+    _notice_stochastic_storage_paths(over["n"].to_list())
+
+
+def _eq_storage_state_fan_start(b: _Build) -> None:
+    """bind_forward_only with a free start: every forecast of a fan in the solve's first period starts at the
+    same level."""
+    d = b.d
+    if not (b.has_storage
+            and _has_rows(d.storage_bind_forward_only)
+            and _has_rows(d.nodeState_first_dt)):
+        return
+    roots = sorted(set(str(x) for x in d.nodeState_first_dt["d"].to_list()))
+    if len(roots) < 2:
+        return
+    m = b.m
+
+    # ─── EQ. ─── storage_state_fan_start ─────────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state[n,d,t_first(d)] − v_state[n,d″,t_first(d″)] = 0
+    #   ∀ n ∈ bind_forward_only, (n,d,t_first(d)) and (n,d″,t_first(d″)) ∈ nodeState_first_dt with no start term
+    #     (n ∉ storage_fix_start ∪ carried), d = the first root (sorted), d″ ∈ the other roots, one row
+    #     per group of roots that non_anticipativity_storage_state_first does not already tie to d's group
+    #   roots = the periods of nodeState_first_dt (built from period_first_of_solve): the forecast branch periods
+    #     of a fan in the solve's first period; one root without a fan: no rows
+    # The first step of a bind_forward_only node has no state change (dtttdt_forward_only): without fix_start or a
+    # carried state it is free, so each forecast of a fan in the first period could pick its own start level from
+    # what it later sees.  The fan has only forecasts (no realized member), so this row is what makes their start
+    # the same.  A fix_start or carried node starts every root from the same value already (_fix_start_terms,
+    # the roll carry).  For a node of an include_stochastics group, non_anticipativity_storage_state_first may tie
+    # the first step of a root to its reference forecast already (a tie window shorter than the root period):
+    # those pairs are left out, read from that row's domain.
+    first = (_utf8_cells(d.nodeState_first_dt)
+             .join(_utf8_cells(d.storage_bind_forward_only, ("n",)), on="n", how="semi"))
+    for started in (_self_discharge.fix_start_first(d), _self_discharge.carried_nodes(d)):
+        if started is not None:
+            first = first.join(_utf8_cells(started, ("n",)).unique(), on="n", how="anti")
+    if first.height == 0:
+        return
+    ref = first.filter(pl.col("d") == roots[0])
+    other = first.filter(pl.col("d") != roots[0]).select("n", b="d", t_b="t")
+    over = ref.join(other, on="n", how="inner").select("n", "d", "t", "b", "t_b")
+    tied = _non_anticipativity.storage_state_first_cells(b)
+    if tied is not None and over.height > 0:
+        edges = (_utf8_cells(tied, ("n", "d", "b", "t"))
+                 .join(first, on=["n", "d", "t"], how="semi")
+                 .join(first.rename({"d": "b"}), on=["n", "b", "t"], how="semi"))
+        if edges.height > 0:
+            keep = []
+            for node, group in over.group_by("n", maintain_order=True):
+                parent: dict[str, str] = {}
+
+                def find(x: str) -> str:
+                    while parent.get(x, x) != x:
+                        x = parent[x]
+                    return x
+
+                for x, y in edges.filter(pl.col("n") == node[0]).select("d", "b").iter_rows():
+                    parent[find(x)] = find(y)
+                for row in group.sort("b").iter_rows(named=True):
+                    if find(row["b"]) != find(roots[0]):
+                        parent[find(row["b"])] = find(roots[0])
+                        keep.append(row)
+            over = pl.DataFrame(keep, schema=over.schema, orient="row")
+    if over.height == 0:
+        return
+    over = _state_cells_typed(b, over.sort("n", "b"), {"b": "d", "t_b": "t"})
+    m.add_cstr(
+        "storage_state_fan_start",
+        over      = over,
+        sense     = "==",
+        lhs_terms = {"state": b.v_state,
+                     "state_root": -_var_view(b.v_state, "__fan_start", {"d": "b", "t": "t_b"})},
+        rhs_terms = {},
+    )
+    _notice_stochastic_storage_paths(over["n"].to_list())
 
 
 def _eq_storage_end_binding(b: _Build) -> None:

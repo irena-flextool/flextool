@@ -1445,6 +1445,10 @@ class FlexData:
     storage_solve_at_model_end: bool = True
     dtttdt: pl.DataFrame | None = None           # (d, t, t_previous_*, ...)
     dtttdt_forward_only: pl.DataFrame | None = None  # dtttdt with first (d,t) per solve dropped
+    # The bind_within_solve lag (columns of dtttdt) where it differs from dtttdt: with a stochastic fan in the
+    # solve's first period, the first step of each root forecast continues from the last step of its own path
+    # (_derived.dtttdt_within_solve_from_dtttdt); None otherwise (the lag is dtttdt).
+    dtttdt_within_solve: pl.DataFrame | None = None
     # (d, t, t_previous_within_period): the previous step of t in its own period; the first step of each period
     # wraps to the period's own last step (the bind_within_period lag; blocks chain inside the period).
     dtttdt_within_period: pl.DataFrame | None = None
@@ -3834,6 +3838,13 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         dtttdt_forward_only_df = dtttdt_forward_only_from_dtttdt(
             dtttdt, read_period_first_of_solve(sd, provider=provider))
 
+    dtttdt_within_solve_df = None
+    if binding_within_solve is not None and dtttdt is not None and dtttdt.height > 0:
+        from flextool.engine.preprocess.params._derived import (
+            dtttdt_within_solve_from_dtttdt, read_period_first_of_solve)
+        dtttdt_within_solve_df = dtttdt_within_solve_from_dtttdt(
+            dtttdt, read_period_first_of_solve(sd, provider=provider))
+
     dtttdt_within_period_df = None
     if binding_within_period is not None and dtttdt is not None and dtttdt.height > 0:
         dtttdt_within_period_df = _within_period_lag(dtttdt)
@@ -4314,6 +4325,7 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         p_storage_state_reference_price = p_storage_state_reference_price,
         dtttdt = dtttdt,
         dtttdt_forward_only = dtttdt_forward_only_df,
+        dtttdt_within_solve = dtttdt_within_solve_df,
         dtttdt_within_period = dtttdt_within_period_df,
         nodeStateBlock = nodeStateBlock,
         period_block = period_block,

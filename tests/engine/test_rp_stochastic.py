@@ -61,12 +61,13 @@ def _rp_weights(weights: dict) -> api.Map:
 
 def _tiny(tmp_path_factory, *, n_steps: int, timesets: dict, period_timeset: dict, fan: tuple,
           profile: dict, s: dict, K: float, D: float, s_in_group: bool = False,
-          inflow: dict | None = None) -> dict:
+          inflow: dict | None = None, branch_weights: dict | None = None) -> dict:
     """Build, solve and return the steps of the tiny model.
 
-    ``timesets`` = {name: (timeset_duration, representative_period_weights)}; ``fan`` = (period, start step);
+    ``timesets`` = {name: (timeset_duration, representative_period_weights or None)}; ``fan`` = (period, start step);
     ``profile`` = {branch: {analysis_time: {step: p}}}; ``s`` = extra parameters of node ``s``; ``inflow`` (same
-    nesting as ``profile``) replaces the constant inflow −D of ``s`` by a stochastic one."""
+    nesting as ``profile``) replaces the constant inflow −D of ``s`` by a stochastic one; ``branch_weights``
+    {branch: weight} (default 0.5 each)."""
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_handle import open_database_mapping
     from flextool.update_flextool.initialize_database import initialize_database
@@ -83,7 +84,8 @@ def _tiny(tmp_path_factory, *, n_steps: int, timesets: dict, period_timeset: dic
         entities.append(("group__node", ("g", "s")))
     periods = list(period_timeset)
     fan_period, fan_step = fan
-    branches = _m({fan_period: _m({b: _m({fan_step: _m({"no": 0.5}, "realized")}, "analysis_time")
+    bw = branch_weights or {b: 0.5 for b in profile}
+    branches = _m({fan_period: _m({b: _m({fan_step: _m({"no": bw[b]}, "realized")}, "analysis_time")
                                    for b in profile}, "branch")}, "period")
     prof = _m({b: _m({at: _m(series, "time") for at, series in windows.items()}, "analysis_time")
                for b, windows in profile.items()}, "branch")
@@ -109,8 +111,9 @@ def _tiny(tmp_path_factory, *, n_steps: int, timesets: dict, period_timeset: dic
     ]
     for ts, (duration, weights) in timesets.items():
         values += [("timeset", ts, "timeline", "tl"),
-                   ("timeset", ts, "timeset_duration", _m(duration, "time")),
-                   ("timeset", ts, "representative_period_weights", _rp_weights(weights))]
+                   ("timeset", ts, "timeset_duration", _m(duration, "time"))]
+        if weights is not None:
+            values.append(("timeset", ts, "representative_period_weights", _rp_weights(weights)))
     values += [("node", "s", k, v) for k, v in s.items()]
     with open_database_mapping(url) as db:
         _count, errors = api.import_data(
@@ -340,11 +343,108 @@ def test_h2b_within_solve_blended_every_branch_closes_on_the_trunk_start(tmp_pat
 
 
 # ---------------------------------------------------------------------------
+# H1 / H2: plain bind_forward_only and bind_within_solve in a fan (no representative periods)
+# ---------------------------------------------------------------------------
+
+_PLAIN_FAN_TS = {"ts": ({"t0001": 4.0}, None)}
+
+
+def _h1(tmp_path_factory, *, high, low, s_in_group: bool = False) -> dict:
+    K, D = 5.0, 3.0
+    st = _steps(4)
+    return _tiny(tmp_path_factory, n_steps=4, timesets=_PLAIN_FAN_TS, period_timeset={"p1": "ts"},
+                 fan=("p1", "t0001"), K=K, D=D, s_in_group=s_in_group,
+                 s={"existing": 5.0, "storage_binding_method": "bind_forward_only",
+                    "storage_start_end_method": "fix_nothing"},
+                 profile={"high": {"t0001": _series(st, high, K, D)}, "low": {"t0001": _series(st, low, K, D)}})
+
+
+def test_h1_forward_only_first_period_fan_starts_equal(tmp_path_factory):
+    """H1a: plain bind_forward_only, fix_nothing, C = 5, first-period fan p1 @ t0001; c high 0, −1, −1, +2,
+    low 0, +2, +1, −3.  t0001 is open (no state change) ⇒ high S, S−1, S−2, S; low S, S+2, S+3, S.  The equal
+    start (storage_state_fan_start) gives S ≥ 2 and S ≤ 2 ⇒ S = 2: v_high 2, 1, 0, 2; v_low 2, 4, 5, 2."""
+    step = _h1(tmp_path_factory, high=[0.0, -1.0, -1.0, 2.0], low=[0.0, 2.0, 1.0, -3.0])["sol"]
+    state = _values(step, "v_state")
+    assert [state[("s", "p1_high", t)] for t in _steps(4)] == pytest.approx([2.0, 1.0, 0.0, 2.0], abs=TOL)
+    assert [state[("s", "p1_low", t)] for t in _steps(4)] == pytest.approx([2.0, 4.0, 5.0, 2.0], abs=TOL)
+    assert float(step.solution.obj) == pytest.approx(0.0, abs=TOL)
+    assert _rows(build(step.flex_data), "storage_state_fan_start") == [
+        "storage_state_fan_start[s,p1_high,t0001,p1_low,t0001]"]
+
+
+def test_h1_fan_start_kept_when_the_window_ties_the_whole_root(tmp_path_factory):
+    """H4 note on S4: s in the include_stochastics group with the default window (all of p1 tied) has no
+    non_anticipativity_storage_state_first row, so the start is tied by storage_state_fan_start alone (identical
+    series: the net-flow tie holds)."""
+    c = [0.0, -1.0, -1.0, 2.0]
+    step = _h1(tmp_path_factory, high=c, low=c, s_in_group=True)["sol"]
+    pb = build(step.flex_data)
+    assert _rows(pb, "non_anticipativity_storage_state_first") == []
+    assert len(_rows(pb, "storage_state_fan_start")) == 1
+    state = _values(step, "v_state")
+    assert state[("s", "p1_high", "t0001")] == pytest.approx(state[("s", "p1_low", "t0001")], abs=TOL)
+
+
+def _h2(tmp_path_factory, *, K: float, D: float, low: list[float]) -> dict:
+    trunk = _series(["t0001", "t0002"], [1.0, 1.0], K, D)
+    return _tiny(
+        tmp_path_factory, n_steps=4, timesets={"ts1": ({"t0001": 2.0}, None), "ts2": ({"t0003": 2.0}, None)},
+        period_timeset={"p1": "ts1", "p2": "ts2"}, fan=("p2", "t0003"), K=K, D=D,
+        branch_weights={"high": 0.3, "low": 0.7},
+        s={"existing": 2.0, "storage_binding_method": "bind_within_solve", "storage_start_end_method": "fix_nothing",
+           "penalty_down": 100.0, "penalty_up": 1000.0},
+        profile={"high": {"t0001": trunk, "t0003": _series(["t0003", "t0004"], [-1.0, 0.0], K, D)},
+                 "low": {"t0001": trunk, "t0003": _series(["t0003", "t0004"], low, K, D)}})["sol"]
+
+
+# op_factor[p2_x, t] = Δt (1 h) · tsw (1) · inflation_op[p2] / period_share[p2] · branch weight: inflation_rate 0 and
+# years_represented 1 ⇒ inflation_op = 1; p2 (and its branch periods) holds 2 h ⇒ period_share = 2 / 8760 ⇒
+# op_factor = 4380 · w: high (0.3) 1314, low (0.7) 3066.
+_OP_HIGH, _OP_LOW = 4380.0 * 0.3, 4380.0 * 0.7
+
+
+def test_h2_within_solve_every_branch_ends_at_the_trunk_start(tmp_path_factory):
+    """H2a: plain bind_within_solve, fan at p2 @ t0003 (0.3 / 0.7), C = 2; c trunk +1, +1; high −1, 0; low −1, −1.
+    One loop per path: every leaf ends at E, the trunk's first step starts from E ⇒ trunk E+1, E+2 ⇒ E = 0;
+    low 1, 0 closes; high needs a spill of 1 MWh (timing within the period degenerate).
+    Objective = P_d (100) · 1 MWh · op_factor[p2_high] = 131 400."""
+    step = _h2(tmp_path_factory, K=2.0, D=1.0, low=[-1.0, -1.0])
+    state = _values(step, "v_state")
+    assert [state[("s", "p1", t)] for t in ("t0001", "t0002")] == pytest.approx([1.0, 2.0], abs=TOL)
+    assert [state[("s", "p2_low", t)] for t in ("t0003", "t0004")] == pytest.approx([1.0, 0.0], abs=TOL)
+    assert state[("s", "p2_high", "t0004")] == pytest.approx(0.0, abs=TOL)
+    spill = _values(step, "vq_state_down")
+    assert sum(v for k, v in spill.items() if k[1] == "p2_high") == pytest.approx(1.0, abs=TOL)
+    assert sum(v for k, v in spill.items() if k[1] != "p2_high") == pytest.approx(0.0, abs=TOL)
+    assert float(step.solution.obj) == pytest.approx(100.0 * _OP_HIGH, rel=1e-9)
+    assert _rows(build(step.flex_data), "storage_within_solve_path_end") == [
+        "storage_within_solve_path_end[s,p2_high,t0004,p2_low,t0004]"]
+
+
+def test_h2a_prime_within_solve_closes_both_leaves(tmp_path_factory):
+    """H2a': D = 2, K = 4: trunk +1, +1; high −1, 0; low −1, −2; C = 2.  Ends equal E = 0 ⇒ high spills 1 MWh and
+    low takes 1 MWh of up-slack (a trunk slack costs more), whichever leaf the trunk wraps to.
+    Objective = P_d · op_factor[p2_high] + P_u · op_factor[p2_low] = 100 · 1314 + 1000 · 3066 = 3 197 400."""
+    step = _h2(tmp_path_factory, K=4.0, D=2.0, low=[-1.0, -2.0])
+    state = _values(step, "v_state")
+    assert [state[("s", "p1", t)] for t in ("t0001", "t0002")] == pytest.approx([1.0, 2.0], abs=TOL)
+    assert state[("s", "p2_high", "t0004")] == pytest.approx(0.0, abs=TOL)
+    assert state[("s", "p2_low", "t0004")] == pytest.approx(0.0, abs=TOL)
+    assert sum(v for k, v in _values(step, "vq_state_down").items() if k[1] == "p2_high") == pytest.approx(
+        1.0, abs=TOL)
+    assert sum(v for k, v in _values(step, "vq_state_up").items() if k[1] == "p2_low") == pytest.approx(
+        1.0, abs=TOL)
+    assert float(step.solution.obj) == pytest.approx(100.0 * _OP_HIGH + 1000.0 * _OP_LOW, rel=1e-9)
+
+
+# ---------------------------------------------------------------------------
 # O1: identical forecasts = the deterministic model (lh2_three_region_rp_invest)
 # ---------------------------------------------------------------------------
 
 
-def _lh2_run(tmp_path_factory, values: list, *, drop: tuple = ()) -> dict:
+def _lh2_run(tmp_path_factory, values: list, *, drop: tuple = (), patch=None) -> dict:
+    """Solve the lh2 fixture with the overlay ``values``; ``patch`` (an ``lp_snapshot`` ``_patch_*`` function)
+    first adds its own scenario, which the overlay then builds on."""
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_migration import migrate_database
     from tests.db_utils import json_to_db
@@ -352,7 +452,11 @@ def _lh2_run(tmp_path_factory, values: list, *, drop: tuple = ()) -> dict:
     data = json.loads(RP_JSON.read_text())
     data["parameter_values"] = [v for v in data["parameter_values"]
                                 if not (v[0] == "solve" and v[1] == LH2_SOLVE and v[2] in drop)]
-    data = L._overlay(data, name="custom", base="lh2_three_region_rp_invest", values=values)
+    base = "lh2_three_region_rp_invest"
+    if patch is not None:
+        data = patch(data)
+        base = data["scenarios"][-1][0]
+    data = L._overlay(data, name="custom", base=base, values=values)
     work = tmp_path_factory.mktemp("rp_stoch_lh2")
     (work / "f.json").write_text(json.dumps(data))
     url = json_to_db(work / "f.json", work / "f.sqlite")
@@ -372,9 +476,9 @@ def _branches(period: str, step: str) -> dict:
 
 
 def _lh2_methods(method: str) -> list:
-    # The batteries' bind_within_solve + fix_start loops the trunk's first step to the solve's last period key
-    # (one forecast only) in a stochastic solve, a plain-method quirk outside these items: bind_within_timeblock
-    # and fix_nothing keep them out of the comparison.
+    # O1 compares the blended methods: bind_within_timeblock and fix_nothing keep the batteries (plain
+    # bind_within_solve + fix_start in the fixture) out of it; test_lh2_identical_forecasts_plain_within_solve
+    # covers them.
     return ([["node", n, "storage_binding_method", method] for n in LH2]
             + [["node", n, "storage_binding_method", "bind_within_timeblock"] for n in BATTERIES]
             + [["node", n, "storage_start_end_method", "fix_nothing"] for n in BATTERIES])
@@ -401,6 +505,48 @@ def test_o1_identical_forecasts_equal_the_deterministic_objective(tmp_path_facto
     if method == FO_B and fan[0] == "y2030":
         # The lh2 nodes' fix_start pins the first block, not the chain start: the fan start ties them too.
         assert len(_rows(build(step.flex_data), "rp_inter_period_fan_start")) == len(LH2)
+
+
+_FANS = [("y2040", "t0049"), ("y2030", "t0001")]
+_FAN_IDS = ["midhorizon", "first_period"]
+_LH2_DET: list[float] = []
+
+
+@pytest.mark.parametrize("fan", _FANS, ids=_FAN_IDS)
+def test_lh2_identical_forecasts_plain_within_solve(tmp_path_factory, fan):
+    """Identical forecasts (0.5 / 0.5) of the lh2 fixture as it is (batteries bind_within_solve + fix_start, the lh2
+    nodes bind_within_period_blended_weights) give the deterministic objective: every forecast path closes its own
+    loop (before, only the last-listed branch did and the other battery ends were free: 8.93e9 vs 9.39e9)."""
+    if not _LH2_DET:
+        _LH2_DET.append(float(_lh2_run(tmp_path_factory, [])[LH2_SOLVE].solution.obj))
+    step = _lh2_run(tmp_path_factory, [["solve", LH2_SOLVE, "stochastic_branches", _branches(*fan)]])[LH2_SOLVE]
+    assert float(step.solution.obj) == pytest.approx(_LH2_DET[0], rel=1e-9)
+
+
+@pytest.mark.parametrize("fan", _FANS, ids=_FAN_IDS)
+def test_plain_within_solve_every_leaf_ends_at_the_wrap_target(tmp_path_factory, fan):
+    """The rp_multi_base_solve topology (lp_snapshot) with forecasts a / b and the batteries (plain
+    bind_within_solve) on fix_nothing: the last step of every leaf (y2040_a, y2040_b) ends at the level of the
+    trunk's wrap target d* (the last period key, y2040_b).  With the fan in the first period each root's first
+    step continues from the last step of its own path (y2030_x t0001 ← y2040_x t0096)."""
+    steps = _lh2_run(tmp_path_factory,
+                     [["solve", LH2_SOLVE, "stochastic_branches", _branches(*fan)]]
+                     + [["node", n, "storage_start_end_method", "fix_nothing"] for n in BATTERIES],
+                     patch=L._patch_rp_multi_base_solve)
+    step = steps[LH2_SOLVE]
+    state = _values(step, "v_state")
+    for n in BATTERIES:
+        assert state[(n, "y2040_a", "t0096")] == pytest.approx(state[(n, "y2040_b", "t0096")], abs=1e-6), n
+    assert _rows(build(step.flex_data), "storage_within_solve_path_end") == [
+        f"storage_within_solve_path_end[{n},y2040_a,t0096,y2040_b,t0096]" for n in BATTERIES]
+    lag = step.flex_data.dtttdt_within_solve
+    if fan[0] == "y2030":
+        wrap = {(d, t): (dp, tp) for d, t, dp, tp in _u(lag).select(
+            "d", "t", "d_previous", "t_previous_within_solve").iter_rows() if d.startswith("y2030")}
+        assert wrap[("y2030_a", "t0001")] == ("y2040_a", "t0096")
+        assert wrap[("y2030_b", "t0001")] == ("y2040_b", "t0096")
+    else:
+        assert lag is None
 
 
 # ---------------------------------------------------------------------------

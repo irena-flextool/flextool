@@ -8004,6 +8004,67 @@ def dtttdt_forward_only_from_dtttdt(dtttdt: pl.DataFrame | None,
     return out if out.height > 0 else None
 
 
+def dtttdt_within_solve_from_dtttdt(dtttdt: pl.DataFrame | None,
+                                    first_periods: "list[str] | None" = None,
+                                    ) -> pl.DataFrame | None:
+    """``dtttdt`` with the bind_within_solve wrap of a stochastic fan in the solve's first period; None when the
+    plain ``dtttdt`` wrap is already the bind_within_solve one.
+
+    *first_periods* are the periods of ``period_first_of_solve``: with a fan in the solve's first period, its
+    forecast branch periods (the roots; the period label has no steps).  ``dtttdt`` (``make_step_jump``) wraps the
+    first step of each root to the root's own last step.  bind_within_solve closes one loop per path instead: the
+    first step of each root continues from the last step of the last period on its own path (the leaf the root's
+    continuation branch periods lead to; with several, the last in name order).  A root that is its own leaf (a
+    single-period solve) keeps its wrap, so only a fan in the first period of a multi-period solve gives a frame.
+    The tree is read from the first-step rows of ``dtttdt``: a period whose first step continues from another
+    period is its child.  A period's first and last steps are its smallest and largest time steps (as
+    :func:`dtttdt_forward_only_from_dtttdt` takes the first).
+    """
+    if dtttdt is None or dtttdt.height == 0 or first_periods is None or len(first_periods) < 2:
+        return None
+    roots = [str(p) for p in first_periods]
+    u = dtttdt.select(_d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8),
+                      _dp=pl.col("d_previous").cast(pl.Utf8))
+    span = u.group_by("_d").agg(_first=pl.col("_t").min(), _last=pl.col("_t").max())
+    last = dict(span.select("_d", "_last").iter_rows())
+    first = dict(span.select("_d", "_first").iter_rows())
+    children: dict[str, list[str]] = {}
+    for d_name, d_prev in (u.join(span.select("_d", _t=pl.col("_first")), on=["_d", "_t"], how="semi")
+                           .select("_d", "_dp").unique().iter_rows()):
+        if d_prev != d_name and d_name not in roots:
+            children.setdefault(d_prev, []).append(d_name)
+
+    def leaf_of(root: str) -> str:
+        leaves, seen, stack = [], set(), [root]
+        while stack:
+            node = stack.pop()
+            if node in seen:
+                continue
+            seen.add(node)
+            kids = children.get(node, [])
+            if kids:
+                stack.extend(kids)
+            else:
+                leaves.append(node)
+        return max(leaves)
+
+    relink = {r: leaf_of(r) for r in roots if r in last}
+    relink = {r: leaf for r, leaf in relink.items() if leaf != r}
+    if not relink:
+        return None
+    wrap = pl.DataFrame({"_d": list(relink), "_t": [first[r] for r in relink],
+                         "_dp_new": list(relink.values()), "_tp_new": [last[leaf] for leaf in relink.values()]},
+                        schema={"_d": pl.Utf8, "_t": pl.Utf8, "_dp_new": pl.Utf8, "_tp_new": pl.Utf8})
+    dp_dtype, tp_dtype = dtttdt.schema["d_previous"], dtttdt.schema["t_previous_within_solve"]
+    return (dtttdt.with_columns(_d=pl.col("d").cast(pl.Utf8), _t=pl.col("t").cast(pl.Utf8))
+            .join(wrap, on=["_d", "_t"], how="left")
+            .with_columns(
+                d_previous=pl.coalesce(pl.col("_dp_new"), pl.col("d_previous").cast(pl.Utf8)).cast(dp_dtype),
+                t_previous_within_solve=pl.coalesce(pl.col("_tp_new"),
+                                                    pl.col("t_previous_within_solve").cast(pl.Utf8)).cast(tp_dtype))
+            .select(dtttdt.columns))
+
+
 def read_period_first_of_solve(sd: Path, *, provider: "object | None" = None) -> "list[str] | None":
     """The periods of ``solve_data/period_first_of_solve.csv``; None when absent."""
     p = Path(sd) / "period_first_of_solve.csv"
@@ -8117,6 +8178,7 @@ def _rolling_realized_steps(flex_data: object, workdir: Path | None,
 E_PUBLIC_FIELDS: tuple[str, ...] = (
     "dtttdt",
     "dtttdt_forward_only",
+    "dtttdt_within_solve",
     "dtttdt_block_interior",
     "dtttdt_block_lag",
     "nodeStateBlock",
@@ -8231,6 +8293,15 @@ def apply_derived_e(
                         pl.col("method") == "bind_forward_only").height > 0)
                     or (per_solve_fo is not None and per_solve_fo.height > 0)):
                 flex_data.dtttdt_forward_only = fwd
+        # bind_within_solve: the first step of each root of a fan in the solve's first period continues from the
+        # last step of its own path (the state-change lag of the bind_within_solve nodes).
+        ws_nodes = getattr(flex_data, "storage_bind_within_solve", None)
+        flex_data.dtttdt_within_solve = (
+            dtttdt_within_solve_from_dtttdt(
+                getattr(flex_data, "dtttdt", None),
+                read_period_first_of_solve(Path(workdir) / "solve_data", provider=provider)
+                if workdir is not None else None)
+            if ws_nodes is not None and ws_nodes.height > 0 else None)
         flex_data.dtttdt_block_interior = dtttdt_block_interior_from_dtttdt(
             dtttdt_db, period_block_time_for_arc)
         flex_data.dtttdt_block_lag = dtttdt_block_lag_from_dtttdt(

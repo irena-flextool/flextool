@@ -147,6 +147,50 @@ def _storage_use_partition(b: "_Build", over: pl.DataFrame) -> "pl.DataFrame | N
             .select("n", "d", "b", "b_first", "t", "w"))
 
 
+def _state_first_cells(star, tie_dt, stoch_nodes, v_state) -> "pl.DataFrame | None":
+    """``(n, d, b, t)``: the rows of non_anticipativity_storage_state_first (forecast d tied to its reference b at
+    the first tied step t of d, only where the tied steps of d are fewer than the v_state steps of (n, d), and with
+    a v_state column on both sides); None when there are none."""
+    if v_state is None or stoch_nodes is None:
+        return None
+    vstate_dt = v_state.frame.select("n", "d", "t").unique()
+    tied_steps = tie_dt.select("d", "t").unique()
+    first_per_d = tied_steps.group_by("d").agg(pl.col("t").min().alias("t"))
+    tied_counts = tied_steps.group_by("d").agg(pl.len().alias("tied_count"))
+    full_counts = vstate_dt.group_by("n", "d").agg(pl.len().alias("full_count"))
+    nd_keep = (stoch_nodes
+               .join(tie_dt.select("d").unique(), how="cross")
+               .join(tied_counts, on="d", how="inner")
+               .join(full_counts, on=["n", "d"], how="inner")
+               .filter(pl.col("tied_count") < pl.col("full_count"))
+               .select("n", "d").unique())
+    if nd_keep.height == 0:
+        return None
+    over = (nd_keep
+            .join(first_per_d, on="d", how="inner")
+            .join(star, on="d", how="inner")
+            .select("n", "d", "b", "t").unique())
+    # Keep only cells with a v_state column on both sides (the star's b is on the period axis).
+    over = (over
+            .join(vstate_dt, on=["n", "d", "t"], how="inner")
+            .join(vstate_dt.rename({"d": "b"}), on=["n", "b", "t"], how="inner")
+            .select("n", "d", "b", "t").unique())
+    return over if over.height > 0 else None
+
+
+def storage_state_first_cells(b: "_Build") -> "pl.DataFrame | None":
+    """``(n, d, b, t)``: the rows non_anticipativity_storage_state_first has in this build (the same guards as
+    :func:`add_dispatch_constraints`); None when it has none.  ``model.core._eq_storage_state_fan_start`` leaves
+    the root pairs these rows tie out."""
+    d = b.d
+    if not _has_rows(d.period_branch_full) or not _has_rows(d.dt_non_anticipativity):
+        return None
+    star, tie_dt = _forecast_star(d)
+    if star is None or not _has_rows(tie_dt):
+        return None
+    return _state_first_cells(star, tie_dt, _stochastic_nodes(d), b.v_state)
+
+
 def add_dispatch_constraints(b: "_Build") -> None:
     """Tie storage use, units online and reserves across the forecast branches of each anchor period."""
     d = b.d
@@ -221,39 +265,16 @@ def add_dispatch_constraints(b: "_Build") -> None:
     # drift stays feasible where balance slack or forecast-specific inflow
     # absorbs it.  v_online and v_reserve need no analogue: their ties pin
     # the variable itself at every tied step.
-    state_first_over = None   # (n, d, b, t) of the rows below: non_anticipativity_rp_block_start leaves them out
-    if v_state is not None and stoch_nodes is not None:
-        vstate_dt = v_state.frame.select("n", "d", "t").unique()
-        tied_steps = tie_dt.select("d", "t").unique()
-        first_per_d = tied_steps.group_by("d").agg(pl.col("t").min().alias("t"))
-        tied_counts = tied_steps.group_by("d").agg(pl.len().alias("tied_count"))
-        full_counts = vstate_dt.group_by("n", "d").agg(pl.len().alias("full_count"))
-        nd_keep = (stoch_nodes
-                   .join(tie_dt.select("d").unique(), how="cross")
-                   .join(tied_counts, on="d", how="inner")
-                   .join(full_counts, on=["n", "d"], how="inner")
-                   .filter(pl.col("tied_count") < pl.col("full_count"))
-                   .select("n", "d").unique())
-        if nd_keep.height > 0:
-            over = (nd_keep
-                    .join(first_per_d, on="d", how="inner")
-                    .join(star, on="d", how="inner")
-                    .select("n", "d", "b", "t").unique())
-            # Keep only cells with a v_state column on both sides (the star's b is on the period axis).
-            over = (over
-                    .join(vstate_dt, on=["n", "d", "t"], how="inner")
-                    .join(vstate_dt.rename({"d": "b"}), on=["n", "b", "t"], how="inner")
-                    .select("n", "d", "b", "t").unique())
-            if over.height > 0:
-                state_first_over = over
-                m.add_cstr(
-                    "non_anticipativity_storage_state_first",
-                    over      = over,
-                    sense     = "==",
-                    lhs_terms = {"v_d":  v_state,
-                                 "v_b": -_var_view(v_state, "__nab_first", {"d": "b"})},
-                    rhs_terms = {},
-                )
+    state_first_over = _state_first_cells(star, tie_dt, stoch_nodes, v_state)
+    if state_first_over is not None:
+        m.add_cstr(
+            "non_anticipativity_storage_state_first",
+            over      = state_first_over,
+            sense     = "==",
+            lhs_terms = {"v_d":  v_state,
+                         "v_b": -_var_view(v_state, "__nab_first", {"d": "b"})},
+            rhs_terms = {},
+        )
 
     # ─── EQ. ─── non_anticipativity_rp_block_start ───────────────────────────
     # ─────────────────────────────────────────────────────────────────────────
