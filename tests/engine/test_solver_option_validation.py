@@ -106,6 +106,74 @@ def test_option_file_value_ending_in_a_backslash_is_refused(solver) -> None:
     assert [o.value for o in _resolve(solver, options={"A": "C:\\out\\x"})] == ["C:\\out\\x"]
 
 
+#: A parameter name of each commercial solver, as the database or an option file spells it.
+_GAP_NAME = {"gurobi": "MIPGap", "cplex": "mip tolerances mipgap", "xpress": "MIPRELSTOP", "copt": "RelGap"}
+
+
+@pytest.mark.parametrize("solver", _COMMERCIAL)
+def test_empty_value_is_refused_from_the_database(solver) -> None:
+    """G2: an empty value shifts a CPLEX script line (CPLEX reads the next line as the value) and is dropped by
+    Gurobi and Xpress; it is refused, naming the solve."""
+    with pytest.raises(FlexToolUserError, match="the value is empty or missing") as err:
+        _resolve(solver, options={"Threads": "1", _GAP_NAME[solver]: ""})
+    assert "solver_arguments of solve invest" in str(err.value)
+    # A missing value (None) is still skipped, a switch is still 1 / 0.
+    assert [(o.name, o.value) for o in _resolve(solver, options={"Threads": None, "Presolve": False})] == [
+        ("presolve" if solver == "cplex" else "Presolve", "0")]
+
+
+@pytest.mark.parametrize("solver", _COMMERCIAL)
+def test_option_file_line_without_a_value_is_refused_naming_the_line(solver) -> None:
+    """G2: a line of one word was skipped without a word; a CPLEX line of several words without its value read as
+    a shorter parameter name with the last word as its value.  Both are refused, naming the file and line."""
+    for text in ("Threads 1\nThreads\n", f"Threads 1\n{_GAP_NAME[solver]}\n"):
+        with pytest.raises(FlexToolUserError, match="value is missing|value is empty") as err:
+            _resolve(solver, opt_text=text)
+        assert "cfg/x.opt, line 2" in str(err.value)
+
+
+def test_cplex_value_that_is_a_name_word_is_refused_from_every_source() -> None:
+    with pytest.raises(FlexToolUserError, match="'mip tolerances mipgap' reads as a parameter name"):
+        _resolve("cplex", options={"mip tolerances": "mipgap"})
+    with pytest.raises(FlexToolUserError, match="value is missing"):
+        _resolve("cplex", opt_text="mip tol mipgap\n")
+    # Text parameters (also abbreviated) take a word; a switch word, a number and a path pass everywhere.
+    options = _resolve("cplex", options={
+        "workdir": "scratch", "out intsol": "incumbent", "read fileencoding": "UTF-8", "cpumask": "ffff",
+        "emphasis numerical": "yes", "timelimit": "1e+75", "mip tolerances mipgap": "0.01",
+    })
+    assert [o.value for o in options] == ["scratch", "incumbent", "UTF-8", "ffff", "yes", "1e+75", "0.01"]
+
+
+def test_cplex_text_parameters_and_switch_words_match_its_parameters() -> None:
+    """Pin the CPLEX value rule to ``Cplex().parameters``: its text parameters are the listed ones (plus the
+    Interactive Optimizer's ``logfile``), no parameter word is a switch word, and the name of every parameter of
+    several words, cut before its last word, refuses that word as its value."""
+    cplex = pytest.importorskip("cplex")
+    from cplex._internal._parameter_classes import Parameter, ParameterGroup
+
+    leaves: dict[str, object] = {}
+
+    def walk(group, path: list[str]) -> None:
+        for attr in (a for a in dir(group) if not a.startswith("_")):
+            child = getattr(group, attr, None)
+            if isinstance(child, Parameter):
+                leaves[" ".join([*path, attr])] = child.default()
+            elif isinstance(child, ParameterGroup):
+                walk(child, [*path, attr])
+
+    model = cplex.Cplex()  # the parameter objects hold only a weak reference to it
+    walk(model.parameters, [])
+    assert len(leaves) > 150
+    assert {n for n, d in leaves.items() if isinstance(d, str)} | {"logfile"} == _solver_dispatch._CPLEX_TEXT_PARAMETERS
+    assert not {w for n in leaves for w in n.split(" ")} & _solver_dispatch._CPLEX_SWITCH_WORDS
+    for name in leaves:
+        *head, last = name.split(" ")
+        if head and " ".join(head) not in _solver_dispatch._CPLEX_TEXT_PARAMETERS:
+            assert _solver_dispatch._cplex_value_is_a_name_word(" ".join(head), last), name
+        assert not _solver_dispatch._cplex_value_is_a_name_word(name, "2"), name
+
+
 def test_space_in_a_name_is_refused_except_cplex_single_spaces() -> None:
     with pytest.raises(FlexToolUserError, match="space"):
         _resolve("gurobi", options={"MIP Gap": "0.01"})
@@ -240,6 +308,21 @@ _GUROBI_SERVER = ["ComputeServer", "CSManager", "CSAPIAccessID", "CSAPISecret", 
                   "CSIdleTimeout", "ServerPassword", "ServerTimeout", "TokenServer", "TSPort", "CloudAccessID",
                   "CloudSecretKey", "CloudPool", "CloudHost", "WLSAccessID", "WLSSecret", "WLSToken", "LicenseID",
                   "UserName", "WorkerPool", "WorkerPassword"]
+
+
+@pytest.mark.parametrize("solver", ["highs", *_COMMERCIAL])
+@pytest.mark.parametrize("file_name", ["gurobi.env", "Gurobi.ENV", "gurobi.env.", "gurobi.lic", "license.dat",
+                                       "LICENSE.KEY", "client.ini", "xpauth.xpr", "nethasp.ini"])
+def test_database_file_name_a_solver_reads_by_itself_is_refused(solver: str, file_name: str, tmp_path) -> None:
+    """Every solver runs in the same work folder, so a file the database names there must not be one a solver
+    reads from its folder at start (Gurobi's gurobi.env, a licence file, COPT / Xpress client settings)."""
+    with pytest.raises(FlexToolUserError, match="reads by itself") as err:
+        _resolve_db(solver, {_PATH_OPTION[solver]: file_name}, workspace=tmp_path)
+    assert "solver_arguments of solve invest" in str(err.value) and f"solver_config/{solver}.opt" in str(err.value)
+    # Another plain name is taken; the option file is trusted with any name.
+    assert _resolve_db(solver, {_PATH_OPTION[solver]: "gurobi_env.log"}, workspace=tmp_path)
+    line = f"{_PATH_OPTION[solver]} = {file_name}" if solver == "highs" else f"{_PATH_OPTION[solver]} {file_name}"
+    assert list(_resolve_db(solver, {}, opt_text=line + "\n").values()) == [file_name]
 
 
 @pytest.mark.parametrize("name", _GUROBI_SERVER)

@@ -101,6 +101,15 @@ _CPLEX_OPTION_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.]*(?: [A-Za-z][A-Za-z0-9_.
 _OPTION_VALUE = re.compile(r"[A-Za-z0-9_.+\-/\\:]*")
 _OPTION_NAME_MAX = 64
 _OPTION_VALUE_MAX = 255
+#: The solvers whose options become command-script lines or ``Name=value`` arguments: an empty value there shifts
+#: or drops a parameter (CPLEX reads the next script line as the value; Gurobi and Xpress drop it).
+_COMMERCIAL_SOLVERS = ("gurobi", "cplex", "xpress", "copt")
+#: CPLEX (22.1.2) parameters whose value is text, as :func:`commercial_option_key` forms: ``Cplex().parameters``'s
+#: four string parameters and the Interactive Optimizer's ``logfile``.  Every other CPLEX parameter takes a number.
+_CPLEX_TEXT_PARAMETERS = frozenset({"workdir", "output intsolfileprefix", "read fileencoding", "cpumask", "logfile"})
+#: Words that may stand for a switch's value (the Interactive Optimizer's yes / no and the like); no CPLEX parameter
+#: name has these words, so such a value cannot be the missing last word of a name.
+_CPLEX_SWITCH_WORDS = frozenset({"yes", "no", "y", "n", "on", "off", "true", "false"})
 
 
 def _describe_character(ch: str) -> str:
@@ -122,12 +131,34 @@ def _short(text: str, limit: int = 80) -> str:
     return shown if len(shown) <= limit else shown[: limit - 3] + "..."
 
 
+def _cplex_value_is_a_name_word(name: str, value: str) -> bool:
+    """Whether the CPLEX line ``<name> <value>`` reads as a parameter name without its value.
+
+    ``mip tolerances mipgap`` (no value) reads as parameter ``mip tolerances`` with the value ``mipgap``, and the
+    Interactive Optimizer then takes the script's next line as the value.  Every CPLEX parameter but
+    :data:`_CPLEX_TEXT_PARAMETERS` takes a number (or a switch word), so a value that could be the last word of a
+    parameter name (a letter, then letters, digits, ``_`` and ``.``) means the value is missing.  A text parameter
+    is recognised also abbreviated, as CPLEX accepts.
+    """
+    if (
+        _OPTION_NAME.fullmatch(value) is None or _is_number(value) or value.casefold() in _CPLEX_SWITCH_WORDS
+    ):
+        return False
+    words = commercial_option_key("cplex", name).split(" ")
+    return not any(
+        len(words) == len(full.split(" ")) and all(f.startswith(w) for w, f in zip(words, full.split(" ")))
+        for full in _CPLEX_TEXT_PARAMETERS
+    )
+
+
 def validate_solver_option(solver: str, name: object, value: object, where: str) -> None:
     """Refuse a solver option whose *name* or *value* could change the solver's command script or arguments.
 
     *where* names the source in the message: the option file and its line, ``solver_arguments of solve X``,
     ``solver_mip_gap of solve X`` or the flag / environment variable.  Raises :class:`FlexToolUserError`.
-    Booleans and ``None`` pass; other numbers are checked as their text.
+    Booleans and ``None`` pass; other numbers are checked as their text.  For the commercial solvers a text value
+    must not be empty (an option-file line without a value arrives here as an empty value), and a CPLEX value
+    must not be a word where CPLEX expects a number (:func:`_cplex_value_is_a_name_word`).
     """
     if value is None or isinstance(value, bool):
         value_text = ""
@@ -151,6 +182,8 @@ def validate_solver_option(solver: str, name: object, value: object, where: str)
             problem = "the name does not start with a letter"
         else:
             problem = "the name's words are not separated by single spaces, each starting with a letter"
+    elif solver in _COMMERCIAL_SOLVERS and isinstance(value, str) and not value.strip():
+        problem = "the value is empty or missing"
     elif len(value_text) > _OPTION_VALUE_MAX:
         problem = f"the value is longer than {_OPTION_VALUE_MAX} characters"
     elif _OPTION_VALUE.fullmatch(value_text) is None:
@@ -159,6 +192,11 @@ def validate_solver_option(solver: str, name: object, value: object, where: str)
     elif value_text.endswith("\\"):
         # A console that reads Tcl (Xpress) joins a line ending in a backslash with the next command.
         problem = "the value ends with a backslash"
+    elif solver == "cplex" and _cplex_value_is_a_name_word(name_text, value_text):
+        problem = (
+            f"the value is missing: {_short(name_text + ' ' + value_text)} reads as a parameter name, since every "
+            "CPLEX parameter except " + ", ".join(sorted(_CPLEX_TEXT_PARAMETERS)) + " takes a number or a switch word"
+        )
     if problem is None:
         return
     name_rule_text = (
@@ -262,6 +300,22 @@ _SERVER_OPTION_PREFIXES: dict[str, tuple[str, ...]] = {
 #: A plain file name: ASCII letters, digits, ``_ . + -``, starting with a letter, digit or ``_``.
 _PLAIN_FILE_NAME = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.+\-]*")
 
+#: Files a solver reads by itself from the folder it runs in, as lower case names.  Every solver runs in the same
+#: work folder (``solve_data/subprocess``), so a file one solve writes there under such a name would set up the
+#: next solve: ``gurobi.env`` (Gurobi's parameter file, read at start), ``license.dat`` / ``license.key`` /
+#: ``client.ini`` (COPT's licence and its floating-licence or cluster client settings, coptpy 8.0.4),
+#: ``xpauth.xpr`` and ``nethasp.ini`` (Xpress's licence file and its network-key settings, xpress 9.8.1).  CPLEX
+#: 22.1.2 and HiGHS read no such file.  A name ending in ``.lic`` (Gurobi's licence file and others) is one too.
+_SOLVER_READS_FILES = frozenset({"gurobi.env", "license.dat", "license.key", "client.ini", "xpauth.xpr", "nethasp.ini"})
+_SOLVER_READS_SUFFIXES = (".lic",)
+
+
+def _solver_reads_file(file_name: str) -> bool:
+    """Whether *file_name* (a plain name) is one a solver reads by itself from its folder; case and trailing dots
+    are ignored, as Windows does."""
+    key = file_name.rstrip(".").casefold()
+    return key in _SOLVER_READS_FILES or key.endswith(_SOLVER_READS_SUFFIXES)
+
 
 def solver_workspace(work_folder: "Path | str | None") -> Path | None:
     """The solve's work folder for solver files: ``<work_folder>/solve_data/subprocess`` (where a commercial
@@ -345,6 +399,13 @@ def check_database_solver_option(solver: str, name: object, value: object, where
             "(ASCII letters, digits and '_ . + -', starting with a letter, digit or '_'; no '/', '\\', ':' or "
             "'..'), and FlexTool puts that file in the solve's work folder (solve_data/subprocess). For a file "
             f"elsewhere, remove the option from the database and {instead}"
+        )
+    if _solver_reads_file(value_text):
+        raise FlexToolUserError(
+            f"Refusing {solver} option {_short(name_text)} (value {_short(value_text)}) from {where}: it comes "
+            "from the input database and names a file that a solver reads by itself from the folder it runs in "
+            "(its settings or licence file), so the next solve in the work folder would read it. Give the file "
+            f"another name, or {instead}"
         )
 
 

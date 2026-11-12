@@ -90,12 +90,16 @@ Each line says what changes for a model that ran before and what to do; the deta
   quote, `;`, `#` or `=`; names are letters, digits, `_` and `.` (CPLEX: words separated by single spaces). The
   error names the solve and parameter, or the option file and line. Numbers (`-1`, `1e-4`, `inf`), single words
   and paths without spaces still pass; a value with a space, such as a file path, or ending in a backslash is now
-  refused: use a path without spaces.
+  refused: use a path without spaces. For Gurobi, CPLEX, Xpress and COPT an empty value, and an option-file line
+  with a name but no value, is refused too (before, the line was skipped or read wrongly); for CPLEX this includes
+  a word where the parameter takes a number (`mip tolerances mipgap` without its value).
 - **Solver options in the input database take no file paths or server settings.** Since 4.0, a database's
   `solver_arguments` could make the solver, HiGHS included, write over or read files anywhere on your computer (for
   example HiGHS `solution_file` / `log_file`, Gurobi `LogFile` / `InputFile`, CPLEX `workdir`, Xpress
   `TUNEROUTPUTPATH`), or send the model to another computer. An option there that names a file or folder now takes
-  only a plain file name, written in the solve's work folder (`<work folder>/solve_data/subprocess/`); a full path,
+  only a plain file name, written in the solve's work folder (`<work folder>/solve_data/subprocess/`), and not the
+  name of a file that a solver reads by itself from that folder (`gurobi.env`, a licence file such as `*.lic`,
+  COPT's `license.dat` / `license.key` / `client.ini`, Xpress's `xpauth.xpr` / `nethasp.ini`); a full path,
   a Gurobi Compute Server, Cloud, WLS, token-server or licence option, and an Xpress remote-solving control
   (`COMPUTE...`), is refused with a message naming the option, its value and the solve. Move such options to `solver_config/<solver>.opt`: the option files, flags and
   environment variables keep full paths and server options. Names are matched as the solver reads them (Gurobi
@@ -596,6 +600,10 @@ Each line says what changes for a model that ran before and what to do; the deta
   Xpress or COPT, or address another Gurobi or HiGHS option. Every option of every solver is now checked before the
   solve; a refused one stops the run with a message naming the solve and parameter, or the option file and line,
   and the option. The solver's command script and arguments are checked again just before it starts.
+- **An empty solver option value is refused** (since 4.0). For CPLEX, an empty value in `solver_arguments`, or an
+  option-file line without its value, made the CPLEX console take the next command as the value; Gurobi and Xpress
+  dropped the option while the log showed it as passed, and an option-file line of one word was skipped without a
+  word. Such an option now stops the run with a message naming the solve and parameter, or the file and line.
 - **A database could point a solver at any file or at another computer** (since 4.0). A `solver_arguments` entry
   such as `log_file`, `write_model_file`, `read_basis_file`, Gurobi `InputFile` / `ComputeServer` / `CloudAccessID`,
   CPLEX `workdir` or Xpress `TUNEROUTPUTPATH` could read or write a file anywhere the user may, or send the model

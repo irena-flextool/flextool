@@ -176,6 +176,10 @@ parameters; from the database:
   Names are matched as the solver reads them (above), so `Log_File` for
   Gurobi or `XPRS_TUNEROUTPUTPATH` for Xpress is the same parameter. A number
   or a switch in such a parameter (Gurobi `NodefileStart 0.5`) passes.
+  Every solver runs in the same work folder, so the file name may not be one
+  that a solver reads by itself from there: `gurobi.env`, a name ending in
+  `.lic`, `license.dat`, `license.key`, `client.ini`, `xpauth.xpr` or
+  `nethasp.ini` (in any case).
 - **Gurobi server, cloud and licence parameters** are refused:
   `ComputeServer`, `ServerPassword`, `ServerTimeout`, the `CS...` Cluster
   Manager parameters (`CSManager`, `CSAPIAccessID`, `CSAPISecret`, `CSGroup`,
@@ -190,7 +194,11 @@ The error names the parameter, its value and the solve. Put a file path or a
 server parameter in the solver's option file, `solver_config/<solver>.opt`
 (or that file in a folder given with `--solver-config-dir`), which keeps them.
 The checks against extra commands (no line breaks, spaces, quotes, `;`, `#`,
-`=` or a backslash at the end) apply to every source.
+`=` or a backslash at the end) apply to every source. So does, for Gurobi,
+CPLEX, Xpress and COPT, the rule that every parameter has a value: an empty
+value, or an option-file line with a name and no value, is refused (for
+CPLEX also a last word that is not a number where the parameter takes one,
+such as `mip tolerances mipgap` without its value).
 
 ### Per-solver baseline `.opt` files
 

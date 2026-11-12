@@ -864,13 +864,15 @@ def _read_native_opt_text(path: Path) -> str | None:
 
 def _native_opt_lines(text: str) -> list[tuple[int, str, str]]:
     """``(line number, name, value)`` of every parameter line of a native ``.opt`` text, in file order (rules of
-    :func:`_parse_native_opt_file`)."""
+    :func:`_parse_native_opt_file`).  A line of one word is a name without a value: its value is ``""``, which
+    ``_solver_dispatch.validate_solver_option`` refuses (before, the line was skipped without a word)."""
     out: list[tuple[int, str, str]] = []
     for lineno, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
         if " " not in line and "\t" not in line:
+            out.append((lineno, line, ""))
             continue
         name, value = line.rsplit(maxsplit=1)
         out.append((lineno, name.strip(), value.strip()))
