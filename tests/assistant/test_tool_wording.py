@@ -12,6 +12,7 @@ from flextool.assistant import cli, mcp_server, prompt, unit_wording
 from flextool.assistant.errors import MESSAGES
 from flextool.assistant.inputs import _values
 from flextool.assistant.inputs._notes import traps
+from flextool.assistant.results import _entity
 from flextool.assistant.registry import DATA_SENTENCE, all_tools
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
 
@@ -31,6 +32,7 @@ def _texts() -> list[tuple[str, str]]:
     out += [(f"session note {k}", v) for k, v in unit_wording.SESSION_NOTES.items()]
     out += [(f"trap {k}", t.text) for k, ts in traps().items() for t in ts]
     out.append(("RUN_TIME_NOTE", _values.RUN_TIME_NOTE))
+    out += [(f"explain_entity {k}", v) for k, v in _entity.TEXTS.items()]
     # What the connection server and the command say.
     out.append(("instructions", prompt.instructions("project")))
     out += [(f"ADDENDA[{k}]", v) for k, v in prompt.ADDENDA.items()]

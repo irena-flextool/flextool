@@ -3,7 +3,7 @@
 * the instructions and tool schemas of each level and front end fit the level's prefix budget (digit-aware
   estimate, P3 §4.1), the room the chat keeps for them;
 * basic sends exactly the eight tools of P3-O15 (with list_sources, 2026-11-08), standard and advanced all
-  eighteen;
+  nineteen;
 * no layer sent at a level — the chat's five layers for each front end, and the connection's instructions —
   names a tool outside that level's set (critique M1);
 * the level texts are the owner-approved ones (P3-O9, O15's tool sentence), byte-stable across builds;
@@ -64,7 +64,7 @@ def test_the_prefix_fits_the_level_budget(front_end, level):
 def test_basic_is_the_eight_tools():
     assert tuple(t.name for t in registry.tools_for_tier("small")) == BASIC_TOOLS
     assert tuple(t.name for t in tool_specs("basic")) == BASIC_TOOLS
-    assert len(registry.all_tools()) == 18
+    assert len(registry.all_tools()) == 19
     for level in ("medium", "large"):
         assert {t.name for t in registry.tools_for_tier(level)} == set(registry.all_tools())
     assert not registry.all_tools()["get_gui_context"].small_tier

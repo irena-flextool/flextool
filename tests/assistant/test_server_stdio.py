@@ -1,7 +1,7 @@
 """The connection server for AI agents, ``flextool-assistant --mcp``, started as an agent starts it.
 
 * Over real stdio (the installed console script in a subprocess, newline-delimited JSON-RPC): ``initialize``
-  carries the data-use and units notices, ``tools/list`` gives the 18 read-only tools, a tool call answers from
+  carries the data-use and units notices, ``tools/list`` gives the 19 read-only tools, a tool call answers from
   the synthetic project, and every byte on stdout is a protocol message.  A tool that prints, writes to file
   descriptor 1 and reads stdin does not touch the protocol.
 * With mcp's own client over stdio: the same handshake and a call, as an agent's client sees them.
@@ -125,7 +125,7 @@ def test_stdio_handshake_tools_and_a_call(assistant_project: Path) -> None:
         assert f'"{assistant_project.name}"' in init["instructions"]
 
         tools = conn.send("tools/list", {})["tools"]
-        assert len(tools) == 18
+        assert len(tools) == 19
         assert all(t["annotations"] == {"readOnlyHint": True, "openWorldHint": False} for t in tools)
         assert all(t["inputSchema"]["type"] == "object" for t in tools)
 
@@ -225,7 +225,7 @@ def test_mcp_client_over_stdio(assistant_project: Path) -> None:
 
     instructions, tools, sources = anyio.run(session)
     assert DATA_NOTICE in instructions
-    assert len(tools) == 18 and all(t.annotations.read_only_hint for t in tools)
+    assert len(tools) == 19 and all(t.annotations.read_only_hint for t in tools)
     assert "tests.sqlite" in sources
 
 

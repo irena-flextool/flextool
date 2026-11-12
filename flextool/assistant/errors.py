@@ -153,6 +153,21 @@ MESSAGES: dict[str, str] = {
     "no_comparison": ("The project has no comparison files (output_parquet_comparison). Name the scenario folders "
                       "to compare."),
     "table_in_no_run": "None of the runs {runs} has the result table {table}.",
+    # One entity of a run (explain_entity)
+    "explain_run_or_scenario": ("explain_entity needs a result folder (run, from list_runs) or a scenario (its "
+                                "newest run). The latest folders are: {runs}."),
+    "explain_other_scenario": ("The result folder {run} is a run of scenario {value}, not of {scenario}. Leave "
+                               "scenario out, or name a result folder of {scenario}."),
+    "explain_other_source": ("The result folder {run} is not from the input source {source}. Leave source out, or "
+                             "name a result folder of that source."),
+    "explain_no_source_run": ("No result folder of scenario {scenario} is from the input source {source}. The "
+                              "scenario's result folders are: {runs}."),
+    "explain_not_explained": ("{entity} is not a unit, connection or node in {source} (it is in {names}). "
+                              "explain_entity explains units, connections and nodes; get_entity shows any entity."),
+    "explain_several_classes": ("{entity} names entities of several classes ({names}) in {source}. Give "
+                                "entity_class, one of them."),
+    "explain_not_in_results": ("The run {run} has no results of {entity}, and its input data cannot be read to say "
+                               "what it is. Check the name with list_entities, or name entity_class."),
     # Run logs and slacks
     "no_run_record": ("This run has no run record (it ran before FlexTool kept run logs, or with an older "
                       "FlexTool). Run the scenario again to get one."),

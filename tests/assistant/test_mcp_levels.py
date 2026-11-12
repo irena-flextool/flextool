@@ -1,7 +1,7 @@
 """The levels for AI agents (P3 §2.3, test 5): the installed ``flextool-assistant --mcp`` in a subprocess.
 
 * Without ``--tier``: ``prompts/list`` gives basic, standard and advanced; ``prompts/get basic`` is one user
-  message with the basic level text; ``tools/list`` gives the 18 tools.
+  message with the basic level text; ``tools/list`` gives the 19 tools.
 * ``--tier basic``: ``tools/list`` gives the eight basic tools and only the basic prompt; any other tool is an
   error result that says how to get it; a basic tool answers.
 * ``--tier standard`` keeps every tool and prompt.
@@ -57,7 +57,7 @@ def test_without_a_level_the_agent_gets_three_prompts_and_every_tool(assistant_p
         assert prompt.ADDENDA["small"] in text
         assert text.endswith("\n\nQuestion: What is the demand of west?")
         tools = conn.send("tools/list", {})["tools"]
-        assert len(tools) == 18
+        assert len(tools) == 19
         # Without a level the agent may pick any prompt: every tool in its full form (the superset).
         assert _listed(tools) == _full_forms()
     finally:
@@ -113,7 +113,7 @@ def test_tier_basic_serves_the_eight_basic_tools_and_refuses_the_rest(assistant_
 def test_tier_standard_keeps_every_tool_and_prompt(assistant_project: Path) -> None:
     conn = _server(assistant_project, "--tier", "standard")
     try:
-        assert len(conn.send("tools/list", {})["tools"]) == 18
+        assert len(conn.send("tools/list", {})["tools"]) == 19
         assert [p["name"] for p in conn.send("prompts/list", {})["prompts"]] == ["basic", "standard", "advanced"]
     finally:
         _finish(conn)

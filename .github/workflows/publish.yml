@@ -124,7 +124,7 @@ jobs:
           # The connection for AI agents starts from the wheel (its entry module is a
           # top-level module) and keeps stdout for protocol messages only.
           mkdir -p /tmp/assistant-project
-          /tmp/wheeltest/bin/python .github/scripts/mcp_smoke.py --tools 18 -- \
+          /tmp/wheeltest/bin/python .github/scripts/mcp_smoke.py --tools 19 -- \
             /tmp/wheeltest/bin/flextool-assistant --mcp --project-path /tmp/assistant-project
 
       - name: Check distribution metadata
