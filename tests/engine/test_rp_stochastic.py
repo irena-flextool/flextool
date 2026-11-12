@@ -61,13 +61,14 @@ def _rp_weights(weights: dict) -> api.Map:
 
 def _tiny(tmp_path_factory, *, n_steps: int, timesets: dict, period_timeset: dict, fan: tuple,
           profile: dict, s: dict, K: float, D: float, s_in_group: bool = False,
-          inflow: dict | None = None, branch_weights: dict | None = None) -> dict:
+          inflow: dict | None = None, branch_weights: dict | None = None,
+          with_work: bool = False) -> dict:
     """Build, solve and return the steps of the tiny model.
 
     ``timesets`` = {name: (timeset_duration, representative_period_weights or None)}; ``fan`` = (period, start step);
     ``profile`` = {branch: {analysis_time: {step: p}}}; ``s`` = extra parameters of node ``s``; ``inflow`` (same
     nesting as ``profile``) replaces the constant inflow −D of ``s`` by a stochastic one; ``branch_weights``
-    {branch: weight} (default 0.5 each)."""
+    {branch: weight} (default 0.5 each); ``with_work``: return (steps, work folder)."""
     from flextool.engine import run_chain_from_db
     from flextool.update_flextool.db_handle import open_database_mapping
     from flextool.update_flextool.initialize_database import initialize_database
@@ -126,7 +127,7 @@ def _tiny(tmp_path_factory, *, n_steps: int, timesets: dict, period_timeset: dic
     steps = run_chain_from_db(url, "tiny_s", work_folder=work / "w", keep_solutions=True)
     for step in steps.values():
         assert step.solution is not None and step.solution.optimal
-    return steps
+    return (steps, work / "w") if with_work else steps
 
 
 def _u(df: pl.DataFrame) -> pl.DataFrame:
@@ -435,6 +436,53 @@ def test_h2a_prime_within_solve_closes_both_leaves(tmp_path_factory):
     assert sum(v for k, v in _values(step, "vq_state_up").items() if k[1] == "p2_low") == pytest.approx(
         1.0, abs=TOL)
     assert float(step.solution.obj) == pytest.approx(100.0 * _OP_HIGH + 1000.0 * _OP_LOW, rel=1e-9)
+
+
+def test_within_solve_output_state_change_of_a_first_period_fan(tmp_path_factory, monkeypatch):
+    """node_state_change (calc_storage_vre) of plain bind_within_solve with a fan in the solve's first period: the
+    first step of each root reports v[root, t0001] − v[leaf, t0004] (the model's lag, dtttdt_within_solve), not
+    the root's own last step.  p1 (t0001-t0002) fans at t0001 into high / low, p2 (t0003-t0004) continues them;
+    C = 1, fix_nothing; c high +1, 0, −1, 0; low 0, +1, 0, −1.  Both leaves end at E and each root starts from E
+    + c(t0001) ≤ 1 ⇒ E = 0: v_high 1, 1, 0, 0; v_low 0, 1, 1, 0 (unique, no slack).  State change (unitsize 1)
+    high +1, 0, −1, 0; low 0, +1, 0, −1 (the old wrap to the root's own last step gave 0 and −1 at t0001).
+    The forecast periods are not realized (normal outputs drop them), so the test keeps them, reads their v_state
+    from the solution and reports every step."""
+    from flextool.process_outputs import drop_levels as dl
+    from flextool.process_outputs.calc_storage_vre import node_state_change_dt
+    from flextool.process_outputs.write_outputs import _read_outputs
+
+    K, D = 2.0, 1.0
+    steps, work = _tiny(
+        tmp_path_factory, n_steps=4, timesets={"ts1": ({"t0001": 2.0}, None), "ts2": ({"t0003": 2.0}, None)},
+        period_timeset={"p1": "ts1", "p2": "ts2"}, fan=("p1", "t0001"), K=K, D=D, with_work=True,
+        s={"existing": 1.0, "storage_binding_method": "bind_within_solve", "storage_start_end_method": "fix_nothing",
+           "penalty_down": 100.0, "penalty_up": 1000.0},
+        profile={"high": {"t0001": _series(["t0001", "t0002"], [1.0, 0.0], K, D),
+                          "t0003": _series(["t0003", "t0004"], [-1.0, 0.0], K, D)},
+                 "low": {"t0001": _series(["t0001", "t0002"], [0.0, 1.0], K, D),
+                         "t0003": _series(["t0003", "t0004"], [0.0, -1.0], K, D)}})
+    step = steps["sol"]
+    state = _values(step, "v_state")
+    assert [state[("s", "p1_high", t)] for t in ("t0001", "t0002")] == pytest.approx([1.0, 1.0], abs=TOL)
+    assert [state[("s", "p2_high", t)] for t in ("t0003", "t0004")] == pytest.approx([0.0, 0.0], abs=TOL)
+    assert [state[("s", "p1_low", t)] for t in ("t0001", "t0002")] == pytest.approx([0.0, 1.0], abs=TOL)
+    assert [state[("s", "p2_low", t)] for t in ("t0003", "t0004")] == pytest.approx([1.0, 0.0], abs=TOL)
+    par, sets, v = _read_outputs(
+        str(work / "output_raw"), flex_data=step.flex_data, solution=step.solution, solve_name=step.solve_name,
+        solve_steps=[(st.solve_name, st.flex_data, st.effective_solution) for st in steps.values()],
+        flex_data_provider=step.flex_data_provider)
+    monkeypatch.setattr(dl, "_drop_unrealized_forecast_periods", lambda *_: None)
+    sets.dt_realize_dispatch = sets.dt
+    par, sets, v = dl.drop_levels(par, sets, v)
+    # output_raw holds realized rows only: v_state of the forecast periods from the solution.
+    v.state = (step.solution.value("v_state").to_pandas().astype({"n": str, "d": str, "t": str})
+               .pivot_table(index=["d", "t"], columns="n", values="value").rename_axis(["period", "time"]))
+    change = node_state_change_dt(sets, v, par.entity_unitsize)["s"]
+    got = {(str(d), str(t)): float(x) for (d, t), x in change.items()}
+    assert got == pytest.approx({
+        ("p1_high", "t0001"): 1.0, ("p1_high", "t0002"): 0.0, ("p2_high", "t0003"): -1.0, ("p2_high", "t0004"): 0.0,
+        ("p1_low", "t0001"): 0.0, ("p1_low", "t0002"): 1.0, ("p2_low", "t0003"): 0.0, ("p2_low", "t0004"): -1.0},
+        abs=TOL)
 
 
 # ---------------------------------------------------------------------------

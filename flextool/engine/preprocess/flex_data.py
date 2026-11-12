@@ -3838,6 +3838,9 @@ def _load_storage(inp: Path, sd: Path, dt: pl.DataFrame,
         dtttdt_forward_only_df = dtttdt_forward_only_from_dtttdt(
             dtttdt, read_period_first_of_solve(sd, provider=provider))
 
+    # The seed value of the bind_within_solve lag.  _derived.apply_derived_e recomputes it from the source dtttdt
+    # with the same dtttdt_within_solve_from_dtttdt and overwrites this one: that value is authoritative, and the
+    # two must agree (same function, same period_first_of_solve).
     dtttdt_within_solve_df = None
     if binding_within_solve is not None and dtttdt is not None and dtttdt.height > 0:
         from flextool.engine.preprocess.params._derived import (

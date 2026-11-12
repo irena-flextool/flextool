@@ -8046,6 +8046,8 @@ def dtttdt_within_solve_from_dtttdt(dtttdt: pl.DataFrame | None,
                 stack.extend(kids)
             else:
                 leaves.append(node)
+        # Convention: with several leaves, the last in sorted name order (as core._eq_storage_within_solve_path_end
+        # picks d*).
         return max(leaves)
 
     relink = {r: leaf_of(r) for r in roots if r in last}
@@ -8294,7 +8296,9 @@ def apply_derived_e(
                     or (per_solve_fo is not None and per_solve_fo.height > 0)):
                 flex_data.dtttdt_forward_only = fwd
         # bind_within_solve: the first step of each root of a fan in the solve's first period continues from the
-        # last step of its own path (the state-change lag of the bind_within_solve nodes).
+        # last step of its own path (the state-change lag of the bind_within_solve nodes).  This value is
+        # authoritative: it overwrites the seed value of flex_data._load_storage, which uses the same function and
+        # must agree with it.
         ws_nodes = getattr(flex_data, "storage_bind_within_solve", None)
         flex_data.dtttdt_within_solve = (
             dtttdt_within_solve_from_dtttdt(

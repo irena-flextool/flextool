@@ -6495,9 +6495,20 @@ def _v79_stochastic_storage_paths(db) -> None:
     per path (every forecast branch ends at the level the solve starts from) and ``bind_forward_only`` with a free
     start starts all the forecasts of a fan in the solve's first period at the same level.  No value is rewritten.
     Behaviour-change marker ``stochastic_storage_paths_tied`` (``{"since": 79, "solves": [...]}``) only on a
-    database with a ``stochastic_branches`` value on some solve and a storage node whose
-    ``storage_binding_method`` is ``bind_within_solve`` or ``bind_forward_only`` (stored or the default): its
-    results can change (the run names the nodes).  Idempotent: a rerun finds the marker written.
+    database with a ``stochastic_branches`` value on some solve and a storage node whose results can change (the
+    run names the nodes that get the new rows):
+
+    * ``storage_binding_method`` ``bind_within_solve`` (in any alternative), or
+    * ``bind_forward_only`` (stored in some alternative, or the default when none is stored) with a start that is
+      not fixed somewhere: no ``storage_start_end_method`` stored (the default ``fix_nothing``) or a stored value
+      other than ``fix_start`` / ``fix_start_end`` in some alternative.  A node whose every stored
+      ``storage_start_end_method`` is ``fix_start`` or ``fix_start_end`` already starts every forecast from the
+      same value and is left out.
+
+    The marker is broader than the change: a free-start ``bind_forward_only`` node changes only when a fan opens in
+    the solve's first period (a fan opening later continues from the trunk as before), and the migration does not
+    read where the fans open or which alternatives a scenario combines.  Idempotent: a rerun finds the marker
+    written.
     """
     if not (db.get_item("entity_class", name="solve") and db.get_item("entity_class", name="node")):
         return
@@ -6506,14 +6517,29 @@ def _v79_stochastic_storage_paths(db) -> None:
         if from_database(pv["value"], pv["type"]) is not None})
     if not solves:
         return
+
+    def stored(param: str) -> dict[str, set]:
+        out: dict[str, set] = {}
+        for pv in db.find_parameter_values(entity_class_name="node", parameter_definition_name=param):
+            out.setdefault(pv["entity_byname"][0], set()).add(from_database(pv["value"], pv["type"]))
+        return out
+
     storage = {pv["entity_byname"][0] for pv in db.find_parameter_values(
         entity_class_name="node", parameter_definition_name="node_type")
         if from_database(pv["value"], pv["type"]) == "storage"}
-    methods: dict[str, set] = {}
-    for pv in db.find_parameter_values(entity_class_name="node", parameter_definition_name="storage_binding_method"):
-        methods.setdefault(pv["entity_byname"][0], set()).add(from_database(pv["value"], pv["type"]))
-    plain = {"bind_within_solve", "bind_forward_only", None}
-    if any(n not in methods or methods[n] & plain for n in storage):
+    methods = stored("storage_binding_method")
+    starts = stored("storage_start_end_method")
+    fixed_start = {"fix_start", "fix_start_end"}
+
+    def changes(n: str) -> bool:
+        if "bind_within_solve" in methods.get(n, set()):
+            return True
+        # A stored null is the default (bind_forward_only / fix_nothing).
+        forward_only = n not in methods or bool(methods[n] & {"bind_forward_only", None})
+        free_start = n not in starts or bool(starts[n] - fixed_start)
+        return forward_only and free_start
+
+    if any(changes(n) for n in storage):
         _v77_set_marker(db, "stochastic_storage_paths_tied", json.dumps({"since": 79, "solves": solves}))
 
 

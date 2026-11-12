@@ -270,7 +270,12 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "ended free (a fan in the first period looped each forecast within its first period). With "
                      "bind_forward_only and a free start (no fix_start, no carried state), the forecasts opening "
                      "in the solve's first period now start at the same level; before, each chose its own "
-                     "(results change)."),
+                     "(results change). With storage_start_end_method fix_start the start of each forecast is "
+                     "the storage_state_start share of that forecast's own storage capacity, so where the "
+                     "capacity differs by forecast (investment or divestment per forecast) the starting energy "
+                     "differs. The upgrade marks every stochastic database with a storage node on "
+                     "bind_within_solve, or on bind_forward_only without a fixed start; such a "
+                     "bind_forward_only node changes only when a fan opens in the solve's first period."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "stochastic_storage_paths_tied"),
         ),
         BehaviourChange(

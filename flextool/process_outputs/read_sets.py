@@ -857,6 +857,24 @@ def read_sets(
     else:
         s.dtt_within_period = empty_multi_index(["solve", "period", "time", "t_previous_within_period"])
 
+    # dtt_within_solve — (solve, period, time, d_previous, t_previous_within_solve): the bind_within_solve
+    # predecessors that differ from dtttdt's (with a stochastic fan in the solve's first period, the first step of
+    # each root forecast continues from the last step of its own path); the model's lag
+    # (FlexData.dtttdt_within_solve).  Empty when that lag is dtttdt's.
+    ws_lag = getattr(flex_data, "dtttdt_within_solve", None)
+    if ws_lag is not None and ws_lag.height > 0 and flex_data.dtttdt is not None:
+        lag_cols = ("d", "t", "d_previous", "t_previous_within_solve")
+        ws_u = ws_lag.select(pl.col(c).cast(pl.Utf8) for c in lag_cols)
+        base_u = flex_data.dtttdt.select(pl.col(c).cast(pl.Utf8) for c in lag_cols)
+        pdf = (ws_u.join(base_u, on=list(lag_cols), how="anti")
+               .unique().sort("d", "t")
+               .select(pl.lit(solve_name).alias("solve"), *lag_cols)
+               .to_pandas())
+        s.dtt_within_solve = pd.MultiIndex.from_frame(
+            pdf, names=["solve", "period", "time", "d_previous", "t_previous_within_solve"])
+    else:
+        s.dtt_within_solve = empty_multi_index(["solve", "period", "time", "d_previous", "t_previous_within_solve"])
+
     # dtt — typically (d, t, t_previous). Derive from dtttdt if available.
     # Sort by (solve, period, time, t_previous) so the resulting
     # MultiIndex follows the canonical iteration order — without

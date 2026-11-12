@@ -36,7 +36,9 @@ Seed: ``data/v75_seed_stoch_two_period.json`` (a frozen version-75 copy of
 * rewrites the ``node.storage_binding_method`` / ``timeset.representative_period_weights`` descriptions
   (representative periods work in stochastic solves; blended methods bind forward only in a rolling solve).
 * writes the marker ``stochastic_storage_paths_tied`` only on a database with a stochastic solve and a storage
-  node on plain ``bind_within_solve`` / ``bind_forward_only`` (stored or the default).
+  node on plain ``bind_within_solve``, or on ``bind_forward_only`` (stored or the default) whose
+  ``storage_start_end_method`` is not ``fix_start`` / ``fix_start_end`` in every alternative that stores one (none
+  stored: the default ``fix_nothing``).
 
 It changes no other definition and no value, and a rerun commits nothing.
 """
@@ -160,6 +162,8 @@ def _migrate(tmp_path_factory, tag: str, values: dict) -> dict:
             _set(db, "node", node, "node_type", "storage", alt)
             if values["storage_method"] is not None:
                 _set(db, "node", node, "storage_binding_method", values["storage_method"], alt)
+            for start_alt, start in values.get("storage_start", {}).items():
+                _set(db, "node", node, "storage_start_end_method", start, start_alt)
         if "unit_invest_cost" in values:
             _set(db, "unit", unit, "invest_method", "invest_no_limit", alt)
             if values["unit_invest_cost"] is not None:
@@ -393,15 +397,32 @@ def test_invest_without_cost_marker_only_without_a_cost(tmp_path_factory, plain,
 
 
 def test_stochastic_storage_marker_only_with_plain_storage(tmp_path_factory, plain, monkeypatch) -> None:
-    """The seed's solve is stochastic: the marker comes with a storage node on the default (bind_forward_only) or
-    bind_within_solve, not with a blended method or without a storage node."""
+    """The seed's solve is stochastic: the marker comes with a storage node on bind_within_solve (also with
+    fix_start) or on the default bind_forward_only with a start that is not fixed in every alternative storing
+    one; not with a blended method, a bind_forward_only node whose every stored start method fixes the start, or
+    without a storage node."""
     assert "stochastic_storage_paths_tied" not in plain["markers"]
-    blended = _migrate(tmp_path_factory, "v79_ssp_blended", {"storage_method": "bind_within_period_blended_weights"})
-    assert "stochastic_storage_paths_tied" not in blended["markers"]
-    for tag, method in (("v79_ssp_default", None), ("v79_ssp_ws", "bind_within_solve")):
-        tied = _migrate(tmp_path_factory, tag, {"storage_method": method})
-        assert json.loads(tied["markers"]["stochastic_storage_paths_tied"]) == {"since": 79,
-                                                                                "solves": [tied["solve"]]}
+    cases = {
+        "v79_ssp_blended": ({"storage_method": "bind_within_period_blended_weights"}, False),
+        "v79_ssp_fo_fix_start": ({"storage_method": None, "storage_start": {"base": "fix_start"}}, False),
+        "v79_ssp_fo_fix_both": ({"storage_method": "bind_forward_only",
+                                 "storage_start": {"base": "fix_start", "stoch": "fix_start_end"}}, False),
+        "v79_ssp_default": ({"storage_method": None}, True),
+        "v79_ssp_ws": ({"storage_method": "bind_within_solve"}, True),
+        "v79_ssp_ws_fix_start": ({"storage_method": "bind_within_solve", "storage_start": {"base": "fix_start"}},
+                                 True),
+        "v79_ssp_fo_free_somewhere": ({"storage_method": None,
+                                       "storage_start": {"base": "fix_start", "stoch": "fix_nothing"}}, True),
+        "v79_ssp_fo_fix_end": ({"storage_method": None, "storage_start": {"base": "fix_end"}}, True),
+    }
+    for tag, (values, marked) in cases.items():
+        run = _migrate(tmp_path_factory, tag, values)
+        if marked:
+            assert json.loads(run["markers"]["stochastic_storage_paths_tied"]) == {"since": 79,
+                                                                                   "solves": [run["solve"]]}, tag
+            tied = run
+        else:
+            assert "stochastic_storage_paths_tied" not in run["markers"], tag
     with DatabaseMapping(tied["url"]) as db:
         _rerun_changes_nothing(db, m._v79_stochastic_storage_paths, monkeypatch)
 

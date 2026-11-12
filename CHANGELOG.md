@@ -68,8 +68,11 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   did and the others ended free), and when the forecasts open in the solve's first period each forecast continues
   from the end of its own path (before, it looped within its first period). With *bind_forward_only* and nothing
   fixing the start (no `fix_start`, no carried state) the forecasts of a fan in the solve's first period now start
-  from the same level (before, each chose its own). Results of such stochastic models change; the upgrade marks
-  the databases and runs name the nodes.
+  from the same level (before, each chose its own). With `fix_start` / `fix_start_end` each forecast starts from
+  the `storage_state_start` share of its own storage capacity, so where the capacity differs by forecast
+  (investment or divestment per forecast) the starting energy differs although the share is the same; without a
+  fixed start all the forecasts start from the same level. Results of such stochastic models change; the upgrade
+  marks the databases and runs name the nodes.
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another
   constraint had one (since 4.0); the reported fuel, CO2 and cost of a unit with a profile and an input were too
   low; the period node-group indicators and VRE share are now ratios of the period energies; the `summary_solve.csv`

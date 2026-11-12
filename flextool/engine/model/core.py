@@ -4521,6 +4521,8 @@ def _eq_storage_within_solve_path_end(b: _Build) -> None:
     targets = sorted(set(wraps["d_prev"].to_list()) & set(last_periods))
     if not targets:
         return
+    # Convention: d* is the last wrap target in sorted name order (the trunk wraps to the last period key; a root
+    # of a first-period fan to the leaf its dtttdt_within_solve picks, also by sorted name, _derived.leaf_of).
     d_star = targets[-1]
     ends = (_utf8_cells(d.nodeState_last_dt)
             .join(_utf8_cells(d.storage_bind_within_solve, ("n",)), on="n", how="semi")
