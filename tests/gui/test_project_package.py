@@ -116,7 +116,7 @@ def test_export_dialog_names_a_left_out_option_file(root: tk.Tk, workspace: dict
     dlg = ExportDialog(root, workspace["project"], solver_config_dir=workspace["config"], target_dir=out_dir)
     try:
         expected = (f"Solver options gurobi.opt (from {workspace['config']}) left out of the package, because "
-                    "line 1: ComputeServer srv.example:61000 connects the solver to another computer")
+                    "line 1: ComputeServer <hidden> connects the solver to another computer")
         assert any(text.startswith(expected) for text in _label_texts(dlg))
         assert any("highs.opt from" in text and "gurobi" not in text for text in _label_texts(dlg))
         dlg.export_button.invoke()

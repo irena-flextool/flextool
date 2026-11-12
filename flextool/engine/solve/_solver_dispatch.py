@@ -667,13 +667,13 @@ def resolve_commercial_options(
     if opt_text is None and opt_file is not None:
         opt_text = _read_native_opt_text(Path(opt_file))
     file_options: dict[str, str] = {}
+    file_label = str(opt_file) if opt_file is not None else f"{solver}.opt"
     if opt_text is not None:
-        file_label = str(opt_file) if opt_file is not None else f"{solver}.opt"
         for lineno, name, value in _native_opt_lines(opt_text):
             if commercial_option_key(solver, name) not in own:  # dropped below, never passed on
                 validate_solver_option(solver, name, value, f"{file_label}, line {lineno}")
         file_options = _parse_native_opt_text(opt_text)
-    entries += [CommercialOption(k, v, str(opt_file)) for k, v in file_options.items()]
+    entries += [CommercialOption(k, v, file_label) for k, v in file_options.items()]
     n_file_entries = len(entries)
     if solver_config is not None:
         names = _PARAM_MAP[solver]
@@ -741,8 +741,8 @@ def _note_thread_override(solver: str, old: CommercialOption, new: CommercialOpt
 
     Printed, not logged: it sits just before the solve's printed ``Solver args`` line, where ``logger.info``
     does not reach the console.  Once per solver, kind of layer and old value, so rolls and repeated solves
-    print it once.  The advice to raise ``--threads`` is added only when the budget lowers the thread count
-    (an "all cores" value: Gurobi / CPLEX ``0``, Xpress / COPT ``<= 0``, or a larger number).
+    print it once.  The advice to raise ``--threads`` (``FLEXTOOL_THREADS`` when the budget came from it) is
+    added only when the budget lowers the thread count (an "all cores" value: Gurobi / CPLEX ``0``, Xpress / COPT ``<= 0``, or a larger number).
     """
     old_number, new_number = _thread_number(old.value), _thread_number(new.value)
     if old_number is not None and old_number == new_number:
@@ -753,11 +753,16 @@ def _note_thread_override(solver: str, old: CommercialOption, new: CommercialOpt
     _warned_thread_overrides.add(warn_key)
     all_cores = old_number is not None and (old_number == 0 or (solver in ("xpress", "copt") and old_number < 0))
     lowers = all_cores or (old_number is not None and new_number is not None and old_number > new_number)
-    tail = (" For more solver threads raise --threads (Threads per run in the FlexTool window)."
-            if lowers else "")
+    if not lowers:
+        tail = ""
+    elif new.layer.startswith("environment variable "):
+        env_name = new.layer.removeprefix("environment variable ")
+        tail = f" For more solver threads raise {env_name} (or give --threads)."
+    else:
+        tail = " For more solver threads raise --threads (Threads per run in the FlexTool window)."
     print(
-        f"{solver} {old.name} {old.value}{' (all cores)' if all_cores else ''} in {old.layer} is replaced by "
-        f"{new.value}, the run's thread budget ({new.layer}).{tail}",
+        f"{solver} uses {new.name} {new.value}, the run's thread budget ({new.layer}), instead of {old.name} "
+        f"{old.value}{' (all cores)' if all_cores else ''} in {old.layer}.{tail}",
         flush=True,
     )
 

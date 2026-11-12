@@ -55,7 +55,7 @@ solve):
 | `--solver-time-limit`  | `solver_time_limit`      | Seconds per solve, on every solver (HiGHS `time_limit`, Gurobi `TimeLimit`, CPLEX `timelimit`, Xpress `MAXTIME`, COPT `TimeLimit`); unset means no limit. See [Time limit](#time-limit). |
 | `--solver-mip-gap`     |                          | Relative MIP gap of every solve, on every solver (HiGHS `mip_rel_gap`, Gurobi `MIPGap`, CPLEX `mip tolerances mipgap`, Xpress `MIPRELSTOP`, COPT `RelGap`); wins over the solve's `solver_mip_gap` |
 | `--solver-config-dir`  |                          | A folder of the solver option files; repeat for several, highest first (file by file); see [Where the option files come from](#where-the-option-files-come-from) |
-| `--threads`            |                          | Threads of the run (the FlexTool window sends its Threads per run); sets every solver's thread count (HiGHS `threads`, Gurobi `Threads`, CPLEX `threads`, Xpress `THREADS`, COPT `Threads`). See below |
+| `--threads`            |                          | Threads of the run (the FlexTool window sends its Threads per run); sets every solver's thread count (HiGHS `threads` unless `--highs-threads` is given, Gurobi `Threads`, CPLEX `threads`, Xpress `THREADS`, COPT `Threads`). See below |
 | `--highs-threads`      | `solver_threads`         | HiGHS only: integer thread count (default 1); `>1` enables HiGHS parallel mode |
 | `--solver-log-level`   | `solver_log_level`       | `silent` hides the log of every solver; `normal` (default) shows it; `verbose` is HiGHS only |
 
@@ -68,13 +68,14 @@ solver, the run warns once: set the solver's own parameter in the solve's
 Threads per run, default 1) sets the thread count of every solver: HiGHS
 `threads`, Gurobi `Threads`, CPLEX `threads`, Xpress `THREADS`, COPT
 `Threads`. It replaces the value of the option file and of
-`solver_arguments`, also a value meaning all cores (`0`; Xpress and COPT
-`-1`). FlexTool splits the computer's cores between the runs it executes in
+`solver_arguments`, even a value meaning all cores (`0`; Xpress and COPT
+`0` or negative). FlexTool splits the computer's cores between the runs it executes in
 parallel, so the run's thread budget wins. The run prints one line when it
-replaces a different value, for example `gurobi Threads 0 (all cores) in
-<folder>/gurobi.opt is replaced by 1, the run's thread budget (flag
---threads).` For more solver threads raise `--threads` (Threads per run in
-the FlexTool window). Without `--threads` and `FLEXTOOL_THREADS` (a terminal
+replaces a different value, for example `gurobi uses Threads 1, the run's
+thread budget (flag --threads), instead of Threads 0 (all cores) in
+<folder>/gurobi.opt.` For more solver threads raise `--threads` (Threads per
+run in the FlexTool window), or `FLEXTOOL_THREADS` when the budget came from
+it. Without `--threads` and `FLEXTOOL_THREADS` (a terminal
 or Spine Toolbox run that gives neither) the option file and
 `solver_arguments` keep the thread count. Per-algorithm thread controls
 (Xpress `BARTHREADS` / `MIPTHREADS` / `CONCURRENTTHREADS`, COPT `BarThreads` /

@@ -863,11 +863,15 @@ def _parse_native_opt_file(path: Path) -> dict[str, str]:
 
 
 def _read_native_opt_text(path: Path) -> str | None:
-    """The text of a native ``.opt`` file; ``None`` when it is missing or unreadable."""
+    """The text of a native ``.opt`` file, read as UTF-8 without a leading BOM (as the run's solver_config
+    folders are read); ``None`` when it is missing, unreadable or not UTF-8 text (with a warning)."""
     if not path.is_file():
         return None
     try:
-        return path.read_text()
+        return path.read_text(encoding="utf-8-sig")
+    except UnicodeDecodeError as exc:
+        logging.getLogger(__name__).warning("Not reading %s: it is not UTF-8 text (%s).", path, exc)
+        return None
     except OSError:
         return None
 

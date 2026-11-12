@@ -214,8 +214,9 @@ def test_threads_flag_replaces_the_all_cores_gurobi_thread_count(tmp_path: Path,
     assert params == ["Threads=4", "MIPGap=0.002"]
     out = capsys.readouterr().out.splitlines()
     assert out == [
-        f"gurobi Threads 0 (all cores) in {tmp_path / 'gurobi.opt'} is replaced by 4, the run's thread budget "
-        "(flag --threads). For more solver threads raise --threads (Threads per run in the FlexTool window)."
+        f"gurobi uses Threads 4, the run's thread budget (flag --threads), instead of Threads 0 (all cores) in "
+        f"{tmp_path / 'gurobi.opt'}. For more solver threads raise --threads (Threads per run in the FlexTool "
+        "window)."
     ]
 
 
@@ -230,7 +231,7 @@ def test_threads_flag_replaces_the_cplex_xpress_copt_thread_count(solver, opt_te
     _, stdin = _passed(solver, tmp_path, opt_text, SolverConfig(name=solver), ["--threads", "2"])
     assert _thread_lines(solver, stdin) == [expected]
     out = capsys.readouterr().out.splitlines()
-    assert len(out) == 1 and "is replaced by 2" in out[0] and "(all cores)" in out[0], out
+    assert len(out) == 1 and "2, the run's thread budget" in out[0] and "(all cores)" in out[0], out
     assert out[0].endswith("(Threads per run in the FlexTool window).")
 
 
@@ -245,9 +246,9 @@ def test_thread_budget_from_the_environment_replaces_xpress_all_cores(tmp_path: 
     assert [(o.name, o.value) for o in resolved] == [("THREADS", "2"), ("MIPRELSTOP", "0.002")]
     out = capsys.readouterr().out.splitlines()
     assert out == [
-        f"xpress THREADS -1 (all cores) in {opt_file} is replaced by 2, the run's thread budget (environment "
-        "variable FLEXTOOL_THREADS). For more solver threads raise --threads (Threads per run in the FlexTool "
-        "window)."
+        "xpress uses THREADS 2, the run's thread budget (environment variable FLEXTOOL_THREADS), instead of "
+        f"THREADS -1 (all cores) in {opt_file}. For more solver threads raise FLEXTOOL_THREADS (or give "
+        "--threads)."
     ]
 
 
@@ -273,10 +274,30 @@ def test_thread_budget_beats_solver_arguments_alias(tmp_path: Path, capsys) -> N
     assert [(o.name, o.value) for o in resolved] == [("Threads", "3")]
     out = capsys.readouterr().out.splitlines()
     assert out == [
-        "gurobi threads 8 in solver_arguments of solve invest is replaced by 3, the run's thread budget "
-        "(environment variable FLEXTOOL_THREADS). For more solver threads raise --threads (Threads per run in "
-        "the FlexTool window)."
+        "gurobi uses Threads 3, the run's thread budget (environment variable FLEXTOOL_THREADS), instead of "
+        "threads 8 in solver_arguments of solve invest. For more solver threads raise FLEXTOOL_THREADS (or give "
+        "--threads)."
     ]
+
+
+def test_thread_override_line_names_the_option_file_without_its_path(capsys) -> None:
+    """A direct caller giving the option text without its file: the line names ``gurobi.opt``, never ``None``."""
+    reset_run_warnings()
+    resolved = resolve_commercial_options("gurobi", opt_text="Threads 0\n", opt_file=None, solver_config=None,
+                                          run_options=_options(["--threads", "2"]))
+    assert [(o.name, o.value, o.layer) for o in resolved] == [("Threads", "2", "flag --threads")]
+    assert capsys.readouterr().out.splitlines() == [
+        "gurobi uses Threads 2, the run's thread budget (flag --threads), instead of Threads 0 (all cores) in "
+        "gurobi.opt. For more solver threads raise --threads (Threads per run in the FlexTool window)."]
+
+
+def test_option_file_read_without_its_text_drops_a_utf8_bom(tmp_path: Path) -> None:
+    """A caller giving only the file (no text): the file is read as UTF-8 and a leading BOM is not part of the
+    first option's name, whatever the computer's locale encoding."""
+    opt_file = tmp_path / "gurobi.opt"
+    opt_file.write_bytes("\ufeffMIPGap 0.002\n".encode("utf-8"))
+    resolved = resolve_commercial_options("gurobi", opt_file=opt_file, solver_config=None, run_options=_options([]))
+    assert [(o.name, o.value) for o in resolved] == [("MIPGap", "0.002")]
 
 
 def test_no_budget_keeps_the_option_file_thread_count(tmp_path: Path, capsys) -> None:
@@ -304,7 +325,7 @@ def test_thread_override_line_is_once_per_run_and_without_advice_when_raising(tm
     assert capsys.readouterr().out == ""
     assert resolve("Threads 1\n", "4", "a") == [("Threads", "4")]
     assert capsys.readouterr().out.splitlines() == [
-        f"gurobi Threads 1 in {opt_file} is replaced by 4, the run's thread budget (flag --threads)."]
+        f"gurobi uses Threads 4, the run's thread budget (flag --threads), instead of Threads 1 in {opt_file}."]
     assert resolve("Threads 4\n", "1", "dispatch") == [("Threads", "1")]
     assert resolve("Threads 4\n", "1", "invest") == [("Threads", "1")]
     assert len(capsys.readouterr().out.splitlines()) == 1

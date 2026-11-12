@@ -308,8 +308,9 @@ def settle_shipped_solver_config(
 ) -> tuple[dict[str, list[str]], list[str]]:
     """Screen the solver option files of a shipped project's ``solver_config/`` *folder* (another person's files).
 
-    A ``<solver>.opt`` with an option that names a file or folder outside the solve's work folder, or that
-    connects the solver to another computer (:func:`flextool._solver_option_rules.screen_solver_option_file`), is
+    A ``<solver>.opt`` with an option that names a file or folder outside the solve's work folder, that connects
+    the solver to another computer, or a CPLEX name that starts with ``set`` (a line FlexTool would refuse or hold
+    back: :func:`flextool._solver_option_rules.screen_solver_option_file`), is
     renamed to ``<solver>.opt.review`` (its modification time kept): no run reads it until the user has checked
     it and renamed it back.  An existing ``<solver>.opt.review`` is replaced with *replace_held* (a package that
     ships one: that file is never read), else the screen raises :class:`FileExistsError`.  With *drop_templates*
@@ -366,8 +367,9 @@ def screen_export_solver_config(
     """Split the option files an export would ship (``{"<solver>.opt": file}``) into the ones it ships and the
     ones it leaves out: ``(shipped, {file name: (file, problems)})``.  A file is left out when the screen of a
     shipped file (:func:`flextool._solver_option_rules.screen_solver_option_file`) finds a line in it: a server,
-    cloud or licence setting (a password, perhaps) or a folder of this computer should not leave unseen; the
-    receiver would hold such a file back anyway.  An unreadable file is shipped, so the export reports it."""
+    cloud or licence setting (a password, perhaps) or a folder of this computer should not leave unseen, and a
+    CPLEX name starting with ``set`` would fail the receiver's run; the receiver would hold such a file back
+    anyway.  An unreadable file is shipped, so the export reports it."""
     from flextool._solver_option_rules import screen_solver_option_file
 
     shipped: dict[str, Path] = {}
@@ -630,11 +632,14 @@ def _path_replacements(project_dir: Path) -> list[tuple[str, str]]:
 
 #: An absolute folder part of a path (POSIX or Windows) that is not the project or the home folder.  A path may
 #: follow ``:`` or ``;`` (the second folder of a ``FLEXTOOL_SOLVER_CONFIG_DIR`` value); a URL's ``://`` is not one.
-#: A folder name may hold single spaces (``D:\My Data\``): a word followed by a space and more of the name.
-_ABS_DIR = re.compile(
-    r"(?<![\w./~>\\-])(?:(?:/[^\s/\\\"'<>|:*?]+(?: [^\s/\\\"'<>|:*?]+)*)+/"
-    r"|[A-Za-z]:[\\/](?:[^\s\\/\"'<>|:*?]+(?: [^\s\\/\"'<>|:*?]+)*[\\/])*)"
-)
+#: A folder name may hold one space (``D:\My Data\``): the word after the space ends at the next ``/`` or ``\``
+#: and holds no comma, semicolon, bracket or ``=``, and the word before it does not end at a comma or semicolon.  So
+#: text after a path is kept (``from /home/u/proj, wrote and/or copied``, ``in /usr/lib/python3.11 module
+#: foo/bar.py``).  A folder name with two or more spaces is kept, with what follows it; the folders above it are
+#: removed.
+_DIR_WORD = r"[^\s/\\\"'<>|:*?]+"
+_DIR_NAME = rf"{_DIR_WORD}(?:(?<![,;]) [^\s/\\\"'<>|:*?,;()=]+(?=[/\\]))?"
+_ABS_DIR = re.compile(rf"(?<![\w./~>\\-])(?:(?:/{_DIR_NAME})+/|[A-Za-z]:[\\/](?:{_DIR_NAME}[\\/])*)")
 #: Keys of a run record that name this computer or its user.
 _PERSONAL_KEYS = frozenset({"host", "hostname", "user", "username"})
 

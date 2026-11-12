@@ -735,7 +735,7 @@ def test_a_leading_byte_order_mark_is_not_part_of_the_first_name() -> None:
     assert highs_opt_lines("﻿threads = 2\n") == [(1, "threads", "2")]
     assert [(o.name, o.value) for o in _resolve("gurobi", opt_text="﻿Threads 2\n")] == [("Threads", "2")]
     assert screen_solver_option_file("gurobi", "﻿ComputeServer srv.example:61000\n")[0].startswith(
-        "line 1: ComputeServer srv.example:61000 connects the solver to another computer")
+        "line 1: ComputeServer <hidden> connects the solver to another computer")
 
 
 def test_cplex_name_with_a_leading_set_is_refused_from_every_source() -> None:

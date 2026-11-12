@@ -637,14 +637,15 @@ def test_export_leaves_out_a_file_with_server_or_path_lines(
     fixed = pp.always_included(workspace["project"], folders)
     assert sorted(fixed["solver_config_files"]) == ["cplex.opt", "highs.opt"]
     assert fixed["solver_config_withheld"] == {"gurobi.opt": (own / "gurobi.opt", [
-        "line 2: WLSSecret s3cr3t connects the solver to another computer (a server, cloud or licence service) or "
+        "line 2: WLSSecret <hidden> connects the solver to another computer (a server, cloud or licence service) or "
         "carries its credentials"])}
     out = workspace["root"] / "out" / "withheld.flextool.zip"
     assert cli.main(["export", str(workspace["project"]), "-o", str(out), "--solver-config-dir", str(own),
                      "--solver-config-dir", str(workspace["config"])]) == cli.EXIT_OK
     text = capsys.readouterr().out
     assert (f"Warning: Solver options gurobi.opt (from {own}) left out of the package, because line 2: WLSSecret "
-            "s3cr3t connects the solver") in text
+            "<hidden> connects the solver") in text
+    assert "s3cr3t" not in text
     with zipfile.ZipFile(out) as zf:
         names = zf.namelist()
         assert "Proj/solver_config/cplex.opt" in names and not [n for n in names if "gurobi" in n]
@@ -672,3 +673,15 @@ def test_scrub_keeps_no_folder_name_with_spaces(workspace: dict) -> None:
     assert pp.scrub_run_status(status, workspace["project"]) == {
         "a": "<path>\\solver_config", "b": "<path>/x.opt", "c": "see <path>/x and <path>/z",
         "d": "https://example.org/a b/c"}
+
+
+def test_scrub_keeps_the_text_after_a_path(workspace: dict) -> None:
+    """A folder name holds one space only when the next word ends at a separator: prose after a path is kept,
+    and ``D:\\My Data\\`` is still removed whole."""
+    status = {"a": "from /home/u/proj, wrote and/or copied",
+              "b": "error in /usr/lib/python3.11 module foo/bar.py line 3",
+              "c": "read D:\\My Data\\run.log, wrote and/or copied"}
+    assert pp.scrub_run_status(status, workspace["project"]) == {
+        "a": "from <path>/proj, wrote and/or copied",
+        "b": "error in <path>/python3.11 module foo/bar.py line 3",
+        "c": "read <path>\\run.log, wrote and/or copied"}

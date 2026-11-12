@@ -69,10 +69,10 @@ Each line says what changes for a model that ran before and what to do; the deta
   database and option file; the environment variables are now `FLEXTOOL_SOLVER_TIME_LIMIT` / `_MIP_GAP` (the
   `FLEXTOOL_HIGHS_*` names still work for HiGHS only). Commercial runs with these flags can give other results.
 - **`--threads` now sets the thread count of Gurobi, CPLEX, Xpress and COPT too** (the FlexTool window always sends
-  its Threads per run, default 1), over the option file and `solver_arguments`, as for HiGHS, also a value meaning
-  all cores; the run prints a line when it replaces a value. A GUI run with `Threads 0` in `gurobi.opt` now uses 1
-  thread: raise Threads per run. Without `--threads` and `FLEXTOOL_THREADS` the option file keeps it; per-algorithm
-  thread controls (Xpress `BARTHREADS`, COPT `BarThreads`, ...) are not changed.
+  its Threads per run, default 1), over the option file and `solver_arguments`, as for HiGHS, even a value meaning
+  all cores (`0`); the run prints a line when it replaces a value. A GUI run with `Threads 0` in `gurobi.opt` now uses
+  1 thread: raise Threads per run. Without `--threads` and `FLEXTOOL_THREADS` the option file keeps it;
+  per-algorithm thread controls (Xpress `BARTHREADS`, COPT `BarThreads`, ...) are not changed.
 - **At its time limit a MIP with a solution keeps it, with a warning; an LP or a solve without a solution stops the
   run**, for every solver. A commercial solve stopped by another limit, or not certified optimal, now stops the run.
 - **Solver option files come from the run's `solver_config` folders, file by file** (`--solver-config-dir`, next to
@@ -359,7 +359,8 @@ Each line says what changes for a model that ran before and what to do; the deta
   frozen one), and unpacks the shipped solver options to the project's `solver_config/`, where its runs use them
   ahead of the workspace's (delete a file there to use the workspace's). Export leaves out an option file with a
   line that names a file or folder by its path or connects the solver to another computer (a server, cloud or
-  licence service, or its password), and names those lines. A project imported by a 4.4 development build has its
+  licence service, or its password) or sets a CPLEX name starting with `set` (a run refuses it), and names those
+  lines; a server option's value is shown as `<hidden>`. A project imported by a 4.4 development build has its
   shipped options in `imported_solver_config/`, which no run reads: the first time the FlexTool window opens it,
   the files are checked as at import and the folder is renamed to `solver_config/` (a log line says so).
   The viewer's axis ranges file is cut to the shipped runs; run records have this computer's folder paths, user
@@ -375,9 +376,9 @@ Each line says what changes for a model that ran before and what to do; the deta
   without a file there uses the workspace's, else FlexTool's default. `--solver-config-dir` can be repeated, and
   `FLEXTOOL_SOLVER_CONFIG_DIR` takes several folders separated by `:` (on Windows `;`), highest first; only the
   folders given are read. With `FLEXTOOL_SOLVER_CONFIG_DIR` set for the FlexTool window, the project's folder still
-  comes first. A shipped option file with an option that names a path or a server is kept as `<solver>.opt.review`,
-  never read by a run, until you check it and rename it; an unedited FlexTool template in a project folder is
-  skipped, so it never hides the workspace's file.
+  comes first. A shipped option file with an option that names a path or a server, or a CPLEX name starting with
+  `set`, is kept as `<solver>.opt.review`, never read by a run, until you check it and rename it; an unedited
+  FlexTool template in a project folder is skipped, so it never hides the workspace's file.
 
 #### Plots, timings and the parameter catalogue
 

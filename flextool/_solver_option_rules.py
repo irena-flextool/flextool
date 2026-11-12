@@ -214,8 +214,9 @@ def screen_solver_option_file(solver: str, text: str) -> list[str]:
 
     The rules of the input database's options (:func:`is_server_option`, :func:`is_path_option` with
     :func:`is_plain_file_name`): an option that connects the solver to another computer, or one that names a file
-    or folder by more than a plain file name.  One message per such line, ``line N: <name> <value> ...``; an
-    empty list when the file is clean.  A project import or the first open of an imported project keeps a file
+    or folder by more than a plain file name; and a CPLEX name that starts with the word ``set``
+    (:func:`cplex_set_word_problem`), which a run refuses.  One message per such line, ``line N: <name> <value>
+    ...`` (a server option's value shown as ``<hidden>``); an empty list when the file is clean.  A project import or the first open of an imported project keeps a file
     with a message as ``<solver>.opt.review`` (never read by a run) until the user has checked it.
     """
     lines = highs_opt_lines(text) if solver == "highs" else native_opt_lines(text)
@@ -223,6 +224,8 @@ def screen_solver_option_file(solver: str, text: str) -> list[str]:
     for lineno, name, value in lines:
         shown = f"{name} = {value}" if solver == "highs" else f"{name} {value}"
         if is_server_option(solver, name):
+            # The value can be a licence key or a password: the message names the option, never its value.
+            shown = f"{name} = <hidden>" if solver == "highs" else f"{name} <hidden>"
             problems.append(f"line {lineno}: {shown} connects the solver to another computer (a server, cloud or "
                             "licence service) or carries its credentials")
         elif value and is_path_option(solver, name) and not _is_number(value) and not is_plain_file_name(value):
