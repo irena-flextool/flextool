@@ -14,7 +14,7 @@ These parameters will define how the node will behave and use the data it is giv
     - *invest* and/or *retire* 
     - investment limits for each *period* and/or for all periods (*total*) or *no_limit* 
     - *cumulative_limits* considers investments, retirements and existing together, requires `cumulative_max_capacity` and/or `cumulative_min_capacity`
-    - any method other than *not_allowed* offers storage investment (retirement) in every investment period, also without `invest_cost` (`salvage_value`) or where it is 0: that capacity has no annuity, its `fixed_cost` still counts. To forbid investment in a period, set `invest_max_period` 0 for it; a 0 in an `invest_cost` map does not.
+    - any method other than *not_allowed* offers storage investment (retirement) in every investment period, also without `invest_cost` (`salvage_value`) or where it is 0: that capacity has no annuity, its `fixed_cost` still counts. To forbid investment in a period, use a *period* method (*invest_period*, *invest_period_total* and their *invest_retire_* forms) and set `invest_max_period` 0 for it: the other methods do not use `invest_max_period`. A 0 in an `invest_cost` map does not forbid it.
 - `inflow_method` - choice how to treat inflow time series
     - *use_original* - does not scale the original time series (no value defaults here)
     - *no_inflow* - ignores any inserted inflow time series

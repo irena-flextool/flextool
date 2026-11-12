@@ -12,6 +12,7 @@ from flextool.assistant import cli, mcp_server, prompt, unit_wording
 from flextool.assistant.errors import MESSAGES
 from flextool.assistant.inputs import _values
 from flextool.assistant.inputs._notes import traps
+from flextool.assistant.inputs._schema import shipped_schema
 from flextool.assistant.results import _entity
 from flextool.assistant.registry import DATA_SENTENCE, all_tools
 from flextool.update_flextool import FLEXTOOL_DB_VERSION
@@ -19,6 +20,14 @@ from flextool.update_flextool import FLEXTOOL_DB_VERSION
 _FORBIDDEN = re.compile(r"\b(LLM|ZDR|DB|LP)s?\b")
 _MCP = re.compile(r"MCP")
 _VERSION = re.compile(rf"\bv?{FLEXTOOL_DB_VERSION}\b|\bv\d{{2}}\b")
+
+
+def _control_values(cls: str, control: str | None) -> list:
+    """Every value of a note's controlling parameter (its value list, or numbers and unset)."""
+    definition = shipped_schema().parameters.get((cls, control))
+    listed = shipped_schema().value_lists.get(definition.value_list, ()) if definition and definition.value_list \
+        else ()
+    return [*listed] if listed else [None, 0.0, 2.0]
 
 
 def _texts() -> list[tuple[str, str]]:
@@ -31,6 +40,9 @@ def _texts() -> list[tuple[str, str]]:
     out += [(f"MESSAGES[{k}]", v) for k, v in MESSAGES.items()]
     out += [(f"session note {k}", v) for k, v in unit_wording.SESSION_NOTES.items()]
     out += [(f"trap {k}", t.text) for k, ts in traps().items() for t in ts]
+    out += [(f"trap {k} {v}", t.conclude(v, False)) for k, ts in traps().items() for t in ts
+            if t.conclude is not None for v in _control_values(k[0], t.control)
+            if t.conclude(v, False) is not None]
     out.append(("RUN_TIME_NOTE", _values.RUN_TIME_NOTE))
     out += [(f"explain_entity {k}", v) for k, v in _entity.TEXTS.items()]
     # What the connection server and the command say.

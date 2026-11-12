@@ -14,7 +14,7 @@ from flextool.assistant import project
 from flextool.assistant.caps import CapArg, dumps
 from flextool.assistant.context import AssistantContext
 from flextool.assistant.errors import ToolError, close_names, name_list, similar_text
-from flextool.assistant.inputs import _values
+from flextool.assistant.inputs import _notes, _values
 from flextool.assistant.registry import Fit, make_tool
 from flextool.assistant.results import _entity, _runs
 from flextool.assistant.tools.inputs import entity_value, inactive_note, match_names, unit_of
@@ -33,8 +33,7 @@ INPUT_COLUMNS = ["parameter", "value", "unit", "from_alternative"]
 #: The advice of a result call_tool still has to cut (a max_chars below the last cut step's text).
 FIT_HINT = "ask with a larger max_chars"
 #: The input parameters the hints read (the scenario's value, or the default).
-HINT_PARAMETERS = ("invest_method", "invest_max_total", "invest_max_period", "invest_min_total", "invest_min_period",
-                   "retire_max_total", "retire_max_period", "cumulative_max_capacity")
+HINT_PARAMETERS = ("invest_method", *_notes.LIMIT_USERS)
 
 
 # ---------------------------------------------------------------------------------------------------------

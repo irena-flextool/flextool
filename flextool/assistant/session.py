@@ -136,7 +136,6 @@ from flextool.assistant.llm_errors import (
 )
 from flextool.assistant.llm_retry import Pacing, RetryPolicy, call_with_retries
 from flextool.assistant.pacing import PROCESS_PACER, Pacer, pace_key
-from flextool.assistant.placeholders import unset_placeholders
 from flextool.assistant.providers import pacing_seed, schemas_sent
 from flextool.assistant.thoughts import stream_visible
 from flextool.assistant.usage import add_usage, ledger_key
@@ -541,13 +540,12 @@ _CASE_FREE_ARGS = frozenset({"query"})
 
 def _normalised(value: object, case_free: bool = False) -> object:
     """*value* in one spelling for comparing tool calls: text trimmed (a free-text argument also in lower case with
-    its spaces collapsed, :data:`_CASE_FREE_ARGS`), keys sorted.  Empty arguments are not dropped here: whether one
-    is a placeholder depends on the tool (``group_by: []`` is a request), which :func:`call_signature` asks
-    :func:`~flextool.assistant.placeholders.unset_placeholders`."""
+    its spaces collapsed, :data:`_CASE_FREE_ARGS`), keys sorted, empty arguments left out."""
     if isinstance(value, str):
         return " ".join(value.split()).casefold() if case_free else value.strip()
     if isinstance(value, dict):
-        return {k: _normalised(v, case_free or k in _CASE_FREE_ARGS) for k, v in sorted(value.items())}
+        return {k: _normalised(v, case_free or k in _CASE_FREE_ARGS) for k, v in sorted(value.items())
+                if v not in (None, "", [], {})}
     if isinstance(value, list):
         return [_normalised(v, case_free) for v in value]
     return value
@@ -566,19 +564,12 @@ def _redacted_values(value: object, redact: Callable[[str], str]) -> object:
 
 
 def call_signature(call: ToolCall) -> str:
-    """The tool and its normalised arguments: two calls with the same signature ask the same thing.  The
-    placeholder arguments are left out as ``call_tool`` leaves them out (:mod:`flextool.assistant.placeholders`),
-    so ``scenario: ""`` and no scenario are one request."""
-    name = normalise_tool_name(call.name)
+    """The tool and its normalised arguments: two calls with the same signature ask the same thing."""
     if call.arguments is None:
         args: object = " ".join(call.raw_arguments.split())
     else:
-        arguments = call.arguments
-        tool = registry.all_tools().get(name)
-        if tool is not None and isinstance(arguments, dict):
-            arguments = unset_placeholders(name, arguments, tool.input_schema)
-        args = _normalised(arguments)
-    return json.dumps([name, args], sort_keys=True, ensure_ascii=False)
+        args = _normalised(call.arguments)
+    return json.dumps([normalise_tool_name(call.name), args], sort_keys=True, ensure_ascii=False)
 
 
 @dataclass

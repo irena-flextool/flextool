@@ -257,8 +257,9 @@ BEHAVIOUR_CHANGES: dict[str, BehaviourChange] = {
                      "capacity has no annuity, its fixed_cost still counts. Before, such a period had no "
                      "investment (retirement) variable unless a user constraint had a capacity coefficient on "
                      "the entity, so a 0 in an invest_cost map blocked investment in that period (results "
-                     "change). To forbid investment in a period, set invest_max_period 0 there (or invest_method "
-                     "not_allowed). With neither invest_cost nor fixed_cost the invested amount is arbitrary."),
+                     "change). To forbid investment in a period, set invest_max_period 0 there under a *_period "
+                     "invest_method (the other methods do not use invest_max_period), or use not_allowed. With "
+                     "neither invest_cost nor fixed_cost the invested amount is arbitrary."),
             silence=_DELETE_MARKER.format(marker=MARKER_PREFIX + "invest_without_cost_offered"),
         ),
         BehaviourChange(

@@ -158,12 +158,13 @@ def test_the_size_cap(ctx) -> None:
 
 
 def test_at_a_small_result_cap_the_notes_give_way_to_the_rows(ctx) -> None:
-    """At the result cap of a 16 384-token window (2 000 characters) the six cells all fit: the notes are cut to 160
-    or 80 characters first.  At 1 200 characters the notes are left out (and say so); the rows stay whole."""
+    """At 1 800 characters (below the result cap of a 16 384-token window, 2 000, which now holds the whole table:
+    the invest notes state their conclusion in fewer words) the six cells all fit: the notes are cut to 160 or 80
+    characters first.  At 1 200 characters the notes are left out (and say so); the rows stay whole."""
     from flextool.assistant.caps import Caps
     from flextool.assistant.tools.inputs import NOTES_LEFT_OUT
 
-    ctx.caps = Caps(17, 2_000, 3, 33)
+    ctx.caps = Caps(17, 1_800, 3, 33)
     out = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameters": ["existing", "invest_cost",
                                                                                    "availability"],
                                            "entities": [["coal_plant"], ["coal_chp"]], "scenario": "all"})

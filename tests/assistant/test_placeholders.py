@@ -103,11 +103,10 @@ def _sig(name: str, **args) -> str:
     return call_signature(ToolCall("x", name, args, json.dumps(args)))
 
 
-def test_the_repeat_check_reads_placeholders_as_call_tool_does() -> None:
-    assert _sig("list_entities", entity_class="unit", member="", scenario="*") == _sig("list_entities",
-                                                                                      entity_class="unit")
-    assert _sig("query_result", run="r", table="t", filters={}, top_n=0) == _sig("query_result", run="r", table="t")
-    # One total (group_by []) is another request than one summary per series (no group_by).
-    assert _sig("query_result", run="r", table="t", group_by=[]) != _sig("query_result", run="r", table="t")
-    assert _sig("list_runs", results_usable=False) != _sig("list_runs")
-    assert _sig("get_slack_summary", run="r", min_value=0) != _sig("get_slack_summary", run="r")
+def test_the_repeat_check_compares_the_models_own_arguments() -> None:
+    """The repeated-call guard compares what the model wrote, not what ``call_tool`` ran, so the recorded
+    conversations replay as they were recorded (ollama/two_questions)."""
+    assert _sig("list_entities", entity_class="unit", member="*") != _sig("list_entities", entity_class="unit")
+    assert _sig("query_result", run="r", table="t", top_n=0) != _sig("query_result", run="r", table="t")
+    # Empty values were always one spelling of "not given" there.
+    assert _sig("list_entities", entity_class="unit", member="") == _sig("list_entities", entity_class="unit")

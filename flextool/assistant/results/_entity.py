@@ -29,6 +29,7 @@ from typing import Any
 
 from flextool.assistant.caps import dumps, sent_payload
 from flextool.assistant.errors import ToolError
+from flextool.assistant.inputs import _notes
 from flextool.assistant.results import _query
 from flextool.assistant.unit_wording import shown_unit
 from flextool.lean_parquet import to_long
@@ -51,19 +52,10 @@ ZERO = 1e-6
 #: Relative tolerance of a hint's equality (a result equal to its limit).
 REL_TOL = 1e-6
 
-#: invest_method values: which allow no investment, and which use each limit (reference/unit.md, invest_method).
-NO_INVEST = frozenset({"not_allowed", "retire_no_limit", "retire_period", "retire_total", "retire_period_total"})
-RETIRE_ONLY = frozenset({"retire_no_limit", "retire_period", "retire_total", "retire_period_total"})
-INVEST_TOTAL = frozenset({"invest_total", "invest_period_total", "invest_retire_total", "invest_retire_period_total"})
-INVEST_PERIOD = frozenset({"invest_period", "invest_period_total", "invest_retire_period",
-                           "invest_retire_period_total"})
-RETIRE_TOTAL = frozenset({"retire_total", "retire_period_total", "invest_retire_total", "invest_retire_period_total"})
-RETIRE_PERIOD = frozenset({"retire_period", "retire_period_total", "invest_retire_period",
-                           "invest_retire_period_total"})
-CUMULATIVE = frozenset({"cumulative_limits"})
-
 #: The texts explain_entity adds (hints and notes), checked by the plain-English test.
 TEXTS: dict[str, str] = {
+    "hint_unused_limit": ("{limit} is set ({value}) but not used: invest_method is {method}, and only {users} use "
+                          "it."),
     "hint_not_allowed": "Nothing was invested: invest_method is {method}, which allows no investment.",
     "hint_retire_only": "Nothing was invested: invest_method is {method}, which allows retirement only.",
     "hint_total": ("Invested {invested}{unit} over the periods, equal to invest_max_total ({limit}): consistent "
@@ -493,6 +485,20 @@ def _summed(cells: dict[str, dict[str, float | None]], part: str) -> float | Non
     return sum(values) if values else None
 
 
+#: The limits checked for :data:`TEXTS` ``hint_unused_limit``, in this order.
+UNUSED_CHECKED = tuple(_notes.LIMIT_USERS)
+
+
+def _limit_shown(value: Any) -> str:
+    """A limit's value in a hint: the number, or the kind of an indexed value."""
+    from flextool.assistant.inputs import _values
+
+    number = _num(value)
+    if number is not None:
+        return _shown_number(number)
+    return "a map" if _values.is_indexed(value) else "a value"
+
+
 def hints(inputs: dict[str, Any], blocks: dict[str, dict], groups: list[str]) -> list[str]:
     """The hints of the entity's inputs (*inputs*: the value each hint parameter has in the scenario, its default
     for invest_method) and its results (*blocks*); *groups*: the groups it is a member of."""
@@ -506,8 +512,17 @@ def hints(inputs: dict[str, Any], blocks: dict[str, dict], groups: list[str]) ->
     invested = _summed(cells, "invested")
     divested = _summed(cells, "divested")
     constructing = any((c.get("in_construction") or 0) > ZERO for c in cells.values())
-    if method in NO_INVEST and capacity is not None and not (invested and invested > ZERO):
-        key = "hint_retire_only" if method in RETIRE_ONLY else "hint_not_allowed"
+    m = _notes.methods()
+    # First: a limit the entity sets that its invest_method does not use (small models take it as binding).
+    if method in m.known:
+        for limit in UNUSED_CHECKED:
+            users = _notes.users_of(limit)
+            value = inputs.get(limit)
+            if value is not None and users is not None and method not in users:
+                out.append(TEXTS["hint_unused_limit"].format(limit=limit, value=_limit_shown(value), method=method,
+                                                             users=_notes.listed(users)))
+    if method in m.no_invest and capacity is not None and not (invested and invested > ZERO):
+        key = "hint_retire_only" if method in m.retire_only else "hint_not_allowed"
         out.append(TEXTS[key].format(method=method))
 
     def total_hint(key: str, part_sum: float | None, limit_name: str, applies: bool, word: str) -> None:
@@ -533,9 +548,9 @@ def hints(inputs: dict[str, Any], blocks: dict[str, dict], groups: list[str]) ->
                                              limit=_shown_number(limit)))
 
     # Capacity in construction is not yet in "invested" but counts towards invest_max_total: no total hint then.
-    total_hint("hint_total", invested, "invest_max_total", method in INVEST_TOTAL and not constructing, "invested")
-    period_hints("hint_period", "invested", "invest_max_period", method in INVEST_PERIOD, "invested", zero=True)
-    if method in CUMULATIVE:
+    total_hint("hint_total", invested, "invest_max_total", method in m.invest_total and not constructing, "invested")
+    period_hints("hint_period", "invested", "invest_max_period", method in m.invest_period, "invested", zero=True)
+    if method in m.cumulative:
         limits = _by_period(inputs.get("cumulative_max_capacity"), periods)
         for period in periods:
             total, limit = cells[period].get("total"), limits.get(period)
@@ -545,11 +560,11 @@ def hints(inputs: dict[str, Any], blocks: dict[str, dict], groups: list[str]) ->
     # A minimum binds under the methods that use the limit of its kind, as the engine builds them
     # (engine/model/_cumulative_invest.py: minInvest_entity_total over e_invest_total, minInvest_entity_period
     # over ed_invest_period_set; the method sets in engine/preprocess/params/_derived.py): never under *_no_limit.
-    total_hint("hint_min_total", invested, "invest_min_total", method in INVEST_TOTAL, "invested")
-    period_hints("hint_min_period", "invested", "invest_min_period", method in INVEST_PERIOD, "invested",
+    total_hint("hint_min_total", invested, "invest_min_total", method in m.invest_total, "invested")
+    period_hints("hint_min_period", "invested", "invest_min_period", method in m.invest_period, "invested",
                  zero=False)
-    total_hint("hint_retire_total", divested, "retire_max_total", method in RETIRE_TOTAL, "divested")
-    period_hints("hint_retire_period", "divested", "retire_max_period", method in RETIRE_PERIOD, "divested",
+    total_hint("hint_retire_total", divested, "retire_max_total", method in m.retire_total, "divested")
+    period_hints("hint_retire_period", "divested", "retire_max_period", method in m.retire_period, "divested",
                  zero=False)
 
     value = blocks.get("investment_value")

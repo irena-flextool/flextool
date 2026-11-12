@@ -4,8 +4,8 @@ Small models fill every optional argument of a schema: ``scenario: ""``, ``membe
 ``state: "none"``, ``top_n: 0`` (helpfulness analysis 2026-11-12: ``list_entities(member: "", name_contains: "")``
 listed no units, ``state: ""`` was refused).  :func:`unset_placeholders` leaves such an argument out, so the call
 means what a call without it means.  It runs in ``call_tool`` after the "arguments must be an object" check and
-before the caps are clamped, and :func:`flextool.assistant.session.call_signature` uses it, so two calls that differ
-only in placeholders are one request.
+before the caps are clamped.  The repeated-call guard (:func:`flextool.assistant.session.call_signature`) does not
+use it: it compares the model's own arguments.
 
 Only the arguments listed per tool in :data:`EMPTIABLE` are touched, each by its :class:`Kind`.  Never touched: a
 required argument, a boolean (``results_usable: false`` is a filter), ``group_by`` (an empty list means "combine

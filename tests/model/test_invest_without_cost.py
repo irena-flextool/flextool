@@ -240,3 +240,20 @@ def test_f_non_storage_node_invest_method_gets_no_variable(tmp_path_factory, cap
         pass  # no v_invest_n variable at all
     assert any("Node 'west' has invest_method invest_no_limit but node_type balance" in r.getMessage()
                for r in caplog.records), [r.getMessage() for r in caplog.records]
+
+
+@pytest.mark.parametrize(("method", "invested"), [("invest_period", 0.0), ("invest_total", 100.0)])
+def test_f_invest_max_period_zero_forbids_only_under_a_period_method(tmp_path_factory, method, invested) -> None:
+    """``invest_max_period`` 0 forbids investment only under the *_period methods (``_INVEST_PERIOD_METHODS``):
+    under invest_total the period limit is not used, so ``g`` still invests the 100 MW demand (invest_max_total
+    1000 does not bind); under invest_period nothing is invested and the demand goes unserved."""
+    steps, _work = _solve(tmp_path_factory, f"i218_f_{method}", [
+        ["unit", "g", "invest_method", _s(method)],
+        ["unit", "g", "fixed_cost", _f(60.0)],
+        ["unit", "g", "invest_max_period", _f(0.0)],
+        ["unit", "g", "invest_max_total", _f(1000.0)],
+    ], _unit("g"))
+    step = next(iter(steps.values()))
+    invest = _var(step, "v_invest_p", "g")
+    total = float(invest["value"].sum()) * _unitsize(step, "g") if invest.height else 0.0
+    assert total == pytest.approx(invested, abs=1e-6)

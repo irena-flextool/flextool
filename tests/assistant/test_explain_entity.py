@@ -177,15 +177,26 @@ def test_capacity_rows_and_the_period_and_total_hints(ectx) -> None:
 def test_total_limit_without_a_period_hint_and_an_unused_retire_limit(ectx) -> None:
     out = _call(ectx, entity="coal_plant", scenario="all")
     assert out["run"] == "all_1"
-    assert len(_hints_with(out, "invest_max_total")) == 1
-    assert _hints_with(out, "invest_max_period") == []          # invest_total does not use the period limit
-    assert _hints_with(out, "retire_max_total") == []           # nor the retirement limit (divested 1000 = it)
+    assert len(_hints_with(out, "equal to invest_max_total")) == 1
+    # invest_total uses neither the stored period limit nor the retirement limit (divested 1000 = it): said first.
+    assert out["hints"][:2] == [
+        "invest_max_period is set (a map) but not used: invest_method is invest_total, and only "
+        "invest_period, invest_period_total, invest_retire_period, invest_retire_period_total use it.",
+        "retire_max_total is set (1000) but not used: invest_method is invest_total, and only "
+        "retire_total, retire_period_total, invest_retire_total, invest_retire_period_total use it."]
+    assert _hints_with(out, "equal to invest_max_period") == [] and _hints_with(out, "equal to retire_max") == []
     assert out["capacity"]["rows"][0] == ["p2020", 2000.0, 250.0, 1000.0, 0.0, 1250.0]
 
 
 def test_no_limit_method_gives_no_hint_and_zero_value_none(ectx) -> None:
+    """invest_no_limit uses no limit: the stored invest_max_period (a map) and invest_max_total 700 are said to
+    be unused, and nothing binds."""
     out = _call(ectx, entity="coal_plant", run="test_a_lot_1")
-    assert out["hints"] == []
+    assert out["hints"] == [
+        "invest_max_period is set (a map) but not used: invest_method is invest_no_limit, and only "
+        "invest_period, invest_period_total, invest_retire_period, invest_retire_period_total use it.",
+        "invest_max_total is set (700) but not used: invest_method is invest_no_limit, and only "
+        "invest_total, invest_period_total, invest_retire_total, invest_retire_period_total use it."]
     assert out["investment_value"]["rows"] == [["p2020", 0.0], ["p2025", 0.0], ["p2030", 0.0]]
 
 
@@ -483,12 +494,19 @@ def test_a_minimum_hints_only_under_the_methods_that_use_it() -> None:
     the INVEST_PERIOD ones (engine/model/_cumulative_invest.py): invested 40 + 60 = 100 equals the stored
     invest_min_total, and p1's 40 the stored invest_min_period."""
     stored = {"invest_min_total": 100.0, "invest_min_period": 40.0}
-    assert _entity.hints({"invest_method": "invest_no_limit", **stored}, {"capacity": _CAPACITY}, []) == []
+    unused_total = ("invest_min_total is set (100) but not used: invest_method is {method}, and only "
+                    "invest_total, invest_period_total, invest_retire_total, invest_retire_period_total use it.")
+    unused_period = ("invest_min_period is set (40) but not used: invest_method is {method}, and only "
+                     "invest_period, invest_period_total, invest_retire_period, invest_retire_period_total use it.")
+    assert _entity.hints({"invest_method": "invest_no_limit", **stored}, {"capacity": _CAPACITY}, []) == [
+        unused_period.format(method="invest_no_limit"), unused_total.format(method="invest_no_limit")]
     period_only = _entity.hints({"invest_method": "invest_period", **stored}, {"capacity": _CAPACITY}, [])
-    assert period_only == ["In p1 invested 40 MW, equal to invest_min_period (40): consistent with the minimum "
+    assert period_only == [unused_total.format(method="invest_period"),
+                           "In p1 invested 40 MW, equal to invest_min_period (40): consistent with the minimum "
                            "investment forcing it."]
     total_only = _entity.hints({"invest_method": "invest_total", **stored}, {"capacity": _CAPACITY}, [])
-    assert total_only == ["Invested 100 MW over the periods, equal to invest_min_total (100): consistent with the "
+    assert total_only == [unused_period.format(method="invest_total"),
+                          "Invested 100 MW over the periods, equal to invest_min_total (100): consistent with the "
                           "minimum investment forcing it."]
 
 
@@ -664,3 +682,24 @@ def test_one_scan_of_the_runs_per_call(ectx, monkeypatch) -> None:
     calls.clear()
     _call(ectx, entity="coal_plant", run="multi_year_1")
     assert len(calls) == 1
+
+
+def test_an_unused_limit_is_said_first_under_every_method_that_ignores_it() -> None:
+    """B1 T4: cumulative_limits allows investment but uses no invest_max_*; not_allowed uses none; a cumulative
+    limit is used only by cumulative_limits.  Nothing invested (capacity 100 existing, no investment)."""
+    capacity = {**_CAPACITY, "rows": [["p1", 100.0, None, None, 0.0, 100.0]]}
+    got = _entity.hints({"invest_method": "cumulative_limits", "invest_max_total": 50.0,
+                         "cumulative_max_capacity": 100.0}, {"capacity": capacity}, [])
+    assert got == [
+        "invest_max_total is set (50) but not used: invest_method is cumulative_limits, and only invest_total, "
+        "invest_period_total, invest_retire_total, invest_retire_period_total use it.",
+        "In p1 the total capacity is 100 MW, equal to cumulative_max_capacity (100): consistent with the "
+        "cumulative capacity limit binding."]
+    got = _entity.hints({"invest_method": "not_allowed", "cumulative_max_capacity": 80.0}, {"capacity": capacity},
+                        [])
+    assert got == ["cumulative_max_capacity is set (80) but not used: invest_method is not_allowed, and only "
+                   "cumulative_limits use it.",
+                   "Nothing was invested: invest_method is not_allowed, which allows no investment."]
+    # An unknown method (an older database's spelling) says nothing about the limits.
+    assert _entity.hints({"invest_method": "invest_sometimes", "invest_max_total": 50.0}, {"capacity": capacity},
+                         []) == []
