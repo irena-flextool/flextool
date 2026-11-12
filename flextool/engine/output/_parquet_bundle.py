@@ -438,6 +438,7 @@ del _key, _producer, _note
 # Misc input-side sets propagated to processed outputs
 for _key, _producer, _note in (
     ("years_represented__d",      "out_ancillary.input_sets", "Years represented per period (annualisation factor)."),
+    ("period_share_of_year__d",   "out_ancillary.input_sets", "Share of a year per realised period (annualisation divisor)."),
     ("group_node",                "out_ancillary.input_sets", "Group -> node membership set."),
     ("group_process",             "out_ancillary.input_sets", "Group -> process membership set."),
     ("group_process_node",        "out_ancillary.input_sets", "Group -> (process, node) membership set."),

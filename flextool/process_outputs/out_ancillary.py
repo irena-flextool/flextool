@@ -688,4 +688,18 @@ def input_sets(par, s, v, r, debug):
     years_d.columns.name = 'param'
     results.append((years_d, 'years_represented__d'))
 
+    results.append((period_share_of_year_d(par, s), 'period_share_of_year__d'))
+
     return results
+
+
+def period_share_of_year_d(par, s) -> pd.DataFrame:
+    """Per realised period, the share of a year it covers: the ``complete_period_share_of_year`` the annualised
+    (``_d``) tables were divided by — the realising solve's share (``drop_levels._reduce_share_per_period``),
+    filtered to ``s.d_realized_period``."""
+    share = par.complete_period_share_of_year
+    share = share[share.index.isin(s.d_realized_period)]
+    share_d = share.rename('period_share_of_year').to_frame()
+    share_d.index.name = 'period'
+    share_d.columns.name = 'param'
+    return share_d

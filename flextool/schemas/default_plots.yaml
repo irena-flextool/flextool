@@ -2374,6 +2374,7 @@ rename:
   node_state_dt_e: [node_state__dt, true]
   process_co2_d_eee: [process__d_co2, true]
   years_represented__d: [years_represented__d, false]
+  period_share_of_year__d: [period_share_of_year__d, false]
   process_reserve_upDown_node_dt_eppe: [process__reserve__upDown__node__dt, true]
   process_reserve_average_d_eppe: [process__reserve__upDown__node__d_average, true]
   reserve_prices_dt_ppg: [reserve_price__upDown__group__dt, true]

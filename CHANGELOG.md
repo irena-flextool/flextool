@@ -168,6 +168,10 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   metadata, the `_output_metadata` sheet and `datapackage.json`, and the result tools of the AI assistant gave the
   capacity-margin `penalty_cost` and `capacity_price` columns the unit MW. A single-result write updates only its
   own entries in `units.csv` and `datapackage.json`. See [Units in the files](results.md#units-in-the-files).
+- **New result table `period_share_of_year__d`.** For each realised period, the share of a year it covers (its
+  hours / 8760 in the solve that realises it): the annualised per-period (`…__d`) tables are the period's sums
+  divided by this share (a 48-hour period has 0.005479, so its per-period values are 182.5 times its 48-hour sums).
+  Results saved before this version have no such table. See [Costs](results.md#costs).
 
 #### Capacity margin and reserves
 

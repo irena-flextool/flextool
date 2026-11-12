@@ -259,6 +259,11 @@ YEARS = Transform(
     "a", Semantics.COUNT,
     "Calendar years the period represents (annualisation weight).",
 )
+SHARE_OF_YEAR = Transform(
+    "", Semantics.RATIO,
+    "Share of a year the realised period covers (the divisor that scales the per-period tables to a year).",
+    algebra="complete hours of the period in the realising solve / 8760",
+)
 PRICE_RESERVE = Transform(
     "CUR/MW", Semantics.PRICE,
     "Reserve price (dual of the reserve balance) — CUR per MW of reserve held "
@@ -514,6 +519,7 @@ OUTPUT_TRANSFORM: "dict[str, Transform | dict[str, Transform]]" = {
     "discountFactors_d_p": FACTOR,
     "entity_annuity_d_p": INVEST_COST_DISCOUNTED,
     "years_represented__d": YEARS,
+    "period_share_of_year__d": SHARE_OF_YEAR,
     # Start-ups
     "unit_startup_d_e": COUNT_ANNUAL,
     "connection_startup_d_e": COUNT_ANNUAL,
@@ -694,6 +700,8 @@ OUTPUT_DESCRIPTION: dict[str, str] = {
     "entity_annuity_d_p": "Discounted investment cost per MW of the capacity of each unit, connection and storage "
                           "node decided in a period (written only in a debug run).",
     "years_represented__d": "Number of years each period represents.",
+    "period_share_of_year__d": "Share of a year that each realised period covers; the per-period tables are "
+                               "divided by it to give values per year.",
     # Unit and connection flows
     "unit_outputNode_dt_ee": "Flow from each unit to each of its output nodes in each time step.",
     "unit_outputNode_d_ee": "Flow from each unit to each of its output nodes summed over the period and scaled "
@@ -895,6 +903,7 @@ OUTPUT_DIMS: dict[str, OutputDims] = {
     "discountFactors_d_p": OutputDims(_D, ("param",), kinds=_PARAM_QUANTITY),
     "entity_annuity_d_p": OutputDims(("solve", "period"), ("entity",)),
     "years_represented__d": OutputDims(_D, ("param",), kinds=_PARAM_QUANTITY),
+    "period_share_of_year__d": OutputDims(_D, ("param",), kinds=_PARAM_QUANTITY),
     "unit_outputNode_dt_ee": OutputDims(_DT, ("unit", "node"), "unit_outputNode_d_ee"),
     "unit_outputNode_d_ee": OutputDims(_D, ("unit", "node"), "unit_outputNode_dt_ee"),
     "unit_inputNode_dt_ee": OutputDims(_DT, ("unit", "node"), "unit_inputNode_d_ee"),

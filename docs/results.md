@@ -121,6 +121,8 @@ y-axis is `m3/h` for a water node and `MWh/h` by default. A label without tokens
 - `model` entity `cost_t` parameter — [CUR] (currency, not millions) same categories as above but per timestep: the cost incurred during the step, with the step duration and timestep weight applied but not scaled to a full year (no investment / fixed terms). The CSV / parquet output `costs__dt` has the same values and unit.
 - `model` entity `cost_discounted_solve` parameter — M[CUR] costs for the solve considering discounting and years represented (NPV currency)
 - `model` entity `cost_discounted_total` parameter — M[CUR] same, totalled over all realised periods
+- table `years_represented__d` (not in the results database) — [a] the years each period represents; an annualized per-period value times these years gives the period's total over the horizon
+- table `period_share_of_year__d` (not in the results database) — [per unit] for each realised period, the share of a year it covers (its complete hours / 8760, in the solve that realises it): the annualized per-period (`…__d`) tables are the period's sums divided by this share. A 48-hour period has 0.005479, so its per-period values are 182.5 times its 48-hour sums; a full-year period has 1. Results saved before this version have no such table.
 
 ### Costs of a run of several solves
 
