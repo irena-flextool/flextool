@@ -220,15 +220,23 @@ def _refresh_solver_config(folder: Path, *, verbose: bool = False, warn: bool = 
 
     An edited file (any byte differs, CRLF read as LF) and a copy of the current template are left alone, so in
     the steady state nothing is written.  The template's bytes are copied without its file permissions (a
-    read-only installed template must not give a read-only option file), to ``<solver>.opt.tmp-<pid>`` and then
-    moved onto the file.  A failure keeps the file: logged at INFO, or as a warning when *warn*
-    (``flextool-update``; at every FlexTool window start a locked workspace would warn every time).
+    read-only installed template must not give a read-only option file), to ``<solver>.opt.tmp-<pid>``, given the
+    replaced file's permissions (a file the user made private stays private) and then moved onto the file.  A
+    failure keeps the file: logged at INFO, or as a warning when *warn* (``flextool-update``; at every FlexTool
+    window start a locked workspace would warn every time).
+
+    A symbolic link is never seeded through or replaced, whatever it points to: it is the user's arrangement (an
+    option file shared by a team or kept elsewhere), its target may be outside the workspace or used by others,
+    and replacing the link would cut it off.  Replacing an unedited earlier default changes comments only, so
+    keeping the link costs nothing.
     """
     from flextool._solver_config_source import SOLVER_NAMES, _normalised_sha256, is_unedited_template
 
     say = logging.warning if warn else logging.info
     for solver in SOLVER_NAMES:
         runtime = folder / f"{solver}.opt"
+        if runtime.is_symlink():
+            continue
         try:
             template = Path(package_data_path(f"solver_config/{solver}.opt.template"))
             if not runtime.exists():
@@ -246,6 +254,7 @@ def _refresh_solver_config(folder: Path, *, verbose: bool = False, warn: bool = 
         tmp = folder / f"{solver}.opt.tmp-{os.getpid()}"
         try:
             shutil.copyfile(template, tmp)
+            shutil.copymode(runtime, tmp)
             os.replace(tmp, runtime)
         except OSError as exc:
             try:

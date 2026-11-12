@@ -11,6 +11,8 @@ tests chdir into a throwaway workspace.
 """
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from flextool.update_flextool import ensure_runtime_files
@@ -148,9 +150,13 @@ def test_unedited_earlier_default_is_replaced_at_gui_start(workspace, old_gurobi
 
 def test_crlf_copy_of_an_earlier_default_is_replaced(workspace, old_gurobi_known):
     (workspace / "solver_config").mkdir()
-    (workspace / "solver_config" / "gurobi.opt").write_bytes(_OLD.replace(b"\n", b"\r\n"))
+    path = workspace / "solver_config" / "gurobi.opt"
+    path.write_bytes(_OLD.replace(b"\n", b"\r\n"))
+    path.chmod(0o600)
     _refresh(workspace)
-    assert (workspace / "solver_config" / "gurobi.opt").read_bytes() == _template_bytes("gurobi")
+    assert path.read_bytes() == _template_bytes("gurobi")
+    if sys.platform != "win32":
+        assert path.stat().st_mode & 0o777 == 0o600  # a private file stays private
 
 
 def test_edited_file_is_kept_byte_for_byte(workspace, old_gurobi_known):
@@ -200,6 +206,19 @@ def test_failed_replace_keeps_the_file_and_goes_on(workspace, old_gurobi_known, 
         _refresh(workspace)
     assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
     assert os.path.exists("solver_config/gurobi.opt")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symbolic links need a privilege on Windows")
+def test_symlinked_earlier_default_is_left_alone(workspace, old_gurobi_known, tmp_path_factory):
+    """A linked option file (shared by a team) stays a link, and its target is not touched."""
+    shared = tmp_path_factory.mktemp("shared") / "gurobi.opt"
+    shared.write_bytes(_OLD)
+    (workspace / "solver_config").mkdir()
+    link = workspace / "solver_config" / "gurobi.opt"
+    link.symlink_to(shared)
+    _refresh(workspace)
+    assert link.is_symlink() and link.resolve() == shared.resolve()
+    assert shared.read_bytes() == _OLD
 
 
 def test_seeded_file_is_writable_when_the_template_is_read_only(workspace, monkeypatch, tmp_path_factory):
