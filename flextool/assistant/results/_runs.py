@@ -28,7 +28,8 @@ from typing import Any
 from flextool import run_record
 from flextool.assistant import project
 from flextool.assistant.context import NO_RECORD_STATE, AssistantContext
-from flextool.assistant.errors import ToolError, close_names, message, name_list
+from flextool.assistant.caps import Rendered
+from flextool.assistant.errors import ToolError, close_names, message, name_list, quoted
 
 RESULTS_DIR = "output_parquet"
 COMPARISON_DIR = "output_parquet_comparison"
@@ -488,6 +489,31 @@ def run_notes(found: Run) -> list[str]:
         notes.append(f"This run was made with FlexTool {found.entry['flextool_version']}; this is FlexTool "
                      f"{_flextool_version()}.")
     return notes
+
+
+def run_inputs(ctx: AssistantContext, rr: ResolvedRun, *, not_shown: str, current: str
+               ) -> tuple[Any, Any, str | None]:
+    """``(input database, scenario view, note)``: the input data of the run's scenario in the run's own input
+    source, which a result tool shows beside the run's results.  ``(None, None, why not)`` when the source is not
+    known, no longer has the scenario or cannot be read now (*not_shown* says what is then left out, "its units and
+    connections are not listed"); with a view, the note says when the input changed after the run (*current*
+    names what is then of the current data, "the units and connections are those of the current data")."""
+    run = rr.run
+    scenario = rr.entry.get("db_scenario")
+    if run is None or run.source is None or not scenario:
+        return None, None, f"The input source of this run is not known, so {not_shown}."
+    try:
+        db, _ = project.open_source(ctx, run.source)
+        if scenario not in db.scenarios:
+            return None, None, Rendered(f"The input source no longer has the scenario {quoted(scenario, ctx.redact)} "
+                                        "of this run.")
+        view = db.view(scenario)
+    except ToolError as exc:
+        return None, None, Rendered(f"The input data of this run could not be read: {exc.render(ctx.redact)}")
+    note = None
+    if rr.entry.get("stale_vs_input"):
+        note = f"The input data changed after this run; {current}."
+    return db, view, note
 
 
 def member_notes(ctx: AssistantContext, folders: list[str]) -> dict[str, list[str]]:

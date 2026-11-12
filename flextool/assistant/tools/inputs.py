@@ -105,9 +105,10 @@ def _byname(db: _db.InputDB, source: project.Source, entity_class: str, entity: 
     return byname
 
 
-def _entity_value(value: Any) -> Any:
-    """A value as get_entity lists it: a constant itself, a map of at most :data:`ENTITY_TABLE_ROWS` rows with its
-    table, a longer one as its summary (kind, index names, rows, minimum, mean, maximum)."""
+def entity_value(value: Any) -> Any:
+    """A value as get_entity (and explain_entity) lists it: a constant itself, a map of at most
+    :data:`ENTITY_TABLE_ROWS` rows with its table, a longer one as its summary (kind, index names, rows, minimum,
+    mean, maximum)."""
     if _values.is_indexed(value) and len(_values.rows_of(value)) <= ENTITY_TABLE_ROWS:
         return _values.summarize(value, max_rows=ENTITY_TABLE_ROWS)
     return _values.compact(value)
@@ -142,10 +143,11 @@ def _node_topology(view: _db.ScenarioView) -> NodeTopology:
     return topology
 
 
-def _unit(view: _db.ScenarioView | None, entity_class: str, parameter: str,
-          byname: tuple[str, ...] | None) -> tuple[str | None, str | None]:
-    """``(unit as shown, reason)`` of a parameter; for an entity of a scenario, the units of the nodes it is about
-    (a node's ``unit_of_measure``), shown plain (not as a convention unit) when a node set them."""
+def unit_of(view: _db.ScenarioView | None, entity_class: str, parameter: str,
+            byname: tuple[str, ...] | None) -> tuple[str | None, str | None]:
+    """``(unit as shown, reason)`` of a parameter (the input tools' and explain_entity's); for an entity of a
+    scenario, the units of the nodes it is about (a node's ``unit_of_measure``), shown plain (not as a convention
+    unit) when a node set them."""
     if view is None or byname is None:
         info = parameter_unit_info(entity_class, parameter)
     else:
@@ -239,7 +241,7 @@ def value_record(ctx: AssistantContext, db: _db.InputDB, view: _db.ScenarioView,
         shape, shape_note = _values.shape_of(entity_class, parameter, ", ".join(byname), value)
         record["shape"] = shape
         record["shape_note"] = shape_note
-    unit, unit_reason = _unit(view, entity_class, parameter, byname)
+    unit, unit_reason = unit_of(view, entity_class, parameter, byname)
     record["unit"] = unit
     record["unit_reason"] = unit_reason
     notes += notes_for(entity_class, parameter, value_of=_value_of(view, entity_class, byname))
@@ -288,7 +290,9 @@ def list_entities(ctx: AssistantContext, args: dict) -> Fit:
     return Fit(payload, rows_key="entities", what="entities", hint=LIST_HINT)
 
 
-def _match_names(db: _db.InputDB, name: Any) -> list[_db.EntityItem]:
+def match_names(db: _db.InputDB, name: Any) -> list[_db.EntityItem]:
+    """The entities named *name* (one name, or one per dimension) in every class that has one (get_entity;
+    explain_entity's refusal of a name of another class)."""
     names = [name] if isinstance(name, str) else [str(n) for n in name]
     out: list[_db.EntityItem] = []
     for cls in db.classes:
@@ -305,7 +309,7 @@ def get_entity(ctx: AssistantContext, args: dict) -> Fit:
     source, db, notes = _open(ctx, args)
     scenario = _scenario(ctx, source, db, args)
     view = db.view(scenario)
-    matches = _match_names(db, args["name"])
+    matches = match_names(db, args["name"])
     if not matches:
         name = args["name"]
         names = [name] if isinstance(name, str) else list(name)
@@ -323,9 +327,9 @@ def get_entity(ctx: AssistantContext, args: dict) -> Fit:
             item = view.value(cls, byname, param)
             if item is None:
                 continue
-            unit, _ = _unit(view, cls, param, byname)
+            unit, _ = unit_of(view, cls, param, byname)
             any_convention = any_convention or (bool(unit) and is_convention_unit(unit))
-            parameters.append({"parameter": param, "value": _entity_value(item.parsed()), "unit": unit,
+            parameters.append({"parameter": param, "value": entity_value(item.parsed()), "unit": unit,
                                "from_alternative": item.alternative})
         relationships = []
         if len(e.byname) == 1:
@@ -389,7 +393,7 @@ def get_parameter(ctx: AssistantContext, args: dict) -> Fit | dict:
             rows.append({"entity": _names(e.byname), "stored": False,
                          "value": _values.compact(default) if default is not None else None,
                          "is_default": default is not None})
-    unit, unit_reason = _unit(None, entity_class, parameter, None)
+    unit, unit_reason = unit_of(None, entity_class, parameter, None)
     payload = {
         "source": source.name, "scenario": scenario, "entity_class": entity_class, "parameter": parameter,
         "unit": unit, "unit_reason": unit_reason, "entities": rows, "total": len(rows),
@@ -496,7 +500,7 @@ def _cell(ctx: AssistantContext, db: _db.InputDB, view: _db.ScenarioView, entity
         shape, shape_note = _values.shape_of(entity_class, parameter, ", ".join(byname), value)
         if shape_note:
             notes.append(shape_note)
-    unit, unit_reason = _unit(view, entity_class, parameter, byname)
+    unit, unit_reason = unit_of(view, entity_class, parameter, byname)
     if unit_reason:
         notes.append(unit_reason)
     notes += notes_for(entity_class, parameter, value_of=_value_of(view, entity_class, byname))
@@ -657,7 +661,7 @@ def describe_parameter(ctx: AssistantContext, args: dict) -> Fit | dict:
         cls = schema.classes[entity_class]
         rows = []
         for p in sorted(schema.class_parameters(entity_class), key=lambda p: p.name):
-            unit, _ = _unit(None, entity_class, p.name, None)
+            unit, _ = unit_of(None, entity_class, p.name, None)
             rows.append({"parameter": p.name, "unit": unit, "group": p.group, "description": cap_text(p.description, 160)})
         payload = {"entity_class": entity_class, "description": cls.description,
                    "dimensions": list(cls.dimensions) or [entity_class], "parameters": rows,
@@ -671,7 +675,7 @@ def describe_parameter(ctx: AssistantContext, args: dict) -> Fit | dict:
     allowed = PARAM_ALLOWED_SHAPES.get((entity_class, parameter))
     shapes = (allowed_shapes_in_words(allowed) if allowed is not None
               else ranks_in_words(schema.value_types.get((entity_class, parameter), ())))
-    unit, unit_reason = _unit(None, entity_class, parameter, None)
+    unit, unit_reason = unit_of(None, entity_class, parameter, None)
     payload = {
         "entity_class": entity_class,
         "parameter": parameter,

@@ -12,10 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from flextool.assistant import project
-from flextool.assistant.caps import Rendered
 from flextool.assistant.context import AssistantContext
-from flextool.assistant.errors import ToolError, quoted
 from flextool.assistant.results import _query, _runs
 from flextool.assistant.unit_wording import shown_unit
 from flextool.lean_parquet import to_long
@@ -110,19 +107,11 @@ def _totals(table: _query.Table, long, levels: list[str], max_rows: int) -> dict
 
 def _feeding(ctx: AssistantContext, rr: _runs.ResolvedRun, nodes: list[str]) -> tuple[dict | None, str | None]:
     """``{node: [{entity_class, entity}]}``: the units and connections that have the node as a dimension and are
-    active in the run's scenario of its input source."""
-    run = rr.run
-    scenario = rr.entry.get("db_scenario")
-    if run is None or run.source is None or not scenario:
-        return None, "The input source of this run is not known, so its units and connections are not listed."
-    try:
-        db, _ = project.open_source(ctx, run.source)
-        if scenario not in db.scenarios:
-            return None, Rendered(f"The input source no longer has the scenario {quoted(scenario, ctx.redact)} "
-                                  "of this run.")
-        view = db.view(scenario)
-    except ToolError as exc:
-        return None, Rendered(f"The input data of this run could not be read: {exc.render(ctx.redact)}")
+    active in the run's scenario of its input source (:func:`~flextool.assistant.results._runs.run_inputs`)."""
+    db, view, note = _runs.run_inputs(ctx, rr, not_shown="its units and connections are not listed",
+                                      current="the units and connections are those of the current data")
+    if view is None:
+        return None, note
     out: dict[str, list[dict]] = {}
     for node in nodes:
         found: set[tuple[str, tuple[str, ...]]] = set()
@@ -131,9 +120,6 @@ def _feeding(ctx: AssistantContext, rr: _runs.ResolvedRun, nodes: list[str]) -> 
             if dims and dims[0] in _FEEDING_CLASSES and view.active(e.entity_class, e.byname)[0]:
                 found.add((e.entity_class, tuple(e.byname)))
         out[node] = [{"entity_class": cls, "entity": list(byname)} for cls, byname in sorted(found)]
-    note = None
-    if rr.entry.get("stale_vs_input"):
-        note = "The input data changed after this run; the units and connections are those of the current data."
     return out, note
 
 
