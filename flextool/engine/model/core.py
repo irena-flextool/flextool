@@ -35,7 +35,7 @@ r reserve, ud up/down, c commodity, i price tier.  "× unitsize" converts to MW 
                                        group floor slacks, fraction of the group's scale      [_group_slack]
 
 Equation families, in emit order (module in brackets when not model/core.py):
-  Balance & storage   rp_inter_period_{balance,cyclic,max_state}, maxState_rp_start; nodeBalance_eq;
+  Balance & storage   rp_inter_period_{balance,cyclic,fan_start,max_state}, maxState_rp_start; nodeBalance_eq;
                       nodeBalanceCoarse_eq, stateConstantCoarse_eq (coarse new_stepduration groups);
                       nodeBalancePeriod_eq; node_balance_fix_quantity_eq_lower; node_storage_usage_fix_le;
                       stateConstantWithinBlock_eq, nodeBalanceBlock_eq (bind_intraperiod_blocks)
@@ -1245,11 +1245,18 @@ def _eq_rp_storage_chain(b: _Build) -> None:
     # ─────────────────────────────────────────────────────────────────────────
     # v_state_inter[n,d,b_first(d)] − v_state_inter[n,d′,b_last(d′)] = drift[n,d,b_first(d)]
     #   n ∈ bind_within_period_blended_weights: every rp period d, d′ = d
-    #   n ∈ bind_within_solve_blended_weights: d = the rp period without a predecessor in rp_period_previous,
-    #     d′ = the rp period that is no period's predecessor (the last one)
+    #   n ∈ bind_within_solve_blended_weights: (d,d′) ∈ d_first × d_last, d_first = the rp periods without a
+    #     predecessor in rp_period_previous, d_last = the rp periods that are no period's predecessor
     # Closes the chain: the last boundary state connects back to the first.
     # bind_within_period_blended_weights closes every period on itself,
-    # bind_within_solve_blended_weights closes once per solve.
+    # bind_within_solve_blended_weights closes once per path of the solve:
+    # deterministic, one pair (first period, last period).  In a stochastic
+    # solve the rp periods form a tree (rp_period_previous): a fan after the
+    # trunk period (the shared period before the split) has one d_first and
+    # one d_last per forecast branch, so every branch's last period ends at
+    # the level the trunk period starts from; a fan in the first period has
+    # N roots and N leaves, and the N × N pairs are the loop of each path plus
+    # an equal chain start of all the roots.
     # bind_forward_only_blended_weights has no closure.
     closures = []
     if first is not None and last is not None:
@@ -1279,6 +1286,46 @@ def _eq_rp_storage_chain(b: _Build) -> None:
                          "neg_rp_drift_first": -Where(drift, over)},
             rhs_terms = {},
         )
+
+    # ─── EQ. ─── rp_inter_period_fan_start ───────────────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_inter[n,d,b_first(d)] − drift[n,d,b_first(d)]
+    #   − v_state_inter[n,d″,b_first(d″)] + drift[n,d″,b_first(d″)] = 0
+    #   ∀ n ∈ bind_forward_only_blended_weights, d = the first root (sorted), d″ ∈ the other roots
+    #   roots = the rp periods of period_first_of_solve (the forecast branch periods of a fan in the solve's
+    #     first period; one root without a fan: no rows)
+    # Every forecast of a fan in the solve's first period starts its base-period
+    # chain from the same level: the chain start v_state_inter − drift of the
+    # first base period, which no other row binds in a forward-only chain.  A
+    # fix_start node is included: fix_start pins v_state in the first block,
+    # not the chain start.  The bind_within_solve_blended_weights roots are
+    # already tied by rp_inter_period_cyclic; the base-period levels inside a
+    # tie window need no tie of their own (they follow from the tied net flows,
+    # the tied block starts and this shared chain start).
+    if (drift is not None and first is not None and _has_rows(d.storage_bind_forward_only_blended_weights)
+            and _has_rows(d.nodeState_first_dt)):
+        root_names = sorted(set(str(x) for x in d.nodeState_first_dt["d"].to_list())
+                            & set(str(x) for x in first["d"].to_list()))
+        if len(root_names) >= 2:
+            roots = first.filter(pl.col("d").cast(pl.Utf8).is_in(root_names))
+            ref = roots.filter(pl.col("d").cast(pl.Utf8) == root_names[0])
+            other = (roots.filter(pl.col("d").cast(pl.Utf8) != root_names[0])
+                     .rename({"d": "d_prev", "b": "b_prev"}))
+            over = (d.storage_bind_forward_only_blended_weights.select("n").unique()
+                    .join(ref.select("d", "b"), how="cross")
+                    .join(other.select("d_prev", "b_prev"), how="cross")
+                    .select(*keys).sort(pl.col("d_prev").cast(pl.Utf8)))
+            drift_prev = _rp_weighted_drift(b, nodes, at_prev=True)
+            if over.height > 0 and drift_prev is not None:
+                m.add_cstr(
+                    "rp_inter_period_fan_start",
+                    over      = over,
+                    sense     = "==",
+                    lhs_terms = {"d_fan": Where(v_inter, over) - Where(inter_prev, over),
+                                 "neg_rp_drift": -Where(drift, over),
+                                 "rp_drift_prev": Where(drift_prev, over)},
+                    rhs_terms = {},
+                )
 
     # ─── EQ. ─── rp_inter_period_max_state / maxState_rp_start ───────────────
     # ─────────────────────────────────────────────────────────────────────────
@@ -1321,10 +1368,11 @@ def _eq_rp_storage_chain(b: _Build) -> None:
         )
 
 
-def _rp_weighted_drift(b: _Build, nodes: pl.DataFrame):
+def _rp_weighted_drift(b: _Build, nodes: pl.DataFrame, *, at_prev: bool = False):
     """drift[n,d,b] = Σ_r rp_weight[d,b,r] · (v_state[n,d,last_step[d,r]] − v_state_rp_start[n,d,r]).
 
     Block r of period d starts at (d, t = r) ∈ rp_block_first and ends at last_step[d,r].  Dims (n, d, b);
+    with ``at_prev`` dims (n, d_prev, b_prev), the drift of the other side of a period-to-period row.
     None when no representative block is in use.
     """
     d = b.d
@@ -1350,9 +1398,15 @@ def _rp_weighted_drift(b: _Build, nodes: pl.DataFrame):
     if cohort.height == 0:
         return None
     keys = ("d", "b", "r", "last_step")
+    if at_prev:
+        cohort = cohort.rename({"d": "d_prev", "b": "b_prev"})
+        keys = ("d_prev", "b_prev", "r", "last_step")
+        state_at_last = _var_view(b.v_state, "__rp_last_prev", {"d": "d_prev", "t": "last_step"})
+        start_at_r = _var_view(b.v_state_rp_start, "__at_r_prev", {"d": "d_prev", "t": "r"})
+    else:
+        state_at_last = _var_view(b.v_state, "__rp_last", {"t": "last_step"})
+        start_at_r = _var_view(b.v_state_rp_start, "__at_r", {"t": "r"})
     rp_weight = Param(keys, cohort.select(*keys, "value"))
-    state_at_last = _var_view(b.v_state, "__rp_last", {"t": "last_step"})
-    start_at_r = _var_view(b.v_state_rp_start, "__at_r", {"t": "r"})
     idx = nodes.select("n").unique().join(cohort.select(*keys), how="cross")
     return Sum((Where(state_at_last, idx) - Where(start_at_r, idx)) * rp_weight,
                over=("r", "last_step"))

@@ -169,33 +169,16 @@ def _blended_nodes(provider) -> list[str]:
     return sorted(str(n) for n in sbm.filter(pl.col(col).is_in(_BLENDED_METHODS))["node"].unique().to_list())
 
 
-def _check_rp_solve(*, complete_solve_name: str, rp_periods: list[str], period_order: list[str],
-                    period_branch: list, rolling: bool, provider) -> None:
+def _check_rp_solve(*, complete_solve_name: str, rp_periods: list[str], period_order: list[str], provider) -> None:
     """Raise for a representative-period solve whose rp data would not be defined.
 
-    * Stochastic branch periods: the forecast branch periods are created from the solve's periods and have no
-      timeset of their own, so they would get no representative-period weights, blocks or base-period chain
-      (and how a base-period chain should run through a forecast tree is not defined).
-    * A rolling_window solve with ``*_blended_weights`` nodes: the base-period chain spans the whole period and
-      cannot be cut into roll windows.
-    * A solve that mixes periods with and without representative periods while it has ``*_blended_weights``
-      nodes: the blocks of the other periods would be outside the base-period chain.
+    A solve that mixes periods with and without representative periods while it has ``*_blended_weights`` nodes:
+    the blocks of the other periods would be outside the base-period chain.  The forecast branch periods of a
+    stochastic solve are rp periods with the timeset of the period they branch from.  A rolling_window solve never
+    reaches this check with blended nodes: :func:`_downgrade_blended_for_rolling_rp` has made them
+    bind_forward_only before (so in a rolling solve that downgrade pre-empts this raise).
     """
-    branches = sorted({str(b) for a, b in period_branch if a != b and b in period_order})
-    if branches:
-        raise FlexToolConfigError(
-            f"Solve '{complete_solve_name}' combines representative periods (representative_period_weights on "
-            f"the timeset of {', '.join(rp_periods)}) with stochastic branches ({', '.join(branches)}). "
-            "FlexTool does not support this combination: there is no realistic use for representative periods "
-            "in a stochastic solve, so it has not been built. Use a timeset without "
-            "representative_period_weights for this solve, or remove its stochastic branches.")
     blended = _blended_nodes(provider)
-    if blended and rolling:
-        raise FlexToolConfigError(
-            f"Solve '{complete_solve_name}' is a rolling_window solve on representative periods and node(s) "
-            f"{', '.join(blended)} use a *_blended_weights storage_binding_method. Their base-period storage "
-            "chain spans the whole period and cannot be cut into rolls; use a single_solve for the "
-            "representative periods, or the method without _blended_weights.")
     non_rp = [p for p in period_order if p not in rp_periods]
     if blended and non_rp:
         raise FlexToolConfigError(
@@ -206,6 +189,57 @@ def _check_rp_solve(*, complete_solve_name: str, rp_periods: list[str], period_o
             "representative_period_weights, or use separate solves.")
 
 
+# A rolling_window solve on representative periods: every *_blended_weights method binds forward only (owner
+# decision, item 126): the base-period chain spans the whole period and cannot be cut into rolls, so the storage
+# state is passed directly from roll to roll.  Used by :func:`_downgrade_blended_for_rolling_rp`.
+_RP_ROLLING_DOWNGRADE: dict[str, str] = {
+    "bind_within_solve_blended_weights":  "bind_forward_only",
+    "bind_within_period_blended_weights": "bind_forward_only",
+    "bind_forward_only_blended_weights":  "bind_forward_only",
+}
+
+
+def _downgrade_blended_for_rolling_rp(*, state, complete_solve_name: str, active_timeset_names: list, provider,
+                                      warned: set) -> None:
+    """Map every ``*_blended_weights`` storage_binding_method of a rolling_window solve on representative periods
+    to bind_forward_only (see :data:`_RP_ROLLING_DOWNGRADE`), with one warning per complete solve.
+
+    Rewrites the per-solve ``input/node__storage_binding_method`` frame in place, like
+    :func:`_downgrade_rp_methods_for_non_rp_solve` (which handles a solve without representative periods; this one
+    runs after it and before :func:`_fix_start_end_chains_forward`).  The downgraded nodes chain v_state forward
+    and carry it from roll to roll (roll_continue), like any bind_forward_only node.  Runs before
+    :func:`_check_rp_solve`, so a rolling solve that mixes periods with and without representative periods does not
+    raise for these nodes.  Routed through the module logger: ``state.logger`` is silenced during the cascade.
+    """
+    if state.solve.solve_modes.get(complete_solve_name) != "rolling_window":
+        return
+    if not any(ts in state.timeline.rp_weights for ts in active_timeset_names):
+        return
+    key = "input/node__storage_binding_method"
+    if not provider.has(key):
+        return
+    sbm = provider.get(key)
+    if sbm.height == 0:
+        return
+    col = "storage_binding_method" if "storage_binding_method" in sbm.columns else "method"
+    if col not in sbm.columns:
+        return  # malformed frame; let the downstream loaders surface it
+    hit = sbm.filter(pl.col(col).is_in(list(_RP_ROLLING_DOWNGRADE)))
+    if hit.height == 0:
+        return
+    provider.put(key, sbm.with_columns(
+        pl.col(col).replace_strict(_RP_ROLLING_DOWNGRADE, default=pl.col(col)).alias(col)))
+    if complete_solve_name in warned:
+        return
+    warned.add(complete_solve_name)
+    names = sorted(str(n) for n in hit["node"].unique().to_list())
+    _MODULE_LOGGER.warning(
+        "Solve '%s' is a rolling_window solve on representative periods and node(s) %s use a *_blended_weights "
+        "storage_binding_method; storage_binding_method is not applied in a rolling solve: they bind forward only "
+        "and the storage state is passed directly from roll to roll.",
+        complete_solve_name, ", ".join(names))
+
+
 def _rp_period_previous(jump_list: list, active_time_list: dict, rp_periods: list[str],
                         period_order: list[str]) -> list[tuple[str, str]]:
     """``(period, previous period)`` of the across-solve representative-period chain.
@@ -214,6 +248,12 @@ def _rp_period_previous(jump_list: list, active_time_list: dict, rp_periods: lis
     list (the predecessor the bind_within_solve / bind_forward_only state lag uses), kept when it is another rp
     period.  The solve's first period has none (its jump wraps to the last period: that is the
     bind_within_solve_blended_weights closure, built in the model).
+
+    In a stochastic solve the pairs form a tree (``make_step_jump``): the first forecast branch period of a fan
+    after the trunk period (the shared period before the split) continues from the trunk period, a later branch
+    period from the previous period of the same branch.  The branch periods of a fan in the solve's first period
+    self-cycle in the jump list, so they have no previous period: they are the roots of the tree (as
+    ``period_first_of_solve``).
     """
     prev_of = {(row[0], row[1]): row[4] for row in jump_list}
     out: list[tuple[str, str]] = []
@@ -933,6 +973,7 @@ def native_run_model(state, solver) -> int:
     cached_complete_step_jumps: dict = {}
     _warned_rolling_blocks: set = set()
     _logged_fix_start_end_blocks: set = set()
+    _warned_rolling_rp_blended: set = set()
 
     # Pre-compute per-iter level keys.  Same-key consecutive iters are
     # rolling continuations of one base solve; a key change marks a
@@ -1486,7 +1527,11 @@ def native_run_model(state, solver) -> int:
             provider=sub_solve_provider,
             logger=state.logger,
         )
-        # fix_start_end ignores a cyclic binding method: after the downgrade, on the same frame.
+        # A rolling solve on representative periods: blended nodes bind forward only (item 126), with a warning.
+        _downgrade_blended_for_rolling_rp(state=state, complete_solve_name=complete_solve[solve],
+                                          active_timeset_names=active_timeset_names,
+                                          provider=sub_solve_provider, warned=_warned_rolling_rp_blended)
+        # fix_start_end ignores a cyclic binding method: after the downgrades, on the same frame.
         _fix_start_end_chains_forward(solve=solve, provider=sub_solve_provider, logger=state.logger,
                                       complete_solve_name=complete_solve[solve], logged=_logged_fix_start_end_blocks)
         for ts_name in active_timeset_names:
@@ -1509,20 +1554,17 @@ def native_run_model(state, solver) -> int:
         # without representative periods keep their timeset_weights.  The across-solve blended variants chain
         # the periods in the order of the solve's step jumps (rp_period_previous), like bind_within_solve /
         # bind_forward_only chain v_state.
+        # A forecast branch period has the timeset of the period it branches from (one shared rp mapping for
+        # every branch); a fan's period label has no steps, is not in the period order and gets no rp data.
         _period_order = list(active_time_lists[solve])
-        _timeset_of = {p: ts for p, ts in timesets_used}
+        _timeset_of = dict(solve_writers._with_branch_period_timesets(
+            timesets_used, period__branch_lists.get(solve, [])))
         rp_periods = [p for p in _period_order if _timeset_of.get(p) in state.timeline.rp_weights]
-        # A fan's period labels (no steps, not in the period order) carry the timeset of their branch periods.
-        _labels_rp = sorted(p for p in getattr(fan_label_time_lists.get(solve), "labels", ())
-                            if _timeset_of.get(p) in state.timeline.rp_weights)
-        if rp_periods or _labels_rp:
-            rp_periods = rp_periods + _labels_rp
+        if rp_periods:
             _check_rp_solve(
                 complete_solve_name=complete_solve[solve],
                 rp_periods=rp_periods,
                 period_order=_period_order,
-                period_branch=period__branch_lists.get(solve, []),
-                rolling=state.solve.solve_modes.get(complete_solve[solve]) == "rolling_window",
                 provider=sub_solve_provider,
             )
             per_period_inputs = []

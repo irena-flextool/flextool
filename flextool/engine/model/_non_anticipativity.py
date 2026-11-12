@@ -1,7 +1,7 @@
 """Non-anticipativity: decisions taken before a forecast is revealed are equal in every forecast branch.
 
-Owns the dispatch ties non_anticipativity_storage_use, _storage_state_first, _online_{integer,linear} and
-_reserve, which hold over the tied steps dt_non_anticipativity between the forecast branches of each anchor
+Owns the dispatch ties non_anticipativity_storage_use, _storage_state_first, _rp_block_start,
+_online_{integer,linear} and _reserve, which hold over the tied steps dt_non_anticipativity between the forecast branches of each anchor
 period, and the investment ties non_anticipativity_{invest,divest}_{p,n}, which hold over the window
 pd_non_anticipativity of a recourse-investment solve.  The module declares no variables.
 """
@@ -221,6 +221,7 @@ def add_dispatch_constraints(b: "_Build") -> None:
     # drift stays feasible where balance slack or forecast-specific inflow
     # absorbs it.  v_online and v_reserve need no analogue: their ties pin
     # the variable itself at every tied step.
+    state_first_over = None   # (n, d, b, t) of the rows below: non_anticipativity_rp_block_start leaves them out
     if v_state is not None and stoch_nodes is not None:
         vstate_dt = v_state.frame.select("n", "d", "t").unique()
         tied_steps = tie_dt.select("d", "t").unique()
@@ -244,12 +245,57 @@ def add_dispatch_constraints(b: "_Build") -> None:
                     .join(vstate_dt.rename({"d": "b"}), on=["n", "b", "t"], how="inner")
                     .select("n", "d", "b", "t").unique())
             if over.height > 0:
+                state_first_over = over
                 m.add_cstr(
                     "non_anticipativity_storage_state_first",
                     over      = over,
                     sense     = "==",
                     lhs_terms = {"v_d":  v_state,
                                  "v_b": -_var_view(v_state, "__nab_first", {"d": "b"})},
+                    rhs_terms = {},
+                )
+
+    # ─── EQ. ─── non_anticipativity_rp_block_start ───────────────────────────
+    # ─────────────────────────────────────────────────────────────────────────
+    # v_state_rp_start[n,d,t] − v_state_rp_start[n,b,t] = 0
+    #   ∀ n ∈ nodes of groupStochastic ∩ nodeState_rp, (d,b) ∈ forecast star, (d,t) ∈ tied steps,
+    #     (d,t) and (b,t) ∈ rp_block_first, (n,d,b,t) ∉ the rows of non_anticipativity_storage_state_first
+    # A representative block starts from a free level; inside the tie window it
+    # is a decision taken before the forecast is known, so it is the same in
+    # every forecast (the net-flow tie fixes only the shape of the state within
+    # the block).  A block whose first step already has a
+    # non_anticipativity_storage_state_first row is left out.  The base-period
+    # levels v_state_inter need no tie of their own: inside the window they
+    # follow from the tied net flows, these block starts and the shared chain
+    # start (the trunk period's end level, or rp_inter_period_fan_start).
+    v_rp_start = b.v_state_rp_start
+    if v_rp_start is not None and stoch_nodes is not None and _has_rows(d.nodeState_rp):
+        rp_names = [str(n) for n in d.nodeState_rp["n"].to_list()]
+        rp_nodes = stoch_nodes.filter(pl.col("n").cast(pl.Utf8).is_in(rp_names))
+        start_cells = v_rp_start.frame.select("n", "d", "t").unique()
+        if rp_nodes.height > 0 and start_cells.height > 0:
+            u = [pl.col(c).cast(pl.Utf8) for c in ("n", "d", "t")]
+            cells_u = start_cells.select(u)
+            over = (rp_nodes.select(pl.col("n").cast(pl.Utf8))
+                    .join(star.select(pl.col("d").cast(pl.Utf8), pl.col("b").cast(pl.Utf8)), how="cross")
+                    .join(tie_dt.select(pl.col("d").cast(pl.Utf8), pl.col("t").cast(pl.Utf8)).unique(),
+                          on="d", how="inner")
+                    .join(cells_u, on=["n", "d", "t"], how="inner")
+                    .join(cells_u.rename({"d": "b"}), on=["n", "b", "t"], how="inner"))
+            if state_first_over is not None:
+                over = over.join(state_first_over.select([pl.col(c).cast(pl.Utf8) for c in ("n", "d", "b", "t")]),
+                                 on=["n", "d", "b", "t"], how="anti")
+            schema = start_cells.schema
+            over = (over.select("n", "d", "b", "t").unique()
+                    .with_columns(pl.col("n").cast(schema["n"]), pl.col("d").cast(schema["d"]),
+                                  pl.col("b").cast(schema["d"]), pl.col("t").cast(schema["t"])))
+            if over.height > 0:
+                m.add_cstr(
+                    "non_anticipativity_rp_block_start",
+                    over      = over,
+                    sense     = "==",
+                    lhs_terms = {"v_d":  v_rp_start,
+                                 "v_b": -_var_view(v_rp_start, "__nab_rp", {"d": "b"})},
                     rhs_terms = {},
                 )
 

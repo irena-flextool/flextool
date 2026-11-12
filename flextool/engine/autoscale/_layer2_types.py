@@ -245,6 +245,8 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     "rp_inter_period_balance": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_rp_storage_chain
     "rp_inter_period_cyclic": CstrFamily(QuantityType.ENERGY),
+    # flextool/engine/model/core.py _eq_rp_storage_chain (first-period fan of forward-only blended nodes)
+    "rp_inter_period_fan_start": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_rp_storage_chain
     "rp_inter_period_max_state": CstrFamily(QuantityType.ENERGY),
     # flextool/engine/model/core.py _eq_storage_start_binding
@@ -641,6 +643,7 @@ CONSTRAINT_FAMILIES: dict[str, CstrFamily] = {
     # The row rule on coarse steps (a node whose processes are all coarse) — _coarse_flows.add_row_rule_cstr.
     "non_anticipativity_storage_use_coarse": CstrFamily(None),
     "non_anticipativity_storage_state_first": CstrFamily(None),
+    "non_anticipativity_rp_block_start": CstrFamily(None),
     "non_anticipativity_online_integer": CstrFamily(None),
     "non_anticipativity_online_linear": CstrFamily(None),
     "non_anticipativity_reserve": CstrFamily(None),
