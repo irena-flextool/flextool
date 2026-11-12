@@ -15,21 +15,20 @@ from flextool.engine.solve._subprocess_solve import _gurobi_script, _looks_like_
 def test_gurobi_parameters_are_name_value_arguments(tmp_path: Path) -> None:
     """``gurobi_cl`` takes parameters only as ``Name=value`` arguments before the model file; it rejects
     ``ReadParams=<file>`` ("Unknown parameter: 'ReadParams' (ignored)") and then solves at its defaults."""
-    opt = tmp_path / "solve.opt"
-    opt.write_text("# merged baseline + solver_options\nThreads 0\nMIPGap 0.01\nTimeLimit 3600\n")
+    params = (("Threads", "0"), ("MIPGap", "0.01"), ("TimeLimit", "3600"))
     binary, mps, sol = Path("/opt/gurobi/bin/gurobi_cl"), tmp_path / "solve.mps", tmp_path / "solve.sol"
 
-    argv, stdin = _gurobi_script(binary, mps, sol, opt)
+    argv, stdin = _gurobi_script(binary, mps, sol, params)
 
     assert argv == [str(binary), "Threads=0", "MIPGap=0.01", "TimeLimit=3600", f"ResultFile={sol}", str(mps)]
     assert stdin is None
 
 
 def test_gurobi_without_parameters(tmp_path: Path) -> None:
-    """No merged file (no baseline and no solver_options): only the result file and the model."""
+    """No parameters (no baseline and no solver_options): only the result file and the model."""
     binary, mps, sol = Path("gurobi_cl"), tmp_path / "m.mps", tmp_path / "m.sol"
 
-    argv, _ = _gurobi_script(binary, mps, sol, None)
+    argv, _ = _gurobi_script(binary, mps, sol, ())
 
     assert argv == ["gurobi_cl", f"ResultFile={sol}", str(mps)]
 
@@ -88,7 +87,7 @@ from flextool.engine.solve._solver_dispatch import (  # noqa: E402
     reset_run_warnings,
     resolve_commercial_options,
 )
-from flextool.engine.solve._subprocess_solve import _SCRIPTS, _write_commercial_opt_file  # noqa: E402
+from flextool.engine.solve._subprocess_solve import _SCRIPTS, commercial_params  # noqa: E402
 from flextool.run_options import RunOptions  # noqa: E402
 
 _FLAGS = ["--solver-mip-gap", "0.001", "--solver-time-limit", "1800"]
@@ -103,7 +102,7 @@ def _passed(solver: str, tmp_path: Path, opt_text: str, cfg: SolverConfig, flags
     opt_file = tmp_path / f"{solver}.opt"
     opt_file.write_text(opt_text)
     resolved = resolve_commercial_options(solver, opt_file=opt_file, solver_config=cfg, run_options=_options(flags))
-    merged = _write_commercial_opt_file({o.name: o.value for o in resolved}, tmp_path / "solve.opt")
+    merged = commercial_params({o.name: o.value for o in resolved})
     argv, stdin = _SCRIPTS[solver](Path("bin"), tmp_path / "m.mps", tmp_path / "m.sol", merged)
     return argv[1:-2], stdin
 

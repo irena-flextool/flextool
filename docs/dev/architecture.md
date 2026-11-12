@@ -997,6 +997,17 @@ an on-disk MPS file, trading ~5-10 GB peak RSS for slower per-solve
 build time. The orchestrator emits a one-time warning when it disables
 warm-start because of this flag.
 
+**Solver hand-off.** A subprocess solve gets its merged options as a list of
+`(name, value text)` pairs, never through a file it reads back: a commercial
+script builder (`_subprocess_solve._SCRIPTS`) takes `commercial_params(options)`
+and emits one argument or script line per pair; the `--save-memory` HiGHS
+child (`cmd_solve_mps --options-json`) sets each pair with `setOptionValue`,
+refusing an empty value as HiGHS' option-file reader does. `<solve>.opt` next
+to the MPS is the record only. `tests/engine/test_solver_handoff_golden.py`
+pins argv, scripts and HiGHS' resulting options for a corpus (golden made
+before the hand-off was changed) and compares seeded random option lists with
+the old write-and-read-back chain.
+
 **Memory: polars allocator.** polars links jemalloc statically, and its
 own decay settings in 1.x (`dirty_decay_ms:500,muzzy_decay_ms:-1`) leave
 freed pages resident for good, which roughly doubles peak RSS on large

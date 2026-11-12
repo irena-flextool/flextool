@@ -38,8 +38,7 @@ from flextool.engine.solve._solver_dispatch import (
     solver_workspace,
     warn_solver_precommands,
 )
-from flextool.engine.solve import _subprocess_solve
-from flextool.engine.solve._subprocess_solve import _SCRIPTS, _join_script, _write_commercial_opt_file
+from flextool.engine.solve._subprocess_solve import _SCRIPTS, _join_script, commercial_params
 from flextool.run_options import RunOptions
 
 _NO_FLAGS = RunOptions.from_env({})
@@ -122,6 +121,22 @@ def test_empty_value_is_refused_from_the_database(solver) -> None:
         ("presolve" if solver == "cplex" else "Presolve", "0")]
 
 
+def test_highs_empty_value_is_refused_in_process_as_in_the_save_memory_child() -> None:
+    """Item 240 B4: HiGHS' option-file reader refused ``solution_file=`` (the --save-memory child stopped), while
+    the in-process solve took it; an empty HiGHS value is now refused from every source, before any solve."""
+    for where, kwargs in (("solver_arguments of solve invest", {"solver_arguments_map": {"solution_file": ""}}),
+                          ("flags or environment variables", {"cli_overrides": {"log_file": ""}})):
+        with pytest.raises(FlexToolUserError, match="the value is empty or missing") as err:
+            _resolve_effective_highs_options(
+                highs_opt_path=None, solve_name="invest", **{"solver_arguments_map": None, "cli_overrides": None,
+                                                             **kwargs})
+        assert where in str(err.value)
+    with pytest.raises(FlexToolUserError, match="cfg/highs.opt, line 1"):
+        _resolve_db("highs", {}, opt_text="presolve=\n")
+    # The old templates' solution-file lines are still dropped, not refused.
+    assert _resolve_db("highs", {}, opt_text="solution_file=\nthreads=1\n") == {"threads": "1"}
+
+
 @pytest.mark.parametrize("solver", _COMMERCIAL)
 def test_option_file_line_without_a_value_is_refused_naming_the_line(solver) -> None:
     """G2: a line of one word was skipped without a word; a CPLEX line of several words without its value read as
@@ -193,7 +208,7 @@ def test_legitimate_values_pass(solver: str, tmp_path: Path) -> None:
     values = {"A": "-1", "B": "1e-4", "C": "inf", "D": "-inf", "E": "1e+20", "F.g": "on", "G": True}
     options = _resolve(solver, options=values)
     assert [o.value for o in options] == ["-1", "1e-4", "inf", "-inf", "1e+20", "on", "1"]
-    merged = _write_commercial_opt_file({o.name: o.value for o in options}, tmp_path / "s.opt")
+    merged = commercial_params({o.name: o.value for o in options})
     argv, stdin = _SCRIPTS[solver](Path("bin"), Path("m.mps"), Path("m.sol"), merged)
     fixed = {"gurobi": 3, "cplex": 4, "xpress": 5, "copt": 4}[solver]
     assert len(argv if stdin is None else stdin.splitlines()) == len(values) + fixed
@@ -397,10 +412,11 @@ def test_script_builders_refuse_a_line_break_that_got_through(monkeypatch) -> No
         _join_script("cplex", ["set threads 1\nquit"], ["read m.mps", "optimize", "quit"])
     with pytest.raises(FlexToolUserError, match="backslash"):
         _join_script("xpress", ["setControl THREADS 1\\"], ["readprob m.mps", "lpoptimize", "quit"])
-    monkeypatch.setattr(_subprocess_solve, "_parse_native_opt_file", lambda path: {"Threads": "1\nX=2"})
     for solver in _COMMERCIAL:
-        with pytest.raises(FlexToolUserError, match="line break"):
-            _SCRIPTS[solver](Path("bin"), Path("m.mps"), Path("m.sol"), Path("s.opt"))
+        with pytest.raises(FlexToolUserError, match="not one name and one value"):
+            _SCRIPTS[solver](Path("bin"), Path("m.mps"), Path("m.sol"), (("Threads", "1\nX=2"),))
+        with pytest.raises(FlexToolUserError, match="not one name and one value"):
+            _SCRIPTS[solver](Path("bin"), Path("m.mps"), Path("m.sol"), (("Threads", ""),))
 
 
 @pytest.mark.parametrize("solver, expected", [
@@ -416,7 +432,7 @@ def test_shipped_default_options_give_the_same_script(solver, expected, tmp_path
 
     template = Path(flextool.__file__).parent / "solver_config" / f"{solver}.opt.template"
     options = _resolve(solver, opt_text=template.read_text())
-    merged = _write_commercial_opt_file({o.name: o.value for o in options}, tmp_path / "s.opt")
+    merged = commercial_params({o.name: o.value for o in options})
     argv, stdin = _SCRIPTS[solver](Path("bin"), Path("m.mps"), Path("m.sol"), merged)
     assert (argv if solver == "gurobi" else stdin) == expected
 
@@ -458,7 +474,7 @@ def test_trusted_path_reaches_the_solver_and_own_result_file_is_kept(solver, tmp
         solver_config=SolverConfig(name=solver), run_options=_NO_FLAGS, solve_name="invest",
     )
     assert [o.value for o in resolved] == ["2", str(target)]
-    merged = _write_commercial_opt_file({o.name: o.value for o in resolved}, tmp_path / "solve.opt")
+    merged = commercial_params({o.name: o.value for o in resolved})
     sol = tmp_path / "m.sol"
     argv, stdin = _SCRIPTS[solver](Path("bin"), tmp_path / "m.mps", sol, merged)
     sent = " ".join(argv) + (stdin or "")
@@ -479,7 +495,7 @@ def test_gurobi_result_file_is_flextools_own(layer, tmp_path, caplog, _fresh_run
                 solver_config=SolverConfig(name="gurobi", options=options), run_options=_NO_FLAGS, solve_name=solve,
             )
     assert [(o.name, o.value) for o in resolved] == [("Threads", "2")]
-    merged = _write_commercial_opt_file({o.name: o.value for o in resolved}, tmp_path / "solve.opt")
+    merged = commercial_params({o.name: o.value for o in resolved})
     argv, _ = _SCRIPTS["gurobi"](Path("bin"), tmp_path / "m.mps", tmp_path / "m.json", merged)
     assert [a for a in argv if a.casefold().replace("_", "").startswith("resultfile=")] == [
         f"ResultFile={tmp_path / 'm.json'}"]
@@ -553,7 +569,7 @@ def test_gurobi_spellings_of_one_parameter_merge_as_one(tmp_path) -> None:
         run_options=RunOptions.from_cli(build_parser().parse_args(["x.sqlite", "--solver-mip-gap", "0.05"]),
                                         environ={}),
     )
-    merged = _write_commercial_opt_file({o.name: o.value for o in flagged}, tmp_path / "solve.opt")
+    merged = commercial_params({o.name: o.value for o in flagged})
     argv, _ = _SCRIPTS["gurobi"](Path("bin"), tmp_path / "m.mps", tmp_path / "m.json", merged)
     gaps = [a for a in argv if a.split("=", 1)[0].replace("_", "").casefold() == "mipgap"]
     assert gaps == ["MIPGap=0.05"], argv

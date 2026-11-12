@@ -90,9 +90,11 @@ Each line says what changes for a model that ran before and what to do; the deta
   quote, `;`, `#` or `=`; names are letters, digits, `_` and `.` (CPLEX: words separated by single spaces). The
   error names the solve and parameter, or the option file and line. Numbers (`-1`, `1e-4`, `inf`), single words
   and paths without spaces still pass; a value with a space, such as a file path, or ending in a backslash is now
-  refused: use a path without spaces. For Gurobi, CPLEX, Xpress and COPT an empty value, and an option-file line
-  with a name but no value, is refused too (before, the line was skipped or read wrongly); for CPLEX this includes
-  a word where the parameter takes a number (`mip tolerances mipgap` without its value).
+  refused: use a path without spaces. An empty value is refused too, for every solver; for Gurobi, CPLEX, Xpress
+  and COPT also an option-file line with a name but no value (before, the line was skipped or read wrongly); for
+  CPLEX this includes a word where the parameter takes a number (`mip tolerances mipgap` without its value). An
+  empty HiGHS value from `solver_arguments` or a flag, which `--save-memory` already refused when the solve
+  started, now stops every run before its first solve.
 - **Solver options in the input database take no file paths or server settings.** Since 4.0, a database's
   `solver_arguments` could make the solver, HiGHS included, write over or read files anywhere on your computer (for
   example HiGHS `solution_file` / `log_file`, Gurobi `LogFile` / `InputFile`, CPLEX `workdir`, Xpress
@@ -606,7 +608,12 @@ Each line says what changes for a model that ran before and what to do; the deta
 - **An empty solver option value is refused** (since 4.0). For CPLEX, an empty value in `solver_arguments`, or an
   option-file line without its value, made the CPLEX console take the next command as the value; Gurobi and Xpress
   dropped the option while the log showed it as passed, and an option-file line of one word was skipped without a
-  word. Such an option now stops the run with a message naming the solve and parameter, or the file and line.
+  word. HiGHS took an empty value in the normal solve but stopped at it with `--save-memory`. Such an option now
+  stops the run with a message naming the solve and parameter, or the file and line.
+- **Solvers get their parameters directly.** The commercial solvers' arguments and command scripts, and the
+  `--save-memory` HiGHS solve, are now built from the merged parameter list itself rather than from the
+  `<solve>.opt` file written and read back; `<solve>.opt` stays next to the model as the record (and HiGHS' child
+  takes `<solve>.options.json`). What each solver receives is unchanged.
 - **A database could point a solver at any file or at another computer** (since 4.0). A `solver_arguments` entry
   such as `log_file`, `write_model_file`, `read_basis_file`, Gurobi `InputFile` / `ComputeServer` / `CloudAccessID`,
   CPLEX `workdir` or Xpress `TUNEROUTPUTPATH` could read or write a file anywhere the user may, or send the model

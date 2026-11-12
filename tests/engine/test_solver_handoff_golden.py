@@ -241,3 +241,115 @@ def test_golden_record_pins_the_known_cases() -> None:
         assert golden[case]["accepted"] is False and golden[case]["exit_code"] == 2, case
     assert golden["highs_text_values"]["accepted"] is True
     assert "threads = 2" in golden["highs_text_values"]["deviations"]
+
+
+# ---------------------------------------------------------------------------
+# Random option lists: the pairs handed over directly = the file written and read back (item 240 B4)
+# ---------------------------------------------------------------------------
+#
+# Before B4 the builders re-read the ``<solve>.opt`` file written from the options, and the ``--save-memory``
+# HiGHS child read its ``key=value`` file with ``readOptions``.  Both readers are still in the code (the user's
+# option files use the first; HiGHS keeps the second), so the old chain is rebuilt here and compared, over seeded
+# random option lists of the accepted grammar, with what the solver is handed now.
+
+_NAMES = {
+    "gurobi": ["Threads", "MIPGap", "Mip_Gap", "mipgap", "Presolve", "LogFile", "Method", "TimeLimit",
+               "NodefileStart", "Heuristics", "OutputFlag"],
+    "cplex": ["threads", "mip tolerances mipgap", "mip.tolerances.mipgap", "timelimit", "workdir", "emphasis mip",
+              "preprocessing presolve", "lpmethod", "cpumask", "read fileencoding"],
+    "xpress": ["THREADS", "XPRS_MAXTIME", "maxtime", "MIPRELSTOP", "OUTPUTLOG", "TUNEROUTPUTPATH", "FEASTOL"],
+    "copt": ["Threads", "RelGap", "TimeLimit", "LogFile", "Presolve", "FeasTol"],
+}
+_HIGHS_NAMES = ["presolve", "solver", "parallel", "threads", "mip_rel_gap", "time_limit", "output_flag",
+                "log_to_console", "random_seed", "primal_feasibility_tolerance", "run_crossover",
+                "mip_heuristic_effort", "log_file", "simplex_strategy", "bogus_option", "Presolve"]
+_WORDS = ["on", "off", "auto", "choose", "ipm", "simplex", "scratch", "x.log", "ON", "True", "yes", "ffff", "UTF-8"]
+_TEXT_NUMBERS = ["inf", "-inf", "1e-4", "1e+20", "+2", ".5", "5e-1", "1.0", "-3.00", "0", "1", "-1", "100.5"]
+_PATHS = ["C:\\runs\\x.log", "/srv/x", "a:b", "sub/y.txt"]
+
+
+def _random_value(rng):
+    kind = rng.randrange(8)
+    if kind == 0:
+        return rng.randint(-5, 200)
+    if kind == 1:
+        return round(rng.uniform(-1, 1) * 10 ** rng.randint(-9, 9), rng.randint(0, 12))
+    if kind == 2:
+        return float(rng.randint(-20, 20))
+    if kind == 3:
+        return rng.choice([True, False])
+    if kind == 4:
+        return rng.choice(_TEXT_NUMBERS)
+    if kind == 5:
+        return rng.choice(_WORDS)
+    if kind == 6:
+        return rng.choice(_PATHS)
+    return rng.choice([None, ""])
+
+
+def _random_options(rng, names: list[str], accepted) -> dict:
+    options = {}
+    for _ in range(rng.randint(0, 8)):
+        name, value = rng.choice(names), _random_value(rng)
+        if accepted(name, value):
+            options[name] = value
+    return options
+
+
+def test_commercial_pairs_equal_the_file_read_back(tmp_path: Path) -> None:
+    import random
+
+    rng = random.Random(240)
+    record = tmp_path / "s.opt"
+    compared = 0
+    for _ in range(2000):
+        solver = rng.choice(sorted(_NAMES))
+
+        def accepted(name, value, solver=solver) -> bool:
+            if value is None:
+                return True
+            try:
+                _solver_dispatch.validate_solver_option(
+                    solver, name, _subprocess_solve._format_native_opt_value(value), "test")
+            except _solver_dispatch.FlexToolUserError:
+                return False
+            return True
+
+        options = _random_options(rng, _NAMES[solver], accepted)
+        build = _subprocess_solve._SCRIPTS[solver]
+        written = _subprocess_solve._write_commercial_opt_file(options, record)
+        old_params = tuple(_subprocess_solve._parse_native_opt_file(written).items()) if written else ()
+        old = build(Path("bin"), Path("m.mps"), Path("m.sol"), old_params)
+        new = build(Path("bin"), Path("m.mps"), Path("m.sol"), _subprocess_solve.commercial_params(options))
+        assert new == old, (solver, options)
+        compared += bool(options)
+    assert compared > 1500
+
+
+def test_highs_pairs_set_one_by_one_equal_the_option_file_read(tmp_path: Path) -> None:
+    import random
+
+    highspy = pytest.importorskip("highspy")
+    from flextool.cli import cmd_solve_mps
+
+    def ok(status, what) -> bool:  # cmd_solve_mps.main's rule: kWarning is taken
+        return status in (highspy.HighsStatus.kOk, highspy.HighsStatus.kWarning)
+
+    default = set(_options_dump(highspy.Highs()))
+
+    def outcome(highs, taken: bool) -> tuple[bool, list[str] | None]:
+        return taken, ([line for line in _options_dump(highs) if line not in default] if taken else None)
+
+    rng = random.Random(2400)
+    opt_path, json_path = tmp_path / "s.opt", tmp_path / "s.options.json"
+    outcomes = set()
+    for _ in range(2000):
+        options = _random_options(rng, _HIGHS_NAMES, lambda name, value: True)
+        _subprocess_solve._write_highs_option_files(_subprocess_solve._highs_option_pairs(options), opt_path,
+                                                    json_path)
+        old_h, new_h = highspy.Highs(), highspy.Highs()
+        old = outcome(old_h, ok(old_h.readOptions(str(opt_path)), "readOptions"))
+        new = outcome(new_h, cmd_solve_mps.apply_option_pairs(new_h, json_path, ok) is None)
+        assert new == old, options
+        outcomes.add(old[0])
+    assert outcomes == {True, False}

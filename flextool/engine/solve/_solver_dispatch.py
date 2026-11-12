@@ -101,9 +101,6 @@ _CPLEX_OPTION_NAME = re.compile(r"[A-Za-z][A-Za-z0-9_.]*(?: [A-Za-z][A-Za-z0-9_.
 _OPTION_VALUE = re.compile(r"[A-Za-z0-9_.+\-/\\:]*")
 _OPTION_NAME_MAX = 64
 _OPTION_VALUE_MAX = 255
-#: The solvers whose options become command-script lines or ``Name=value`` arguments: an empty value there shifts
-#: or drops a parameter (CPLEX reads the next script line as the value; Gurobi and Xpress drop it).
-_COMMERCIAL_SOLVERS = ("gurobi", "cplex", "xpress", "copt")
 #: CPLEX (22.1.2) parameters whose value is text, as :func:`commercial_option_key` forms: ``Cplex().parameters``'s
 #: four string parameters and the Interactive Optimizer's ``logfile``.  Every other CPLEX parameter takes a number.
 _CPLEX_TEXT_PARAMETERS = frozenset({"workdir", "output intsolfileprefix", "read fileencoding", "cpumask", "logfile"})
@@ -156,9 +153,11 @@ def validate_solver_option(solver: str, name: object, value: object, where: str)
 
     *where* names the source in the message: the option file and its line, ``solver_arguments of solve X``,
     ``solver_mip_gap of solve X`` or the flag / environment variable.  Raises :class:`FlexToolUserError`.
-    Booleans and ``None`` pass; other numbers are checked as their text.  For the commercial solvers a text value
-    must not be empty (an option-file line without a value arrives here as an empty value), and a CPLEX value
-    must not be a word where CPLEX expects a number (:func:`_cplex_value_is_a_name_word`).
+    Booleans and ``None`` pass; other numbers are checked as their text.  A text value must not be empty (an
+    option-file line without a value arrives here as an empty value): CPLEX would read the script's next line as
+    the value, Gurobi and Xpress dropped it, and HiGHS' option-file reader (the ``--save-memory`` solve before
+    item 240 B4) refuses it.  A CPLEX value must not be a word where CPLEX expects a number
+    (:func:`_cplex_value_is_a_name_word`).
     """
     if value is None or isinstance(value, bool):
         value_text = ""
@@ -182,7 +181,7 @@ def validate_solver_option(solver: str, name: object, value: object, where: str)
             problem = "the name does not start with a letter"
         else:
             problem = "the name's words are not separated by single spaces, each starting with a letter"
-    elif solver in _COMMERCIAL_SOLVERS and isinstance(value, str) and not value.strip():
+    elif isinstance(value, str) and not value.strip():
         problem = "the value is empty or missing"
     elif len(value_text) > _OPTION_VALUE_MAX:
         problem = f"the value is longer than {_OPTION_VALUE_MAX} characters"

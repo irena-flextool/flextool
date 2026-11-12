@@ -194,11 +194,13 @@ The error names the parameter, its value and the solve. Put a file path or a
 server parameter in the solver's option file, `solver_config/<solver>.opt`
 (or that file in a folder given with `--solver-config-dir`), which keeps them.
 The checks against extra commands (no line breaks, spaces, quotes, `;`, `#`,
-`=` or a backslash at the end) apply to every source. So does, for Gurobi,
-CPLEX, Xpress and COPT, the rule that every parameter has a value: an empty
-value, or an option-file line with a name and no value, is refused (for
-CPLEX also a last word that is not a number where the parameter takes one,
-such as `mip tolerances mipgap` without its value).
+`=` or a backslash at the end) apply to every source. So does the rule that
+every parameter has a value: an empty value is refused for every solver
+(HiGHS included), and for Gurobi, CPLEX, Xpress and COPT also an option-file
+line with a name and no value (for CPLEX also a last word that is not a
+number where the parameter takes one, such as `mip tolerances mipgap`
+without its value). The solution-file lines of old `highs.opt` templates are
+dropped, as before.
 
 ### Per-solver baseline `.opt` files
 
@@ -232,16 +234,17 @@ name there; the file is written in `<work folder>/solve_data/subprocess/`).
 FlexTool reads each solver's baseline once at the start of the run, overlays
 the solve's `solver_mip_gap`, its `solver_arguments` Map and the run's flags
 **parameter by parameter** (one value per parameter, the highest layer wins),
-writes the merged result next to the MPS file (the record of what the solver
-received) and feeds it to the solver via the per-solver mechanism:
+writes the merged result next to the MPS file as `<solve>.opt` (the record of
+what the solver received; nothing reads it back) and hands each parameter to
+the solver via the per-solver mechanism:
 
-| Solver  | How FlexTool feeds the merged file to the CLI                                                  |
+| Solver  | How FlexTool hands the merged parameters to the CLI                                            |
 |---------|------------------------------------------------------------------------------------------------|
-| HiGHS   | `--options=<file>` argv flag on the `flextool.cli.cmd_solve_mps` subprocess                    |
-| Gurobi  | `gurobi_cl <Name>=<value> ... ResultFile=<sol> <mps>`: one `Name=value` argument per line of the file |
-| CPLEX   | Each line emitted as `set <name> <value>` on the interactive optimizer's stdin before `read`   |
-| Xpress  | Each line emitted as `setControl <NAME> <value>` on the optimizer console's stdin before `readprob` |
-| COPT    | Each line emitted as `set <ParamName> <value>` on `copt_cmd`'s stdin before `read`             |
+| HiGHS   | `--options-json=<solve>.options.json` on the `flextool.cli.cmd_solve_mps` subprocess (`--save-memory`), each option set in order; `--options=<solve>.opt` reads the record for a replay by hand |
+| Gurobi  | `gurobi_cl <Name>=<value> ... ResultFile=<sol> <mps>`: one `Name=value` argument per parameter |
+| CPLEX   | Each parameter emitted as `set <name> <value>` on the interactive optimizer's stdin before `read` |
+| Xpress  | Each parameter emitted as `setControl <NAME> <value>` on the optimizer console's stdin before `readprob` |
+| COPT    | Each parameter emitted as `set <ParamName> <value>` on `copt_cmd`'s stdin before `read`        |
 
 **Override precedence** (highest wins), the same for every solver:
 
