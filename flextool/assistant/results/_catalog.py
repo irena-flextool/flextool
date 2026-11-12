@@ -87,11 +87,102 @@ def _search_text(rec: dict) -> str:
                                   rec.get("results_db") or ""]))
 
 
+# ---------------------------------------------------------------------------------------------------------
+# Search: BM25 with the words users ask in, and the main tables of a few common questions first
+#
+# Only here, not in ``textsearch`` (shared with the documentation search and its cached index).  Evidence:
+# helpfulness analysis 2026-11-12 — "fuel" found no table, "invest" only the dual tables, "unserved energy" put
+# start-up energy first and no slack table, "cost" the per-entity cost tables before the system totals.
+
+#: Whole phrases of a question (lower case, at word boundaries) and the terms the tables use for them, added to
+#: the query before it is tokenized.
+SYNONYMS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (("fuel", "fuels"), "commodity commodity_cost"),
+    (("invest", "investment", "investments", "invested", "built", "build", "expanded"), "capacity invested"),
+    (("unserved", "not served", "loss of load", "lost load", "shortage"), "slack_up loss of load"),
+    (("excess load",), "slack_down"),
+)
+
+
+@dataclass(frozen=True)
+class Preferred:
+    """Tables listed first, in this order, when the expanded query has a *trigger* phrase and the question none
+    of the *unless* words (a more specific question: "capacity margin", "unit cost").  Among them, a table whose
+    name has another word of the question comes first ("connection capacity")."""
+
+    triggers: tuple[str, ...]
+    tables: tuple[str, ...]
+    unless: tuple[str, ...] = ()
+
+
+_ENTITY_WORDS = ("unit", "units", "connection", "connections", "node", "nodes", "storage", "entity", "entities",
+                 "process", "processes", "group", "groups")
+PREFERRED: tuple[Preferred, ...] = (
+    Preferred(("unserved", "not served", "loss of load", "lost load", "shortage"),
+              ("node_slack_up_d_e", "node_slack_up_dt_e", "node_d_ep")),
+    Preferred(("fuel", "fuels"), ("costs_dt_p", "annualized_costs_d_p")),
+    Preferred(("capacity",), ("unit_capacity_ed_p", "connection_capacity_ed_p", "node_capacity_ed_p"),
+              unless=("margin", "factor", "factors", "cf", "slack", "share", "dual", "marginal", "shadow")),
+    Preferred(("cost", "costs", "objective"),
+              ("annualized_costs_d_p", "costs_discounted_p_", "costs_discounted_d_p", "costs_dt_p"),
+              unless=_ENTITY_WORDS + ("co2", "price", "prices", "fuel", "fuels")),
+)
+#: Words of a question that name the table a preference puts first ("storage capacity": the node's table).
+_NAME_WORDS = {"storage": "node", "storages": "node"}
+#: The factor on a dual table's score unless the question asks for one: the marginal values of investment rank
+#: above the capacity tables on "invest" otherwise.  "value" is not one of the words ("value of lost load").
+DUAL_FACTOR = 0.5
+DUAL_WORDS = frozenset({"dual", "duals", "marginal", "shadow"})
+
+
+def _has_phrase(text: str, phrase: str) -> bool:
+    import re
+
+    return re.search(rf"(?<![\w]){re.escape(phrase)}(?![\w])", text) is not None
+
+
+def expanded_query(query: str) -> str:
+    """*query* with the terms of its :data:`SYNONYMS` phrases added."""
+    lower = " ".join(query.lower().split())
+    extra = [terms for phrases, terms in SYNONYMS if any(_has_phrase(lower, p) for p in phrases)]
+    return " ".join([query, *extra])
+
+
+def _preferred(query: str, expanded: str, known: set[str]) -> list[str]:
+    """The tables :data:`PREFERRED` puts first for *query*, in order, without repeats."""
+    from flextool.assistant.textsearch import tokens
+
+    lower, wide = " ".join(query.lower().split()), " ".join(expanded.lower().split())
+    words = {_NAME_WORDS.get(t, t) for t in tokens(lower)}
+    out: list[str] = []
+    for pref in PREFERRED:
+        if not any(_has_phrase(wide, t) for t in pref.triggers) or any(_has_phrase(lower, u) for u in pref.unless):
+            continue
+        trigger_words = {w for t in pref.triggers for w in tokens(t)}
+        named = words - trigger_words
+        ranked = sorted(pref.tables, key=lambda stem: (-len(named & set(stem.lower().split("_"))),
+                                                       pref.tables.index(stem)))
+        out += [stem for stem in ranked if stem in known and stem not in out]
+    return out
+
+
 def search(query: str, max_results: int) -> list[dict]:
-    """The records that best match *query*, best first."""
+    """The records that best match *query*, best first: the :data:`PREFERRED` tables of the question, then the
+    BM25 ranking of the query with its :data:`SYNONYMS`, a dual table's score times :data:`DUAL_FACTOR` unless
+    the question asks for duals."""
+    from flextool.assistant.textsearch import tokens
+
     recs = records()
     assert _index is not None
-    return [recs[i] for i, _ in _index.search(query, max_results)]
+    expanded = expanded_query(query)
+    by_stem = {r["stem"]: i for i, r in enumerate(recs)}
+    first = _preferred(query, expanded, set(by_stem))
+    scores = _index.scores(expanded)
+    if not DUAL_WORDS & set(tokens(query)):
+        scores = {i: sc * DUAL_FACTOR if recs[i]["stem"].startswith("dual_") else sc for i, sc in scores.items()}
+    ranked = [i for i, _ in sorted(scores.items(), key=lambda item: (-item[1], item[0]))]
+    order = [by_stem[stem] for stem in first] + [i for i in ranked if recs[i]["stem"] not in first]
+    return [recs[i] for i in order[:max_results]]
 
 
 def declared_measures(stem: str) -> dict[str, Measure] | None:
