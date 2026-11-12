@@ -162,7 +162,8 @@ flextool-run INPUT_DB_URL [OUTPUT_DB_URL] [options]
 `python run_flextool.py` and `python -m flextool.cli.cmd_run_flextool` take the same arguments.
 
 Each run writes two files into its `output_parquet/<subdir>/` folder: `_run_status.json` (running, succeeded,
-failed, ...; each solve's outcome; whether the parquet files there belong to this run) and `_run.log` (the run's
+failed, ...; each solve's outcome; the solver option files used: folder, and a SHA-256 of each; whether the
+parquet files there belong to this run) and `_run.log` (the run's
 console output). Under `flextool-run`, the GUI, the workflow runner and the calibrator the log also holds the
 solver's native output and any crash dump.
 

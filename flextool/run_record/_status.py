@@ -360,6 +360,7 @@ class RunRecorder:
             "argv": list(argv),
             "versions": _versions(),
             "solver": None,
+            "solver_config": None,
             "input": {
                 "db_url": db_url,
                 "db_path": str(db_path.resolve()) if db_path is not None else None,
@@ -558,6 +559,14 @@ class RunRecorder:
             if name is not None and self._status.get("solver") != name:
                 self._status["solver"] = str(name)
                 self._write()
+
+    @_flushing
+    def note_solver_config(self, record: Mapping[str, Any]) -> None:
+        """The solver option files the run read (``SolverOptionFiles.record()``: folder, reason, and a SHA-256
+        of each file)."""
+        with self._lock:
+            self._status["solver_config"] = dict(record)
+            self._write()
 
     @_flushing
     def solve_started(self, name: str, parent: str | None, index: int, log_anchor: str | None) -> None:

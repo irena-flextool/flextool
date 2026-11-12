@@ -5007,6 +5007,9 @@ def run_chain_from_db(
     from flextool.engine.solve._solver_dispatch import reset_run_warnings
     reset_run_warnings()
     solver_option_files = snapshot_solver_option_files(solver_config_source, work_folder, logger)
+    # Item 234: the run record names the folder and a hash of each option file, so two runs can be compared
+    # without their logs.
+    run_record.active().note_solver_config(solver_option_files.record())
     solver_config_dir_resolved = (
         solver_option_files.snapshot_dir or solver_config_source.dir
     )

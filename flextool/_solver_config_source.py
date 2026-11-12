@@ -37,7 +37,7 @@ import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
 
 if TYPE_CHECKING:
     from flextool.run_options import RunOptions
@@ -318,6 +318,40 @@ class SolverOptionFiles:
 
     def origin(self, solver: str) -> str:
         return self.origins.get(solver, f"{solver}.opt")
+
+    def record(self) -> dict[str, Any]:
+        """The run record's ``solver_config`` block: the folder (``None``: FlexTool's defaults) and why, the
+        folders skipped as unedited template copies, the snapshot folder, and per option file its source (the
+        file, or ``"FlexTool default"``), the SHA-256 of the text the run used (CRLF read as LF, the hash of
+        :data:`SHIPPED_TEMPLATE_SHA256`) and whether that is an unedited FlexTool template.  Paths are absolute,
+        so the record means the same read from elsewhere."""
+        files: dict[str, dict[str, Any]] = {}
+        for solver in SOLVER_NAMES:
+            text = self.texts.get(solver)
+            if text is None:
+                continue
+            digest = _normalised_sha256(text.encode("utf-8"))
+            origin = self.origins.get(solver, "")
+            files[f"{solver}.opt"] = {
+                "source": "FlexTool default" if origin.startswith("FlexTool default") else _absolute(origin),
+                "sha256": digest,
+                "default": digest in _template_hashes(solver),
+            }
+        return {
+            "dir": _absolute(self.source.dir) if self.source.dir is not None else None,
+            "reason": self.source.reason,
+            "skipped": [_absolute(p) for p in self.source.skipped],
+            "snapshot_dir": _absolute(self.snapshot_dir) if self.snapshot_dir is not None else None,
+            "files": files,
+        }
+
+
+def _absolute(path: str | os.PathLike) -> str:
+    """*path* made absolute (as a text), or as given if that fails."""
+    try:
+        return str(Path(path).resolve())
+    except (OSError, RuntimeError):
+        return str(path)
 
 
 def read_solver_option_files(source: SolverConfigSource, names: tuple[str, ...] = SOLVER_NAMES) -> SolverOptionFiles:

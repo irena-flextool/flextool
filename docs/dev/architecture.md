@@ -1064,7 +1064,8 @@ Every engine run (`cmd_run_flextool.main`, once its scenario and output folder a
 - **`_run_status.json`** (schema `flextool.run_status`) — written by the **engine**, the only process that knows
   the verdicts: `RunRecorder` (`_status.py`) creates it as `running`, rewrites it atomically as solves start and
   are classified, and finishes it in `main()`'s `finally` (`succeeded` / `failed` / `interrupted`). It records each
-  solve's model status and acceptance, its `reduced` detail levels (`reduce_*_detail_method`), the error, the input, the options and threads, and `outputs.parquet_state`:
+  solve's model status and acceptance, its `reduced` detail levels (`reduce_*_detail_method`), the error, the input, the options and threads, the solver option folder and a hash of each option file
+  (`solver_config`: `SolverOptionFiles.record()`), and `outputs.parquet_state`:
   a failed run keeps the earlier run's parquet, marked `previous_run`. `write_outputs` keeps both files when it
   empties the folder.
 - **`_run.log`** — written by the **pipe owner**, the process that reads the engine's stdout + stderr pipe and so

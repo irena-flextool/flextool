@@ -113,7 +113,9 @@ Input databases move to data version 79. The FlexTool window, the Spine Toolbox 
   longer read as the work folder's copy (the run warns when it differs); when it is `solver_config/` in the
   current folder and holds only unedited FlexTool templates, the run skips it, uses the next folder or the
   defaults, and warns, naming it (not in the FlexTool folder itself, whose `solver_config/` is always used). The
-  GUI and the calibrator pass the workspace's folder to their runs.
+  GUI and the calibrator pass the workspace's folder to their runs. The run record (`_run_status.json`) names the
+  folder and gives a SHA-256 of each file the run used, and whether it is FlexTool's unedited default, so two
+  runs' options can be compared without their logs.
 - **Fixes that change results:** a user constraint without capacity terms got a right-hand side of 0 when another
   constraint had one (since 4.0); the reported fuel, CO2 and cost of a unit with a profile and an input were too
   low; the period node-group indicators and VRE share are now ratios of the period energies; the `summary_solve.csv`
