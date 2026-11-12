@@ -6459,6 +6459,37 @@ def _v79_node_unit_of_measure(db) -> None:
         db.update_parameter_definition(id=pdef["id"], parameter_type_list=types, **fields)
 
 
+def _v79_rp_texts() -> dict[tuple[str, str], str]:
+    """Descriptions written by v79 part 12: representative periods work in stochastic solves; blended methods bind
+    forward only in a rolling solve."""
+    return {
+        ("node", "storage_binding_method"): (
+            "[choice] " + _STORAGE_BINDING_METHOD_DESCRIPTION_V55 + " In a stochastic solve each forecast branch uses the "
+            "representative periods of its period, and the blended_weights methods work per branch. In a "
+            "rolling_window solve on representative periods the blended_weights methods are not applied: those "
+            "nodes bind forward only (bind_forward_only), with a warning."),
+        ("timeset", "representative_period_weights"): (
+            "[-] Representative-period weighting map (rank-2 nested Map: base period start timestep -> representative "
+            "period start timestep -> weight).  Created by the representative-periods preprocess tool; declares how "
+            "much each representative period stands in for each base period.  Its presence enables RP-aware "
+            "storage-binding ('*_blended_weights'); its absence silently downgrades those methods to the non-RP "
+            "behaviour.  Mutually exclusive with 'timeset_weights' on the same timeset. The forecast branches of a "
+            "stochastic solve use the representative periods of their period."),
+    }
+
+
+def _v79_rp_stochastic_descriptions(db) -> None:
+    """Representative periods in stochastic and rolling solves (part of v79): the ``node.storage_binding_method``
+    and ``timeset.representative_period_weights`` descriptions no longer say that representative periods do not
+    work with stochastic branches (:func:`_v79_rp_texts`).  No value is rewritten.  Idempotent."""
+    for (cls, name), text in _v79_rp_texts().items():
+        if not db.get_item("entity_class", name=cls):
+            continue
+        pdef = _pdef_or_none(db, cls, name)
+        if pdef is not None and (pdef["description"] or "") != text:
+            db.update_parameter_definition(id=pdef["id"], description=text)
+
+
 def _migrate_v79_schema_batch(db) -> None:
     """All schema changes of database version 79 (v78 -> v79), in one step.
 
@@ -6483,6 +6514,9 @@ def _migrate_v79_schema_batch(db) -> None:
         (:func:`_v79_invest_without_cost`).
     11. ``node.unit_of_measure`` (``str``, default ``MWh``, group ``basics``): the unit of measure of the node's
         amounts, a label only (:func:`_v79_node_unit_of_measure`).
+    12. Representative periods work in stochastic solves and bind forward only in rolling solves: the
+        ``node.storage_binding_method`` / ``timeset.representative_period_weights`` descriptions
+        (:func:`_v79_rp_stochastic_descriptions`).
 
     No value is rewritten.  Each part is idempotent, so a rerun of the step changes nothing.
     """
@@ -6497,11 +6531,12 @@ def _migrate_v79_schema_batch(db) -> None:
     _v79_startup_input(db)
     _v79_invest_without_cost(db)
     _v79_node_unit_of_measure(db)
+    _v79_rp_stochastic_descriptions(db)
     _commit_step(db, "v79: constraint_online_coeff, ramp_cost, reduce_*_detail_method, time-varying group "
                      "limits, time series combined over a solve's new_stepduration step, capacity margin by "
                      "entity class and share_of_peak, constraint_period_method, discount_rate 0 is 0 %, "
                      "startup_input_method and startup_energy, investment offered without invest_cost, "
-                     "node.unit_of_measure")
+                     "node.unit_of_measure, representative periods in stochastic and rolling solves")
 
 
 def _v79_adder_has_value(value) -> bool:
