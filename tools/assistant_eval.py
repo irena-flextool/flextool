@@ -790,8 +790,9 @@ def unfinished_text(partial: Any) -> str:
 def setting_key(setting: Setting) -> dict[str, Any]:
     """What a cell's requests are made from beyond the folder's identity: the level, the model id sent, the window
     and its source, the caps and result caps, the compaction rhythm, the history policy, the free plan, the route
-    kind and the hashes of the instructions and tools.  A checkpoint of another key starts its cell again."""
-    from flextool.assistant import budget, prompt
+    kind, the hashes of the instructions and tools and the tools' behaviour batch
+    (:data:`flextool.assistant.ASSISTANT_BEHAVIOUR`).  A checkpoint of another key starts its cell again."""
+    from flextool.assistant import ASSISTANT_BEHAVIOUR, budget, prompt
     from flextool.assistant.session import text_hash, tool_specs, tools_hash
 
     b = setting.budget
@@ -805,13 +806,14 @@ def setting_key(setting: Setting) -> dict[str, Any]:
            "history": [history, history_turns], "free_tier": b.free_tier,
            "route": setting.route.kind if setting.route else None,
            "system_hash": text_hash(list(prompt.system_layers("terminal", setting.level))),
-           "tools_hash": tools_hash(tool_specs(setting.level))}
+           "tools_hash": tools_hash(tool_specs(setting.level)), "behaviour": ASSISTANT_BEHAVIOUR}
     return json.loads(json.dumps(key))
 
 
 def partial_problem(partial: Any, identity: Mapping[str, Any], key: Mapping[str, Any]) -> str | None:
     """Why a checkpoint file cannot continue its cell here (``None``: it can): another format (a key missing or
-    unknown: never a default), another model or project, another level setting, other instructions or tools."""
+    unknown: never a default), another model or project, another behaviour of the tools, another level setting,
+    other instructions or tools."""
     if not isinstance(partial, dict) or set(partial) != set(PARTIAL_KEYS) or partial.get("format") != PARTIAL_FORMAT:
         return "a checkpoint of another format"
     current = partial.get("current")
@@ -827,6 +829,9 @@ def partial_problem(partial: Any, identity: Mapping[str, Any], key: Mapping[str,
     if partial["identity"] != {k: identity[k] for k in IDENTITY_KEYS}:
         return "the checkpoint belongs to another model or project"
     saved = partial["setting_key"]
+    if isinstance(saved, dict) and saved.get("behaviour") != key["behaviour"]:
+        # Before the tools' behaviour was recorded (no "behaviour") or under another batch: never continued.
+        return "the assistant's behaviour changed since this checkpoint"
     if not isinstance(saved, dict) or set(saved) != set(key):
         return "a checkpoint of another format"
     if saved.get("system_hash") != key["system_hash"] or saved.get("tools_hash") != key["tools_hash"]:

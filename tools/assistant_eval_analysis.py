@@ -291,8 +291,9 @@ def failed_attempt_codes(records: Iterable[Mapping[str, Any]]) -> dict[tuple[str
 
 
 #: The hashes of a cell's level setting (``setting_key`` of its record) whose mix within one model and level the
-#: summary and grade-ai warn of: cells asked with other instructions or tools are not of one setting.
-SETTING_HASHES = (("tools_hash", "tools"), ("system_hash", "instructions"))
+#: summary and grade-ai warn of: cells asked with other instructions, tools or tool behaviour (``behaviour``,
+#: :data:`flextool.assistant.ASSISTANT_BEHAVIOUR`; a record before it was recorded: unknown) are not of one setting.
+SETTING_HASHES = (("tools_hash", "tools"), ("system_hash", "instructions"), ("behaviour", "tool behaviours"))
 
 
 def mixed_settings(records: Iterable[Mapping[str, Any]]) -> list[str]:

@@ -15,6 +15,7 @@ result may be compacted, a question may be stopped before any request carried it
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Callable, Iterable
 from typing import Any
@@ -117,3 +118,53 @@ def restore_notes(texts: list[str], redact: Callable[[str], str]) -> list[str]:
         if at is not None:
             out[at] = out[at].replace(token, json.dumps(redact(note), ensure_ascii=False), 1)
     return out
+
+
+#: The units a value gets a scaled copy in (:func:`scaled`): each base unit's larger units and their factors.  A
+#: copy is given only from the first larger unit up (CUR only from a million: M CUR is the model's cost unit).
+LADDERS: dict[str, tuple[tuple[float, str], ...]] = {
+    "MWh": ((1e3, "GWh"), (1e6, "TWh")),
+    "MW": ((1e3, "GW"),),
+    "t": ((1e3, "kt"), (1e6, "Mt")),
+    "CUR": ((1e6, "M CUR"),),
+}
+#: The one ending a scaled unit may have after its base unit (a value per year).
+SCALED_SUFFIXES = ("", "/a")
+
+
+def _three_digits(x: float) -> float:
+    return float(f"{x:.3g}")
+
+
+def scaled(value: Any, unit: str | None, *, carrier: bool = False) -> str | None:
+    """A rounded copy of *value* in a larger unit, for reading ("≈1.03 TWh/a" for 1 030 000 MWh/a), or ``None``.
+
+    Only a unit that is a base unit of :data:`LADDERS` exactly, with no ending or "/a" (never a rate such as
+    CUR/MWh, nor M CUR, Mt or MW·s), and only when the value is at least the first larger unit after rounding to
+    three digits (999 960 MWh is ≈1 TWh, not ≈1e+03 GWh).  *carrier*: the unit is the unit_of_measure of a node,
+    which is scaled only when it is power or energy (a node may count in t or another unit of its own)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or not unit:
+        return None
+    unit = shown_unit(unit) or ""
+    base, suffix = next(((b, unit[len(b):]) for b in sorted(LADDERS, key=len, reverse=True)
+                         if unit.startswith(b) and unit[len(b):] in SCALED_SUFFIXES), (None, ""))
+    if base is None or not is_convention_unit(unit) or (carrier and not is_energy_unit(unit)):
+        return None
+    for factor, name in reversed(LADDERS[base]):
+        x = _three_digits(abs(value) / factor)
+        if x >= 1:
+            text = f"{x:.0f}" if x >= 1000 else f"{x:g}"
+            return f"≈{'-' if value < 0 else ''}{text} {name}{suffix}"
+    return None
+
+
+def table_scaling(units: dict[str, str] | None, measures: Iterable[Any],
+                  row_units: Any = None) -> tuple[str, bool] | None:
+    """The one unit a table's values may be scaled in (:func:`scaled`) and whether it is a carrier's, or ``None``:
+    every column shares one unit (*units* ``{"*": unit}``), it does not vary by row, and a node's unit_of_measure
+    (a carrier measure) only when it is power or energy."""
+    if not units or set(units) != {"*"} or row_units:
+        return None
+    unit = units["*"]
+    carrier = any(getattr(m, "carrier", False) for m in measures)
+    return (unit, carrier) if scaled(1e6, unit, carrier=carrier) else None

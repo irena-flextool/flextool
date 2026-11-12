@@ -14,7 +14,7 @@ from typing import Any
 
 from flextool.assistant.context import AssistantContext
 from flextool.assistant.results import _query, _runs
-from flextool.assistant.unit_wording import shown_unit
+from flextool.assistant.unit_wording import scaled, shown_unit, table_scaling
 from flextool.lean_parquet import to_long
 
 COSTS_TABLE = "annualized_costs_d_p"
@@ -105,6 +105,25 @@ def _totals(table: _query.Table, long, levels: list[str], max_rows: int) -> dict
     return {"total": rows, "total_by": by, "totals_shown": f"{len(rows)} of {totals.height}"}
 
 
+def _add_scaled(entries: list[dict], totals: dict[str, Any], unit: str, carrier: bool) -> None:
+    """A rounded copy in a larger unit (``scaled``, :func:`~flextool.assistant.unit_wording.scaled`) beside each
+    entry's and total's value that gets one; a total per period gets ``total_scaled`` by period."""
+    for entry in entries:
+        copy = scaled(entry["value"], unit, carrier=carrier)
+        if copy:
+            entry["scaled"] = copy
+    total = totals.get("total")
+    if isinstance(total, dict):
+        copies = {p: c for p, v in total.items() if (c := scaled(v, unit, carrier=carrier))}
+        if copies:
+            totals["total_scaled"] = copies
+    elif isinstance(total, list):
+        for row in total:
+            copy = scaled(row["value"], unit, carrier=carrier)
+            if copy:
+                row["scaled"] = copy
+
+
 def _feeding(ctx: AssistantContext, rr: _runs.ResolvedRun, nodes: list[str]) -> tuple[dict | None, str | None]:
     """``{node: [{entity_class, entity}]}``: the units and connections that have the node as a dimension and are
     active in the run's scenario of its input source (:func:`~flextool.assistant.results._runs.run_inputs`)."""
@@ -163,6 +182,10 @@ def slack_summary(ctx: AssistantContext, run: str, *, min_value: float, max_rows
         long = long.sort("value", descending=True, maintain_order=True)
         entries = [{"entity": [row[c] for c in entity_levels], "period": row.get("period"),
                     "value": _query._number(row["value"])} for row in long.head(max_rows).iter_rows(named=True)]
+        scaling = table_scaling(_query._units(table, list(table.layout.physical)), table.measures, table.row_units)
+        totals = _totals(table, long, entity_levels, max_rows)
+        if scaling is not None:
+            _add_scaled(entries, totals, *scaling)
         if spec.beside is not None:
             _add_beside(rr, spec.beside, entity_levels, entries)
         record: dict[str, Any] = {
@@ -170,7 +193,7 @@ def slack_summary(ctx: AssistantContext, run: str, *, min_value: float, max_rows
             "table": spec.table,
             "meaning": spec.meaning,
             "unit": shown_unit(table.measures[0].unit) if table.measures else None,
-            **_totals(table, long, entity_levels, max_rows),
+            **totals,
             "entries": entries,
             "entries_shown": f"{len(entries)} of {long.height}",
             "related_inputs": list(spec.related_inputs),

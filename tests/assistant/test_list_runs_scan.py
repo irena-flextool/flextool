@@ -266,10 +266,11 @@ def test_overview(lctx, cost_reads) -> None:
                  ["battery_storage_east_02", 0.0, None, 0.0, 80.0]]}
     assert out["capacity_periods"].startswith("existing: p2020; total, in_construction: p2030; invested, divested: "
                                               "summed over periods")
-    assert out["slacks"] == {"columns": ["slack", "table", "unit", "entries", "largest"], "rows": [
-        ["vq_state_up", "node_slack_up_d_e", "MWh/a", 2, [["west_grid_node"], "p2025", 1520.5]],
+    # largest_scaled (B1 T6): 1 520.5 MWh/a rounded to three digits in GWh/a; 2.25 MWh/a gets no copy.
+    assert out["slacks"] == {"columns": ["slack", "table", "unit", "entries", "largest", "largest_scaled"], "rows": [
+        ["vq_state_up", "node_slack_up_d_e", "MWh/a", 2, [["west_grid_node"], "p2025", 1520.5], "≈1.52 GWh/a"],
         ["vq_reserve", "nodeGroup_slack_reserve_d_eeg", "MWh/a", 1,
-         [["primary_reserve", "up", "all_nodes_group"], "p2025", 2.25]]]}
+         [["primary_reserve", "up", "all_nodes_group"], "p2025", 2.25], None]]}
     assert out["notes"] == ["Each slack's entries: query_result on its table."]
     # basic caps at 32 768 tokens: 5 entities a class
     small = _with_caps(lctx, resolve_budget("small", 32_768, "loaded", local=True).result_caps)

@@ -1219,3 +1219,16 @@ def test_no_stream_asks_for_whole_answers(evaluator, grounding: Path, tmp_path: 
                              say=lambda _t: None, allow_unsolved=True) == 2
     assert "--no-stream is for the OpenAI-compatible providers" in capsys.readouterr().err
     assert not (tmp_path / "other").exists()
+
+
+def test_cells_of_two_tool_behaviours_are_warned_of(analysis) -> None:
+    """B1 EVAL: one m1 small cell asked with behaviour b1, one before it was recorded (unknown); the same tools and
+    instructions.  One warning, for the behaviour."""
+    def record(behaviour: str | None) -> dict:
+        key = {"tools_hash": "t1", "system_hash": "s1", **({"behaviour": behaviour} if behaviour else {})}
+        return {"cell": {"model": "m1", "level_setting": "small"}, "model": {"preset": "ollama"}, "setting_key": key}
+
+    assert analysis.mixed_settings([record("b1"), record(None)]) == [
+        "Warning: the cells of ollama m1 at level small were asked with 2 different tool behaviours (behaviour b1, "
+        "unknown): their grades are not of one setting."]
+    assert analysis.mixed_settings([record("b1"), record("b1")]) == []

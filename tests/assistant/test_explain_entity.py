@@ -246,10 +246,12 @@ def test_retire_and_minimum_hints() -> None:
 
 def test_flows_per_node_never_summed(ectx) -> None:
     out = _call(ectx, entity="coal_plant", run="multi_year_1")
+    # scaled (B1 T6): 1 000 000 MWh/a is ≈1 TWh/a.
     assert out["output_flows"] == {"table": "unit_outputNode_d_ee", "unit": "MWh/a", "columns": ["period", "node",
-                                   "value"], "rows": [["p2020", "west", 1e6], ["p2025", "west", 1e6],
-                                                      ["p2030", "west", 1e6]]}
-    assert out["input_flows"]["rows"][0] == ["p2020", "coal_market", -2.5e6]
+                                   "value", "scaled"], "rows": [["p2020", "west", 1e6, "≈1 TWh/a"],
+                                                                ["p2025", "west", 1e6, "≈1 TWh/a"],
+                                                                ["p2030", "west", 1e6, "≈1 TWh/a"]]}
+    assert out["input_flows"]["rows"][0] == ["p2020", "coal_market", -2.5e6, "≈-2.5 TWh/a"]
     assert out["capacity_factor"]["rows"] == [["p2020", "west", 0.5], ["p2025", "west", 0.25],
                                               ["p2030", "west", 0.75]]
     assert _entity.TEXTS["annualized_note"] in out["notes"]

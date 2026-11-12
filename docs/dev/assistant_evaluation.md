@@ -77,7 +77,10 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
   before the key was recorded counts as `unknown`, which warns only beside a known one): their grades are not of
   one setting. A new or changed tool changes the `tools_hash` of the levels that list it (`explain_entity`,
   2026-11-12: standard and advanced): their kept checkpoints start again from the start, and their cells are asked
-  again for grades of one setting; basic keeps its hash.
+  again for grades of one setting; basic keeps its hash. A change of what the tools return that leaves their
+  descriptions as they are bumps `ASSISTANT_BEHAVIOUR` (`flextool/assistant/__init__.py`, "b1" for the tools
+  batch B1), which the key records as `behaviour`: the warning above covers it too (a record without it is
+  `unknown`), and a checkpoint of another behaviour starts its cell again.
 - **Local models (Ollama).** Make one variant of the model for each context size. For example, write a Modelfile
   with `FROM <model>` (a model you have pulled) and `PARAMETER num_ctx 32768`, then run
   `ollama create <model>-32k -f Modelfile`.
@@ -126,8 +129,8 @@ python tools/assistant_eval.py run --project DIR/"Grounding project ä" --provid
   sent, window, caps and result caps, compaction, history, free plan, route, the hashes of the instructions and
   tools) and when the restored conversation gives the same request byte for byte; else the cell starts again,
   with one line: "G01__medium__r1: started again from the start (the level setting changed: window)" (or "the
-  instructions or tools changed", "a checkpoint of another format", "the checkpoint no longer gives the same
-  request"). A checkpoint written by an older format or commit is never filled with defaults: a field missing or
+  instructions or tools changed", "the assistant's behaviour changed since this checkpoint", "a checkpoint of
+  another format", "the checkpoint no longer gives the same request"). A checkpoint written by an older format or commit is never filled with defaults: a field missing or
   unknown is another format. A resume on another commit is allowed and recorded (the point's `git` and
   `stopped_git`), not prevented: the hashes guarantee only the next request, so such a cell can mix two code
   versions. The record's `resume` says how often and where the cell was continued: `{"count", "points": [{"turn",

@@ -3,3 +3,9 @@
 Nothing is imported here: the connection server must start before heavy packages load, and each tool module
 imports what it needs when it is first used.
 """
+
+#: The batch of the assistant's tool behaviour (what the tools return and how a question goes on), bumped by each
+#: batch that changes it without changing the tool descriptions or the instructions (so without changing their
+#: hashes): the evaluation runner records it with each cell (tools/assistant_eval.py ``setting_key``) and does not
+#: continue a cell checkpointed under another one.  b1: assistant tools batch B1 (2026-11-12).
+ASSISTANT_BEHAVIOUR = "b1"

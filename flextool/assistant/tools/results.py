@@ -17,7 +17,14 @@ from flextool.assistant.errors import ToolError
 from flextool.assistant.registry import Fit, make_tool
 from flextool.assistant.results import _catalog, _query, _runs
 from flextool.assistant.results._query import AGGS, SCENARIO_LEVEL, Query
-from flextool.assistant.unit_wording import UNITS_CONVENTION, add_session_notes, is_energy_unit, shown_unit
+from flextool.assistant.unit_wording import (
+    UNITS_CONVENTION,
+    add_session_notes,
+    is_energy_unit,
+    scaled,
+    shown_unit,
+    table_scaling,
+)
 
 QUERY_HINT = "add filters, group_by or top_n"
 COMPARISON = "comparison"
@@ -51,6 +58,43 @@ def _row_shown(units: Any) -> Any:
 
 def _semantics_payload(semantics: set[str]) -> Any:
     return next(iter(semantics)) if len(semantics) == 1 else sorted(semantics)
+
+
+#: The note of a ``scaled`` column (:func:`_with_scaled`).
+SCALED_NOTE = ("scaled: the values rounded to three digits in a larger unit, for reading; the exact values are in "
+               "the columns before it.")
+#: The aggregations whose values keep the table's unit (a count or a time of maximum does not).
+_SCALED_AGGS = frozenset({"sum", "mean", "min", "max"})
+
+
+def _with_scaled(payload: dict, value_columns: list[str], scaling: tuple[str, bool] | None) -> dict | None:
+    """*payload* with a ``scaled`` column after its rows' values (one copy, or a list of one per value column),
+    or ``None`` when no value gets one.  *scaling*: :func:`~flextool.assistant.unit_wording.table_scaling`."""
+    if scaling is None:
+        return None
+    unit, carrier = scaling
+    columns = list(payload["columns"])
+    at = [columns.index(c) for c in value_columns if c in columns]
+    if not at:
+        return None
+    cells = []
+    for row in payload["rows"]:
+        copies = [scaled(row[i], unit, carrier=carrier) for i in at]
+        cells.append(copies[0] if len(at) == 1 else copies)
+    if not any(any(c) if isinstance(c, list) else c for c in cells):
+        return None
+    out = dict(payload)
+    out["columns"] = [*columns, "scaled"]
+    out["rows"] = [[*row, cell] for row, cell in zip(payload["rows"], cells)]
+    out["notes"] = [*(payload.get("notes") or []), SCALED_NOTE]
+    return out
+
+
+def _scaling_of(result: _query.Result, table: _query.Table) -> tuple[str, bool] | None:
+    """The unit *result*'s values may be scaled in: plain values or a sum, mean, minimum or maximum of them."""
+    if result.mode not in ("values", "aggregate") or (result.mode == "aggregate" and result.agg not in _SCALED_AGGS):
+        return None
+    return table_scaling(result.units, table.measures, table.row_units)
 
 
 def _with_units_note(ctx: AssistantContext, payload: dict) -> dict:
@@ -243,6 +287,10 @@ def query_result(ctx: AssistantContext, args: dict) -> Fit:
     _verified(payload, rr)
     if result.units:
         _with_units_note(ctx, payload)
+    # A scaled copy of each value only when the result fits whole with it (the registry sends *plain* otherwise).
+    with_scaled = _with_scaled(payload, result.value_columns, _scaling_of(result, table))
+    if with_scaled is not None:
+        return Fit(with_scaled, rows_key="rows", hint=QUERY_HINT, plain=payload)
     return Fit(payload, rows_key="rows", hint=QUERY_HINT)
 
 
@@ -561,6 +609,14 @@ def compare_runs(ctx: AssistantContext, args: dict) -> Fit:
     if totals is not None:
         payload = _fit_totals(payload, int(args["max_chars"]), ctx.redact, totals_n)
     fitted = fit_rows(payload, "rows", int(args["max_chars"]), ctx.redact, note_key="shown", note=note)
+    # A scaled copy of each run's value (and difference) only when no row is cut with it.
+    first_table = next((s[1] for s in sources if s[1] is not None), None)
+    scaling = _scaling_of(first_result, first_table) if first_table is not None else None
+    with_scaled = _with_scaled(payload, run_names + diff_names, scaling)
+    if with_scaled is not None:
+        trial = fit_rows(with_scaled, "rows", int(args["max_chars"]), ctx.redact, note_key="shown", note=note)
+        if len(trial["rows"]) == len(payload["rows"]):
+            fitted = trial
     return Fit(fitted, rows_key="rows", hint=QUERY_HINT)
 
 

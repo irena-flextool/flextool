@@ -31,7 +31,7 @@ from flextool.assistant.caps import dumps, sent_payload
 from flextool.assistant.errors import ToolError
 from flextool.assistant.inputs import _notes
 from flextool.assistant.results import _query
-from flextool.assistant.unit_wording import shown_unit
+from flextool.assistant.unit_wording import scaled, shown_unit
 from flextool.lean_parquet import to_long
 
 CLASSES = ("unit", "connection", "node")
@@ -223,7 +223,8 @@ def read_series(folder: Path, block: Block, name: str) -> dict | None:
     if not found:
         return None
     periods, values = _period_rows(table, [p for p, _ in found])
-    rows, units = [], []
+    measure_of = table.measure_of()
+    rows, units, copies = [], [], []
     for i, period in enumerate(periods):
         for physical, labels in found:
             value = values[physical][i]
@@ -232,6 +233,8 @@ def read_series(folder: Path, block: Block, name: str) -> dict | None:
             rows.append([period, labels[block.by], _query._number(value)] if block.by else
                         [period, _query._number(value)])
             units.append(_unit_of(table, physical))
+            # A rounded copy in a larger unit, by the row's own unit (a node's unit_of_measure may differ).
+            copies.append(scaled(_query._number(value), units[-1], carrier=measure_of[physical].carrier))
     if not rows:
         return None
     columns = ["period", "node" if block.by else None, "value"]
@@ -239,6 +242,9 @@ def read_series(folder: Path, block: Block, name: str) -> dict | None:
     unit, rows = _with_units(rows, units)
     if unit is None and any(u for u in units):
         columns.append("unit")
+    if any(copies):
+        columns.append("scaled")
+        rows = [[*row, copy] for row, copy in zip(rows, copies)]
     return {"table": block.table, "unit": unit, "columns": columns, "rows": rows}
 
 

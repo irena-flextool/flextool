@@ -16,6 +16,7 @@ at most the context's); a payload text is ``fit_json``'s, within its limit by co
 """
 from __future__ import annotations
 
+import dataclasses
 import importlib
 import sys
 import traceback
@@ -23,7 +24,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
-from flextool.assistant.caps import CapArg, Rendered, cap_text, clamp_caps, dumps, fit_json, sent_text
+from flextool.assistant.caps import CapArg, Rendered, cap_text, clamp_caps, dumps, fit_json, sent_payload, sent_text
 from flextool.assistant.context import TOOL_LOCK as TOOL_LOCK  # the one tool lock of this process (P2 §5.5)
 from flextool.assistant.context import AssistantContext
 from flextool.assistant.errors import ToolError, quoted, render
@@ -54,6 +55,8 @@ class Fit:
     rows_key: str | None = None
     what: str = "rows"
     hint: str = "add filters, group_by or top_n"
+    #: The payload without its optional parts (a ``scaled`` column), sent instead when *payload* does not fit whole.
+    plain: dict | None = None
 
 
 @dataclass(frozen=True)
@@ -277,6 +280,8 @@ def call_tool(ctx: AssistantContext, name: str, args: dict | None) -> ToolOutcom
         result = tool.handler(ctx, clamped)
         fit = result if isinstance(result, Fit) else Fit(result)
         max_chars = int(clamped.get("max_chars") or ctx.caps.max_chars)
+        if fit.plain is not None and len(dumps(sent_payload(fit.payload, ctx.redact))) > max_chars:
+            fit = dataclasses.replace(fit, payload=fit.plain, plain=None)
         text = fit_json(fit.payload, max_chars, ctx.redact, rows_key=fit.rows_key, what=fit.what, hint=fit.hint)
         return _final(ctx, ToolOutcome(True, fit.payload, None, text, fit.rows_key, fit.what), max_chars)
     except ToolError as exc:

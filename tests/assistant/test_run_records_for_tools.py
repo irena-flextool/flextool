@@ -480,8 +480,10 @@ def test_comparison_files_record_their_runs_and_are_used_while_fresh(tmp_path: P
     assert [(b["folder"], b["run_id"]) for b in out["built_from"]] == [("base_1", ids["base_1"]),
                                                                         ("high_1", ids["high_1"])]
     # high_1 − base_1: p2020 1500 − 1000 = 500, p2025 0.
-    assert [tuple(r) for r in out["rows"]] == [("p2020", "coal_plant", "west", 1000.0, 1500.0, 500.0),
-                                               ("p2025", "coal_plant", "west", 2000.0, 2000.0, 0.0)]
+    # scaled (B1 T6): base, high and difference from 1 000 MWh/a on in GWh/a.
+    assert [tuple(r) for r in out["rows"]] == [
+        ("p2020", "coal_plant", "west", 1000.0, 1500.0, 500.0, ["≈1 GWh/a", "≈1.5 GWh/a", None]),
+        ("p2025", "coal_plant", "west", 2000.0, 2000.0, 0.0, ["≈2 GWh/a", "≈2 GWh/a", None])]
 
 
 def test_comparison_falls_back_to_member_folders(tmp_path: Path, tests_db: Path) -> None:
@@ -527,7 +529,8 @@ def test_comparison_falls_back_to_member_folders(tmp_path: Path, tests_db: Path)
     out = _compare(ctx)
     assert out["source"] == "run_folders" and out["built_from"] is None
     # The values are high_1's new run: 900 − 1000 = −100.
-    assert [tuple(r) for r in out["rows"]][0] == ("p2020", "coal_plant", "west", 1000.0, 900.0, -100.0)
+    assert [tuple(r) for r in out["rows"]][0] == ("p2020", "coal_plant", "west", 1000.0, 900.0, -100.0,
+                                                  ["≈1 GWh/a", None, None])
 
 
 def test_the_comparison_orchestrator_records_its_runs(tmp_path: Path, tests_db: Path) -> None:
@@ -768,8 +771,10 @@ def test_compare_runs_reads_the_comparison_file_once(tmp_path: Path, tests_db: P
     out = _compare(make_context(project))
     assert out["source"] == "comparison_files" and len(calls) == 1
     # The values of test_comparison_files_record_their_runs_and_are_used_while_fresh.
-    assert [tuple(r) for r in out["rows"]] == [("p2020", "coal_plant", "west", 1000.0, 1500.0, 500.0),
-                                               ("p2025", "coal_plant", "west", 2000.0, 2000.0, 0.0)]
+    # scaled (B1 T6): base, high and difference from 1 000 MWh/a on in GWh/a.
+    assert [tuple(r) for r in out["rows"]] == [
+        ("p2020", "coal_plant", "west", 1000.0, 1500.0, 500.0, ["≈1 GWh/a", "≈1.5 GWh/a", None]),
+        ("p2025", "coal_plant", "west", 2000.0, 2000.0, 0.0, ["≈2 GWh/a", "≈2 GWh/a", None])]
 
 
 def test_a_comparison_rewritten_during_the_read_is_not_used(tmp_path: Path, tests_db: Path, monkeypatch) -> None:

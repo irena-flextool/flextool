@@ -358,11 +358,20 @@ def test_mixed_unit_tables(rctx) -> None:
     assert any("not scaled to a full year" in n for n in out["notes"])
 
 
-def test_values_of_a_period_table_and_a_membership_set(rctx) -> None:
+def test_values_of_a_period_table_and_a_membership_set(rctx, results_project: Path) -> None:
     out = _call(rctx, "query_result", run="base_1", table="unit_outputNode_d_ee", filters={"node": ["west"]})
     assert out["applied"]["mode"] == "values"
-    assert sorted(_rows(out)) == [("p2020", "coal_plant", "west", 1000.0), ("p2020", "wind_plant", "west", 300.0),
-                                  ("p2025", "coal_plant", "west", 2000.0), ("p2025", "wind_plant", "west", 0.0)]
+    # B1 T6: a scaled copy for reading (1 000 MWh/a is ≈1 GWh/a; under 1 000 MWh/a none).
+    assert sorted(_rows(out), key=str) == [
+        ("p2020", "coal_plant", "west", 1000.0, "≈1 GWh/a"), ("p2020", "wind_plant", "west", 300.0, None),
+        ("p2025", "coal_plant", "west", 2000.0, "≈2 GWh/a"), ("p2025", "wind_plant", "west", 0.0, None)]
+    assert out["columns"][-1] == "scaled" and any(n.startswith("scaled: ") for n in out["notes"])
+    # Without room for the copies the rows stay whole and the scaled column is left out (a fresh context each
+    # time: the session note on units is then sent in full in both).
+    args = {"run": "base_1", "table": "unit_outputNode_d_ee", "filters": {"node": ["west"]}}
+    whole = len(call_tool(make_context(results_project), "query_result", args).text)
+    small = _call(make_context(results_project), "query_result", **args, max_chars=whole - 60)
+    assert "scaled" not in small["columns"] and len(small["rows"]) == 4 and small["truncated"] is None
     out = _call(rctx, "query_result", run="base_1", table="group_node", filters={"group": ["g1"]})
     assert out["columns"] == ["group", "node"] and _rows(out) == [("g1", "west"), ("g1", "east")]
     assert "set of names" in _refused(rctx, "query_result", run="base_1", table="group_node", group_by=["group"])
@@ -389,16 +398,17 @@ def test_describe_list_and_find(rctx) -> None:
 
 def test_compare_runs_with_a_missing_key(rctx) -> None:
     out = _call(rctx, "compare_runs", table="unit_outputNode_d_ee", runs=["base_1", "high_1"], by_difference=True)
-    assert out["columns"] == ["period", "unit", "node", "base_1", "high_1", "difference_vs_first"]
+    assert out["columns"] == ["period", "unit", "node", "base_1", "high_1", "difference_vs_first", "scaled"]
     # Largest difference first: coal p2025 4000 − 2000, coal p2020 2000 − 1000, wind 0 and 0; gas_plant is only in
-    # base_1 (no difference, last).
+    # base_1 (no difference, last).  scaled: one copy per run and difference (MWh/a from 1 000 on as GWh/a).
+    none = [None, None, None]
     assert _rows(out) == [
-        ("p2025", "coal_plant", "west", 2000.0, 4000.0, 2000.0),
-        ("p2020", "coal_plant", "west", 1000.0, 2000.0, 1000.0),
-        ("p2020", "wind_plant", "west", 300.0, 300.0, 0.0),
-        ("p2025", "wind_plant", "west", 0.0, 0.0, 0.0),
-        ("p2020", "gas_plant", "east", 50.0, None, None),
-        ("p2025", "gas_plant", "east", 60.0, None, None),
+        ("p2025", "coal_plant", "west", 2000.0, 4000.0, 2000.0, ["≈2 GWh/a", "≈4 GWh/a", "≈2 GWh/a"]),
+        ("p2020", "coal_plant", "west", 1000.0, 2000.0, 1000.0, ["≈1 GWh/a", "≈2 GWh/a", "≈1 GWh/a"]),
+        ("p2020", "wind_plant", "west", 300.0, 300.0, 0.0, none),
+        ("p2025", "wind_plant", "west", 0.0, 0.0, 0.0, none),
+        ("p2020", "gas_plant", "east", 50.0, None, None, none),
+        ("p2025", "gas_plant", "east", 60.0, None, None, none),
     ]
     assert out["missing"] == {"high_1": "2 keys without a value"} and out["source"] == "run_folders"
     # A time table: each series' mean per period (power: the mean, not a sum): coal p2025 (80+100+120)/3 = 100
@@ -446,7 +456,7 @@ def test_budget_and_a_large_table_aggregated_without_expanding(tmp_path: Path, t
     monkeypatch.setattr(pl.DataFrame, "unpivot", counting)
     out = _call(ctx, "query_result", run="big_1", table="unit_outputNode_dt_ee", group_by=["period", "node"],
                 agg="mean")
-    assert _rows(out) == [("p2020", "west", 89700.0), ("p2020", "east", 90000.0)]
+    assert _rows(out) == [("p2020", "west", 89700.0, "≈89.7 GW"), ("p2020", "east", 90000.0, "≈90 GW")]
     assert unpivoted and max(unpivoted) <= 2
 
 

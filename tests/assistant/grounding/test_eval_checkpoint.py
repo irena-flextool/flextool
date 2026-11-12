@@ -285,7 +285,7 @@ def _stopped_at_two(evaluator, grounding, out: Path, runs: Runs) -> None:
     assert evaluator.partial_path(out, "G01__medium__r1").is_file()
 
 
-@pytest.mark.parametrize("change", ["window", "instructions", "format", "missing", "tampered"])
+@pytest.mark.parametrize("change", ["window", "instructions", "format", "missing", "tampered", "behaviour"])
 def test_a_checkpoint_that_no_longer_fits_starts_the_cell_again(evaluator, grounding, tmp_path, monkeypatch,
                                                                 change):
     """A changed window (another setting), changed instructions, a checkpoint of another format, one with a field
@@ -300,7 +300,8 @@ def test_a_checkpoint_that_no_longer_fits_starts_the_cell_again(evaluator, groun
     partial = json.loads(path.read_text(encoding="utf-8"))
     why = {"window": "the level setting changed: window", "instructions": "the instructions or tools changed",
            "format": "a checkpoint of another format", "missing": "a checkpoint of another format",
-           "tampered": "the checkpoint no longer gives the same request"}[change]
+           "tampered": "the checkpoint no longer gives the same request",
+           "behaviour": "the assistant's behaviour changed since this checkpoint"}[change]
     if change == "window":
         runs.window = 200_000
     elif change == "instructions":
@@ -310,6 +311,8 @@ def test_a_checkpoint_that_no_longer_fits_starts_the_cell_again(evaluator, groun
         partial["format"] = 0
     elif change == "missing":
         del partial["current"]["notices"]
+    elif change == "behaviour":
+        del partial["setting_key"]["behaviour"]         # a checkpoint written before ASSISTANT_BEHAVIOUR
     else:
         partial["session"]["conversation"]["messages"][0]["text"] += " (changed)"
     evaluator.write_json(path, partial)
