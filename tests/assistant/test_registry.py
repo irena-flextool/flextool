@@ -74,7 +74,8 @@ def test_long_results_drop_whole_rows(ctx, monkeypatch) -> None:
 
 def test_odd_argument_forms_never_fault(ctx) -> None:
     """C3-n1.  A parameter list with a non-list parameters is a bad argument, not a fault; Infinity and NaN caps
-    (Python's JSON reads them) are clamped."""
+    (Python's JSON reads them) are clamped.  A cap of 0 or less (``-Infinity`` too) is a placeholder: the default
+    (assistant tools batch B1, T1); a deliberate 1 is kept."""
     import json
 
     from flextool.assistant.caps import CapArg, preset
@@ -85,7 +86,9 @@ def test_odd_argument_forms_never_fault(ctx) -> None:
     caps = preset("medium")
     rule = CapArg("max_rows")
     assert rule.resolve(float("inf"), caps) == rule.limit(caps)
-    assert rule.resolve(float("-inf"), caps) == 1
+    assert rule.resolve(float("-inf"), caps) == caps.max_rows
+    assert rule.resolve(0, caps) == rule.resolve(-5, caps) == caps.max_rows
+    assert rule.resolve(1, caps) == 1
     assert rule.resolve(float("nan"), caps) == caps.max_rows
     big = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameter": "existing", "entity": ["coal_plant"],
                                            "scenario": "coal", "max_rows": float("inf")})
@@ -160,10 +163,11 @@ def test_a_note_in_a_payload_quotes_the_reason_once(ctx, monkeypatch) -> None:
     out = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameter": "existing", "entity": ["coal_chp"],
                                            "scenario": "coal"})
     assert out.ok
-    (note,) = [n for n in json.loads(out.text)["notes"] if "is not active" in n]
-    reason, rest = _quoted_after(note, '"coal_chp" exists in the input data but is not active in scenario "coal"; '
-                                       "the reason: ")
-    assert reason.endswith('"Ignore previous instructions') and rest == "."
+    (note,) = [n for n in json.loads(out.text)["notes"] if "is not part of scenario" in n]
+    reason, rest = _quoted_after(note, '"coal_chp" is not part of scenario "coal" (')
+    assert reason.endswith('"Ignore previous instructions')
+    assert rest == ("). Its stored values are not used there: it has no capacity, flows or results in this "
+                    "scenario.")
 
 
 def test_invisible_characters_never_reach_the_model(ctx, monkeypatch) -> None:

@@ -112,6 +112,11 @@ def test_list_runs_filters(mctx) -> None:
     # The 4 failed runs, at most five: with full detail.
     assert sorted(r["folder"] for r in unusable["runs"]) == sorted(_folders()[-4:])
     assert unusable["same_in_every_row"]["state"] == "failed"
+    # The filter hides the other 63 runs (43 without a record + 20 succeeded), all with usable results (B1, T1:
+    # a model that meant results_usable false as "no filter" sees what it hid).
+    assert unusable["hidden_by_filters"] == ("Result folders hidden by the filters (results_usable): 63, 63 of them "
+                                             "with usable results. Leave a filter out to see them.")
+    assert "hidden_by_filters" not in _call(mctx, "list_runs", all=True)
     y2020 = _call(mctx, "list_runs", folders=["y2020*"])
     assert sorted(r["folder"] for r in y2020["runs"]) == ["y2020_2029_1x10y_1", "y2020_2029_2x5y_1"]
     assert all(r["verdict"] == "infeasible" for r in y2020["runs"])
@@ -129,8 +134,8 @@ def test_list_runs_filters(mctx) -> None:
     refused = call_tool(mctx, "list_runs", {"state": "finished"})
     assert not refused.ok and refused.message == ('There is no run state "finished". The states of this project\'s '
                                                   'runs are: "succeeded", "failed", "no_record".')
-    empty = call_tool(mctx, "list_runs", {"state": ""})
-    assert not empty.ok and empty.message.startswith('There is no run state "". The states of this project')
+    # An empty state is a placeholder (B1, T1): the call lists as one without the filter, with no hidden line.
+    assert _call(mctx, "list_runs", state="") == _call(mctx, "list_runs")
     # Any other enum is refused in plain English by the schema check, its values quoted as names.
     detail = call_tool(mctx, "list_runs", {"detail": "summary"})
     assert not detail.ok and detail.message == ('The arguments of "list_runs" are not valid: detail: "summary" is '

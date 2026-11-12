@@ -15,6 +15,7 @@ from flextool.assistant.errors import (
     close_names,
     closest_names,
     did_you_mean,
+    inactive_consequence,
     name_list,
     render,
     similar_text,
@@ -76,6 +77,15 @@ def _description(text: str | None) -> str | None:
 def _entity_text(byname: tuple[str, ...]) -> NameList:
     """An entity's names for a message: each quoted (``"coal", "heat"``)."""
     return NameList(tuple(byname), form="join")
+
+
+def inactive_note(ctx: AssistantContext, entity_class: str, entity: Any, scenario: str, reason: str | None, *,
+                  consequence: str | None = None) -> str:
+    """The note that an entity is not part of the scenario and its stored values are not used there
+    (``inactive_entity``); *consequence* overrides what that means for its class (:func:`inactive_consequence`)."""
+    return render("inactive_entity", {"entity": entity, "scenario": scenario, "reason": reason or "inactive",
+                                      "consequence": inactive_consequence(entity_class) if consequence is None
+                                      else consequence}, ctx.redact)
 
 
 def _find(db: _db.InputDB, entity_class: str, names: list[str]) -> tuple[str, ...] | None:
@@ -194,18 +204,24 @@ def _check_parameter(db: _db.InputDB, entity_class: str, parameter: str) -> None
 def value_record(ctx: AssistantContext, db: _db.InputDB, view: _db.ScenarioView, entity_class: str,
                  byname: tuple[str, ...], parameter: str, *, max_rows: int,
                  time_range: tuple[str, str] | None = None) -> dict:
-    """The value record of one (entity, parameter) in the scenario (P0 §4.3)."""
+    """The value record of one (entity, parameter) in the scenario (P0 §4.3).  For an entity that is not part of
+    the scenario: ``used_in_scenario: false``, the note on it first, a stored value as stored (not used), and no
+    default shown as if it applied."""
     record: dict[str, Any] = {"entity": _names(byname), "parameter": parameter, "scenario": view.scenario}
     notes: list[str] = []
     active, reason = view.active(entity_class, byname)
     if not active:
+        record["used_in_scenario"] = False
         record["active"] = False
-        notes.append(render("inactive_entity", {"entity": _entity_text(byname), "scenario": view.scenario,
-                                                "reason": reason}, ctx.redact))
+        notes.append(inactive_note(ctx, entity_class, _entity_text(byname), view.scenario, reason))
     winner = view.value(entity_class, byname, parameter)
     relation = _version_relation(db)
     value: Any = None
-    if winner is not None:
+    if winner is None and not active:
+        record.update(stored=False, is_default=False, value=None)
+        record["provenance"] = {"from_alternative": None, "alternatives_highest_first": list(reversed(view.ranked)),
+                                "overridden": []}
+    elif winner is not None:
         value = winner.parsed()
         record.update(stored=True, is_default=False, **_values.summarize(value, max_rows=max_rows,
                                                                           time_range=time_range))
@@ -275,6 +291,13 @@ def list_entities(ctx: AssistantContext, args: dict) -> Fit:
         else:
             active_names.append({"entity": _names(e.byname), "description": _description(e.description)})
     limit = args["max_results"]
+    lead: list[str] = []
+    if not active_names and not inactive and (contains or member is not None):
+        given = [key for key in ("name_contains", "member") if args.get(key) is not None]
+        lead.append(render("no_entity_matches", {"entity_class": entity_class, "what": ", ".join(given),
+                                                 "n": len(db.entities.get(entity_class, {}))}, ctx.redact))
+    elif view is not None and not active_names and inactive:
+        lead.append(render("none_active", {"entity_class": entity_class, "scenario": scenario}, ctx.redact))
     payload = {
         "source": source.name,
         "scenario": scenario,
@@ -285,7 +308,7 @@ def list_entities(ctx: AssistantContext, args: dict) -> Fit:
         "inactive_in_scenario": inactive[:limit] if view is not None else None,
         "truncated": (f"showing {limit} of {len(active_names)} entities — {LIST_HINT}"
                       if len(active_names) > limit else None),
-        "notes": notes,
+        "notes": lead + notes,
     }
     return Fit(payload, rows_key="entities", what="entities", hint=LIST_HINT)
 
@@ -336,17 +359,23 @@ def get_entity(ctx: AssistantContext, args: dict) -> Fit:
             for rel in sorted(db.relationships_of(e.entity_class, e.name), key=lambda r: (r.entity_class, r.byname)):
                 relationships.append({"entity_class": rel.entity_class, "entity": _names(rel.byname),
                                       "active": view.active(rel.entity_class, rel.byname)[0]})
-        match: dict[str, Any] = {
+        # An entity that is not part of the scenario: the note first, its values as stored but not used (an
+        # inactive coal_chp with "parameters: existing 1200 MW" read as a unit of the scenario, 2026-11-12).
+        values_key = "parameters" if active else "stored_not_used"
+        match: dict[str, Any] = {}
+        if not active:
+            match["note"] = inactive_note(ctx, cls, _entity_text(byname), scenario, reason)
+        match.update({
             "entity_class": e.entity_class,
             "entity": _names(e.byname),
             "description": _description(e.description),
             "active": active,
             "inactive_reason": reason,
-            "parameters": parameters[:max_rows],
-            "parameters_total": len(parameters),
+            values_key: parameters[:max_rows],
+            f"{values_key}_total": len(parameters),
             "relationships": relationships[:max_rows],
-        }
-        cut = [k for k, rows in (("parameters", parameters), ("relationships", relationships)) if len(rows) > max_rows]
+        })
+        cut = [k for k, rows in ((values_key, parameters), ("relationships", relationships)) if len(rows) > max_rows]
         if cut:
             match["truncated"] = (f"showing at most {max_rows} {' and '.join(cut)} — use get_parameter for one "
                                   "parameter, or list_entities with member for the relationships")
@@ -375,7 +404,8 @@ def get_parameter(ctx: AssistantContext, args: dict) -> Fit | dict:
         record = value_record(ctx, db, view, entity_class, byname, parameter, max_rows=max_rows,
                               time_range=time_range)
         record["source"] = source.name
-        record["notes"] = notes + record["notes"]
+        lead = record["notes"][:1] if record.get("used_in_scenario") is False else []   # the inactive note first
+        record["notes"] = lead + notes + record["notes"][len(lead):]
         return record
     rows = []
     inactive = 0
@@ -476,13 +506,18 @@ def _cell_value(value: Any, row_limit: int, time_range: tuple[str, str] | None) 
 
 
 def _cell(ctx: AssistantContext, db: _db.InputDB, view: _db.ScenarioView, entity_class: str,
-          byname: tuple[str, ...], parameter: str, row_limit: int, time_range: tuple[str, str] | None) -> dict:
-    """One (entity, parameter) cell: value, shape, alternative, default, unit and notes (as value_record)."""
+          byname: tuple[str, ...], parameter: str, row_limit: int, time_range: tuple[str, str] | None,
+          inactive: str | None = None) -> dict:
+    """One (entity, parameter) cell: value, shape, alternative, default, unit and notes (as value_record).
+    *inactive*: the note of an entity that is not part of the scenario, the cell's first note; such a cell shows
+    a stored value as stored and no default as if it applied."""
     winner = view.value(entity_class, byname, parameter)
-    notes: list[str] = []
+    notes: list[str] = [inactive] if inactive is not None else []
     value: Any = None
     alternative = None
-    if winner is not None:
+    if winner is None and inactive is not None:
+        is_default = False
+    elif winner is not None:
         value, alternative, is_default = winner.parsed(), winner.alternative, False
     elif _version_relation(db) is not None:
         is_default = None
@@ -548,6 +583,7 @@ def _parameter_table(ctx: AssistantContext, args: dict) -> Fit:
     entities: list[tuple[str, ...]] = []
     unknown_entities: list[dict] = []
     inactive: list[list[str]] = []
+    inactive_notes: dict[tuple[str, ...], str] = {}
     hidden = 0
     if given:
         dims = db.classes[entity_class].dimensions
@@ -567,8 +603,10 @@ def _parameter_table(ctx: AssistantContext, args: dict) -> Fit:
             if byname in entities:
                 continue
             entities.append(byname)
-            if not view.active(entity_class, byname)[0]:
+            active, reason = view.active(entity_class, byname)
+            if not active:
                 inactive.append(_names(byname))
+                inactive_notes[byname] = inactive_note(ctx, entity_class, _entity_text(byname), scenario, reason)
     else:
         for e in sorted(db.entities.get(entity_class, {}).values(), key=lambda e: e.byname):
             if view.active(entity_class, e.byname)[0]:
@@ -578,7 +616,8 @@ def _parameter_table(ctx: AssistantContext, args: dict) -> Fit:
 
     n_cells = len(entities) * len(known)
     row_limit = max(1, min(args["max_rows"], max(ENTITY_TABLE_ROWS, args["max_rows"] // max(n_cells, 1))))
-    cells = [(byname, p, _cell(ctx, db, view, entity_class, byname, p, row_limit, time_range))
+    cells = [(byname, p, _cell(ctx, db, view, entity_class, byname, p, row_limit, time_range,
+                               inactive_notes.get(byname)))
              for byname in entities for p in known]
 
     # What the cells of a parameter share goes in the header: its unit (the most common) and its notes.
@@ -589,7 +628,9 @@ def _parameter_table(ctx: AssistantContext, args: dict) -> Fit:
         if not mine:
             continue
         units[p] = Counter(c["unit"] for c in mine).most_common(1)[0][0]
-        common = [n for n in mine[0]["notes"] if all(n in c["notes"] for c in mine[1:])]
+        # The inactive note stays on its rows: it is about the entity, never a note of the parameter.
+        own = set(inactive_notes.values())
+        common = [n for n in mine[0]["notes"] if n not in own and all(n in c["notes"] for c in mine[1:])]
         if common:
             shared_notes[p] = common
     unit_column = any(c["unit"] != units.get(p) for _, p, c in cells)

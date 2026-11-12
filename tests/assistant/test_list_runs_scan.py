@@ -405,9 +405,12 @@ def test_the_overview_refusal_says_what_did_not_match(lctx) -> None:
     assert not out.ok and f'"{own}"' in out.message and out.message.startswith(
         f'No result folder is a run of scenario "{own[:-1]}". The scenarios with result folders include: ')
     out = call_tool(lctx, "list_runs", {"detail": "overview", "folders": [fail(2)], "state": "succeeded"})
+    # Every one of the 68 runs is hidden (67 <scenario>_1 + NEWEST); 64 have usable results (43 without a record,
+    # 20 succeeded <scenario>_1, NEWEST), the 4 failed ones not.
     assert not out.ok and out.message == (
-        "No result folder passes every filter given. Leave out source, state or results_usable for the overview, "
-        "or list_runs with the same filters to see what passes.")
+        "No result folder passes every filter given. Result folders hidden by the filters (state, folders): 68, 64 "
+        "of them with usable results. Leave out source, state or results_usable for the overview, or list_runs "
+        "with the same filters to see what passes.")
 
 
 def test_the_basic_default_view_spends_one_line_on_runs_it_does_not_list(lctx) -> None:

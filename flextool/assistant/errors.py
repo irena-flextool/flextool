@@ -21,6 +21,10 @@ from string import Formatter
 
 from flextool.assistant.caps import LOG_LINE_MAX, NAME_MAX, Rendered, cap_text, clean
 
+#: How many result folders the filters of a list_runs call hide (list_runs' ``hidden_by_filters`` line, and the
+#: overview's refusal when nothing passes): a filter a model meant as "no filter" (``results_usable: false``) shows.
+_HIDDEN_BY_FILTERS = "Result folders hidden by the filters ({what}): {n}, {usable} of them with usable results."
+
 MESSAGES: dict[str, str] = {
     # The registry
     "unknown_tool": "There is no tool named {name}. The tools are: {names}.",
@@ -67,8 +71,13 @@ MESSAGES: dict[str, str] = {
                           "{n} names."),
     "older_database": ("This database is {relation} than this FlexTool; the value may be stored under another "
                        "parameter name. Parameters stored for this entity: {names}."),
-    "inactive_entity": ("{entity} exists in the input data but is not active in scenario {scenario}; the reason: "
-                        "{reason}."),
+    # {consequence}: INACTIVE_CONSEQUENCE of the entity's class, or "" where results are shown beside the note.
+    "inactive_entity": ("{entity} is not part of scenario {scenario} ({reason}). Its stored values are not used "
+                        "there{consequence}."),
+    "no_entity_matches": ("No {entity_class} matches the filters given ({what}). The class has {n} entities in the "
+                          "input data; leave the filters out to list them."),
+    "none_active": ("No {entity_class} listed here is part of scenario {scenario}: inactive_in_scenario lists them. "
+                    "Their stored values are not used in this scenario."),
     "no_value": "No alternative of the scenario sets this value and the parameter has no default.",
     "no_parameter_named": ("Name the parameter to read (parameter), or several (parameters). get_entity lists every "
                            "value an entity has."),
@@ -91,9 +100,10 @@ MESSAGES: dict[str, str] = {
                                  "for its overview, or name a result folder of {scenario}."),
     "overview_no_scenario_run": ("No result folder is a run of scenario {scenario}. The scenarios with result "
                                  "folders include: {scenarios}."),
-    "overview_filtered_out": ("No result folder passes every filter given. Leave out source, state or "
-                              "results_usable for the overview, or list_runs with the same filters to see what "
-                              "passes."),
+    "overview_filtered_out": ("No result folder passes every filter given. " + _HIDDEN_BY_FILTERS + " Leave out "
+                              "source, state or results_usable for the overview, or list_runs with the same "
+                              "filters to see what passes."),
+    "hidden_by_filters": _HIDDEN_BY_FILTERS + " Leave a filter out to see them.",
     "unknown_run_state": "There is no run state {value}. The states of this project's runs are: {values}.",
     "run_running": "Scenario folder {run} is running now; its results are not complete.",
     "run_abandoned": ("The latest run of {run} stopped without finishing. Read the run log (get_run_log) and run "
@@ -179,6 +189,16 @@ MESSAGES: dict[str, str] = {
 }
 
 
+#: What an inactive entity's stored values not being used means, by entity class (``inactive_entity``).
+INACTIVE_CONSEQUENCE = ": it has no capacity, flows or results in this scenario"
+INACTIVE_GROUP_CONSEQUENCE = ": its limits do not apply and it has no results in this scenario"
+
+
+def inactive_consequence(entity_class: str) -> str:
+    """The ``consequence`` field of ``inactive_entity`` for an entity of *entity_class*."""
+    return INACTIVE_GROUP_CONSEQUENCE if entity_class == "group" else INACTIVE_CONSEQUENCE
+
+
 #: The classes of the message fields (:func:`render`); every placeholder of :data:`MESSAGES` is in exactly one.
 #: A name from the user's files (or the model's request): quoted, one line, redacted, cut to NAME_MAX.
 NAMES_QUOTED = frozenset({"name", "doc", "section", "scenario", "source", "entity_class", "parameter", "entity",
@@ -193,7 +213,7 @@ MESSAGES_QUOTED = frozenset({"error", "reason"})
 FREE_TEXT = frozenset({"problem", "start"})
 #: FlexTool's own words and numbers: cut to NAME_MAX.
 PLAIN = frozenset({"what", "span", "relation", "use", "type", "example", "n", "db", "tool", "max_parameters",
-                   "max_entities", "parameters", "entities"})
+                   "max_entities", "parameters", "entities", "usable", "consequence"})
 _CLASSES = (NAMES_QUOTED, LISTS, MESSAGES_QUOTED, FREE_TEXT, PLAIN)
 
 Redact = Callable[[str], str]

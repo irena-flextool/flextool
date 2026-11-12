@@ -62,14 +62,82 @@ def test_inactive_entity_in_scenario(ctx) -> None:
     # are inactive by default.  Its existing comes from alternative coal (1200).
     rec = _call(ctx, "get_parameter", entity_class="unit", parameter="existing", entity=["coal_chp"],
                 scenario="coal")
-    assert rec["active"] is False
+    assert rec["active"] is False and rec["used_in_scenario"] is False
     assert rec["value"] == 1200.0 and rec["provenance"]["from_alternative"] == "coal"
-    assert any(n.startswith('"coal_chp" exists in the input data but is not active in scenario "coal"; the reason: "')
-               for n in rec["notes"])
+    assert rec["notes"][0] == INACTIVE_CHP_NOTE
     listing = _call(ctx, "list_entities", entity_class="unit", scenario="coal")
     # Of the ten units, only coal_plant has an entity_alternative in an alternative of coal (coal).
     assert listing["entities"] == [{"entity": ["coal_plant"], "description": None}]
     assert ["coal_chp"] in listing["inactive_in_scenario"]
+
+
+#: coal_chp in scenario coal (B1, T3): its only entity_alternative is in alternative coal_chp, which coal does not
+#: have, and units are inactive unless an alternative makes them active.
+INACTIVE_CHP_NOTE = ('"coal_chp" is not part of scenario "coal" ("no alternative of the scenario makes it active, '
+                     'and unit entities are inactive unless an alternative makes them active"). Its stored values are '
+                     "not used there: it has no capacity, flows or results in this scenario.")
+
+
+def test_an_inactive_entity_shows_its_values_as_stored_not_used(ctx) -> None:
+    """B1, T3 (#52, #61: "coal_chp has 1200 MW in scenario coal" read from get_entity).  In scenario coal (init,
+    west, coal) only alternative coal sets a value of coal_chp: existing 1200.  get_entity gives the note first
+    and the values under stored_not_used, never under parameters."""
+    out = _call(ctx, "get_entity", name=["coal_chp"], scenario="coal")
+    unit = {m["entity_class"]: m for m in out["matches"]}["unit"]
+    assert list(unit)[0] == "note" and unit["note"] == INACTIVE_CHP_NOTE
+    assert unit["active"] is False and "parameters" not in unit and "parameters_total" not in unit
+    assert [(p["parameter"], p["value"], p["from_alternative"]) for p in unit["stored_not_used"]] == [
+        ("existing", 1200.0, "coal")]
+    assert unit["stored_not_used_total"] == 1
+
+
+def test_a_cut_names_the_stored_values_of_an_inactive_entity(ctx, monkeypatch) -> None:
+    """coal_plant made inactive in scenario coal, where alternative coal sets its efficiency 0.4 and existing 500:
+    cut to one row, stored_not_used keeps the first by name and the truncated text names that key."""
+    from flextool.assistant.inputs import _db
+
+    real = _db.ScenarioView.active
+    monkeypatch.setattr(_db.ScenarioView, "active",
+                        lambda self, cls, byname: (False, "it is set inactive in alternative 'x'")
+                        if (cls, tuple(byname)) == ("unit", ("coal_plant",)) else real(self, cls, byname))
+    out = _call(ctx, "get_entity", name=["coal_plant"], scenario="coal", max_rows=1)
+    unit = {m["entity_class"]: m for m in out["matches"]}["unit"]
+    assert [(p["parameter"], p["value"]) for p in unit["stored_not_used"]] == [("efficiency", 0.4)]
+    assert unit["stored_not_used_total"] == 2
+    assert unit["truncated"].startswith("showing at most 1 stored_not_used")
+
+
+def test_an_inactive_entity_shows_no_default_as_applying(ctx) -> None:
+    """efficiency of unit coal_chp: set only in alternative coal_chp (0.9), so in scenario coal no alternative
+    sets it; its default 1.0 (tests.json parameter_definitions) is not shown as applying to an entity that is
+    not part of the scenario."""
+    rec = _call(ctx, "get_parameter", entity_class="unit", parameter="efficiency", entity=["coal_chp"],
+                scenario="coal")
+    assert rec["used_in_scenario"] is False
+    assert (rec["stored"], rec["is_default"], rec["value"]) == (False, False, None)
+    assert rec["notes"][0] == INACTIVE_CHP_NOTE
+    assert not any("has no default" in n for n in rec["notes"])
+    # The same entity in coal_chp is active: its own 0.9.
+    active = _call(ctx, "get_parameter", entity_class="unit", parameter="efficiency", entity=["coal_chp"],
+                   scenario="coal_chp")
+    assert "used_in_scenario" not in active and active["value"] == 0.9
+
+
+def test_list_entities_says_when_nothing_matches_or_nothing_is_active(ctx) -> None:
+    """B1, T1/T3.  No unit name contains "zzz": the note says so with the class's count.  The units whose names
+    contain "chp" (coal_chp and the others of tests.json) are none of them active in scenario coal (only
+    coal_plant is)."""
+    none = _call(ctx, "list_entities", entity_class="unit", scenario="coal", name_contains="zzz")
+    n = fixture_count("entities", "unit")
+    assert none["entities"] == [] and none["notes"][0] == (
+        f'No "unit" matches the filters given (name_contains). The class has {n} entities in the input data; '
+        "leave the filters out to list them.")
+    chp = _call(ctx, "list_entities", entity_class="unit", scenario="coal", name_contains="chp")
+    assert chp["entities"] == [] and ["coal_chp"] in chp["inactive_in_scenario"]
+    assert chp["notes"][0] == ('No "unit" listed here is part of scenario "coal": inactive_in_scenario lists them. '
+                               "Their stored values are not used in this scenario.")
+    assert not any(n.startswith("No ") for n in _call(ctx, "list_entities", entity_class="unit",
+                                                       scenario="coal")["notes"])
 
 
 def test_series_summary(ctx) -> None:

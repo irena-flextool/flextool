@@ -232,6 +232,25 @@ def test_the_aggregation_guard(rctx) -> None:
     assert out["applied"]["how"] == "mean of the single values over time, node; these values do not add up over node"
 
 
+def test_placeholder_query_arguments_mean_no_argument(rctx) -> None:
+    """B1, T1: an empty map, a sort or time_range with an empty required key, top_n 0 and agg "none" are left out;
+    a filter map keeps its real entries.  node_prices_dt_e means by period: p2020 (30+40+50+10+20+30)/6 = 30,
+    p2025 (60+70+80+40+50+60)/6 = 60; west only: (30+40+50)/3 = 40, (60+70+80)/3 = 70."""
+    def without_notes(out: dict) -> dict:          # a later call names the session's unit note by its key only
+        return {k: v for k, v in out.items() if k != "notes"}
+
+    plain = _call(rctx, "query_result", run="base_1", table="node_prices_dt_e", group_by=["period"], agg="mean")
+    filled = _call(rctx, "query_result", run="base_1", table="node_prices_dt_e", group_by=["period"], agg="mean",
+                   filters={}, sort={"by": ""}, time_range={"from": "", "to": ""}, top_n=0)
+    assert without_notes(filled) == without_notes(plain) and _rows(plain) == [("p2020", 30.0), ("p2025", 60.0)]
+    west = _call(rctx, "query_result", run="base_1", table="node_prices_dt_e", group_by=["period"], agg="mean",
+                 filters={"node": ["west"], "solve": []})
+    assert _rows(west) == [("p2020", 40.0), ("p2025", 70.0)] and west["applied"]["filters"] == {"node": ["west"]}
+    # agg "none" without group_by: the summary per series, as with no agg at all.
+    assert without_notes(_call(rctx, "query_result", run="base_1", table="node_prices_dt_e", agg="none")) == \
+        without_notes(_call(rctx, "query_result", run="base_1", table="node_prices_dt_e"))
+
+
 def test_capacity_parameters_are_not_combined(rctx) -> None:
     """existing, invested, in_construction, divested and total are different quantities: no statistic combines
     them (before: sum 100+50+150+200+200 = 700, mean 700/10 = 70, max 200)."""

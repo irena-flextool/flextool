@@ -13,11 +13,11 @@ from typing import Any
 from flextool.assistant import project
 from flextool.assistant.caps import CapArg, dumps
 from flextool.assistant.context import AssistantContext
-from flextool.assistant.errors import ToolError, close_names, name_list, render, similar_text
+from flextool.assistant.errors import ToolError, close_names, name_list, similar_text
 from flextool.assistant.inputs import _values
 from flextool.assistant.registry import Fit, make_tool
 from flextool.assistant.results import _entity, _runs
-from flextool.assistant.tools.inputs import entity_value, match_names, unit_of
+from flextool.assistant.tools.inputs import entity_value, inactive_note, match_names, unit_of
 from flextool.assistant.unit_wording import (
     STORED_VALUES,
     UNITS_CONVENTION,
@@ -231,16 +231,21 @@ def explain_entity(ctx: AssistantContext, args: dict) -> Fit:
     cls = _entity_class(rr, db, source_name or rr.folder.name, name, args.get("entity_class"))
     inputs = None
     description = None
+    inactive_reason: str | None = None
+    inactive = False
     if view is not None and db.entity_by_name(cls, name) is not None:
         item = db.entity_by_name(cls, name)
         description = item.description.strip() if item.description and item.description.strip() else None
-        active, reason = view.active(cls, item.byname)
-        if not active:
-            notes.append(render("inactive_entity", {"entity": name, "scenario": view.scenario, "reason": reason},
-                                ctx.redact))
+        active, inactive_reason = view.active(cls, item.byname)
+        inactive = not active
         inputs = _Inputs(db, view, cls, name)
 
     blocks, missing, large = _entity.read_results(rr.folder, cls, name)
+    if inactive:
+        # First of the notes.  Whether the entity is part of the scenario comes from the current input data: the
+        # "no capacity, flows or results" part only when the run has none of its results either.
+        notes.insert(0, inactive_note(ctx, cls, name, view.scenario, inactive_reason,
+                                      consequence=None if not blocks else ""))
     nodes = list(inputs.nodes) if inputs is not None else []
     if cls == "node":
         nodes = [name]

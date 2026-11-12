@@ -332,10 +332,33 @@ def test_unknown_names_other_scenarios_and_other_classes(ectx) -> None:
     assert message.startswith('No result folder is a run of scenario "no_such_scenario".')
 
 
+#: Why coal_chp is not part of multi_year: its only entity_alternative is in alternative coal_chp (tests.json),
+#: and units are inactive by default.
+NOT_MADE_ACTIVE = ("no alternative of the scenario makes it active, and unit entities are inactive unless an "
+                   "alternative makes them active")
+
+
 def test_an_inactive_entity_is_noted_with_its_tables_not_in_run(ectx) -> None:
+    """B1, T3: the note that the entity is not part of the scenario comes first; the run has none of its results
+    (every table of the run lacks coal_chp), so the note also says it has none."""
     out = _call(ectx, entity="coal_chp", run="multi_year_1")
-    assert any("is not active in scenario" in n for n in out["notes"])
+    assert out["notes"][0] == (f'"coal_chp" is not part of scenario "multi_year" ("{NOT_MADE_ACTIVE}"). Its stored '
+                               "values are not used there: it has no capacity, flows or results in this scenario.")
     assert {"unit_capacity_ed_p", "unit_outputNode_d_ee", "cost_unit_discounted_d_ec"} <= set(out["not_in_run"])
+
+
+def test_an_entity_inactive_in_the_current_data_with_results_in_the_run(ectx, monkeypatch) -> None:
+    """Whether the entity is part of the scenario is read from the current input data; when the run has results
+    of it (coal_plant's capacity in multi_year_1), the note does not say it has none."""
+    from flextool.assistant.inputs import _db
+
+    monkeypatch.setattr(_db.ScenarioView, "active",
+                        lambda self, cls, byname: (False, "it is set inactive in alternative 'x'")
+                        if byname == ("coal_plant",) else (True, None))
+    out = _call(ectx, entity="coal_plant", run="multi_year_1")
+    assert "capacity" in out
+    assert out["notes"][0] == ('"coal_plant" is not part of scenario "multi_year" ("it is set inactive in '
+                               "alternative 'x'\"). Its stored values are not used there.")
 
 
 # ---------------------------------------------------------------------------------------------------------

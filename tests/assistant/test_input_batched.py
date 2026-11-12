@@ -119,6 +119,27 @@ def test_an_inactive_entity_is_named_in_the_header(ctx) -> None:
     assert _cells(out)["coal_chp", "existing"]["value"] == 1200.0
 
 
+def test_an_inactive_entity_has_its_note_on_its_rows(ctx) -> None:
+    """B1, T3.  coal_chp in scenario coal: existing 1200 is stored (alternative coal) but not used; efficiency is
+    set only in alternative coal_chp, so no value, and its default 1.0 is not shown as applying.  coal_plant's
+    efficiency is 0.4 (alternative coal).  The note is on coal_chp's rows, first, never a parameter's note."""
+    out = _call(ctx, entity_class="unit", parameters=["existing", "efficiency"],
+                entities=[["coal_plant"], ["coal_chp"]], scenario="coal")
+    cells = _cells(out)
+    note = ('"coal_chp" is not part of scenario "coal" ("no alternative of the scenario makes it active, and unit '
+            'entities are inactive unless an alternative makes them active"). Its stored values are not used there: '
+            "it has no capacity, flows or results in this scenario.")
+    for parameter in ("existing", "efficiency"):
+        assert cells["coal_chp", parameter]["notes"][0] == note
+        assert note not in cells["coal_plant", parameter]["notes"]
+        assert note not in out.get("notes_by_parameter", {}).get(parameter, [])
+    assert (cells["coal_chp", "efficiency"]["value"], cells["coal_chp", "efficiency"]["is_default"]) == (None, False)
+    assert cells["coal_plant", "efficiency"]["value"] == 0.4
+    # One inactive entity alone: its note stays on its row (not lifted into the parameter's shared notes).
+    alone = _call(ctx, entity_class="unit", parameters=["existing"], entities=[["coal_chp"]], scenario="coal")
+    assert _cells(alone)["coal_chp", "existing"]["notes"][0] == note
+
+
 def test_the_size_cap(ctx) -> None:
     parameters = [f"p{i}" for i in range(MAX_PARAMETERS + 1)]
     out = call_tool(ctx, "get_parameter", {"entity_class": "unit", "parameters": parameters,
